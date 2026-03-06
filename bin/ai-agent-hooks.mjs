@@ -492,6 +492,9 @@ async function runAudit(check, context, logPath, runDir) {
     if (check.model) {
       args.push("-c", `model=${JSON.stringify(check.model)}`);
     }
+    if (check.reasoningEffort) {
+      args.push("-c", `model_reasoning_effort=${JSON.stringify(check.reasoningEffort)}`);
+    }
     if (context.pushContext.baseRef) {
       args.push("--base", context.pushContext.baseRef, "-");
     } else {
@@ -582,6 +585,8 @@ function normalizeChecks(hookConfig) {
         command: typeof check.audit.command === "string" ? check.audit.command : "",
         prompt: typeof check.audit.prompt === "string" ? check.audit.prompt : DEFAULT_AUDIT_PROMPT,
         model: typeof check.audit.model === "string" ? check.audit.model : "",
+        reasoningEffort:
+          typeof check.audit.reasoningEffort === "string" ? check.audit.reasoningEffort : "",
         skipIfMissing: check.audit.skipIfMissing === true,
       };
     }
@@ -610,24 +615,14 @@ function defaultConfig() {
           { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
           {
             id: "codex-review",
-            group: "ensemble",
-            required: false,
+            group: "sequential",
+            required: true,
             timeoutSec: 900,
             audit: {
               runner: "codex-review",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
               prompt: DEFAULT_AUDIT_PROMPT,
-              skipIfMissing: true,
-            },
-          },
-          {
-            id: "claude-review",
-            group: "ensemble",
-            required: false,
-            timeoutSec: 900,
-            audit: {
-              runner: "claude",
-              prompt: DEFAULT_AUDIT_PROMPT,
-              skipIfMissing: true,
             },
           },
         ],

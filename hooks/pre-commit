@@ -11,9 +11,5 @@ if command -v ai-agent-hooks >/dev/null 2>&1; then
   exec ai-agent-hooks run pre-commit "$@"
 fi
 
-if command -v pnpm >/dev/null 2>&1; then
-  exec pnpm exec ai-agent-hooks run pre-commit "$@"
-fi
-
 echo "ai-agent-hooks not found in PATH"
 exit 1

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-function run(cmd, args, cwd) {
-  const result = spawnSync(cmd, args, { cwd, encoding: "utf8" });
+function run(cmd, args, cwd, env = process.env) {
+  const result = spawnSync(cmd, args, { cwd, encoding: "utf8", env });
   return result;
 }
 
@@ -33,6 +33,7 @@ assert.equal(result.status, 0, result.stderr || result.stdout);
 assert.equal(existsSync(join(repoRoot, ".githooks", "pre-commit")), true);
 assert.equal(existsSync(join(repoRoot, ".githooks", "pre-push")), true);
 assert.equal(existsSync(join(repoRoot, ".ai-agent-hooks.mjs")), true);
+assert.match(readFileSync(join(repoRoot, ".githooks", "pre-push"), "utf8"), /bin\/ai-agent-hooks\.mjs/);
 
 result = run("git", ["config", "--get", "core.hooksPath"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
@@ -49,6 +50,9 @@ const configPath = join(repoRoot, ".ai-agent-hooks.mjs");
 const config = readFileSync(configPath, "utf8");
 assert.match(config, /merge-conflict-markers/);
 assert.match(config, /codex-review/);
+assert.match(config, /required:\s*true/);
+assert.match(config, /model:\s*"gpt-5\.4"/);
+assert.match(config, /reasoningEffort:\s*"high"/);
 
 writeFileSync(
   configPath,
@@ -58,13 +62,15 @@ writeFileSync(
     "pre-push": {
       checks: [
         {
-          id: "local-audit",
+          id: "codex-review",
           required: true,
           timeoutSec: 30,
           audit: {
-            runner: "command",
+            runner: "codex-review",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
             prompt: "audit prompt",
-            command: "node -e \\"const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.env.AI_AGENT_HOOKS_PROMPT_FILE,'utf8'));\\""
+            skipIfMissing: false
           }
         }
       ]
@@ -81,17 +87,40 @@ assert.equal(result.status, 0, result.stderr);
 result = run("git", ["commit", "-m", "update"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
 
-result = run("node", [scriptPath, "run", "pre-push"], repoRoot);
+const fakeBinDir = join(repoRoot, "fake-bin");
+const fakeCodexPath = join(fakeBinDir, "codex");
+const codexArgsPath = join(repoRoot, "codex-args.txt");
+const codexStdinPath = join(repoRoot, "codex-stdin.txt");
+mkdirSync(fakeBinDir, { recursive: true });
+writeFileSync(
+  fakeCodexPath,
+  `#!/usr/bin/env bash
+printf '%s\n' "$@" > "${codexArgsPath}"
+cat > "${codexStdinPath}"
+printf 'No findings\n'
+`,
+  "utf8",
+);
+chmodSync(fakeCodexPath, 0o755);
+
+result = run("node", [scriptPath, "run", "pre-push"], repoRoot, {
+  ...process.env,
+  PATH: `${fakeBinDir}:${process.env.PATH}`,
+});
 assert.equal(result.status, 0, result.stderr || result.stdout);
-assert.match(result.stdout, /ok local-audit/);
+assert.match(result.stdout, /ok codex-review/);
 
 const runsDir = join(repoRoot, ".git", "ai-agent-hooks", "runs");
 const runNames = readdirSync(runsDir).sort();
 assert.equal(runNames.length > 0, true);
 const latestRunDir = join(runsDir, runNames[runNames.length - 1]);
 const summary = readFileSync(join(latestRunDir, "summary.json"), "utf8");
-const promptOutput = readFileSync(join(latestRunDir, "local-audit.log"), "utf8");
-assert.match(summary, /local-audit/);
+const promptOutput = readFileSync(join(repoRoot, "codex-stdin.txt"), "utf8");
+const codexArgs = readFileSync(codexArgsPath, "utf8");
+assert.match(summary, /codex-review/);
 assert.match(promptOutput, /Changed files list:/);
+assert.match(codexArgs, /review/);
+assert.match(codexArgs, /model="gpt-5\.4"/);
+assert.match(codexArgs, /model_reasoning_effort="high"/);
 
 console.log("smoke test passed");
