@@ -53,6 +53,7 @@ assert.match(config, /codex-review/);
 assert.match(config, /required:\s*true/);
 assert.match(config, /model:\s*"gpt-5\.4"/);
 assert.match(config, /reasoningEffort:\s*"high"/);
+assert.match(config, /failOnSeverities:\s*\["high", "critical"\]/);
 
 writeFileSync(
   configPath,
@@ -69,6 +70,7 @@ writeFileSync(
             runner: "codex-review",
             model: "gpt-5.4",
             reasoningEffort: "high",
+            failOnSeverities: ["high", "critical"],
             prompt: "audit prompt",
             skipIfMissing: false
           }
@@ -96,8 +98,19 @@ writeFileSync(
   fakeCodexPath,
   `#!/usr/bin/env bash
 printf '%s\n' "$@" > "${codexArgsPath}"
+output_file=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    output_file="$1"
+  fi
+  shift
+done
 cat > "${codexStdinPath}"
-printf 'No findings\n'
+cat > "$output_file" <<'JSON'
+{"status":"pass","summary":"No findings","findings":[]}
+JSON
+printf 'structured review complete\n'
 `,
   "utf8",
 );
@@ -117,10 +130,48 @@ const latestRunDir = join(runsDir, runNames[runNames.length - 1]);
 const summary = readFileSync(join(latestRunDir, "summary.json"), "utf8");
 const promptOutput = readFileSync(join(repoRoot, "codex-stdin.txt"), "utf8");
 const codexArgs = readFileSync(codexArgsPath, "utf8");
+const modelOutput = readFileSync(join(latestRunDir, "codex-review.result.json"), "utf8");
 assert.match(summary, /codex-review/);
+assert.match(summary, /"overallStatus": "pass"/);
 assert.match(promptOutput, /Changed files list:/);
-assert.match(codexArgs, /review/);
+assert.match(codexArgs, /exec/);
 assert.match(codexArgs, /model="gpt-5\.4"/);
 assert.match(codexArgs, /model_reasoning_effort="high"/);
+assert.match(codexArgs, /--output-schema/);
+assert.match(modelOutput, /"status": "pass"/);
+
+writeFileSync(
+  fakeCodexPath,
+  `#!/usr/bin/env bash
+output_file=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    output_file="$1"
+  fi
+  shift
+done
+cat > /dev/null
+cat > "$output_file" <<'JSON'
+{"status":"fail","summary":"1 blocking finding","findings":[{"severity":"high","category":"security","title":"Blocking issue","file":"index.js","line":2,"evidence":"example evidence","recommendation":"fix it"}]}
+JSON
+printf 'structured review complete\n'
+`,
+  "utf8",
+);
+chmodSync(fakeCodexPath, 0o755);
+
+result = run("node", [scriptPath, "run", "pre-push"], repoRoot, {
+  ...process.env,
+  PATH: `${fakeBinDir}:${process.env.PATH}`,
+});
+assert.equal(result.status, 1, result.stderr || result.stdout);
+assert.match(result.stdout, /failed codex-review/);
+
+const rerunNames = readdirSync(runsDir).sort();
+const failedRunDir = join(runsDir, rerunNames[rerunNames.length - 1]);
+const failedSummary = readFileSync(join(failedRunDir, "summary.json"), "utf8");
+assert.match(failedSummary, /"overallStatus": "fail"/);
+assert.match(failedSummary, /"severity": "high"/);
 
 console.log("smoke test passed");

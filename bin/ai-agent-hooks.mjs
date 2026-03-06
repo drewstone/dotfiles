@@ -19,6 +19,8 @@ const HOOK_TEMPLATES_DIR = join(PACKAGE_ROOT, "hooks");
 const CONFIG_TEMPLATE_PATH = join(PACKAGE_ROOT, "templates", "ai-agent-hooks.mjs");
 
 const BUILTIN_IDS = new Set(["merge-conflict-markers", "suspicious-secrets"]);
+const FINDING_SEVERITIES = ["low", "medium", "high", "critical"];
+const DEFAULT_FAIL_ON_SEVERITIES = ["high", "critical"];
 const DEFAULT_AUDIT_PROMPT =
   "Review this change before it is pushed. Focus on correctness, regressions, security issues, missing tests, and production-readiness gaps. Return concise findings only. If there are no findings, say 'No findings'.";
 
@@ -397,6 +399,114 @@ function runShell(command, cwd, timeoutSec, logPath, env = process.env) {
   });
 }
 
+function buildReviewOutputSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "summary", "findings"],
+    properties: {
+      status: {
+        type: "string",
+        enum: ["pass", "fail"],
+      },
+      summary: {
+        type: "string",
+      },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "category", "title", "file", "line", "evidence", "recommendation"],
+          properties: {
+            severity: {
+              type: "string",
+              enum: FINDING_SEVERITIES,
+            },
+            category: {
+              type: "string",
+            },
+            title: {
+              type: "string",
+            },
+            file: {
+              type: ["string", "null"],
+            },
+            line: {
+              type: ["integer", "null"],
+            },
+            evidence: {
+              type: ["string", "null"],
+            },
+            recommendation: {
+              type: "string",
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateReviewResult(result) {
+  if (!isPlainObject(result)) {
+    return "Review result must be an object.";
+  }
+  if (result.status !== "pass" && result.status !== "fail") {
+    return "Review result status must be 'pass' or 'fail'.";
+  }
+  if (typeof result.summary !== "string" || result.summary.trim().length === 0) {
+    return "Review result summary must be a non-empty string.";
+  }
+  if (!Array.isArray(result.findings)) {
+    return "Review result findings must be an array.";
+  }
+
+  for (const [index, finding] of result.findings.entries()) {
+    if (!isPlainObject(finding)) {
+      return `Finding ${index} must be an object.`;
+    }
+    if (!FINDING_SEVERITIES.includes(finding.severity)) {
+      return `Finding ${index} has invalid severity.`;
+    }
+    if (typeof finding.category !== "string" || finding.category.trim().length === 0) {
+      return `Finding ${index} category must be a non-empty string.`;
+    }
+    if (typeof finding.title !== "string" || finding.title.trim().length === 0) {
+      return `Finding ${index} title must be a non-empty string.`;
+    }
+    if (finding.file !== null && finding.file !== undefined && typeof finding.file !== "string") {
+      return `Finding ${index} file must be a string or null.`;
+    }
+    if (
+      finding.line !== null &&
+      finding.line !== undefined &&
+      (!Number.isInteger(finding.line) || finding.line < 1)
+    ) {
+      return `Finding ${index} line must be a positive integer or null.`;
+    }
+    if (
+      finding.evidence !== null &&
+      finding.evidence !== undefined &&
+      typeof finding.evidence !== "string"
+    ) {
+      return `Finding ${index} evidence must be a string or null.`;
+    }
+    if (
+      typeof finding.recommendation !== "string" ||
+      finding.recommendation.trim().length === 0
+    ) {
+      return `Finding ${index} recommendation must be a non-empty string.`;
+    }
+  }
+
+  return "";
+}
+
 function buildAuditPrompt(check, context, artifactPaths) {
   const basePrompt = typeof check.prompt === "string" && check.prompt.trim()
     ? check.prompt.trim()
@@ -404,6 +514,10 @@ function buildAuditPrompt(check, context, artifactPaths) {
 
   return [
     basePrompt,
+    "",
+    "Return only structured review output. Classify every finding severity as low, medium, high, or critical.",
+    `Blocking severities for this review: ${(check.failOnSeverities || DEFAULT_FAIL_ON_SEVERITIES).join(", ")}.`,
+    "Use status='pass' when there are no blocking findings. Use status='fail' when there is at least one blocking finding.",
     "",
     `Repository root: ${context.repoRoot}`,
     `Hook: ${context.hookName}`,
@@ -467,6 +581,30 @@ function skippedOutcome(logPath, reason) {
   };
 }
 
+function parseJsonFile(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function evaluateReviewResult(check, reviewResult) {
+  const failOnSeverities = Array.isArray(check.failOnSeverities) && check.failOnSeverities.length > 0
+    ? check.failOnSeverities
+    : DEFAULT_FAIL_ON_SEVERITIES;
+
+  const blockingFindings = reviewResult.findings.filter((finding) =>
+    failOnSeverities.includes(finding.severity)
+  );
+  const expectedStatus = blockingFindings.length > 0 ? "fail" : "pass";
+  const statusMatchesPolicy = reviewResult.status === expectedStatus;
+
+  return {
+    ok: blockingFindings.length === 0 && statusMatchesPolicy,
+    blockingFindings,
+    failOnSeverities,
+    expectedStatus,
+    statusMatchesPolicy,
+  };
+}
+
 async function runAudit(check, context, logPath, runDir) {
   const artifacts = writeAuditArtifacts(runDir, check.id, context, check);
   const env = {
@@ -488,20 +626,51 @@ async function runAudit(check, context, logPath, runDir) {
       throw new Error("codex CLI not found");
     }
 
-    const args = ["review"];
+    const schemaPath = join(runDir, `${slug(check.id)}.schema.json`);
+    const modelOutputPath = join(runDir, `${slug(check.id)}.result.json`);
+    const runnerMetaPath = join(runDir, `${slug(check.id)}.runner-meta.json`);
+    writeFileSync(schemaPath, JSON.stringify(buildReviewOutputSchema(), null, 2), "utf8");
+
+    const args = [
+      "exec",
+      "-",
+      "-C",
+      context.repoRoot,
+      "--sandbox",
+      "read-only",
+      "--output-schema",
+      schemaPath,
+      "--output-last-message",
+      modelOutputPath,
+      "--color",
+      "never",
+    ];
     if (check.model) {
       args.push("-c", `model=${JSON.stringify(check.model)}`);
     }
     if (check.reasoningEffort) {
       args.push("-c", `model_reasoning_effort=${JSON.stringify(check.reasoningEffort)}`);
     }
-    if (context.pushContext.baseRef) {
-      args.push("--base", context.pushContext.baseRef, "-");
-    } else {
-      args.push("--uncommitted", "-");
-    }
+    args.push("--skip-git-repo-check");
 
-    return runProcess({
+    writeFileSync(
+      runnerMetaPath,
+      JSON.stringify(
+        {
+          runner: check.runner,
+          model: check.model || "",
+          reasoningEffort: check.reasoningEffort || "",
+          failOnSeverities: check.failOnSeverities || DEFAULT_FAIL_ON_SEVERITIES,
+          outputSchemaPath: schemaPath,
+          outputResultPath: modelOutputPath,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const processResult = await runProcess({
       command: "codex",
       args,
       cwd: context.repoRoot,
@@ -510,6 +679,73 @@ async function runAudit(check, context, logPath, runDir) {
       env,
       stdinText: artifacts.prompt,
     });
+
+    if (!processResult.ok) {
+      return processResult;
+    }
+
+    if (!existsSync(modelOutputPath)) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nMissing structured review output: ${modelOutputPath}\n`,
+        "utf8",
+      );
+      return {
+        ok: false,
+        status: 1,
+        elapsedMs: processResult.elapsedMs,
+      };
+    }
+
+    let reviewResult;
+    try {
+      reviewResult = parseJsonFile(modelOutputPath);
+    } catch (error) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nInvalid JSON review output: ${error.message}\n`,
+        "utf8",
+      );
+      return {
+        ok: false,
+        status: 1,
+        elapsedMs: processResult.elapsedMs,
+      };
+    }
+
+    const validationError = validateReviewResult(reviewResult);
+    if (validationError) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nSchema validation failed: ${validationError}\n`,
+        "utf8",
+      );
+      return {
+        ok: false,
+        status: 1,
+        elapsedMs: processResult.elapsedMs,
+      };
+    }
+
+    const gate = evaluateReviewResult(check, reviewResult);
+    writeFileSync(modelOutputPath, JSON.stringify(reviewResult, null, 2), "utf8");
+    if (!gate.statusMatchesPolicy) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nReview status '${reviewResult.status}' does not match expected status '${gate.expectedStatus}' for configured severities.\n`,
+        "utf8",
+      );
+    }
+
+    return {
+      ok: gate.ok,
+      status: gate.ok ? 0 : 1,
+      elapsedMs: processResult.elapsedMs,
+      reviewResult,
+      gate,
+      modelOutputPath,
+      runnerMetaPath,
+    };
   }
 
   if (check.runner === "claude") {
@@ -587,6 +823,9 @@ function normalizeChecks(hookConfig) {
         model: typeof check.audit.model === "string" ? check.audit.model : "",
         reasoningEffort:
           typeof check.audit.reasoningEffort === "string" ? check.audit.reasoningEffort : "",
+        failOnSeverities: Array.isArray(check.audit.failOnSeverities)
+          ? check.audit.failOnSeverities.filter((value) => FINDING_SEVERITIES.includes(value))
+          : DEFAULT_FAIL_ON_SEVERITIES,
         skipIfMissing: check.audit.skipIfMissing === true,
       };
     }
@@ -622,6 +861,7 @@ function defaultConfig() {
               runner: "codex-review",
               model: "gpt-5.4",
               reasoningEffort: "high",
+              failOnSeverities: ["high", "critical"],
               prompt: DEFAULT_AUDIT_PROMPT,
             },
           },
@@ -651,12 +891,14 @@ function slug(value) {
 }
 
 function writeSummary(runDir, hookName, results) {
+  const failedRequired = results.filter((result) => !result.ok && result.required);
   writeFileSync(
     join(runDir, "summary.json"),
     JSON.stringify(
       {
         hook: hookName,
         finishedAt: new Date().toISOString(),
+        overallStatus: failedRequired.length > 0 ? "fail" : "pass",
         results,
       },
       null,
@@ -732,6 +974,10 @@ async function runHookCommand(rawArgs) {
       elapsedMs: outcome.elapsedMs,
       logPath,
       skipped: outcome.skipped === true,
+      reviewResult: outcome.reviewResult || null,
+      gate: outcome.gate || null,
+      modelOutputPath: outcome.modelOutputPath || null,
+      runnerMetaPath: outcome.runnerMetaPath || null,
     };
 
     results.push(result);
@@ -777,6 +1023,10 @@ async function runHookCommand(rawArgs) {
             elapsedMs: outcome.elapsedMs,
             logPath,
             skipped: outcome.skipped === true,
+            reviewResult: outcome.reviewResult || null,
+            gate: outcome.gate || null,
+            modelOutputPath: outcome.modelOutputPath || null,
+            runnerMetaPath: outcome.runnerMetaPath || null,
           };
         }
 
