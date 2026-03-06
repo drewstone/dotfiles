@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -48,5 +48,50 @@ assert.equal(result.status, 0, result.stderr || result.stdout);
 const configPath = join(repoRoot, ".ai-agent-hooks.mjs");
 const config = readFileSync(configPath, "utf8");
 assert.match(config, /merge-conflict-markers/);
+assert.match(config, /codex-review/);
+
+writeFileSync(
+  configPath,
+  `export default {
+  artifactsDir: ".git/ai-agent-hooks/runs",
+  hooks: {
+    "pre-push": {
+      checks: [
+        {
+          id: "local-audit",
+          required: true,
+          timeoutSec: 30,
+          audit: {
+            runner: "command",
+            prompt: "audit prompt",
+            command: "node -e \\"const fs=require('node:fs');process.stdout.write(fs.readFileSync(process.env.AI_AGENT_HOOKS_PROMPT_FILE,'utf8'));\\""
+          }
+        }
+      ]
+    }
+  }
+};
+`,
+  "utf8",
+);
+
+writeFileSync(join(repoRoot, "README.txt"), "hello again\n", "utf8");
+result = run("git", ["add", "README.txt"], repoRoot);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["commit", "-m", "update"], repoRoot);
+assert.equal(result.status, 0, result.stderr);
+
+result = run("node", [scriptPath, "run", "pre-push"], repoRoot);
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok local-audit/);
+
+const runsDir = join(repoRoot, ".git", "ai-agent-hooks", "runs");
+const runNames = readdirSync(runsDir).sort();
+assert.equal(runNames.length > 0, true);
+const latestRunDir = join(runsDir, runNames[runNames.length - 1]);
+const summary = readFileSync(join(latestRunDir, "summary.json"), "utf8");
+const promptOutput = readFileSync(join(latestRunDir, "local-audit.log"), "utf8");
+assert.match(summary, /local-audit/);
+assert.match(promptOutput, /Changed files list:/);
 
 console.log("smoke test passed");

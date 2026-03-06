@@ -10,7 +10,7 @@ import {
   readdirSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -19,6 +19,8 @@ const HOOK_TEMPLATES_DIR = join(PACKAGE_ROOT, "hooks");
 const CONFIG_TEMPLATE_PATH = join(PACKAGE_ROOT, "templates", "ai-agent-hooks.mjs");
 
 const BUILTIN_IDS = new Set(["merge-conflict-markers", "suspicious-secrets"]);
+const DEFAULT_AUDIT_PROMPT =
+  "Review this change before it is pushed. Focus on correctness, regressions, security issues, missing tests, and production-readiness gaps. Return concise findings only. If there are no findings, say 'No findings'.";
 
 function parseArgs(args) {
   const flags = new Map();
@@ -79,7 +81,8 @@ function copyHook({ source, destination, force }) {
     throw new Error(`Hook already exists: ${destination} (pass --force to overwrite)`);
   }
 
-  copyFileSync(source, destination);
+  const template = readFileSync(source, "utf8").replaceAll("__AI_AGENT_HOOKS_BIN__", SCRIPT_PATH);
+  writeFileSync(destination, template, "utf8");
   chmodSync(destination, 0o755);
 }
 
@@ -136,21 +139,33 @@ function initConfigCommand(rawArgs) {
   console.log(result.created ? `Created ${result.path}` : `Config exists: ${result.path}`);
 }
 
-function detectDiffRangeForPush(repoRoot) {
+function resolvePushDiffContext(repoRoot) {
   const upstream = runGit(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], true);
   if (upstream.ok) {
-    return `${upstream.stdout.trim()}...HEAD`;
+    return {
+      range: `${upstream.stdout.trim()}...HEAD`,
+      baseRef: upstream.stdout.trim(),
+      upstream: upstream.stdout.trim(),
+    };
   }
 
   const previous = runGit(repoRoot, ["rev-parse", "--verify", "HEAD~1"], true);
   if (previous.ok) {
-    return "HEAD~1...HEAD";
+    return {
+      range: "HEAD~1...HEAD",
+      baseRef: "HEAD~1",
+      upstream: "",
+    };
   }
 
-  return "";
+  return {
+    range: "",
+    baseRef: "",
+    upstream: "",
+  };
 }
 
-function changedFiles(repoRoot, hookName) {
+function changedFiles(repoRoot, hookName, pushContext = resolvePushDiffContext(repoRoot)) {
   if (hookName === "pre-commit") {
     const staged = runGit(
       repoRoot,
@@ -167,7 +182,7 @@ function changedFiles(repoRoot, hookName) {
       .filter(Boolean);
   }
 
-  const range = detectDiffRangeForPush(repoRoot);
+  const range = pushContext.range;
   if (!range) {
     return [];
   }
@@ -186,6 +201,34 @@ function changedFiles(repoRoot, hookName) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function diffText(repoRoot, hookName, pushContext = resolvePushDiffContext(repoRoot)) {
+  if (hookName === "pre-commit") {
+    return runGit(
+      repoRoot,
+      ["diff", "--cached", "--binary", "--no-ext-diff", "--unified=3"],
+      true,
+    ).stdout;
+  }
+
+  if (!pushContext.range) {
+    return "";
+  }
+
+  return runGit(
+    repoRoot,
+    ["diff", "--binary", "--no-ext-diff", "--unified=3", pushContext.range],
+    true,
+  ).stdout;
+}
+
+function currentBranch(repoRoot) {
+  return runGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"], true).stdout.trim();
+}
+
+function commandExists(command) {
+  return spawnSync("bash", ["-lc", `command -v ${command}`], { encoding: "utf8" }).status === 0;
 }
 
 function checkMergeConflictMarkers(repoRoot, files) {
@@ -286,13 +329,14 @@ function runBuiltin(builtin, context) {
   return { ok: false, status: 1, output: `Unknown builtin check: ${builtin}` };
 }
 
-function runShell(command, cwd, timeoutSec, logPath) {
+function runProcess({ command, args, cwd, timeoutSec, logPath, env = process.env, stdinText = "" }) {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
-    const child = spawn("bash", ["-lc", command], {
+    let settled = false;
+    const child = spawn(command, args, {
       cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
     let output = "";
@@ -310,7 +354,26 @@ function runShell(command, cwd, timeoutSec, logPath) {
       setTimeout(() => child.kill("SIGKILL"), 1000);
     }, Math.max(1, timeoutSec) * 1000);
 
+    if (stdinText) {
+      child.stdin.write(stdinText);
+    }
+    child.stdin.end();
+
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      writeFileSync(logPath, error.message, "utf8");
+      resolvePromise({ ok: false, status: 1, elapsedMs: Date.now() - startedAt });
+    });
+
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       clearTimeout(timer);
       const elapsedMs = Date.now() - startedAt;
       const status = timedOut ? 124 : code ?? 1;
@@ -321,6 +384,166 @@ function runShell(command, cwd, timeoutSec, logPath) {
       resolvePromise({ ok, status, elapsedMs });
     });
   });
+}
+
+function runShell(command, cwd, timeoutSec, logPath, env = process.env) {
+  return runProcess({
+    command: "bash",
+    args: ["-lc", command],
+    cwd,
+    timeoutSec,
+    logPath,
+    env,
+  });
+}
+
+function buildAuditPrompt(check, context, artifactPaths) {
+  const basePrompt = typeof check.prompt === "string" && check.prompt.trim()
+    ? check.prompt.trim()
+    : DEFAULT_AUDIT_PROMPT;
+
+  return [
+    basePrompt,
+    "",
+    `Repository root: ${context.repoRoot}`,
+    `Hook: ${context.hookName}`,
+    `Branch: ${context.branch || "(unknown)"}`,
+    `Diff range: ${context.pushContext.range || "staged changes"}`,
+    `Changed files list: ${artifactPaths.changedFilesPath}`,
+    `Unified diff patch: ${artifactPaths.diffPath}`,
+    "",
+    "Read the changed files list and diff patch before producing findings.",
+  ].join("\n");
+}
+
+function writeAuditArtifacts(runDir, checkId, context, check) {
+  const promptPath = join(runDir, `${slug(checkId)}.prompt.txt`);
+  const diffPath = join(runDir, `${slug(checkId)}.diff.patch`);
+  const changedFilesPath = join(runDir, `${slug(checkId)}.changed-files.txt`);
+  const contextPath = join(runDir, `${slug(checkId)}.git-context.json`);
+
+  writeFileSync(diffPath, context.diff || "", "utf8");
+  writeFileSync(changedFilesPath, context.files.join("\n"), "utf8");
+  writeFileSync(
+    contextPath,
+    JSON.stringify(
+      {
+        hook: context.hookName,
+        branch: context.branch,
+        diffRange: context.pushContext.range,
+        baseRef: context.pushContext.baseRef,
+        upstream: context.pushContext.upstream,
+        changedFiles: context.files,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const prompt = buildAuditPrompt(check, context, {
+    diffPath,
+    changedFilesPath,
+    contextPath,
+  });
+  writeFileSync(promptPath, prompt, "utf8");
+
+  return {
+    prompt,
+    promptPath,
+    diffPath,
+    changedFilesPath,
+    contextPath,
+  };
+}
+
+function skippedOutcome(logPath, reason) {
+  writeFileSync(logPath, reason, "utf8");
+  return {
+    ok: true,
+    skipped: true,
+    status: 0,
+    elapsedMs: 0,
+  };
+}
+
+async function runAudit(check, context, logPath, runDir) {
+  const artifacts = writeAuditArtifacts(runDir, check.id, context, check);
+  const env = {
+    ...process.env,
+    AI_AGENT_HOOKS_PROMPT_FILE: artifacts.promptPath,
+    AI_AGENT_HOOKS_DIFF_FILE: artifacts.diffPath,
+    AI_AGENT_HOOKS_CHANGED_FILES_FILE: artifacts.changedFilesPath,
+    AI_AGENT_HOOKS_GIT_CONTEXT_FILE: artifacts.contextPath,
+    AI_AGENT_HOOKS_REPO_ROOT: context.repoRoot,
+    AI_AGENT_HOOKS_HOOK: context.hookName,
+    AI_AGENT_HOOKS_DIFF_RANGE: context.pushContext.range || "",
+  };
+
+  if (check.runner === "codex-review") {
+    if (!commandExists("codex")) {
+      if (check.skipIfMissing) {
+        return skippedOutcome(logPath, "Skipped codex-review: codex CLI not found.");
+      }
+      throw new Error("codex CLI not found");
+    }
+
+    const args = ["review"];
+    if (check.model) {
+      args.push("-c", `model=${JSON.stringify(check.model)}`);
+    }
+    if (context.pushContext.baseRef) {
+      args.push("--base", context.pushContext.baseRef, "-");
+    } else {
+      args.push("--uncommitted", "-");
+    }
+
+    return runProcess({
+      command: "codex",
+      args,
+      cwd: context.repoRoot,
+      timeoutSec: check.timeoutSec,
+      logPath,
+      env,
+      stdinText: artifacts.prompt,
+    });
+  }
+
+  if (check.runner === "claude") {
+    if (!commandExists("claude")) {
+      if (check.skipIfMissing) {
+        return skippedOutcome(logPath, "Skipped claude audit: claude CLI not found.");
+      }
+      throw new Error("claude CLI not found");
+    }
+
+    const args = [
+      "-p",
+      "--output-format",
+      "text",
+      "--permission-mode",
+      "bypassPermissions",
+    ];
+    if (check.model) {
+      args.push("--model", check.model);
+    }
+    args.push(artifacts.prompt);
+
+    return runProcess({
+      command: "claude",
+      args,
+      cwd: context.repoRoot,
+      timeoutSec: check.timeoutSec,
+      logPath,
+      env,
+    });
+  }
+
+  if (check.runner === "command") {
+    return runShell(check.command, context.repoRoot, check.timeoutSec, logPath, env);
+  }
+
+  throw new Error(`Unknown audit runner: ${check.runner}`);
 }
 
 function normalizeChecks(hookConfig) {
@@ -341,6 +564,26 @@ function normalizeChecks(hookConfig) {
         throw new Error(`Unknown builtin '${check.builtin}' for check '${id}'`);
       }
       return { id, required, group, timeoutSec, kind: "builtin", builtin: check.builtin };
+    }
+
+    if (typeof check.audit === "object" && check.audit !== null) {
+      const runner = typeof check.audit.runner === "string" ? check.audit.runner : "";
+      if (!runner) {
+        throw new Error(`Audit check '${id}' is missing audit.runner`);
+      }
+
+      return {
+        id,
+        required,
+        group,
+        timeoutSec,
+        kind: "audit",
+        runner,
+        command: typeof check.audit.command === "string" ? check.audit.command : "",
+        prompt: typeof check.audit.prompt === "string" ? check.audit.prompt : DEFAULT_AUDIT_PROMPT,
+        model: typeof check.audit.model === "string" ? check.audit.model : "",
+        skipIfMissing: check.audit.skipIfMissing === true,
+      };
     }
 
     if (typeof check.run === "string" && check.run.trim()) {
@@ -365,6 +608,28 @@ function defaultConfig() {
         checks: [
           { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
           { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+          {
+            id: "codex-review",
+            group: "ensemble",
+            required: false,
+            timeoutSec: 900,
+            audit: {
+              runner: "codex-review",
+              prompt: DEFAULT_AUDIT_PROMPT,
+              skipIfMissing: true,
+            },
+          },
+          {
+            id: "claude-review",
+            group: "ensemble",
+            required: false,
+            timeoutSec: 900,
+            audit: {
+              runner: "claude",
+              prompt: DEFAULT_AUDIT_PROMPT,
+              skipIfMissing: true,
+            },
+          },
         ],
       },
     },
@@ -430,8 +695,16 @@ async function runHookCommand(rawArgs) {
   );
   mkdirSync(runDir, { recursive: true });
 
-  const files = changedFiles(repoRoot, hookName);
-  const context = { repoRoot, files };
+  const pushContext = resolvePushDiffContext(repoRoot);
+  const files = changedFiles(repoRoot, hookName, pushContext);
+  const context = {
+    repoRoot,
+    hookName,
+    branch: currentBranch(repoRoot),
+    pushContext,
+    files,
+    diff: diffText(repoRoot, hookName, pushContext),
+  };
 
   console.log(`ai-agent-hooks: hook=${hookName}`);
   console.log(`ai-agent-hooks: changed_files=${files.length}`);
@@ -450,6 +723,8 @@ async function runHookCommand(rawArgs) {
       outcome = runBuiltin(check.builtin, context);
       writeFileSync(logPath, outcome.output || "", "utf8");
       outcome.elapsedMs = Date.now() - started;
+    } else if (check.kind === "audit") {
+      outcome = await runAudit(check, context, logPath, runDir);
     } else {
       outcome = await runShell(check.run, repoRoot, check.timeoutSec, logPath);
     }
@@ -461,10 +736,15 @@ async function runHookCommand(rawArgs) {
       status: outcome.status,
       elapsedMs: outcome.elapsedMs,
       logPath,
+      skipped: outcome.skipped === true,
     };
 
     results.push(result);
-    console.log(`- ${result.ok ? "ok" : result.required ? "failed" : "warn"} ${check.id}`);
+    console.log(
+      `- ${
+        result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
+      } ${check.id}`,
+    );
 
     if (!result.ok && result.required) {
       writeSummary(runDir, hookName, results);
@@ -488,6 +768,20 @@ async function runHookCommand(rawArgs) {
             status: outcome.status,
             elapsedMs: Date.now() - started,
             logPath,
+            skipped: false,
+          };
+        }
+
+        if (check.kind === "audit") {
+          const outcome = await runAudit(check, context, logPath, runDir);
+          return {
+            id: check.id,
+            required: check.required,
+            ok: outcome.ok,
+            status: outcome.status,
+            elapsedMs: outcome.elapsedMs,
+            logPath,
+            skipped: outcome.skipped === true,
           };
         }
 
@@ -499,13 +793,18 @@ async function runHookCommand(rawArgs) {
           status: outcome.status,
           elapsedMs: outcome.elapsedMs,
           logPath,
+          skipped: false,
         };
       }),
     );
 
     results.push(...ensembleResults);
     for (const result of ensembleResults) {
-      console.log(`- ${result.ok ? "ok" : result.required ? "failed" : "warn"} ${result.id}`);
+      console.log(
+        `- ${
+          result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
+        } ${result.id}`,
+      );
     }
   }
 

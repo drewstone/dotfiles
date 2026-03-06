@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+AI_AGENT_HOOKS_BIN="__AI_AGENT_HOOKS_BIN__"
+
+if [ -x "$AI_AGENT_HOOKS_BIN" ]; then
+  exec "$AI_AGENT_HOOKS_BIN" run pre-push "$@"
+fi
+
 if command -v ai-agent-hooks >/dev/null 2>&1; then
   exec ai-agent-hooks run pre-push "$@"
 fi
