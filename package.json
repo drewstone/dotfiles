@@ -1,0 +1,21 @@
+{
+  "name": "dot-git-hooks",
+  "version": "0.1.0",
+  "description": "Reusable personal git hooks for AI-agent harness and audit workflows",
+  "type": "module",
+  "bin": {
+    "ai-agent-hooks": "./bin/ai-agent-hooks.mjs"
+  },
+  "files": [
+    "bin",
+    "hooks",
+    "templates"
+  ],
+  "scripts": {
+    "test": "node ./tests/smoke.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT"
+}
