@@ -1,6 +1,30 @@
 # dotfiles
 
-Personal Git hook tooling for local AI-assisted review gates.
+Personal developer tooling: AI-assisted git hooks and Claude Code configuration.
+
+## Claude Code Config
+
+Portable Claude Code setup — global instructions, settings, skills, and hooks.
+
+```bash
+# Install on any machine
+./claude/install.sh
+
+# Overwrite existing config
+./claude/install.sh --force
+```
+
+Includes:
+- `CLAUDE.md` — global defaults (quality bar, work style, succinctness)
+- `settings.json` — hooks, plugins, trusted directories
+- 22 portable skills (`/polish`, `/verify`, `/status`, `/critical-audit`, `/code-review`, etc.)
+- Langfuse observability hook
+
+Project-specific skills (tangle-blueprint-expert, blueprint-frontend, sandbox-blueprint) are kept in their respective project repos, not here.
+
+## Git Hooks
+
+AI-assisted review gates via `ai-agent-hooks`.
 
 ## What It Does
 
