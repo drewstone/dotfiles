@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/.venv/bin/python3 ~/.claude/hooks/langfuse_hook.py"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/notify_done.sh"
           }
         ]
       }
@@ -16,14 +20,6 @@
     "frontend-design@claude-plugins-official": true
   },
   "skipDangerousModePermissionPrompt": true,
-  "trustedDirectories": [
-    "/home/drew",
-    "/home/drew/code",
-    "/home/drew/tools",
-    "/home/drew/tools/lead-gen",
-    "/tmp",
-    "/tmp/blueprint-optional-extractors"
-  ],
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
       "source": {

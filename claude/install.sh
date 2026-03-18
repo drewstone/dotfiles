@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Install Claude Code configuration (CLAUDE.md, settings, skills, hooks)
+# Install Claude Code configuration (CLAUDE.md, settings, skills, hooks, commands)
 # Usage: ./install.sh [--force]
 #
 # Symlinks config from this repo into ~/.claude/
-# Skips project-specific skills (tangle-*, blueprint-*, sandbox-*)
+# Generates platform-specific settings.local.json (trustedDirectories)
 # Safe to re-run — only replaces symlinks, never overwrites real files unless --force
 
 set -euo pipefail
@@ -36,23 +36,93 @@ mkdir -p "$CLAUDE_DIR"
 link "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 link "$SCRIPT_DIR/settings.json" "$CLAUDE_DIR/settings.json"
 
-# Skills
+# Skills (only real directories, skip broken symlinks)
 mkdir -p "$CLAUDE_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
+  [ -d "$skill_dir" ] || continue
   skill="$(basename "$skill_dir")"
   link "$skill_dir" "$CLAUDE_DIR/skills/$skill"
 done
+
+# Commands
+if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/null)" ]; then
+  mkdir -p "$CLAUDE_DIR/commands"
+  for cmd in "$SCRIPT_DIR/commands"/*; do
+    [ -f "$cmd" ] || continue
+    link "$cmd" "$CLAUDE_DIR/commands/$(basename "$cmd")"
+  done
+fi
 
 # Hooks
 if [ -d "$SCRIPT_DIR/hooks" ] && [ "$(ls -A "$SCRIPT_DIR/hooks" 2>/dev/null)" ]; then
   mkdir -p "$CLAUDE_DIR/hooks"
   for hook in "$SCRIPT_DIR/hooks"/*; do
+    [ -f "$hook" ] || continue
     link "$hook" "$CLAUDE_DIR/hooks/$(basename "$hook")"
   done
 fi
 
+# Platform-specific settings.local.json (trustedDirectories)
+LOCAL_SETTINGS="$CLAUDE_DIR/settings.local.json"
+if [ ! -e "$LOCAL_SETTINGS" ]; then
+  echo ""
+  echo "Generating platform-specific settings.local.json..."
+  case "$(uname -s)" in
+    Darwin)
+      cat > "$LOCAL_SETTINGS" <<'MACOS'
+{
+  "trustedDirectories": [
+    "/Users/drew",
+    "/Users/drew/webb",
+    "/Users/drew/code",
+    "/tmp"
+  ]
+}
+MACOS
+      echo "  CREATED $LOCAL_SETTINGS (macOS)"
+      ;;
+    Linux)
+      cat > "$LOCAL_SETTINGS" <<'LINUX'
+{
+  "trustedDirectories": [
+    "/home/drew",
+    "/home/drew/code",
+    "/home/drew/webb",
+    "/home/drew/tools",
+    "/tmp"
+  ]
+}
+LINUX
+      echo "  CREATED $LOCAL_SETTINGS (Linux)"
+      ;;
+    *)
+      echo "  SKIP settings.local.json (unknown platform: $(uname -s))"
+      ;;
+  esac
+else
+  echo "  SKIP $LOCAL_SETTINGS (exists)"
+fi
+
+# Langfuse hook venv
+VENV_DIR="$CLAUDE_DIR/hooks/.venv"
+if [ ! -d "$VENV_DIR" ]; then
+  echo ""
+  echo "Setting up Langfuse hook venv..."
+  if command -v python3 &>/dev/null; then
+    python3 -m venv "$VENV_DIR"
+    "$VENV_DIR/bin/pip" install --quiet langfuse
+    echo "  CREATED $VENV_DIR with langfuse"
+  else
+    echo "  SKIP venv (python3 not found)"
+  fi
+else
+  echo "  SKIP $VENV_DIR (exists)"
+fi
+
+# Summary
+skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills | wc -l | tr -d ' ')
+cmd_count=$(find "$SCRIPT_DIR/commands" -type f 2>/dev/null | wc -l | tr -d ' ')
+hook_count=$(find "$SCRIPT_DIR/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
+
 echo ""
-echo "Done. $(ls "$SCRIPT_DIR/skills" | wc -l) skills, $(ls "$SCRIPT_DIR/hooks" 2>/dev/null | wc -l) hooks installed."
-echo ""
-echo "Project-specific skills (tangle-*, blueprint-*, sandbox-*) are NOT included."
-echo "Install those separately in the relevant project repos."
+echo "Done. ${skill_count} skills, ${cmd_count} commands, ${hook_count} hooks installed."
