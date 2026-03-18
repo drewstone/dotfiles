@@ -1,4 +1,4 @@
-#!/home/drew/.claude/hooks/.venv/bin/python3
+#!/Users/drew/.claude/hooks/.venv/bin/python3
 """
 Sends Claude Code traces to Langfuse after each response.
 """
