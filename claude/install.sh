@@ -62,43 +62,34 @@ if [ -d "$SCRIPT_DIR/hooks" ] && [ "$(ls -A "$SCRIPT_DIR/hooks" 2>/dev/null)" ];
   done
 fi
 
+# Tools (bin symlinks)
+if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ]; then
+  mkdir -p "$HOME/bin"
+  for tool in "$SCRIPT_DIR/tools"/*; do
+    [ -f "$tool" ] || continue
+    base="$(basename "$tool")"
+    [[ "$base" == "README.md" ]] && continue
+    link "$tool" "$HOME/bin/$base"
+    chmod +x "$tool"
+  done
+fi
+
 # Platform-specific settings.local.json (trustedDirectories)
+# Uses $HOME so it works on any machine/user without hardcoded paths.
 LOCAL_SETTINGS="$CLAUDE_DIR/settings.local.json"
 if [ ! -e "$LOCAL_SETTINGS" ]; then
   echo ""
   echo "Generating platform-specific settings.local.json..."
-  case "$(uname -s)" in
-    Darwin)
-      cat > "$LOCAL_SETTINGS" <<'MACOS'
+  cat > "$LOCAL_SETTINGS" <<EOF
 {
   "trustedDirectories": [
-    "/Users/drew",
-    "/Users/drew/webb",
-    "/Users/drew/code",
+    "$HOME",
+    "$HOME/code",
     "/tmp"
   ]
 }
-MACOS
-      echo "  CREATED $LOCAL_SETTINGS (macOS)"
-      ;;
-    Linux)
-      cat > "$LOCAL_SETTINGS" <<'LINUX'
-{
-  "trustedDirectories": [
-    "/home/drew",
-    "/home/drew/code",
-    "/home/drew/webb",
-    "/home/drew/tools",
-    "/tmp"
-  ]
-}
-LINUX
-      echo "  CREATED $LOCAL_SETTINGS (Linux)"
-      ;;
-    *)
-      echo "  SKIP settings.local.json (unknown platform: $(uname -s))"
-      ;;
-  esac
+EOF
+  echo "  CREATED $LOCAL_SETTINGS ($(uname -s), user: $(whoami))"
 else
   echo "  SKIP $LOCAL_SETTINGS (exists)"
 fi
