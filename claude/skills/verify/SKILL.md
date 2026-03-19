@@ -7,14 +7,26 @@ description: "Verify work is complete and correct before shipping. Runs tests, c
 
 Perform a thorough verification that work is complete and ready to ship. Do NOT ask questions — run checks and report.
 
-## Checks (run in parallel)
+## Pre-loaded Context
+
+### Git Status
+!`git status --short 2>/dev/null`
+
+### Staged Changes
+!`git diff --cached --stat 2>/dev/null`
+
+### Unstaged Changes
+!`git diff --stat 2>/dev/null`
+
+### Changed Files (full diff for review)
+!`git diff HEAD 2>/dev/null | head -200`
+
+## Additional Checks (run in parallel)
 
 1. **Tests pass** — run the full test suite. Report pass/fail counts.
-2. **Git clean** — `git status` to confirm all intended changes are staged/committed. Flag untracked files that look like they should be committed.
-3. **No debug artifacts** — grep changed files for `console.log`, `print(`, `debugger`, `TODO`, `FIXME` that shouldn't ship.
-4. **Build succeeds** — if the project has a build step, run it.
-5. **No secrets** — scan changed files for patterns that look like API keys, passwords, or credentials.
-6. **Diff review** — `git diff` (or `git diff HEAD` if committed) to sanity-check the changes are what was intended. Flag anything suspicious.
+2. **No debug artifacts** — grep changed files for `console.log`, `print(`, `debugger`, `TODO`, `FIXME` that shouldn't ship.
+3. **Build succeeds** — if the project has a build step, run it.
+4. **No secrets** — scan changed files for patterns that look like API keys, passwords, or credentials.
 
 ## Report format
 

@@ -103,21 +103,14 @@ else
   echo "  SKIP $LOCAL_SETTINGS (exists)"
 fi
 
-# Langfuse hook venv
-VENV_DIR="$CLAUDE_DIR/hooks/.venv"
-if [ ! -d "$VENV_DIR" ]; then
-  echo ""
-  echo "Setting up Langfuse hook venv..."
-  if command -v python3 &>/dev/null; then
-    python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --quiet langfuse
-    echo "  CREATED $VENV_DIR with langfuse"
-  else
-    echo "  SKIP venv (python3 not found)"
-  fi
-else
-  echo "  SKIP $VENV_DIR (exists)"
-fi
+# Clean up stale symlinks in skills, commands, hooks
+for dir in "$CLAUDE_DIR/skills" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
+  [ -d "$dir" ] || continue
+  find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print | while read -r stale; do
+    echo "  PRUNE $stale (dead symlink)"
+    rm "$stale"
+  done
+done
 
 # Summary
 skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills | wc -l | tr -d ' ')

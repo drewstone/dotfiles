@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/.venv/bin/python3 ~/.claude/hooks/langfuse_hook.py"
+            "command": "~/.claude/hooks/notify_done.sh"
           }
         ]
       }

@@ -7,13 +7,22 @@ description: "Quick status check on current work. Shows what's done, what's rema
 
 Give a concise status report on the current work. Do NOT ask questions — just investigate and report.
 
-## Gather (parallel where possible)
+## Pre-loaded Context
 
-1. **Git status** — `git status` and `git diff --stat` to see uncommitted changes
-2. **Recent commits** — `git log --oneline -5` to see what's been done
-3. **Test results** — run the project's test suite (pytest, vitest, cargo test, etc.)
-4. **TODOs/FIXMEs** — grep for TODO, FIXME, HACK, XXX in changed files
-5. **Task list** — check if there's an active task list in this session
+### Git Status
+!`git status --short 2>/dev/null`
+
+### Recent Changes
+!`git diff --stat 2>/dev/null`
+
+### Recent Commits
+!`git log --oneline -5 2>/dev/null`
+
+## Additional Checks (parallel where possible)
+
+1. **Test results** — run the project's test suite (pytest, vitest, cargo test, etc.)
+2. **TODOs/FIXMEs** — grep for TODO, FIXME, HACK, XXX in changed files
+3. **Task list** — check if there's an active task list in this session
 
 ## Report format
 
