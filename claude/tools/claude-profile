@@ -213,6 +213,18 @@ cmd_auto() {
   done
 }
 
+cmd_set() {
+  local name="${1:?Usage: claude-profile set <name>}"
+  if [[ ! -f "${PROFILES_DIR}/${name}.json" ]]; then
+    red "Profile '$name' not found. Available profiles:"
+    cmd_list
+    exit 1
+  fi
+  echo "$name" > .claude-profile
+  green "Set project profile to '$name' in $(pwd)/.claude-profile"
+  cmd_use "$name"
+}
+
 cmd_shell_hook() {
   cat <<'HOOK'
 claude_profile_auto() {
@@ -237,6 +249,7 @@ HOOK
 case "${1:-help}" in
   add)              cmd_add "${2:-}" ;;
   use|switch)       cmd_use "${2:-}" ;;
+  set)              cmd_set "${2:-}" ;;
   list|ls)          cmd_list ;;
   current)          cmd_current ;;
   remove|rm)        cmd_remove "${2:-}" ;;
@@ -249,13 +262,16 @@ case "${1:-help}" in
     echo "claude-profile — manage multiple Claude accounts"
     echo ""
     echo "  add <name>            Save current credentials"
-    echo "  use <name>            Switch to a profile"
+    echo "  use <name>            Switch to a profile (this session)"
+    echo "  set <name>            Set profile for this project directory"
     echo "  list                  List all profiles"
     echo "  current               Show active profile"
     echo "  remove <name>         Delete a profile"
-    echo "  pool <n1> <n2> ...    Create rotation pool"
+    echo ""
+    echo "  pool <n1> <n2> ...    Create rotation pool for this directory"
     echo "  next                  Rotate to next in pool"
     echo "  pool-status           Show pool + active"
+    echo ""
     echo "  auto                  Auto-select from .claude-profile/.claude-pool"
     echo "  shell-hook            Print shell hook for cd auto-switching"
     ;;
