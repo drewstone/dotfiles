@@ -153,6 +153,41 @@ One pass is never enough. Budget for 3-5 comparison rounds minimum.
 7. Get the **animations** from inline `<script>` tags (p5.js, GSAP, etc.)
 8. Do 3-5 rounds of **visual comparison** with real screenshots
 
+### Use `bad showcase` for automated comparison:
+The @tangle-network/browser-agent-driver CLI (`bad`) has a `showcase` command that automates screenshot capture for comparison:
+
+```bash
+# Capture both sites at same scroll positions
+bad showcase --url https://original.com --capture hero,scroll:900,scroll:1800 --sink ./compare-live
+bad showcase --url http://localhost:4322 --capture hero,scroll:900,scroll:1800 --sink ./compare-clone
+
+# Generate interactive walkthrough demos
+bad showcase --script walkthrough.json --format demo --sink ./demo
+```
+
+Build an HTML comparison page with original/clone side-by-side and serve it locally for review.
+
+### New content pages need the SAME design system:
+When adding new pages (service pages, etc.) that don't exist on the original:
+- Use the SAME CSS classes (wf-section-hero, wf-section-wrapper, etc.)
+- Match the same section structure, heading sizes, and spacing
+- Don't invent a new design language — extend the existing one
+- Use page-scoped CSS (ba-*, sb-*, bp-* prefixes) for page-specific styles
+- Keep max-widths consistent across all pages (80rem standard)
+
+### Product screenshots > SVG mockups:
+When showcasing products on marketing pages:
+- Use `bad showcase` to capture real product screenshots
+- Embed with glow backdrop (gradient blur + radial gradient)
+- Never use hand-drawn SVG mockups of UIs — they always look worse than real screenshots
+- Real screenshots with `--scale 2` give retina quality
+
+### Visual components > text descriptions:
+In feature/capability sections (bento grids):
+- Progress bars, colored badges, logo grids, chart SVGs > monospace text tables
+- Each cell should have a UNIQUE visual treatment, not the same code block pattern
+- Never use ASCII art to simulate UI layouts
+
 ## Deliverables
 
 - Complete, building project in target framework
