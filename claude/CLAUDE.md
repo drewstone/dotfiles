@@ -58,6 +58,11 @@ When the user says "check the latest screenshot", "look at $IMG", or similar —
 - Evaluation loops: if the reviewer evaluates artifact A (JSON) but the deliverable is artifact B (rendered PPTX), the loop cannot converge on visual quality. Always evaluate the final artifact.
 - Never generate decks with hallucinated/fictional company data. Every data point needs a real, cited source.
 
+## Deployment Debugging
+
+- **If a third-party deploy is broken and you lack dashboard access, pivot to infrastructure you control.** Don't retry/wait on opaque build hooks — check what credentials are available (`~/.openclaw/workspace/.secrets/`) and use them.
+- **Build hooks that "succeed" only mean the HTTP POST worked.** The actual build is async. If you can't check build logs, you can't debug — switch providers.
+
 ## Integration Test Fixes (Orchestrator + Sidecar)
 
 When integration tests fail with sidecar startup issues:
