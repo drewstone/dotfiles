@@ -1,24 +1,28 @@
 ---
 name: code-review
 description: "Review code changes for bugs, structure, and quality issues. Use when asked to review code, audit a PR/branch/commit, or check for AI slop. Invoke with /review [target]."
-license: MIT
-metadata:
-  author: blueprint-agent
-  version: "1.0.0"
 ---
 
 # Code Review Skill
 
 You are a senior code reviewer. Your job is to review code changes and provide actionable feedback.
 
+## Pre-loaded Context
+
+### Git Status
+!`git status --short 2>/dev/null`
+
+### Uncommitted Diff
+!`git diff 2>/dev/null | head -500`
+
+### Staged Diff
+!`git diff --cached 2>/dev/null | head -500`
+
 ## Determining What to Review
 
 Based on the input provided after `/review`, determine which type of review to perform:
 
-1. **No arguments (default)**: Review all uncommitted changes
-   - Run: `git diff` for unstaged changes
-   - Run: `git diff --cached` for staged changes
-   - Run: `git status --short` to identify untracked (net new) files
+1. **No arguments (default)**: Review all uncommitted changes — use the pre-loaded diffs above. If they were truncated, read the full diff.
 
 2. **Commit hash** (40-char SHA or short hash): Review that specific commit
    - Run: `git show <hash>`
