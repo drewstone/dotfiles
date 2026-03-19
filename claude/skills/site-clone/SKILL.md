@@ -96,6 +96,79 @@ For each page:
 
 Take screenshots of the built pages and compare against the originals side-by-side. Fix any discrepancies.
 
+## Phase 7: Meticulous 1:1 Verification
+
+Phase 6 is a quick visual gut check. Phase 7 is the real verification — automated, numerical, no room for "it looks close."
+
+### 7a. Automated computed style extraction
+
+For every page, write a Playwright script that navigates to the LIVE site and extracts computed styles from every visual element. The script must output a JSON map of selector → property → computed value. Extract at minimum:
+
+- **Body/page**: `background-color` (COMPUTED from `getComputedStyle`, not CSS variables)
+- **Every heading (h1–h6)**: `font-size`, `font-weight`, `font-family`, `color`, `line-height`, `letter-spacing`
+- **Every section wrapper**: `background-color`, `background-image`, `border`, `border-radius`, `padding`, `margin`
+- **Every card/container**: `background`, `border`, `border-radius`, `padding`, `gap`
+- **Every button**: `padding`, `background`, `border-radius`, `font-size`, `font-weight`
+- **Every label/detail text**: `font-size`, `font-weight`, `color`, `text-transform`, `letter-spacing`
+- **Layout containers**: `display`, `flex-direction`, `grid-template-columns`, `gap`, `max-width`, `width`
+- **Tab/accordion components**: active AND inactive states, transitions, icon styles
+- **Asset grids**: grid layout, cell dimensions, borders
+- **FAQ/accordion**: border colors, icon shapes (circle vs square), sizes
+
+### 7b. Side-by-side computed value comparison
+
+Run the SAME extraction script against the clone (localhost). Print both value sets side by side. Flag every mismatch with the delta. Example output:
+
+```
+ELEMENT          PROPERTY          LIVE              CLONE             MATCH
+body             background-color  rgb(31, 29, 43)   rgb(31, 29, 43)   OK
+.hero h1         font-size         72px              64px              MISMATCH (-8px)
+.hero h1         letter-spacing    -0.02em           0em               MISMATCH
+.tab-wrapper     background-color  rgb(55, 52, 77)   transparent        MISMATCH
+.faq-item        border            1px solid #eaecf0 none              MISMATCH
+```
+
+Every MISMATCH must be fixed. Re-run extraction after fixes until zero mismatches on critical properties.
+
+### 7c. Dimension matching for interactive components
+
+For tabs, accordions, carousels, and other stateful components, extract:
+
+- Tab menu width vs content area width ratio
+- Image dimensions (BOTH rendered width/height AND natural width/height)
+- Container padding and inner spacing
+- Active vs inactive state differences (background, border, color, font-weight)
+
+### 7d. Screenshot comparison at fixed scroll positions
+
+Take viewport screenshots (1440×900) at scroll positions 0, 800, 1600, 2400, 3200 on BOTH the live site and the clone. Save as numbered pairs:
+
+```
+compare/live-scroll-0000.png    compare/clone-scroll-0000.png
+compare/live-scroll-0800.png    compare/clone-scroll-0800.png
+compare/live-scroll-1600.png    compare/clone-scroll-1600.png
+...
+```
+
+Compare each pair. Any visible difference triggers a computed style extraction on the differing region.
+
+### 7e. Common traps to verify explicitly
+
+These are the most frequently missed details. The extraction script must check each one:
+
+| Trap | What to extract | Common mistake |
+|---|---|---|
+| Tab wrapper background | `background-color` on `.tabs-wrapper` or equivalent | Left as `transparent` instead of a distinct color like `#37344d` |
+| Tab wrapper border-radius | `border-radius` on tab container | Missing large radius (e.g., `40px`) |
+| Active tab styling | `background`, `border-left`, `border-radius` on active tab | Using rounded bg pill when live site uses border-left accent, or vice versa |
+| FAQ accordion borders | `border`, `border-color` on FAQ items | Missing light borders like `1px solid #eaecf0` on dark backgrounds |
+| FAQ icons | Icon element shape, `border-radius`, `width`, `height` | Circle with plus icon vs bare plus bars — completely different feel |
+| Asset/logo grid | Grid layout, individual cell `border`, `border-radius` | Plain flex layout instead of individually bordered cards |
+| Section description alignment | `text-align` on description paragraphs | Left-aligned when live site centers them, or vice versa |
+| Detail label colors | `color` on label/meta text | Using body text color instead of muted gray like `#6b7094` |
+| Images inside interactive components | Rendered `width`/`height` AND `naturalWidth`/`naturalHeight` | Wrong aspect ratio or size inside tabs/carousels |
+| Tab content area proportions | Width ratio of tab menu vs tab content panel | Content area too wide or too narrow relative to menu |
+
 ## Key Principles
 
 ### What makes the difference between 50% and 95%:
@@ -121,6 +194,16 @@ Take screenshots of the built pages and compare against the originals side-by-si
 - **Missing letter-spacing** — `-0.02em` on nav links is subtle but contributes to feel
 - **Hero height** — `95vh` vs `100vh` vs arbitrary padding changes the impact
 - **Partner logos need `filter: brightness(0) invert(1)`** — originals are white monochrome on dark, not full-color
+
+### Verification is not optional:
+Every page must go through at least ONE round of automated computed style extraction + comparison (Phase 7). "It looks close" is not verification. Extract the actual numbers and compare. Common sources of "it looks lighter/darker/different":
+- Wrong wrapper background (`transparent` vs a tinted color like `#37344d`)
+- Wrong border colors (missing borders, or wrong shade)
+- Wrong padding creating different visual density
+- Tab/card proportions off (content area too wide/narrow relative to menu)
+- Muted label colors using body text color instead of distinct gray
+
+If the comparison table shows zero MISMATCH lines on all critical properties, the page passes. If not, fix and re-run. No exceptions.
 
 ### Video/Image Background Extraction:
 Videos are the #1 missed asset type. They don't appear in CSS or asset manifests.
