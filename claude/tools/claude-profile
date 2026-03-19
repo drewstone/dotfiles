@@ -8,11 +8,8 @@
 #   claude-profile current            # Show active profile
 #   claude-profile remove <name>      # Delete a saved profile
 #   claude-profile auto               # Auto-select profile based on .claude-profile in cwd
-#
-# Per-directory auto-switching:
-#   echo "work" > ~/code/phony/.claude-profile
-#   echo "personal" > ~/code/sideproject/.claude-profile
-#   # Add to .bashrc/.zshrc: eval "$(claude-profile shell-hook)"
+#   claude-profile pool <n1> <n2> ... # Create a rotation pool for a project
+#   claude-profile next               # Rotate to the next profile in the pool
 
 set -euo pipefail
 
@@ -24,7 +21,12 @@ mkdir -p "$PROFILES_DIR"
 
 red() { printf '\033[31m%s\033[0m\n' "$1"; }
 green() { printf '\033[32m%s\033[0m\n' "$1"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$1"; }
 dim() { printf '\033[2m%s\033[0m\n' "$1"; }
+
+get_sub() {
+  python3 -c "import json; print(json.load(open('$1')).get('claudeAiOauth',{}).get('subscriptionType','unknown'))" 2>/dev/null || echo "?"
+}
 
 cmd_add() {
   local name="${1:?Usage: claude-profile add <name>}"
@@ -35,11 +37,7 @@ cmd_add() {
   cp "$CREDS_FILE" "${PROFILES_DIR}/${name}.json"
   echo "$name" > "$ACTIVE_FILE"
   green "Saved current credentials as profile '$name'"
-
-  # Show subscription type
-  local sub
-  sub=$(python3 -c "import json; print(json.load(open('${PROFILES_DIR}/${name}.json')).get('claudeAiOauth',{}).get('subscriptionType','unknown'))" 2>/dev/null || echo "unknown")
-  dim "  subscription: $sub"
+  dim "  subscription: $(get_sub "${PROFILES_DIR}/${name}.json")"
 }
 
 cmd_use() {
@@ -53,15 +51,19 @@ cmd_use() {
   cp "$profile" "$CREDS_FILE"
   echo "$name" > "$ACTIVE_FILE"
   green "Switched to profile '$name'"
-
-  local sub
-  sub=$(python3 -c "import json; print(json.load(open('$profile')).get('claudeAiOauth',{}).get('subscriptionType','unknown'))" 2>/dev/null || echo "unknown")
-  dim "  subscription: $sub"
+  dim "  subscription: $(get_sub "$profile")"
 }
 
 cmd_list() {
   local active=""
   [[ -f "$ACTIVE_FILE" ]] && active=$(cat "$ACTIVE_FILE")
+
+  local pool_file=""
+  local pool_profiles=()
+  pool_file=$(find_pool_file)
+  if [[ -n "$pool_file" ]]; then
+    mapfile -t pool_profiles < "$pool_file"
+  fi
 
   local found=0
   for f in "${PROFILES_DIR}"/*.json; do
@@ -70,10 +72,14 @@ cmd_list() {
     local name
     name=$(basename "$f" .json)
     local sub
-    sub=$(python3 -c "import json; print(json.load(open('$f')).get('claudeAiOauth',{}).get('subscriptionType','unknown'))" 2>/dev/null || echo "?")
+    sub=$(get_sub "$f")
     local marker=" "
     [[ "$name" == "$active" ]] && marker="*"
-    printf " %s %-20s %s\n" "$marker" "$name" "($sub)"
+    local pool_marker=""
+    for p in "${pool_profiles[@]+"${pool_profiles[@]}"}"; do
+      [[ "$p" == "$name" ]] && pool_marker=" [pool]"
+    done
+    printf " %s %-20s %s%s\n" "$marker" "$name" "($sub)" "$pool_marker"
   done
 
   if [[ $found -eq 0 ]]; then
@@ -98,13 +104,88 @@ cmd_remove() {
   fi
   rm "$profile"
   green "Removed profile '$name'"
-
-  # Clear active if it was this one
   [[ -f "$ACTIVE_FILE" ]] && [[ "$(cat "$ACTIVE_FILE")" == "$name" ]] && rm "$ACTIVE_FILE"
 }
 
+find_pool_file() {
+  local dir="$PWD"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/.claude-pool" ]]; then
+      echo "$dir/.claude-pool"
+      return 0
+    fi
+    dir=$(dirname "$dir")
+  done
+  echo ""
+}
+
+cmd_pool() {
+  if [[ $# -lt 2 ]]; then
+    red "Usage: claude-profile pool <profile1> <profile2> [profile3] ..."
+    exit 1
+  fi
+  for name in "$@"; do
+    if [[ ! -f "${PROFILES_DIR}/${name}.json" ]]; then
+      red "Profile '$name' not found"
+      exit 1
+    fi
+  done
+  printf '%s\n' "$@" > .claude-pool
+  green "Created pool with ${#} profiles in $(pwd)/.claude-pool"
+  for name in "$@"; do
+    dim "  - $name ($(get_sub "${PROFILES_DIR}/${name}.json"))"
+  done
+  cmd_use "$1"
+}
+
+cmd_next() {
+  local pool_file
+  pool_file=$(find_pool_file)
+  if [[ -z "$pool_file" ]]; then
+    red "No .claude-pool found. Create one with: claude-profile pool <p1> <p2> ..."
+    exit 1
+  fi
+  local profiles=()
+  mapfile -t profiles < "$pool_file"
+  if [[ ${#profiles[@]} -eq 0 ]]; then
+    red "Pool file is empty"
+    exit 1
+  fi
+  local current=""
+  [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
+  local next_idx=0
+  for i in "${!profiles[@]}"; do
+    if [[ "${profiles[$i]}" == "$current" ]]; then
+      next_idx=$(( (i + 1) % ${#profiles[@]} ))
+      break
+    fi
+  done
+  local next_name="${profiles[$next_idx]}"
+  yellow "Rotating: $current → $next_name"
+  cmd_use "$next_name"
+}
+
+cmd_pool_status() {
+  local pool_file
+  pool_file=$(find_pool_file)
+  if [[ -z "$pool_file" ]]; then
+    dim "No pool configured for this directory"
+    return
+  fi
+  local profiles=()
+  mapfile -t profiles < "$pool_file"
+  local current=""
+  [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
+  echo "Pool: $pool_file"
+  for i in "${!profiles[@]}"; do
+    local name="${profiles[$i]}"
+    local marker="  "
+    [[ "$name" == "$current" ]] && marker="→ "
+    printf " %s%-20s (%s)\n" "$marker" "$name" "$(get_sub "${PROFILES_DIR}/${name}.json" 2>/dev/null)"
+  done
+}
+
 cmd_auto() {
-  # Walk up from cwd looking for .claude-profile
   local dir="$PWD"
   while [[ "$dir" != "/" ]]; do
     if [[ -f "$dir/.claude-profile" ]]; then
@@ -113,20 +194,27 @@ cmd_auto() {
       if [[ -n "$name" ]]; then
         local current=""
         [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
-        if [[ "$name" != "$current" ]]; then
-          cmd_use "$name"
-        fi
+        [[ "$name" != "$current" ]] && cmd_use "$name"
         return 0
       fi
     fi
+    if [[ -f "$dir/.claude-pool" ]]; then
+      local profiles=()
+      mapfile -t profiles < "$dir/.claude-pool"
+      local current=""
+      [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
+      for p in "${profiles[@]}"; do
+        [[ "$p" == "$current" ]] && return 0
+      done
+      [[ ${#profiles[@]} -gt 0 ]] && cmd_use "${profiles[0]}"
+      return 0
+    fi
     dir=$(dirname "$dir")
   done
-  # No .claude-profile found — leave as-is
 }
 
 cmd_shell_hook() {
   cat <<'HOOK'
-# Claude profile auto-switching — add to .bashrc/.zshrc
 claude_profile_auto() {
   if command -v claude-profile &>/dev/null; then
     claude-profile auto 2>/dev/null
@@ -134,36 +222,41 @@ claude_profile_auto() {
 }
 if [[ -n "$ZSH_VERSION" ]]; then
   autoload -U add-zsh-hook
+  add-zsh-hook -d chpwd claude_profile_auto 2>/dev/null || true
   add-zsh-hook chpwd claude_profile_auto
 else
-  PROMPT_COMMAND="claude_profile_auto;${PROMPT_COMMAND:-}"
+  case ";${PROMPT_COMMAND:-};" in
+    *";claude_profile_auto;"*) ;;
+    *) PROMPT_COMMAND="claude_profile_auto${PROMPT_COMMAND:+;${PROMPT_COMMAND}}" ;;
+  esac
 fi
+claude_profile_auto
 HOOK
 }
 
-# --- Dispatch ---
 case "${1:-help}" in
-  add)          cmd_add "${2:-}" ;;
-  use|switch)   cmd_use "${2:-}" ;;
-  list|ls)      cmd_list ;;
-  current)      cmd_current ;;
-  remove|rm)    cmd_remove "${2:-}" ;;
-  auto)         cmd_auto ;;
-  shell-hook)   cmd_shell_hook ;;
+  add)              cmd_add "${2:-}" ;;
+  use|switch)       cmd_use "${2:-}" ;;
+  list|ls)          cmd_list ;;
+  current)          cmd_current ;;
+  remove|rm)        cmd_remove "${2:-}" ;;
+  pool)             shift; cmd_pool "$@" ;;
+  next|rotate)      cmd_next ;;
+  pool-status|ps)   cmd_pool_status ;;
+  auto)             cmd_auto ;;
+  shell-hook)       cmd_shell_hook ;;
   *)
     echo "claude-profile — manage multiple Claude accounts"
     echo ""
-    echo "Commands:"
-    echo "  add <name>       Save current credentials as a named profile"
-    echo "  use <name>       Switch to a named profile"
-    echo "  list             List saved profiles"
-    echo "  current          Show active profile name"
-    echo "  remove <name>    Delete a saved profile"
-    echo "  auto             Auto-select based on .claude-profile in cwd ancestors"
-    echo "  shell-hook       Print shell hook for auto-switching on cd"
-    echo ""
-    echo "Per-directory auto-switching:"
-    echo "  echo 'work' > ~/code/phony/.claude-profile"
-    echo "  eval \"\$(claude-profile shell-hook)\"  # add to .bashrc/.zshrc"
+    echo "  add <name>            Save current credentials"
+    echo "  use <name>            Switch to a profile"
+    echo "  list                  List all profiles"
+    echo "  current               Show active profile"
+    echo "  remove <name>         Delete a profile"
+    echo "  pool <n1> <n2> ...    Create rotation pool"
+    echo "  next                  Rotate to next in pool"
+    echo "  pool-status           Show pool + active"
+    echo "  auto                  Auto-select from .claude-profile/.claude-pool"
+    echo "  shell-hook            Print shell hook for cd auto-switching"
     ;;
 esac
