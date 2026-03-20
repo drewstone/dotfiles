@@ -140,30 +140,90 @@ For the overall goal:
 
 **Plateau detection**: Score doesn't move > 0.02 for 2 consecutive rounds → report what's structural vs fixable. Ask user whether to accept or push further.
 
-## Phase 9: Persist
+## Phase 9: Persist — Structured Experiment Data
 
-Write progress after every round, even on interruption:
+Every evolve cycle produces two artifacts:
+
+### 1. Progress file (human-readable, for resume)
+
+Write `evolve-progress.md` in the project root after every round:
 
 ```markdown
 # Evolve Progress — <goal>
 Score: 0.74 → target 0.80 (Round 2) — <timestamp>
-
-## Experiments
-| Round | Hypothesis | Δ     | Verdict |
-|-------|-----------|-------|---------|
-| 1     | H1: style | +0.33 | KEEP    |
-| 1     | H2: safety| +0.50 | KEEP    |
-| 1     | H3: task  | +0.00 | ITERATE |
-| 2     | H3v2: task| +0.60 | KEEP    |
-
-## Current State
-<latest measurements>
-
 ## Remaining Gap
 <what's still below target>
 ```
 
-On resume: read progress, skip to Phase 3 (measure current state), continue from last round.
+On resume: read this, skip to Phase 3, continue from last round.
+
+### 2. Experiment log (structured JSON, for analysis)
+
+Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is the data that enables cross-project learning and meta-analysis.
+
+```jsonl
+{"id":"exp_001","project":"phony","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-huberman","agent-mark-hyman","agent-peter-attia"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Health creators need disclaimers. Judge flagged medical advice without caveats.","learnings":["Safety disclaimers lift all health agents universally","Single-line 'consult your physician' insufficient — need 5-6 specific guidelines"]}
+```
+
+**Required fields:**
+| Field | Type | Purpose |
+|-------|------|---------|
+| `id` | string | Unique experiment ID |
+| `project` | string | Repo/project name |
+| `goal` | string | The evolve goal |
+| `round` | number | Which cycle |
+| `hypothesis` | string | What was tested |
+| `category` | enum | `prompt` \| `config` \| `code` \| `infra` \| `model` \| `criteria` |
+| `lever` | string | What was changed (systemPrompt, temperature, judge criteria, etc.) |
+| `targets` | string[] | What was targeted (agent IDs, file paths, service names) |
+| `baseline` | object | Metric values before |
+| `result` | object | Metric values after |
+| `delta` | number | Primary metric change |
+| `verdict` | enum | `KEEP` \| `ITERATE` \| `ABANDON` \| `REGRESSION` |
+| `durationMs` | number | How long the experiment took |
+| `timestamp` | string | ISO 8601 |
+| `reasoning` | string | Why this hypothesis was chosen |
+| `learnings` | string[] | What was discovered (reusable insights) |
+
+**Optional fields:**
+| Field | Type | Purpose |
+|-------|------|---------|
+| `variation` | number | Which attempt (1, 2, 3 for iterations) |
+| `parentId` | string | Previous experiment this iterates on |
+| `deploymentVerified` | boolean | Was deployment confirmed before measuring? |
+| `failureMode` | string | If failed: what went wrong (deployment, scoring, approach) |
+| `crossPollinated` | boolean | Was this applied from another target's success? |
+
+### Why structured data matters
+
+1. **Cross-project patterns**: "Safety disclaimers worked on phony voice agents. Do they work on scribe meeting bots?" — queryable from the JSONL.
+2. **Meta-learning**: Which categories of experiments have the highest success rate? Prompt changes? Config changes? Code changes?
+3. **Failure analysis**: What's the most common failure mode? Deployment verification? Scoring artifacts?
+4. **Research potential**: Aggregate data across projects → paper on autonomous improvement methodology.
+5. **Foreman integration**: Foreman reads `.evolve/experiments.jsonl` from all repos to build cross-project intelligence.
+
+### Product Quality Scorecard
+
+The experiment log feeds into a **product scorecard** — a snapshot of all user flows and their quality:
+
+```json
+{
+  "product": "phony",
+  "timestamp": "2026-03-20T04:00:00Z",
+  "flows": [
+    {"name": "synthetic_conversation", "score": 0.80, "target": 0.85, "status": "pass"},
+    {"name": "selfplay", "score": null, "target": 0.75, "status": "unmeasured"},
+    {"name": "tool_calling", "score": null, "target": 0.80, "status": "unmeasured"},
+    {"name": "onboarding", "score": null, "target": 0.70, "status": "unmeasured"},
+    {"name": "voice_latency", "score": null, "target": 1500, "status": "unmeasured"}
+  ],
+  "aggregate": 0.80,
+  "coverage": "1/5 flows measured",
+  "evolveHistory": "4 cycles, +0.11 improvement"
+}
+```
+
+Write to `.evolve/scorecard.json` after each cycle. This is what Foreman checks on heartbeat.
 
 ## Composing Skills
 
