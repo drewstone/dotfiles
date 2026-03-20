@@ -41,10 +41,11 @@ See [PROJECTS.md](./PROJECTS.md) for active projects, paths, stacks, and model c
 
 ## Screenshots / Clipboard Images
 
-When the user says "check the latest screenshot", "look at $IMG", or similar — read the most recent file in:
-```
-~/.claude/image-cache/
-```
+When the user says "check the latest screenshot", "look at $IMG", or similar:
+- First check the newest file under `~/.claude/image-cache/`
+- If that is empty or stale, check the tmux clipboard bridge output under `~/.tmux/clipboard/images/` (often `latest.png`)
+
+The tmux clipboard bridge commonly writes remote screenshots to `~/.tmux/clipboard/images/`, while some local flows use `~/.claude/image-cache/`. Use whichever has the newest real image file.
 
 ## Anti-Patterns
 

@@ -4,7 +4,7 @@ Personal developer tooling: AI-assisted git hooks and Claude Code configuration.
 
 ## Claude Code Config
 
-Portable Claude Code setup — global instructions, settings, skills, and hooks.
+Portable Claude Code setup — global instructions, settings, skills, hooks, commands, and local CLI tools.
 
 ```bash
 # Install on any machine
@@ -17,10 +17,13 @@ Portable Claude Code setup — global instructions, settings, skills, and hooks.
 Includes:
 - `CLAUDE.md` — global defaults (quality bar, work style, succinctness)
 - `settings.json` — hooks, plugins, trusted directories
-- 22 portable skills (`/polish`, `/verify`, `/status`, `/critical-audit`, `/code-review`, etc.)
+- 18 portable skills (`/polish`, `/verify`, `/work-status`, `/critical-audit`, `/code-review`, etc.)
+- `claude-profile` in `~/bin` — switch Claude credentials by named profile
 - Langfuse observability hook
 
 Project-specific skills (tangle-blueprint-expert, blueprint-frontend, sandbox-blueprint) are kept in their respective project repos, not here.
+
+Skill inventory and maintenance notes live in `claude/skills/README.md`. Tool docs live in `claude/tools/README.md`.
 
 ## Git Hooks
 

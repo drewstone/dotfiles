@@ -6,13 +6,23 @@ Custom CLI tools for managing Claude Code. Installed via `install.sh` which syml
 
 Switch between multiple Claude Max/Codex subscriptions. Swaps `~/.claude/.credentials.json` per named profile.
 
+### Machine setup
+
+```bash
+./claude/install.sh
+which claude-profile
+```
+
+`install.sh` symlinks `claude-profile` into `~/bin/claude-profile`. This machine already has `~/bin` on `PATH`; if another machine does not, add `export PATH="$HOME/bin:$PATH"` to shell startup.
+
 ### Setup
 
 ```bash
 # Save your current logged-in account:
 claude-profile add main-acct
 
-# Log into another account (`claude /login`), save it:
+# Log into another account, then save it:
+claude /login
 claude-profile add work-acct
 
 # List all profiles:
@@ -43,6 +53,17 @@ eval "$(claude-profile shell-hook)"
 ```
 
 Now `cd ~/code/myproject` auto-switches to `main-acct`.
+
+### First-time credential bootstrap
+
+If `claude-profile add <name>` says no credentials exist, log into Claude Code once first:
+
+```bash
+claude /login
+claude-profile add main-acct
+```
+
+Profiles are copied from `~/.claude/.credentials.json` into `~/.claude/profiles/<name>.json`.
 
 ### Pool mode — rotation when exhausted
 

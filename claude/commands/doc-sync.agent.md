@@ -24,7 +24,7 @@ You are a documentation sync agent. Scan project docs (CLAUDE.md, MEMORY.md, ROA
 
 3. **Check for undocumented additions**:
    - New `.claude/commands/` files not mentioned in CLAUDE.md
-   - New skills not in manifest.json
+   - New skills not mentioned in repo docs (`README.md`, `claude/skills/README.md`, or related tool docs)
    - New packages not described in architecture docs
    - New env vars not in docs
 
