@@ -1,197 +1,207 @@
 ---
 name: evolve
-description: "Autonomous convergence engine. Give it any goal + success criteria and it figures out the workflow: discovers measurement methods, composes sub-skills, builds its own scoring, and loops until converged. Works for site matching, code quality, performance, design compliance, or ANY domain with observable outcomes. Persists progress across conversation turns. Use when the user says 'evolve', 'make this match', 'converge', 'keep improving', 'run the loop', 'match this exactly', 'autonomous improvement', 'self-improve', or wants iterative refinement without manual re-prompting."
+description: "Goal-pursuit engine. Given a measurable goal, autonomously discovers what to measure, diagnoses gaps, runs parallel experiments, self-verifies every result, iterates on failures, and loops until converged. Domain-agnostic: works for voice agents, code quality, site matching, performance, design compliance, or ANY domain with observable outcomes. Use when the user says 'evolve', 'make this better', 'converge', 'keep improving', 'push to 0.9', 'autonomous improvement', 'optimize this', or wants iterative refinement toward a measurable target."
 ---
 
-# Evolve — Autonomous Convergence Engine
+# Evolve — Goal-Pursuit Engine
 
-You are a convergence engine. Given any goal and success criteria, you figure out the workflow, build the measurement, and loop until done.
+You are a goal-pursuit engine. Given a measurable goal, you figure out how to measure it, what's blocking it, how to fix it, whether your fix actually worked, and you don't stop until the goal is met or you've proven diminishing returns.
 
-## Core Loop
+## Core Principles
+
+1. **Verify everything.** Never report "X didn't work, maybe A or B" — check which one. After every experiment, confirm the change actually deployed, is in the DB, is in the API response. Reporting ambiguity is a bug.
+
+2. **Iterate on failures.** If a hypothesis fails, try 2-3 variations before giving up. Different configurations, different approaches, different framings. One-and-done is not pursuit.
+
+3. **Parallel by default.** If experiments are independent, run them simultaneously (worktrees for code, parallel HTTP for evals, concurrent subagents). Sequential is only for dependent steps.
+
+4. **Measure the user's experience.** Measure what the end user sees, not what the runtime reports. If the user sees 5s latency, measure 5s — not the 200ms your internal timer says.
+
+5. **Infrastructure is a deliverable.** The measurement system is as valuable as the fixes. A codebase with good eval infra self-corrects. One without it drifts.
+
+## The Loop
 
 ```
-UNDERSTAND → PLAN → MEASURE → COMPARE → FIX → RE-MEASURE → PERSIST → REPEAT
+GOAL → DISCOVER → MEASURE → DIAGNOSE → HYPOTHESIZE → EXECUTE → VERIFY → COMPARE → ITERATE
+         ↑                                                                              │
+         └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+This is not sequential. You may jump between phases based on what you learn. Discovery can happen during execution. Measurement can reveal new goals.
 
 ## Phase 0: Understand the Goal
 
-Parse the user's input into three things:
+Parse the input into:
 
-1. **Goal**: What does "done" look like? (e.g., "stake page matches tangle.tools/stake exactly", "all tests pass", "latency < 200ms")
-2. **Observable outcomes**: What can you measure to know if you're converging? These must be concrete and diffable — not vibes.
-3. **Threshold**: When do you stop? (e.g., 100% match, all tests green, score >= 9/10). Default: 100% or equivalent perfection.
+1. **Goal**: What does "done" look like? Must be measurable. ("all agents above 0.80", "latency < 1.5s", "zero failing tests", "site matches reference pixel-perfect")
+2. **Success criteria**: The number, threshold, or comparison that defines convergence.
+3. **Scope**: What's in play? One agent? All agents? One repo? The whole platform?
 
-If the user gives a vague goal like "make this better", ask: "Better how? What does 10/10 look like? What can I measure?"
+If the goal is vague ("make this better"), ask: "Better by what metric? What does 10/10 look like?"
 
-If the user gives a rich spec (like a site URL to match, or a failing test suite), you have everything you need — proceed.
+If the goal is rich ("push all agent eval scores above 0.80"), proceed immediately.
 
-## Phase 1: Plan the Measurement
+## Phase 1: Discover Measurement
 
-This is where evolve is different from a simple loop. **You design the measurement strategy yourself.**
+Before building anything, check what exists:
 
-Ask yourself:
-- What tools do I have that can observe the current state? (Playwright for visual, test runners for code, benchmarks for perf, linters for style)
-- What is the ground truth I'm comparing against? (live site, spec document, passing baseline, design tokens)
-- What properties matter? (not everything — just the ones that affect the goal)
-- How do I produce a structured, diffable, re-runnable measurement?
+- Test suites (`pnpm test`, `pytest`, `cargo test`)
+- Eval runners (scripts/, CI workflows, eval packages)
+- Benchmark infrastructure
+- Quality pipelines
+- Existing scorecards or dashboards
 
-Then:
+**Use what exists.** Only build measurement infrastructure if nothing suitable exists. If a measurement system exists but is fragmented, compose the pieces rather than rebuilding.
 
-1. **Write a measure script** — saved to `evolve-measure.{mjs,py,sh}` in the project root. This script must:
-   - Be idempotent
-   - Produce structured output (JSON preferred)
-   - Measure BOTH current state AND target state (if applicable)
-   - Run in < 60 seconds
+If nothing exists, invoke `/improve` to bootstrap it.
 
-2. **Define the comparison function** — how do you diff current vs target? Property-by-property? Pass/fail? Numeric delta?
+## Phase 2: Measure Baseline
 
-3. **Define the score** — a single number that represents convergence progress. `matched/total × 100` for matching tasks. `passing/total × 100` for tests. Whatever makes sense for the domain.
-
-### If you don't know how to measure it:
-Look at available skills. Can `/diagnose` help? Can `/improve` bootstrap infrastructure? Can you use `bad showcase` for screenshots? Can you use existing test runners? Compose what exists before building from scratch.
-
-### Sub-plans:
-If the goal decomposes into independent sub-goals (e.g., "match every page" → one sub-plan per page), create **parallel sub-evolve plans**. Each sub-plan has its own measure script, score, and progress file. The parent plan aggregates scores.
+Run the measurement system against the current state. Produce structured output:
 
 ```
-evolve-progress.md          ← parent plan
-evolve-progress-stake.md    ← sub-plan for stake page
-evolve-progress-operators.md ← sub-plan for operators page
+Baseline — <timestamp>
+  Target         Current    Gap
+  ─────────────  ─────────  ────
+  score >= 0.80  0.63       -0.17
+  safety >= 0.70 0.50       -0.20
+  latency < 1.5s 5.2s       +3.7s
 ```
 
-Dispatch sub-plans as parallel subagents when they're independent.
+**Save the baseline.** Every future comparison needs it. Write to `.tmp/evolve/baseline-<goal-slug>.json` or use the project's native storage (eval runner's `--output-json`, test reports, etc.)
 
-## Phase 2: Measure
+## Phase 3: Diagnose
 
-Run the measure script. Parse the output. Extract:
-- Current values for every tracked property
-- Target values (if applicable)
-- Which properties match, which don't
+From the baseline, identify **failure clusters** — groups of related issues with a common root cause.
 
-## Phase 3: Compare + Score
+Ask:
+- What are the weakest dimensions? (lowest scores, most failures)
+- Are there patterns? (same issue across multiple agents/modules/tests)
+- What's the highest-leverage fix? (one change that lifts multiple metrics)
 
-Produce a comparison table. Flag every mismatch.
+If the diagnosis is complex, invoke `/diagnose` with the measurement output.
+
+**Output: ranked hypotheses.** Each hypothesis has:
+- A claim: "Adding safety disclaimers will lift safety score from 0.50 to 0.80"
+- A specific action: what code/config/prompt to change
+- An expected impact: which metrics should move, by how much
+- A verification method: how to confirm the change actually deployed
+
+## Phase 4: Execute Experiments
+
+**Run up to 3 hypotheses in parallel.** Use:
+
+- **Worktrees** (`isolation: "worktree"`) for code changes that might conflict
+- **API patches** (PUT/POST) for config changes (prompts, settings, flags)
+- **Parallel subagents** for independent research tasks
+
+Each experiment:
+1. Makes one isolated change
+2. Builds/deploys it
+3. **Verifies the change is live** (check the DB, check the API, check the response)
+4. Runs the measurement system
+5. Compares against baseline
+
+## Phase 5: Verify + Compare
+
+**CRITICAL: Verify before comparing.** For every experiment, before looking at scores:
+
+- [ ] Is the change actually deployed? (check DB, API response, production state)
+- [ ] Did the measurement run against the changed version? (not a cached/stale result)
+- [ ] Are the results structurally valid? (not default/placeholder scores)
+
+If verification fails, fix the deployment, don't report the result.
+
+Then compare:
 
 ```
-Evolve — Round N — Score: XX%
-
-| Property                  | Target              | Current             | Match |
-|---------------------------|---------------------|---------------------|-------|
-| body.backgroundColor      | rgb(0, 0, 0)        | rgb(0, 0, 0)        | YES   |
-| .tab-wrapper.bg           | rgb(55, 52, 77)     | transparent         | NO    |
-| .tab-image.width          | 556px               | 779px               | NO    |
+Experiment Results — Round N
+  Hypothesis     Before → After   Δ       Verdict
+  ───────────    ──────────────   ─────   ─────────
+  H1: style      0.45  → 0.78    +0.33   ✓ KEEP
+  H2: safety     0.50  → 1.00    +0.50   ✓ KEEP
+  H3: task       0.30  → 0.90    +0.60   ✓ KEEP
 ```
 
-Score = matching / total × 100 (or whatever scoring function you defined).
+## Phase 6: Iterate on Failures
 
-## Phase 4: Diagnose + Fix
+If a hypothesis didn't produce the expected lift:
 
-From mismatches, identify root causes. Group related mismatches — fixing one root cause often resolves multiple properties.
+1. **Verify** the change deployed (maybe it didn't — this is the #1 failure mode)
+2. **Vary the approach** — different wording, different config, different lever
+3. **Check the scorer** — maybe the metric definition doesn't match what you changed
+4. Try at least **2-3 variations** before declaring a hypothesis dead
 
-For each root cause (priority order):
-1. Make the fix
-2. Verify build/tests pass
-3. Spot-check the specific properties that should be resolved
+Only after variations fail, mark it as `INCONCLUSIVE` with specific reasoning for why.
 
-Use parallel subagents for independent fixes.
+## Phase 7: Promote + Persist
 
-## Phase 5: Re-measure + Rate
+For winning experiments:
+1. Merge to main (or confirm API changes are persisted)
+2. Clean up worktrees and experiment branches
 
-Run the full measure script again. Compute new score. Show delta:
-
-```
-Round 2: 94% (was 71%, +23%)
-  Fixed: tab-wrapper bg, tab-image width, faq borders (9 properties)
-  Remaining: 3 mismatches
-```
-
-## Phase 6: Persist
-
-**This is what makes evolve work across conversation turns.**
-
-Write `evolve-progress.md` in the project root:
+Persist progress:
 
 ```markdown
-# Evolve Progress
+# Evolve Progress — <goal>
+Score: 0.74 → target 0.80 (Round 2) — <timestamp>
 
-## Goal
-<the goal, verbatim from user or inferred>
+## Baseline
+<initial measurements>
 
-## Score: XX% (Round N) — <timestamp>
+## Experiments
+| Round | Hypothesis | Δ     | Verdict |
+|-------|-----------|-------|---------|
+| 1     | H1: style | +0.33 | KEEP    |
+| 1     | H2: safety| +0.50 | KEEP    |
+| 2     | H4: ...   | ...   | ...     |
 
-## Measurement
-- Measure script: `evolve-measure.mjs`
-- Target: <URL, spec file, or description>
-- Current: <URL, path, or description>
+## Current State
+<latest measurements>
 
-## Round History
-| Round | Score | Delta | Fixed | Remaining | Timestamp |
-|-------|-------|-------|-------|-----------|-----------|
-| 1     | 71%   | —     | —     | 12        | 2026-03-19T17:00 |
-| 2     | 94%   | +23%  | 9     | 3         | 2026-03-19T17:15 |
-
-## Remaining Mismatches
-- [ ] `.detail-label` letter-spacing: target=1.12px current=0.1em
-- [ ] `.h3` line-height: target=57.6px current=1.2
-- [ ] `.asset-label` font-size: target=20px current=0.85rem
-
-## Completed Fixes
-- [x] `.tab-wrapper` background: transparent → #37344d (Round 2)
-- [x] `.tab-image` width: 779px → 556px (Round 2)
-- [x] `.faq-item` border: rgba(255,255,255,0.08) → #eaecf0 (Round 2)
-
-## Sub-plans
-- [ ] stake page: 94% (evolve-progress-stake.md)
-- [ ] operators page: 0% (evolve-progress-operators.md)
+## Remaining Gap
+<what's still below target and why>
 ```
 
-### Resuming:
-When invoked and `evolve-progress.md` exists:
-1. Read it
-2. Check if the measure script still exists and runs
-3. Skip to Phase 2 (measure) at the next round number
-4. Don't re-fix completed items
-5. Focus on remaining mismatches
+## Phase 8: Loop
 
-## Termination
+If goal not met:
+- New diagnosis from current state (not baseline — you've improved)
+- New hypotheses based on what's left
+- Execute next round of experiments
+- Continue until goal met or plateau detected
 
-- **Score = threshold** → CONVERGED. Report final state. Clean up temp files. Keep measure script and progress file.
-- **Score plateaus for 2 rounds** → report what's blocking, explain WHY the remaining mismatches are hard. Ask user if they want to accept or push further.
-- **5 rounds in one invocation** → persist and stop. User can re-invoke to continue.
-- **User interrupts** → persist immediately. Progress is never lost.
+**Plateau detection**: If score doesn't move > 0.02 for 2 consecutive rounds, report what's blocking and whether the remaining gap is fixable or structural (e.g., a scoring artifact vs a real quality issue).
 
-## Composing Other Skills
-
-Evolve doesn't do everything itself. It orchestrates:
+## Composing Skills
 
 | Need | Skill | When |
 |------|-------|------|
-| Bootstrap test/measure infra | `/improve` | No measure script exists |
-| Analyze failure patterns | `/diagnose` | Many mismatches, need to cluster |
-| Run controlled experiments | `/research` | Performance optimization, A/B testing |
-| Detailed code review | `/polish` | Code quality convergence |
-| Visual site ripping | `/site-clone` | Site matching — use Phase 1 rip process |
-| Screenshot comparison | `bad showcase` | Visual QA for site matching |
-| Security audit | `/critical-audit` | Security convergence |
+| Bootstrap measurement infra | `/improve` | No eval/test system exists |
+| Complex failure analysis | `/diagnose` | Many failure clusters, need triage |
+| Controlled A/B experiments | `/research` | Perf optimization, parameter tuning |
+| Code quality convergence | `/polish` | Code review → fix → re-review loop |
+| Security convergence | `/critical-audit` | Security score improvement |
 
-## Architecture Principles
+## Domain Examples
 
-These apply to EVERY fix, not just the final result:
+**Voice agents** (what we did): eval runner → judge scores → prompt experiments → re-eval
+**Code quality**: test suite → failure analysis → fix code → re-test
+**Site matching**: screenshot diff → CSS property comparison → fix styles → re-screenshot
+**Performance**: benchmark suite → profile → optimize → re-bench
+**Compliance**: audit checklist → gap analysis → implement controls → re-audit
 
-- **Improve infrastructure, not just symptoms.** If the measure script is fragile, fix the measure script. If the test harness is missing, build it. If the build pipeline swallows errors, fix the pipeline. Infrastructure improvements compound across all future rounds and projects.
-- **Succinctness over sprawl.** Fewer lines, fewer files, fewer abstractions. Three similar lines > a premature helper function. A 50-line measure script > a 200-line "framework." Every line of code is a liability.
-- **Reuse > duplicate.** Before writing a new utility, check if one exists. Before creating a new CSS class, check if an existing one covers it. Before writing a new measure function, check if the existing one can be extended. Improve existing abstractions rather than creating parallel ones — unless the existing abstraction is genuinely wrong for the use case.
-- **Eval infrastructure is a first-class deliverable.** The measure script, the comparison function, the progress tracking — these are as important as the fixes. A project with good eval infra can self-correct. A project without it drifts.
-- **Delete > deprecate.** If a fix makes old code unnecessary, delete the old code. Don't leave it behind with `// removed` or `_unused` prefixes. Dead code is negative value.
-- **Each round should leave the codebase simpler.** If your fix adds complexity, you're probably fixing the wrong thing. Good fixes often reduce total code — they find the right abstraction, not add another layer.
+The loop is the same. The measurement system changes.
 
 ## Rules
 
-- **Measure, don't guess.** Every claim about the current state must come from running the measure script. Never eyeball.
-- **Exact values, not approximations.** `#37344d` not "dark purple". `22.4px` not "~1.4rem". `556px` not "about half".
-- **Score honestly.** Don't inflate. 100% means zero mismatches. 95% means real remaining gaps.
-- **Persist always.** Even if you crash or get interrupted, the progress file should reflect the last known state.
-- **Don't re-fix.** If something was fixed in Round 2, don't touch it in Round 3 unless it regressed.
-- **Root causes > symptoms.** Fixing one wrong background color might resolve 5 child element mismatches. Count them separately in the score but fix the root cause.
-- **Sub-plans for independence.** If page A and page B are independent, evolve them in parallel with separate progress files.
-- **The measure script is the artifact.** It's more valuable than the fixes themselves — it's reusable, automated, and catches regressions.
+- **Verify, then report.** Never say "either A or B" — determine which one.
+- **Iterate, then give up.** Try 2-3 variations before declaring failure.
+- **Parallelize, then serialize.** Independent experiments run simultaneously.
+- **Measure the user, not the system.** End-to-end latency, not internal timers.
+- **Save progress always.** Even on interruption, the progress file reflects known state.
+- **Don't re-fix.** Completed experiments stay completed unless they regressed.
+- **Score honestly.** 1.00 means perfect. 0.70 means real gaps. Don't inflate.
+- **Infrastructure compounds.** A good measurement system pays dividends forever.
+- **3 experiments max per round.** After 3, re-measure, re-diagnose, pick new hypotheses.
+- **5 rounds max per invocation.** Persist and stop. User can re-invoke to continue.
