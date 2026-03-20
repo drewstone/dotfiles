@@ -1,207 +1,228 @@
 ---
 name: evolve
-description: "Goal-pursuit engine. Given a measurable goal, autonomously discovers what to measure, diagnoses gaps, runs parallel experiments, self-verifies every result, iterates on failures, and loops until converged. Domain-agnostic: works for voice agents, code quality, site matching, performance, design compliance, or ANY domain with observable outcomes. Use when the user says 'evolve', 'make this better', 'converge', 'keep improving', 'push to 0.9', 'autonomous improvement', 'optimize this', or wants iterative refinement toward a measurable target."
+description: "Goal-pursuit engine. Given a measurable goal, autonomously discovers what to measure, diagnoses gaps, runs parallel experiments, self-verifies every result, iterates on failures, and loops until converged. Domain-agnostic: works for voice agents, code quality, site matching, performance, design compliance, or ANY domain with observable outcomes. Decomposes goals into independent sub-goals and pursues them in parallel. Use when the user says 'evolve', 'make this better', 'converge', 'keep improving', 'push to 0.9', 'autonomous improvement', 'optimize this', or wants iterative refinement toward a measurable target."
 ---
 
 # Evolve — Goal-Pursuit Engine
 
-You are a goal-pursuit engine. Given a measurable goal, you figure out how to measure it, what's blocking it, how to fix it, whether your fix actually worked, and you don't stop until the goal is met or you've proven diminishing returns.
+Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 
 ## Core Principles
 
-1. **Verify everything.** Never report "X didn't work, maybe A or B" — check which one. After every experiment, confirm the change actually deployed, is in the DB, is in the API response. Reporting ambiguity is a bug.
+1. **Verify everything.** Never report "X didn't work, maybe A or B" — determine which one. After every experiment, confirm the change is live: check the DB, the API response, the deployed state. Ambiguity in a report is a bug in the loop.
 
-2. **Iterate on failures.** If a hypothesis fails, try 2-3 variations before giving up. Different configurations, different approaches, different framings. One-and-done is not pursuit.
+2. **Iterate on failures.** A failed hypothesis gets 2-3 variations before it's abandoned. Different configs, different approaches, different framings. Check if the failure is in the experiment or in the deployment. The #1 failure mode is "change didn't actually deploy."
 
-3. **Parallel by default.** If experiments are independent, run them simultaneously (worktrees for code, parallel HTTP for evals, concurrent subagents). Sequential is only for dependent steps.
+3. **Decompose and parallelize.** If a goal has independent sub-goals (5 agents, 3 services, N test files), decompose and pursue them in parallel. Use worktrees for conflicting code changes, parallel HTTP for independent API calls, concurrent subagents for independent research. Only serialize dependent steps.
 
-4. **Measure the user's experience.** Measure what the end user sees, not what the runtime reports. If the user sees 5s latency, measure 5s — not the 200ms your internal timer says.
+4. **Measure the user's experience.** Measure what the end user sees, not what internal timers report.
 
-5. **Infrastructure is a deliverable.** The measurement system is as valuable as the fixes. A codebase with good eval infra self-corrects. One without it drifts.
+5. **Infrastructure is a deliverable.** The measurement system is as valuable as the fixes. It persists, enables future cycles, and catches regressions automatically.
 
 ## The Loop
 
 ```
-GOAL → DISCOVER → MEASURE → DIAGNOSE → HYPOTHESIZE → EXECUTE → VERIFY → COMPARE → ITERATE
-         ↑                                                                              │
-         └──────────────────────────────────────────────────────────────────────────────┘
+GOAL → DECOMPOSE → [MEASURE → DIAGNOSE → HYPOTHESIZE → EXECUTE → VERIFY → COMPARE]* → ITERATE
+                     └─── parallel per sub-goal ───┘
 ```
 
-This is not sequential. You may jump between phases based on what you learn. Discovery can happen during execution. Measurement can reveal new goals.
+This is not sequential. You jump between phases based on what you learn. Discovery happens during execution. Measurement reveals new goals. A verification failure sends you back to execute, not back to start.
 
 ## Phase 0: Understand the Goal
 
 Parse the input into:
 
-1. **Goal**: What does "done" look like? Must be measurable. ("all agents above 0.80", "latency < 1.5s", "zero failing tests", "site matches reference pixel-perfect")
-2. **Success criteria**: The number, threshold, or comparison that defines convergence.
-3. **Scope**: What's in play? One agent? All agents? One repo? The whole platform?
+1. **Goal**: What does "done" look like? Must be measurable.
+2. **Success criteria**: The threshold that defines convergence.
+3. **Scope**: What's in play? Decomposable?
 
-If the goal is vague ("make this better"), ask: "Better by what metric? What does 10/10 look like?"
+If vague ("make this better"), ask: "Better by what metric? What does 10/10 look like?"
 
-If the goal is rich ("push all agent eval scores above 0.80"), proceed immediately.
+If rich ("push all agent scores above 0.80"), proceed.
 
-## Phase 1: Discover Measurement
+## Phase 1: Decompose
 
-Before building anything, check what exists:
+**Before measuring, ask: can this goal be split into independent sub-goals?**
 
-- Test suites (`pnpm test`, `pytest`, `cargo test`)
-- Eval runners (scripts/, CI workflows, eval packages)
-- Benchmark infrastructure
-- Quality pipelines
-- Existing scorecards or dashboards
+| Goal | Sub-goals | Parallelism |
+|------|-----------|-------------|
+| "All 5 agents above 0.80" | One sub-goal per agent | 5 parallel evolve loops |
+| "Latency < 1.5s and quality > 0.80" | Latency + quality | 2 parallel (may interact) |
+| "All tests pass" | Group by failure cluster | N parallel fix streams |
+| "Match reference site" | One per page | N parallel |
 
-**Use what exists.** Only build measurement infrastructure if nothing suitable exists. If a measurement system exists but is fragmented, compose the pieces rather than rebuilding.
+Independent sub-goals get their own measurement, their own experiments, their own progress tracking. They can run as parallel subagents, parallel worktrees, or (when Foreman dispatches) parallel Claude Code sessions.
 
-If nothing exists, invoke `/improve` to bootstrap it.
+Dependent sub-goals run sequentially: fix the build before running tests, deploy before measuring production.
 
-## Phase 2: Measure Baseline
+## Phase 2: Discover Measurement
 
-Run the measurement system against the current state. Produce structured output:
+Check what exists before building anything:
+
+- Test suites, eval runners, benchmark scripts
+- Quality pipelines, CI workflows
+- Existing scorecards, dashboards, monitoring
+
+**Use what exists.** Compose fragments. Only build from scratch if nothing suitable exists (invoke `/improve`).
+
+## Phase 3: Measure Baseline
+
+Run the measurement. Save structured output. This is the anchor for all future comparisons.
 
 ```
 Baseline — <timestamp>
   Target         Current    Gap
-  ─────────────  ─────────  ────
   score >= 0.80  0.63       -0.17
   safety >= 0.70 0.50       -0.20
-  latency < 1.5s 5.2s       +3.7s
 ```
 
-**Save the baseline.** Every future comparison needs it. Write to `.tmp/evolve/baseline-<goal-slug>.json` or use the project's native storage (eval runner's `--output-json`, test reports, etc.)
+## Phase 4: Diagnose
 
-## Phase 3: Diagnose
+Identify failure clusters. For each, generate a hypothesis with:
+- **Claim**: what will improve, by how much
+- **Action**: specific change (code, config, prompt)
+- **Verification**: how to confirm the change deployed
+- **Expected metrics**: which numbers should move
 
-From the baseline, identify **failure clusters** — groups of related issues with a common root cause.
+Complex diagnosis → invoke `/diagnose`. Performance tuning → invoke `/research`.
 
-Ask:
-- What are the weakest dimensions? (lowest scores, most failures)
-- Are there patterns? (same issue across multiple agents/modules/tests)
-- What's the highest-leverage fix? (one change that lifts multiple metrics)
+## Phase 5: Execute Experiments
 
-If the diagnosis is complex, invoke `/diagnose` with the measurement output.
+Run independent hypotheses in parallel:
 
-**Output: ranked hypotheses.** Each hypothesis has:
-- A claim: "Adding safety disclaimers will lift safety score from 0.50 to 0.80"
-- A specific action: what code/config/prompt to change
-- An expected impact: which metrics should move, by how much
-- A verification method: how to confirm the change actually deployed
+- **Worktrees** for conflicting code changes
+- **API mutations** (PUT/POST) for config/prompt changes
+- **Subagents** for independent research or implementation
 
-## Phase 4: Execute Experiments
+Each experiment: make change → build/deploy → **verify it's live** → measure → compare.
 
-**Run up to 3 hypotheses in parallel.** Use:
+**There is no fixed limit on parallel experiments.** Run as many as are genuinely independent. The constraint is: you must verify and compare each one before promoting.
 
-- **Worktrees** (`isolation: "worktree"`) for code changes that might conflict
-- **API patches** (PUT/POST) for config changes (prompts, settings, flags)
-- **Parallel subagents** for independent research tasks
+## Phase 6: Verify
 
-Each experiment:
-1. Makes one isolated change
-2. Builds/deploys it
-3. **Verifies the change is live** (check the DB, check the API, check the response)
-4. Runs the measurement system
-5. Compares against baseline
+**Before looking at scores, confirm:**
 
-## Phase 5: Verify + Compare
+- [ ] Change is actually deployed (check DB, API, production state)
+- [ ] Measurement ran against the changed version (not cached/stale)
+- [ ] Results are structurally valid (not defaults or placeholders)
 
-**CRITICAL: Verify before comparing.** For every experiment, before looking at scores:
+If verification fails → fix the deployment. Don't report unverified results.
 
-- [ ] Is the change actually deployed? (check DB, API response, production state)
-- [ ] Did the measurement run against the changed version? (not a cached/stale result)
-- [ ] Are the results structurally valid? (not default/placeholder scores)
+**This is the step that most loops skip and most failures trace to.** Build it into muscle memory.
 
-If verification fails, fix the deployment, don't report the result.
-
-Then compare:
+## Phase 7: Compare + Decide
 
 ```
-Experiment Results — Round N
-  Hypothesis     Before → After   Δ       Verdict
-  ───────────    ──────────────   ─────   ─────────
-  H1: style      0.45  → 0.78    +0.33   ✓ KEEP
-  H2: safety     0.50  → 1.00    +0.50   ✓ KEEP
-  H3: task       0.30  → 0.90    +0.60   ✓ KEEP
+Hypothesis     Before → After   Δ       Verdict
+H1: style      0.45  → 0.78    +0.33   KEEP — promote
+H2: safety     0.50  → 1.00    +0.50   KEEP — promote
+H3: task       0.30  → 0.30    +0.00   ITERATE — verify deployment
 ```
 
-## Phase 6: Iterate on Failures
+Verdicts:
+- **KEEP**: Clear improvement, no regressions. Promote to main.
+- **ITERATE**: Didn't move, or moved wrong direction. Go back to Phase 5 with a variation. Check deployment first.
+- **ABANDON**: 2-3 variations tried, verified deployed each time, still no movement. Document why and move on.
+- **REGRESSION**: Something got worse. Revert. Investigate before trying again.
 
-If a hypothesis didn't produce the expected lift:
+## Phase 8: Iterate
 
-1. **Verify** the change deployed (maybe it didn't — this is the #1 failure mode)
-2. **Vary the approach** — different wording, different config, different lever
-3. **Check the scorer** — maybe the metric definition doesn't match what you changed
-4. Try at least **2-3 variations** before declaring a hypothesis dead
+For ITERATE verdicts:
+1. Verify deployment (failure mode #1)
+2. Try a different approach to the same hypothesis
+3. Check the scorer — maybe the metric doesn't capture what you changed
+4. After 2-3 variations with verified deployment, mark ABANDON
 
-Only after variations fail, mark it as `INCONCLUSIVE` with specific reasoning for why.
+For the overall goal:
+- Re-diagnose from *current* state (not original baseline — you've improved)
+- Generate new hypotheses for remaining gaps
+- Execute next round
 
-## Phase 7: Promote + Persist
+**Plateau detection**: Score doesn't move > 0.02 for 2 consecutive rounds → report what's structural vs fixable. Ask user whether to accept or push further.
 
-For winning experiments:
-1. Merge to main (or confirm API changes are persisted)
-2. Clean up worktrees and experiment branches
+## Phase 9: Persist
 
-Persist progress:
+Write progress after every round, even on interruption:
 
 ```markdown
 # Evolve Progress — <goal>
 Score: 0.74 → target 0.80 (Round 2) — <timestamp>
-
-## Baseline
-<initial measurements>
 
 ## Experiments
 | Round | Hypothesis | Δ     | Verdict |
 |-------|-----------|-------|---------|
 | 1     | H1: style | +0.33 | KEEP    |
 | 1     | H2: safety| +0.50 | KEEP    |
-| 2     | H4: ...   | ...   | ...     |
+| 1     | H3: task  | +0.00 | ITERATE |
+| 2     | H3v2: task| +0.60 | KEEP    |
 
 ## Current State
 <latest measurements>
 
 ## Remaining Gap
-<what's still below target and why>
+<what's still below target>
 ```
 
-## Phase 8: Loop
-
-If goal not met:
-- New diagnosis from current state (not baseline — you've improved)
-- New hypotheses based on what's left
-- Execute next round of experiments
-- Continue until goal met or plateau detected
-
-**Plateau detection**: If score doesn't move > 0.02 for 2 consecutive rounds, report what's blocking and whether the remaining gap is fixable or structural (e.g., a scoring artifact vs a real quality issue).
+On resume: read progress, skip to Phase 3 (measure current state), continue from last round.
 
 ## Composing Skills
 
 | Need | Skill | When |
 |------|-------|------|
-| Bootstrap measurement infra | `/improve` | No eval/test system exists |
-| Complex failure analysis | `/diagnose` | Many failure clusters, need triage |
-| Controlled A/B experiments | `/research` | Perf optimization, parameter tuning |
-| Code quality convergence | `/polish` | Code review → fix → re-review loop |
-| Security convergence | `/critical-audit` | Security score improvement |
+| Bootstrap measurement | `/improve` | No eval/test exists |
+| Failure triage | `/diagnose` | Many clusters, need ranking |
+| A/B experiments | `/research` | Parameter tuning, provider comparison |
+| Code quality | `/polish` | Review → fix → re-review |
+| Security | `/critical-audit` | Compliance convergence |
 
-## Domain Examples
+## Orchestration by Foreman
 
-**Voice agents** (what we did): eval runner → judge scores → prompt experiments → re-eval
-**Code quality**: test suite → failure analysis → fix code → re-test
-**Site matching**: screenshot diff → CSS property comparison → fix styles → re-screenshot
-**Performance**: benchmark suite → profile → optimize → re-bench
-**Compliance**: audit checklist → gap analysis → implement controls → re-audit
+When Foreman dispatches an evolve session:
 
-The loop is the same. The measurement system changes.
+**Input** (from Foreman):
+```json
+{
+  "goal": "all agents above 0.80 on smoke eval",
+  "scope": "~/code/phony",
+  "successCriteria": { "metric": "aggregateScore", "threshold": 0.80 },
+  "constraints": { "maxRounds": 5, "maxCostUsd": 10 }
+}
+```
+
+**Output** (to Foreman):
+```json
+{
+  "status": "converged|plateau|in_progress",
+  "score": { "before": 0.63, "after": 0.77, "target": 0.80 },
+  "rounds": 3,
+  "experiments": [
+    { "hypothesis": "safety disclaimers", "delta": 0.50, "verdict": "KEEP" }
+  ],
+  "remainingGap": "styleAdherence stuck at 0.50 — judge wants examples not traits"
+}
+```
+
+Foreman uses this to: learn cross-repo patterns, decide whether to dispatch another session with a different strategy, or promote the result.
+
+## Domain Specs
+
+Evolve is domain-agnostic. Domain-specific knowledge lives in **specs**, not in this skill.
+
+When a project has a `docs/EVOLVE-SPEC.md` (or equivalent), read it first. It tells you:
+- How to measure (what command, what output format)
+- What levers to pull (API mutations, code changes, infra)
+- What to verify (DB state, deployment, caching)
+- Known scoring artifacts to exclude
+
+When Foreman dispatches evolve, it reads the spec and passes context in the session instruction. The skill doesn't need to know about any specific domain.
 
 ## Rules
 
-- **Verify, then report.** Never say "either A or B" — determine which one.
-- **Iterate, then give up.** Try 2-3 variations before declaring failure.
-- **Parallelize, then serialize.** Independent experiments run simultaneously.
-- **Measure the user, not the system.** End-to-end latency, not internal timers.
-- **Save progress always.** Even on interruption, the progress file reflects known state.
-- **Don't re-fix.** Completed experiments stay completed unless they regressed.
-- **Score honestly.** 1.00 means perfect. 0.70 means real gaps. Don't inflate.
-- **Infrastructure compounds.** A good measurement system pays dividends forever.
-- **3 experiments max per round.** After 3, re-measure, re-diagnose, pick new hypotheses.
-- **5 rounds max per invocation.** Persist and stop. User can re-invoke to continue.
+- **Verify, then report.** Determine which, not "maybe A or B."
+- **Iterate, then abandon.** 2-3 verified variations before giving up.
+- **Decompose, then parallelize.** Independent sub-goals run simultaneously.
+- **Measure the user.** End-to-end, not internal.
+- **Persist always.** Progress survives interruption.
+- **Score honestly.** 1.00 means perfect. Don't inflate.
+- **Infrastructure compounds.** Good measurement systems pay dividends forever.
+- **5 rounds max per invocation.** Persist and stop. User or Foreman re-invokes to continue.
