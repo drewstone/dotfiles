@@ -149,15 +149,40 @@ const project = await this.orchestrator.createProject({
 });
 ```
 
-## Backend Type
+## Backend Types
 
-The staging orchestrator currently only supports `"opencode"` as the backend type. The `opencode` backend:
-- Sets `AGENT_BACKEND=opencode` in the container
-- Supports `apiKey`, `baseUrl`, `model`, `provider` in backend config
-- Translates to OpenCode agent env vars inside the container
-- Resolves profiles from `@tangle-network/sdk-provider-opencode`
+The orchestrator supports multiple agent backends (from `develop` branch, `apps/orchestrator/src/routes/projects.ts:215`):
 
-The orchestrator source supports multiple backend types in its `BACKEND_REGISTRY`, but the staging build only has `opencode` compiled in.
+```typescript
+type: z.enum(["opencode", "claude-code", "codex", "amp", "factory-droids"])
+```
+
+| Type | Description | When to Use |
+|------|-------------|-------------|
+| `opencode` | OpenCode SDK agent. Default, works with any model via apiKey + baseUrl. | General-purpose. Works on all orchestrator builds. |
+| `claude-code` | Claude Code CLI agent with OAuth or API key auth. | When you need Claude Code's specific tools/capabilities. |
+| `codex` | OpenAI Codex CLI agent. | For OpenAI-native coding agents. |
+| `amp` | Amp agent backend. | For Amp-based agents. |
+| `factory-droids` | Factory Droids backend. | For Factory Droids agents. |
+
+Each backend supports these config fields:
+```typescript
+backend: {
+  type: "opencode" | "claude-code" | "codex" | "amp" | "factory-droids",
+  profile: string | Record<string, unknown>,  // Named or inline profile
+  provider: string,       // e.g. "anthropic", "openai"
+  model: string,          // e.g. "claude-sonnet-4-6"
+  apiKey: string,         // Provider or LiteLLM proxy key
+  baseUrl: string,        // Custom API endpoint (LiteLLM proxy URL)
+  mode: "api" | "cli",    // API mode or CLI mode
+  authMode: "api-key" | "oauth",  // Auth strategy
+  authFiles: [{ path, content, mode }],  // OAuth credential files
+}
+```
+
+**Note**: The staging orchestrator may be running an older build that only supports `"opencode"`. Check by trying your desired backend type — if you get `"Invalid input: expected \"opencode\""`, the staging build needs to be updated from the `develop` branch.
+
+**To update staging**: Build and deploy from `~/code/agent-dev-container` `develop` branch.
 
 ## Available Container Images
 
