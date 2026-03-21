@@ -50,8 +50,50 @@ cmd_use() {
   fi
   cp "$profile" "$CREDS_FILE"
   echo "$name" > "$ACTIVE_FILE"
+  # snapshot creds mtime so we can detect re-auth
+  stat -c %Y "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || \
+    stat -f %m "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || true
   green "Switched to profile '$name'"
   dim "  subscription: $(get_sub "$profile")"
+}
+
+cmd_sync() {
+  # Update the active profile from current credentials (run after re-auth)
+  if [[ ! -f "$ACTIVE_FILE" ]]; then
+    red "No active profile set"
+    exit 1
+  fi
+  local name
+  name=$(cat "$ACTIVE_FILE")
+  local profile="${PROFILES_DIR}/${name}.json"
+  if [[ ! -f "$CREDS_FILE" ]]; then
+    red "No credentials found"
+    exit 1
+  fi
+  cp "$CREDS_FILE" "$profile"
+  stat -c %Y "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || \
+    stat -f %m "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || true
+  green "Synced credentials back to profile '$name'"
+  dim "  subscription: $(get_sub "$profile")"
+}
+
+cmd_auto_sync() {
+  # Silently sync if credentials changed since last use/sync (re-auth happened)
+  [[ -f "$ACTIVE_FILE" ]] || return 0
+  [[ -f "$CREDS_FILE" ]] || return 0
+  local saved_mtime=""
+  [[ -f "${PROFILES_DIR}/.creds_mtime" ]] && saved_mtime=$(cat "${PROFILES_DIR}/.creds_mtime")
+  local current_mtime
+  current_mtime=$(stat -c %Y "$CREDS_FILE" 2>/dev/null || stat -f %m "$CREDS_FILE" 2>/dev/null || echo "")
+  [[ -z "$current_mtime" ]] && return 0
+  [[ "$current_mtime" == "$saved_mtime" ]] && return 0
+  # Credentials file changed — sync back to active profile
+  local name
+  name=$(cat "$ACTIVE_FILE")
+  local profile="${PROFILES_DIR}/${name}.json"
+  cp "$CREDS_FILE" "$profile"
+  echo "$current_mtime" > "${PROFILES_DIR}/.creds_mtime"
+  dim "Auto-synced refreshed credentials to profile '$name'"
 }
 
 cmd_list() {
@@ -225,79 +267,35 @@ cmd_set() {
   cmd_use "$name"
 }
 
-cmd_export() {
-  local outfile="claude-profiles.tar.gz"
-  local profile_names=()
-  for arg in "$@"; do
-    if [[ "$arg" == *.tar.gz ]]; then
-      outfile="$arg"
-    else
-      profile_names+=("$arg")
+cmd_token() {
+  local profile="${1:-}"
+  local creds
+  if [[ -n "$profile" ]]; then
+    creds="${PROFILES_DIR}/${profile}.json"
+    if [[ ! -f "$creds" ]]; then
+      red "Profile '$profile' not found" >&2
+      exit 1
     fi
-  done
-  local profiles=()
-  if [[ ${#profile_names[@]} -gt 0 ]]; then
-    for name in "${profile_names[@]}"; do
-      if [[ ! -f "${PROFILES_DIR}/${name}.json" ]]; then
-        red "Profile '$name' not found"
-        exit 1
-      fi
-      profiles+=("${name}.json")
-    done
   else
-    for f in "${PROFILES_DIR}"/*.json; do
-      [[ -f "$f" ]] || continue
-      profiles+=("$(basename "$f")")
-    done
+    creds="$CREDS_FILE"
   fi
-  if [[ ${#profiles[@]} -eq 0 ]]; then
-    red "No profiles to export"
+  if [[ ! -f "$creds" ]]; then
+    red "No credentials found" >&2
     exit 1
   fi
-  tar -czf "$outfile" -C "$PROFILES_DIR" "${profiles[@]}"
-  green "Exported ${#profiles[@]} profile(s) to $outfile"
-  for p in "${profiles[@]}"; do
-    dim "  - ${p%.json} ($(get_sub "${PROFILES_DIR}/${p}"))"
-  done
+  python3 -c "import json; print(json.load(open('$creds'))['claudeAiOauth']['accessToken'])"
 }
 
-cmd_import() {
-  local force=0
-  local infile=""
-  for arg in "$@"; do
-    case "$arg" in
-      --force|-f) force=1 ;;
-      *) infile="$arg" ;;
-    esac
-  done
-  if [[ -z "$infile" ]]; then
-    red "Usage: claude-profile import <file> [--force]"
-    exit 1
-  fi
-  if [[ ! -f "$infile" ]]; then
-    red "File not found: $infile"
-    exit 1
-  fi
-  local tmpdir
-  tmpdir=$(mktemp -d)
-  trap "rm -rf '$tmpdir'" EXIT
-  tar -xzf "$infile" -C "$tmpdir"
-  local imported=0 skipped=0
-  for f in "$tmpdir"/*.json; do
-    [[ -f "$f" ]] || continue
-    local name
-    name=$(basename "$f")
-    if [[ -f "${PROFILES_DIR}/${name}" ]] && [[ $force -eq 0 ]]; then
-      yellow "Skipped ${name%.json} (already exists, use --force to overwrite)"
-      skipped=$((skipped + 1))
-      continue
-    fi
-    cp "$f" "${PROFILES_DIR}/${name}"
-    green "Imported ${name%.json}"
-    imported=$((imported + 1))
-  done
-  echo ""
-  dim "Imported: $imported, Skipped: $skipped"
+cmd_env() {
+  local token
+  token=$(cmd_token "${1:-}")
+  echo "export ANTHROPIC_OAUTH_TOKEN=\"$token\""
+}
+
+cmd_wrap() {
+  local token
+  token=$(cmd_token "")
+  ANTHROPIC_OAUTH_TOKEN="$token" exec "$@"
 }
 
 cmd_shell_hook() {
@@ -305,6 +303,8 @@ cmd_shell_hook() {
 claude_profile_auto() {
   if command -v claude-profile &>/dev/null; then
     claude-profile auto 2>/dev/null
+    local _token
+    _token=$(claude-profile token 2>/dev/null) && export ANTHROPIC_OAUTH_TOKEN="$_token"
   fi
 }
 if [[ -n "$ZSH_VERSION" ]]; then
@@ -321,6 +321,12 @@ claude_profile_auto
 HOOK
 }
 
+# Auto-sync before any command that might switch profiles
+case "${1:-help}" in
+  use|switch|next|rotate|auto|list|ls|pool-status|ps|token|env|wrap)
+    cmd_auto_sync ;;
+esac
+
 case "${1:-help}" in
   add)              cmd_add "${2:-}" ;;
   use|switch)       cmd_use "${2:-}" ;;
@@ -332,8 +338,10 @@ case "${1:-help}" in
   next|rotate)      cmd_next ;;
   pool-status|ps)   cmd_pool_status ;;
   auto)             cmd_auto ;;
-  export)           shift; cmd_export "$@" ;;
-  import)           shift; cmd_import "$@" ;;
+  sync)             cmd_sync ;;
+  token)            cmd_token "${2:-}" ;;
+  env)              cmd_env "${2:-}" ;;
+  wrap)             shift; cmd_wrap "$@" ;;
   shell-hook)       cmd_shell_hook ;;
   *)
     echo "claude-profile — manage multiple Claude accounts"
@@ -349,10 +357,17 @@ case "${1:-help}" in
     echo "  next                  Rotate to next in pool"
     echo "  pool-status           Show pool + active"
     echo ""
-    echo "  export [file] [names]  Export profiles to tar.gz (default: all)"
-    echo "  import <file> [-f]    Import profiles from tar.gz"
+    echo "  sync                  Update active profile after re-authentication"
+    echo ""
+    echo "  token [profile]       Print OAuth access token (active or named profile)"
+    echo "  env [profile]         Print export for ANTHROPIC_OAUTH_TOKEN"
+    echo "  wrap <cmd> [args...]  Run a command with ANTHROPIC_OAUTH_TOKEN set"
     echo ""
     echo "  auto                  Auto-select from .claude-profile/.claude-pool"
     echo "  shell-hook            Print shell hook for cd auto-switching"
+    echo ""
+    echo "Pi integration:"
+    echo "  claude-profile wrap pi --provider anthropic --model claude-sonnet-4-6"
+    echo "  eval \"\$(claude-profile env)\" && pi --provider anthropic"
     ;;
 esac

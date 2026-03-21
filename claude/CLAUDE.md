@@ -35,6 +35,33 @@ All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked int
 - Code comments: technical and direct, no adjectives or narrative
 - **No Co-Authored-By lines in commits** — never add Claude/AI co-authorship trailers
 
+## Ops Board — Task Tracking
+
+Every Claude Code session uses the ops board to track work. It's a SQLite-backed kanban at `~/tools/ops-board/`.
+
+**DB path:** `~/.openclaw/workspace/ops/ops-board.db`
+**CLI:** `cd ~/tools/ops-board && python3 -m ops_board.cli --db-path ~/.openclaw/workspace/ops/ops-board.db <command>`
+
+**Commands:**
+- `list [--state STATE] [--json]` — list tasks (states: INBOX, RUNNING, BLOCKED, REVIEW, DONE)
+- `add --title "..." --lane gtm|ops|eng --owner drew|claude --repo-surface "company/gtm" --done-criteria "..." --next-action "..." [--json]`
+- `move --id N --state STATE [--json]` — move task between states
+- `show --id N [--json]` — show task details
+- `done --id N --artifact-url "..." [--json]` — mark done with proof
+- `block --id N --reason "..." --retry-cmd "..."` — mark blocked
+
+**When to use:**
+- **Session start:** Run `list` to see open tasks. Pick up INBOX or RUNNING items relevant to the current work.
+- **During work:** When you identify follow-up tasks, `add` them immediately. Don't rely on memory or conversation context.
+- **After completing work:** `done` with an artifact URL (commit hash, deployed URL, file path).
+- **When blocked:** `block` with reason and retry command.
+
+**Rules:**
+- Every actionable item that comes out of a session gets a task. No exceptions.
+- Tasks need measurable `done-criteria`, not vague descriptions.
+- `next-action` should be the literal next command or step to take.
+- Owner is `drew` for things only Drew can do (DNS changes, approvals), `claude` for everything else.
+
 ## Projects & Models
 
 See [PROJECTS.md](./PROJECTS.md) for active projects, paths, stacks, and model config.
