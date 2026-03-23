@@ -66,6 +66,18 @@ Every Claude Code session uses the ops board to track work. It's a SQLite-backed
 
 See [PROJECTS.md](./PROJECTS.md) for active projects, paths, stacks, and model config.
 
+## Credential Separation — Tangle vs Webb
+
+**CRITICAL: Never mix credentials between Tangle and Webb projects.**
+
+- **Tangle** (company products): `agent-dev-container`, `gtm-agent`, sandbox products, blueprints
+- **Webb** (personal products): `phony`, `tax-filler-filer`
+
+These have separate Cloudflare accounts, Stripe accounts, and API keys. Before using any credential from another project's `.env`, verify which organization it belongs to. Ask if unclear.
+
+- Tangle CF account: `0c928041f7d1c2caadd7df75cc69c5ef` ("Tangle Network")
+- Webb/personal CF credentials: DO NOT use for Tangle projects
+
 ## Screenshots / Clipboard Images
 
 When the user says "check the latest screenshot", "look at $IMG", or similar:
