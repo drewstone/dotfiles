@@ -427,6 +427,7 @@ cmd_wrap() {
 
 cmd_shell_hook() {
   cat <<'HOOK'
+# Full auto-detect: runs on cd to pick up .claude-profile/.claude-pool
 claude_profile_auto() {
   if command -v claude-profile &>/dev/null; then
     claude-profile auto 2>/dev/null
@@ -434,14 +435,36 @@ claude_profile_auto() {
     _token=$(claude-profile token 2>/dev/null) && export ANTHROPIC_OAUTH_TOKEN="$_token"
   fi
 }
+# Lightweight token refresh: runs before every prompt so pool rotations
+# in other shells are picked up immediately (no python3 fork — pure bash)
+claude_profile_refresh_token() {
+  local _profiles_dir="${HOME}/.claude/profiles"
+  local _sessions_dir="${_profiles_dir}/sessions"
+  local _session_file="${_sessions_dir}/$$.session"
+  local _active_file="${_profiles_dir}/.active"
+  local _name=""
+  if [[ -f "$_session_file" ]]; then
+    _name=$(cat "$_session_file")
+  elif [[ -f "$_active_file" ]]; then
+    _name=$(cat "$_active_file")
+  fi
+  if [[ -n "$_name" && -f "${_profiles_dir}/${_name}.json" ]]; then
+    # Extract token without forking python3 — use grep+sed on the JSON
+    local _tok
+    _tok=$(grep -o '"accessToken":"[^"]*"' "${_profiles_dir}/${_name}.json" 2>/dev/null | head -1 | sed 's/"accessToken":"//;s/"$//')
+    [[ -n "$_tok" ]] && export ANTHROPIC_OAUTH_TOKEN="$_tok"
+  fi
+}
 if [[ -n "$ZSH_VERSION" ]]; then
   autoload -U add-zsh-hook
   add-zsh-hook -d chpwd claude_profile_auto 2>/dev/null || true
   add-zsh-hook chpwd claude_profile_auto
+  add-zsh-hook -d precmd claude_profile_refresh_token 2>/dev/null || true
+  add-zsh-hook precmd claude_profile_refresh_token
 else
   case ";${PROMPT_COMMAND:-};" in
-    *";claude_profile_auto;"*) ;;
-    *) PROMPT_COMMAND="claude_profile_auto${PROMPT_COMMAND:+;${PROMPT_COMMAND}}" ;;
+    *";claude_profile_refresh_token;"*) ;;
+    *) PROMPT_COMMAND="claude_profile_refresh_token${PROMPT_COMMAND:+;${PROMPT_COMMAND}}" ;;
   esac
 fi
 claude_profile_auto
