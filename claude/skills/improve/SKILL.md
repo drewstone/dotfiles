@@ -273,3 +273,14 @@ At the end of `/improve`, the project should have:
 - **Don't duplicate existing infra.** If the project already has an A/B runner, don't write another one. Enhance what's there or write the missing layer.
 - **The infra must be agent-runnable.** Every script must work with zero interactive input. An agent should be able to invoke `experiment --control A --treatment B` and get a machine-readable result.
 - **Use parallel subagents** for Phase 1 discovery — don't serialize exploration.
+
+## Decision Capture & Reflection
+
+After completing work, capture significant decisions and reflect on the session:
+
+- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
+- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
+- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
+- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
+
+This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
