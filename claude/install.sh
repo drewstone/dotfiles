@@ -94,6 +94,26 @@ else
   echo "  SKIP $LOCAL_SETTINGS (exists)"
 fi
 
+# Pi skills (subset — only skills that work in conversation, not coding)
+PI_SKILLS_DIR="$HOME/.pi/agent/skills"
+PI_SKILLS=(reflect capture-decisions research)
+if [ -d "$HOME/.pi/agent" ]; then
+  mkdir -p "$PI_SKILLS_DIR"
+  for skill in "${PI_SKILLS[@]}"; do
+    skill_dir="$SCRIPT_DIR/skills/$skill"
+    if [ -d "$skill_dir" ]; then
+      link "$skill_dir" "$PI_SKILLS_DIR/$skill"
+    fi
+  done
+  # Prune dead Pi skill symlinks
+  find "$PI_SKILLS_DIR" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | while read -r stale; do
+    echo "  PRUNE $stale (dead Pi skill symlink)"
+    rm "$stale"
+  done
+  pi_skill_count=$(find "$PI_SKILLS_DIR" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
+  echo "  Pi: ${pi_skill_count} skills synced"
+fi
+
 # Clean up stale symlinks in skills, commands, hooks
 for dir in "$CLAUDE_DIR/skills" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
   [ -d "$dir" ] || continue
