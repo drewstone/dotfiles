@@ -84,7 +84,33 @@ Identify failure clusters. For each, generate a hypothesis with:
 - **Verification**: how to confirm the change deployed
 - **Expected metrics**: which numbers should move
 
-Complex diagnosis → invoke `/diagnose`. Performance tuning → invoke `/research`.
+Complex diagnosis → invoke `/diagnose`.
+
+### Competitive context (when relevant)
+
+Before hypothesizing fixes, check if the problem is solved elsewhere:
+- How do competitors/alternatives handle this? What do they charge, how do they perform?
+- Are there open-source implementations, papers, or benchmarks to reference?
+- Where are we genuinely behind vs where are we already ahead?
+
+Present as a comparison table. Be honest — if competitors are better, say so. This prevents reinventing solutions that already exist.
+
+### Anti-overfitting discipline
+
+These rules prevent benchmark gaming that produces fragile improvements:
+
+1. **Never tune to specific test cases.** If a change only helps case X, it's memorization, not improvement.
+2. **Validate on held-out cases.** If a larger case set exists, run the winner on it before promoting.
+3. **Prefer architectural improvements over parameter tuning.** Changing a timeout is a knob turn. Adding batching is architectural. Architectural wins are more durable.
+4. **Monitor for Goodhart's Law.** If the metric improves but the actual experience feels worse, the metric is wrong — fix the metric, not the code.
+5. **Run 3+ reps** when possible. A single before/after is noisy. Multiple reps with consistent direction is signal.
+
+### Hypothesis categories (prioritize top-down)
+
+1. **Bug fixes**: failures that should be passes. Highest ROI, always first.
+2. **Architectural**: new capabilities, better abstractions, smarter strategies.
+3. **Efficiency**: same quality, less cost/time (prompt engineering, batching, caching).
+4. **Parameter tuning**: config knob adjustments. Lowest priority, most likely to overfit.
 
 ## Phase 5: Execute Experiments
 
@@ -231,9 +257,9 @@ Write to `.evolve/scorecard.json` after each cycle. This is what Foreman checks 
 |------|-------|------|
 | Bootstrap measurement | `/improve` | No eval/test exists |
 | Failure triage | `/diagnose` | Many clusters, need ranking |
-| A/B experiments | `/research` | Parameter tuning, provider comparison |
 | Code quality | `/polish` | Review → fix → re-review |
 | Security | `/critical-audit` | Compliance convergence |
+| Generational redesign | `/pursue` | Evolve has plateaued, need architectural leap |
 
 ## Orchestration by Foreman
 
