@@ -128,7 +128,7 @@ Date: [date]
 
 ## Where to Store Results
 
-- **In the project**: `reflect-[date].md` in project root
+- **In the project**: `reflect-YYYYMMDD-HHMMSS.md` in project root (e.g. `reflect-20260323-143042.md`). Timestamp prevents collisions when multiple agents reflect in parallel on the same repo.
 - **In memory**: save key insights to Claude Code memory
 - **In Foreman**: if running, call `log_outcome` with learnings and `POST /api/taste` with taste signals
 - **In the operator's dotfiles**: if insights apply to skills themselves, update the skill

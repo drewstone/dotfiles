@@ -24,13 +24,12 @@ Create `research/` in the project root (if it doesn't exist):
 research/
   README.md              — thesis, paper outline, tracking guide
   decisions/
-    001-short-name.md    — numbered for ordering
-    002-short-name.md
+    YYYYMMDD-HHMMSS-short-name.md  — timestamped for ordering, parallel-safe
     ...
   metrics/
     YYYY-MM-DD-label.md  — quantitative snapshots
   failures/
-    001-what-failed.md   — structured failure analysis
+    YYYYMMDD-HHMMSS-what-failed.md  — timestamped, parallel-safe
   sessions/
     YYYY-MM-DD-label.md  — session summaries with contribution analysis
 ```
@@ -38,7 +37,7 @@ research/
 ## Decision Record Format
 
 ```markdown
-# Decision NNN: [Title]
+# Decision [YYYYMMDD-HHMMSS]: [Title]
 
 Date: [date]
 Status: PROPOSED | ACCEPTED | SUPERSEDED | REVERTED
@@ -127,7 +126,7 @@ Scope: [what was worked on]
 ## Failure Record Format
 
 ```markdown
-# Failure NNN: [What Failed]
+# Failure [YYYYMMDD-HHMMSS]: [What Failed]
 
 Date: [date]
 Severity: [how bad — data loss, wasted time, wrong direction, minor]
@@ -196,9 +195,9 @@ Read all existing decision records, check if any have been superseded by later w
 
 7. **Be honest about AI contribution.** Don't claim the AI "designed" something if it generated the obvious implementation. Don't claim the human "designed" something if the AI proposed it and the human just approved.
 
-8. **Number sequentially.** Don't skip numbers. Don't rename. The sequence IS the narrative.
+8. **Timestamp precisely.** Use YYYYMMDD-HHMMSS format. Timestamps sort naturally and prevent collisions across parallel sessions.
 
-9. **Cross-reference.** Decisions reference other decisions. "This supersedes Decision 003." "This was motivated by the failure in Failure 002."
+9. **Cross-reference.** Decisions reference other decisions by timestamp. "This supersedes Decision 20260320-141523." "This was motivated by Failure 20260319-093012."
 
 10. **This is publishable material.** Write it like a researcher, not like a developer. Future readers include: you in 6 months, your team, academic reviewers, open-source contributors.
 
