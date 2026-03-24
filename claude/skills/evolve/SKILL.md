@@ -55,6 +55,24 @@ Independent sub-goals get their own measurement, their own experiments, their ow
 
 Dependent sub-goals run sequentially: fix the build before running tests, deploy before measuring production.
 
+## Phase 1.5: Audit Before Building
+
+**Before proposing ANY changes, verify what actually exists and works.** This is the highest-ROI time in any evolve session. Without it, you build on assumptions — wrong endpoints, mismatched schemas, dead infrastructure.
+
+Spend 10-15 minutes:
+1. **Read the actual code** involved in measurement (eval runners, test endpoints, API routes)
+2. **Verify endpoints exist and match** — call them, check response shapes, confirm auth works
+3. **Run the existing measurement** against production to get a real baseline (not from memory)
+4. **Identify what's broken vs missing** — broken infra needs fixing before experimenting
+
+Common failure modes this prevents:
+- Building against endpoints that don't exist or have different schemas
+- Using stale base URLs or dead services
+- Assuming a feature works when it's half-built or returns faked data
+- Creating duplicate infrastructure when something already exists
+
+**Only after the audit confirms what's real do you proceed to measurement and experimentation.**
+
 ## Phase 2: Discover Measurement
 
 Check what exists before building anything:
