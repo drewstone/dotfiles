@@ -7,6 +7,15 @@ description: "Meta-skill for relentless goal pursuit through generational leaps,
 
 The key insight: **most improvement comes from architectural shifts, not parameter tuning.** Evolve runs tight experiment loops (measure → tweak → measure). Pursue steps back, redesigns the system, ships a new generation, THEN hands off to evolve for fine-tuning.
 
+## Start Here
+
+If `.evolve/` exists, read in this order before designing:
+1. `.evolve/current.json`
+2. `.evolve/progress.md`
+3. The newest file in `.evolve/pursuits/`
+4. The tail of `.evolve/experiments.jsonl`
+5. Any project spec such as `docs/EVOLVE-SPEC.md`
+
 ## When to Use Pursue vs Evolve
 
 | Signal | Skill |
@@ -35,14 +44,16 @@ This is NOT iterative in the same way evolve is. Each pursuit cycle ships a GENE
 Before proposing changes, understand EVERYTHING:
 
 1. **Read all code** involved in the pipeline/system
-2. **Read all experiment history** (`.evolve/experiments.jsonl`, evolve-progress.md)
+2. **Read all experiment history** (`.evolve/current.json`, `.evolve/progress.md`, `.evolve/experiments.jsonl`, `.evolve/pursuits/`)
 3. **Read all feedback** (user feedback in memory, reading notes, bug reports)
 4. **Run current measurements** to get honest baselines
 5. **Identify what was built but never tested**, what was tested but never integrated, what needs cleanup
 
 ### Write the Pursuit Spec
 
-Create `pursue-{goal}.md` in the project root:
+`.evolve/` is the canonical repo-local state directory for this workflow. Do not write `pursue-*.md` files into the repo root.
+
+Create `.evolve/pursuits/<date>-<goal-slug>.md`:
 
 ```markdown
 # Pursuit: {goal}
@@ -213,11 +224,12 @@ REVERT: This generation is worse. Roll back and rethink.
 
 After a generation is evaluated and promoted:
 
-1. Update `pursue-{goal}.md` with results
+1. Update `.evolve/pursuits/<date>-<goal-slug>.md` with results
 2. Update `.evolve/experiments.jsonl` with the generation experiment
 3. Update baselines for all metrics
-4. Write `evolve-progress.md` with the new starting point
-5. The system is now ready for `/evolve` to fine-tune within this generation
+4. Write `.evolve/progress.md` with the new starting point for the next evolve loop
+5. Write `.evolve/current.json` with the current generation, active pursuit path, and latest status
+6. The system is now ready for `/evolve` to fine-tune within this generation
 
 **Pursue ships generations. Evolve fine-tunes within them.**
 
@@ -234,24 +246,14 @@ After a generation is evaluated and promoted:
 
 ## Rules
 
-1. **Audit before designing.** Read the actual code and data, not your memory of it.
-2. **Design before building.** Write the pursuit spec. Get the thesis clear.
-3. **Build completely before testing.** No partial testing of interacting changes.
-4. **Test the whole system.** Generational changes need end-to-end runs.
-5. **Evaluate honestly.** If it's worse, say so. Revert. Don't rationalize.
-6. **Persist everything.** The pursuit spec, build status, and results survive sessions.
-7. **Think in generations.** Each pursuit cycle should feel like a version bump, not a patch.
-8. **Take risks.** Safe changes belong in /evolve. Pursue is for bold bets.
-9. **Research the domain.** Don't just engineer — understand how experts solve this problem.
-10. **One generation at a time.** Finish Gen N before starting Gen N+1.
+1. **Audit before designing.** Read the actual code and `.evolve/` state, not your memory of it.
+2. **Design before building.** Write the pursuit spec and thesis first.
+3. **Build the whole generation before testing.** No partial testing of interacting changes.
+4. **Persist everything in `.evolve/`.** Specs, handoff state, and results all live there.
+5. **Think in generations.** Take risks, evaluate honestly, and finish Gen N before starting Gen N+1.
 
 ## Decision Capture & Reflection
 
-After completing work, capture significant decisions and reflect on the session:
-
-- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
-- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
-- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
-- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
-
-This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
+- Record major design decisions and pivots with `/capture-decisions` when available.
+- Run `/reflect` after each generation to capture what worked, what failed, and what the next generation should try.
+- Put durable writeups in `research/decisions/` and `research/failures/` when the repo uses them.

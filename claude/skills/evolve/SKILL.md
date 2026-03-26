@@ -7,6 +7,15 @@ description: "Goal-pursuit engine. Given a measurable goal, autonomously discove
 
 Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 
+## Start Here
+
+If `.evolve/` exists, read in this order before acting:
+1. `.evolve/current.json`
+2. `.evolve/progress.md`
+3. The tail of `.evolve/experiments.jsonl`
+4. The newest file in `.evolve/pursuits/` if present
+5. Any project spec such as `docs/EVOLVE-SPEC.md`
+
 ## Core Principles
 
 1. **Verify everything.** Never report "X didn't work, maybe A or B" — determine which one. After every experiment, confirm the change is live: check the DB, the API response, the deployed state. Ambiguity in a report is a bug in the loop.
@@ -51,7 +60,7 @@ If rich ("push all agent scores above 0.80"), proceed.
 | "All tests pass" | Group by failure cluster | N parallel fix streams |
 | "Match reference site" | One per page | N parallel |
 
-Independent sub-goals get their own measurement, their own experiments, their own progress tracking. They can run as parallel subagents, parallel worktrees, or (when Foreman dispatches) parallel Claude Code sessions.
+Independent sub-goals get their own measurement, their own experiments, their own progress tracking. They can run as parallel subagents, parallel worktrees, or parallel Claude Code sessions.
 
 Dependent sub-goals run sequentially: fix the build before running tests, deploy before measuring production.
 
@@ -186,11 +195,13 @@ For the overall goal:
 
 ## Phase 9: Persist — Structured Experiment Data
 
-Every evolve cycle produces two artifacts:
+`.evolve/` is the canonical repo-local state directory for this workflow. Keep all evolve and pursue runtime artifacts there so any later session can resume from one place.
+
+Every evolve cycle produces three artifacts:
 
 ### 1. Progress file (human-readable, for resume)
 
-Write `evolve-progress.md` in the project root after every round:
+Write `.evolve/progress.md` after every round:
 
 ```markdown
 # Evolve Progress — <goal>
@@ -201,7 +212,25 @@ Score: 0.74 → target 0.80 (Round 2) — <timestamp>
 
 On resume: read this, skip to Phase 3, continue from last round.
 
-### 2. Experiment log (structured JSON, for analysis)
+### 2. Current state pointer (machine-readable, for resume/orchestration)
+
+Write `.evolve/current.json` after every round:
+
+```json
+{
+  "mode": "evolve",
+  "goal": "all agents above 0.80",
+  "status": "in_progress",
+  "round": 2,
+  "generation": null,
+  "activePursuit": null,
+  "updatedAt": "2026-03-20T04:00:00Z"
+}
+```
+
+This is the first file an agent should read to understand the current state of the repo-level improvement loop.
+
+### 3. Experiment log (structured JSON, for analysis)
 
 Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is the data that enables cross-project learning and meta-analysis.
 
@@ -244,7 +273,7 @@ Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is 
 2. **Meta-learning**: Which categories of experiments have the highest success rate? Prompt changes? Config changes? Code changes?
 3. **Failure analysis**: What's the most common failure mode? Deployment verification? Scoring artifacts?
 4. **Research potential**: Aggregate data across projects → paper on autonomous improvement methodology.
-5. **Foreman integration**: Foreman reads `.evolve/experiments.jsonl` from all repos to build cross-project intelligence.
+5. **Cross-project intelligence**: shared experiment logs make patterns reusable across repos and sessions.
 
 ### Product Quality Scorecard
 
@@ -267,7 +296,7 @@ The experiment log feeds into a **product scorecard** — a snapshot of all user
 }
 ```
 
-Write to `.evolve/scorecard.json` after each cycle. This is what Foreman checks on heartbeat.
+Write to `.evolve/scorecard.json` after each cycle.
 
 ## Composing Skills
 
@@ -279,34 +308,12 @@ Write to `.evolve/scorecard.json` after each cycle. This is what Foreman checks 
 | Security | `/critical-audit` | Compliance convergence |
 | Generational redesign | `/pursue` | Evolve has plateaued, need architectural leap |
 
-## Orchestration by Foreman
+## External Orchestration
 
-When Foreman dispatches an evolve session:
-
-**Input** (from Foreman):
-```json
-{
-  "goal": "all agents above 0.80 on smoke eval",
-  "scope": "~/code/phony",
-  "successCriteria": { "metric": "aggregateScore", "threshold": 0.80 },
-  "constraints": { "maxRounds": 5, "maxCostUsd": 10 }
-}
-```
-
-**Output** (to Foreman):
-```json
-{
-  "status": "converged|plateau|in_progress",
-  "score": { "before": 0.63, "after": 0.77, "target": 0.80 },
-  "rounds": 3,
-  "experiments": [
-    { "hypothesis": "safety disclaimers", "delta": 0.50, "verdict": "KEEP" }
-  ],
-  "remainingGap": "styleAdherence stuck at 0.50 — judge wants examples not traits"
-}
-```
-
-Foreman uses this to: learn cross-repo patterns, decide whether to dispatch another session with a different strategy, or promote the result.
+Any external orchestrator should treat `.evolve/` as the contract:
+- read `.evolve/current.json` first
+- use `.evolve/progress.md` for human-readable resume state
+- use `.evolve/experiments.jsonl` and `.evolve/scorecard.json` for analysis
 
 ## Domain Specs
 
@@ -318,26 +325,18 @@ When a project has a `docs/EVOLVE-SPEC.md` (or equivalent), read it first. It te
 - What to verify (DB state, deployment, caching)
 - Known scoring artifacts to exclude
 
-When Foreman dispatches evolve, it reads the spec and passes context in the session instruction. The skill doesn't need to know about any specific domain.
+An orchestrator can pass extra context, but the skill itself stays domain-agnostic.
 
 ## Rules
 
+- **Read state first.** Start with `.evolve/current.json` and `.evolve/progress.md` when present.
 - **Verify, then report.** Determine which, not "maybe A or B."
-- **Iterate, then abandon.** 2-3 verified variations before giving up.
-- **Decompose, then parallelize.** Independent sub-goals run simultaneously.
-- **Measure the user.** End-to-end, not internal.
 - **Persist always.** Progress survives interruption.
 - **Score honestly.** 1.00 means perfect. Don't inflate.
-- **Infrastructure compounds.** Good measurement systems pay dividends forever.
-- **5 rounds max per invocation.** Persist and stop. User or Foreman re-invokes to continue.
+- **5 rounds max per invocation.** Persist and stop. Re-invoke to continue.
 
 ## Decision Capture & Reflection
 
-After completing work, capture significant decisions and reflect on the session:
-
-- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
-- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
-- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
-- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
-
-This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
+- Record important pivots and architectural decisions with `/capture-decisions` when available.
+- Run `/reflect` after each round to capture what worked, what failed, and what to try next.
+- Put durable writeups in `research/decisions/` and `research/failures/` when the repo uses them.
