@@ -126,12 +126,38 @@ Date: [date]
 [concrete next steps, ordered by impact]
 ```
 
-## Where to Store Results
+## Where to Store Results (MANDATORY — always persist)
 
-- **In the project**: `reflect-YYYYMMDD-HHMMSS.md` in project root (e.g. `reflect-20260323-143042.md`). Timestamp prevents collisions when multiple agents reflect in parallel on the same repo.
-- **In memory**: save key insights to Claude Code memory
-- **In Foreman**: if running, call `log_outcome` with learnings and `POST /api/taste` with taste signals
-- **In the operator's dotfiles**: if insights apply to skills themselves, update the skill
+Every reflection produces artifacts in THREE places:
+
+### 1. Project-level (`.evolve/reflections/`)
+Write the full reflection to `.evolve/reflections/YYYY-MM-DD-HHMMSS.md` in the current project. This is the canonical record — it lives with the code it analyzes.
+
+```bash
+# Example path
+.evolve/reflections/2026-04-02-143042.md
+```
+
+If `.evolve/` doesn't exist, create it. If `reflections/` doesn't exist, create it.
+
+### 2. Global cross-project index (`~/.claude/reflections/`)
+Append a one-line summary to `~/.claude/reflections/INDEX.md`. This enables portfolio-level analysis across projects without reading every project's `.evolve/`.
+
+```markdown
+# Reflections Index
+- [2026-04-02] starter-foundry — 8.5/10, 30 commits, TS migration + 8 gen routing architecture [.evolve/reflections/2026-04-02-143042.md]
+- [2026-03-28] phony — 7/10, voice agent eval convergence [.evolve/reflections/2026-03-28-091523.md]
+```
+
+For significant sessions, also write a full reflection copy to `~/.claude/reflections/YYYY-MM-DD-project-slug.md` for offline reference.
+
+### 3. Memory (key learnings only)
+Save project-specific insights to Claude Code memory (`memory/` in the project's `.claude/projects/` dir). These are the durable takeaways — anti-patterns discovered, operator preferences learned, architectural decisions worth remembering.
+
+Do NOT put the full reflection in memory — it's too long. Extract the 3-5 most important learnings.
+
+### 4. Optional: Foreman / ops-board
+If running, call `log_outcome` with learnings and `POST /api/taste` with taste signals. If the ops-board is available, create tasks for action items.
 
 ## Scheduling
 
