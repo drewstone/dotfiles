@@ -36,6 +36,9 @@ mkdir -p "$CLAUDE_DIR"
 link "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 link "$SCRIPT_DIR/settings.json" "$CLAUDE_DIR/settings.json"
 
+# Reflections (cross-project analysis)
+link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
+
 # Skills (only real directories, skip broken symlinks)
 mkdir -p "$CLAUDE_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
