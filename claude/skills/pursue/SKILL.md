@@ -30,14 +30,17 @@ If `.evolve/` exists, read in this order before designing:
 ## The Pursuit Cycle
 
 ```
-AUDIT → DESIGN → BUILD → INTEGRATE → TEST → EVALUATE → PERSIST
-  │        │                                               │
-  │        └── bold architectural changes, not tweaks       │
-  │                                                        │
-  └── next generation starts here ─────────────────────────┘
+AUDIT → DESIGN → REVIEW → BUILD → INTEGRATE → TEST → EVALUATE → PERSIST
+  │        │       │                                              │
+  │        │       └── adversarial multi-perspective audit         │
+  │        └── bold architectural changes, not tweaks              │
+  │                                                                │
+  └── next generation starts here ──────────────────────────────────┘
 ```
 
 This is NOT iterative in the same way evolve is. Each pursuit cycle ships a GENERATION — a coherent set of changes that transform the system. Then evolve fine-tunes within that generation.
+
+The REVIEW phase exists to surface architectural mistakes before code is written. Use it when the change is non-trivially distributed: touches multiple components, modifies a lifecycle or trust boundary, spawns long-lived processes, is hard to roll back, or ships to users before the next evolve loop can correct it. For a one-file reversible change, skip it.
 
 ## Phase 0: Audit — Map the Full System State
 
@@ -150,6 +153,28 @@ Add to the pursuit spec:
 - [metric] from [baseline] to [target]
 - Overall: [what does "this generation worked" look like?]
 ```
+
+## Phase 1.5: Review — Adversarial Audit Before Build
+
+Most architectural mistakes are visible to *some* perspective at design time and invisible to all of them at build time. The point of this phase is to surface those mistakes before code is written, while alternatives are still cheap.
+
+Do this when the change is non-trivially distributed: it touches multiple components, modifies a lifecycle or trust boundary, spawns long-lived processes, is hard to roll back, or ships to users before the next evolve loop. For a one-file reversible change, skip this phase.
+
+The shape of the review is a sketch, not a contract. Adapt to the project.
+
+1. **Map the change.** List every component the change touches — files, processes, events, external systems, trust boundaries, anything downstream depends on. If you cannot fit the map on a page, the change is large enough to need every step below.
+
+2. **Get adversarial perspectives, in parallel.** Spawn sub-agents (or otherwise solicit independent viewpoints) that critique the design from angles that match the change. Common ones include architecture/coupling, reliability/failure modes, security/trust, performance, cost, product/UX, testability, maintainability, and a deliberate red team that tries to break the plan. Pick the angles that matter for *this* change — there is no canonical set. Each perspective should produce a short, structured response: a verdict, a few specific concerns with severity, an alternative they would consider, and whether they would block the plan.
+
+3. **Enumerate failure modes mechanically.** For every spawn, fetch, write, event, and shared resource in the map, ask: what fails, how it manifests, how it propagates, how it recovers. This is not speculative — it is a checklist. Skip nothing.
+
+4. **Run a red-team round.** Assume the plan ships exactly as written. What breaks on day 1? Day 30? Day 90? Under load, under partial failure, under concurrent users, under adversarial input? Surface attacks; do not let yourself fix them in the same breath. Each attack then needs a written disposition: mitigated (and how), accepted (and why), or it blocks the plan.
+
+5. **Pick the strongest plan, not the highest-scoring one.** When comparing alternatives, the chosen plan is the one with no fatal weakness — not the one with the best average. A plan that scores 9/9/9/3 loses to a plan that scores 8/8/8/8, because the 3 is a hole that will eventually fall through. Write down what you gave up and why.
+
+6. **Capture the decision.** Record the map, the perspectives, the failure modes, the red-team output, the chosen plan, and the conditions the build phase has to satisfy (resolved blocks, mitigated concerns). This becomes the build-phase checklist and a permanent record of what was considered and rejected.
+
+The point of all six steps is the same: **make the cost of being wrong show up before you write code**. Done well, this phase saves more time than it spends. Done as a checkbox ritual, it is worse than nothing — so adapt the depth to the actual stakes of the change.
 
 ## Phase 2: Build — Complete Before Testing
 
