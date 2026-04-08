@@ -35,6 +35,7 @@ echo "Installing Claude config from $SCRIPT_DIR"
 mkdir -p "$CLAUDE_DIR"
 link "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 link "$SCRIPT_DIR/settings.json" "$CLAUDE_DIR/settings.json"
+[ -f "$SCRIPT_DIR/RTK.md" ] && link "$SCRIPT_DIR/RTK.md" "$CLAUDE_DIR/RTK.md"
 
 # Reflections (cross-project analysis)
 link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
@@ -99,7 +100,7 @@ fi
 
 # Pi skills (subset — only skills that work in conversation, not coding)
 PI_SKILLS_DIR="$HOME/.pi/agent/skills"
-PI_SKILLS=(reflect)
+PI_SKILLS=(reflect capture-decisions research)
 if [ -d "$HOME/.pi/agent" ]; then
   mkdir -p "$PI_SKILLS_DIR"
   for skill in "${PI_SKILLS[@]}"; do

@@ -1,3 +1,8 @@
+---
+name: bad
+description: Operate the `bad` CLI (Browser Agent Driver), a general-purpose agentic browser automation tool. Use for browser automation, benchmark runs, design audits, showcases, and experiments. Triggers - "run bad", "browser agent", "design audit", "webbench", "browser benchmark", "automate this site".
+---
+
 # bad — Browser Agent Driver CLI Skill
 
 You are an expert operator of the `bad` CLI (Browser Agent Driver) — a general-purpose agentic browser automation tool. Use this knowledge to help users run benchmarks, design audits, showcases, experiments, and browser automation tasks.
