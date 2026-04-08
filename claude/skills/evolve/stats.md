@@ -137,7 +137,7 @@ This makes mean and even median misleading.
 
 ### Outlier Detection
 - `detectOutliers(scores)` — IQR-based flagging (value < Q1-1.5×IQR or > Q3+1.5×IQR)
-- Outlier runs often indicate infrastructure issues (sidecar crash, timeout), not model variance
+- Outlier runs often indicate infrastructure issues (container crash, timeout, API error), not model variance
 - Report outliers separately: "median 85% (N=10, 1 outlier at 31% excluded)"
 
 ### Stratified Analysis

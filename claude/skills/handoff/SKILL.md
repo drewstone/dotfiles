@@ -38,10 +38,10 @@ This is **critical** — without it, the next session won't know if it's mid-exp
 
 ### 4. Next Actions (with explicit skill routing)
 Each action specifies **which skill to run**:
-- "Run `/evolve` targeting retired-couple persona with baseline 74%"
-- "Run `/pursue` — evolve has plateaued for 3 rounds on form_accuracy"
-- "Run `/diagnose` on the 5 failing traces in `.evolve/traces/`"
-- "Run `bad design-audit --url ... --provider claude-code --model opus`"
+- "Run `/evolve` targeting [specific target] with baseline [number]%"
+- "Run `/pursue` — evolve has plateaued for 3 rounds on [dimension]"
+- "Run `/diagnose` on the failing traces in `.evolve/traces/`"
+- "Run design audit on [URL] to verify UX quality"
 
 Each action has: what to do, which files to touch, acceptance criteria, skill to invoke.
 Flag any blockers or dependencies.
