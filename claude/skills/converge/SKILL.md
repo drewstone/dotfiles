@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Drive CI to green through iterative fix-commit-push-wait cycles. Reads remote CI failures via GitHub API, diagnoses root causes from job logs, applies fixes, commits, pushes, and waits for the next run — repeating until all workflows pass. Persists progress to converge-progress.md so it can resume across conversations. Never takes shortcuts (no continue-on-error, no --no-verify, no suppressing failures). Use when the user says 'get CI green', 'fix CI', 'converge CI', 'make the build pass', 'land this PR', or any variant of iterative CI repair."
+description: "Drive CI to green through iterative fix-commit-push-wait cycles. Reads remote CI failures via GitHub API, diagnoses root causes from job logs, applies fixes, commits, pushes, and waits for the next run — repeating until all workflows pass. Persists progress to .evolve/converge-progress.md so it can resume across conversations. Never takes shortcuts (no continue-on-error, no --no-verify, no suppressing failures). Use when the user says 'get CI green', 'fix CI', 'converge CI', 'make the build pass', 'land this PR', or any variant of iterative CI repair."
 ---
 
 # Converge — CI Green Loop
@@ -18,7 +18,7 @@ Evolve runs a local measure script in <60s. CI convergence is fundamentally diff
 
 ## Resume Protocol
 
-**Before doing anything else, check for `converge-progress.md` in the project root.**
+**Before doing anything else, check for `.evolve/converge-progress.md`.** Also check the old location `converge-progress.md` in the project root (legacy — migrate if found).
 
 ### If it exists:
 
@@ -126,7 +126,7 @@ One root cause per commit. Don't over-split.
 
 ## Phase 7: Persist Progress
 
-Write `converge-progress.md` after every round:
+Write `.evolve/converge-progress.md` after every round:
 
 ```markdown
 # Converge Progress
