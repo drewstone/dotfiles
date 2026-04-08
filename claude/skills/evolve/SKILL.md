@@ -338,6 +338,19 @@ When a project has a `docs/EVOLVE-SPEC.md` (or equivalent), read it first. It te
 
 An orchestrator can pass extra context, but the skill itself stays domain-agnostic.
 
+## Statistical Rigor
+
+See `stats.md` in this skill directory for the full statistical reference. Key rules:
+
+- **Report median, not mean.** Means are dragged by outliers.
+- **Always include N.** "85% accuracy" vs "85% accuracy (N=5, CV=8%)" are different claims.
+- **Use effect size for comparisons.** Cohen's d tells you if a change is real or noise. d < 0.2 is negligible regardless of raw delta.
+- **3 reps minimum.** Never make decisions on N=1. 5 reps for noisy targets.
+- **Include confidence intervals.** "median 85% [79%, 91%]" tells the reader how trustworthy the estimate is.
+- **Flag instability.** CV > 20% means the target is too noisy for reliable measurement — fix the variance source before optimizing the score.
+
+A reference `eval-stats.ts` library is available in this skill directory. Copy it into any project's `tests/eval/lib/` for describe(), compare(), histogram(), and summaryReport() functions.
+
 ## Rules
 
 - **Read state first.** Start with `.evolve/current.json` and `.evolve/progress.md` when present.
