@@ -87,16 +87,43 @@ Add: distribution shape (bimodal? skewed?), outlier analysis,
 correlation between dimensions, per-turn convergence analysis.
 Sufficient for research-quality reporting.
 
+## Paired Comparisons (A/B testing)
+
+When comparing two prompt versions on the SAME personas, use **paired tests**:
+- **Wilcoxon signed-rank test** (non-parametric, no normality assumption)
+- `compare(baseline, treatment, paired=true)` returns p-value
+- p < 0.05 with d > 0.5 → real improvement, promote
+- p > 0.05 with d < 0.2 → noise, don't change anything
+
+### Multiple Comparison Correction
+Testing 20 personas = 20 hypotheses. Without correction, you'll get ~1 false positive by chance.
+- **Benjamini-Hochberg FDR**: `adjustPValues(pValues)` — controls false discovery rate
+- Use adjusted p-values, not raw, when claiming "X personas significantly improved"
+- Rule: if ≥3 personas show adjusted p < 0.05 with d > 0.5, the change is real
+
+## Bimodality Detection
+
+LLM outputs are often bimodal: the model either "gets it" (85-100%) or "misses" (30-60%).
+This makes mean and even median misleading.
+- **Sarle's bimodality coefficient**: BC > 0.555 suggests bimodality
+- `describe(scores).bimodal` flags this automatically
+- When bimodal: report BOTH modes, not just the median. "Mode 1: 90% (60% of runs), Mode 2: 45% (40% of runs)"
+- Bimodal targets need architectural fixes (the model is randomly choosing between two strategies), not prompt tweaks
+
 ## Anti-Patterns
 
-1. **Reporting mean instead of median** — means are dragged by outliers. A single 20% run drops the mean of [90,90,90,90,20] from 90 to 76. Median stays at 90.
+1. **Reporting mean instead of median** — means are dragged by outliers. [90,90,90,90,20] mean=76, median=90. Use median.
 
-2. **Comparing single runs** — "v1 scored 85%, v2 scored 88%, so v2 is better" is not valid. Run 3 reps of each and compare medians with effect size.
+2. **Comparing single runs** — "v1=85%, v2=88%, v2 wins" is not valid. Run 3+ reps, compare medians with effect size.
 
-3. **Ignoring variance** — "average score 85%" means nothing without knowing if it's [84,85,86] or [51,85,100]. Report IQR.
+3. **Ignoring variance** — "average 85%" means nothing without knowing if it's [84,85,86] or [51,85,100]. Report IQR and CV.
 
-4. **Optimizing for the metric instead of the experience** — if the metric goes up but the actual output reads worse, the metric is wrong. Regularly spot-check outputs manually.
+4. **Optimizing metric over experience** — if the score goes up but output reads worse, the metric is wrong. Spot-check.
 
-5. **Treating all dimensions equally** — a 10pp drop in hallucination_free is catastrophic. A 10pp drop in line_value_accuracy is fixable. Weight regressions by severity.
+5. **Treating all dimensions equally** — a 10pp drop in hallucination is catastrophic. A 10pp drop in line values is fixable.
 
-6. **Publishing without N** — every number needs its sample size. "85% accuracy" vs "85% accuracy (N=47, CV=8%)" are completely different claims.
+6. **Publishing without N** — "85% accuracy" vs "85% accuracy (N=47, CV=8%)" are different claims.
+
+7. **Multiple testing without correction** — 20 personas × 1 comparison = expect 1 false positive. Use BH-adjusted p-values.
+
+8. **Ignoring bimodality** — if the distribution is bimodal, the median sits between two clusters and represents neither. Check and report both modes.
