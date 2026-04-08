@@ -103,6 +103,10 @@ Baseline — <timestamp>
   safety >= 0.70 0.50       -0.20
 ```
 
+**Per-turn metrics** (if available): If the system supports multi-turn interactions, score at each cumulative turn to see completion growth. This reveals *when* quality degrades (Turn 3? Turn 5?) and which turns are high-value vs wasted. Track convergence turn (first turn where score hits threshold), cost per turn, and score variance.
+
+**Prompt versioning**: If the project has a prompt registry (`.evolve/prompts/`), record which prompt version is being measured. Every experiment must be traceable to a specific prompt. Without this, you can't distinguish prompt regressions from model variance.
+
 ## Phase 4: Diagnose
 
 Identify failure clusters. For each, generate a hypothesis with:
@@ -193,6 +197,10 @@ For the overall goal:
 
 **Plateau detection**: Score doesn't move > 0.02 for 2 consecutive rounds → report what's structural vs fixable. Ask user whether to accept or push further.
 
+**Escalation to /pursue**: If evolve has plateaued for 3+ rounds AND the remaining gap appears architectural (not tunable), escalate to `/pursue` for a generational redesign. Evolve fine-tunes within a generation; pursue ships a new generation. Don't loop evolve indefinitely when the approach itself needs rethinking.
+
+**Multi-rep stability**: If single-run scores oscillate >15% between runs for the same target, the signal is noise. Run 3 reps and take the median before making decisions. A target that scores 51/84/84 has a true median of 84, not an average of 73.
+
 ## Phase 9: Persist — Structured Experiment Data
 
 `.evolve/` is the canonical repo-local state directory for this workflow. Keep all evolve and pursue runtime artifacts there so any later session can resume from one place.
@@ -266,6 +274,9 @@ Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is 
 | `deploymentVerified` | boolean | Was deployment confirmed before measuring? |
 | `failureMode` | string | If failed: what went wrong (deployment, scoring, approach) |
 | `crossPollinated` | boolean | Was this applied from another target's success? |
+| `promptVersionId` | string | Which prompt version was tested (from `.evolve/prompts/registry.json`) |
+| `costUsd` | number | Estimated cost of this experiment |
+| `reps` | number | How many repetitions were run (1 = single run, 3 = median-of-3) |
 
 ### Why structured data matters
 

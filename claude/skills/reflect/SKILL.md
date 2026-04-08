@@ -178,6 +178,30 @@ If Foreman is running with confidence >= 0.6 on `/reflect`, it can auto-dispatch
 6. **Propose actions.** Every insight should have a next step.
 7. **Cross-pollinate.** The best insights come from patterns across projects, not within one.
 
+## Skill Dispatch (required at end of every reflection)
+
+Don't just identify patterns — route to the skill that fixes them:
+
+| Signal | Dispatch | Evidence threshold |
+|--------|----------|--------------------|
+| Metric to optimize | `/evolve` with target + baseline | Score below target for 2+ runs |
+| Architectural gap | `/pursue` with thesis | Evolve plateaued 3+ rounds |
+| Unsolved problem | `/research` with question | No known solution in codebase |
+| Missing measurement | `/improve` with scope | Can't measure what matters |
+| Unexplained failures | `/diagnose` with traces | Pass rate < 80% with no root cause |
+| Same error repeated | Fix code directly | Pattern in 3+ traces |
+
+**Every reflection MUST end with an explicit dispatch**: "Next: run `/evolve` targeting X with baseline Y" or "Next: run `/pursue` — evolve has plateaued." Make it executable, not suggestive.
+
+## Data Sources
+
+If the project has measurement infrastructure, use it:
+- `.evolve/experiments.jsonl` — experiment history, verdicts, learnings
+- `.evolve/scorecard.json` — all measured flows with scores and targets
+- Per-turn metrics (if available) — identify which conversation turns degrade quality
+- Prompt registry (if available) — correlate insights with which prompt versions produced them
+- Trace store (if available) — read actual failure traces, not summaries
+
 ## Relationship to Other Skills
 
 ```

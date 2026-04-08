@@ -250,11 +250,17 @@ REVERT: This generation is worse. Roll back and rethink.
 After a generation is evaluated and promoted:
 
 1. Update `.evolve/pursuits/<date>-<goal-slug>.md` with results
-2. Update `.evolve/experiments.jsonl` with the generation experiment
+2. Update `.evolve/experiments.jsonl` with the generation experiment (include `promptVersionId` if prompts changed)
 3. Update baselines for all metrics
 4. Write `.evolve/progress.md` with the new starting point for the next evolve loop
-5. Write `.evolve/current.json` with the current generation, active pursuit path, and latest status
+5. **Formalize the handoff**: Write `.evolve/current.json` with:
+   - `mode: "evolve"` (not "pursue" — the pursuit is complete)
+   - `generation: N` (the new generation number)
+   - `activePursuit: null` (signals pursuit is done)
+   - `promptVersion: "vX"` if a new prompt was shipped
 6. The system is now ready for `/evolve` to fine-tune within this generation
+
+**If new scoring dimensions were added** during this generation (new judges, new metrics), run a comparison eval using the PREVIOUS generation's artifacts + the new judges. This establishes backward-compatible baselines and prevents score inflation from measurement changes.
 
 **Pursue ships generations. Evolve fine-tunes within them.**
 
