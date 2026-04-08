@@ -7,6 +7,8 @@ description: "Goal-pursuit engine. Given a measurable goal, autonomously discove
 
 Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 
+**Use evolve when** the goal is measurable and you can run a local eval. **Use `/pursue`** when evolve has plateaued for 3+ rounds and the system needs a generational/architectural leap. **Use `/polish`** when correctness is fine and the gap is rubric-driven (quality, design, edge cases). **Use `/research`** when the question is "which approach works" and requires structured hypothesis testing. **Use `/converge`** when the loop is remote CI (push → wait → diagnose → fix → push).
+
 ## Start Here
 
 If `.evolve/` exists, read in this order before acting:
@@ -223,56 +225,17 @@ If verification fails → fix the deployment. Don't report unverified results.
 
 ## Phase 7: Compare + Decide
 
-**Use `compare()` from eval-stats.ts, not eyeballing.** The comparison must include:
+**Use `compare()` from eval-stats.ts, not eyeballing.** Every comparison must include: median with 95% CI, effect size (Cohen's d), p-value, and verdict.
 
-```
-Hypothesis     Baseline     Treatment    Δ      d      p        Verdict
-H1: format     72% [65,79]  85% [80,90]  +13   0.92   0.003    KEEP ✓
-H2: safety     80% [75,85]  82% [77,87]  +2    0.15   0.42     NOISE —
-H3: length     88% [85,91]  81% [74,88]  -7    0.61   0.02     REGRESSION ✗
-```
+See `stats.md` in this skill directory for the full verdict decision tree, multiple comparison correction (BH FDR), stratified analysis methodology, and when to use paired vs unpaired tests.
 
-**Always include**: median with 95% CI, effect size (Cohen's d), p-value (permutation test or Wilcoxon), and verdict.
+Quick reference:
+- d < 0.2 → **NOISE** (regardless of raw delta)
+- d ≥ 0.5, p < 0.05, no regressions → **KEEP**
+- d ≥ 0.5, p > 0.05 → **ITERATE** (need more reps)
+- Any regression with d > 0.3 → **REVERT** immediately
 
-### Verdict Decision Tree
-
-```
-d < 0.2                    → NOISE (regardless of p-value or raw delta)
-d ≥ 0.5 AND p < 0.05      → KEEP (if direction=improved) or REGRESSION (if regressed)
-d 0.2-0.5 AND p < 0.05    → KEEP with caution (small effect, monitor for durability)
-d ≥ 0.5 AND p > 0.05      → ITERATE (real effect but insufficient reps — run more)
-any regression with d > 0.3 → REVERT immediately, investigate
-```
-
-### Multiple Comparison Correction
-
-If testing N targets simultaneously, apply Benjamini-Hochberg FDR correction to p-values before making decisions. Testing 20 personas without correction will produce ~1 false positive.
-
-### Stratified Verdict
-
-Don't just report overall. Break down by category:
-```
-Simple:   +3pp (not significant, at ceiling)
-Moderate: +8pp (p=0.02, d=0.7) ← main beneficiary
-Complex:  +12pp (p=0.001, d=1.1) ← strong improvement
-Extreme:  -2pp (not significant) ← no regression
-```
-
-A change can be KEEP for one stratum and ITERATE for another. That's fine — promote it and note which targets need further work.
-
-### Post-Comparison Analysis
-
-After deciding, generate an analysis:
-1. **What worked**: which targets improved, by how much, and why (trace the improvement to specific prompt changes or code changes)
-2. **What didn't**: which targets were unaffected, and what the failure mode is
-3. **Regressions**: any targets that got worse — root cause, reversal plan
-4. **Next hypotheses**: based on the remaining gaps, what should the next experiment target?
-
-Verdicts:
-- **KEEP**: d ≥ 0.5, p < 0.05, no regressions. Promote.
-- **ITERATE**: Didn't move enough, or insufficient reps. Run more data or try a variation.
-- **ABANDON**: 2-3 variations tried, verified deployed, still d < 0.2. Document why and move on.
-- **REGRESSION**: d > 0.3 in wrong direction. Revert immediately.
+After deciding, document: what worked, what didn't, regressions with root cause, and next hypotheses.
 
 ## Phase 8: Iterate
 

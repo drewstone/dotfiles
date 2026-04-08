@@ -26,10 +26,10 @@ Analyze ALL recent sessions across projects. Dispatches sub-agents per project/b
 ```
 
 For portfolio mode, use this pipeline:
-1. Call `portfolio_status` to see all goals and decisions
-2. Group decisions by project
-3. For each project with recent activity, dispatch a sub-agent (via `dispatch_skill` with `/reflect` or direct prompt) to analyze that project's sessions and outcomes
-4. Aggregate all sub-agent results into a single report
+1. Enumerate active projects (check `~/code/` for repos with recent git activity)
+2. Group by recency of activity (git log dates)
+3. For each project with recent activity, analyze `.evolve/` state, git history, and any session transcripts
+4. Aggregate findings into a single cross-project report
 5. Cross-pollinate: what patterns appear across multiple projects?
 
 ## What to Analyze
@@ -156,8 +156,8 @@ Save project-specific insights to Claude Code memory (`memory/` in the project's
 
 Do NOT put the full reflection in memory — it's too long. Extract the 3-5 most important learnings.
 
-### 4. Optional: Foreman / ops-board
-If running, call `log_outcome` with learnings and `POST /api/taste` with taste signals. If the ops-board is available, create tasks for action items.
+### 4. Optional: Ops Board
+If the project uses an ops board or task tracker, create tasks for action items from the reflection.
 
 ## Scheduling
 
@@ -165,8 +165,6 @@ This should run periodically:
 - **After every major run**: grade the dispatches, extract learnings
 - **Weekly**: full portfolio reflect — analyze all sessions, cross-pollinate
 - **Before planning**: reflect before deciding what to work on next
-
-If Foreman is running with confidence >= 0.6 on `/reflect`, it can auto-dispatch reflections on a schedule.
 
 ## Rules
 
