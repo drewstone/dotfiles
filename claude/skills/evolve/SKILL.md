@@ -124,15 +124,53 @@ Baseline — <timestamp>
 
 **Prompt versioning**: If the project has a prompt registry (`.evolve/prompts/`), record which prompt version is being measured. Every experiment must be traceable to a specific prompt. Without this, you can't distinguish prompt regressions from model variance.
 
-## Phase 4: Diagnose
+## Phase 4: Diagnose — Identify Highest-ROI Targets
 
-Identify failure clusters. For each, generate a hypothesis with:
+Don't just find failures — **rank them by optimization ROI**. Fix the thing that moves the most score for the least effort.
+
+### ROI Ranking Framework
+
+For each failing target, compute:
+
+```
+ROI = (gap_to_threshold × blast_radius × confidence) / estimated_effort
+
+gap_to_threshold: how far below target (bigger gap = more room to improve)
+blast_radius:     how many targets share this failure mode (systemic > isolated)
+confidence:       how stable is the measurement? (CV < 15% = high, CV > 25% = low)
+estimated_effort: 1 (config change) to 5 (architectural change)
+```
+
+**Always fix systemic issues before isolated ones.** If 8/20 targets fail on the same dimension, that's one fix for 8 improvements. If 1 target fails on a unique issue, that's one fix for 1 improvement.
+
+### Diagnosis Checklist
+
+1. **Stratify failures by dimension**: Which scoring dimensions are consistently weak? Use `stratify()` or group failures by their worst dimension.
+2. **Check for bimodality**: If a target's scores are bimodal [90,90,45,88,42], the model is randomly choosing between two strategies. That's architectural, not tunable.
+3. **Check cross-dimension correlation**: If form_accuracy and line_value_accuracy are correlated (rho > 0.6), fixing one may fix both. Use `spearmanCorrelation()`.
+4. **Check per-turn convergence**: Does quality degrade at a specific turn? Does the model disengage after T3? That's a prompt structure issue, not a content issue.
+5. **Check cost vs quality**: Are expensive runs (high token count) also the best runs? If not, the model is wasting tokens on the wrong things.
+
+### Hypothesis Generation
+
+For each failure cluster, generate a hypothesis with:
 - **Claim**: what will improve, by how much
 - **Action**: specific change (code, config, prompt)
 - **Verification**: how to confirm the change deployed
 - **Expected metrics**: which numbers should move
+- **Estimated ROI**: gap × blast × confidence / effort
 
 Complex diagnosis → invoke `/diagnose`.
+
+### Experiment Design (before running anything)
+
+**Don't run all targets × all reps.** Design the minimal experiment:
+
+1. **Skip ceiling targets**: If a target is at 98% with CV=3%, it won't show improvement. Don't waste runs on it.
+2. **Focus on movable targets**: Targets with scores 60-80% AND CV > 10% have room to move AND are measurable.
+3. **Compute required reps**: Use `requiredReps(cv, expectedDelta)` from eval-stats.ts. High-variance targets need more reps.
+4. **Estimate cost**: reps × targets × avg_cost_per_run. Is this experiment worth its cost?
+5. **Define success criteria BEFORE running**: "If median improves ≥5pp on ≥3 targets with d>0.5 and 0 regressions, KEEP."
 
 ### Competitive context (when relevant)
 
@@ -141,17 +179,16 @@ Before hypothesizing fixes, check if the problem is solved elsewhere:
 - Are there open-source implementations, papers, or benchmarks to reference?
 - Where are we genuinely behind vs where are we already ahead?
 
-Present as a comparison table. Be honest — if competitors are better, say so. This prevents reinventing solutions that already exist.
+Present as a comparison table. Be honest — if competitors are better, say so.
 
 ### Anti-overfitting discipline
-
-These rules prevent benchmark gaming that produces fragile improvements:
 
 1. **Never tune to specific test cases.** If a change only helps case X, it's memorization, not improvement.
 2. **Validate on held-out cases.** If a larger case set exists, run the winner on it before promoting.
 3. **Prefer architectural improvements over parameter tuning.** Changing a timeout is a knob turn. Adding batching is architectural. Architectural wins are more durable.
 4. **Monitor for Goodhart's Law.** If the metric improves but the actual experience feels worse, the metric is wrong — fix the metric, not the code.
 5. **Run 3+ reps** when possible. A single before/after is noisy. Multiple reps with consistent direction is signal.
+6. **Use effect size, not raw delta.** A +5pp improvement with d=0.1 is noise. With d=1.2 is real. Always compute Cohen's d.
 
 ### Hypothesis categories (prioritize top-down)
 
@@ -186,18 +223,56 @@ If verification fails → fix the deployment. Don't report unverified results.
 
 ## Phase 7: Compare + Decide
 
+**Use `compare()` from eval-stats.ts, not eyeballing.** The comparison must include:
+
 ```
-Hypothesis     Before → After   Δ       Verdict
-H1: style      0.45  → 0.78    +0.33   KEEP — promote
-H2: safety     0.50  → 1.00    +0.50   KEEP — promote
-H3: task       0.30  → 0.30    +0.00   ITERATE — verify deployment
+Hypothesis     Baseline     Treatment    Δ      d      p        Verdict
+H1: format     72% [65,79]  85% [80,90]  +13   0.92   0.003    KEEP ✓
+H2: safety     80% [75,85]  82% [77,87]  +2    0.15   0.42     NOISE —
+H3: length     88% [85,91]  81% [74,88]  -7    0.61   0.02     REGRESSION ✗
 ```
 
+**Always include**: median with 95% CI, effect size (Cohen's d), p-value (permutation test or Wilcoxon), and verdict.
+
+### Verdict Decision Tree
+
+```
+d < 0.2                    → NOISE (regardless of p-value or raw delta)
+d ≥ 0.5 AND p < 0.05      → KEEP (if direction=improved) or REGRESSION (if regressed)
+d 0.2-0.5 AND p < 0.05    → KEEP with caution (small effect, monitor for durability)
+d ≥ 0.5 AND p > 0.05      → ITERATE (real effect but insufficient reps — run more)
+any regression with d > 0.3 → REVERT immediately, investigate
+```
+
+### Multiple Comparison Correction
+
+If testing N targets simultaneously, apply Benjamini-Hochberg FDR correction to p-values before making decisions. Testing 20 personas without correction will produce ~1 false positive.
+
+### Stratified Verdict
+
+Don't just report overall. Break down by category:
+```
+Simple:   +3pp (not significant, at ceiling)
+Moderate: +8pp (p=0.02, d=0.7) ← main beneficiary
+Complex:  +12pp (p=0.001, d=1.1) ← strong improvement
+Extreme:  -2pp (not significant) ← no regression
+```
+
+A change can be KEEP for one stratum and ITERATE for another. That's fine — promote it and note which targets need further work.
+
+### Post-Comparison Analysis
+
+After deciding, generate an analysis:
+1. **What worked**: which targets improved, by how much, and why (trace the improvement to specific prompt changes or code changes)
+2. **What didn't**: which targets were unaffected, and what the failure mode is
+3. **Regressions**: any targets that got worse — root cause, reversal plan
+4. **Next hypotheses**: based on the remaining gaps, what should the next experiment target?
+
 Verdicts:
-- **KEEP**: Clear improvement, no regressions. Promote to main.
-- **ITERATE**: Didn't move, or moved wrong direction. Go back to Phase 5 with a variation. Check deployment first.
-- **ABANDON**: 2-3 variations tried, verified deployed each time, still no movement. Document why and move on.
-- **REGRESSION**: Something got worse. Revert. Investigate before trying again.
+- **KEEP**: d ≥ 0.5, p < 0.05, no regressions. Promote.
+- **ITERATE**: Didn't move enough, or insufficient reps. Run more data or try a variation.
+- **ABANDON**: 2-3 variations tried, verified deployed, still d < 0.2. Document why and move on.
+- **REGRESSION**: d > 0.3 in wrong direction. Revert immediately.
 
 ## Phase 8: Iterate
 
