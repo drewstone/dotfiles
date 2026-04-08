@@ -127,3 +127,42 @@ This makes mean and even median misleading.
 7. **Multiple testing without correction** — 20 personas × 1 comparison = expect 1 false positive. Use BH-adjusted p-values.
 
 8. **Ignoring bimodality** — if the distribution is bimodal, the median sits between two clusters and represents neither. Check and report both modes.
+
+## Advanced Techniques (use when N≥10 or cross-round analysis)
+
+### Correlation Analysis
+- `spearmanCorrelation(dimA, dimB)` — which dimensions predict overall success?
+- If form_accuracy and line_value_accuracy have rho > 0.7, they're measuring the same thing — fix one, both improve
+- If they're uncorrelated (rho < 0.3), they need independent fixes
+
+### Outlier Detection
+- `detectOutliers(scores)` — IQR-based flagging (value < Q1-1.5×IQR or > Q3+1.5×IQR)
+- Outlier runs often indicate infrastructure issues (sidecar crash, timeout), not model variance
+- Report outliers separately: "median 85% (N=10, 1 outlier at 31% excluded)"
+
+### Stratified Analysis
+- `stratify([{group: 'simple', score: 95}, ...])` — break results by category
+- "Simple personas: median 95% vs extreme: median 74%" is more actionable than "overall 85%"
+- Stratify by: complexity tier, state, error type, turn count
+
+### Change Point Detection
+- `detectChangePoint(rounds)` — which round caused the biggest jump/drop?
+- Automatically identifies the experiment that moved the needle
+- More rigorous than eyeballing trend lines
+
+### Score Drift (EWMA)
+- `ewma(scores, alpha=0.2)` — exponentially weighted moving average
+- Detects gradual degradation (model API changes, prompt rot)
+- If EWMA trends downward over 5+ runs, something systematic is wrong
+
+### When to use each technique
+| Question | Technique | Min N |
+|----------|-----------|-------|
+| Is this score reliable? | Bootstrap CI + CV | 3 |
+| Did this change help? | Cohen's d + Wilcoxon | 5 per group |
+| Which dimensions matter most? | Spearman correlation | 10 |
+| Is this run an outlier? | IQR outlier detection | 4 |
+| Where did quality change? | Change point detection | 5 rounds |
+| Is quality drifting? | EWMA | 10+ runs |
+| Are results bimodal? | Sarle's coefficient | 5 |
+| Are my p-values inflated? | BH FDR correction | any multiple test |

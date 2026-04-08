@@ -82,15 +82,32 @@ Common failure modes this prevents:
 
 **Only after the audit confirms what's real do you proceed to measurement and experimentation.**
 
-## Phase 2: Discover Measurement
+## Phase 2: Discover and Improve Measurement
 
-Check what exists before building anything:
+**Check what exists before building anything:**
 
 - Test suites, eval runners, benchmark scripts
 - Quality pipelines, CI workflows
 - Existing scorecards, dashboards, monitoring
+- `.evolve/` state from prior sessions (experiments.jsonl, progress.md, scorecard.json)
+- Existing scoring libraries (scoring.ts, metrics.ts, trace stores)
 
-**Use what exists.** Compose fragments. Only build from scratch if nothing suitable exists (invoke `/improve`).
+**Use what exists. Improve what's incomplete. Only build from scratch if nothing suitable exists.**
+
+### Audit existing eval infrastructure against the gold standard:
+
+| Component | Check | If missing |
+|-----------|-------|-----------|
+| Scoring dimensions | Are there ≥5 dimensions? Are weights explicit? | Add dimensions for the domain |
+| Per-turn metrics | Does scoring happen at each turn, or only at the end? | Add cumulative scoring after each turn |
+| Prompt versioning | Is there a `.evolve/prompts/` registry? | Create one, register current prompt as v0 |
+| Trace storage | Are full prompts + responses saved per run? | Add trace capture (JSONL + individual files) |
+| Statistical library | Does `eval-stats.ts` exist? Bootstrap CI? Effect size? | Copy from this skill's `eval-stats.ts` reference |
+| Cost tracking | Are tokens and estimated USD tracked per run? | Add token estimation to metrics |
+| Multi-rep support | Can you run N reps and get median/IQR? | Add a 3-rep runner script |
+| Optimization loop | Is there automated diagnosis → mutation → eval? | Build or adapt from this skill's patterns |
+
+**The eval infrastructure IS the product for improvement.** Investing in measurement quality has higher ROI than any single experiment. A project with 3 scoring dimensions and no traces can't improve systematically — fix that before running experiments.
 
 ## Phase 3: Measure Baseline
 
