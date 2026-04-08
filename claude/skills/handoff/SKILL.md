@@ -1,3 +1,8 @@
+---
+name: handoff
+description: Produce a session-to-session knowledge transfer brief. Reads current session work, git history, open PRs, memory, and `.evolve/` state, then writes a structured handoff doc the next session can execute immediately. Use when wrapping up a long session, switching projects, or after a major milestone. Triggers - "wrap up", "hand off", "prepare for next session", "save context".
+---
+
 # Handoff — Session-to-Session Knowledge Transfer
 
 Produce a dispatchable brief for the next session. Reads the current session's work, project state, git history, open issues, memory, and `.evolve/` state — then writes a structured handoff document that a fresh session can execute immediately.

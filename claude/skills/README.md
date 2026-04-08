@@ -2,46 +2,16 @@
 
 Portable Claude Code skills maintained in this dotfiles repo.
 
-## Inventory
+The source of truth for what each skill does is its `SKILL.md` frontmatter (`name`, `description`). To list current skills, read the directory:
 
-Current count: 18 skills.
-
-### Workflow
-
-- `code-review` — review diffs, branches, commits, or PRs
-- `critical-audit` — parallelized staff-level review
-- `diagnose` — failure triage and clustering
-- `evolve` — orchestrated improvement loop
-- `improve` — build experiment infrastructure
-- `init-context` — onboard into a repo quickly
-- `polish` — finish and tighten work
-- `research` — run improvement experiments
-- `verify` — pre-ship verification
-- `work-status` — quick status check
-
-### Analysis and compression
-
-- `ai-conversation-extractor` — convert AI JSONL transcripts to Markdown
-- `layered-summary` — generate layered repo summaries
-- `repomix-analysis` — pack repos for LLM analysis with `repomix`
-- `session-stripper` — compact and repair Claude Code sessions
-
-### Security and scanning
-
-- `semgrep` — multi-pass Semgrep scan orchestration
-
-### Product and design
-
-- `site-clone` — pixel-faithful site migration workflow
-- `tangle-branded-designer` — Tangle-specific UI guidance
-
-### Environment-specific
-
-- `bad` — Browser Agent Driver CLI reference and workflow
+```bash
+ls claude/skills/
+```
 
 ## Maintenance notes
 
-- Source of truth is `claude/skills/<name>/SKILL.md`.
-- Keep skill names in docs aligned with directory names. Example: the status skill is `work-status`, not `status`.
-- If a skill references helper workflows that are not shipped in this repo, mark them explicitly as external rather than implying they are locally available.
-- When adding or removing a skill, update this file and the top-level `README.md` in the same change.
+- Skills live at `claude/skills/<name>/SKILL.md`. Each one needs YAML frontmatter (`name`, `description`) at the top — without it, Claude Code's description-based loader cannot trigger the skill.
+- Run `./install.sh` from the repo root to symlink skills into `~/.claude/skills/`.
+- A subset is also synced to `~/.pi/agent/skills/` — see the `PI_SKILLS` array in `install.sh`.
+- Keep skill names in docs aligned with directory names.
+- If a skill references helper scripts that aren't shipped in this repo, mark them explicitly as external.
