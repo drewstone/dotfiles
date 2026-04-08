@@ -176,6 +176,19 @@ The shape of the review is a sketch, not a contract. Adapt to the project.
 
 The point of all six steps is the same: **make the cost of being wrong show up before you write code**. Done well, this phase saves more time than it spends. Done as a checkbox ritual, it is worse than nothing — so adapt the depth to the actual stakes of the change.
 
+### Audit history belongs in the pursuit doc, not in the code
+
+The review phase produces a lot of useful structure: persona names, plan letters, score matrices, "Plan B vetoed by Reliability." All of that is **session-local context**. It belongs in the pursuit doc you write to `.evolve/pursuits/<date>-<slug>.md`, where future agents can read it as history. **It does not belong in code comments, type docstrings, or commit messages**, because:
+
+- A future agent reading the code six months from now has no idea what "Plan D-prime" was. The label is meaningless without the audit doc next to it.
+- "Plan D-prime success criterion" in a docstring tells the reader nothing actionable. "≥95% of runs hit this within the deadline" tells them the actionable target — write *that* instead.
+- Persona names ("Adversarial Red Team review surfaced X") are noise; the *finding* is the signal. Write the finding as a normal technical statement.
+- Build-phase comments should describe *the code's behavior and the why behind it*, not the design process that produced it.
+
+When the build phase quotes from the review, **paraphrase the rationale into a project-agnostic technical statement**. "This is idempotent because two concurrent calls in the same workspace would corrupt the pnpm store" is correct. "This is idempotent per Reliability finding #4 in the Plan D' review" is wrong, even though it's the same fact, because the second form is unreadable to anyone who wasn't in the audit room.
+
+Same rule for commit messages: describe what the change does and why the code is shaped that way, not which audit phase ranked which alternative. The pursuit doc is the audit log; the code is the result.
+
 ## Phase 2: Build — Complete Before Testing
 
 Build ALL changes for the generation before testing any of them. This is critical — you cannot A/B test interacting changes independently. Partial testing gives misleading results.
