@@ -12,6 +12,134 @@ A reusable pattern for building multi-tenant AI agent platforms where:
 - **Consumers** buy API keys to chat with someone else's trained agent
 - **The platform** (Tangle) takes a revenue cut via on-chain settlement
 
+## Core Architecture: The Sandbox IS the Agent
+
+The fundamental insight: **the sandbox already runs the agent.** You don't need to extract or freeze it. You add a thin proxy layer in front that handles payment + security:
+
+```
+                 CONSUMER
+        ┌────────────────────────┐
+        │ Claude Desktop, Cursor │  ← MCP client
+        │ OR                     │
+        │ HTTP client w/ x402    │  ← Direct API
+        └────────────┬───────────┘
+                     │
+                     │ POST /v1/agents/:slug/chat/completions
+                     │ X-Payment-Signature: <EIP-712 SpendAuth>
+                     │ (or Authorization: Bearer sk_agent_...)
+                     ▼
+        ┌────────────────────────────────────┐
+        │  AGENT GATEWAY (proxy)             │
+        │                                    │
+        │  1. Resolve agent slug             │
+        │  2. Verify x402 sig OR API key    │
+        │  3. Apply prompt filter            │
+        │     - strip private vault refs    │
+        │     - block prompt injection      │
+        │     - cap message length          │
+        │  4. Forward to owner's sandbox    │
+        │  5. Stream OpenAI-compatible      │
+        │  6. Count tokens                   │
+        │  7. Settle on-chain (x402) OR     │
+        │     deduct credits (API key)       │
+        │  8. Record usage → owner balance  │
+        └────────────┬───────────────────────┘
+                     │
+                     │ streamSandboxPrompt(box, msg, {...})
+                     ▼
+        ┌────────────────────────────────────┐
+        │  OWNER'S SANDBOX SIDECAR           │
+        │  (the trained agent — unchanged)   │
+        │                                    │
+        │  - Same system prompt the owner   │
+        │    uses themselves                 │
+        │  - Same tools they customized     │
+        │  - Same vault knowledge           │
+        │  - LLM via tcloud                  │
+        └────────────────────────────────────┘
+```
+
+**Why this is elegant:**
+- No snapshot mechanism needed — owner keeps training, consumers get the live agent
+- The sandbox already exists; the proxy is ~250 LOC
+- Two interface protocols, same backend: OpenAI HTTP + MCP server
+- Two payment models, same auth surface: x402 (on-chain) + API keys (Stripe)
+
+## Working Reference Implementation
+
+A minimal working proxy exists in `~/code/film-agent/src/routes/v1.agents.$slug.chat.completions.ts`. It demonstrates:
+
+- `GET /v1/agents/:slug/chat/completions` — discovery (returns metadata + accepted payment methods, no auth)
+- `POST` without payment → `HTTP 402` with full payment instructions (x402 + API key options)
+- `POST` with `Authorization: Bearer sk_agent_...` → API key auth path
+- `POST` with `X-Payment-Signature: {commitment, signature, ...}` → x402 path
+- Both paths apply prompt filtering, forward to `streamSandboxPrompt(box, ...)`, return SSE in OpenAI format
+
+### x402 Verification (already exists in tangle-router)
+
+`~/code/tangle-router/lib/shielded/verify.ts` — `verifySpendAuthSignature()` recovers EIP-712 signer from a SpendAuth payload. The full flow (`~/code/tangle-router/app/api/chat/route.ts:201-292`):
+
+1. Read `X-Payment-Signature` header (JSON)
+2. Field validation (operator, expiry, amount > 0)
+3. EIP-712 signature recovery via viem
+4. Nonce replay check (Redis-backed)
+5. Per-commitment rate limit (120 req/min)
+6. Call `ShieldedCredits.authorizeSpend()` on-chain
+7. Serve inference
+8. Call `ShieldedCredits.claimPayment()` post-response
+
+The agent gateway can import this verification module directly — no need to rebuild it.
+
+### x402 Domain (already on-chain)
+
+- Chain: Tangle (testnet 3799, mainnet 5845)
+- Contract: `ShieldedCredits` (address in `SHIELDED_CREDITS_ADDRESS` env)
+- Anonymous funding via VAnchor pool — no KYC, no email
+- Consumer flow: generate ephemeral wallet → fund commitment → sign SpendAuth per request
+
+### MCP Server Wrapper (the second protocol)
+
+Same proxy can be exposed as an MCP server. Each MCP `tools/call` becomes an x402-protected request to the agent. The MCP server advertises one tool per agent:
+
+```typescript
+// mcp-server/src/index.ts
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+
+const server = new Server({ name: 'tangle-agent-marketplace', version: '0.1.0' })
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: await fetchPublishedAgents().then(agents =>
+    agents.map(a => ({
+      name: a.slug,
+      description: a.description,
+      inputSchema: { type: 'object', properties: { message: { type: 'string' } } },
+    }))
+  ),
+}))
+
+server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const slug = req.params.name
+  const message = req.params.arguments.message
+  // Sign x402 + forward to gateway
+  const sig = signSpendAuth({ /* ... */ })
+  const res = await fetch(`https://gateway.tangle.tools/v1/agents/${slug}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Payment-Signature': JSON.stringify(sig),
+    },
+    body: JSON.stringify({ messages: [{ role: 'user', content: message }] }),
+  })
+  // Stream → collect → return
+  return { content: [{ type: 'text', text: await res.text() }] }
+})
+
+await server.connect(new StdioServerTransport())
+```
+
+Claude Desktop / Cursor add this MCP server once → all published agents become callable tools, with payments handled transparently by the MCP wrapper.
+
 ## The Three Surfaces
 
 Every Tangle agent app has three distinct surfaces:
