@@ -65,6 +65,127 @@ The fundamental insight: **the sandbox already runs the agent.** You don't need 
 - Two interface protocols, same backend: OpenAI HTTP + MCP server
 - Two payment models, same auth surface: x402 (on-chain) + API keys (Stripe)
 
+## The Sovereignty Path: Centralized → Self-Hosted Operator
+
+The same `@tangle-network/sandbox` SDK that talks to centralized Tangle infrastructure ALSO talks to a self-hosted blueprint operator. The SDK accepts:
+
+- `baseUrl` — the operator's HTTP endpoint
+- `apiPrefix` — `/api/sandboxes` for ai-agent-sandbox-blueprint operators (`/v1/sandboxes` is the centralized default)
+- `apiKey` — the PASETO bearer token (acquired via EIP-191 challenge on the operator)
+
+So sovereignty mode is implemented by **swapping the Sandbox client constructor**, not by writing custom HTTP code:
+
+```typescript
+// src/lib/.server/sandbox/index.ts
+
+// Centralized: defaults to https://sandbox.tangle.tools
+function getClient(): Sandbox {
+  return new Sandbox({
+    apiKey: process.env.SANDBOX_API_KEY,
+    baseUrl: process.env.SANDBOX_API_URL ?? 'https://sandbox.tangle.tools',
+  })
+}
+
+// Sovereign: targets a blueprint operator the owner controls
+export function getRemoteOperatorClient(endpoint: string, bearerToken: string): Sandbox {
+  return new Sandbox({
+    apiKey: bearerToken,                    // PASETO from EIP-191 challenge
+    baseUrl: endpoint.replace(/\/+$/, ''),  // operator URL
+    apiPrefix: '/api/sandboxes',            // blueprint convention
+  })
+}
+
+export async function getRemoteSandboxById(
+  endpoint: string, bearerToken: string, sandboxId: string,
+): Promise<SandboxInstance> {
+  return getRemoteOperatorClient(endpoint, bearerToken).get(sandboxId)
+}
+```
+
+Then the gateway picks the right client based on `published.sandbox_endpoint`:
+
+```typescript
+const box = agent.sandboxEndpoint
+  ? await getRemoteSandboxById(agent.sandboxEndpoint, agent.remoteBearerToken, agent.remoteSandboxId)
+  : await ensureWorkspaceSandbox(agent.workspaceId, agent.ownerId)
+
+// Same SDK call in both modes — no protocol-specific code in the gateway
+const promptStream = streamSandboxPrompt(box, userMessage, { sessionId, systemPrompt })
+```
+
+**Why this works:** the ai-agent-sandbox-blueprint exposes the same conceptual API as the centralized orchestrator (sandbox CRUD, prompt, task, exec, snapshot). The blueprint runtime is built specifically to be SDK-compatible. The only differences are:
+- Path prefix (`/api/sandboxes` vs `/v1/sandboxes`)
+- Auth (PASETO from EIP-191 vs orchestrator API key)
+
+Both are SDK config options. **Zero custom HTTP code needed in the proxy.**
+
+### Migration Flow (5 steps)
+
+1. **Owner clicks "Export workspace" in film-agent UI**
+   `GET /api/workspaces/:id/export` → returns a JSON bundle with vault files, system prompt, tools, threads, generations, and a deployment manifest pointing at `ghcr.io/tangle-network/sidecar:latest`
+
+2. **Owner submits `JOB_SANDBOX_CREATE` on Tangle**
+   Pays ~$0.05 in TNT (50× base rate). Provides:
+   ```rust
+   CreateSandboxParams {
+     name: "neo-noir-director",
+     image: "ghcr.io/tangle-network/sidecar:latest",
+     agent_identifier: "default",
+     env_json: "{}",
+     metadata_json: "{...}",
+     ...
+   }
+   ```
+   Operator provisions the sandbox, returns the sandbox ID.
+
+3. **Owner authenticates with the operator**
+   ```
+   POST {operator}/api/auth/challenge   → nonce
+   sign with EIP-191                    → signature
+   POST {operator}/api/auth/session     → PASETO token (1h TTL)
+   ```
+
+4. **Owner restores state**
+   For each vault file in the export bundle:
+   ```
+   POST {operator}/api/sandboxes/:id/exec
+   { command: "mkdir -p ~/agent/<dir> && cat > ~/agent/<file> <<EOF\n<content>\nEOF" }
+   ```
+   For each tool:
+   ```
+   POST {operator}/api/sandboxes/:id/exec
+   { command: "cat > /usr/local/bin/film-shot-list <<EOF\n<script>\nEOF && chmod +x /usr/local/bin/film-shot-list" }
+   ```
+
+5. **Owner publishes with sovereignty config**
+   ```
+   POST /api/workspaces/:id/export   (action handler — "publish" verb)
+   {
+     sandbox_endpoint: "https://my-operator.tangle.tools",
+     remote_sandbox_id: "sandbox-uuid-from-step-2",
+     remote_bearer_token: "v4.local.<paseto-from-step-3>",
+     slug: "neo-noir-director",
+     price_per_token_usd: 0.00003
+   }
+   ```
+   The gateway URL `/v1/agents/neo-noir-director/chat/completions` stays the same. Consumer requests now route through the SDK to the owner's operator instead of Tangle's centralized infrastructure.
+
+### What Stays the Same
+
+- Same gateway URL (consumers don't notice the migration)
+- Same x402 / API key payment surface
+- Same prompt filter (security boundary stays at the gateway)
+- Same SDK methods (`streamSandboxPrompt`, `box.get()`, etc.)
+- Same sidecar image (so the agent's tools and behavior are bit-identical)
+- Same MCP server wrapper (just points at a different gateway URL if needed)
+
+### What Changes
+
+- The owner pays the operator for compute (off-chain RFQ or on-chain TNT)
+- The owner earns the inference revenue minus operator costs (instead of platform splitting it)
+- The owner can verify TEE attestation if using TEE instance mode
+- The platform's role shrinks to: discovery, payment routing, marketplace, identity
+
 ## Working Reference Implementation
 
 A minimal working proxy exists in `~/code/film-agent/src/routes/v1.agents.$slug.chat.completions.ts`. It demonstrates:
