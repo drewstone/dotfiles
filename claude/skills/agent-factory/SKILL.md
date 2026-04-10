@@ -204,29 +204,61 @@ Register all in `src/routes.ts`.
 
 ### Phase 6: UI Routes (25 min)
 
-Build all UI shells using sandbox-ui components:
+Build all UI shells using sandbox-ui components. **DO NOT rebuild what sandbox-ui already provides.** Use the library's workspace, chat, files, and editor modules. Only write custom code for domain-specific layouts that don't exist in the library.
 
-**Run in parallel — all independent:**
+**CRITICAL: Use these sandbox-ui components — do NOT rewrite them:**
 
-1. **Root + App shell** — TopBar, workspace selector, auth redirect
-2. **Workspace layout** — Left sidebar nav (Chat, Studio, Tasks, Calendar, Inbox, Vault, Settings) with badge counts
-3. **Chat** — Thread list sidebar, streaming messages (ChatMessage, ChatInput, ThinkingIndicator), auto-scroll, abort
-4. **Studio** — Generation gallery with filter tabs, detail modal, relative time, "Open in Vault" links
-5. **Tasks** — Drag-drop kanban (@hello-pangea/dnd), create/edit/delete dialogs, priority badges, due dates
-6. **Calendar** — Month grid with event dots, day detail panel, prev/next navigation, month/list toggle, create/edit/delete
-7. **Inbox** — Confidence stats cards, pending proposals with approve/reject, rejection reason textarea, resolved history
-8. **Vault** — File tree sidebar with search, file viewer with frontmatter parsing, edit mode, create/delete files
-9. **Settings** — General config, domain-specific fields, member management, danger zone
-
-**Component imports from sandbox-ui:**
 ```tsx
+// Workspace components (use these, not custom implementations)
+import { SessionSidebar } from '@tangle-network/sandbox-ui/workspace'     // Thread/session list sidebar
+import { DirectoryPane } from '@tangle-network/sandbox-ui/workspace'       // Vault file tree
+import { TaskBoard } from '@tangle-network/sandbox-ui/workspace'           // Kanban board
+import { CalendarView } from '@tangle-network/sandbox-ui/workspace'        // Month grid calendar
+import { ApprovalQueue } from '@tangle-network/sandbox-ui/workspace'       // Approval/inbox workflow
+import { WorkspaceLayout } from '@tangle-network/sandbox-ui/workspace'     // 3-panel layout shell
+import { ArtifactPane } from '@tangle-network/sandbox-ui/workspace'        // File/artifact viewer frame
+import { TerminalPanel } from '@tangle-network/sandbox-ui/workspace'       // Shell terminal
+
+// Chat components
+import { ChatMessage, ChatInput, ThinkingIndicator } from '@tangle-network/sandbox-ui/chat'
+import { AgentTimeline } from '@tangle-network/sandbox-ui/chat'            // Tool call visualization
+
+// Files + editor
+import { FileArtifactPane } from '@tangle-network/sandbox-ui/files'        // File viewer + editor
+import { DocumentEditorPane } from '@tangle-network/sandbox-ui/editor'     // Collaborative editing
+import { Markdown } from '@tangle-network/sandbox-ui/markdown'             // Markdown rendering
+
+// Run/tool visualization
+import { ToolCallFeed } from '@tangle-network/sandbox-ui/run'              // Streaming tool calls
+
+// Dashboard (if needed)
+import { Sidebar, SidebarRail } from '@tangle-network/sandbox-ui/dashboard' // Icon-rail navigation
+
+// Primitives
 import { Button, Card, CardContent, Badge, Input, Label, Textarea,
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
   EmptyState, Skeleton, Tabs, TabsList, TabsTrigger,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@tangle-network/sandbox-ui'
-import { ChatMessage, ChatInput, ThinkingIndicator } from '@tangle-network/sandbox-ui/chat'
 ```
+
+**Build these pages — each uses the components above:**
+
+1. **Root + App shell** — Sidebar nav, workspace selector, auth redirect
+2. **Workspace layout** — Use `WorkspaceLayout` (3-panel) or `Sidebar`+`SidebarRail` for navigation
+3. **Chat** — Use `SessionSidebar` for thread list + `ChatMessage`/`ChatInput`/`ThinkingIndicator` for messages + `AgentTimeline` for tool calls. Strip `:::blocks` from displayed text.
+4. **Studio** — Generation gallery (custom — sandbox-ui has no generation gallery). Use `Card`, `Badge`, `Tabs`, `Dialog`.
+5. **Tasks** — Use `TaskBoard` component. Wire `@hello-pangea/dnd` for drag-drop via `onMoveItem`. Pass `renderItemMeta` and `renderBadge` for domain-specific styling.
+6. **Calendar** — Use `CalendarView` component. Pass `renderEventChip` for event type colors. Pass `renderDayDetail` for click-to-view.
+7. **Inbox** — Use `ApprovalQueue` component. Pass `renderTypeBadge` for domain action types. Pass `onApprove`/`onReject` callbacks.
+8. **Vault** — Use `DirectoryPane` for file tree + `FileArtifactPane` or `DocumentEditorPane` for viewing/editing. For collaborative editing, use `DocumentEditorPane` with `backend="collaborative"`.
+9. **Settings** — Custom page using primitives (`Card`, `Input`, `Select`, `Dialog`). No sandbox-ui equivalent.
+
+**What sandbox-ui does NOT provide (build custom):**
+- Generation gallery / Studio page (domain-specific)
+- Settings page (domain-specific config fields)
+- Login/signup pages (auth-specific)
+- Workspace creation wizard
 
 ### Phase 7: Feedback Loops (10 min)
 
@@ -318,13 +350,26 @@ Everything else — auth, RBAC, chat pipeline, streaming, post-processing, vault
 ## Anti-Patterns
 
 - Don't build auth from scratch — BetterAuth handles it
-- Don't create custom UI components — use sandbox-ui
+- **Don't rebuild what sandbox-ui already provides** — check the library FIRST. The following are provided and should NOT be reimplemented:
+  - Thread/session sidebar → `SessionSidebar`
+  - File tree browser → `DirectoryPane` + `FileArtifactPane`
+  - Kanban board → `TaskBoard`
+  - Calendar grid → `CalendarView`
+  - Approval queue → `ApprovalQueue`
+  - Chat messages → `ChatMessage` + `ChatInput` + `ThinkingIndicator` + `AgentTimeline`
+  - Document editing → `DocumentEditorPane` (collaborative mode built in)
+  - Markdown rendering → `Markdown` component (not raw `<pre>` tags)
+  - Tool call visualization → `ToolCallFeed`
+  - Layout shells → `WorkspaceLayout`, `ArtifactPane`
 - Don't write a custom streaming parser — copy stream-normalizer.ts
 - Don't implement your own billing — use the Stripe + credit ledger pattern
 - Don't stub tools — write real implementations or skip them
 - Don't mock tcloud in tests — use real API calls against router.tangle.tools
 - Don't deploy without real D1/KV IDs in wrangler.toml
 - Don't skip the eval harness — it's how you prove the agent works
+- Don't use tcloud SDK's SSE parser in Cloudflare Workers — use raw fetch + manual SSE line parsing (the SDK's async generators don't work in Workers runtime)
+- Don't use `window.history.replaceState` in React Router — use `navigate()` with `replace: true` so the router tracks URL changes for revalidation
+- Don't display raw `:::block` text in chat UI — strip them before rendering (they're for the post-processor)
 
 ## Reference Projects
 
