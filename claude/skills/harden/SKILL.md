@@ -74,7 +74,7 @@ If any of these don't exist, note it — but you still must extend whatever IS t
 
 Derive the attack surface autonomously by reading the code. Write every target, with its attack class and risk, to `.evolve/harden/<date>-surface.md`.
 
-**Four scan dimensions — run in parallel subagents:**
+**Six scan dimensions — run in parallel subagents:**
 
 1. **Invariants.** What claims does the code implicitly make? Every state machine transition, every access-control check, every data-flow boundary is an invariant. Examples:
    - "After `revokeToken(jti)`, no request with that jti succeeds."
@@ -88,16 +88,38 @@ Derive the attack surface autonomously by reading the code. Write every target, 
    - Headers (CRLF injection, oversized)
    - File uploads (zip bombs, symlink targets, malformed archives)
 
-3. **Attack surface.** Every trust boundary, external dependency, credential storage. Examples:
-   - SSRF targets (cloud metadata, internal services)
-   - Auth bypass (token replay, cid confusion, alg substitution)
-   - Container escape (if containerized)
-   - Supply chain (npm postinstall, git hook, malicious mirror)
+3. **Attack surface (OWASP + beyond).** Every trust boundary, external dependency, credential. Systematic — run every applicable class, not just the ones that look likely:
+   - **Injection:** SQL, NoSQL, OS command, LDAP, XPath, template (SSTI), header (CRLF), log injection. Test every input→query/exec path.
+   - **Broken auth:** Token replay, session fixation, JWT `alg:none`/`alg:HS256` on RS256 keys, credential stuffing timing oracle, password reset token prediction, OAuth state parameter bypass, PKCE downgrade.
+   - **BOLA/IDOR:** Enumerate every endpoint with an ID param. Replace your ID with another tenant's. Try sequential IDs, UUIDs from other responses, zero, negative, max-int.
+   - **SSRF:** Every place the server fetches a URL. Try `169.254.169.254`, `localhost:PORT`, `file://`, gopher, DNS rebinding. Chain SSRF through redirects.
+   - **Mass assignment:** POST/PUT with extra fields (`isAdmin: true`, `role: owner`, `creditBalance: 999999`). Check if the ORM/framework silently accepts them.
+   - **Security misconfiguration:** Default credentials, debug endpoints (`/debug`, `/metrics`, `/graphql`), verbose error messages leaking stack traces, CORS `*`, missing rate limits on auth endpoints.
+   - **Cryptographic failures:** Hardcoded secrets in source/env/logs, weak hashing (MD5/SHA1 for passwords), missing HTTPS enforcement, predictable tokens (timestamp-based, sequential).
+   - **CSRF/clickjacking:** State-changing POST/PUT/DELETE without CSRF tokens. Missing `X-Frame-Options`/CSP `frame-ancestors`.
+   - **Deserialization:** If the app deserializes user-controlled data (JSON.parse of untrusted, pickle, Java serialization), try injection payloads.
+   - **Supply chain:** `npm audit --audit-level=critical`, `cargo audit`, `pip-audit`. Check for postinstall scripts in deps. Pin vs range analysis.
 
-4. **Benchmark gaps.** Every latency-sensitive path, every resource-bounded operation. Examples:
+4. **Credential hunting.** Secrets leak. Find them before an attacker does.
+   - `git log --all -p | grep -iE 'api.?key|secret|password|token|sk-|pk-'` — scan full git history, not just HEAD
+   - Grep source for hardcoded keys, connection strings, JWTs, private keys
+   - Check `.env*` files for overly broad permissions (644 not 600)
+   - Check logs/debug output for leaked tokens or PII
+   - Check error responses for internal paths, stack traces, or credential fragments
+   - Check CI configs for secrets in plaintext (not using secret managers)
+
+5. **Race conditions & TOCTOU.** Concurrent mutations are where billing, auth, and state machines break.
+   - Double-spend: send N identical debit requests simultaneously. Does balance go negative?
+   - Signup race: create same account from 2 threads. Duplicate user? Orphaned state?
+   - Token revocation race: revoke + use token simultaneously. Does the use succeed?
+   - File/resource TOCTOU: check-then-act patterns where another request can mutate between check and act
+   - Use `Promise.all` with 10-50 concurrent requests against every state-changing endpoint
+
+6. **Benchmark gaps.** Every latency-sensitive path, every resource-bounded operation. Examples:
    - Hot-path functions with no `.bench()` coverage
    - Concurrency paths with no load test
    - Memory-bound operations with no leak test
+   - ReDoS: regex patterns with backtracking on user input
 
 ## Phase 2: Rank
 
@@ -124,20 +146,61 @@ For each selected target, add coverage to the REAL harness. Rules:
 - **Benchmarks → existing bench runner.** Add to the benchmark suite that CI already runs. If there's no benchmark job in CI, surface this gap in the report but don't fork infra — flag it for `/pursue`.
 - **Observability → existing telemetry.** Every adversarial test emits metrics to the same channel real tests use.
 
-## Phase 4: Execute
+## Phase 4: Execute — Red Team
 
-Run the real system. No mocks beyond process boundaries.
+Run the real system. No mocks beyond process boundaries. **Think like an attacker, not a tester.** The goal is not "check that auth exists" — it's "bypass auth, escalate to admin, read another tenant's data, and prove the full chain with a reproducible script."
 
-- Real DB? Spin up the real DB (docker-compose service, testcontainer, or the project's canonical test DB).
+### Environment
+
+- Real DB? Spin up the real DB (docker-compose, testcontainer, or the project's canonical test DB).
 - Real HTTP? Start the real server on a real port.
-- Real container/sandbox? Use the project's SDK (e.g., sandbox SDK) to spawn real containers. Run exploit PoCs inside them.
+- Real container/sandbox? Use the project's SDK to spawn real containers. Run exploit PoCs inside them.
 - Real agent? Invoke the real agent with real tools against real endpoints.
 - Real UI? Drive it with Playwright/bad CLI against a real DOM.
 
-Capture everything:
-- Invariant holds / fails
+### Offensive methodology
+
+For every target from the ranked surface, execute in this order:
+
+1. **Recon.** Map the real attack surface from the outside — enumerate endpoints, discover hidden routes (`/debug`, `/admin`, `/graphql`, `/metrics`, `/.env`), fingerprint frameworks/versions, collect error messages for info leaks.
+
+2. **Exploit.** Write the actual exploit code. Not "this endpoint might be vulnerable to SSRF" — `curl -X POST https://target/api/proxy -d '{"url":"http://169.254.169.254/latest/meta-data/"}'` and show the response. Every finding needs a runnable PoC.
+
+3. **Escalate.** Chain findings. Auth bypass alone is a finding. Auth bypass → read another user's API keys → use those keys to access their sandboxes → exfiltrate their code → that's a critical chain. Always try to escalate:
+   - Anonymous → authenticated (registration bypass, default creds, token theft)
+   - User → admin (IDOR on admin endpoints, mass assignment on role fields, JWT claim manipulation)
+   - Single-tenant → cross-tenant (swap tenant IDs in tokens, shared resource access, cache poisoning)
+   - Application → infrastructure (SSRF to cloud metadata, container escape, env var exfiltration)
+
+4. **Exfiltrate.** Prove impact. If you got access, show what data you can read. If you bypassed billing, show the zero-cost request. If you escaped a sandbox, show host filesystem access. The PoC should make the severity undeniable.
+
+5. **Persist.** Can the attacker maintain access? Planted JWT with no expiry, webhook to external URL, modified config that survives restart. Check these paths exist even if you don't exploit them — note them as findings.
+
+### Race condition execution
+
+Don't just theorize about races — trigger them:
+
+```typescript
+// Example: billing double-spend race
+const results = await Promise.allSettled(
+  Array.from({ length: 20 }, () =>
+    fetch('/api/billing/debit', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ amount: userBalance }), // full balance, 20x
+    })
+  )
+)
+const successes = results.filter(r => r.status === 'fulfilled' && r.value.ok)
+// If successes > 1, the user spent more than their balance. Finding: CRITICAL.
+```
+
+### Capture everything
+
+- Invariant holds / fails (with 10K+ inputs for "holds" claims)
 - Counterexample on failure (minimal reproduction)
-- Attack succeeds / blocked (with PoC code on success)
+- **Full exploit chain** on success (runnable script, not prose)
+- **Exact HTTP requests/responses** for every finding (curl commands preferred)
 - Performance number + delta from baseline
 - Tokens, time, cost, side effects, state deltas
 
@@ -149,13 +212,41 @@ Write `.evolve/harden/<date>-report.md`:
 # Harden Report — <scope>
 Date: <date>
 
-## Proven
+## Proven invariants
 | Invariant | Inputs tested | Result |
 | After revokeToken(jti), all requests with jti fail | 10,000 adversarial | HOLDS |
 
-## Broken
-| Finding | Severity | PoC | File:Line |
-| SSRF to 169.254.169.254 succeeds from sandbox | CRITICAL | [curl command] | docker.ts:597 |
+## Exploit chains (CRITICAL/HIGH)
+| # | Chain | Severity | Impact |
+| 1 | Anonymous → IDOR on /api/users/:id → read any user's API keys → use key to access their sandbox | CRITICAL | Full cross-tenant data access |
+
+### Chain 1: Cross-tenant data exfiltration via IDOR
+**Recon:** GET /api/users/1 returns 200 with full profile when authenticated as user 2.
+**Exploit:**
+```bash
+# As user 2, read user 1's API keys
+curl -H "Authorization: Bearer $USER2_TOKEN" https://target/api/users/1/keys
+# Response: {"keys": [{"id": "sk-tan-abc123", "name": "production"}]}
+
+# Use stolen key to access user 1's sandbox
+curl -H "Authorization: Bearer sk-tan-abc123" https://target/api/sandbox/list
+# Response: user 1's sandboxes visible
+```
+**Escalation:** API key grants full sandbox access including file read/write.
+**Impact:** Any authenticated user can read any other user's credentials and access their infrastructure.
+**Fix:** `requireOwnership(userId, session.user)` check on `/api/users/:id/*` routes. See file:line.
+
+## Credential findings
+| Location | Type | Severity |
+| git log (commit abc123, 2025-03-14) | Hardcoded Stripe secret key in .env committed then removed | HIGH — still in git history |
+
+## Race condition findings
+| Endpoint | Concurrent requests | Result |
+| POST /api/billing/debit | 20 simultaneous full-balance debits | 3 succeeded — user spent 3x balance | CRITICAL |
+
+## Dependency vulnerabilities
+| Package | CVE | Severity | Fix |
+| lodash@4.17.20 | CVE-2021-23337 | HIGH | Upgrade to 4.17.21 |
 
 ## Still unknown
 | Surface | Why couldn't I reach it |
