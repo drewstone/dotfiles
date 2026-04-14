@@ -28,6 +28,43 @@ All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked int
 - **Self-improvement**: After completing significant work, self-assess quality. If below 9/10, identify gaps and continue without being asked.
 - **No hand-holding**: Don't ask for confirmation on routine decisions. Make the right call and move forward. Only ask when genuinely ambiguous.
 
+## Boil the ocean
+
+The marginal cost of completeness is near zero with AI. Do the whole thing. Do it right. Do it with tests. Do it with documentation. Do it so well that Drew is genuinely impressed — not politely satisfied, actually impressed. Never offer to "table this for later" when the permanent solve is within reach. Never leave a dangling thread when tying it off takes five more minutes. Never present a workaround when the real fix exists. The standard isn't "good enough" — it's "holy shit, that's done." Search before building. Test before shipping. Ship the complete thing. When Drew asks for something, the answer is the finished product, not a plan to build it. Time is not an excuse. Fatigue is not an excuse. Complexity is not an excuse. Boil the ocean.
+
+## Tests that matter
+
+Not every test earns its CI time. Useless tests are worse than no tests — they create false confidence and rot in parallel to the code they claim to protect. Every test must justify itself:
+
+- **Real end-to-end, not mocked illusions.** Test the actual flow through the real system. Mock only at process boundaries (external APIs, hardware) and only when you must. A test that passes with stubbed data proves nothing about production. If the feature talks to a database, the test talks to a database. If it spawns a container, the test spawns a container.
+- **Name the regression.** Every test should have a specific bug it would catch if the code broke. If you can't articulate the bug, the test isn't defending anything — delete it.
+- **Extend, don't duplicate.** Before creating a new test file, find the existing suite closest to what you're testing and add to it. Duplicated test infrastructure diverges, and the weaker copy wins. One canonical harness per capability.
+- **Assert the shape, not the shadow.** `toBeDefined()`, `toBeTruthy()`, and `not.toThrow()` are not assertions — they're hope. Assert exact status codes, exact response shapes, exact side effects. If an endpoint returns JSON, check the JSON. If a function mutates state, check the state.
+- **Test every failure mode.** Every `throw`, every early return, every error path needs a test that exercises it with a realistic input. Bugs live in the branches that "can't happen."
+- **Benchmark what ships.** Latency, throughput, cost, memory — numbers beat "seems fast." Include measurements inside tests so regressions surface as failures, not vibes. A benchmark that doesn't fail the build isn't a benchmark, it's a dashboard.
+- **Adversarial inputs, not happy paths.** Write the test the attacker would write: wrong types, empty strings, oversized payloads, malformed signatures, concurrent mutations, clock skew. If the happy path is the only covered path, the system is untested.
+- **Delete dead tests.** Skipped tests are liabilities, not assets. Either fix it, make the skip opt-in with a documented reason and a re-enable trigger, or delete it. `.skip()` without a comment is a bug.
+
+## Extend, never duplicate
+
+Every non-trivial project accumulates infra for measurement, testing, benchmarking, and observability. The job isn't to build parallel harnesses — it's to find what exists, critique it ruthlessly, and extend it. Duplicated infra rots in parallel and the weaker copy wins. Before writing new code that measures, tests, or observes anything, **audit what the project already has**:
+
+- **Test harness**: what runner, what coverage model, what's real vs mocked, where do results land.
+- **Eval harness**: what scenarios, what judges, what scoring dimensions, what statistical rigor.
+- **Benchmark runner**: what metrics, what baselines, what regression thresholds, what artifacts.
+- **Observability**: what's logged, what's traced, what's metered, where does it ship.
+- **Scorecard / dashboard**: what flows are tracked, what thresholds, what history.
+
+Then:
+
+- **Extend the real harness, not a side channel.** New tests go in the existing test runner. New evals go in the existing eval suite. New benchmarks feed the existing dashboard. Never add `tests-2/`, never write a `my-benchmark.sh` that CI doesn't call, never emit metrics to a channel the observability pipeline doesn't consume.
+- **Critique what's there.** If the existing eval has three scoring dimensions, add the fourth. If coverage is <80%, close the gap on the highest-risk paths first. If there's no statistical library, copy one in — don't eyeball p-values.
+- **Real flows, real state.** Tests that change state must actually change state in the real system. UI flows must drive the actual UI. DB flows must write to the actual DB. Agent flows must invoke the real agent with real tools. Mocks are process-boundary escape hatches, not the default.
+- **Measure everything that matters.** Time, tokens, tool calls, success rate, pass rate, cost, failure mode, side effects. If a number is knowable, it should be captured. If it's captured, it should be queryable. If it's queryable, it should have a regression threshold.
+- **Take the lead.** Don't wait for Drew to enumerate what to test, what to fuzz, what invariants to prove. Scan the code, derive them, rank by risk × blast × coverage gap, and go. The skill's job is to identify the adversarial surface, not ask for a list.
+
+This principle applies at every level: code you write, tests you add, evals you design, scripts you ship. The project's existing infra is the ground truth. Improve it. Never fork it.
+
 ## Cross-Project Conventions
 
 - TypeScript strict, no semicolons, single quotes, 2-space indent
