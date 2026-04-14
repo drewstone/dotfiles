@@ -1,15 +1,5 @@
 {
   "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/notify_done.sh"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -25,9 +15,9 @@
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
-    "codex@openai-codex": true
+    "codex@openai-codex": true,
+    "last30days@last30days-skill": true
   },
-  "skipDangerousModePermissionPrompt": true,
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
       "source": {
@@ -40,7 +30,15 @@
         "source": "github",
         "repo": "openai/codex-plugin-cc"
       }
+    },
+    "last30days-skill": {
+      "source": {
+        "source": "github",
+        "repo": "mvanhorn/last30days-skill"
+      }
     }
   },
-  "effortLevel": "high"
+  "effortLevel": "high",
+  "fastMode": true,
+  "skipDangerousModePermissionPrompt": true
 }

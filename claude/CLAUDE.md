@@ -77,10 +77,10 @@ This principle applies at every level: code you write, tests you add, evals you 
 
 ## Ops Board — Task Tracking
 
-Every Claude Code session uses the ops board to track work. It's a SQLite-backed kanban at `~/tools/ops-board/`.
+Every Claude Code session uses the ops board to track work. It's a **Turso-backed** kanban shared across every machine (local Mac + remote Hetzner). Source at `~/company/tools/ops-board/`. See `~/company/tools/ops-board/README.md` and `~/company/devops/processes/shared-state.md` for architecture.
 
-**DB path:** `~/company/agent-state/ops/ops-board.db`
-**CLI:** `cd ~/tools/ops-board && python3 -m ops_board.cli --db-path ~/company/agent-state/ops/ops-board.db <command>`
+**Storage:** Turso DB `tangle-ops-board` (libSQL over HTTPS)
+**CLI:** `ops-board <command>` (from a machine with the repo cloned and `~/company/devops/secrets/turso.env` decryptable; the wrapper at `bin/ops-board` injects creds via dotenvx)
 
 **Commands:**
 - `list [--state STATE] [--json]` — list tasks (states: INBOX, RUNNING, BLOCKED, REVIEW, DONE)
