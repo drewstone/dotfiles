@@ -298,7 +298,7 @@ This is the first file an agent should read to understand the current state of t
 Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is the data that enables cross-project learning and meta-analysis.
 
 ```jsonl
-{"id":"exp_001","project":"phony","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-huberman","agent-mark-hyman","agent-peter-attia"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Health creators need disclaimers. Judge flagged medical advice without caveats.","learnings":["Safety disclaimers lift all health agents universally","Single-line 'consult your physician' insufficient — need 5-6 specific guidelines"]}
+{"id":"exp_001","project":"my-app","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-huberman","agent-mark-hyman","agent-peter-attia"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Health creators need disclaimers. Judge flagged medical advice without caveats.","learnings":["Safety disclaimers lift all health agents universally","Single-line 'consult your physician' insufficient — need 5-6 specific guidelines"]}
 ```
 
 **Required fields:**
@@ -335,7 +335,7 @@ Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is 
 
 ### Why structured data matters
 
-1. **Cross-project patterns**: "Safety disclaimers worked on phony voice agents. Do they work on scribe meeting bots?" — queryable from the JSONL.
+1. **Cross-project patterns**: "Safety disclaimers worked on voice agents. Do they work on meeting bots?" — queryable from the JSONL.
 2. **Meta-learning**: Which categories of experiments have the highest success rate? Prompt changes? Config changes? Code changes?
 3. **Failure analysis**: What's the most common failure mode? Deployment verification? Scoring artifacts?
 4. **Research potential**: Aggregate data across projects → paper on autonomous improvement methodology.
@@ -347,7 +347,7 @@ The experiment log feeds into a **product scorecard** — a snapshot of all user
 
 ```json
 {
-  "product": "phony",
+  "product": "my-app",
   "timestamp": "2026-03-20T04:00:00Z",
   "flows": [
     {"name": "synthetic_conversation", "score": 0.80, "target": 0.85, "status": "pass"},

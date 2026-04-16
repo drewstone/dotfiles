@@ -146,7 +146,7 @@ Append a one-line summary to `~/.claude/reflections/INDEX.md`. This enables port
 ```markdown
 # Reflections Index
 - [2026-04-02] starter-foundry — 8.5/10, 30 commits, TS migration + 8 gen routing architecture [.evolve/reflections/2026-04-02-143042.md]
-- [2026-03-28] phony — 7/10, voice agent eval convergence [.evolve/reflections/2026-03-28-091523.md]
+- [2026-03-28] voice-app — 7/10, voice agent eval convergence [.evolve/reflections/2026-03-28-091523.md]
 ```
 
 For significant sessions, also write a full reflection copy to `~/.claude/reflections/YYYY-MM-DD-project-slug.md` for offline reference.

@@ -237,27 +237,6 @@ A harness that scores well on the eval suite but fails on unseen inputs is overf
 
 Write variants in whatever language the project uses. TypeScript, Python, Rust, whatever. Match existing conventions exactly.
 
-## Connecting to Foreman
-
-If Foreman service is running (`http://localhost:7374`):
-
-```bash
-# Start a meta-harness evolution job via Foreman API
-curl -X POST http://localhost:7374/api/evolve-code -H 'Content-Type: application/json' -d '{
-  "repo": "/path/to/project",
-  "harness": "lib/agent-scaffold.ts",
-  "eval": "pnpm test:eval",
-  "iterations": 10,
-  "parallelism": 2,
-  "dimensions": ["accuracy", "efficiency"],
-  "backend": "tangle"
-}'
-```
-
-This dispatches N parallel proposers (via tmux locally or Tangle Sandbox containers remotely), each reading the shared frontier, each writing variants. Foreman tracks goals, costs, sessions, and taste signals.
-
-Without Foreman: run the loop manually in a single CC session using this skill. Phase 1→2→3 repeated.
-
 ## When to stop
 
 - Frontier hasn't changed in 3 iterations → converged
