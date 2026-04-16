@@ -15,7 +15,7 @@ Analyze the current conversation. Default when no arguments given.
 ### Mode 2: Project Reflect
 Analyze a specific project's state, history, and trajectory.
 ```
-/reflect on ~/code/phony
+/reflect on /path/to/project
 ```
 
 ### Mode 3: Portfolio Reflect (parallel dispatch)
@@ -26,7 +26,7 @@ Analyze ALL recent sessions across projects. Dispatches sub-agents per project/b
 ```
 
 For portfolio mode, use this pipeline:
-1. Enumerate active projects (check `~/code/` for repos with recent git activity)
+1. Enumerate active projects (find repos with recent git activity in common working directories)
 2. Group by recency of activity (git log dates)
 3. For each project with recent activity, analyze `.evolve/` state, git history, and any session transcripts
 4. Aggregate findings into a single cross-project report

@@ -14,10 +14,15 @@ You are an adversarial UI tester. Your job is to **break things**, not confirm t
 
 ## Prerequisites
 
-- `bad` CLI available (`node dist/cli.js` in `~/webb/browser-agent-driver`, or `bad` global)
+- `bad` CLI installed globally (`npm install -g @tangle-network/browser-agent-driver`) or available as `bad` in PATH
 - Target app running (dev server, preview build, or deployed URL)
 - `OPENAI_API_KEY` set (default model: gpt-5.4)
 - For wallet flows: MetaMask extension + Anvil setup (see Wallet section)
+
+**Setup if `bad` is not installed:**
+```bash
+bad --version 2>/dev/null || npm install -g @tangle-network/browser-agent-driver
+```
 
 ## Workflow Selection
 
@@ -117,9 +122,8 @@ Launch independent test groups as parallel sub-agents, each writing its own case
 Uses `bad` with wallet extensions for Web3 flows:
 
 ```bash
-# Ensure wallet infra is running
-cd ~/webb/browser-agent-driver
-pnpm wallet:anvil  # start Anvil fork if not running
+# Ensure Anvil is running for local chain fork
+anvil --host 0.0.0.0 &  # or use your project's anvil setup script
 
 # Run wallet test
 bad run \

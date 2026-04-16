@@ -11,9 +11,11 @@ Collect signals from configured sources, score relevance to the user's work, ext
 
 Before scraping, discover what signal sources are available in this workspace:
 
-**Check for tools:**
+**Check for tools in the workspace:**
 ```bash
-ls ~/tools/  # look for *-intel, *-scraper, community-*, social-* tools
+# Look for signal-gathering tools in common locations
+find . -maxdepth 3 -name "cli.py" -o -name "cli.ts" 2>/dev/null | head -10
+ls tools/ 2>/dev/null | grep -iE "intel|scraper|community|social|pulse"
 ```
 
 **Check for databases:**
@@ -21,12 +23,12 @@ ls ~/tools/  # look for *-intel, *-scraper, community-*, social-* tools
 - Signal files in `signals/` directory
 
 **Check for configs:**
-- Subreddit lists, keyword configs, RSS feeds
-- API credentials that indicate connected services
+- Subreddit lists, keyword configs, RSS feeds in tool directories
+- API credentials that indicate connected services (`.env` files)
 
 **Check for cron outputs:**
-- `/tmp/cron-*.log` for recent tool runs
-- `~/.cache/tools/` for cached data
+- Recent log files from scheduled scrapes
+- Cached data directories
 
 If NO signal sources exist, help the user set them up:
 1. Ask what communities/platforms their audience uses
@@ -38,16 +40,12 @@ If NO signal sources exist, help the user set them up:
 Run each available source. Examples (adapt to what exists):
 
 ```bash
-# If HN intel exists
-cd ~/tools/hn-intel && python3 cli.py scrape && python3 cli.py distill --json
+# Run whatever signal tools exist in the workspace. Examples:
+# HN intel:        cd tools/hn-intel && python3 cli.py scrape && python3 cli.py distill --json
+# Reddit intel:    cd tools/reddit-intel && python3 cli.py scrape && python3 cli.py distill --json
+# Community pulse: cd tools/community-pulse && python3 cli.py scan --json
 
-# If Reddit intel exists
-cd ~/tools/reddit-intel && python3 cli.py scrape && python3 cli.py distill --json
-
-# If community-pulse exists
-cd ~/tools/community-pulse && python3 cli.py scan --json
-
-# If none exist, fall back to web search
+# If no signal tools exist, fall back to web search
 # Search for the user's configured topics across HN, Reddit, Twitter
 ```
 

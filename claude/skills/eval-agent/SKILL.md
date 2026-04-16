@@ -27,13 +27,13 @@ Collects domain knowledge the evaluator needs. Does NOT hardcode it — uses too
 4. Returns a structured context blob
 
 ```bash
-# Example: gather context for evaluating Tangle Blueprints
-claude -p "Read ~/.claude/skills/tangle-blueprint-expert/references/*.md \
-  and grep ~/code/*-blueprint/operator/src/lib.rs for Router patterns. \
+# Example: gather context for evaluating a project
+claude -p "Read the project's CLAUDE.md, README.md, and test fixtures. \
+  Grep for common patterns in src/. \
   Output a JSON with: required_patterns, anti_patterns, file_structure, \
   build_commands, test_commands." \
   --model sonnet --allowedTools Read Glob Grep Bash \
-  --add-dir ~ --dangerously-skip-permissions \
+  --add-dir . --dangerously-skip-permissions \
   --output-format json
 ```
 

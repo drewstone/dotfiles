@@ -7,12 +7,44 @@ description: Operate the `bad` CLI (Browser Agent Driver), a general-purpose age
 
 You are an expert operator of the `bad` CLI (Browser Agent Driver) — a general-purpose agentic browser automation tool. Use this knowledge to help users run benchmarks, design audits, showcases, experiments, and browser automation tasks.
 
+## Setup
+
+**Check if installed:**
+```bash
+bad --version 2>/dev/null || echo "not installed"
+```
+
+**Install globally (npm):**
+```bash
+npm install -g @tangle-network/browser-agent-driver
+```
+
+**Install from source:**
+```bash
+git clone https://github.com/tangle-network/browser-agent-driver.git
+cd browser-agent-driver
+pnpm install && pnpm build
+# Use: node dist/cli.js (or alias to bad)
+```
+
+**Required env vars (at least one provider):**
+```bash
+export OPENAI_API_KEY=sk-...          # for gpt-5.4 (default model)
+# or
+export ANTHROPIC_API_KEY=sk-ant-...   # for claude-sonnet-4-6
+# or
+export GOOGLE_GENERATIVE_AI_API_KEY=... # for Gemini models
+```
+
+**Verify:** `bad run -g "What is this page?" -u https://example.com -d`
+
+If `bad` is not installed and can't be installed (no npm, no git access), tell the user what's needed and stop — don't fake it.
+
 ## Quick Reference
 
-**Project:** `~/webb/browser-agent-driver`
-**Binary:** `node dist/cli.js` (dev) or `bad` (installed globally)
+**Binary:** `bad` (global install) or `node dist/cli.js` (from source)
 **Default model:** `gpt-5.4` (OpenAI)
-**Config:** `browser-agent-driver.config.ts`
+**Config file:** `browser-agent-driver.config.ts` (optional, in project root)
 
 ## Commands
 
@@ -23,7 +55,7 @@ You are an expert operator of the `bad` CLI (Browser Agent Driver) — a general
 bad run --goal "Find the price of iPhone 16 Pro" --url https://apple.com
 
 # From test case file
-bad run --cases bench/scenarios/cases/webbench-full50-max20-timeout240.json
+bad run --cases ./test-cases.json
 
 # With specific model and provider
 bad run -g "Search for restaurants" -u https://yelp.com --model gpt-5.4 --provider openai
@@ -85,7 +117,7 @@ bad design-audit --url https://myapp.com --pages 5 --profile defi
 
 **Sub-modes:**
 - Default: LLM-powered scoring + findings report
-- `--extract-tokens`: Pure DOM extraction — colors, typography, spacing, components, brand assets at mobile/tablet/desktop
+- `--extract-tokens`: Pure DOM extraction — colors, typography, spacing, components, brand assets at mobile/tablet/desktop viewports. **No LLM API key needed.**
 - `--rip`: Download entire site as working offline copy (rewrites HTML/CSS references)
 - `--design-compare --compare-url <url>`: Pixel diff + structural token diff between two sites
 
@@ -117,99 +149,28 @@ bad runs --session-id abc123       # filter by session
 bad runs --json                    # JSON output
 ```
 
-## Benchmarks & Experiments
-
-### Running WEBBENCH-50
+### `bad auth` — Authentication management
 
 ```bash
-# Full headed run (production baseline)
-node scripts/run-scenario-track.mjs \
-  --cases bench/scenarios/cases/webbench-full50-max20-timeout240.json \
-  --benchmark-profile webbench-stealth \
-  --model gpt-5.4 \
-  --modes fast-explore \
-  --concurrency 3
+# Interactive: opens browser, you log in, saves session state
+bad auth save --url https://app.example.com --storage-state .auth/session.json
 
-# Headless run
-node scripts/run-scenario-track.mjs \
-  --cases bench/scenarios/cases/webbench-full50-max20-timeout240.json \
-  --benchmark-profile webbench-stealth \
-  --model gpt-5.4 \
-  --modes fast-explore \
-  --headless \
-  --concurrency 2
+# Validate saved state
+bad auth check --storage-state .auth/session.json
 
-# Subset of cases
-node scripts/run-scenario-track.mjs \
-  --cases bench/scenarios/cases/webbench-expensive5.json \
-  --benchmark-profile webbench-stealth \
-  --model gpt-5.4 \
-  --modes fast-explore
+# Headless login (CI/CD)
+bad auth login --url https://app.example.com/login \
+  --fill "email=ci@test.com" --fill "password=$SECRET" \
+  --wait-for "url:*/dashboard*" \
+  --storage-state .auth/session.json
+
+# Cookie injection
+bad auth login --url https://app.example.com \
+  --cookie "session=$TOKEN" \
+  --storage-state .auth/session.json
 ```
 
-### A/B Experiments
-
-```bash
-# Seeded A/B test
-pnpm ab:experiment -- \
-  --cases bench/scenarios/cases/webbench-full50-max20-timeout240.json \
-  --control "default config" \
-  --treatment "new feature" \
-  --seed 42 \
-  --reps 3
-```
-
-### Research Pipeline
-
-```bash
-# Two-stage hypothesis testing (screen all 1 rep, validate winners 5 reps)
-pnpm research:pipeline --queue bench/research/reliability-v1.json --two-stage
-
-# Cost estimation before running
-pnpm research:pipeline --queue bench/research/reliability-v1.json --estimate
-
-# Single hypothesis
-pnpm research:pipeline --queue bench/research/reliability-v1.json --hypothesis speed-compact-first
-```
-
-### Gate Checks (CI)
-
-```bash
-pnpm bench:tier1:gate              # deterministic local (must pass 100%)
-pnpm bench:tier2:gate              # staging auth flows
-pnpm bench:local:smoke             # quick smoke test
-pnpm bench:local:nightly           # full nightly suite
-```
-
-### Metrics & Scoring
-
-```bash
-# Generate reliability scorecard from results
-pnpm reliability:scorecard -- --root ./agent-results/run-dir
-
-# Compare runs on a scoreboard
-pnpm bench:scoreboard -- --runs ./agent-results/run1,./agent-results/run2
-
-# Historical trend
-pnpm reliability:trend -- --root ./agent-results
-```
-
-## Wallet / DeFi Testing
-
-```bash
-# Full setup flow
-pnpm wallet:setup          # download MetaMask
-pnpm wallet:onboard        # automate first-run wizard
-pnpm wallet:anvil           # start Anvil fork (100 ETH + 10 WETH + 10k USDC)
-pnpm wallet:configure       # add custom RPC to MetaMask
-pnpm wallet:validate        # run DeFi validation (7 cases)
-
-# Cleanup
-pnpm wallet:anvil:stop
-```
-
-**Test wallet:** `test test test test test test test test test test test junk`
-**Address:** `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`
+**`--fill` smart selectors:** `email=foo` resolves to `input[name="email"], input[type="email"], #email`. Use full CSS selectors for custom elements: `--fill "#my-input=value"`.
 
 ## Browser Profiles
 
@@ -258,17 +219,6 @@ export default defineConfig({
 })
 ```
 
-## Development
-
-```bash
-pnpm build                  # compile TypeScript
-pnpm lint                   # type-check
-pnpm check:boundaries       # architecture boundaries
-pnpm test                   # vitest (549 tests)
-```
-
-**Important:** `pnpm exec bad` doesn't work in dev. Use `node dist/cli.js` directly.
-
 ## Output & Reporting
 
 Results go to `--sink` directory (default: `./agent-results`):
@@ -286,67 +236,7 @@ Results go to `--sink` directory (default: `./agent-results`):
 - **Duration** — wall clock time
 - **Waste metrics** — repeated queries, verification rejections, error turns
 
-## Authentication & Session Management
-
-### Capturing Auth State (Interactive Login → Reusable JSON)
-
-```bash
-# Opens a browser, you log in manually, then it saves cookies + localStorage
-bad auth save --url https://app.example.com --storage-state .auth/example-session.json
-
-# Validate the saved state
-bad auth check --storage-state .auth/example-session.json
-bad auth check .auth/example-session.json app.example.com   # also verify origin
-```
-
-The saved file is Playwright's standard storage state format:
-```json
-{
-  "cookies": [{ "name": "session", "value": "abc123", "domain": ".example.com", ... }],
-  "origins": [{ "origin": "https://app.example.com", "localStorage": [...] }]
-}
-```
-
-### Headless Login for CI/CD (`bad auth login`)
-
-```bash
-# Form-based login (headless, no interaction)
-bad auth login --url https://app.example.com/login \
-  --fill "email=ci@test.com" --fill "password=$SECRET" \
-  --wait-for "url:*/dashboard*" \
-  --storage-state .auth/session.json
-
-# Cookie injection (for API tokens, SSO tokens, etc.)
-bad auth login --url https://app.example.com \
-  --cookie "session=$TOKEN" \
-  --storage-state .auth/session.json
-
-# Multiple cookies
-bad auth login --url https://app.example.com \
-  --cookie "session=$TOKEN" --cookie "csrf=$CSRF" \
-  --storage-state .auth/session.json
-
-# Wait for a specific element instead of URL
-bad auth login --url https://app.example.com/login \
-  --fill "email=ci@test.com" --fill "password=$SECRET" \
-  --wait-for "[data-testid='dashboard']" \
-  --wait-timeout 15000
-```
-
-**`--fill` smart selectors:** `email=foo` resolves to `input[name="email"], input[type="email"], #email`. Use full CSS selectors for custom elements: `--fill "#my-input=value"`.
-
-**CI/CD pattern (GitHub Actions):**
-```yaml
-- name: Generate fresh auth state
-  run: |
-    bad auth login --url ${{ secrets.APP_URL }}/login \
-      --fill "email=${{ secrets.CI_EMAIL }}" \
-      --fill "password=${{ secrets.CI_PASSWORD }}" \
-      --wait-for "url:*/dashboard*" \
-      --storage-state .auth/session.json
-- name: Run tests
-  run: bad run --cases ./tests.json --storage-state .auth/session.json
-```
+## Authentication Patterns
 
 ### Using Auth State in Runs
 
@@ -357,26 +247,18 @@ bad run -g "Change notification settings" -u https://app.example.com \
 
 # Benchmark with auth (all cases share the session)
 bad run --cases ./auth-cases.json --storage-state .auth/session.json
-
-# Config file approach
-# browser-agent-driver.config.ts:
-#   storageState: '.auth/session.json'
 ```
 
 **Gotchas:**
 - State is applied once at context creation — does not auto-refresh expired tokens
 - Captures cookies + localStorage + sessionStorage — not IndexedDB
-- Works with both fresh and persistent contexts
 - Default save path: `.auth/storage-state.json` (override with `--storage-state`)
 
-### Persistent Chrome Profiles (Survive Across Runs)
+### Persistent Chrome Profiles
 
 ```bash
 # General-purpose persistent profile (cookies, localStorage, extensions persist)
 bad run -g "Continue shopping" -u https://amazon.com --profile-dir ./my-chrome-profile
-
-# Same profile, different task — picks up where you left off
-bad run -g "Check order status" -u https://amazon.com --profile-dir ./my-chrome-profile
 
 # Wallet mode (forces concurrency=1, enables extension loading)
 bad run -g "Swap ETH for USDC" -u https://app.uniswap.org \
@@ -385,7 +267,6 @@ bad run -g "Swap ETH for USDC" -u https://app.uniswap.org \
   --user-data-dir ./.agent-wallet-profile
 ```
 
-**`--profile-dir` vs `--user-data-dir`:**
 - `--profile-dir` — general persistent profile, supports concurrency > 1
 - `--user-data-dir` — wallet/extension mode, forces concurrency=1
 - Both are Chromium-only (no Firefox/WebKit)
@@ -393,10 +274,7 @@ bad run -g "Swap ETH for USDC" -u https://app.uniswap.org \
 ### Connecting to an Existing Browser (CDP)
 
 ```bash
-# Launch Chrome with remote debugging
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-
-# Connect bad to it (uses existing cookies, extensions, everything)
+# Connect to browser with remote debugging enabled
 bad run -g "Export my data" -u https://app.example.com --cdp-url http://localhost:9222
 
 # Also works via environment variable
@@ -404,9 +282,21 @@ export BROWSER_ENDPOINT=http://localhost:9222
 bad run -g "..." -u "..."
 ```
 
-CDP auto-discovers the WebSocket URL from the HTTP endpoint. Works with Chrome, Brave, Edge, Firefox (via `browserType.connect()`).
+CDP auto-discovers the WebSocket URL from the HTTP endpoint. Works with Chrome, Brave, Edge.
 
-**Best for:** Sites where you're already logged in, debugging with DevTools open, connecting to remote browsers.
+### Session Continuity
+
+```bash
+# Tag runs with a session ID — shares history context
+bad run -g "Search for hotels" -u https://booking.com --session-id trip-planning
+bad run -g "Now book the cheapest one" -u https://booking.com --session-id trip-planning
+
+# Resume a crashed/timed-out run
+bad run --resume-run <runId>
+
+# Fork from a completed run with a new goal
+bad run --fork-run <runId> --goal "Now check out with PayPal"
+```
 
 ### Multi-Actor Sessions (Programmatic API)
 
@@ -422,51 +312,21 @@ const session = await MultiActorSession.create(browser, {
   agentConfig: { model: 'gpt-5.4' }
 })
 
-// Each actor has isolated cookies/storage
 await session.actor('admin').run({ goal: 'Invite partner user' })
 await session.actor('partner').run({ goal: 'Accept invitation' })
-```
-
-### Proxy & Network Configuration
-
-```typescript
-// browser-agent-driver.config.ts
-export default defineConfig({
-  browserArgs: [
-    '--proxy-server=http://proxy.example.com:8080',
-    // Or DNS-level redirect (used for wallet RPC interception)
-    '--host-resolver-rules=MAP api.example.com 127.0.0.1:8443',
-  ]
-})
-```
-
-No dedicated `--proxy` flag — use `browserArgs` in config or pass `--browser-args` on CLI.
-
-### Session Continuity Across Runs
-
-```bash
-# Tag runs with a session ID — shares history context
-bad run -g "Search for hotels" -u https://booking.com --session-id trip-planning
-bad run -g "Now book the cheapest one" -u https://booking.com --session-id trip-planning
-
-# Resume a crashed/timed-out run from where it left off
-bad run --resume-run abc123
-
-# Fork from a completed run with a new goal
-bad run --fork-run abc123 --goal "Now check out with PayPal"
 ```
 
 ### Auth Strategy Decision Tree
 
 | Scenario | Approach |
 |----------|----------|
-| One-time login, reuse across runs | `pnpm auth:save-state` → `--storage-state` |
+| One-time login, reuse across runs | `bad auth save` → `--storage-state` |
 | Need extensions (MetaMask, etc.) | `--user-data-dir` + `--extension` |
 | Already logged in via Chrome | `--cdp-url http://localhost:9222` |
 | Multi-user workflows | `MultiActorSession` (programmatic API) |
 | Persistent sessions across days | `--profile-dir ./my-profile` |
-| CI/automated (no interactive login) | `--storage-state` from pre-captured JSON |
-| DeFi / wallet testing | `--wallet` + full wallet setup flow |
+| CI/automated (no interactive login) | `--storage-state` from `bad auth login` |
+| DeFi / wallet testing | `--wallet` + `--extension` |
 
 ## Common Patterns
 
@@ -477,7 +337,7 @@ bad design-audit --url http://localhost:3000 --profile saas --pages 3
 
 **Extract competitor design tokens:**
 ```bash
-bad design-audit --url https://competitor.com --extract-tokens --output ./competitor-tokens
+bad design-audit --url https://competitor.com --extract-tokens
 ```
 
 **Compare your app to a competitor:**
@@ -488,11 +348,6 @@ bad design-audit --url http://localhost:3000 --design-compare --compare-url http
 **Run a quick task and see results:**
 ```bash
 bad run -g "Find the cheapest flight from NYC to LA on Dec 25" -u https://google.com/flights -d
-```
-
-**Benchmark with stealth (for anti-bot sites):**
-```bash
-node scripts/run-scenario-track.mjs --cases my-cases.json --benchmark-profile webbench-stealth --model gpt-5.4
 ```
 
 **Authenticated task on a SaaS app:**
@@ -507,4 +362,27 @@ bad run -g "Create a new project called 'Q2 Launch'" \
 ```bash
 bad run -g "Add items to cart" -u https://shop.example.com --session-id checkout-flow
 bad run -g "Complete checkout with saved payment" -u https://shop.example.com --session-id checkout-flow
+```
+
+**CI/CD pattern (GitHub Actions):**
+```yaml
+- name: Install bad CLI
+  run: npm install -g @tangle-network/browser-agent-driver
+
+- name: Generate auth state
+  run: |
+    bad auth login --url ${{ secrets.APP_URL }}/login \
+      --fill "email=${{ secrets.CI_EMAIL }}" \
+      --fill "password=${{ secrets.CI_PASSWORD }}" \
+      --wait-for "url:*/dashboard*" \
+      --storage-state .auth/session.json
+
+- name: Run test cases
+  run: bad run --cases ./e2e-cases.json --storage-state .auth/session.json --sink ./results
+
+- name: Upload results
+  uses: actions/upload-artifact@v4
+  with:
+    name: browser-agent-results
+    path: ./results/
 ```
