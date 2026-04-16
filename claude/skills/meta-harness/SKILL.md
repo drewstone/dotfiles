@@ -69,9 +69,15 @@ If the project has no eval suite, CREATE ONE. This is non-negotiable — meta-ha
 2. Create `tests/eval/` (or extend existing) with:
    - **Golden cases**: 5-10 inputs with known-good outputs (from existing tests, docs, or manual creation)
    - **Edge cases**: inputs that stress the harness's decision-making
-   - **A scoring function** that outputs `SCORE:dimension=value` lines or JSON `{scores: {...}}`
+   - **Per-scenario output** — the eval MUST report results per scenario, not just aggregate. The proposer needs to know WHICH scenarios fail and WHY, not just "accuracy=0.72". Output format:
+     ```json
+     {"scenario": "ambiguous_query", "passed": false, "score": 0.3, "output": "...", "expected": "...", "error": "retrieval returned 0 results"}
+     {"scenario": "simple_lookup", "passed": true, "score": 0.95, "output": "...", "expected": "..."}
+     ```
+     Or equivalently: `SCORE:ambiguous_query=0.3` + `SCORE:simple_lookup=0.95`
+   - **A scoring function** that outputs per-scenario JSON lines or `SCORE:dimension=value` lines
 3. The eval must be runnable via a single command (e.g., `pnpm test:eval`)
-4. Verify the eval runs and produces scores before proceeding
+4. Verify the eval runs and produces per-scenario scores before proceeding
 
 ### 0c. Seed baseline
 
@@ -105,9 +111,16 @@ For each iteration, you ARE the proposer. Read the full diagnostic state, then w
 - **Dead ends**: 3+ proposals on the same mechanism all failed → pivot
 - **Lineage merging**: two successful variants with complementary strengths → combine
 
-### 1c. Read raw traces
+### 1c. Read raw traces — triage protocol
 
-If eval produces detailed output (logs, per-case results), read them directly. The paper's key finding: **raw traces (10M tokens) >> summaries (34.9 acc) >> scores-only (34.6 acc)**. Don't summarize. Read the raw output and diagnose.
+The paper's key finding: **raw traces (10M tokens) >> summaries >> scores-only**. The proposer reads 82 files per iteration. But don't read randomly — triage:
+
+1. **Start with per-scenario scores.** Read the eval output to identify WHICH scenarios fail and which pass. A variant that fails scenario_7 and scenario_12 tells you where to look.
+2. **Read failing scenario traces.** For the 2-3 worst-scoring scenarios, read the raw execution output (`.log` files, stdout captures). Look for: what input was given, what the harness produced, what was expected, where the harness made a wrong decision.
+3. **Read passing scenario traces for the same variant.** What's different about the passing cases? The contrast reveals which harness mechanism is responsible.
+4. **Read the SAME failing scenarios for frontier variants.** How does the best variant handle scenario_7? What mechanism is different?
+
+This triage gets you from "accuracy=0.72" to "scenario_7 fails because the retrieval misses contrastive examples when the query is ambiguous" — which is a diagnosable, fixable root cause.
 
 ### 1d. Read prior variant source code
 
@@ -190,6 +203,35 @@ Every hypothesis must cite evidence:
 ### REQUIRED: Learn from history
 
 Read evolution.jsonl. If the last 3 proposals targeting the same component all regressed, DON'T target that component again. Pivot.
+
+**Worked example — the pattern from the paper (TerminalBench-2, 10 iterations):**
+
+- Iterations 1-2: hypothesized marker-fix and single-confirm changes. Both regressed (-5.6pp, -6.7pp). Why: prompt template changes caused the agent to delete necessary state before completion. The bugfixes were confounded with harmful prompt changes.
+- Iteration 3: identified the confound explicitly. Isolated the structural fix from the prompt change.
+- Iterations 4-6: tested isolated fixes (completion-flag reset, softer cleanup language, smart-waiting). All still regressed. Lesson: "modifications to prompts and completion flow are high risk."
+- **Iteration 7: STRATEGIC PIVOT.** "All 6 prior iterations regressed because they modified completion flow. evo_env_bootstrap takes a different approach — purely additive." → Became the winning candidate.
+- Iteration 8: composed environment bootstrap with a structural fix, avoiding prompts/confirmation flows.
+
+**The pattern: confound → isolation → dead end → pivot to different mechanism class.**
+
+### REQUIRED: Lineage merging
+
+When two frontier variants have complementary strengths (A excels on dimension X, B excels on dimension Y), write a variant that combines their mechanisms. The paper's math harness is literally a merge of two search lineages — one contributed a stronger geometry route, the other a stronger combinatorics route. The proposer autonomously combined them.
+
+Read the frontier. If two entries dominate different dimensions, your next proposal should be: "Combine mechanism from variant A (which handles X) with mechanism from variant B (which handles Y)."
+
+### REQUIRED: Smoke test before full benchmark
+
+Before running the full eval suite on a variant, run it on 1-2 scenarios first. If the variant fails those, skip the full benchmark. A full eval run is expensive (minutes, API calls, compute). A smoke test on one scenario takes seconds and catches compile-time failures, import errors, and obvious regressions early.
+
+### RECOMMENDED: Generalization check at convergence
+
+When the frontier hasn't changed in 3 iterations (converged), test the top variants on held-out inputs:
+- Different dataset distributions than the eval suite
+- Different model versions (if the harness wraps an LLM)
+- Edge cases not in the golden set
+
+A harness that scores well on the eval suite but fails on unseen inputs is overfit to the eval. Log generalization results in evolution.jsonl with `"type": "ood_check"`.
 
 ### Language agnostic
 
