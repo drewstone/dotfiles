@@ -26,10 +26,11 @@ When /pursue designs a generation, it can dispatch meta-harness as the builder: 
 ## Start Here — Full Bootstrap
 
 If `.evolve/meta-harness/` exists, read in order:
-1. `.evolve/meta-harness/frontier.json` — what variants are non-dominated
-2. `.evolve/meta-harness/evolution.jsonl` — what's been tried, what worked, why
-3. `.evolve/meta-harness/variants/` — prior variant source code
-4. `.evolve/current.json` — current evolve state
+1. `.evolve/meta-harness/config.json` — dimensions AND `dimensionClaims`. If any dimension lacks a claim, fix that before proposing anything. (See Phase 0a.5.)
+2. `.evolve/meta-harness/frontier.json` — what variants are non-dominated
+3. `.evolve/meta-harness/evolution.jsonl` — what's been tried, what worked, why
+4. `.evolve/meta-harness/variants/` — prior variant source code + `.meta.json`
+5. `.evolve/current.json` — current evolve state
 
 If `.evolve/meta-harness/` does NOT exist, bootstrap from scratch (Phase 0).
 
@@ -57,9 +58,30 @@ Write the discovery to `.evolve/meta-harness/config.json`:
   "evalCommand": "pnpm test:eval",
   "validateCommand": "npx tsc --noEmit",
   "dimensions": ["accuracy", "efficiency"],
+  "dimensionClaims": {
+    "accuracy": "If this number moves, <what user-visible outcome moves>?",
+    "efficiency": "If this number moves, <what user-visible outcome moves>?"
+  },
   "discoveredAt": "2026-04-15T23:00:00Z"
 }
 ```
+
+### 0a.5. Validate metric → product linkage
+
+Before writing the eval, for EACH dimension in `config.json` write the one-sentence product-value claim and store it in `dimensionClaims`:
+
+> "If this number moves, what user-visible product outcome moves with it?"
+
+If you can't write it, the metric is wrong. **Stop and ask the operator.** Do not proceed to 0b until every dimension has a claim.
+
+Meta-harness will converge happily on proxy metrics that don't track product value — that is the default failure mode of offline evals. The skill has shipped "wins" that moved the eval without moving anything users care about. Force the linkage up front so the operator doesn't have to catch it at review.
+
+- **Bad dimension:** "expected-capability jaccard" against a hand-authored expected list with no stated claim that matching the list improves downstream agent success.
+- **Good dimension:** "turns-to-preview" with claim "fewer turns = user sees their feature sooner = lower abandon rate in session replay."
+- **Bad dimension:** "p95 latency" on a path that already runs in microseconds with no stated downstream effect.
+- **Good dimension:** "p95 latency" with claim "this path gates the user's first keystroke; p95 > 100ms shows up as jank in session replay."
+
+If a dimension's claim is "it's in the existing dashboard, seems worth tracking" — that's not a claim, that's a habit. Kill it.
 
 ### 0b. Create evals if missing
 
@@ -79,9 +101,15 @@ If the project has no eval suite, CREATE ONE. This is non-negotiable — meta-ha
 3. The eval must be runnable via a single command (e.g., `pnpm test:eval`)
 4. Verify the eval runs and produces per-scenario scores before proceeding
 
-### 0c. Seed baseline
+### 0c. Seed baseline (median of ≥3 runs)
 
-Run the eval against the current harness. Record scores in `.evolve/meta-harness/frontier.json` as the baseline entry. This is what all future variants compete against.
+Run the eval **≥3 times** against the current harness. Record the MEDIAN scores (per dimension) in `.evolve/meta-harness/frontier.json` as the baseline entry. Log the individual run values in a `baselineRuns` array on the entry.
+
+First-run baselines drift ~5% from steady-state on noisy metrics (latency, sampling-based accuracy, LLM-judge variance). A single-run baseline causes false wins on the first variant and false regressions on the next; the frontier then chases noise. Median-of-3 makes the baseline steady before variants compete against it.
+
+If the 3 runs have spread >10% of the mean on any dimension, run 5 more and report the stability. If the metric is still that noisy, the metric itself is too noisy to evolve against — either increase scenario count, switch to a deterministic judge, or drop the dimension.
+
+The same rule applies to variants: any variant claiming frontier-dominance must be measured over ≥3 runs (5 if close to the margin) before overwriting the frontier entry.
 
 ### 0d. Initialize state
 
@@ -89,12 +117,19 @@ Run the eval against the current harness. Record scores in `.evolve/meta-harness
 .evolve/
 ├── current.json           # update: mode = "meta-harness"
 ├── meta-harness/
-│   ├── config.json        # harness path, eval command, dimensions
-│   ├── frontier.json      # Pareto frontier (baseline seeded)
+│   ├── config.json        # harness path, eval command, dimensions, dimensionClaims
+│   ├── frontier.json      # Pareto frontier (baseline = median of ≥3 runs)
 │   ├── evolution.jsonl    # empty (will grow)
-│   └── variants/          # empty (will grow)
+│   ├── runs/              # per-run eval JSONL, keyed by variant name
+│   └── variants/          # per-variant source + meta.json (before merge)
 └── progress.md            # append: "Meta-harness initialized"
 ```
+
+**Pre-dispatch hygiene** (do this before Phase 1 parallel proposers):
+
+- Commit `.evolve/meta-harness/` on main so worktrees inherit the config + baseline.
+- Commit any `scripts/` additions (eval runner, collectors, helpers) so worktrees inherit them too. Proposers dispatched before a script is committed will not have it, silently fall back to re-implementing it, and diverge.
+- Add `.claude/worktrees/` to `.gitignore`.
 
 ## Phase 1: Propose — Read, Reason, Write
 
@@ -173,7 +208,45 @@ Update `frontier.json` if the variant is non-dominated.
 
 Update `.evolve/progress.md` with the iteration results.
 
-If running in parallel (multiple CC sessions), each proposer reads the SAME frontier but writes to a unique variant file. Results are merged after all proposers complete.
+### Post-merge compaction
+
+Once a variant is merged to main (commit exists in the project repo), its source file in `.evolve/meta-harness/variants/<name>.<ext>` duplicates what's now in git. Compact:
+
+- **DELETE** `.evolve/meta-harness/variants/<name>.<ext>` (source duplicate)
+- **KEEP** `.evolve/meta-harness/variants/<name>.meta.json`
+- Add to the meta JSON:
+  ```json
+  {
+    "merged": true,
+    "commit": "<sha>",
+    "targetPath": "<in main, e.g. src/lib/keywords.ts>",
+    "linesChanged": N
+  }
+  ```
+
+This stops the archive from drifting from the code it supposedly represents. Scores, hypothesis, and mechanism — the parts that matter for future proposers — live in the `.meta.json`; the code is reproducible from the commit.
+
+Non-merged variants (rejected, or still pending) keep their source file for frontier comparison.
+
+## Parallel dispatch pattern
+
+When the operator wants multi-proposer generation (N proposers evaluating in parallel):
+
+1. **Use git worktrees for isolation.** Dispatch with `Agent(isolation: "worktree")` — each proposer gets an independent working tree, so edits don't conflict.
+
+2. **Assign each proposer a different code region.** Before dispatch, identify N disjoint files or subsystems. Proposer A targets file X, Proposer B targets file Y. **If two proposers target the same file, serialize them** — parallel edits on the same file block composition and the best-of-N becomes tournament-style (one winner, others thrown away) instead of a compose.
+
+3. **Pre-dispatch brief must include:**
+   - The proposer's target file(s)
+   - The OTHER proposers' target files (so this proposer knows what NOT to touch)
+   - The config dimensions + dimensionClaims (so the proposer reasons about product effect, not just metric movement)
+   - The current frontier + last 3 evolution.jsonl entries
+
+4. **Collection**: after all proposers complete, read each worktree's `.evolve/meta-harness/variants/*.meta.json`, copy the variant source + run JSONL back to main. Worth having a `scripts/meta-harness-collect.mjs` that scans `git worktree list` and gathers artifacts — otherwise this step is error-prone manual `cp`.
+
+5. **Composition = lineage merge for generation N+1.** If proposers targeted orthogonal files, the next generation starts by applying each winning variant to its own file, rebuilding, and re-running the full eval ≥3 times. This composed variant IS the next-gen baseline.
+
+6. **Conflict — if two winning variants touch the same file**: do NOT blindly concatenate. Write a third proposer whose brief is "merge the mechanisms from A and B, both of which edit file X" — same protocol as single-proposer Phase 1.
 
 ## Rules
 
@@ -260,10 +333,11 @@ Without Foreman: run the loop manually in a single CC session using this skill. 
 
 ## When to stop
 
-- Frontier hasn't changed in 3 iterations → converged
+- Frontier hasn't changed in 3 iterations → converged (if the metric is real — see below)
 - Budget exhausted (cost or iteration count)
 - All N dimensions exceed target thresholds
 - Proposer can't form a novel hypothesis (all mechanisms explored)
+- **Metric-linkage broken**: the dimensions are moving but there's no product signal that the user-visible outcome moved with them. At this point, convergence is meaningless. Stop, flag the proxy-metric problem, and either redesign the eval against a product-grounded metric or hand off to a skill that can (e.g., an end-to-end A/B harness in the system that consumes this code).
 
 Update `.evolve/current.json`:
 ```json
