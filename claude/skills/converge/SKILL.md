@@ -196,6 +196,7 @@ Write `.evolve/converge-progress.md` after every round:
 | Security | `/critical-audit` | Deeper than CI audit |
 | Failure triage | `/diagnose` | Many test failures |
 | Pre-ship | `/verify` | Final check before merge |
+| Quality gate beyond green/red | `/eval-agent` | When the CI signal is pass/fail but the real question is "is the output good enough to ship" — e.g., generated content quality, agent output fitness, subjective acceptance. Build the eval with `/eval-agent`, wire it into the CI job, then converge targets both green tests AND the quality threshold. |
 
 ## Rules
 
