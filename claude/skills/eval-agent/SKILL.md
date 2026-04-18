@@ -7,6 +7,13 @@ description: "Build agentic evaluation systems (LLM-as-judge, meta-reviewers, qu
 
 Build LLM-as-judge systems that evaluate targets (code, conversations, outputs, agents) using dynamically generated rubrics grounded in real reference material.
 
+## Fit Check — before building
+
+1. **Subjective target**: eval-agent is for scoring outputs where two humans could disagree on quality (writing, conversation, design, generated code-fit). If the target is objectively checkable (compiles, test passes, HTTP 200, string-equals expected), use a test — not an eval. Building an LLM judge for objective criteria wastes tokens and adds variance.
+2. **Reference material exists**: rubrics must come from real reference examples (good outputs, bad outputs, domain docs). If no reference material exists, scope a gathering pass first — agentic `claude -p` with Read/Grep can assemble it from the codebase or adjacent repos. Do NOT hand-write the rubric; that's the anti-pattern this skill replaces.
+3. **Caller context**: eval-agent is almost always dispatched BY another skill (`/evolve` needs measurement, `/pursue` needs a subjective success criterion, `/polish` needs a domain-specific rubric). If invoked directly, confirm who will consume the rubric — an eval that nothing reads is infrastructure debt.
+4. **Resume check**: if `.evolve/eval-agent/rubrics/<domain>.json` exists from a prior session, verify the references it was generated from haven't drifted (re-hash the reference blob). Stale rubrics silently score against old criteria.
+
 ## Core Pattern
 
 ```
