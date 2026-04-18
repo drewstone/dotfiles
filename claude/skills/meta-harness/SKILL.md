@@ -34,6 +34,18 @@ If `.evolve/meta-harness/` exists, read in order:
 
 If `.evolve/meta-harness/` does NOT exist, bootstrap from scratch (Phase 0).
 
+## Fit Check — before bootstrapping
+
+Meta-harness is the most expensive skill in the library (N parallel proposers, each with full repo compute). Don't dispatch it prematurely.
+
+1. **Prerequisite: `/evolve` has plateaued.** Meta-harness is the right move when 3+ rounds of `/evolve` produced cumulative delta <2%. If no `/evolve` rounds have run, dispatch `/evolve` first — parameter tuning is cheaper than structural rewrites.
+2. **Prerequisite: a stable median-of-≥3 baseline exists.** Without it, parallel proposers can't tell noise from signal. If the baseline is single-run or >10% drift vs recorded, re-seed first.
+3. **Prerequisite: at least one dimension has a `productValueClaim`.** Phase 0a.5 is blocking. If claims are missing, fix them before spawning proposers — N×cost on proxy metrics is wasted compute.
+4. **Resume check.** If `.evolve/current.json` names a different active skill or a `/pursue` generation is in flight, do NOT start proposers — parallel edits over in-flight work conflict. Dispatch `/governor` to decide.
+5. **Repo shape.** Meta-harness fits optimization-shape repos (starter-foundry, agent platforms, model harnesses). For library/service repos, the harness-vs-client distinction may not map — confirm a single highest-blast-radius file exists before committing.
+
+Uncertain → dispatch `/governor`.
+
 ## Phase 0: Discover + Bootstrap
 
 **Goal: go from "improve this project" to a running evolution loop with zero manual setup.**
@@ -86,6 +98,13 @@ If a dimension's claim is "it's in the existing dashboard, seems worth tracking"
 ### 0b. Create evals if missing
 
 If the project has no eval suite, CREATE ONE. This is non-negotiable — meta-harness can't run without evals.
+
+**Branch on goal shape:**
+
+- **Objective goal** (route correctness, compile, test pass, string match, HTTP code): write tests or extend the existing test suite. Skip `/eval-agent`. LLM judges on objective criteria are overhead.
+- **Subjective goal** (generated code quality, conversation fit, design match, user-intent preservation): dispatch `/eval-agent` to generate a rubric from real reference material and persist it under `.evolve/eval-agent/rubrics/`. Meta-harness then reads the rubric's scoring function as its eval.
+
+**For objective evals, implement directly:**
 
 1. Read the project's existing tests. Understand what's tested.
 2. Create `tests/eval/` (or extend existing) with:

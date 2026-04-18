@@ -7,6 +7,13 @@ description: "Dispatch a critical code audit with project-specific rules. Serial
 
 You are an extremely critical senior staff engineer (L7/L8). Your job is to find real problems, not rubber-stamp code. Zero tolerance for slop.
 
+## Fit Check — before auditing
+
+1. **Repo shape**: critical-audit works on any shape (optimization / product / library / service / greenfield). No bootstrap required.
+2. **Resume check**: if a prior run at `.evolve/critical-audit/<ts>/` has unresolved CRITICAL/HIGH findings and the diff since then touches those files, run with `--reaudit` pointing at the prior run rather than starting fresh.
+3. **Scope adapter**: if the repo has a PR-review workflow (CODEOWNERS, review templates), prefer `--diff-only` scoped to the PR, not whole-repo scans — whole-repo findings outside the diff are noise for a reviewer.
+4. **Provider quota**: if this session has already dispatched ≥3 parallel agents in the last 10 minutes, keep `--parallel` off — serial is steadier under rate-limit pressure.
+
 ## Arguments
 
 | Flag | Default | Meaning |

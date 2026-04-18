@@ -16,6 +16,17 @@ If `.evolve/` exists, read in order before designing:
 4. Tail of `.evolve/experiments.jsonl`
 5. Any project spec (`docs/EVOLVE-SPEC.md`)
 
+## Fit Check — before bootstrapping
+
+Before planting state or designing a generation:
+
+1. **Repo shape check.** `/pursue` fits optimization, product, and greenfield repos. It does NOT fit library repos whose public API constrains "bold bets" — `/polish` or `/harden` are usually right there.
+2. **Resume check.** If `.evolve/current.json` names a different active skill within the last 24h, reconcile — continue in-flight work or dispatch `/governor` to decide. Don't start a new pursuit while another skill's generation is mid-flight.
+3. **State adapter.** If the repo uses `docs/decisions/` (ADRs), `.bench/`, Linear, or another convention, adopt it — don't force `.evolve/` onto a mature repo that has its own pattern. `.evolve/governor-config.json` (if written by `/governor`) names the adapted paths.
+4. **Baseline drift.** If a prior baseline exists, run the eval's smoke path once. If it diverges >10% from the recorded number, baseline is stale — re-seed before designing against it (a generation built on a stale baseline regresses on re-measurement, not on merit).
+
+If any of these surface uncertainty, dispatch `/governor` — don't guess.
+
 ## When Pursue vs Evolve
 
 | Signal | Skill |
@@ -69,6 +80,13 @@ and either (a) note the metric is too noisy to evolve against, or
 A single-run baseline causes false wins on Gen N and phantom regressions
 on Gen N+1 — the same variant looks great or terrible depending on
 which run you sampled.
+
+If a metric's product-value claim names a subjective outcome (writing
+quality, conversation fit, scaffold usefulness, design match) and no
+judge exists, dispatch `/eval-agent` to build one before baselining.
+Hand-authoring a judge inline during pursue defeats the proxy-metric
+gate — the whole point is to measure against real reference material,
+not against whatever rubric you invent under deadline pressure.
 
 ## Diagnosis
 [root cause — what's architectural vs tunable]

@@ -18,6 +18,18 @@ If `.evolve/` exists, read in this order before acting:
 4. The newest file in `.evolve/pursuits/` if present
 5. Any project spec such as `docs/EVOLVE-SPEC.md`
 
+## Fit Check — before bootstrapping
+
+Before running Phase 0:
+
+1. **Repo shape check.** `/evolve` requires a measurable eval and a clear metric. If the repo has no eval suite (tests only, no scenarios/judges/scoring), dispatch `/eval-agent` first to build one. Do NOT invent an eval inline — that's how proxy metrics ship.
+2. **Resume check.** Read `.evolve/current.json`. If `mode` names a different skill active in the last 24h, reconcile — continue that work or dispatch `/governor`. If `mode: "pursue"` is active, a generation is in flight; join it, don't start a parallel evolve loop.
+3. **State adapter.** If the repo uses `.bench/`, a GitHub Project, or an external dashboard as its canonical scorecard, use that as the source of truth. `.evolve/governor-config.json` (written by `/governor`) names adopted paths.
+4. **Baseline drift.** Prior baseline in `progress.md`? Run the eval once, compare. >10% drift on any dimension = stale baseline. Re-seed with median-of-≥3 (Phase 0.5 rule) before comparing variants against it.
+5. **Product-value claim.** If the goal's metric has no `productValueClaim` recorded, Phase 0.5 is blocking. Write the claim or surface to the operator.
+
+Uncertain on any of the above → dispatch `/governor`.
+
 ## Core Principles
 
 1. **Verify everything.** Never report "X didn't work, maybe A or B" — determine which one. After every experiment, confirm the change is live: check the DB, the API response, the deployed state. Ambiguity in a report is a bug in the loop.
@@ -107,6 +119,10 @@ Common failure modes this prevents:
 - Existing scoring libraries (scoring.ts, metrics.ts, trace stores)
 
 **Use what exists. Improve what's incomplete. Only build from scratch if nothing suitable exists.**
+
+**If no eval exists and the goal is subjective** (writing quality, conversation quality, design fit, generated-code-fit, user intent preserved), dispatch `/eval-agent` to build the judge. Do NOT hand-author a rubric inline — that's the proxy-metric trap Phase 0.5 exists to prevent. `/eval-agent` generates rubrics from real reference material and persists them under `.evolve/eval-agent/rubrics/` for future rounds to reuse.
+
+**If no eval exists and the goal is objective** (compiles, test passes, HTTP 200, string match), don't dispatch `/eval-agent` — write a test instead. LLM-as-judge on objective criteria wastes tokens and adds variance.
 
 ### Audit existing eval infrastructure against the gold standard:
 

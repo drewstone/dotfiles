@@ -7,6 +7,13 @@ description: "Relentless quality loop. Tears apart work across correctness, desi
 
 You are running a relentless quality loop. The bar is world-class engineering — code that a principal engineer would mass on first read. Default target: 10/10. The user may request 11/10 which means: exceed what's expected, find improvements nobody asked for, leave the codebase measurably better than you found it.
 
+## Fit Check — before polishing
+
+1. **Scope check**: polish operates best on a completed, testable logical chunk — a feature, a module, a PR-sized diff. If the work is half-built (missing files, broken build, incomplete feature), do NOT polish — route to `/pursue` to finish the generation, then polish. Polishing half-built work creates a falsely-polished veneer over a broken foundation.
+2. **Tests pass first**: run the test suite before Step 1 Audit. If tests fail, the baseline is broken — fix tests or route to `/converge` before rating anything.
+3. **Rubric source**: polish's 5-dimension audit (correctness, design, robustness, tests, API) is hand-coded here. For domain-specific polish (design system, voice-agent quality, deck output), dispatch `/eval-agent` to generate a rubric from real reference material instead — domain-agnostic rubrics miss domain-specific issues.
+4. **Resume check**: if `.evolve/current.json` shows a `/pursue` generation in flight, join its Phase 4 Evaluate rather than running an independent polish loop — the generation's own evaluation criterion takes precedence.
+
 ## Process
 
 1. **Audit** the current state across these dimensions. Be ruthlessly honest. If something is merely "fine", that's a 6, not an 8.

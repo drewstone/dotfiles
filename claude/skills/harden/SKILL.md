@@ -13,6 +13,13 @@ Three rules that govern everything:
 2. **Real flows, real state.** No mocks as default. Real DB, real HTTP, real container, real UI, real agent. Mocks only at process boundaries where the alternative is impossible.
 3. **Take the lead.** Don't ask the user what to test. Scan the code, derive the adversarial surface, rank by risk, go.
 
+## Fit Check — before attacking
+
+1. **Repo shape**: harden requires a runnable system to attack. Works on services, full-stack apps, agents, CLIs. For pure-library repos (no runtime, only consumed by callers), harden's value is limited — `/critical-audit` is usually the right tool. If harden is the ask anyway, the inventory must find a harness to attack through (example app, integration tests, CLI).
+2. **Prerequisite: the project's test harness is named in Phase 0 inventory.** Extending a harness that doesn't exist means building one, which is out of scope for harden — route to `/pursue` first to build the harness, then harden.
+3. **Mock-coverage ratio.** Already called out in Phase 0: if >30% of integration-test surface is mocked on real-infra paths, that's HIGH finding #1 — document it and do not start Phase 1 scan until named.
+4. **Resume check**: prior `.evolve/harden/<date>-report.md` findings unresolved? Re-run those targets first before discovering new ones. Attacking the same surface twice across sessions is a waste.
+
 ## When to use
 
 | Signal | Skill |
