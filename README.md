@@ -16,6 +16,7 @@ Portable Claude Code setup — global instructions, settings, skills, hooks, com
 
 Includes:
 - `CLAUDE.md` — global defaults (quality bar, work style, succinctness)
+- `AGENTS.md` — shared agent instructions synced to Claude, Codex, and OpenCode homes
 - `settings.json` — hooks, plugins, trusted directories
 - 18 portable skills (`/polish`, `/verify`, `/work-status`, `/critical-audit`, `/code-review`, etc.)
 - `claude-profile` in `~/bin` — switch Claude credentials by named profile
