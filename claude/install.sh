@@ -10,6 +10,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
+CODEX_DIR="$HOME/.codex"
+OPENCODE_DIR="$HOME/.config/opencode"
+AGENTS_SRC="$SCRIPT_DIR/AGENTS.md"
 FORCE="${1:-}"
 
 link() {
@@ -36,6 +39,14 @@ mkdir -p "$CLAUDE_DIR"
 link "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 link "$SCRIPT_DIR/settings.json" "$CLAUDE_DIR/settings.json"
 [ -f "$SCRIPT_DIR/RTK.md" ] && link "$SCRIPT_DIR/RTK.md" "$CLAUDE_DIR/RTK.md"
+
+# Shared agent instructions
+if [ -f "$AGENTS_SRC" ]; then
+  mkdir -p "$CLAUDE_DIR" "$CODEX_DIR" "$OPENCODE_DIR"
+  link "$AGENTS_SRC" "$CLAUDE_DIR/AGENTS.md"
+  link "$AGENTS_SRC" "$CODEX_DIR/AGENTS.md"
+  link "$AGENTS_SRC" "$OPENCODE_DIR/AGENTS.md"
+fi
 
 # Reflections (cross-project analysis)
 link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"

@@ -2,9 +2,10 @@
 
 All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked into `~/.claude/` by `~/dotfiles/claude/install.sh`.
 
+- **Shared agent defaults**: provider-agnostic instructions live in `~/dotfiles/claude/AGENTS.md`. `install.sh` syncs them to `~/.claude/AGENTS.md`, `~/.codex/AGENTS.md`, and `~/.config/opencode/AGENTS.md`.
 - **Skills**: author in `~/dotfiles/claude/skills/<name>/SKILL.md`, then run `install.sh` to symlink into `~/.claude/skills/`
 - **Pi skills**: a subset of skills (reflect, capture-decisions, research) are also synced to `~/.pi/agent/skills/` — only skills that work in conversation, not coding-specific ones. Edit `PI_SKILLS` array in `install.sh` to add more.
-- **Other agents**: Codex (`~/.codex/`), OpenCode — add sync targets in `install.sh` as needed. Skills use the same SKILL.md format across agents.
+- **Other agents**: `CLAUDE.md` stays Claude-specific. Shared behavior should go in `AGENTS.md` so Codex/OpenCode can consume it too.
 - **Hooks**: author in `~/dotfiles/claude/hooks/`, symlinked to `~/.claude/hooks/`
 - **Commands**: author in `~/dotfiles/claude/commands/`, symlinked to `~/.claude/commands/`
 - **Tools**: scripts in `~/dotfiles/claude/tools/` are symlinked into `~/bin/`
