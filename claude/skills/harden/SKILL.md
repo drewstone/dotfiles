@@ -70,6 +70,8 @@ Record in `.evolve/harden/<date>-inventory.md`:
 
 If any of these don't exist, note it — but you still must extend whatever IS there, not create a new harness.
 
+**Mocks-as-coverage is itself a finding.** If the real-vs-mocked ratio shows mocks dominating the integration-test surface (anything above ~30% mock coverage on real-infra paths: DB, HTTP, agents, sandboxes, payment), that's the first finding in your report — SEVERITY=HIGH, category=test-integrity. A mocked test passes while the bug stays in production. Do not start Phase 1 adversarial scan until this is named in the inventory; attacks against a mock-coverage harness produce false confidence.
+
 ## Phase 1: Adversarial Scan
 
 Derive the attack surface autonomously by reading the code. Write every target, with its attack class and risk, to `.evolve/harden/<date>-surface.md`.

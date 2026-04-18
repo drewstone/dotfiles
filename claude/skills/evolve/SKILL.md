@@ -51,6 +51,18 @@ If vague ("make this better"), ask: "Better by what metric? What does 10/10 look
 
 If rich ("push all agent scores above 0.80"), proceed.
 
+### Phase 0.5: Metric → product-value claim (REQUIRED before Phase 1)
+
+For every metric in the success criteria, write one sentence:
+> "If this number moves, what user-visible product outcome moves with it?"
+
+If you can't, the metric is wrong. Stop. Evolve converges on whatever metric you point it at — proxy metrics are the default failure mode of offline evals. Force the linkage now, or you ship "wins" that don't move anything users feel.
+
+Store the claim on each metric in `.evolve/current.json` under `metricClaims[<metric>]` so future rounds can validate.
+
+Bad metric: "expected-capability jaccard ≥ 0.5" with no claim that matching the list improves downstream agent success.
+Good metric: "p95 latency < 100ms" with claim "this path gates the user's first keystroke; jank shows up in session replay above 100ms."
+
 ## Phase 1: Decompose
 
 **Before measuring, ask: can this goal be split into independent sub-goals?**
@@ -130,39 +142,15 @@ Baseline — <timestamp>
 
 Don't just find failures — **rank them by optimization ROI**. Fix the thing that moves the most score for the least effort.
 
-### ROI Ranking Framework
+**Dispatch `/diagnose` for the full triage methodology** (ROI ranking, stratification, bimodality/correlation/per-turn checks, hypothesis generation). `/diagnose` owns that loop; duplicating it here caused the two skills' methodologies to drift.
 
-For each failing target, compute:
+The minimal version — use this only when dispatching `/diagnose` is overkill (single target, one obvious failure cluster):
 
-```
-ROI = (gap_to_threshold × blast_radius × confidence) / estimated_effort
+1. Cluster failures by dimension or error shape.
+2. Pick the cluster with biggest gap × broadest blast radius × cheapest fix.
+3. Write one hypothesis with claim, action, verification, expected metric change.
 
-gap_to_threshold: how far below target (bigger gap = more room to improve)
-blast_radius:     how many targets share this failure mode (systemic > isolated)
-confidence:       how stable is the measurement? (CV < 15% = high, CV > 25% = low)
-estimated_effort: 1 (config change) to 5 (architectural change)
-```
-
-**Always fix systemic issues before isolated ones.** If 8/20 targets fail on the same dimension, that's one fix for 8 improvements. If 1 target fails on a unique issue, that's one fix for 1 improvement.
-
-### Diagnosis Checklist
-
-1. **Stratify failures by dimension**: Which scoring dimensions are consistently weak? Use `stratify()` or group failures by their worst dimension.
-2. **Check for bimodality**: If a target's scores are bimodal [90,90,45,88,42], the model is randomly choosing between two strategies. That's architectural, not tunable.
-3. **Check cross-dimension correlation**: If form_accuracy and line_value_accuracy are correlated (rho > 0.6), fixing one may fix both. Use `spearmanCorrelation()`.
-4. **Check per-turn convergence**: Does quality degrade at a specific turn? Does the model disengage after T3? That's a prompt structure issue, not a content issue.
-5. **Check cost vs quality**: Are expensive runs (high token count) also the best runs? If not, the model is wasting tokens on the wrong things.
-
-### Hypothesis Generation
-
-For each failure cluster, generate a hypothesis with:
-- **Claim**: what will improve, by how much
-- **Action**: specific change (code, config, prompt)
-- **Verification**: how to confirm the change deployed
-- **Expected metrics**: which numbers should move
-- **Estimated ROI**: gap × blast × confidence / effort
-
-Complex diagnosis → invoke `/diagnose`.
+For anything more complex (multi-target, bimodal scores, cross-dimension correlation), run `/diagnose` and read its output into Phase 5.
 
 ### Experiment Design (before running anything)
 
@@ -173,15 +161,6 @@ Complex diagnosis → invoke `/diagnose`.
 3. **Compute required reps**: Use `requiredReps(cv, expectedDelta)` from eval-stats.ts. High-variance targets need more reps.
 4. **Estimate cost**: reps × targets × avg_cost_per_run. Is this experiment worth its cost?
 5. **Define success criteria BEFORE running**: "If median improves ≥5pp on ≥3 targets with d>0.5 and 0 regressions, KEEP."
-
-### Competitive context (when relevant)
-
-Before hypothesizing fixes, check if the problem is solved elsewhere:
-- How do competitors/alternatives handle this? What do they charge, how do they perform?
-- Are there open-source implementations, papers, or benchmarks to reference?
-- Where are we genuinely behind vs where are we already ahead?
-
-Present as a comparison table. Be honest — if competitors are better, say so.
 
 ### Anti-overfitting discipline
 
@@ -297,72 +276,12 @@ This is the first file an agent should read to understand the current state of t
 
 Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is the data that enables cross-project learning and meta-analysis.
 
-```jsonl
-{"id":"exp_001","project":"phony","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-huberman","agent-mark-hyman","agent-peter-attia"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Health creators need disclaimers. Judge flagged medical advice without caveats.","learnings":["Safety disclaimers lift all health agents universally","Single-line 'consult your physician' insufficient — need 5-6 specific guidelines"]}
-```
+Full schema (required fields, optional fields, product-scorecard shape, example line) lives in **`schema.md`** in this skill directory. Read it before writing your first experiment of a session.
 
-**Required fields:**
-| Field | Type | Purpose |
-|-------|------|---------|
-| `id` | string | Unique experiment ID |
-| `project` | string | Repo/project name |
-| `goal` | string | The evolve goal |
-| `round` | number | Which cycle |
-| `hypothesis` | string | What was tested |
-| `category` | enum | `prompt` \| `config` \| `code` \| `infra` \| `model` \| `criteria` |
-| `lever` | string | What was changed (systemPrompt, temperature, judge criteria, etc.) |
-| `targets` | string[] | What was targeted (agent IDs, file paths, service names) |
-| `baseline` | object | Metric values before |
-| `result` | object | Metric values after |
-| `delta` | number | Primary metric change |
-| `verdict` | enum | `KEEP` \| `ITERATE` \| `ABANDON` \| `REGRESSION` |
-| `durationMs` | number | How long the experiment took |
-| `timestamp` | string | ISO 8601 |
-| `reasoning` | string | Why this hypothesis was chosen |
-| `learnings` | string[] | What was discovered (reusable insights) |
-
-**Optional fields:**
-| Field | Type | Purpose |
-|-------|------|---------|
-| `variation` | number | Which attempt (1, 2, 3 for iterations) |
-| `parentId` | string | Previous experiment this iterates on |
-| `deploymentVerified` | boolean | Was deployment confirmed before measuring? |
-| `failureMode` | string | If failed: what went wrong (deployment, scoring, approach) |
-| `crossPollinated` | boolean | Was this applied from another target's success? |
-| `promptVersionId` | string | Which prompt version was tested (from `.evolve/prompts/registry.json`) |
-| `costUsd` | number | Estimated cost of this experiment |
-| `reps` | number | How many repetitions were run (1 = single run, 3 = median-of-3) |
-
-### Why structured data matters
-
-1. **Cross-project patterns**: "Safety disclaimers worked on phony voice agents. Do they work on scribe meeting bots?" — queryable from the JSONL.
-2. **Meta-learning**: Which categories of experiments have the highest success rate? Prompt changes? Config changes? Code changes?
-3. **Failure analysis**: What's the most common failure mode? Deployment verification? Scoring artifacts?
-4. **Research potential**: Aggregate data across projects → paper on autonomous improvement methodology.
-5. **Cross-project intelligence**: shared experiment logs make patterns reusable across repos and sessions.
-
-### Product Quality Scorecard
-
-The experiment log feeds into a **product scorecard** — a snapshot of all user flows and their quality:
-
-```json
-{
-  "product": "phony",
-  "timestamp": "2026-03-20T04:00:00Z",
-  "flows": [
-    {"name": "synthetic_conversation", "score": 0.80, "target": 0.85, "status": "pass"},
-    {"name": "selfplay", "score": null, "target": 0.75, "status": "unmeasured"},
-    {"name": "tool_calling", "score": null, "target": 0.80, "status": "unmeasured"},
-    {"name": "onboarding", "score": null, "target": 0.70, "status": "unmeasured"},
-    {"name": "voice_latency", "score": null, "target": 1500, "status": "unmeasured"}
-  ],
-  "aggregate": 0.80,
-  "coverage": "1/5 flows measured",
-  "evolveHistory": "4 cycles, +0.11 improvement"
-}
-```
-
-Write to `.evolve/scorecard.json` after each cycle.
+Key reminders:
+- Baseline and result must be median of ≥3 runs (Phase 0.5 rule).
+- Include `productValueClaim` so downstream readers can judge proxy vs real movement.
+- Write `.evolve/scorecard.json` after each cycle — product flows with scores + targets + status.
 
 ## Composing Skills
 

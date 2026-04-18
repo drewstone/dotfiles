@@ -44,6 +44,15 @@ Write `.evolve/pursuits/<date>-<goal-slug>.md`:
 Generation: {N}
 Status: auditing
 
+## Metric → product-value claim (REQUIRED before moving on)
+For each metric in the goal, write one sentence:
+"If this number moves, what user-visible product outcome moves with it?"
+
+If you can't write it, the metric is wrong. Stop and rescope with the
+operator. Pursue converges happily on proxy metrics if you don't force
+the linkage now — that's how "successful" generations ship with no
+measurable product effect.
+
 ## System Audit
 - What exists and works
 - What exists but isn't integrated
@@ -51,8 +60,15 @@ Status: auditing
 - What doesn't exist yet
 - Measurement gaps
 
-## Baselines
-[run measurements, record honest numbers]
+## Baselines (median of ≥3 runs)
+Run each measurement ≥3 times. Record the median AND the individual
+run values. If spread is >10% of the mean on any dimension, run 5 more
+and either (a) note the metric is too noisy to evolve against, or
+(b) tighten the measurement (more scenarios, deterministic judge).
+
+A single-run baseline causes false wins on Gen N and phantom regressions
+on Gen N+1 — the same variant looks great or terrible depending on
+which run you sampled.
 
 ## Diagnosis
 [root cause — what's architectural vs tunable]
@@ -120,9 +136,33 @@ A generation = 5–20 coordinated changes + at least 1 architectural change + a 
 
 Done well, saves more time than it spends. Done as ritual, worse than nothing.
 
+### Phase 1.5 blocking gate
+
+Before advancing to Phase 2 Build, answer each question in the pursuit
+spec. If ANY answer is yes, Phase 1.5 Review is blocking — you cannot
+skip it, only defer a one-file reversible shim.
+
+- Does any diff file touch auth, crypto, TLS, signing, or trust boundaries?
+- Does any diff file touch billing, payments, subscriptions, credits?
+- Is the total diff >5 files or >300 lines?
+- Does the change add or modify an external API endpoint?
+- Does the change modify lifecycle operations (create, delete, provision)?
+- Does the change introduce concurrency, locking, or shared mutable state?
+
+If all answers are no, mark the gate passed in the spec with the literal
+line `Phase 1.5 gate: passed (all-no)`. This exists because two
+independent reflections (blueprint-agent hosting, agent-dev-container
+skills-workflow) documented Phase 1.5 being silently skipped on
+trust-boundary changes and CRITs being caught post-merge.
+
 ## Phase 2: Build — Complete Before Testing
 
 Build ALL coupled changes before testing any. No A/B on coupled changes.
+
+**Boil the ocean.** A generation is complete or it's nothing. No "coming
+soon," no TODO markers on critical paths, no "we'll wire it up next
+round." If the change requires three files to ship and you've built two,
+you have not built a generation — you've accumulated debt. Finish.
 
 Track in the spec:
 
@@ -142,11 +182,23 @@ Run the complete pipeline end-to-end with ALL changes active. Full eval battery.
 
 Before declaring done, audit the diff. Focus: does new code match codebase patterns? Does it reuse existing utilities? Does every branch have test coverage?
 
+**Preferred path**: dispatch `/critical-audit --diff-only`. It serializes
+its reviewers (no 429s), outputs a fix-plan keyed by file:line, and
+persists the run under `.evolve/critical-audit/` so Phase 4 can compare
+against it.
+
+**Fallback**: if `/critical-audit --diff-only` isn't available in this
+environment, run the shell helper:
+
 ```bash
 bash ${SKILL_DIR}/diff-audit.sh
 ```
 
-This dispatches parallel reviewers scoped to the diff (fast). Fix every CRITICAL and HIGH before Phase 4. Skip only for one-file reversible changes.
+Either path: fix every CRITICAL and HIGH before Phase 4. Skip only for
+one-file reversible changes. Three independent reflections
+(skills-workflow, hosting-skill-workflow, gpu-providers-session) show
+CRITs landing in main because this step was treated as optional — it
+is not.
 
 ## Phase 4: Evaluate
 
