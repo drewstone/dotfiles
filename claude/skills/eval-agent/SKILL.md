@@ -278,6 +278,8 @@ const median = scores.sort((a, b) => a.score - b.score)[1]
 5. **No baseline.** Always score before AND after changes. Delta matters more than absolute score.
 6. **Crammed context.** Don't stuff 50K chars of reference into a single LLM call. Use agentic gathering (claude -p with tools) to let the evaluator read selectively.
 7. **Same model judges itself.** The evaluator should be a different model or at minimum a different prompt role than the builder. Same-model self-eval is unreliable.
+8. **Evaluating mocked outputs as if they were real.** If the target system under eval is behind mocks (stubbed DB, mocked HTTP, fake agent responses), the eval measures the mocks, not the system. Rubrics must score what the user's real environment produces — real agent calls, real DB reads, real downstream effects. If real execution is expensive, cache real runs; don't substitute synthetic fixtures. A high score on a mocked target is worse than no score — it creates false confidence that ships.
+9. **Metric with no product-value claim.** Before a dimension enters a rubric, write one sentence: "If this dimension's score moves, what user-visible outcome moves with it?" Dimensions that can't carry that sentence are proxies — they converge happily while product stays flat.
 
 ## Composing with Other Skills
 
