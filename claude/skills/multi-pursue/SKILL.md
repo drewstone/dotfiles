@@ -1,48 +1,50 @@
 ---
-name: meta-harness
-description: "Automated code-level evolution. Drop into any project, discover the harness (the code around the model/agent), create evals if missing, then run parallel CC proposers that evolve the architecture — not the parameters. State lives in .evolve/meta-harness/. Use when /evolve plateaus on parameter tuning and the system needs structural code changes, or when the user says 'meta-harness', 'evolve the architecture', 'improve the harness', 'make this code better structurally'."
+name: multi-pursue
+description: "Automated N-proposer pursue — runs multiple parallel Claude Code agents, each proposing a structurally different variant of the harness, competing on a Pareto frontier. Implements the pattern from yoonholee.com/meta-harness (raw-trace access, filesystem-based optimization, grounded proposals). Drop into any project, discover the harness (the code around the model/agent), create evals if missing, then run parallel CC proposers that evolve the architecture — not the parameters. State lives in .evolve/multi-pursue/. Use when /evolve plateaus on parameter tuning and the system needs structural code changes, or when the user says 'multi-pursue', 'meta-harness', 'parallel proposers', 'evolve the architecture', 'run N proposers in parallel'."
 ---
 
-# Meta-Harness — Automated Code Architecture Evolution
+# Multi-Pursue — Automated N-Proposer Architecture Evolution
 
 Drop into any project. Discover what to evolve. Create evals if missing. Run parallel proposers that write structurally different code. Track a Pareto frontier. Converge.
 
-State lives in `.evolve/meta-harness/` — part of the evolve ecosystem, not separate.
+State lives in `.evolve/multi-pursue/` — part of the evolve ecosystem, not separate.
 
-**Use meta-harness when** /evolve has plateaued on parameter tuning and the gap is architectural. **Use /evolve when** the goal is a measurable metric and parameter changes can move it. **Use /pursue when** you need to design a generation before building. Meta-harness IS automated /pursue — N parallel proposers instead of one human directing CC.
+**Use multi-pursue when** /evolve has plateaued on parameter tuning and the gap is architectural. **Use /evolve when** the goal is a measurable metric and parameter changes can move it. **Use /pursue when** you need to design a generation before building. Multi-pursue IS automated /pursue — N parallel proposers instead of one human directing CC.
 
 ## How it relates to /evolve and /pursue
 
 ```
 /evolve         → tight experiment loop, parameter tuning, metric optimization
 /pursue         → generational architectural shift, human-directed
-/meta-harness   → automated /pursue — CC proposes architectural shifts, eval judges them
+/multi-pursue   → automated /pursue — CC proposes architectural shifts, eval judges them
 ```
 
-When /evolve runs and hits a plateau (3+ rounds, <1% improvement), it should recommend: "Run /meta-harness — parameter tuning is exhausted, need structural changes."
+When /evolve runs and hits a plateau (3+ rounds, <1% improvement), it should recommend: "Run /multi-pursue — parameter tuning is exhausted, need structural changes."
 
-When /pursue designs a generation, it can dispatch meta-harness as the builder: "I designed the generation, now meta-harness finds the best implementation."
+When /pursue designs a generation, it can dispatch multi-pursue as the builder: "I designed the generation, now multi-pursue finds the best implementation."
+
+**Name note:** this skill was renamed from `/meta-harness` 2026-04-19 for naming clarity — `meta-harness` is the paper's term for the pattern; `multi-pursue` is the more accurate description of what the skill does (N parallel /pursue proposers instead of one human-directed one). The frontmatter retains `meta-harness` as a trigger phrase for backward compat with the paper terminology.
 
 ## Start Here — Full Bootstrap
 
-If `.evolve/meta-harness/` exists, read in order:
-1. `.evolve/meta-harness/config.json` — dimensions AND `dimensionClaims`. If any dimension lacks a claim, fix that before proposing anything. (See Phase 0a.5.)
-2. `.evolve/meta-harness/frontier.json` — what variants are non-dominated
-3. `.evolve/meta-harness/evolution.jsonl` — what's been tried, what worked, why
-4. `.evolve/meta-harness/variants/` — prior variant source code + `.meta.json`
+If `.evolve/multi-pursue/` exists, read in order:
+1. `.evolve/multi-pursue/config.json` — dimensions AND `dimensionClaims`. If any dimension lacks a claim, fix that before proposing anything. (See Phase 0a.5.)
+2. `.evolve/multi-pursue/frontier.json` — what variants are non-dominated
+3. `.evolve/multi-pursue/evolution.jsonl` — what's been tried, what worked, why
+4. `.evolve/multi-pursue/variants/` — prior variant source code + `.meta.json`
 5. `.evolve/current.json` — current evolve state
 
-If `.evolve/meta-harness/` does NOT exist, bootstrap from scratch (Phase 0).
+If `.evolve/multi-pursue/` does NOT exist, bootstrap from scratch (Phase 0).
 
 ## Fit Check — before bootstrapping
 
-Meta-harness is the most expensive skill in the library (N parallel proposers, each with full repo compute). Don't dispatch it prematurely.
+Multi-pursue is the most expensive skill in the library (N parallel proposers, each with full repo compute). Don't dispatch it prematurely.
 
 1. **Prerequisite: `/evolve` has plateaued.** Meta-harness is the right move when 3+ rounds of `/evolve` produced cumulative delta <2%. If no `/evolve` rounds have run, dispatch `/evolve` first — parameter tuning is cheaper than structural rewrites.
 2. **Prerequisite: a stable median-of-≥3 baseline exists.** Without it, parallel proposers can't tell noise from signal. If the baseline is single-run or >10% drift vs recorded, re-seed first.
 3. **Prerequisite: at least one dimension has a `productValueClaim`.** Phase 0a.5 is blocking. If claims are missing, fix them before spawning proposers — N×cost on proxy metrics is wasted compute.
 4. **Resume check.** If `.evolve/current.json` names a different active skill or a `/pursue` generation is in flight, do NOT start proposers — parallel edits over in-flight work conflict. Dispatch `/governor` to decide.
-5. **Repo shape.** Meta-harness fits optimization-shape repos (starter-foundry, agent platforms, model harnesses). For library/service repos, the harness-vs-client distinction may not map — confirm a single highest-blast-radius file exists before committing.
+5. **Repo shape.** Multi-pursue fits optimization-shape repos (starter-foundry, agent platforms, model harnesses). For library/service repos, the harness-vs-client distinction may not map — confirm a single highest-blast-radius file exists before committing.
 
 Uncertain → dispatch `/governor`.
 
@@ -63,7 +65,7 @@ The harness is the code that wraps the core logic — the scaffolding that deter
 2. The harness is NOT: model weights, test fixtures, config constants, CI scripts
 3. Pick the file with the highest blast radius on output quality. One file. The proposers evolve THIS.
 
-Write the discovery to `.evolve/meta-harness/config.json`:
+Write the discovery to `.evolve/multi-pursue/config.json`:
 ```json
 {
   "harnessPath": "lib/agent-scaffold.ts",
@@ -86,7 +88,7 @@ Before writing the eval, for EACH dimension in `config.json` write the one-sente
 
 If you can't write it, the metric is wrong. **Stop and ask the operator.** Do not proceed to 0b until every dimension has a claim.
 
-Meta-harness will converge happily on proxy metrics that don't track product value — that is the default failure mode of offline evals. The skill has shipped "wins" that moved the eval without moving anything users care about. Force the linkage up front so the operator doesn't have to catch it at review.
+Multi-pursue will converge happily on proxy metrics that don't track product value — that is the default failure mode of offline evals. The skill has shipped "wins" that moved the eval without moving anything users care about. Force the linkage up front so the operator doesn't have to catch it at review.
 
 - **Bad dimension:** "expected-capability jaccard" against a hand-authored expected list with no stated claim that matching the list improves downstream agent success.
 - **Good dimension:** "turns-to-preview" with claim "fewer turns = user sees their feature sooner = lower abandon rate in session replay."
@@ -97,7 +99,7 @@ If a dimension's claim is "it's in the existing dashboard, seems worth tracking"
 
 ### 0b. Create evals if missing
 
-If the project has no eval suite, CREATE ONE. This is non-negotiable — meta-harness can't run without evals.
+If the project has no eval suite, CREATE ONE. This is non-negotiable — multi-pursue can't run without evals.
 
 **Branch on goal shape:**
 
@@ -122,7 +124,7 @@ If the project has no eval suite, CREATE ONE. This is non-negotiable — meta-ha
 
 ### 0c. Seed baseline (median of ≥3 runs)
 
-Run the eval **≥3 times** against the current harness. Record the MEDIAN scores (per dimension) in `.evolve/meta-harness/frontier.json` as the baseline entry. Log the individual run values in a `baselineRuns` array on the entry.
+Run the eval **≥3 times** against the current harness. Record the MEDIAN scores (per dimension) in `.evolve/multi-pursue/frontier.json` as the baseline entry. Log the individual run values in a `baselineRuns` array on the entry.
 
 First-run baselines drift ~5% from steady-state on noisy metrics (latency, sampling-based accuracy, LLM-judge variance). A single-run baseline causes false wins on the first variant and false regressions on the next; the frontier then chases noise. Median-of-3 makes the baseline steady before variants compete against it.
 
@@ -134,8 +136,8 @@ The same rule applies to variants: any variant claiming frontier-dominance must 
 
 ```
 .evolve/
-├── current.json           # update: mode = "meta-harness"
-├── meta-harness/
+├── current.json           # update: mode = "multi-pursue"
+├── multi-pursue/
 │   ├── config.json        # harness path, eval command, dimensions, dimensionClaims
 │   ├── frontier.json      # Pareto frontier (baseline = median of ≥3 runs)
 │   ├── evolution.jsonl    # empty (will grow)
@@ -146,7 +148,7 @@ The same rule applies to variants: any variant claiming frontier-dominance must 
 
 **Pre-dispatch hygiene** (do this before Phase 1 parallel proposers):
 
-- Commit `.evolve/meta-harness/` on main so worktrees inherit the config + baseline.
+- Commit `.evolve/multi-pursue/` on main so worktrees inherit the config + baseline.
 - Commit any `scripts/` additions (eval runner, collectors, helpers) so worktrees inherit them too. Proposers dispatched before a script is committed will not have it, silently fall back to re-implementing it, and diverge.
 - Add `.claude/worktrees/` to `.gitignore`.
 
@@ -156,11 +158,11 @@ For each iteration, you ARE the proposer. Read the full diagnostic state, then w
 
 ### 1a. Read the frontier
 
-`.evolve/meta-harness/frontier.json` — which variants are non-dominated. What dimensions are they strong/weak on.
+`.evolve/multi-pursue/frontier.json` — which variants are non-dominated. What dimensions are they strong/weak on.
 
 ### 1b. Read the evolution history
 
-`.evolve/meta-harness/evolution.jsonl` — every prior proposal. What was the hypothesis? Did it work? WHY did it fail? Look for:
+`.evolve/multi-pursue/evolution.jsonl` — every prior proposal. What was the hypothesis? Did it work? WHY did it fail? Look for:
 - **Confounds**: a change that helped on some dimensions but hurt others
 - **Dead ends**: 3+ proposals on the same mechanism all failed → pivot
 - **Lineage merging**: two successful variants with complementary strengths → combine
@@ -193,7 +195,7 @@ YES: "Add a verification stage after draft prediction to catch false positives b
 
 ### 1f. Write the variant
 
-A complete, compilable source file at `.evolve/meta-harness/variants/<snake_case_name>.<ext>`. Not a diff. Not a partial. Complete file that replaces the harness.
+A complete, compilable source file at `.evolve/multi-pursue/variants/<snake_case_name>.<ext>`. Not a diff. Not a partial. Complete file that replaces the harness.
 
 Match the codebase style exactly — imports, naming, error handling. Read 3 existing files first.
 
@@ -206,7 +208,7 @@ Match the codebase style exactly — imports, naming, error handling. Read 3 exi
   "base_system": "baseline",
   "changes": ["Add second retrieval stage", "Retrieve challengers"],
   "axis": "exploration",
-  "file": ".evolve/meta-harness/variants/draft_verification.ts"
+  "file": ".evolve/multi-pursue/variants/draft_verification.ts"
 }
 ```
 
@@ -218,7 +220,7 @@ Match the codebase style exactly — imports, naming, error handling. Read 3 exi
 
 ## Phase 3: Record + Iterate
 
-Append to `.evolve/meta-harness/evolution.jsonl`:
+Append to `.evolve/multi-pursue/evolution.jsonl`:
 ```json
 {"iteration":1,"name":"draft_verification","hypothesis":"...","scores":{"accuracy":0.85},"outcome":"frontier"}
 ```
@@ -229,10 +231,10 @@ Update `.evolve/progress.md` with the iteration results.
 
 ### Post-merge compaction
 
-Once a variant is merged to main (commit exists in the project repo), its source file in `.evolve/meta-harness/variants/<name>.<ext>` duplicates what's now in git. Compact:
+Once a variant is merged to main (commit exists in the project repo), its source file in `.evolve/multi-pursue/variants/<name>.<ext>` duplicates what's now in git. Compact:
 
-- **DELETE** `.evolve/meta-harness/variants/<name>.<ext>` (source duplicate)
-- **KEEP** `.evolve/meta-harness/variants/<name>.meta.json`
+- **DELETE** `.evolve/multi-pursue/variants/<name>.<ext>` (source duplicate)
+- **KEEP** `.evolve/multi-pursue/variants/<name>.meta.json`
 - Add to the meta JSON:
   ```json
   {
@@ -261,7 +263,7 @@ When the operator wants multi-proposer generation (N proposers evaluating in par
    - The config dimensions + dimensionClaims (so the proposer reasons about product effect, not just metric movement)
    - The current frontier + last 3 evolution.jsonl entries
 
-4. **Collection**: after all proposers complete, read each worktree's `.evolve/meta-harness/variants/*.meta.json`, copy the variant source + run JSONL back to main. Worth having a `scripts/meta-harness-collect.mjs` that scans `git worktree list` and gathers artifacts — otherwise this step is error-prone manual `cp`.
+4. **Collection**: after all proposers complete, read each worktree's `.evolve/multi-pursue/variants/*.meta.json`, copy the variant source + run JSONL back to main. Worth having a `scripts/multi-pursue-collect.mjs` that scans `git worktree list` and gathers artifacts — otherwise this step is error-prone manual `cp`.
 
 5. **Composition = lineage merge for generation N+1.** If proposers targeted orthogonal files, the next generation starts by applying each winning variant to its own file, rebuilding, and re-running the full eval ≥3 times. This composed variant IS the next-gen baseline.
 
@@ -334,7 +336,7 @@ Write variants in whatever language the project uses. TypeScript, Python, Rust, 
 If Foreman service is running (`http://localhost:7374`):
 
 ```bash
-# Start a meta-harness evolution job via Foreman API
+# Start a multi-pursue evolution job via Foreman API
 curl -X POST http://localhost:7374/api/evolve-code -H 'Content-Type: application/json' -d '{
   "repo": "/path/to/project",
   "harness": "lib/agent-scaffold.ts",
@@ -360,14 +362,14 @@ Without Foreman: run the loop manually in a single CC session using this skill. 
 
 Update `.evolve/current.json`:
 ```json
-{"mode": "evolve", "generation": N, "note": "meta-harness converged, hand off to /evolve for fine-tuning"}
+{"mode": "evolve", "generation": N, "note": "multi-pursue converged, hand off to /evolve for fine-tuning"}
 ```
 
 ## Related skills
 
 ```
-/meta-harness    ← automated code architecture evolution (this)
-  ├── /evolve    ← parameter tuning AFTER meta-harness converges
-  ├── /pursue    ← manual generational design BEFORE meta-harness automates
+/multi-pursue    ← automated code architecture evolution (this)
+  ├── /evolve    ← parameter tuning AFTER multi-pursue converges
+  ├── /pursue    ← manual generational design BEFORE multi-pursue automates
   └── /reflect   ← extract learnings from evolution history
 ```

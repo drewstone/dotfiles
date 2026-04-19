@@ -254,4 +254,4 @@ State files:
 └── progress.md                # append cleanup summary
 ```
 
-After deep-clean converges, hand off to `/meta-harness` if the codebase has an agent/harness worth evolving, or to `/evolve` for metric-driven improvement.
+After deep-clean converges, hand off to `/multi-pursue` if the codebase has an agent/harness worth evolving, or to `/evolve` for metric-driven improvement.

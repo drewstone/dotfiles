@@ -1,11 +1,11 @@
 ---
 name: governor
-description: "Explore-exploit governor for the evolve/pursue/meta-harness loop. Reads accumulated .evolve state + recent reflections + scorecard, detects repo shape, and dispatches the next skill — /evolve to exploit a working direction, /pursue for a generational leap, /meta-harness for parallel structural exploration, /eval-agent to bootstrap missing measurement, /reflect when the loop needs stepping back. Use when the user says 'what's next', 'keep improving', 'run the loop', 'what should we work on', 'pick the next skill', 'governor', or when re-entering a project after a break and wanting the system to decide the next move."
+description: "Explore-exploit governor for the evolve/pursue/multi-pursue loop. Reads accumulated .evolve state + recent reflections + scorecard, detects repo shape, and dispatches the next skill — /evolve to exploit a working direction, /pursue for a generational leap, /multi-pursue for parallel structural exploration, /eval-agent to bootstrap missing measurement, /reflect when the loop needs stepping back. Use when the user says 'what's next', 'keep improving', 'run the loop', 'what should we work on', 'pick the next skill', 'governor', or when re-entering a project after a break and wanting the system to decide the next move."
 ---
 
 # Governor — Explore-Exploit Dispatcher
 
-The skills below you (`/evolve`, `/pursue`, `/meta-harness`, `/polish`, `/eval-agent`, `/harden`, `/converge`) each do one thing well. Picking which one to run at which moment used to be the operator's job. Governor is the bandit that sits above them: reads accumulated state, decides whether to exploit (tighten the current direction) or explore (try something structurally different), and dispatches.
+The skills below you (`/evolve`, `/pursue`, `/multi-pursue`, `/polish`, `/eval-agent`, `/harden`, `/converge`) each do one thing well. Picking which one to run at which moment used to be the operator's job. Governor is the bandit that sits above them: reads accumulated state, decides whether to exploit (tighten the current direction) or explore (try something structurally different), and dispatches.
 
 Governor is **not** the orchestrator — it doesn't chain skills in sequence. It picks the single next skill, hands off, and exits. The dispatched skill runs and ends with its own dispatch-at-end. You run `/governor` again when you want the next pick.
 
@@ -31,7 +31,7 @@ Scan top-level files and `.evolve/` (if present):
 | `tests/` + CI config + no `.evolve/` | **Product/service repo** | `/harden`, `/verify`, `/critical-audit`, `/converge`; `/evolve`-`/pursue` need `/eval-agent` bootstrap first |
 | `src/lib/` as library + `package.json` public + changelog | **Library repo** | `/harden`, `/critical-audit`, `/verify`; evolve-family only if a benchmark suite exists |
 | Infra + deploy configs + SLA-style monitors | **Service repo** | `/converge`, `/harden`, `/verify`; evolve-family only if a user-visible metric is defined |
-| No tests, no CI, raw prototype | **Greenfield** | `/pursue` or `/meta-harness` to scaffold structure; bootstrap `.evolve/` and `/eval-agent` first |
+| No tests, no CI, raw prototype | **Greenfield** | `/pursue` or `/multi-pursue` to scaffold structure; bootstrap `.evolve/` and `/eval-agent` first |
 
 Record the detection in the governor's decision log (see Phase 4). If the shape is ambiguous, ask the operator before dispatching — a wrong classification cascades.
 
@@ -43,7 +43,7 @@ Record the detection in the governor's decision log (see Phase 4). If the shape 
 .evolve/experiments.jsonl                 # last 10-20 entries: deltas, verdicts
 .evolve/scorecard.json                    # current flow scores vs targets
 .evolve/reflections/ (newest 3)           # grading + dispatch-at-end of prior sessions
-.evolve/meta-harness/frontier.json        # if present: non-dominated variants
+.evolve/multi-pursue/frontier.json        # if present: non-dominated variants
 .evolve/pursuits/ (newest)                # current generation thesis + status
 .evolve/critical-audit/ (newest)          # unresolved CRITICAL/HIGH findings
 git log --oneline origin/main..HEAD       # uncommitted work, recent PRs
@@ -67,7 +67,7 @@ Derive these from Phase 1. Each is a boolean or short verdict.
 - **Dispatch-at-end of newest reflection names `/pursue`**: trust it.
 - **Current generation is complete (ADVANCE verdict) but no follow-up pursuit** → design the next generation.
 
-### Explore-heavy signals (favor `/meta-harness`)
+### Explore-heavy signals (favor `/multi-pursue`)
 
 - **Plateau + `/pursue` already ran 3+ rounds with <2% cumulative delta** → architecture is stuck, need parallel structural proposers.
 - **User explicitly asks "think bigger" or "what structural changes"** → route there.
@@ -76,7 +76,7 @@ Derive these from Phase 1. Each is a boolean or short verdict.
 
 - **Goal is defined but `.evolve/` has no baseline** → no measurement exists; bootstrap the judge.
 - **Scorecard has `status: unmeasured` flows with `target` set** → build the missing eval for that flow.
-- **The metric has no `productValueClaim`** (Phase 0.5 gate from `/evolve`, `/pursue`, `/meta-harness`) → measurement is proxy-shaped; either redefine the metric or build a judge that ties to product value.
+- **The metric has no `productValueClaim`** (Phase 0.5 gate from `/evolve`, `/pursue`, `/multi-pursue`) → measurement is proxy-shaped; either redefine the metric or build a judge that ties to product value.
 
 ### Retreat signals (favor revert + `/evolve` on last-known-good)
 
@@ -103,7 +103,7 @@ Apply signals in priority order. First match wins.
 2. Measurement-gap fires           → dispatch /eval-agent (or /improve if infra is the gap)
 3. Unresolved HIGH/CRITICAL fires  → dispatch /critical-audit --reaudit OR fix directly
 4. Reflection-due fires            → dispatch /reflect; governor re-runs after
-5. Explore-heavy fires             → dispatch /meta-harness
+5. Explore-heavy fires             → dispatch /multi-pursue
 6. Explore-light fires             → dispatch /pursue
 7. Exploit fires                   → dispatch /evolve (or /polish if gap is rubric-driven)
 8. Hand-off fires                  → write closing reflection + stop
@@ -190,7 +190,7 @@ The `.evolve/governor.jsonl` log is append-only. Never rewrite prior decisions �
 3. **Log every decision, including overrides.** The log is what future governor versions learn from.
 4. **Never skip detection.** Phase 0 repo-shape detection runs every time. A repo can change shape between runs (added evals, dropped CI, migrated state).
 5. **Retreat before explore after regression.** A regression must be reverted and re-baselined before the next explore — otherwise explore runs against a broken baseline.
-6. **Reflect before deep-explore.** `/meta-harness` is expensive. If it's been ≥5 rounds since the last reflection, reflect first.
+6. **Reflect before deep-explore.** `/multi-pursue` is expensive. If it's been ≥5 rounds since the last reflection, reflect first.
 7. **Respect the operator.** Any explicit skill request from the operator overrides governor's pick. Log the override and continue.
 
 ## Related skills
@@ -199,7 +199,7 @@ The `.evolve/governor.jsonl` log is append-only. Never rewrite prior decisions �
 /governor        ← reads state, picks the next skill to run (this)
   ├── /evolve           ← exploit a working direction
   ├── /pursue           ← generational leap when plateaued
-  ├── /meta-harness     ← parallel structural explore when pursue plateaus
+  ├── /multi-pursue     ← parallel structural explore when pursue plateaus
   ├── /eval-agent       ← bootstrap measurement when missing
   ├── /polish           ← rubric-driven quality pass
   ├── /critical-audit   ← unresolved HIGH/CRITICAL findings
