@@ -1,544 +1,507 @@
 #!/usr/bin/env bash
-# claude-profile — switch between multiple Claude accounts
+# claude-profile — switch between multiple Claude Code accounts.
 #
-# Usage:
-#   claude-profile add <name>         # Save current credentials as a named profile
-#   claude-profile use <name>         # Switch to a named profile
-#   claude-profile list               # List saved profiles
-#   claude-profile current            # Show active profile
-#   claude-profile remove <name>      # Delete a saved profile
-#   claude-profile auto               # Auto-select profile based on .claude-profile in cwd
-#   claude-profile pool <n1> <n2> ... # Create a rotation pool for a project
-#   claude-profile next               # Rotate to the next profile in the pool
+# Design (v2, 2026-04-19 rewrite):
+#
+# Each profile is its own complete CLAUDE_CONFIG_DIR. Activation means
+# exporting CLAUDE_CONFIG_DIR for the current shell. That's it.
+#
+# Why this is race-free and bug-free:
+#
+# - Claude Code honors CLAUDE_CONFIG_DIR (verified against the binary)
+#   and reads/writes EVERYTHING — credentials, history, projects, settings
+#   — from that single directory.
+# - No shared file is ever rewritten. Two concurrent `claude` sessions
+#   with different CLAUDE_CONFIG_DIR values never touch each other's state.
+# - Logging in with another account is just: run `claude` with a different
+#   CLAUDE_CONFIG_DIR pointing at a fresh (or existing) profile dir. No
+#   sync, no "active" marker to update, no cross-shell coordination.
+# - The shell hook only exports env vars. It never writes files. It can't
+#   clobber a running session's credentials because it doesn't touch them.
+#
+# Layout:
+#
+#   ~/.claude-profiles/
+#     .default                  # name of default profile for new shells (optional)
+#     <name>/                   # this dir == CLAUDE_CONFIG_DIR for the profile
+#       .credentials.json       # written by `claude` during OAuth login
+#       .claude.json            # written by `claude` at runtime
+#       projects/  sessions/  backups/   # also owned by `claude`
+#
+# The legacy ~/.claude/ directory is left intact as the "no profile
+# selected" fallback so users who don't opt into profiles see zero change.
+#
+# Compatible with zsh 5+ and bash 3.2+ (macOS stock bash).
 
 set -euo pipefail
 
-PROFILES_DIR="${HOME}/.claude/profiles"
-CREDS_FILE="${HOME}/.claude/.credentials.json"
-ACTIVE_FILE="${PROFILES_DIR}/.active"
-SESSIONS_DIR="${PROFILES_DIR}/sessions"
+PROFILES_DIR="${CLAUDE_PROFILES_DIR:-$HOME/.claude-profiles}"
+DEFAULT_FILE="${PROFILES_DIR}/.default"
+LEGACY_CREDS="$HOME/.claude/.credentials.json"
 
-mkdir -p "$PROFILES_DIR" "$SESSIONS_DIR"
+mkdir -p "$PROFILES_DIR"
 
-red() { printf '\033[31m%s\033[0m\n' "$1"; }
-green() { printf '\033[32m%s\033[0m\n' "$1"; }
-yellow() { printf '\033[33m%s\033[0m\n' "$1"; }
-dim() { printf '\033[2m%s\033[0m\n' "$1"; }
+# --- colors (only when stdout is a TTY) ---
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
+else
+  BOLD=''; DIM=''; RED=''; GREEN=''; YELLOW=''; CYAN=''; RESET=''
+fi
+_say()  { printf '%s\n' "$*"; }
+_dim()  { printf '%s%s%s\n' "$DIM" "$*" "$RESET"; }
+_red()  { printf '%s%s%s\n' "$RED" "$*" "$RESET" >&2; }
+_grn()  { printf '%s%s%s\n' "$GREEN" "$*" "$RESET"; }
+_warn() { printf '%s%s%s\n' "$YELLOW" "$*" "$RESET" >&2; }
+_info() { printf '%s%s%s\n' "$CYAN" "$*" "$RESET"; }
 
-get_sub() {
-  python3 -c "import json; print(json.load(open('$1')).get('claudeAiOauth',{}).get('subscriptionType','unknown'))" 2>/dev/null || echo "?"
+# --- helpers ---
+
+_profile_dir() { printf '%s/%s' "$PROFILES_DIR" "$1"; }
+
+_profile_exists() {
+  [[ -n "${1:-}" && -d "$(_profile_dir "$1")" ]]
 }
 
-# --- Session tracking ---
-# Each shell registers PID -> profile so we can detect conflicts
-
-_cleanup_stale_sessions() {
-  for f in "${SESSIONS_DIR}"/*.session; do
-    [[ -f "$f" ]] || continue
-    local pid
-    pid=$(basename "$f" .session)
-    if ! kill -0 "$pid" 2>/dev/null; then
-      rm -f "$f"
-    fi
-  done
-}
-
-_register_session() {
+_validate_name() {
+  # Profile names become directory names — lock them down to alnum + dash
+  # + underscore. Rejects '/', '..', whitespace, '.', leading '-'.
   local name="$1"
-  echo "$name" > "${SESSIONS_DIR}/$$.session"
-}
-
-_unregister_session() {
-  rm -f "${SESSIONS_DIR}/$$.session"
-}
-
-_active_sessions() {
-  # Print "pid:profile" for each live session (excluding current shell)
-  _cleanup_stale_sessions
-  for f in "${SESSIONS_DIR}"/*.session; do
-    [[ -f "$f" ]] || continue
-    local pid
-    pid=$(basename "$f" .session)
-    [[ "$pid" == "$$" ]] && continue
-    local prof
-    prof=$(cat "$f")
-    echo "${pid}:${prof}"
-  done
-}
-
-_conflicting_sessions() {
-  # Return sessions using a DIFFERENT profile than $1
-  local target="$1"
-  _active_sessions | while IFS=: read -r pid prof; do
-    [[ "$prof" != "$target" ]] && echo "${pid}:${prof}"
-  done
-}
-
-_write_creds() {
-  local name="$1"
-  local profile="${PROFILES_DIR}/${name}.json"
-  cp "$profile" "$CREDS_FILE"
-  # snapshot creds mtime so we can detect re-auth
-  stat -c %Y "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || \
-    stat -f %m "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || true
-}
-
-# --- Commands ---
-
-cmd_add() {
-  local name="${1:?Usage: claude-profile add <name>}"
-  if [[ ! -f "$CREDS_FILE" ]]; then
-    red "No credentials found at $CREDS_FILE — log in first with 'claude'"
-    exit 1
+  if [[ -z "$name" ]]; then
+    _red "profile name required"
+    exit 2
   fi
-  cp "$CREDS_FILE" "${PROFILES_DIR}/${name}.json"
-  echo "$name" > "$ACTIVE_FILE"
-  _register_session "$name"
-  green "Saved current credentials as profile '$name'"
-  dim "  subscription: $(get_sub "${PROFILES_DIR}/${name}.json")"
+  if ! [[ "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$ ]]; then
+    _red "invalid profile name: $(printf '%q' "$name")"
+    _red "  must match /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}\$/"
+    exit 2
+  fi
 }
 
-cmd_use() {
-  local force=0
-  if [[ "${1:-}" == "--force" ]]; then
-    force=1
-    shift
-  fi
-  local name="${1:?Usage: claude-profile use <name>}"
-  local profile="${PROFILES_DIR}/${name}.json"
-  if [[ ! -f "$profile" ]]; then
-    red "Profile '$name' not found. Available profiles:"
-    cmd_list
-    exit 1
-  fi
-
-  # Check for conflicting sessions
-  local conflicts
-  conflicts=$(_conflicting_sessions "$name")
-  if [[ -n "$conflicts" && "$force" -eq 0 ]]; then
-    yellow "Other shells are using different profiles:"
-    echo "$conflicts" | while IFS=: read -r pid prof; do
-      dim "  PID $pid → $prof"
-    done
-    yellow "Writing creds file would affect them."
-    yellow "Use 'claude-profile use --force $name' to override,"
-    yellow "or just rely on the shell hook (ANTHROPIC_OAUTH_TOKEN is set per-shell)."
-    # Still register this shell and update active marker, but skip creds file
-    echo "$name" > "$ACTIVE_FILE"
-    _register_session "$name"
-    green "Shell registered with profile '$name' (creds file unchanged)"
-    dim "  subscription: $(get_sub "$profile")"
-    return 0
-  fi
-
-  _write_creds "$name"
-  echo "$name" > "$ACTIVE_FILE"
-  _register_session "$name"
-  green "Switched to profile '$name'"
-  dim "  subscription: $(get_sub "$profile")"
+_creds_in() {
+  printf '%s/.credentials.json' "$1"
 }
 
-cmd_sync() {
-  if [[ ! -f "$ACTIVE_FILE" ]]; then
-    red "No active profile set"
-    exit 1
+_get_sub() {
+  # Best-effort subscription label from a creds file. Pure bash — no python.
+  local creds="$1"
+  [[ -f "$creds" ]] || { printf 'no-creds'; return; }
+  local line sub
+  line=$(grep -o '"subscriptionType":"[^"]*"' "$creds" 2>/dev/null | head -1 || true)
+  sub=${line#\"subscriptionType\":\"}
+  sub=${sub%\"}
+  [[ -n "$sub" ]] || sub='unknown'
+  printf '%s' "$sub"
+}
+
+_get_expires_at() {
+  # Epoch ms from creds (Claude stores UNIX ms). Empty string if missing.
+  local creds="$1"
+  [[ -f "$creds" ]] || return
+  grep -o '"expiresAt":[0-9]*' "$creds" 2>/dev/null | head -1 | cut -d: -f2 || true
+}
+
+_current_from_env() {
+  # Which profile does the CURRENT shell point at? Derived from CLAUDE_CONFIG_DIR.
+  local cfg="${CLAUDE_CONFIG_DIR:-}"
+  [[ -z "$cfg" ]] && return
+  local base
+  base=$(basename "$cfg")
+  if _profile_exists "$base" && [[ "$(_profile_dir "$base")" == "$cfg" ]]; then
+    printf '%s' "$base"
   fi
+}
+
+_default_name() {
+  [[ -f "$DEFAULT_FILE" ]] || return
   local name
-  name=$(cat "$ACTIVE_FILE")
-  local profile="${PROFILES_DIR}/${name}.json"
-  if [[ ! -f "$CREDS_FILE" ]]; then
-    red "No credentials found"
-    exit 1
-  fi
-  cp "$CREDS_FILE" "$profile"
-  stat -c %Y "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || \
-    stat -f %m "$CREDS_FILE" 2>/dev/null > "${PROFILES_DIR}/.creds_mtime" || true
-  green "Synced credentials back to profile '$name'"
-  dim "  subscription: $(get_sub "$profile")"
+  name=$(head -1 "$DEFAULT_FILE" | tr -d '[:space:]' || true)
+  [[ -n "$name" ]] && _profile_exists "$name" && printf '%s' "$name"
 }
 
-cmd_auto_sync() {
-  [[ -f "$ACTIVE_FILE" ]] || return 0
-  [[ -f "$CREDS_FILE" ]] || return 0
-  local saved_mtime=""
-  [[ -f "${PROFILES_DIR}/.creds_mtime" ]] && saved_mtime=$(cat "${PROFILES_DIR}/.creds_mtime")
-  local current_mtime
-  current_mtime=$(stat -c %Y "$CREDS_FILE" 2>/dev/null || stat -f %m "$CREDS_FILE" 2>/dev/null || echo "")
-  [[ -z "$current_mtime" ]] && return 0
-  [[ "$current_mtime" == "$saved_mtime" ]] && return 0
-  # Credentials file changed — sync back to active profile
-  local name
-  name=$(cat "$ACTIVE_FILE")
-  local profile="${PROFILES_DIR}/${name}.json"
-  cp "$CREDS_FILE" "$profile"
-  echo "$current_mtime" > "${PROFILES_DIR}/.creds_mtime"
-  dim "Auto-synced refreshed credentials to profile '$name'"
-}
+# --- commands ---
 
 cmd_list() {
-  local active=""
-  [[ -f "$ACTIVE_FILE" ]] && active=$(cat "$ACTIVE_FILE")
-
-  local pool_file=""
-  local pool_profiles=()
-  pool_file=$(find_pool_file)
-  if [[ -n "$pool_file" ]]; then
-    while IFS= read -r _line; do pool_profiles+=("$_line"); done < "$pool_file"
-  fi
-
-  _cleanup_stale_sessions
+  local current default
+  current=$(_current_from_env || true)
+  default=$(_default_name || true)
 
   local found=0
-  for f in "${PROFILES_DIR}"/*.json; do
-    [[ -f "$f" ]] || continue
+  for dir in "$PROFILES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
     found=1
-    local name
-    name=$(basename "$f" .json)
-    local sub
-    sub=$(get_sub "$f")
-    local marker=" "
-    [[ "$name" == "$active" ]] && marker="*"
-    local pool_marker=""
-    for p in "${pool_profiles[@]+"${pool_profiles[@]}"}"; do
-      [[ "$p" == "$name" ]] && pool_marker=" [pool]"
-    done
-    # collect PIDs for this profile from session files
-    local session_pids=""
-    for sf in "${SESSIONS_DIR}"/*.session; do
-      [[ -f "$sf" ]] || continue
-      local sp
-      sp=$(cat "$sf")
-      if [[ "$sp" == "$name" ]]; then
-        local spid
-        spid=$(basename "$sf" .session)
-        if [[ -n "$session_pids" ]]; then
-          session_pids="${session_pids}, $spid"
-        else
-          session_pids="$spid"
-        fi
-      fi
-    done
-    local session_marker=""
-    [[ -n "$session_pids" ]] && session_marker=" [active: PID $session_pids]"
-    printf " %s %-20s %s%s%s\n" "$marker" "$name" "($sub)" "$pool_marker" "$session_marker"
+    local name sub marker
+    name=$(basename "$dir")
+    sub=$(_get_sub "$(_creds_in "$dir")")
+    marker='  '
+    [[ "$name" == "$current" ]] && marker="${GREEN}→ ${RESET}"
+    local def_tag=''
+    [[ "$name" == "$default" ]] && def_tag=" ${DIM}[default]${RESET}"
+    local logged_in=''
+    [[ -f "$(_creds_in "$dir")" ]] || logged_in=" ${YELLOW}[not logged in]${RESET}"
+    printf ' %s%s%-24s%s  (%s)%s%s\n' "$marker" "$BOLD" "$name" "$RESET" "$sub" "$def_tag" "$logged_in"
   done
 
   if [[ $found -eq 0 ]]; then
-    dim "  No profiles saved. Run: claude-profile add <name>"
+    _dim "No profiles saved yet. Next steps:"
+    _dim "  claude-profile add <name>       — create a fresh profile (runs login)"
+    _dim "  claude-profile import <name>    — snapshot ~/.claude/ as a profile"
+    return
+  fi
+
+  _say
+  if [[ -n "$current" ]]; then
+    _dim "This shell: $current   (via CLAUDE_CONFIG_DIR)"
+  elif [[ -n "$default" ]]; then
+    _dim "This shell: $default   (from default — start a new shell to apply)"
+  else
+    _dim "This shell: legacy ~/.claude/   (no profile active)"
   fi
 }
 
 cmd_current() {
-  if [[ -f "$ACTIVE_FILE" ]]; then
-    cat "$ACTIVE_FILE"
+  local current default
+  current=$(_current_from_env || true)
+  default=$(_default_name || true)
+  if [[ -n "$current" ]]; then
+    printf '%s\n' "$current"
+  elif [[ -n "$default" ]]; then
+    _dim "(default: $default — not active in this shell)"
+    printf '%s\n' "$default"
   else
-    echo "(none)"
+    printf '%s\n' '(none)'
+  fi
+}
+
+cmd_add() {
+  local name="${1:?Usage: claude-profile add <name>}"
+  _validate_name "$name"
+  local dir; dir=$(_profile_dir "$name")
+  if _profile_exists "$name"; then
+    _warn "Profile '$name' already exists at $dir"
+    _warn "  To re-authenticate: claude-profile login $name"
+    _warn "  To delete and recreate: claude-profile remove $name"
+    exit 1
+  fi
+  mkdir -p "$dir"
+  _grn "Created profile '$name'"
+  _info "Starting login flow in isolated dir..."
+  _dim "  CLAUDE_CONFIG_DIR=$dir"
+  _dim "  When /login completes, Ctrl+D or /exit to return."
+  _say
+  CLAUDE_CONFIG_DIR="$dir" claude || true
+  if [[ -f "$(_creds_in "$dir")" ]]; then
+    _grn "Profile '$name' is logged in (subscription: $(_get_sub "$(_creds_in "$dir")"))."
+    if [[ ! -f "$DEFAULT_FILE" ]] && [[ $(find "$PROFILES_DIR" -maxdepth 1 -type d ! -path "$PROFILES_DIR" | wc -l) -eq 1 ]]; then
+      printf '%s' "$name" > "$DEFAULT_FILE"
+      _dim "  Marked '$name' as the default for new shells."
+    fi
+    _say
+    _info "To activate in this shell:"
+    _dim "    claude-profile use $name"
+  else
+    _warn "No credentials were written — did the login flow complete?"
+    _warn "  Re-run: claude-profile login $name"
+  fi
+}
+
+cmd_login() {
+  local name="${1:?Usage: claude-profile login <name>}"
+  _validate_name "$name"
+  if ! _profile_exists "$name"; then
+    _red "Profile '$name' not found. Create it with: claude-profile add $name"
+    exit 1
+  fi
+  local dir; dir=$(_profile_dir "$name")
+  _info "Re-running login for '$name'..."
+  _dim "  CLAUDE_CONFIG_DIR=$dir"
+  CLAUDE_CONFIG_DIR="$dir" claude || true
+  if [[ -f "$(_creds_in "$dir")" ]]; then
+    _grn "Profile '$name' refreshed (subscription: $(_get_sub "$(_creds_in "$dir")"))."
+  else
+    _warn "No credentials written — login flow may not have completed."
+  fi
+}
+
+cmd_import() {
+  # Snapshot legacy ~/.claude/.credentials.json into a named profile. Useful
+  # when switching to the profile model from a single pre-existing account.
+  local name="${1:?Usage: claude-profile import <name>}"
+  _validate_name "$name"
+  if [[ ! -f "$LEGACY_CREDS" ]]; then
+    _red "No credentials at $LEGACY_CREDS — nothing to import."
+    _red "  Log in first: claude /login"
+    exit 1
+  fi
+  if _profile_exists "$name"; then
+    _red "Profile '$name' already exists. Remove it first or pick another name."
+    exit 1
+  fi
+  local dir; dir=$(_profile_dir "$name")
+  mkdir -p "$dir"
+  install -m 0600 "$LEGACY_CREDS" "$(_creds_in "$dir")"
+  _grn "Imported current credentials as profile '$name' (subscription: $(_get_sub "$(_creds_in "$dir")"))."
+  if [[ ! -f "$DEFAULT_FILE" ]]; then
+    printf '%s' "$name" > "$DEFAULT_FILE"
+    _dim "  Marked '$name' as the default for new shells."
+  fi
+  _info "To activate in this shell:   claude-profile use $name"
+}
+
+cmd_use() {
+  # The binary can't mutate the caller's env. The `use` command only works
+  # via the shell function installed by `shell-hook` — it evals the export.
+  # When run directly, this command refuses and tells the user how to fix.
+  local name="${1:?Usage: claude-profile use <name>}"
+  _validate_name "$name"
+  if ! _profile_exists "$name"; then
+    _red "Profile '$name' not found. Available:"
+    cmd_list >&2
+    exit 1
+  fi
+  local dir; dir=$(_profile_dir "$name")
+  if [[ ! -f "$(_creds_in "$dir")" ]]; then
+    _warn "Profile '$name' has no credentials yet. Run: claude-profile login $name"
+  fi
+  if [[ "${_CLAUDE_PROFILE_VIA_FUNCTION:-}" == "1" ]]; then
+    printf 'export CLAUDE_CONFIG_DIR=%q\n' "$dir"
+    printf 'printf %%s\\\\n %q > %q\n' "$name" "$DEFAULT_FILE"
+  else
+    _warn "claude-profile is a shell function when installed correctly."
+    _warn "  Add to ~/.bashrc or ~/.zshrc:"
+    _warn "      eval \"\$(claude-profile shell-hook)\""
+    _warn "  Reload the shell, then re-run: claude-profile use $name"
+    _warn ""
+    _warn "  One-off without the hook:"
+    _warn "      export CLAUDE_CONFIG_DIR=$dir"
+    exit 1
+  fi
+}
+
+cmd_default() {
+  if [[ "${1:-}" == "--unset" ]]; then
+    rm -f "$DEFAULT_FILE"
+    _grn "Default profile unset. New shells will use ~/.claude/."
+    return
+  fi
+  local name="${1:?Usage: claude-profile default <name> | --unset}"
+  _validate_name "$name"
+  if ! _profile_exists "$name"; then
+    _red "Profile '$name' not found."
+    exit 1
+  fi
+  printf '%s' "$name" > "$DEFAULT_FILE"
+  _grn "Default profile for new shells set to '$name'."
+  if [[ "$(_current_from_env || true)" != "$name" ]]; then
+    _dim "  This shell is unchanged — run 'claude-profile use $name' to switch now."
   fi
 }
 
 cmd_remove() {
   local name="${1:?Usage: claude-profile remove <name>}"
-  local profile="${PROFILES_DIR}/${name}.json"
-  if [[ ! -f "$profile" ]]; then
-    red "Profile '$name' not found"
+  _validate_name "$name"
+  if ! _profile_exists "$name"; then
+    _red "Profile '$name' not found."
     exit 1
   fi
-  rm "$profile"
-  green "Removed profile '$name'"
-  [[ -f "$ACTIVE_FILE" ]] && [[ "$(cat "$ACTIVE_FILE")" == "$name" ]] && rm "$ACTIVE_FILE"
-}
-
-find_pool_file() {
-  local dir="$PWD"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/.claude-pool" ]]; then
-      echo "$dir/.claude-pool"
-      return 0
-    fi
-    dir=$(dirname "$dir")
-  done
-  echo ""
-}
-
-cmd_pool() {
-  if [[ $# -lt 2 ]]; then
-    red "Usage: claude-profile pool <profile1> <profile2> [profile3] ..."
-    exit 1
-  fi
-  for name in "$@"; do
-    if [[ ! -f "${PROFILES_DIR}/${name}.json" ]]; then
-      red "Profile '$name' not found"
+  local dir; dir=$(_profile_dir "$name")
+  local force=0
+  [[ "${2:-}" == "--force" ]] && force=1
+  if [[ $force -eq 0 ]]; then
+    if [[ -t 0 ]]; then
+      printf '%sDelete %s?%s [y/N] ' "$YELLOW" "$dir" "$RESET"
+      local reply; read -r reply
+      [[ "$reply" == "y" || "$reply" == "Y" ]] || { _dim "aborted."; exit 0; }
+    else
+      _red "Refusing to delete '$name' without --force (non-interactive shell)."
       exit 1
     fi
-  done
-  printf '%s\n' "$@" > .claude-pool
-  green "Created pool with ${#} profiles in $(pwd)/.claude-pool"
-  for name in "$@"; do
-    dim "  - $name ($(get_sub "${PROFILES_DIR}/${name}.json"))"
-  done
-  cmd_use "$1"
+  fi
+  # Read the default file DIRECTLY (not via _default_name, which gates on
+  # the dir still existing — we're about to delete that dir).
+  local raw_default=''
+  [[ -f "$DEFAULT_FILE" ]] && raw_default=$(head -1 "$DEFAULT_FILE" | tr -d '[:space:]' 2>/dev/null || true)
+  rm -rf "$dir"
+  if [[ "$raw_default" == "$name" ]]; then
+    rm -f "$DEFAULT_FILE"
+    _dim "  Also cleared default (new shells will use ~/.claude/ again)."
+  fi
+  _grn "Removed profile '$name'."
+  if [[ "${CLAUDE_CONFIG_DIR:-}" == "$dir" ]]; then
+    _warn "  This shell's CLAUDE_CONFIG_DIR still points at the deleted dir."
+    _warn "  Fix: claude-profile use <other-name>   OR   unset CLAUDE_CONFIG_DIR"
+  fi
 }
 
-cmd_next() {
-  local pool_file
-  pool_file=$(find_pool_file)
-  if [[ -z "$pool_file" ]]; then
-    red "No .claude-pool found. Create one with: claude-profile pool <p1> <p2> ..."
-    exit 1
+cmd_doctor() {
+  local now_ms
+  now_ms=$(date +%s%3N 2>/dev/null || echo "")
+  if [[ -z "$now_ms" || "$now_ms" == *N* ]]; then
+    # macOS date has no %N; fall back to seconds*1000.
+    now_ms=$(( $(date +%s) * 1000 ))
   fi
-  local profiles=()
-  while IFS= read -r _line; do profiles+=("$_line"); done < "$pool_file"
-  if [[ ${#profiles[@]} -eq 0 ]]; then
-    red "Pool file is empty"
-    exit 1
-  fi
-  local current=""
-  [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
-  local next_idx=0
-  for i in "${!profiles[@]}"; do
-    if [[ "${profiles[$i]}" == "$current" ]]; then
-      next_idx=$(( (i + 1) % ${#profiles[@]} ))
-      break
+  _info "${BOLD}Profiles dir:${RESET} $PROFILES_DIR"
+  _say
+  local count=0 missing=0 expired=0
+  for dir in "$PROFILES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    count=$((count + 1))
+    local name creds exp sub
+    name=$(basename "$dir")
+    creds=$(_creds_in "$dir")
+    if [[ ! -f "$creds" ]]; then
+      printf '  %s✗%s %s — no credentials file\n' "$RED" "$RESET" "$name"
+      missing=$((missing + 1))
+      continue
     fi
+    if ! head -c 1 "$creds" | grep -q '{'; then
+      printf '  %s✗%s %s — credentials file is not JSON\n' "$RED" "$RESET" "$name"
+      continue
+    fi
+    exp=$(_get_expires_at "$creds")
+    sub=$(_get_sub "$creds")
+    local stamp=''
+    if [[ -n "$exp" && "$exp" =~ ^[0-9]+$ ]]; then
+      if [[ "$exp" -lt "$now_ms" ]]; then
+        stamp=" ${RED}expired${RESET}"
+        expired=$((expired + 1))
+      else
+        local secs=$(( (exp - now_ms) / 1000 ))
+        local human
+        if (( secs < 3600 )); then
+          human="$((secs / 60))m"
+        elif (( secs < 86400 )); then
+          human="$((secs / 3600))h"
+        else
+          human="$((secs / 86400))d"
+        fi
+        stamp=" ${DIM}(expires in $human)${RESET}"
+      fi
+    fi
+    printf '  %s✓%s %s — %s%s\n' "$GREEN" "$RESET" "$name" "$sub" "$stamp"
   done
-  local next_name="${profiles[$next_idx]}"
-  yellow "Rotating: $current → $next_name"
-  cmd_use "$next_name"
-}
-
-cmd_pool_status() {
-  local pool_file
-  pool_file=$(find_pool_file)
-  if [[ -z "$pool_file" ]]; then
-    dim "No pool configured for this directory"
+  if [[ $count -eq 0 ]]; then
+    _dim "No profiles yet."
     return
   fi
-  local profiles=()
-  while IFS= read -r _line; do profiles+=("$_line"); done < "$pool_file"
-  local current=""
-  [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
-  echo "Pool: $pool_file"
-  for i in "${!profiles[@]}"; do
-    local name="${profiles[$i]}"
-    local marker="  "
-    [[ "$name" == "$current" ]] && marker="→ "
-    printf " %s%-20s (%s)\n" "$marker" "$name" "$(get_sub "${PROFILES_DIR}/${name}.json" 2>/dev/null)"
-  done
-}
-
-cmd_auto() {
-  local dir="$PWD"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/.claude-profile" ]]; then
-      local name
-      name=$(cat "$dir/.claude-profile" | tr -d '[:space:]')
-      if [[ -n "$name" ]]; then
-        local current=""
-        [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
-        if [[ "$name" != "$current" ]]; then
-          # In auto mode, silently skip creds write if conflicts exist
-          local conflicts
-          conflicts=$(_conflicting_sessions "$name")
-          if [[ -n "$conflicts" ]]; then
-            # Don't clobber — just register this shell and set env var
-            echo "$name" > "$ACTIVE_FILE"
-            _register_session "$name"
-            return 0
-          fi
-          cmd_use "$name"
-        fi
-        return 0
-      fi
-    fi
-    if [[ -f "$dir/.claude-pool" ]]; then
-      local profiles=()
-      while IFS= read -r _line; do profiles+=("$_line"); done < "$dir/.claude-pool"
-      local current=""
-      [[ -f "$ACTIVE_FILE" ]] && current=$(cat "$ACTIVE_FILE")
-      for p in "${profiles[@]}"; do
-        [[ "$p" == "$current" ]] && return 0
-      done
-      if [[ ${#profiles[@]} -gt 0 ]]; then
-        local conflicts
-        conflicts=$(_conflicting_sessions "${profiles[0]}")
-        if [[ -n "$conflicts" ]]; then
-          echo "${profiles[0]}" > "$ACTIVE_FILE"
-          _register_session "${profiles[0]}"
-          return 0
-        fi
-        cmd_use "${profiles[0]}"
-      fi
-      return 0
-    fi
-    dir=$(dirname "$dir")
-  done
-}
-
-cmd_set() {
-  local name="${1:?Usage: claude-profile set <name>}"
-  if [[ ! -f "${PROFILES_DIR}/${name}.json" ]]; then
-    red "Profile '$name' not found. Available profiles:"
-    cmd_list
-    exit 1
-  fi
-  echo "$name" > .claude-profile
-  green "Set project profile to '$name' in $(pwd)/.claude-profile"
-  cmd_use "$name"
-}
-
-cmd_token() {
-  local profile="${1:-}"
-  local creds
-  if [[ -n "$profile" ]]; then
-    creds="${PROFILES_DIR}/${profile}.json"
-    if [[ ! -f "$creds" ]]; then
-      red "Profile '$profile' not found" >&2
-      exit 1
-    fi
+  _say
+  if [[ $missing -gt 0 || $expired -gt 0 ]]; then
+    _warn "$missing missing creds file(s), $expired expired token(s)."
+    _warn "  Fix: claude-profile login <name>"
   else
-    # Read from this shell's registered profile first, fall back to global creds
-    local shell_profile="${SESSIONS_DIR}/$$.session"
-    if [[ -f "$shell_profile" ]]; then
-      local name
-      name=$(cat "$shell_profile")
-      creds="${PROFILES_DIR}/${name}.json"
-    else
-      creds="$CREDS_FILE"
-    fi
+    _dim "All $count profile(s) healthy."
   fi
-  if [[ ! -f "$creds" ]]; then
-    red "No credentials found" >&2
-    exit 1
-  fi
-  python3 -c "import json; print(json.load(open('$creds'))['claudeAiOauth']['accessToken'])"
-}
-
-cmd_env() {
-  local token
-  token=$(cmd_token "${1:-}")
-  echo "export ANTHROPIC_OAUTH_TOKEN=\"$token\""
-}
-
-cmd_wrap() {
-  local token
-  token=$(cmd_token "")
-  ANTHROPIC_OAUTH_TOKEN="$token" exec "$@"
 }
 
 cmd_shell_hook() {
-  cat <<'HOOK'
-# Full auto-detect: runs on cd to pick up .claude-profile/.claude-pool
-claude_profile_auto() {
-  if command -v claude-profile &>/dev/null; then
-    claude-profile auto 2>/dev/null
-    local _token
-    _token=$(claude-profile token 2>/dev/null) && export ANTHROPIC_OAUTH_TOKEN="$_token"
-  fi
-}
-# Lightweight token refresh: runs before every prompt so pool rotations
-# in other shells are picked up immediately (no python3 fork — pure bash)
-claude_profile_refresh_token() {
-  local _profiles_dir="${HOME}/.claude/profiles"
-  local _sessions_dir="${_profiles_dir}/sessions"
-  local _session_file="${_sessions_dir}/$$.session"
-  local _active_file="${_profiles_dir}/.active"
-  local _name=""
-  if [[ -f "$_session_file" ]]; then
-    _name=$(cat "$_session_file")
-  elif [[ -f "$_active_file" ]]; then
-    _name=$(cat "$_active_file")
-  fi
-  if [[ -n "$_name" && -f "${_profiles_dir}/${_name}.json" ]]; then
-    # Extract token without forking python3 — use grep+sed on the JSON
-    local _tok
-    _tok=$(grep -o '"accessToken":"[^"]*"' "${_profiles_dir}/${_name}.json" 2>/dev/null | head -1 | sed 's/"accessToken":"//;s/"$//')
-    [[ -n "$_tok" ]] && export ANTHROPIC_OAUTH_TOKEN="$_tok"
-  fi
-}
-if [[ -n "$ZSH_VERSION" ]]; then
-  autoload -U add-zsh-hook
-  add-zsh-hook -d chpwd claude_profile_auto 2>/dev/null || true
-  add-zsh-hook chpwd claude_profile_auto
-  add-zsh-hook -d precmd claude_profile_refresh_token 2>/dev/null || true
-  add-zsh-hook precmd claude_profile_refresh_token
-else
-  case ";${PROMPT_COMMAND:-};" in
-    *";claude_profile_refresh_token;"*) ;;
-    *) PROMPT_COMMAND="claude_profile_refresh_token${PROMPT_COMMAND:+;${PROMPT_COMMAND}}" ;;
+  # Emits the bash/zsh snippet that turns `claude-profile` into a shell
+  # function so `use` can mutate the current shell's env. Pure env
+  # mutation — no file writes on any hot path.
+  cat <<'EOF'
+# claude-profile shell hook — injected by `eval "$(claude-profile shell-hook)"`
+# Principles: pure env var mutation, zero file writes on hot paths.
+
+# `claude-profile use X` must mutate THIS shell's env — impossible from a
+# child process. Wrap it in a shell function that evals the printed export.
+claude-profile() {
+  case "${1:-}" in
+    use)
+      local _out
+      _out=$(_CLAUDE_PROFILE_VIA_FUNCTION=1 command claude-profile "$@") || return $?
+      eval "$_out"
+      ;;
+    *)
+      command claude-profile "$@"
+      ;;
   esac
-fi
-claude_profile_auto
-HOOK
 }
 
-cmd_sessions() {
-  _cleanup_stale_sessions
-  local found=0
-  for f in "${SESSIONS_DIR}"/*.session; do
-    [[ -f "$f" ]] || continue
-    found=1
-    local pid prof
-    pid=$(basename "$f" .session)
-    prof=$(cat "$f")
-    local marker=" "
-    [[ "$pid" == "$$" ]] && marker="*"
-    printf " %s PID %-8s → %s\n" "$marker" "$pid" "$prof"
-  done
-  if [[ $found -eq 0 ]]; then
-    dim "  No active sessions"
+# Resolve CLAUDE_CONFIG_DIR at shell startup. Priority:
+#   1. Already set by the user (environment) → keep it.
+#   2. ~/.claude-profiles/.default names a profile → use it.
+#   3. Otherwise unset → claude falls back to ~/.claude/.
+__claude_profile_init() {
+  local _profiles_dir="${CLAUDE_PROFILES_DIR:-$HOME/.claude-profiles}"
+  if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    return 0
+  fi
+  local _default_file="${_profiles_dir}/.default"
+  [[ -f "$_default_file" ]] || return 0
+  local _name
+  _name=$(head -1 "$_default_file" | tr -d '[:space:]' 2>/dev/null || true)
+  if [[ -n "$_name" && -d "${_profiles_dir}/${_name}" ]]; then
+    export CLAUDE_CONFIG_DIR="${_profiles_dir}/${_name}"
   fi
 }
+__claude_profile_init
+unset -f __claude_profile_init
 
-# Auto-sync before any command that might switch profiles
-case "${1:-help}" in
-  use|switch|next|rotate|auto|list|ls|pool-status|ps|token|env|wrap|sessions)
-    cmd_auto_sync ;;
-esac
+EOF
+}
 
-case "${1:-help}" in
-  add)              cmd_add "${2:-}" ;;
-  use|switch)       shift; cmd_use "$@" ;;
-  set)              cmd_set "${2:-}" ;;
-  list|ls)          cmd_list ;;
-  current)          cmd_current ;;
-  remove|rm)        cmd_remove "${2:-}" ;;
-  pool)             shift; cmd_pool "$@" ;;
-  next|rotate)      cmd_next ;;
-  pool-status|ps)   cmd_pool_status ;;
-  auto)             cmd_auto ;;
-  sync)             cmd_sync ;;
-  token)            cmd_token "${2:-}" ;;
-  env)              cmd_env "${2:-}" ;;
-  wrap)             shift; cmd_wrap "$@" ;;
-  shell-hook)       cmd_shell_hook ;;
-  sessions)         cmd_sessions ;;
+cmd_help() {
+  cat <<EOF
+${BOLD}claude-profile${RESET} — switch between Claude Code accounts
+
+${BOLD}Core commands:${RESET}
+  ${CYAN}list${RESET}                   list profiles (marks active + default)
+  ${CYAN}current${RESET}                print the current shell's active profile
+  ${CYAN}add <name>${RESET}             create a new profile and run login
+  ${CYAN}import <name>${RESET}          snapshot ~/.claude/ as a named profile
+  ${CYAN}login <name>${RESET}           re-authenticate an existing profile
+  ${CYAN}use <name>${RESET}             switch THIS shell to <name> (requires shell hook)
+  ${CYAN}default <name>${RESET}         set default profile for new shells
+  ${CYAN}default --unset${RESET}        clear default (new shells use ~/.claude/)
+  ${CYAN}remove <name>${RESET}          delete a profile
+
+${BOLD}Diagnostics:${RESET}
+  ${CYAN}doctor${RESET}                 audit profiles, flag expired/missing tokens
+
+${BOLD}Shell integration:${RESET}
+  Add to ~/.bashrc or ~/.zshrc:
+      eval "\$(claude-profile shell-hook)"
+  Then \`claude-profile use X\` switches THIS shell to profile X.
+
+${BOLD}Mental model:${RESET}
+  Each profile is its own complete \$CLAUDE_CONFIG_DIR under
+  ${PROFILES_DIR}/<name>/.
+  Activating a profile = setting CLAUDE_CONFIG_DIR in your shell.
+  Nothing else. No shared files are rewritten, so two terminals on
+  two accounts never race.
+
+${BOLD}Typical setup:${RESET}
+  # if you already have an account logged in under ~/.claude/:
+  claude-profile import personal
+  # add a second account:
+  claude-profile add work
+  # pick a default for new terminals:
+  claude-profile default personal
+  # switch this terminal:
+  claude-profile use work
+EOF
+}
+
+# --- dispatch ---
+
+cmd="${1:-help}"
+[[ $# -gt 0 ]] && shift || true
+
+case "$cmd" in
+  list|ls)                 cmd_list ;;
+  current)                 cmd_current ;;
+  add)                     cmd_add "$@" ;;
+  import|import-current)   cmd_import "$@" ;;
+  login)                   cmd_login "$@" ;;
+  use|switch)              cmd_use "$@" ;;
+  default)                 cmd_default "$@" ;;
+  remove|rm)               cmd_remove "$@" ;;
+  doctor|status)           cmd_doctor ;;
+  shell-hook|hook)         cmd_shell_hook ;;
+  help|--help|-h|'')       cmd_help ;;
   *)
-    echo "claude-profile — manage multiple Claude accounts"
-    echo ""
-    echo "  add <name>            Save current credentials"
-    echo "  use <name>            Switch to a profile (this session)"
-    echo "  use --force <name>    Switch even if other sessions conflict"
-    echo "  set <name>            Set profile for this project directory"
-    echo "  list                  List all profiles"
-    echo "  current               Show active profile"
-    echo "  remove <name>         Delete a profile"
-    echo ""
-    echo "  pool <n1> <n2> ...    Create rotation pool for this directory"
-    echo "  next                  Rotate to next in pool"
-    echo "  pool-status           Show pool + active"
-    echo ""
-    echo "  sessions              Show active shell sessions + their profiles"
-    echo "  sync                  Update active profile after re-authentication"
-    echo ""
-    echo "  token [profile]       Print OAuth access token (active or named profile)"
-    echo "  env [profile]         Print export for ANTHROPIC_OAUTH_TOKEN"
-    echo "  wrap <cmd> [args...]  Run a command with ANTHROPIC_OAUTH_TOKEN set"
-    echo ""
-    echo "  auto                  Auto-select from .claude-profile/.claude-pool"
-    echo "  shell-hook            Print shell hook for cd auto-switching"
-    echo ""
-    echo "Pi integration:"
-    echo "  claude-profile wrap pi --provider anthropic --model claude-sonnet-4-6"
-    echo "  eval \"\$(claude-profile env)\" && pi --provider anthropic"
+    _red "Unknown command: $cmd"
+    _say
+    cmd_help
+    exit 1
     ;;
 esac
