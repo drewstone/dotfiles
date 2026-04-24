@@ -9,6 +9,39 @@
             "command": "~/.claude/hooks/rtk-rewrite.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ssh-guard.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
+            "timeout": 30,
+            "async": true
+          }
+        ]
       }
     ]
   },
@@ -16,7 +49,8 @@
     "rust-analyzer-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "codex@openai-codex": true,
-    "last30days@last30days-skill": true
+    "last30days@last30days-skill": true,
+    "tangle-blueprint-innovate@tangle-network-skills": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -36,9 +70,14 @@
         "source": "github",
         "repo": "mvanhorn/last30days-skill"
       }
+    },
+    "tangle-network-skills": {
+      "source": {
+        "source": "github",
+        "repo": "tangle-network/skills"
+      }
     }
   },
   "effortLevel": "high",
-  "fastMode": true,
   "skipDangerousModePermissionPrompt": true
 }
