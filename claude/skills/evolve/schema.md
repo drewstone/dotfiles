@@ -35,7 +35,10 @@ One JSON object per line. This is the canonical structured log of every evolve e
 | `promptVersionId` | string | Which prompt version was tested (from `.evolve/prompts/registry.json`) |
 | `costUsd` | number | Estimated cost of this experiment |
 | `reps` | number | How many repetitions were run (1 = single run, 3 = median-of-3, 5 = noisy target) |
-| `productValueClaim` | string | The one-sentence claim from Phase 0.5 — included so downstream readers can judge whether the metric movement tracks user-visible value |
+| `productValueClaim` | string | The one-sentence claim — included so downstream readers can judge whether the metric movement tracks user-visible value |
+| `transcriptPath` | string | Pointer to the Claude session JSONL that produced this experiment (e.g. `~/.claude/projects/<slug>/<sessionId>.jsonl`). Lets `/reflect` and AxGEPA-style optimizers replay the run. |
+| `traceDir` | string | Pointer to a run-scoped subdir holding eval output, agent traces, custom artifacts (e.g. `.evolve/runs/evolve-<ts>/`). Pointer not copy. |
+| `rejected` | array | `[{hypothesis, reason}]` — alternatives considered and rejected. Negative-knowledge for future runs. |
 
 ## Example
 
