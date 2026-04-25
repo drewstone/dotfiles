@@ -1,11 +1,6 @@
 ---
 name: ui-test
-description: >-
-  Adversarial UI testing using the bad CLI (Browser Agent Driver). Analyzes git
-  diffs to test only changed code, or explores full apps to find bugs. Runs in
-  real browsers with optional wallet extension support. Use when the user says
-  'test the UI', 'ui test', 'QA this', 'test my PR', 'find UI bugs',
-  'adversarial test', or wants browser-based testing of frontend changes.
+description: "Adversarial UI testing via the bad CLI (Browser Agent Driver). Scopes to changed code via git diff, runs in real browsers (optional wallet extension). Triggers: 'test the UI', 'QA this', 'test my PR', 'find UI bugs'."
 ---
 
 # ui-test — Adversarial UI Testing with Browser Agent Driver

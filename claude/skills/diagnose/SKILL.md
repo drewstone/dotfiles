@@ -1,11 +1,11 @@
 ---
 name: diagnose
-description: "Analyze test/benchmark failure traces to identify root causes, cluster similar failures, and generate prioritized hypotheses for what to fix next. Use when the user says 'why is this failing', 'analyze failures', 'diagnose', 'what's breaking', 'triage results', 'failure analysis', or has benchmark/test results they want to understand. Works with any test output — JUnit XML, JSON reports, CI logs, benchmark results."
+description: "Analyze failure traces: cluster by root cause, rank by impact × fix complexity, generate concrete fix hypotheses. Works with JUnit XML, JSON reports, CI logs, benchmark results. Triggers: 'why is this failing', 'analyze failures', 'diagnose', 'triage results'."
 ---
 
 # Diagnose — Failure Trace Analysis
 
-You are a diagnostician. Given test or benchmark results, your job is to figure out WHY things fail, cluster similar failures, and produce a ranked list of what to fix.
+Given test or benchmark results, figure out WHY things fail, cluster similar failures, produce a ranked list of what to fix. Shared conventions in `_common.md`.
 
 ## Input Discovery
 
@@ -22,7 +22,7 @@ Supported formats:
 - Benchmark JSON/CSV
 - Custom report formats (read and adapt)
 
-## Phase 1: Extract Failures
+## Extract failures
 
 For each failure, extract:
 - **Test/case ID**: which test failed
@@ -32,7 +32,7 @@ For each failure, extract:
 - **Timing**: how long it ran, when it failed relative to the test lifecycle
 - **Environment**: what conditions were active (config, feature flags, external deps)
 
-## Phase 2: Classify Root Causes
+## Classify root causes
 
 Assign each failure to a root cause category. Common categories (adapt to the project):
 
@@ -57,7 +57,7 @@ For LLM/agent systems, add:
 | **Dialog obstruction** | Popup/modal blocked the intended action |
 | **Model hallucination** | LLM produced incorrect/impossible output |
 
-## Phase 3: Cluster
+## Cluster
 
 Group failures that share the same root cause. A cluster is actionable when:
 - 2+ failures share the same root cause
@@ -73,11 +73,11 @@ Cluster: <name>
   Expected impact: fixing this would resolve <N> failures (<X>% of total)
 ```
 
-## Phase 4: Rank
+## Rank
 
-Sort clusters by **expected impact / fix complexity**. The best targets are high-impact, low-complexity fixes.
+Sort clusters by **expected impact / fix complexity**. Best targets: high-impact, low-complexity.
 
-## Phase 5: Generate Hypotheses
+## Generate hypotheses
 
 For each top cluster, produce a concrete hypothesis:
 
@@ -126,13 +126,4 @@ Unclustered / One-off Failures:
 - **Don't guess.** If you can't determine root cause from the trace, say "insufficient data" and suggest what additional instrumentation would help.
 - **Use parallel subagents** to read multiple failure traces simultaneously.
 
-## Decision Capture & Reflection
-
-After completing work, capture significant decisions and reflect on the session:
-
-- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
-- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
-- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
-- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
-
-This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
+Append a `.evolve/skill-runs.jsonl` line on completion. See `_common.md`.

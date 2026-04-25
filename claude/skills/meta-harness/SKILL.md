@@ -1,69 +1,53 @@
 ---
 name: meta-harness
-description: "Automated code-level evolution. Drop into any project, discover the harness (the code around the model/agent), create evals if missing, then run parallel CC proposers that evolve the architecture — not the parameters. State lives in .evolve/meta-harness/. Use when /evolve plateaus on parameter tuning and the system needs structural code changes, or when the user says 'meta-harness', 'evolve the architecture', 'improve the harness', 'make this code better structurally'."
+description: "Automated code-level evolution. Discover the harness, create evals if missing, run parallel CC proposers that evolve architecture (not parameters). State in `.evolve/meta-harness/`. Triggers: 'meta-harness', 'evolve the architecture', evolve plateau on parameters."
 ---
 
 # Meta-Harness — Automated Code Architecture Evolution
 
 Drop into any project. Discover what to evolve. Create evals if missing. Run parallel proposers that write structurally different code. Track a Pareto frontier. Converge.
 
-State lives in `.evolve/meta-harness/` — part of the evolve ecosystem, not separate.
+State lives in `.evolve/meta-harness/` — part of the evolve ecosystem, not separate. Shared conventions in `_common.md`.
 
-**Use meta-harness when** /evolve has plateaued on parameter tuning and the gap is architectural. **Use /evolve when** the goal is a measurable metric and parameter changes can move it. **Use /pursue when** you need to design a generation before building. Meta-harness IS automated /pursue — N parallel proposers instead of one human directing CC.
+**Use meta-harness when** `/evolve` has plateaued on parameter tuning and the gap is architectural.
+**Use `/evolve` when** the goal is a measurable metric and parameter changes can move it.
+**Use `/pursue` when** you need to design a generation before building (human-directed). Meta-harness IS automated `/pursue` — N parallel proposers instead of one operator directing CC.
 
-## How it relates to /evolve and /pursue
-
-```
-/evolve         → tight experiment loop, parameter tuning, metric optimization
-/pursue         → generational architectural shift, human-directed
-/meta-harness   → automated /pursue — CC proposes architectural shifts, eval judges them
-```
-
-When /evolve runs and hits a plateau (3+ rounds, <1% improvement), it should recommend: "Run /meta-harness — parameter tuning is exhausted, need structural changes."
-
-When /pursue designs a generation, it can dispatch meta-harness as the builder: "I designed the generation, now meta-harness finds the best implementation."
-
-## Start Here — Full Bootstrap
+## Resume / bootstrap
 
 If `.evolve/meta-harness/` exists, read in order:
-1. `.evolve/meta-harness/config.json` — dimensions AND `dimensionClaims`. If any dimension lacks a claim, fix that before proposing anything. (See Phase 0a.5.)
-2. `.evolve/meta-harness/frontier.json` — what variants are non-dominated
-3. `.evolve/meta-harness/evolution.jsonl` — what's been tried, what worked, why
-4. `.evolve/meta-harness/variants/` — prior variant source code + `.meta.json`
+1. `config.json` — dimensions AND `dimensionClaims`. Any dimension lacking a claim → fix that before proposing anything.
+2. `frontier.json` — non-dominated variants
+3. `evolution.jsonl` — what's been tried, what worked, why
+4. `variants/` — prior variant source + `.meta.json`
 5. `.evolve/current.json` — current evolve state
 
-If `.evolve/meta-harness/` does NOT exist, bootstrap from scratch (Phase 0).
+If `.evolve/meta-harness/` does NOT exist, bootstrap (Discover phase).
 
-## Fit Check — before bootstrapping
+## Prerequisites
 
-Meta-harness is the most expensive skill in the library (N parallel proposers, each with full repo compute). Don't dispatch it prematurely.
+Meta-harness is the most expensive skill in the library (N parallel proposers, full repo compute each). Don't dispatch prematurely:
 
-1. **Prerequisite: `/evolve` has plateaued.** Meta-harness is the right move when 3+ rounds of `/evolve` produced cumulative delta <2%. If no `/evolve` rounds have run, dispatch `/evolve` first — parameter tuning is cheaper than structural rewrites.
-2. **Prerequisite: a stable median-of-≥3 baseline exists.** Without it, parallel proposers can't tell noise from signal. If the baseline is single-run or >10% drift vs recorded, re-seed first.
-3. **Prerequisite: at least one dimension has a `productValueClaim`.** Phase 0a.5 is blocking. If claims are missing, fix them before spawning proposers — N×cost on proxy metrics is wasted compute.
-4. **Resume check.** If `.evolve/current.json` names a different active skill or a `/pursue` generation is in flight, do NOT start proposers — parallel edits over in-flight work conflict. Dispatch `/governor` to decide.
-5. **Repo shape.** Meta-harness fits optimization-shape repos (starter-foundry, agent platforms, model harnesses). For library/service repos, the harness-vs-client distinction may not map — confirm a single highest-blast-radius file exists before committing.
+1. **`/evolve` has plateaued.** 3+ rounds with cumulative delta <2%. Otherwise dispatch `/evolve` first — parameter tuning is cheaper than structural rewrites.
+2. **Stable median-of-≥3 baseline exists.** Without it, parallel proposers can't tell noise from signal. Single-run or >10% drift → re-seed.
+3. **At least one dimension has a `productValueClaim`.** N×cost on proxy metrics is wasted compute.
+4. **No other skill mid-flight.** If `.evolve/current.json` names a `/pursue` generation in flight, parallel edits conflict — dispatch `/governor` first.
+5. **Repo shape fits.** Optimization repos (model harnesses, agent platforms) work well. Library/service repos: confirm a single highest-blast-radius file exists before committing.
 
-Uncertain → dispatch `/governor`.
+## Discover + bootstrap
 
-## Phase 0: Discover + Bootstrap
+Goal: from "improve this project" to a running evolution loop with zero manual setup.
 
-**Goal: go from "improve this project" to a running evolution loop with zero manual setup.**
+### Discover the harness
 
-### 0a. Discover the harness
+The harness is the code that wraps core logic — scaffolding that determines behavior without changing the underlying model/algorithm. Find it:
 
-The harness is the code that wraps the core logic — the scaffolding that determines behavior without changing the underlying model/algorithm. Find it:
+1. Read project structure. Look for: agent scaffolds (`lib/agent-scaffold.ts`, `agent/*.py`), pipeline orchestration, prompt templates with retrieval/memory logic, tool configs and routing, context/memory systems.
+2. The harness is NOT: model weights, test fixtures, config constants, CI scripts.
+3. Pick the file with highest blast radius on output quality. One file. Proposers evolve THIS.
 
-1. Read the project structure. Look for:
-   - Agent scaffolds (`lib/agent-scaffold.ts`, `src/agent.ts`, `agent/*.py`)
-   - Pipeline orchestration (`lib/pipeline.ts`, `src/orchestrator.ts`)
-   - Prompt templates with retrieval/memory logic
-   - Tool configurations and routing logic
-   - Context management / memory systems
-2. The harness is NOT: model weights, test fixtures, config constants, CI scripts
-3. Pick the file with the highest blast radius on output quality. One file. The proposers evolve THIS.
+Write to `.evolve/meta-harness/config.json`:
 
-Write the discovery to `.evolve/meta-harness/config.json`:
 ```json
 {
   "harnessPath": "lib/agent-scaffold.ts",
@@ -74,267 +58,174 @@ Write the discovery to `.evolve/meta-harness/config.json`:
     "accuracy": "If this number moves, <what user-visible outcome moves>?",
     "efficiency": "If this number moves, <what user-visible outcome moves>?"
   },
-  "discoveredAt": "2026-04-15T23:00:00Z"
+  "discoveredAt": "2026-04-25T23:00:00Z"
 }
 ```
 
-### 0a.5. Validate metric → product linkage
+### Validate metric → product linkage
 
-Before writing the eval, for EACH dimension in `config.json` write the one-sentence product-value claim and store it in `dimensionClaims`:
+For EACH dimension, write the one-sentence product-value claim and store in `dimensionClaims`. If you can't write it, the metric is wrong. **Stop and ask the operator.** Do not proceed until every dimension has a claim.
 
-> "If this number moves, what user-visible product outcome moves with it?"
+Meta-harness will converge happily on proxy metrics that don't track product value — that is the default failure mode of offline evals. The skill has shipped "wins" that moved the eval without moving anything users care about.
 
-If you can't write it, the metric is wrong. **Stop and ask the operator.** Do not proceed to 0b until every dimension has a claim.
+- **Bad:** "expected-capability jaccard" with no claim that matching the list improves downstream agent success.
+- **Good:** "turns-to-preview" with claim "fewer turns = user sees their feature sooner = lower abandon rate."
+- **Bad:** "p95 latency" on a path running in microseconds with no stated downstream effect.
+- **Good:** "p95 latency" with claim "this path gates the user's first keystroke; >100ms shows up as jank in session replay."
 
-Meta-harness will converge happily on proxy metrics that don't track product value — that is the default failure mode of offline evals. The skill has shipped "wins" that moved the eval without moving anything users care about. Force the linkage up front so the operator doesn't have to catch it at review.
+If a claim is "it's in the existing dashboard, seems worth tracking" — that's not a claim, that's a habit. Kill it.
 
-- **Bad dimension:** "expected-capability jaccard" against a hand-authored expected list with no stated claim that matching the list improves downstream agent success.
-- **Good dimension:** "turns-to-preview" with claim "fewer turns = user sees their feature sooner = lower abandon rate in session replay."
-- **Bad dimension:** "p95 latency" on a path that already runs in microseconds with no stated downstream effect.
-- **Good dimension:** "p95 latency" with claim "this path gates the user's first keystroke; p95 > 100ms shows up as jank in session replay."
+### Create evals if missing
 
-If a dimension's claim is "it's in the existing dashboard, seems worth tracking" — that's not a claim, that's a habit. Kill it.
-
-### 0b. Create evals if missing
-
-If the project has no eval suite, CREATE ONE. This is non-negotiable — meta-harness can't run without evals.
+If the project has no eval suite, CREATE ONE. Non-negotiable.
 
 **Branch on goal shape:**
+- **Objective** (route correctness, compile, test pass, string match, HTTP code): write tests. Skip `/eval-agent`.
+- **Subjective** (generated code quality, conversation fit, design match): dispatch `/eval-agent` to generate a rubric from real reference material under `.evolve/eval-agent/rubrics/`. Meta-harness reads the rubric's scoring function as its eval.
 
-- **Objective goal** (route correctness, compile, test pass, string match, HTTP code): write tests or extend the existing test suite. Skip `/eval-agent`. LLM judges on objective criteria are overhead.
-- **Subjective goal** (generated code quality, conversation fit, design match, user-intent preservation): dispatch `/eval-agent` to generate a rubric from real reference material and persist it under `.evolve/eval-agent/rubrics/`. Meta-harness then reads the rubric's scoring function as its eval.
+For objective evals:
+1. Read existing tests. Understand what's tested.
+2. Create `tests/eval/` with golden cases (5–10 inputs with known-good outputs), edge cases, and **per-scenario output**:
+   ```json
+   {"scenario":"ambiguous_query","passed":false,"score":0.3,"output":"...","expected":"...","error":"retrieval returned 0 results"}
+   ```
+   Or `SCORE:scenario=value` lines. The proposer needs to know WHICH scenarios fail and WHY, not just "accuracy=0.72".
+3. Single command (e.g., `pnpm test:eval`).
+4. Verify it runs and produces per-scenario scores.
 
-**For objective evals, implement directly:**
+### Seed baseline (median of ≥3)
 
-1. Read the project's existing tests. Understand what's tested.
-2. Create `tests/eval/` (or extend existing) with:
-   - **Golden cases**: 5-10 inputs with known-good outputs (from existing tests, docs, or manual creation)
-   - **Edge cases**: inputs that stress the harness's decision-making
-   - **Per-scenario output** — the eval MUST report results per scenario, not just aggregate. The proposer needs to know WHICH scenarios fail and WHY, not just "accuracy=0.72". Output format:
-     ```json
-     {"scenario": "ambiguous_query", "passed": false, "score": 0.3, "output": "...", "expected": "...", "error": "retrieval returned 0 results"}
-     {"scenario": "simple_lookup", "passed": true, "score": 0.95, "output": "...", "expected": "..."}
-     ```
-     Or equivalently: `SCORE:ambiguous_query=0.3` + `SCORE:simple_lookup=0.95`
-   - **A scoring function** that outputs per-scenario JSON lines or `SCORE:dimension=value` lines
-3. The eval must be runnable via a single command (e.g., `pnpm test:eval`)
-4. Verify the eval runs and produces per-scenario scores before proceeding
+Run the eval ≥3 times. Record MEDIAN per dimension in `frontier.json` as baseline; log individual values in `baselineRuns`.
 
-### 0c. Seed baseline (median of ≥3 runs)
+First-run baselines drift ~5% from steady-state on noisy metrics. Single-run baselines cause false wins on first variant and false regressions on the next; the frontier chases noise.
 
-Run the eval **≥3 times** against the current harness. Record the MEDIAN scores (per dimension) in `.evolve/meta-harness/frontier.json` as the baseline entry. Log the individual run values in a `baselineRuns` array on the entry.
+If the 3 runs have spread >10% of mean on any dimension, run 5 more. Still that noisy → metric is too noisy to evolve against; increase scenarios, switch to deterministic judge, or drop the dimension.
 
-First-run baselines drift ~5% from steady-state on noisy metrics (latency, sampling-based accuracy, LLM-judge variance). A single-run baseline causes false wins on the first variant and false regressions on the next; the frontier then chases noise. Median-of-3 makes the baseline steady before variants compete against it.
+Same rule applies to variants: any variant claiming frontier-dominance must be measured ≥3 runs (5 if margin-close) before overwriting.
 
-If the 3 runs have spread >10% of the mean on any dimension, run 5 more and report the stability. If the metric is still that noisy, the metric itself is too noisy to evolve against — either increase scenario count, switch to a deterministic judge, or drop the dimension.
-
-The same rule applies to variants: any variant claiming frontier-dominance must be measured over ≥3 runs (5 if close to the margin) before overwriting the frontier entry.
-
-### 0d. Initialize state
+### Initialize state
 
 ```
 .evolve/
-├── current.json           # update: mode = "meta-harness"
+├── current.json           # mode = "meta-harness"
 ├── meta-harness/
 │   ├── config.json        # harness path, eval command, dimensions, dimensionClaims
-│   ├── frontier.json      # Pareto frontier (baseline = median of ≥3 runs)
+│   ├── frontier.json      # baseline = median of ≥3
 │   ├── evolution.jsonl    # empty (will grow)
-│   ├── runs/              # per-run eval JSONL, keyed by variant name
-│   └── variants/          # per-variant source + meta.json (before merge)
+│   ├── runs/              # per-run eval JSONL
+│   └── variants/          # per-variant source + meta.json
 └── progress.md            # append: "Meta-harness initialized"
 ```
 
-**Pre-dispatch hygiene** (do this before Phase 1 parallel proposers):
-
-- Commit `.evolve/meta-harness/` on main so worktrees inherit the config + baseline.
-- Commit any `scripts/` additions (eval runner, collectors, helpers) so worktrees inherit them too. Proposers dispatched before a script is committed will not have it, silently fall back to re-implementing it, and diverge.
+**Pre-dispatch hygiene** (before parallel proposers):
+- Commit `.evolve/meta-harness/` on main so worktrees inherit config + baseline.
+- Commit any `scripts/` additions (eval runner, collectors, helpers) so worktrees inherit them. Proposers dispatched before a script is committed will silently re-implement it and diverge.
 - Add `.claude/worktrees/` to `.gitignore`.
 
-## Phase 1: Propose — Read, Reason, Write
+## Propose — read, reason, write
 
-For each iteration, you ARE the proposer. Read the full diagnostic state, then write a variant.
+For each iteration, you ARE the proposer. Read full diagnostic state, then write a variant.
 
-### 1a. Read the frontier
+1. **Read frontier** — which variants are non-dominated, dimension strengths/weaknesses.
+2. **Read evolution history** — every prior proposal. Hypothesis? Worked? WHY did it fail? Look for confounds (helped on X, hurt on Y), dead ends (3+ same-mechanism failures → pivot), lineage merges (two complementary variants → combine).
+3. **Read raw traces — triage**. The paper's key finding: raw traces (10M tokens) >> summaries >> scores-only. Don't read randomly:
+   1. Per-scenario scores → identify failing scenarios.
+   2. Read 2–3 worst-scoring traces. What input, what produced, what expected, where did the harness make a wrong decision.
+   3. Read passing scenarios for the same variant. Contrast reveals the responsible mechanism.
+   4. Read the SAME failing scenarios for frontier variants. How do they handle it differently?
+4. **Read top 2–3 frontier variants AND 2–3 worst failures**. Understand mechanisms.
+5. **Falsifiable hypothesis**: "Changing [mechanism X] to [mechanism Y] will improve [dimension Z] because [evidence from traces/evolution.jsonl shows W]". NOT "increase N from 16 to 32" (parameter — rejected). NOT "try a different approach" (vague — rejected). YES "Add a verification stage after draft prediction to catch false positives by retrieving challengers" (structural, falsifiable).
+6. **Write the variant** — complete, compilable source at `.evolve/meta-harness/variants/<snake_case>.<ext>`. Not a diff. Match codebase style exactly — read 3 existing files first.
+7. **Write `pending_eval.json`**:
+   ```json
+   {"name":"draft_verification","hypothesis":"Adding a verification stage...","base_system":"baseline","changes":["Add second retrieval","Retrieve challengers"],"axis":"exploration","file":".evolve/meta-harness/variants/draft_verification.ts"}
+   ```
 
-`.evolve/meta-harness/frontier.json` — which variants are non-dominated. What dimensions are they strong/weak on.
+## Validate + benchmark
 
-### 1b. Read the evolution history
+1. **Compile check** with the variant swapped in.
+2. **Benchmark** with eval command, parse scores.
+3. **Pareto check** — non-dominated on the frontier?
 
-`.evolve/meta-harness/evolution.jsonl` — every prior proposal. What was the hypothesis? Did it work? WHY did it fail? Look for:
-- **Confounds**: a change that helped on some dimensions but hurt others
-- **Dead ends**: 3+ proposals on the same mechanism all failed → pivot
-- **Lineage merging**: two successful variants with complementary strengths → combine
+## Record + iterate
 
-### 1c. Read raw traces — triage protocol
-
-The paper's key finding: **raw traces (10M tokens) >> summaries >> scores-only**. The proposer reads 82 files per iteration. But don't read randomly — triage:
-
-1. **Start with per-scenario scores.** Read the eval output to identify WHICH scenarios fail and which pass. A variant that fails scenario_7 and scenario_12 tells you where to look.
-2. **Read failing scenario traces.** For the 2-3 worst-scoring scenarios, read the raw execution output (`.log` files, stdout captures). Look for: what input was given, what the harness produced, what was expected, where the harness made a wrong decision.
-3. **Read passing scenario traces for the same variant.** What's different about the passing cases? The contrast reveals which harness mechanism is responsible.
-4. **Read the SAME failing scenarios for frontier variants.** How does the best variant handle scenario_7? What mechanism is different?
-
-This triage gets you from "accuracy=0.72" to "scenario_7 fails because the retrieval misses contrastive examples when the query is ambiguous" — which is a diagnosable, fixable root cause.
-
-### 1d. Read prior variant source code
-
-Read the top 2-3 frontier variants AND the 2-3 worst failures. Understand their mechanisms.
-
-### 1e. Form a falsifiable hypothesis
-
-```
-"Changing [mechanism X] to [mechanism Y] will improve [dimension Z] 
-because [evidence from traces/evolution.jsonl shows W]"
-```
-
-NOT: "increase N from 16 to 32" (parameter variant — rejected)
-NOT: "try a different approach" (vague — rejected)
-YES: "Add a verification stage after draft prediction to catch false positives by retrieving challengers" (structural, falsifiable)
-
-### 1f. Write the variant
-
-A complete, compilable source file at `.evolve/meta-harness/variants/<snake_case_name>.<ext>`. Not a diff. Not a partial. Complete file that replaces the harness.
-
-Match the codebase style exactly — imports, naming, error handling. Read 3 existing files first.
-
-### 1g. Write pending_eval.json
-
-```json
-{
-  "name": "draft_verification",
-  "hypothesis": "Adding a verification stage...",
-  "base_system": "baseline",
-  "changes": ["Add second retrieval stage", "Retrieve challengers"],
-  "axis": "exploration",
-  "file": ".evolve/meta-harness/variants/draft_verification.ts"
-}
-```
-
-## Phase 2: Validate + Benchmark
-
-1. **Compile check**: run the validate command with the variant swapped in
-2. **Benchmark**: run the eval command, parse scores
-3. **Pareto check**: is this variant non-dominated on the frontier?
-
-## Phase 3: Record + Iterate
-
-Append to `.evolve/meta-harness/evolution.jsonl`:
+Append to `evolution.jsonl`:
 ```json
 {"iteration":1,"name":"draft_verification","hypothesis":"...","scores":{"accuracy":0.85},"outcome":"frontier"}
 ```
 
-Update `frontier.json` if the variant is non-dominated.
-
-Update `.evolve/progress.md` with the iteration results.
+Update `frontier.json` if non-dominated. Update `progress.md`.
 
 ### Post-merge compaction
 
-Once a variant is merged to main (commit exists in the project repo), its source file in `.evolve/meta-harness/variants/<name>.<ext>` duplicates what's now in git. Compact:
+Once a variant is merged to main, source in `variants/` duplicates git. Compact:
+- **DELETE** `variants/<name>.<ext>` (source duplicate)
+- **KEEP** `variants/<name>.meta.json`
+- Add `{merged: true, commit: "<sha>", targetPath: "<in main>", linesChanged: N}`
 
-- **DELETE** `.evolve/meta-harness/variants/<name>.<ext>` (source duplicate)
-- **KEEP** `.evolve/meta-harness/variants/<name>.meta.json`
-- Add to the meta JSON:
-  ```json
-  {
-    "merged": true,
-    "commit": "<sha>",
-    "targetPath": "<in main, e.g. src/lib/keywords.ts>",
-    "linesChanged": N
-  }
-  ```
+This stops the archive from drifting. Scores, hypothesis, mechanism live in the meta JSON; code reproduces from the commit. Non-merged variants keep source for frontier comparison.
 
-This stops the archive from drifting from the code it supposedly represents. Scores, hypothesis, and mechanism — the parts that matter for future proposers — live in the `.meta.json`; the code is reproducible from the commit.
+## Parallel dispatch
 
-Non-merged variants (rejected, or still pending) keep their source file for frontier comparison.
+When the operator wants multi-proposer generation:
 
-## Parallel dispatch pattern
-
-When the operator wants multi-proposer generation (N proposers evaluating in parallel):
-
-1. **Use git worktrees for isolation.** Dispatch with `Agent(isolation: "worktree")` — each proposer gets an independent working tree, so edits don't conflict.
-
-2. **Assign each proposer a different code region.** Before dispatch, identify N disjoint files or subsystems. Proposer A targets file X, Proposer B targets file Y. **If two proposers target the same file, serialize them** — parallel edits on the same file block composition and the best-of-N becomes tournament-style (one winner, others thrown away) instead of a compose.
-
-3. **Pre-dispatch brief must include:**
-   - The proposer's target file(s)
-   - The OTHER proposers' target files (so this proposer knows what NOT to touch)
-   - The config dimensions + dimensionClaims (so the proposer reasons about product effect, not just metric movement)
-   - The current frontier + last 3 evolution.jsonl entries
-
-4. **Collection**: after all proposers complete, read each worktree's `.evolve/meta-harness/variants/*.meta.json`, copy the variant source + run JSONL back to main. Worth having a `scripts/meta-harness-collect.mjs` that scans `git worktree list` and gathers artifacts — otherwise this step is error-prone manual `cp`.
-
-5. **Composition = lineage merge for generation N+1.** If proposers targeted orthogonal files, the next generation starts by applying each winning variant to its own file, rebuilding, and re-running the full eval ≥3 times. This composed variant IS the next-gen baseline.
-
-6. **Conflict — if two winning variants touch the same file**: do NOT blindly concatenate. Write a third proposer whose brief is "merge the mechanisms from A and B, both of which edit file X" — same protocol as single-proposer Phase 1.
+1. **Worktrees for isolation.** Dispatch with `Agent(isolation: "worktree")` — independent working trees, no edit conflicts.
+2. **Different code regions per proposer.** Identify N disjoint files/subsystems before dispatch. **Same-file proposers must serialize** — parallel edits block composition; best-of-N becomes tournament-style with winners thrown away.
+3. **Pre-dispatch brief includes:** target file(s), other proposers' targets (don't touch), dimensions + claims (reason about product effect, not just metric movement), current frontier + last 3 evolution entries.
+4. **Collection:** read each worktree's `variants/*.meta.json`, copy variant source + run JSONL back to main. A `scripts/meta-harness-collect.mjs` scanning `git worktree list` is worth having — manual `cp` is error-prone.
+5. **Composition = lineage merge for Gen N+1.** Orthogonal-file winners → apply each to its file, rebuild, re-run full eval ≥3 times. Composed variant IS the next-gen baseline.
+6. **Same-file conflicts:** don't blindly concatenate. Write a third proposer briefed to "merge mechanisms from A and B, both edit file X."
 
 ## Rules
 
-### REQUIRED: Structural mechanism changes
+### REQUIRED: structural mechanism changes
 
-The most common failure mode is parameter variants. DO NOT:
-- Change numbers (N=16→32, threshold=0.5→0.7)
-- Add more examples to a prompt
-- Rename variables
-- Reorder existing steps
+Most common failure: parameter variants. DO NOT change numbers (N=16→32, threshold=0.5→0.7), add prompt examples, rename variables, reorder steps.
 
-DO:
-- Change the retrieval algorithm
-- Add a new processing stage
-- Change the memory architecture
-- Change control flow (sequential→parallel→conditional)
-- Add a new information source
-- Change error handling strategy
+DO change retrieval algorithms, add processing stages, change memory architecture, change control flow (sequential→parallel→conditional), add information sources, change error handling strategy.
 
-### REQUIRED: Causal reasoning from traces
+### REQUIRED: causal reasoning from traces
 
-Every hypothesis must cite evidence:
+Every hypothesis cites evidence:
 - "Scenario X fails because trace Y shows Z"
 - "Prior attempt {name} regressed because [confound in evolution.jsonl]"
-- "Iterations 1-6 all regressed on prompt changes → pivoting to additive change"
+- "Iterations 1–6 all regressed on prompt changes → pivoting to additive change"
 
-### REQUIRED: Learn from history
+### REQUIRED: learn from history
 
-Read evolution.jsonl. If the last 3 proposals targeting the same component all regressed, DON'T target that component again. Pivot.
+Read `evolution.jsonl`. Last 3 proposals targeting the same component all regressed → DON'T target it again. Pivot.
 
-**Worked example — the pattern from the paper (TerminalBench-2, 10 iterations):**
+**Worked example (TerminalBench-2, paper, 10 iterations):**
 
-- Iterations 1-2: hypothesized marker-fix and single-confirm changes. Both regressed (-5.6pp, -6.7pp). Why: prompt template changes caused the agent to delete necessary state before completion. The bugfixes were confounded with harmful prompt changes.
-- Iteration 3: identified the confound explicitly. Isolated the structural fix from the prompt change.
-- Iterations 4-6: tested isolated fixes (completion-flag reset, softer cleanup language, smart-waiting). All still regressed. Lesson: "modifications to prompts and completion flow are high risk."
-- **Iteration 7: STRATEGIC PIVOT.** "All 6 prior iterations regressed because they modified completion flow. evo_env_bootstrap takes a different approach — purely additive." → Became the winning candidate.
+- Iterations 1–2: marker-fix and single-confirm. Both regressed (-5.6pp, -6.7pp). Why: prompt changes caused the agent to delete necessary state before completion. Bugfixes confounded with harmful prompt changes.
+- Iteration 3: identified the confound, isolated the structural fix.
+- Iterations 4–6: tested isolated fixes (completion-flag reset, softer cleanup, smart-waiting). All regressed. Lesson: "modifications to prompts and completion flow are high risk."
+- **Iteration 7: STRATEGIC PIVOT.** "All 6 prior iterations regressed because they modified completion flow. evo_env_bootstrap takes a different approach — purely additive." → Winning candidate.
 - Iteration 8: composed environment bootstrap with a structural fix, avoiding prompts/confirmation flows.
 
-**The pattern: confound → isolation → dead end → pivot to different mechanism class.**
+Pattern: **confound → isolation → dead end → pivot to different mechanism class.**
 
-### REQUIRED: Lineage merging
+### REQUIRED: lineage merging
 
-When two frontier variants have complementary strengths (A excels on dimension X, B excels on dimension Y), write a variant that combines their mechanisms. The paper's math harness is literally a merge of two search lineages — one contributed a stronger geometry route, the other a stronger combinatorics route. The proposer autonomously combined them.
+Two frontier variants with complementary strengths (A excels on X, B on Y) → write a variant combining their mechanisms. The paper's math harness merged a stronger geometry route with a stronger combinatorics route. The proposer autonomously combined them.
 
-Read the frontier. If two entries dominate different dimensions, your next proposal should be: "Combine mechanism from variant A (which handles X) with mechanism from variant B (which handles Y)."
+### REQUIRED: smoke test before full benchmark
 
-### REQUIRED: Smoke test before full benchmark
+Before running full eval, run on 1–2 scenarios. Fails those → skip full benchmark. Full eval is expensive (minutes, API calls). Smoke test takes seconds and catches compile failures, import errors, obvious regressions early.
 
-Before running the full eval suite on a variant, run it on 1-2 scenarios first. If the variant fails those, skip the full benchmark. A full eval run is expensive (minutes, API calls, compute). A smoke test on one scenario takes seconds and catches compile-time failures, import errors, and obvious regressions early.
+### RECOMMENDED: generalization check at convergence
 
-### RECOMMENDED: Generalization check at convergence
-
-When the frontier hasn't changed in 3 iterations (converged), test the top variants on held-out inputs:
-- Different dataset distributions than the eval suite
-- Different model versions (if the harness wraps an LLM)
-- Edge cases not in the golden set
-
-A harness that scores well on the eval suite but fails on unseen inputs is overfit to the eval. Log generalization results in evolution.jsonl with `"type": "ood_check"`.
+Frontier unchanged for 3 iterations → test top variants on held-out inputs (different distributions, different model versions, edge cases not in golden set). A harness scoring well on the eval but failing on unseen inputs is overfit. Log as `"type": "ood_check"`.
 
 ### Language agnostic
 
-Write variants in whatever language the project uses. TypeScript, Python, Rust, whatever. Match existing conventions exactly.
+Write variants in whatever the project uses. Match conventions exactly.
 
-## Connecting to Foreman
+## Foreman integration
 
-If Foreman service is running (`http://localhost:7374`):
+If Foreman is running (`http://localhost:7374`):
 
 ```bash
-# Start a meta-harness evolution job via Foreman API
 curl -X POST http://localhost:7374/api/evolve-code -H 'Content-Type: application/json' -d '{
   "repo": "/path/to/project",
   "harness": "lib/agent-scaffold.ts",
@@ -346,28 +237,18 @@ curl -X POST http://localhost:7374/api/evolve-code -H 'Content-Type: application
 }'
 ```
 
-This dispatches N parallel proposers (via tmux locally or Tangle Sandbox containers remotely), each reading the shared frontier, each writing variants. Foreman tracks goals, costs, sessions, and taste signals.
+Dispatches N parallel proposers (tmux locally or Tangle Sandbox containers remotely), each reading the shared frontier. Foreman tracks goals, costs, sessions, taste signals.
 
-Without Foreman: run the loop manually in a single CC session using this skill. Phase 1→2→3 repeated.
+Without Foreman: run the loop manually in a single CC session. Propose → Validate → Record, repeated.
 
 ## When to stop
 
-- Frontier hasn't changed in 3 iterations → converged (if the metric is real — see below)
-- Budget exhausted (cost or iteration count)
-- All N dimensions exceed target thresholds
-- Proposer can't form a novel hypothesis (all mechanisms explored)
-- **Metric-linkage broken**: the dimensions are moving but there's no product signal that the user-visible outcome moved with them. At this point, convergence is meaningless. Stop, flag the proxy-metric problem, and either redesign the eval against a product-grounded metric or hand off to a skill that can (e.g., an end-to-end A/B harness in the system that consumes this code).
+- Frontier unchanged for 3 iterations → converged (if the metric is real).
+- Budget exhausted (cost or iteration count).
+- All N dimensions exceed targets.
+- Proposer can't form a novel hypothesis (mechanisms exhausted).
+- **Metric-linkage broken**: dimensions moving but no product signal → convergence is meaningless. Stop, flag the proxy-metric problem, redesign the eval against a product-grounded metric or hand off to a skill that can.
 
-Update `.evolve/current.json`:
-```json
-{"mode": "evolve", "generation": N, "note": "meta-harness converged, hand off to /evolve for fine-tuning"}
-```
+Update `.evolve/current.json`: `{"mode": "evolve", "generation": N, "note": "meta-harness converged, hand off to /evolve for fine-tuning"}`.
 
-## Related skills
-
-```
-/meta-harness    ← automated code architecture evolution (this)
-  ├── /evolve    ← parameter tuning AFTER meta-harness converges
-  ├── /pursue    ← manual generational design BEFORE meta-harness automates
-  └── /reflect   ← extract learnings from evolution history
-```
+End with: `Next: /evolve targeting <dimension> at frontier <baseline>`.

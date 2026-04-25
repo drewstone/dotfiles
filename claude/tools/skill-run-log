@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Append one structured line to .evolve/skill-runs.jsonl per skill invocation.
+#
+# Usage:
+#   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
+#                         [--project NAME] [--transcript PATH] [--trace-dir PATH]
+#
+# Example:
+#   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor \
+#                 --trace-dir .evolve/runs/evolve-2026-04-25/
+#
+# Writes to <git-root>/.evolve/skill-runs.jsonl — falls back to $PWD/.evolve/ if not in a git repo.
+# Creates the directory and file if missing. Append-only; never rewrites prior lines.
+#
+# Schema (see ~/dotfiles/claude/skills/_common.md):
+#   { skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride }
+#
+# `operatorOverride` is left null by this script; /reflect fills it later when it
+# notices the operator's actual next invocation differed from `dispatchedTo`.
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "usage: skill-run-log <skill> [--target X] [--prompt \"...\"] [--duration MIN] [--verdict V] [--next /SKILL] [--project NAME] [--transcript PATH] [--trace-dir PATH]" >&2
+  exit 2
+fi
+
+skill="$1"; shift
+
+target=""
+prompt=""
+duration="null"
+verdict="n/a"
+next_skill="stop"
+project=""
+transcript=""
+trace_dir=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target)     target="$2"; shift 2;;
+    --prompt)     prompt="$2"; shift 2;;
+    --duration)   duration="$2"; shift 2;;
+    --verdict)    verdict="$2"; shift 2;;
+    --next)       next_skill="$2"; shift 2;;
+    --project)    project="$2"; shift 2;;
+    --transcript) transcript="$2"; shift 2;;
+    --trace-dir)  trace_dir="$2"; shift 2;;
+    *) echo "skill-run-log: unknown arg $1" >&2; exit 2;;
+  esac
+done
+
+# Resolve project root: prefer git, fall back to $PWD basename
+if [ -z "$project" ]; then
+  if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    project="$(basename "$git_root")"
+    target_dir="$git_root/.evolve"
+  else
+    project="$(basename "$PWD")"
+    target_dir="$PWD/.evolve"
+  fi
+else
+  target_dir="$PWD/.evolve"
+fi
+
+mkdir -p "$target_dir"
+log="$target_dir/skill-runs.jsonl"
+
+ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# JSON-escape strings (handles quotes, backslashes, newlines)
+esc() {
+  printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")' 2>/dev/null \
+    || printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/' | tr -d '\n' | sed 's/\\n$//' | awk '{print "\""$0"\""}'
+}
+
+skill_j="$(esc "$skill")"
+project_j="$(esc "$project")"
+target_j="$(esc "$target")"
+prompt_j="$(esc "$prompt")"
+verdict_j="$(esc "$verdict")"
+next_j="$(esc "$next_skill")"
+
+# transcript and traceDir: emit as JSON null when empty, escaped string otherwise
+if [ -z "$transcript" ]; then transcript_j="null"; else transcript_j="$(esc "$transcript")"; fi
+if [ -z "$trace_dir" ];  then trace_j="null";       else trace_j="$(esc "$trace_dir")"; fi
+
+printf '{"skill":%s,"ts":"%s","project":%s,"target":%s,"operatorPrompt":%s,"durationMin":%s,"verdict":%s,"dispatchedTo":%s,"operatorOverride":null,"transcriptPath":%s,"traceDir":%s}\n' \
+  "$skill_j" "$ts" "$project_j" "$target_j" "$prompt_j" "$duration" "$verdict_j" "$next_j" "$transcript_j" "$trace_j" >> "$log"
+
+echo "logged: $skill -> $next_skill ($verdict) [$log]"

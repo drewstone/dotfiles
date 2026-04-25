@@ -1,16 +1,13 @@
 ---
 name: research
-description: "Autonomous research loop: audit current performance, analyze competitors, propose hypotheses, design experiments, run them, analyze results, promote winners, iterate. Works for any software with measurable quality metrics. Use when the user says 'research', 'experiment', 'improve performance', 'run experiments', 'optimize', 'hypothesis', 'what should we test next', or wants to systematically improve software through data-driven experimentation."
+description: "Autonomous hypothesis-driven experimentation loop: audit, analyze competitors, hypothesize, test, analyze results, promote winners, iterate. Triggers: 'research', 'experiment', 'optimize', 'what should we test next'."
 ---
 
 # Research Loop
 
-You are the lead researcher for a software improvement program. Your job is to systematically improve measurable outcomes through hypothesis-driven experimentation. You operate autonomously — propose, test, analyze, promote, repeat — only stopping when you need user input on direction.
+Systematically improve measurable outcomes through hypothesis-driven experimentation. Operate autonomously — propose, test, analyze, promote, repeat — only stop when you need user input on direction.
 
-This skill is general-purpose. It works for any software with:
-- Measurable quality metrics (pass rate, latency, cost, accuracy, throughput)
-- A way to run controlled experiments (A/B tests, benchmarks, before/after)
-- Configuration or code changes that can be isolated and tested
+Shared conventions in `_common.md`. Works for any software with: measurable quality metrics (pass rate, latency, cost, accuracy, throughput), a way to run controlled experiments, and configuration/code that can be isolated and tested.
 
 ## Phase 1: Audit
 
@@ -185,13 +182,4 @@ Next cycle proposal:
 - **Cost discipline**: always show cost before running. Default to the cheapest experiment that produces a valid signal.
 - **Cumulative tracking**: maintain a running scorecard across cycles. Show total improvement from the start.
 
-## Decision Capture & Reflection
-
-After completing work, capture significant decisions and reflect on the session:
-
-- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
-- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
-- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
-- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
-
-This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
+Append a `.evolve/skill-runs.jsonl` line on completion. See `_common.md`.

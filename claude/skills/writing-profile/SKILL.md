@@ -1,6 +1,6 @@
 ---
 name: writing-profile
-description: "Build a constraints-first writing profile from any content source — Twitter/X, blog posts, Reddit history, LinkedIn, or raw text samples. Analyzes what someone does and doesn't do in their writing, producing a profile that catches AI cadence and guides authentic content generation. Use when the user says 'writing-profile', 'profile this person', 'learn my voice', 'build a writing profile', 'how does X write', or wants to understand any person's writing patterns."
+description: "Constraints-first writing profile from any source (Twitter/X, blogs, Reddit, LinkedIn, raw text). Captures what the writer does AND doesn't do; catches AI cadence; guides authentic content. Triggers: 'writing-profile', 'learn my voice', 'how does X write'."
 ---
 
 # Voice Profile — Constraints-First Writing Analysis
