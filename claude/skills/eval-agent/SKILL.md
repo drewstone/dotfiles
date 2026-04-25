@@ -1,18 +1,18 @@
 ---
 name: eval-agent
-description: "Build agentic evaluation systems (LLM-as-judge, meta-reviewers, quality gates). Generates domain-specific rubrics from reference material, scores targets with structured findings, drives improvement loops. Use when building evaluators, judges, scoring pipelines, quality gates, or any system where an LLM assesses the output of another LLM/agent/human. Triggers on 'build an evaluator', 'LLM as judge', 'scoring pipeline', 'quality gate', 'meta-reviewer', 'evaluation agent', 'rubric generation'."
+description: "Build LLM-as-judge systems with rubrics generated from real reference material (not hand-written). Scores targets, returns structured findings, drives improvement loops. Triggers: 'build an evaluator', 'LLM as judge', 'scoring pipeline', 'quality gate', 'rubric generation'."
 ---
 
 # Eval Agent — Build Agentic Evaluation Systems
 
-Build LLM-as-judge systems that evaluate targets (code, conversations, outputs, agents) using dynamically generated rubrics grounded in real reference material.
+Build LLM-as-judge systems that evaluate targets (code, conversations, outputs, agents) using dynamically generated rubrics grounded in real reference material. Shared conventions in `_common.md`.
 
-## Fit Check — before building
+## Prerequisites
 
-1. **Subjective target**: eval-agent is for scoring outputs where two humans could disagree on quality (writing, conversation, design, generated code-fit). If the target is objectively checkable (compiles, test passes, HTTP 200, string-equals expected), use a test — not an eval. Building an LLM judge for objective criteria wastes tokens and adds variance.
-2. **Reference material exists**: rubrics must come from real reference examples (good outputs, bad outputs, domain docs). If no reference material exists, scope a gathering pass first — agentic `claude -p` with Read/Grep can assemble it from the codebase or adjacent repos. Do NOT hand-write the rubric; that's the anti-pattern this skill replaces.
-3. **Caller context**: eval-agent is almost always dispatched BY another skill (`/evolve` needs measurement, `/pursue` needs a subjective success criterion, `/polish` needs a domain-specific rubric). If invoked directly, confirm who will consume the rubric — an eval that nothing reads is infrastructure debt.
-4. **Resume check**: if `.evolve/eval-agent/rubrics/<domain>.json` exists from a prior session, verify the references it was generated from haven't drifted (re-hash the reference blob). Stale rubrics silently score against old criteria.
+- **Subjective target.** Two humans could disagree on quality (writing, conversation, design, generated code-fit). Objectively checkable (compiles, test passes, HTTP 200, string match) → write a test, not an eval. LLM judges on objective criteria waste tokens and add variance.
+- **Reference material exists.** Rubrics come from real examples (good outputs, bad outputs, domain docs). No references → scope a gathering pass first via agentic `claude -p` with Read/Grep. Don't hand-write the rubric — that's the anti-pattern this skill replaces.
+- **A consumer.** Almost always dispatched BY another skill (`/evolve` needs measurement, `/pursue` needs a subjective success criterion, `/polish` needs a domain-specific rubric). Direct invocation → confirm who consumes the rubric. An eval nothing reads is infrastructure debt.
+- **Resume**: if `.evolve/eval-agent/rubrics/<domain>.json` exists, re-hash the reference blob to verify it hasn't drifted. Stale rubrics silently score against old criteria.
 
 ## Core Pattern
 
@@ -288,22 +288,11 @@ const median = scores.sort((a, b) => a.score - b.score)[1]
 8. **Evaluating mocked outputs as if they were real.** If the target system under eval is behind mocks (stubbed DB, mocked HTTP, fake agent responses), the eval measures the mocks, not the system. Rubrics must score what the user's real environment produces — real agent calls, real DB reads, real downstream effects. If real execution is expensive, cache real runs; don't substitute synthetic fixtures. A high score on a mocked target is worse than no score — it creates false confidence that ships.
 9. **Metric with no product-value claim.** Before a dimension enters a rubric, write one sentence: "If this dimension's score moves, what user-visible outcome moves with it?" Dimensions that can't carry that sentence are proxies — they converge happily while product stays flat.
 
-## Composing with Other Skills
-
-| Need | Skill | Integration |
-|---|---|---|
-| Improvement loop | `/evolve` | Evolve uses eval-agent as its measurement engine |
-| Failure analysis | `/diagnose` | Diagnose clusters eval findings by root cause |
-| Code quality | `/polish` | Polish uses eval-agent findings as its fix list |
-| Generational leap | `/pursue` | Pursue uses eval-agent to measure generational delta |
-| Regression gate | `/converge` | Converge uses eval-agent as CI quality gate |
-
 ## Persistence
 
-Eval results go to `.evolve/experiments.jsonl` (if running inside an evolve loop) or to a project-specific results directory. Always include:
-- Rubric version hash (so you know which rubric produced which score)
-- Target identifier (so you can re-evaluate the same target later)
-- Timestamp + model + cost
+Eval results go to `.evolve/experiments.jsonl` (if inside an evolve loop) or to a project-specific results directory. Always include rubric version hash, target identifier, timestamp + model + cost.
+
+Append a `.evolve/skill-runs.jsonl` line on completion.
 
 ## Rules
 

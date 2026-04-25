@@ -1,11 +1,13 @@
 ---
 name: deep-clean
-description: "Thorough codebase cleanup with measurement, tooling, dependency-ordered phases, and verification. Runs real tools (knip, madge, tsc --strict, jscpd), measures before/after, implements in safe order, verifies nothing breaks. Integrates with .evolve/ for tracking. Use when the user says 'clean up the codebase', 'code quality pass', 'deep clean', 'remove dead code', 'fix all the types', 'reduce complexity', 'technical debt', 'codebase hygiene', or wants a thorough quality sweep."
+description: "Codebase cleanup with measurement, real tooling (knip, madge, tsc --strict, jscpd), dependency-ordered phases, verification gates. Triggers: 'clean up the codebase', 'remove dead code', 'fix all the types', 'reduce complexity', 'technical debt'."
 ---
 
 # Deep Clean — Measured Codebase Cleanup
 
 Thorough codebase quality sweep. Runs real static analysis tools, measures before/after, implements changes in dependency-safe order, verifies after every phase. Not 8 blind agents — 4 ordered phases with verification gates.
+
+Shared conventions in `_common.md`.
 
 ## Why phases, not parallel agents
 
@@ -115,7 +117,7 @@ For each clone group:
 3. If coincidentally similar (different intent, same shape): leave them. Premature DRY is worse than duplication.
 4. **Three is a pattern, two is a coincidence.** Don't DRY two-instance duplication unless the intent is clearly shared.
 
-**GATE: run tests + type check before proceeding to Phase 2.**
+Verify before next phase: tests + type check pass.
 
 ## Phase 2: Strengthen — Remove Weakness, Don't Add Fragility
 
@@ -160,7 +162,7 @@ For each finding:
 
 The test: **can you name the specific error this catch handles?** If yes, keep it. If no ("it might throw... something?"), remove it.
 
-**GATE: run full test suite + type check + build before proceeding to Phase 3.**
+Verify before next phase: full test suite + type check + build pass.
 
 ## Phase 3: Polish — Cosmetic Cleanup After Structural Changes
 
@@ -198,7 +200,7 @@ npx prettier --write src/    # or biome format, or rustfmt, or ruff format
 npx eslint --fix src/
 ```
 
-**GATE: full test suite + type check + build + lint.**
+Verify before final measurement: full test suite + type check + build + lint pass.
 
 ## Phase 4: Measure Again — Prove It Helped
 
@@ -244,14 +246,13 @@ But NEVER parallelize across phases. Phase 2 reads Phase 1's output.
 - **Don't delete tests.** Even bad tests. Flag them for rewrite but don't delete coverage.
 - **Don't "modernize" working code.** `var` → `const` is fine. Rewriting a callback to async/await when the callback works is not cleanup — it's risk.
 
-## Integration with .evolve/
+## Persist
 
-State files:
 ```
-.evolve/
-├── deep-clean-baseline.json   # Phase 0 measurements
-├── deep-clean-result.json     # Phase 4 measurements
-└── progress.md                # append cleanup summary
+.evolve/deep-clean-baseline.json   # Phase 0 measurements
+.evolve/deep-clean-result.json     # Phase 4 measurements
+.evolve/progress.md                # append cleanup summary
+.evolve/skill-runs.jsonl           # one line on completion
 ```
 
-After deep-clean converges, hand off to `/meta-harness` if the codebase has an agent/harness worth evolving, or to `/evolve` for metric-driven improvement.
+After convergence, hand off to `/meta-harness` if the codebase has an agent/harness worth evolving, or to `/evolve` for metric-driven improvement.

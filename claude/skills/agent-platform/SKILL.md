@@ -1,6 +1,6 @@
 ---
 name: agent-platform
-description: "Build a Tangle Agent Platform — a multi-tenant SaaS where users create AI agents in customizable sandboxed workspaces, train them over time, and flip a switch to monetize them as paid API endpoints. Other users buy API keys for that specific agent. Tangle takes a revenue share. Use when the user describes building an agent marketplace, multi-tenant agent platform, agent monetization, or 'users build their own agents and sell access'."
+description: "Build the Tangle Agent Platform — multi-tenant SaaS where owners train agents in sandboxed workspaces and monetize them as paid API endpoints with on-chain settlement. Triggers: 'agent marketplace', 'multi-tenant agent platform', 'agent monetization'."
 ---
 
 # Tangle Agent Platform

@@ -1,6 +1,6 @@
 ---
 name: agent-factory
-description: "Build a production-ready sandboxed AI agent application for any domain. Scaffolds the full Tangle stack (Cloudflare Workers + Remix + D1 + sandbox SDK + tcloud + sandbox-ui), wires chat/vault/tools/billing/auth, creates domain-specific tools and prompts, deploys infrastructure, builds eval harness, and runs real generations. Use when the user says 'build an agent for X', 'create a new agent app', 'scaffold an agent', 'new sandbox agent', or describes a domain they want an AI agent for."
+description: "Scaffold a production sandboxed AI agent app for any domain on the Tangle stack (CF Workers + Remix + D1 + sandbox SDK + tcloud + sandbox-ui), wire chat/vault/tools/billing/auth, deploy, build evals, run real generations. Triggers: 'build an agent for X', 'scaffold an agent', 'new sandbox agent'."
 ---
 
 # Agent Factory

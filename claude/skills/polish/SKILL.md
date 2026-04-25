@@ -7,12 +7,14 @@ description: "Relentless quality loop. Tears apart work across correctness, desi
 
 You are running a relentless quality loop. The bar is world-class engineering — code that a principal engineer would mass on first read. Default target: 10/10. The user may request 11/10 which means: exceed what's expected, find improvements nobody asked for, leave the codebase measurably better than you found it.
 
-## Fit Check — before polishing
+Shared conventions in `_common.md`.
 
-1. **Scope check**: polish operates best on a completed, testable logical chunk — a feature, a module, a PR-sized diff. If the work is half-built (missing files, broken build, incomplete feature), do NOT polish — route to `/pursue` to finish the generation, then polish. Polishing half-built work creates a falsely-polished veneer over a broken foundation.
-2. **Tests pass first**: run the test suite before Step 1 Audit. If tests fail, the baseline is broken — fix tests or route to `/converge` before rating anything.
-3. **Rubric source**: polish's 5-dimension audit (correctness, design, robustness, tests, API) is hand-coded here. For domain-specific polish (design system, voice-agent quality, deck output), dispatch `/eval-agent` to generate a rubric from real reference material instead — domain-agnostic rubrics miss domain-specific issues.
-4. **Resume check**: if `.evolve/current.json` shows a `/pursue` generation in flight, join its Phase 4 Evaluate rather than running an independent polish loop — the generation's own evaluation criterion takes precedence.
+## Prerequisites
+
+- Polish needs a completed, testable chunk (feature, module, PR-sized diff). Half-built work → `/pursue` first to finish the generation. Polishing half-built work paints a veneer over a broken foundation.
+- Tests pass before audit. Failing → fix or `/converge` before rating.
+- Domain-specific polish (design systems, voice-agent quality, deck output) → dispatch `/eval-agent` for a rubric from real reference material; the 5-dim default below misses domain-specific issues.
+- If `.evolve/current.json` shows a `/pursue` generation in flight, join its Evaluate phase — the generation's own criteria take precedence.
 
 ## Process
 
@@ -58,13 +60,4 @@ Round N — Score: X/10 (target: Y)
   <prioritized list — what's wrong and why it matters>
 ```
 
-## Decision Capture & Reflection
-
-After completing work, capture significant decisions and reflect on the session:
-
-- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
-- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
-- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
-- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
-
-This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
+Append a `.evolve/skill-runs.jsonl` line on completion. See `_common.md`.

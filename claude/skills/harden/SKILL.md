@@ -1,50 +1,46 @@
 ---
 name: harden
-description: "Autonomous adversarial validator. Scans the codebase, derives every invariant worth proving, every fuzz target, every attack surface, every benchmark gap — ranks by risk × blast × coverage gap — then extends the project's EXISTING test/eval/bench/observability infra to cover them. Runs real adversarial inputs against the real system. Ends with proven invariants, reproducible counterexamples, and ranked findings routed to code fixes or /pursue. Use when the user says 'harden this', 'try to break this', 'red team', 'prove this is secure', 'find the exploits', 'what's not covered', or wants adversarial validation of a system claim."
+description: "Autonomous adversarial validator. Derives invariants, fuzz targets, attack surface, and benchmark gaps from the codebase, then extends the project's existing harness to cover them. Triggers: 'harden this', 'try to break this', 'red team', 'find the exploits', 'what's not covered'."
 ---
 
 # Harden — Autonomous Adversarial Validator
 
-Prove the system holds under inputs the author didn't imagine. The AI derives what to attack, prove, and fuzz — not the user. One skill absorbs red-team (write exploits), property-based proof (verify invariants), fuzz (probe parsers and boundaries), and benchmark stress (find performance regressions).
+Prove the system holds under inputs the author didn't imagine. The AI derives what to attack, prove, and fuzz — not the user. One skill absorbs red-team (write exploits), property-based proof (verify invariants), fuzz (probe parsers and boundaries), and benchmark stress.
 
-Three rules that govern everything:
+Shared conventions in `_common.md`. Three rules govern everything:
 
-1. **Extend, never duplicate.** Every finding lands in the project's existing test/eval/bench/observability harness. Never build a parallel sidecar.
-2. **Real flows, real state.** No mocks as default. Real DB, real HTTP, real container, real UI, real agent. Mocks only at process boundaries where the alternative is impossible.
+1. **Extend, never duplicate.** Every finding lands in the project's existing test/eval/bench/observability harness. No parallel sidecar.
+2. **Real flows, real state.** No mocks as default. Real DB, HTTP, container, UI, agent. Mocks only at process boundaries when alternatives are impossible.
 3. **Take the lead.** Don't ask the user what to test. Scan the code, derive the adversarial surface, rank by risk, go.
 
-## Fit Check — before attacking
+## Prerequisites
 
-1. **Repo shape**: harden requires a runnable system to attack. Works on services, full-stack apps, agents, CLIs. For pure-library repos (no runtime, only consumed by callers), harden's value is limited — `/critical-audit` is usually the right tool. If harden is the ask anyway, the inventory must find a harness to attack through (example app, integration tests, CLI).
-2. **Prerequisite: the project's test harness is named in Phase 0 inventory.** Extending a harness that doesn't exist means building one, which is out of scope for harden — route to `/pursue` first to build the harness, then harden.
-3. **Mock-coverage ratio.** Already called out in Phase 0: if >30% of integration-test surface is mocked on real-infra paths, that's HIGH finding #1 — document it and do not start Phase 1 scan until named.
-4. **Resume check**: prior `.evolve/harden/<date>-report.md` findings unresolved? Re-run those targets first before discovering new ones. Attacking the same surface twice across sessions is a waste.
+- **A runnable system to attack.** Services, full-stack apps, agents, CLIs. Pure-library repos: harden's value is limited — `/critical-audit` is usually right. If harden anyway, inventory must find a harness to attack through (example app, integration tests, CLI).
+- **The project's test harness exists.** Extending a non-existent harness means building one — out of scope. Route to `/pursue` first.
+- **Resume**: prior `.evolve/harden/<date>-report.md` findings unresolved? Re-run those targets first before discovering new ones.
 
-## When to use
+## When harden vs critical-audit
 
 | Signal | Skill |
 |--------|-------|
 | "Try to break this" / "red team" / "find exploits" | `/harden` |
 | "Prove this is secure" / "verify this invariant" | `/harden` |
 | "What's not covered" / "find the gaps" | `/harden` |
-| "Did we miss anything" on a security/correctness-critical path | `/harden` |
-| Build-something new | `/pursue` |
-| Tune a known metric | `/evolve` |
-| Review existing code for bugs | `/critical-audit` (passive review) vs `/harden` (active attack) |
+| "Did we miss anything" on security/correctness path | `/harden` |
+| Review existing code for bugs (read-only) | `/critical-audit` |
 
 `/critical-audit` finds bugs by reading. `/harden` finds them by attacking.
 
-## The Cycle
+## The cycle
 
 ```
 INVENTORY → SCAN → RANK → EXTEND → EXECUTE → REPORT → DISPATCH
 ```
 
-## Phase 0: Inventory
+## Inventory
 
-Before attacking, map what the project already has to measure, test, and observe. You will extend this — never build parallel.
+Map what the project has to measure, test, observe. You will extend this — never build parallel.
 
-Run the inventory script:
 ```bash
 bash ${SKILL_DIR}/inventory.sh
 ```
@@ -53,173 +49,157 @@ Record in `.evolve/harden/<date>-inventory.md`:
 
 ```markdown
 ## Test infra
-- Runner: [vitest / jest / pytest / cargo test / go test]
-- Location: [tests/, __tests__/, etc.]
-- Real-vs-mocked ratio: [read a few tests, assess honestly]
-- Coverage: [run the coverage report, record the real number]
+- Runner, location, real-vs-mocked ratio, coverage report number
 
 ## Eval infra
-- Suite: [.evolve/, evals/, or none]
-- Scenarios, judges, scoring dimensions
-- Scorecard location, baseline history
+- Suite (.evolve/, evals/, none), scenarios, judges, scoring dimensions, scorecard
 
 ## Benchmark infra
-- Runner: [benchmark.js, criterion, vitest bench, custom scripts]
-- Metrics tracked: [latency, tokens, cost, memory]
-- Regression threshold: [does CI fail on regression? where's the baseline?]
+- Runner, metrics tracked, regression threshold, where baseline lives
 
 ## Observability
-- Logs: [where written, what format]
-- Traces: [OpenTelemetry, Sentry, Langfuse, etc.]
-- Metrics: [Prometheus, dashboard]
-- Where findings should land: [specific test file / scorecard / dashboard]
+- Logs (where, format), traces (OTel/Sentry/Langfuse), metrics, where findings should land
 ```
 
-If any of these don't exist, note it — but you still must extend whatever IS there, not create a new harness.
+If something doesn't exist, note it — but extend what IS there, don't fork.
 
-**Mocks-as-coverage is itself a finding.** If the real-vs-mocked ratio shows mocks dominating the integration-test surface (anything above ~30% mock coverage on real-infra paths: DB, HTTP, agents, sandboxes, payment), that's the first finding in your report — SEVERITY=HIGH, category=test-integrity. A mocked test passes while the bug stays in production. Do not start Phase 1 adversarial scan until this is named in the inventory; attacks against a mock-coverage harness produce false confidence.
+**Mocks-as-coverage is itself a finding.** If real-vs-mocked ratio shows mocks dominating integration-test surface (>30% on real-infra paths: DB, HTTP, agents, sandboxes, payment), that's HIGH finding #1 — `category=test-integrity`. A mocked test passes while the bug stays in production. Do not start the adversarial scan until this is named.
 
-## Phase 1: Adversarial Scan
+## Adversarial scan
 
-Derive the attack surface autonomously by reading the code. Write every target, with its attack class and risk, to `.evolve/harden/<date>-surface.md`.
+Derive the attack surface by reading code. Write every target with attack class and risk to `.evolve/harden/<date>-surface.md`. Six dimensions — run in parallel subagents:
 
-**Six scan dimensions — run in parallel subagents:**
+### 1. Invariants
 
-1. **Invariants.** What claims does the code implicitly make? Every state machine transition, every access-control check, every data-flow boundary is an invariant. Examples:
-   - "After `revokeToken(jti)`, no request with that jti succeeds."
-   - "After `deleteSandbox(id)`, no direct-access token for id works."
-   - "A user can only read rows where `owner_id = session.user`."
-   - "A JWT with `alg: none` is always rejected."
+What claims does the code implicitly make? Every state machine transition, access-control check, data-flow boundary is an invariant.
+- "After `revokeToken(jti)`, no request with that jti succeeds."
+- "After `deleteSandbox(id)`, no direct-access token for id works."
+- "A user can only read rows where `owner_id = session.user`."
+- "A JWT with `alg: none` is always rejected."
 
-2. **Fuzz targets.** Every parser, every type coercion, every external input boundary. Examples:
-   - JSON body parsers (malformed, oversized, UTF-8 corner cases, deep nesting)
-   - URL/path parsers (traversal, encoding, null bytes, unicode normalization)
-   - Headers (CRLF injection, oversized)
-   - File uploads (zip bombs, symlink targets, malformed archives)
+### 2. Fuzz targets
 
-3. **Attack surface (OWASP + beyond).** Every trust boundary, external dependency, credential. Systematic — run every applicable class, not just the ones that look likely:
-   - **Injection:** SQL, NoSQL, OS command, LDAP, XPath, template (SSTI), header (CRLF), log injection. Test every input→query/exec path.
-   - **Broken auth:** Token replay, session fixation, JWT `alg:none`/`alg:HS256` on RS256 keys, credential stuffing timing oracle, password reset token prediction, OAuth state parameter bypass, PKCE downgrade.
-   - **BOLA/IDOR:** Enumerate every endpoint with an ID param. Replace your ID with another tenant's. Try sequential IDs, UUIDs from other responses, zero, negative, max-int.
-   - **SSRF:** Every place the server fetches a URL. Try `169.254.169.254`, `localhost:PORT`, `file://`, gopher, DNS rebinding. Chain SSRF through redirects.
-   - **Mass assignment:** POST/PUT with extra fields (`isAdmin: true`, `role: owner`, `creditBalance: 999999`). Check if the ORM/framework silently accepts them.
-   - **Security misconfiguration:** Default credentials, debug endpoints (`/debug`, `/metrics`, `/graphql`), verbose error messages leaking stack traces, CORS `*`, missing rate limits on auth endpoints.
-   - **Cryptographic failures:** Hardcoded secrets in source/env/logs, weak hashing (MD5/SHA1 for passwords), missing HTTPS enforcement, predictable tokens (timestamp-based, sequential).
-   - **CSRF/clickjacking:** State-changing POST/PUT/DELETE without CSRF tokens. Missing `X-Frame-Options`/CSP `frame-ancestors`.
-   - **Deserialization:** If the app deserializes user-controlled data (JSON.parse of untrusted, pickle, Java serialization), try injection payloads.
-   - **Supply chain:** `npm audit --audit-level=critical`, `cargo audit`, `pip-audit`. Check for postinstall scripts in deps. Pin vs range analysis.
+Every parser, type coercion, external input boundary.
+- JSON body (malformed, oversized, UTF-8 corner cases, deep nesting)
+- URL/path (traversal, encoding, null bytes, unicode normalization)
+- Headers (CRLF injection, oversized)
+- File uploads (zip bombs, symlink targets, malformed archives)
 
-4. **Credential hunting.** Secrets leak. Find them before an attacker does.
-   - `git log --all -p | grep -iE 'api.?key|secret|password|token|sk-|pk-'` — scan full git history, not just HEAD
-   - Grep source for hardcoded keys, connection strings, JWTs, private keys
-   - Check `.env*` files for overly broad permissions (644 not 600)
-   - Check logs/debug output for leaked tokens or PII
-   - Check error responses for internal paths, stack traces, or credential fragments
-   - Check CI configs for secrets in plaintext (not using secret managers)
+### 3. Attack surface (OWASP + beyond)
 
-5. **Race conditions & TOCTOU.** Concurrent mutations are where billing, auth, and state machines break.
-   - Double-spend: send N identical debit requests simultaneously. Does balance go negative?
-   - Signup race: create same account from 2 threads. Duplicate user? Orphaned state?
-   - Token revocation race: revoke + use token simultaneously. Does the use succeed?
-   - File/resource TOCTOU: check-then-act patterns where another request can mutate between check and act
-   - Use `Promise.all` with 10-50 concurrent requests against every state-changing endpoint
+Systematic — every applicable class, not just likely ones:
 
-6. **Benchmark gaps.** Every latency-sensitive path, every resource-bounded operation. Examples:
-   - Hot-path functions with no `.bench()` coverage
-   - Concurrency paths with no load test
-   - Memory-bound operations with no leak test
-   - ReDoS: regex patterns with backtracking on user input
+- **Injection:** SQL, NoSQL, OS command, LDAP, XPath, template (SSTI), header (CRLF), log injection. Test every input→query/exec path.
+- **Broken auth:** Token replay, session fixation, JWT `alg:none`/`alg:HS256` on RS256 keys, credential-stuffing timing oracle, password reset token prediction, OAuth state bypass, PKCE downgrade.
+- **BOLA/IDOR:** Every endpoint with an ID param. Replace your ID with another tenant's. Sequential, UUIDs from other responses, zero, negative, max-int.
+- **SSRF:** Every URL fetch. `169.254.169.254`, `localhost:PORT`, `file://`, gopher, DNS rebinding. Chain through redirects.
+- **Mass assignment:** POST/PUT with extra fields (`isAdmin: true`, `role: owner`, `creditBalance: 999999`). Does the ORM silently accept?
+- **Misconfig:** Default credentials, debug endpoints (`/debug`, `/metrics`, `/graphql`), verbose errors leaking stack traces, CORS `*`, missing rate limits.
+- **Crypto:** Hardcoded secrets in source/env/logs, weak hashing (MD5/SHA1 for passwords), missing HTTPS enforcement, predictable tokens.
+- **CSRF/clickjacking:** State-changing without CSRF tokens. Missing `X-Frame-Options`/CSP `frame-ancestors`.
+- **Deserialization:** Untrusted JSON.parse, pickle, Java serialization → injection payloads.
+- **Supply chain:** `npm audit --audit-level=critical`, `cargo audit`, `pip-audit`. Postinstall scripts. Pin vs range.
 
-## Phase 2: Rank
+### 4. Credential hunting
 
-Compute risk for every target:
+Secrets leak. Find them first.
+- `git log --all -p | grep -iE 'api.?key|secret|password|token|sk-|pk-'` — full history, not HEAD
+- Hardcoded keys, connection strings, JWTs, private keys in source
+- `.env*` permissions (644 not 600)
+- Logs/debug for leaked tokens or PII
+- Error responses for internal paths, stack traces, credential fragments
+- CI configs for plaintext secrets
+
+### 5. Race conditions & TOCTOU
+
+Concurrent mutations are where billing, auth, and state machines break.
+- Double-spend: send N identical debit requests simultaneously. Balance go negative?
+- Signup race: same account from 2 threads. Duplicate user? Orphaned state?
+- Token revocation race: revoke + use simultaneously. Use succeeds?
+- File/resource TOCTOU: check-then-act where another request mutates between
+- `Promise.all` with 10–50 concurrent against every state-changing endpoint
+
+### 6. Benchmark gaps
+
+- Hot-path functions with no `.bench()` coverage
+- Concurrency paths with no load test
+- Memory-bound operations with no leak test
+- ReDoS: backtracking regex on user input
+
+## Rank
 
 ```
 risk = severity × blast_radius × exploitability × coverage_gap
 ```
 
-- `severity`: what breaks (data loss, auth bypass, crash, slowdown) — 1-10
-- `blast_radius`: how many users/tenants/systems affected — 1-10
-- `exploitability`: how hard to trigger (public, authed, requires timing) — 1-10
-- `coverage_gap`: inverse of existing test quality for this target — 1-10
+Each 1–10. Pick top 10–20 fitting the compute budget.
 
-Pick the top N (default 10–20) that fit in a reasonable compute budget.
+## Extend the existing harness
 
-## Phase 3: Extend Existing Harness
+For each selected target:
 
-For each selected target, add coverage to the REAL harness. Rules:
+- **Unit tests** → existing test runner. Same directory, same naming, imports from same sources. No new directory, no new runner.
+- **Eval scenarios** → existing eval suite. If `.evolve/` or `evals/` exists, add a scenario file in the right shape, register in the index.
+- **Fuzz targets** → existing property-based harness (fast-check, hypothesis, cargo fuzz). Add one only if the test runner supports plugin patterns.
+- **Benchmarks** → existing bench runner that CI runs. No CI bench job → surface in report, flag for `/pursue`. Don't fork.
+- **Observability** → existing telemetry channel.
 
-- **Unit tests → existing test runner.** Add to the same directory, matching file naming, importing from the same sources. No new directory, no new runner.
-- **Eval scenarios → existing eval suite.** If the project has `.evolve/` or `evals/`, add a scenario file in the right shape, register it in the suite index.
-- **Fuzz targets → existing property-based harness.** If one exists (fast-check, hypothesis, cargo fuzz), extend it. If not, add one BUT ONLY if the project test runner supports plugin patterns.
-- **Benchmarks → existing bench runner.** Add to the benchmark suite that CI already runs. If there's no benchmark job in CI, surface this gap in the report but don't fork infra — flag it for `/pursue`.
-- **Observability → existing telemetry.** Every adversarial test emits metrics to the same channel real tests use.
+## Execute — red team
 
-## Phase 4: Execute — Red Team
-
-Run the real system. No mocks beyond process boundaries. **Think like an attacker, not a tester.** The goal is not "check that auth exists" — it's "bypass auth, escalate to admin, read another tenant's data, and prove the full chain with a reproducible script."
+Run the real system. No mocks beyond process boundaries. Think like an attacker, not a tester. Goal isn't "check that auth exists" — it's "bypass auth, escalate to admin, read another tenant's data, prove the full chain with a reproducible script."
 
 ### Environment
 
-- Real DB? Spin up the real DB (docker-compose, testcontainer, or the project's canonical test DB).
+- Real DB? Spin it up (docker-compose, testcontainer, project's canonical test DB).
 - Real HTTP? Start the real server on a real port.
-- Real container/sandbox? Use the project's SDK to spawn real containers. Run exploit PoCs inside them.
-- Real agent? Invoke the real agent with real tools against real endpoints.
-- Real UI? Drive it with Playwright/bad CLI against a real DOM.
+- Real container/sandbox? Use the project SDK to spawn real containers. Run PoCs inside.
+- Real agent? Invoke with real tools against real endpoints.
+- Real UI? Drive with Playwright/bad CLI against a real DOM.
 
-### Offensive methodology
+### Methodology — every target, in this order
 
-For every target from the ranked surface, execute in this order:
-
-1. **Recon.** Map the real attack surface from the outside — enumerate endpoints, discover hidden routes (`/debug`, `/admin`, `/graphql`, `/metrics`, `/.env`), fingerprint frameworks/versions, collect error messages for info leaks.
-
-2. **Exploit.** Write the actual exploit code. Not "this endpoint might be vulnerable to SSRF" — `curl -X POST https://target/api/proxy -d '{"url":"http://169.254.169.254/latest/meta-data/"}'` and show the response. Every finding needs a runnable PoC.
-
-3. **Escalate.** Chain findings. Auth bypass alone is a finding. Auth bypass → read another user's API keys → use those keys to access their sandboxes → exfiltrate their code → that's a critical chain. Always try to escalate:
+1. **Recon.** Map attack surface from outside — enumerate endpoints, discover hidden routes (`/debug`, `/admin`, `/graphql`, `/metrics`, `/.env`), fingerprint frameworks/versions, collect error messages for info leaks.
+2. **Exploit.** Write actual exploit code. Not "this might be vulnerable" — `curl -X POST https://target/api/proxy -d '{"url":"http://169.254.169.254/latest/meta-data/"}'` and show the response. Every finding needs a runnable PoC.
+3. **Escalate.** Chain findings. Auth bypass alone is a finding. Auth bypass → read API keys → access sandboxes → exfiltrate code → critical chain. Always try:
    - Anonymous → authenticated (registration bypass, default creds, token theft)
    - User → admin (IDOR on admin endpoints, mass assignment on role fields, JWT claim manipulation)
-   - Single-tenant → cross-tenant (swap tenant IDs in tokens, shared resource access, cache poisoning)
-   - Application → infrastructure (SSRF to cloud metadata, container escape, env var exfiltration)
+   - Single-tenant → cross-tenant (swap tenant IDs, shared resource access, cache poisoning)
+   - Application → infrastructure (SSRF to cloud metadata, container escape, env exfiltration)
+4. **Exfiltrate.** Prove impact. Got access → show what data you can read. Bypassed billing → zero-cost request. Sandbox escape → host filesystem access. Make severity undeniable.
+5. **Persist.** Can the attacker maintain access? Planted JWT with no expiry, webhook to external URL, modified config surviving restart. Note these even if not exploited.
 
-4. **Exfiltrate.** Prove impact. If you got access, show what data you can read. If you bypassed billing, show the zero-cost request. If you escaped a sandbox, show host filesystem access. The PoC should make the severity undeniable.
-
-5. **Persist.** Can the attacker maintain access? Planted JWT with no expiry, webhook to external URL, modified config that survives restart. Check these paths exist even if you don't exploit them — note them as findings.
-
-### Race condition execution
-
-Don't just theorize about races — trigger them:
+### Race execution — trigger, don't theorize
 
 ```typescript
-// Example: billing double-spend race
+// billing double-spend race
 const results = await Promise.allSettled(
   Array.from({ length: 20 }, () =>
     fetch('/api/billing/debit', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ amount: userBalance }), // full balance, 20x
+      body: JSON.stringify({ amount: userBalance }), // full balance, 20×
     })
   )
 )
 const successes = results.filter(r => r.status === 'fulfilled' && r.value.ok)
-// If successes > 1, the user spent more than their balance. Finding: CRITICAL.
+// successes > 1 → user spent more than their balance. CRITICAL.
 ```
 
-### Capture everything
+### Capture
 
-- Invariant holds / fails (with 10K+ inputs for "holds" claims)
+- Invariant holds/fails (10K+ inputs for "holds" claims)
 - Counterexample on failure (minimal reproduction)
-- **Full exploit chain** on success (runnable script, not prose)
-- **Exact HTTP requests/responses** for every finding (curl commands preferred)
+- Full exploit chain on success (runnable script, not prose)
+- Exact HTTP requests/responses (curl preferred)
 - Performance number + delta from baseline
 - Tokens, time, cost, side effects, state deltas
 
-## Phase 5: Report
+## Report
 
 Write `.evolve/harden/<date>-report.md`:
 
 ```markdown
 # Harden Report — <scope>
-Date: <date>
 
 ## Proven invariants
 | Invariant | Inputs tested | Result |
@@ -227,39 +207,32 @@ Date: <date>
 
 ## Exploit chains (CRITICAL/HIGH)
 | # | Chain | Severity | Impact |
-| 1 | Anonymous → IDOR on /api/users/:id → read any user's API keys → use key to access their sandbox | CRITICAL | Full cross-tenant data access |
+| 1 | Anonymous → IDOR on /api/users/:id → read API keys → access sandbox | CRITICAL | Full cross-tenant data access |
 
 ### Chain 1: Cross-tenant data exfiltration via IDOR
-**Recon:** GET /api/users/1 returns 200 with full profile when authenticated as user 2.
+**Recon:** GET /api/users/1 returns 200 when authenticated as user 2.
 **Exploit:**
 ```bash
-# As user 2, read user 1's API keys
 curl -H "Authorization: Bearer $USER2_TOKEN" https://target/api/users/1/keys
 # Response: {"keys": [{"id": "sk-tan-abc123", "name": "production"}]}
-
-# Use stolen key to access user 1's sandbox
 curl -H "Authorization: Bearer sk-tan-abc123" https://target/api/sandbox/list
 # Response: user 1's sandboxes visible
 ```
-**Escalation:** API key grants full sandbox access including file read/write.
-**Impact:** Any authenticated user can read any other user's credentials and access their infrastructure.
-**Fix:** `requireOwnership(userId, session.user)` check on `/api/users/:id/*` routes. See file:line.
+**Escalation:** API key grants full sandbox access including file r/w.
+**Impact:** Any authenticated user can read any other user's credentials.
+**Fix:** `requireOwnership(userId, session.user)` on `/api/users/:id/*`. See file:line.
 
 ## Credential findings
 | Location | Type | Severity |
-| git log (commit abc123, 2025-03-14) | Hardcoded Stripe secret key in .env committed then removed | HIGH — still in git history |
 
 ## Race condition findings
 | Endpoint | Concurrent requests | Result |
-| POST /api/billing/debit | 20 simultaneous full-balance debits | 3 succeeded — user spent 3x balance | CRITICAL |
 
 ## Dependency vulnerabilities
 | Package | CVE | Severity | Fix |
-| lodash@4.17.20 | CVE-2021-23337 | HIGH | Upgrade to 4.17.21 |
 
 ## Still unknown
 | Surface | Why couldn't I reach it |
-| Firecracker VM network isolation | No Firecracker host available locally |
 
 ## Extended infra
 - Added N property-based tests to existing vitest suite
@@ -268,29 +241,23 @@ curl -H "Authorization: Bearer sk-tan-abc123" https://target/api/sandbox/list
 - Flagged: no CI bench regression gate — needs /pursue
 
 ## Ranked next steps
-1. [CRITICAL finding] → fix now
-2. [HIGH finding] → fix this sprint
-3. [Coverage gap] → /pursue to build missing infra
+1. [CRITICAL] → fix now
+2. [HIGH] → fix this sprint
+3. [Coverage gap] → /pursue
 ```
 
-## Phase 6: Dispatch
+## Dispatch
 
-End every `/harden` run with explicit routing:
+End with explicit routing:
 
-- **Every CRITICAL finding with a PoC** → fix in code now. Do not defer.
-- **Every HIGH without a PoC** → iterate in `/harden` until you have a PoC or prove the invariant holds.
-- **Every coverage gap** → `/pursue` to build the missing infra (e.g., "project has no CI benchmark gate — needs generational addition").
+- **Every CRITICAL with PoC** → fix in code now. Don't defer.
+- **Every HIGH without PoC** → iterate `/harden` until you have a PoC or prove the invariant.
+- **Every coverage gap** → `/pursue` to build missing infra ("no CI bench gate — needs generational addition").
 - **Every tunable metric uncovered** → `/evolve` with the new baseline.
 
 Write `.evolve/current.json`:
 ```json
-{
-  "mode": "evolve | pursue | harden",
-  "status": "findings_pending | clean",
-  "activeHarden": "<date>-report.md",
-  "critical": N,
-  "high": N
-}
+{"mode":"evolve|pursue|harden","status":"findings_pending|clean","activeHarden":"<date>-report.md","critical":N,"high":N}
 ```
 
 ## Persist
@@ -299,7 +266,8 @@ Write `.evolve/current.json`:
 - Surface → `.evolve/harden/<date>-surface.md`
 - Report → `.evolve/harden/<date>-report.md`
 - Global index → `~/.claude/harden/INDEX.md` (one line per run)
-- Durable findings → project memory (`.memory/` if used) for repeat regression prevention
+- Durable findings → project memory for repeat regression prevention
+- `.evolve/skill-runs.jsonl` line on completion
 
 ## Rules
 
@@ -309,13 +277,3 @@ Write `.evolve/current.json`:
 4. Every finding has a PoC or a 10K-input proof.
 5. Route to code fix, `/pursue`, or `/evolve`. Never "note for later."
 6. Measure everything. Emit to the project's observability channel.
-
-## Related Skills
-
-```
-/harden          ← adversarial: derive, attack, prove, measure
-  ├── /critical-audit  ← passive review (complementary, not replacement)
-  ├── /pursue    ← when coverage gap needs architectural infra
-  ├── /evolve    ← when harden exposes a tunable metric
-  └── /diagnose  ← when a PoC fails to reproduce reliably
-```

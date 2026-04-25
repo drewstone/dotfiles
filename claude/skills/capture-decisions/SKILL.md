@@ -1,11 +1,13 @@
 ---
 name: capture-decisions
-description: "Track architectural decisions, methodology, and reasoning in any project. Creates structured decision records with rationale, alternatives considered, human vs AI contribution analysis, and outcomes. Maintains a research/ corpus suitable for academic publication, internal knowledge bases, or project handoff. Use when the user says 'capture this decision', 'why did we do this', 'track this', 'document the reasoning', 'decision record', 'ADR', or after any significant architectural choice, pivot, or learning."
+description: "Structured decision/failure/session records with rationale, alternatives, human-vs-AI contribution analysis, outcomes. Maintains a research/ corpus. Triggers: 'capture this decision', 'document the reasoning', 'decision record', 'ADR', after a significant architectural choice or pivot."
 ---
 
 # Capture Decisions — Structured Development Intelligence
 
-Every significant decision in a project has a story: what was the context, what alternatives existed, why was this chosen, who contributed what, and what happened. Most of this is lost in chat history and commit messages. This skill captures it in a structured, searchable, publishable format.
+Every significant decision has a story: context, alternatives, why this, who contributed what, what happened. Most is lost in chat history and commit messages. This captures it in a structured, searchable, publishable format.
+
+Shared conventions in `_common.md`.
 
 ## When to Invoke
 
@@ -201,14 +203,8 @@ Read all existing decision records, check if any have been superseded by later w
 
 10. **This is publishable material.** Write it like a researcher, not like a developer. Future readers include: you in 6 months, your team, academic reviewers, open-source contributors.
 
-## Relationship to Other Skills
+## Where it fits
 
-```
-/capture-decisions               ← document what happened and why
-  ├── /reflect                   ← meta-analyze, then capture the insights
-  ├── /pursue                    ← each generation produces decisions to capture
-  ├── /evolve                    ← experiments produce outcome data to capture
-  └── /verify                    ← verification reveals whether decisions worked
-```
+This skill is institutional memory. Other skills produce work; this produces understanding of the work. `/reflect` and this skill compose — reflect identifies what's significant, capture-decisions records it.
 
-/capture-decisions is the institutional memory. Every other skill produces work. This skill produces understanding of the work.
+Append to `.evolve/skill-runs.jsonl` on completion.

@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Drive CI to green through iterative fix-commit-push-wait cycles. Reads remote CI failures via GitHub API, diagnoses root causes from job logs, applies fixes, commits, pushes, and waits for the next run — repeating until all workflows pass. Persists progress to .evolve/converge-progress.md so it can resume across conversations. Never takes shortcuts (no continue-on-error, no --no-verify, no suppressing failures). Use when the user says 'get CI green', 'fix CI', 'converge CI', 'make the build pass', 'land this PR', or any variant of iterative CI repair."
+description: "Drive CI to green: diagnose remote failures, fix root causes, commit, push, wait, repeat. Persists to `.evolve/converge-progress.md` to resume across sessions. No shortcuts (no `continue-on-error`, no `--no-verify`). Triggers: 'get CI green', 'fix CI', 'land this PR'."
 ---
 
 # Converge — CI Green Loop
@@ -211,13 +211,4 @@ Write `.evolve/converge-progress.md` after every round:
 - **Don't re-fix.** Unless it regressed.
 - **Trust progress, verify against reality.** Progress says what WAS true. `gh run list` says what IS true.
 
-## Decision Capture & Reflection
-
-After completing work, capture significant decisions and reflect on the session:
-
-- **During work**: when you make an architectural choice, pivot, or reject an alternative, note it. These become `/capture-decisions` records.
-- **After each round/generation**: run `/reflect` to meta-analyze what happened — what worked, what didn't, what patterns emerged.
-- **Decision records**: create `research/decisions/NNN-*.md` for any decision that changes direction, introduces new concepts, or rejects alternatives. Include rationale, alternatives, origin analysis (human vs AI contribution), and outcomes.
-- **Failure records**: when something fails, create `research/failures/NNN-*.md` with root cause, debugging journey, fix, and prevention.
-
-This is how the system learns across sessions. The structured records feed into Foreman's learning loop, inform future dispatches, and accumulate into publishable methodology documentation.
+Append a `.evolve/skill-runs.jsonl` line on completion (CONVERGED / BLOCKED / etc.). See `_common.md`.
