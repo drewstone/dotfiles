@@ -1,83 +1,65 @@
 ---
 name: evolve
-description: "Goal-pursuit engine. Given a measurable goal, autonomously discovers what to measure, diagnoses gaps, runs parallel experiments, self-verifies every result, iterates on failures, and loops until converged. Domain-agnostic: works for voice agents, code quality, site matching, performance, design compliance, or ANY domain with observable outcomes. Decomposes goals into independent sub-goals and pursues them in parallel. Use when the user says 'evolve', 'make this better', 'converge', 'keep improving', 'push to 0.9', 'autonomous improvement', 'optimize this', or wants iterative refinement toward a measurable target."
+description: "Goal-pursuit engine: measure → diagnose → experiment → verify → iterate against a measurable target. Domain-agnostic — works on agents, code, content, design, GTM. Triggers: 'evolve', 'make this better', 'converge', 'push to 0.9', 'optimize'."
 ---
 
 # Evolve — Goal-Pursuit Engine
 
 Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 
-**Use evolve when** the goal is measurable and you can run a local eval. **Use `/pursue`** when evolve has plateaued for 3+ rounds and the system needs a generational/architectural leap. **Use `/polish`** when correctness is fine and the gap is rubric-driven (quality, design, edge cases). **Use `/research`** when the question is "which approach works" and requires structured hypothesis testing. **Use `/converge`** when the loop is remote CI (push → wait → diagnose → fix → push).
+Shared conventions (state-first reads, persist-to-`.evolve/`, dispatch-at-end, no AI attribution, 5-rounds-max) live in `_common.md`. This skill inlines only what's evolve-specific.
 
-## Start Here
+## When evolve vs other skills
 
-If `.evolve/` exists, read in this order before acting:
-1. `.evolve/current.json`
-2. `.evolve/progress.md`
-3. The tail of `.evolve/experiments.jsonl`
-4. The newest file in `.evolve/pursuits/` if present
-5. Any project spec such as `docs/EVOLVE-SPEC.md`
+| Need | Skill |
+|------|-------|
+| The goal is a measurable metric and parameter changes can move it | **`/evolve`** |
+| Evolve plateaued 3+ rounds, gap is architectural | `/pursue` |
+| Correctness fine, gap is rubric-driven (quality, design, edge cases) | `/polish` |
+| Many failures, need ROI ranking before fixing | `/diagnose` |
+| No eval exists for a subjective target | `/eval-agent` (then evolve) |
+| Loop is remote CI (push → wait → diagnose) | `/converge` |
+| Question is "which approach works", needs structured hypotheses | `/research` |
 
-## Fit Check — before bootstrapping
+## Resume
 
-Before running Phase 0:
+If `.evolve/` exists, read in order: `current.json`, `progress.md`, tail of `experiments.jsonl`, newest `pursuits/*.md`, project spec (`docs/EVOLVE-SPEC.md`). If `mode` names a different active skill within 24h, reconcile or dispatch `/governor`.
 
-1. **Repo shape check.** `/evolve` requires a measurable eval and a clear metric. If the repo has no eval suite (tests only, no scenarios/judges/scoring), dispatch `/eval-agent` first to build one. Do NOT invent an eval inline — that's how proxy metrics ship.
-2. **Resume check.** Read `.evolve/current.json`. If `mode` names a different skill active in the last 24h, reconcile — continue that work or dispatch `/governor`. If `mode: "pursue"` is active, a generation is in flight; join it, don't start a parallel evolve loop.
-3. **State adapter.** If the repo uses `.bench/`, a GitHub Project, or an external dashboard as its canonical scorecard, use that as the source of truth. `.evolve/governor-config.json` (written by `/governor`) names adopted paths.
-4. **Baseline drift.** Prior baseline in `progress.md`? Run the eval once, compare. >10% drift on any dimension = stale baseline. Re-seed with median-of-≥3 (Phase 0.5 rule) before comparing variants against it.
-5. **Product-value claim.** If the goal's metric has no `productValueClaim` recorded, Phase 0.5 is blocking. Write the claim or surface to the operator.
+If a project uses `.bench/`, ADRs, Linear, or another canonical scorecard, use that — `.evolve/governor-config.json` records adopted paths.
 
-Uncertain on any of the above → dispatch `/governor`.
-
-## Core Principles
-
-1. **Verify everything.** Never report "X didn't work, maybe A or B" — determine which one. After every experiment, confirm the change is live: check the DB, the API response, the deployed state. Ambiguity in a report is a bug in the loop.
-
-2. **Iterate on failures.** A failed hypothesis gets 2-3 variations before it's abandoned. Different configs, different approaches, different framings. Check if the failure is in the experiment or in the deployment. The #1 failure mode is "change didn't actually deploy."
-
-3. **Decompose and parallelize.** If a goal has independent sub-goals (5 agents, 3 services, N test files), decompose and pursue them in parallel. Use worktrees for conflicting code changes, parallel HTTP for independent API calls, concurrent subagents for independent research. Only serialize dependent steps.
-
-4. **Measure the user's experience.** Measure what the end user sees, not what internal timers report.
-
-5. **Infrastructure is a deliverable.** The measurement system is as valuable as the fixes. It persists, enables future cycles, and catches regressions automatically.
-
-## The Loop
+## The loop
 
 ```
 GOAL → DECOMPOSE → [MEASURE → DIAGNOSE → HYPOTHESIZE → EXECUTE → VERIFY → COMPARE]* → ITERATE
-                     └─── parallel per sub-goal ───┘
+                       └─ parallel per sub-goal ─┘
 ```
 
-This is not sequential. You jump between phases based on what you learn. Discovery happens during execution. Measurement reveals new goals. A verification failure sends you back to execute, not back to start.
+Not sequential — discovery happens during execution, measurement reveals new goals, verification failure sends you back to execute (not back to start).
 
-## Phase 0: Understand the Goal
+## Understand the goal
 
 Parse the input into:
-
-1. **Goal**: What does "done" look like? Must be measurable.
-2. **Success criteria**: The threshold that defines convergence.
-3. **Scope**: What's in play? Decomposable?
+- **Goal**: what does "done" look like? Must be measurable.
+- **Success criteria**: the threshold that defines convergence.
+- **Scope**: what's in play? Decomposable?
 
 If vague ("make this better"), ask: "Better by what metric? What does 10/10 look like?"
 
-If rich ("push all agent scores above 0.80"), proceed.
-
-### Phase 0.5: Metric → product-value claim (REQUIRED before Phase 1)
+### Product-value claim (REQUIRED before any experiment)
 
 For every metric in the success criteria, write one sentence:
 > "If this number moves, what user-visible product outcome moves with it?"
 
 If you can't, the metric is wrong. Stop. Evolve converges on whatever metric you point it at — proxy metrics are the default failure mode of offline evals. Force the linkage now, or you ship "wins" that don't move anything users feel.
 
-Store the claim on each metric in `.evolve/current.json` under `metricClaims[<metric>]` so future rounds can validate.
+Store the claim per-metric in `.evolve/current.json` under `metricClaims[<metric>]` so future rounds can validate.
 
-Bad metric: "expected-capability jaccard ≥ 0.5" with no claim that matching the list improves downstream agent success.
-Good metric: "p95 latency < 100ms" with claim "this path gates the user's first keystroke; jank shows up in session replay above 100ms."
+- Bad: "expected-capability jaccard ≥ 0.5" with no claim that matching the list improves downstream agent success.
+- Good: "p95 latency < 100ms" with claim "this path gates the user's first keystroke; jank shows up in session replay above 100ms."
 
-## Phase 1: Decompose
+## Decompose
 
-**Before measuring, ask: can this goal be split into independent sub-goals?**
+Before measuring, ask: can this goal be split into independent sub-goals?
 
 | Goal | Sub-goals | Parallelism |
 |------|-----------|-------------|
@@ -86,62 +68,35 @@ Good metric: "p95 latency < 100ms" with claim "this path gates the user's first 
 | "All tests pass" | Group by failure cluster | N parallel fix streams |
 | "Match reference site" | One per page | N parallel |
 
-Independent sub-goals get their own measurement, their own experiments, their own progress tracking. They can run as parallel subagents, parallel worktrees, or parallel Claude Code sessions.
+Independent sub-goals get their own measurement, experiments, and progress tracking. Dependent sub-goals run sequentially (fix the build before running tests).
 
-Dependent sub-goals run sequentially: fix the build before running tests, deploy before measuring production.
+## Audit before building
 
-## Phase 1.5: Audit Before Building
+Before proposing changes, verify what actually exists and works. Highest-ROI step in any evolve session — without it you build on assumptions.
 
-**Before proposing ANY changes, verify what actually exists and works.** This is the highest-ROI time in any evolve session. Without it, you build on assumptions — wrong endpoints, mismatched schemas, dead infrastructure.
+10–15 minutes:
+1. Read the actual code involved in measurement (eval runners, test endpoints, API routes).
+2. Verify endpoints exist and match — call them, check response shapes, confirm auth works.
+3. Run the existing measurement against production for a real baseline (not from memory).
+4. Identify what's broken vs missing — broken infra needs fixing before experimenting.
 
-Spend 10-15 minutes:
-1. **Read the actual code** involved in measurement (eval runners, test endpoints, API routes)
-2. **Verify endpoints exist and match** — call them, check response shapes, confirm auth works
-3. **Run the existing measurement** against production to get a real baseline (not from memory)
-4. **Identify what's broken vs missing** — broken infra needs fixing before experimenting
+Common failure modes this prevents: building against endpoints with different schemas, stale base URLs, half-built features returning faked data, duplicate infrastructure.
 
-Common failure modes this prevents:
-- Building against endpoints that don't exist or have different schemas
-- Using stale base URLs or dead services
-- Assuming a feature works when it's half-built or returns faked data
-- Creating duplicate infrastructure when something already exists
+## Measurement
 
-**Only after the audit confirms what's real do you proceed to measurement and experimentation.**
+Use what exists. Improve what's incomplete. Only build from scratch if nothing suitable exists.
 
-## Phase 2: Discover and Improve Measurement
+If the goal is **subjective** (writing quality, conversation fit, design match) and no eval exists → dispatch `/eval-agent` to build the judge from real reference material. Hand-authoring a rubric inline is the proxy-metric trap.
 
-**Check what exists before building anything:**
+If the goal is **objective** (compiles, test passes, HTTP 200, string match) → write a test. LLM-as-judge on objective criteria adds variance.
 
-- Test suites, eval runners, benchmark scripts
-- Quality pipelines, CI workflows
-- Existing scorecards, dashboards, monitoring
-- `.evolve/` state from prior sessions (experiments.jsonl, progress.md, scorecard.json)
-- Existing scoring libraries (scoring.ts, metrics.ts, trace stores)
+Audit existing eval infrastructure: ≥5 scoring dimensions with explicit weights, per-turn metrics if multi-turn, prompt versioning (`.evolve/prompts/`), trace storage (JSONL + per-run files), statistical library (`evolve/eval-stats.ts` is a copy-in reference), cost tracking, multi-rep support (3-rep median minimum).
 
-**Use what exists. Improve what's incomplete. Only build from scratch if nothing suitable exists.**
+The eval infrastructure IS the product for improvement. A project with 3 dimensions and no traces can't improve systematically — fix that before running experiments.
 
-**If no eval exists and the goal is subjective** (writing quality, conversation quality, design fit, generated-code-fit, user intent preserved), dispatch `/eval-agent` to build the judge. Do NOT hand-author a rubric inline — that's the proxy-metric trap Phase 0.5 exists to prevent. `/eval-agent` generates rubrics from real reference material and persists them under `.evolve/eval-agent/rubrics/` for future rounds to reuse.
+## Baseline
 
-**If no eval exists and the goal is objective** (compiles, test passes, HTTP 200, string match), don't dispatch `/eval-agent` — write a test instead. LLM-as-judge on objective criteria wastes tokens and adds variance.
-
-### Audit existing eval infrastructure against the gold standard:
-
-| Component | Check | If missing |
-|-----------|-------|-----------|
-| Scoring dimensions | Are there ≥5 dimensions? Are weights explicit? | Add dimensions for the domain |
-| Per-turn metrics | Does scoring happen at each turn, or only at the end? | Add cumulative scoring after each turn |
-| Prompt versioning | Is there a `.evolve/prompts/` registry? | Create one, register current prompt as v0 |
-| Trace storage | Are full prompts + responses saved per run? | Add trace capture (JSONL + individual files) |
-| Statistical library | Does `eval-stats.ts` exist? Bootstrap CI? Effect size? | Copy from this skill's `eval-stats.ts` reference |
-| Cost tracking | Are tokens and estimated USD tracked per run? | Add token estimation to metrics |
-| Multi-rep support | Can you run N reps and get median/IQR? | Add a 3-rep runner script |
-| Optimization loop | Is there automated diagnosis → mutation → eval? | Build or adapt from this skill's patterns |
-
-**The eval infrastructure IS the product for improvement.** Investing in measurement quality has higher ROI than any single experiment. A project with 3 scoring dimensions and no traces can't improve systematically — fix that before running experiments.
-
-## Phase 3: Measure Baseline
-
-Run the measurement. Save structured output. This is the anchor for all future comparisons.
+Run the measurement, save structured output, anchor all future comparisons.
 
 ```
 Baseline — <timestamp>
@@ -150,207 +105,129 @@ Baseline — <timestamp>
   safety >= 0.70 0.50       -0.20
 ```
 
-**Per-turn metrics** (if available): If the system supports multi-turn interactions, score at each cumulative turn to see completion growth. This reveals *when* quality degrades (Turn 3? Turn 5?) and which turns are high-value vs wasted. Track convergence turn (first turn where score hits threshold), cost per turn, and score variance.
+Per-turn metrics (if multi-turn): score at each cumulative turn to see completion growth, identify when quality degrades, track convergence turn + cost per turn + variance.
 
-**Prompt versioning**: If the project has a prompt registry (`.evolve/prompts/`), record which prompt version is being measured. Every experiment must be traceable to a specific prompt. Without this, you can't distinguish prompt regressions from model variance.
+Prompt versioning: every experiment must be traceable to a specific prompt version. Without this, you can't distinguish prompt regressions from model variance.
 
-## Phase 4: Diagnose — Identify Highest-ROI Targets
+## Diagnose
 
-Don't just find failures — **rank them by optimization ROI**. Fix the thing that moves the most score for the least effort.
+Don't just find failures — rank by ROI. Fix the thing that moves the most score for the least effort.
 
-**Dispatch `/diagnose` for the full triage methodology** (ROI ranking, stratification, bimodality/correlation/per-turn checks, hypothesis generation). `/diagnose` owns that loop; duplicating it here caused the two skills' methodologies to drift.
-
-The minimal version — use this only when dispatching `/diagnose` is overkill (single target, one obvious failure cluster):
+Dispatch `/diagnose` for the full triage methodology (ROI ranking, stratification, bimodality, per-turn checks, hypothesis generation). The minimal version (single target, one obvious cluster):
 
 1. Cluster failures by dimension or error shape.
 2. Pick the cluster with biggest gap × broadest blast radius × cheapest fix.
-3. Write one hypothesis with claim, action, verification, expected metric change.
+3. Write one hypothesis: claim, action, verification, expected metric change.
 
-For anything more complex (multi-target, bimodal scores, cross-dimension correlation), run `/diagnose` and read its output into Phase 5.
+Multi-target, bimodal scores, or cross-dimension correlation → run `/diagnose` and feed its output into the next phase.
 
-### Experiment Design (before running anything)
+### Experiment design
 
-**Don't run all targets × all reps.** Design the minimal experiment:
+Don't run all targets × all reps. Design the minimal experiment:
 
-1. **Skip ceiling targets**: If a target is at 98% with CV=3%, it won't show improvement. Don't waste runs on it.
-2. **Focus on movable targets**: Targets with scores 60-80% AND CV > 10% have room to move AND are measurable.
-3. **Compute required reps**: Use `requiredReps(cv, expectedDelta)` from eval-stats.ts. High-variance targets need more reps.
-4. **Estimate cost**: reps × targets × avg_cost_per_run. Is this experiment worth its cost?
-5. **Define success criteria BEFORE running**: "If median improves ≥5pp on ≥3 targets with d>0.5 and 0 regressions, KEEP."
+1. **Skip ceiling targets** (98% with CV=3% won't move).
+2. **Focus movable targets** (60–80% AND CV > 10% — room to move AND measurable).
+3. **Compute required reps** via `requiredReps(cv, expectedDelta)` from `eval-stats.ts`.
+4. **Estimate cost** (reps × targets × avg per-run). Worth it?
+5. **Define success criteria BEFORE running** ("median improves ≥5pp on ≥3 targets with d>0.5 and 0 regressions → KEEP").
 
-### Anti-overfitting discipline
+### Hypothesis priority (top-down)
 
-1. **Never tune to specific test cases.** If a change only helps case X, it's memorization, not improvement.
-2. **Validate on held-out cases.** If a larger case set exists, run the winner on it before promoting.
-3. **Prefer architectural improvements over parameter tuning.** Changing a timeout is a knob turn. Adding batching is architectural. Architectural wins are more durable.
-4. **Monitor for Goodhart's Law.** If the metric improves but the actual experience feels worse, the metric is wrong — fix the metric, not the code.
-5. **Run 3+ reps** when possible. A single before/after is noisy. Multiple reps with consistent direction is signal.
-6. **Use effect size, not raw delta.** A +5pp improvement with d=0.1 is noise. With d=1.2 is real. Always compute Cohen's d.
+1. **Bug fixes** — failures that should be passes. Always first.
+2. **Architectural** — new capabilities, smarter strategies.
+3. **Efficiency** — same quality, less cost/time.
+4. **Parameter tuning** — config knobs. Lowest priority, most likely to overfit.
 
-### Hypothesis categories (prioritize top-down)
+### Anti-overfitting
 
-1. **Bug fixes**: failures that should be passes. Highest ROI, always first.
-2. **Architectural**: new capabilities, better abstractions, smarter strategies.
-3. **Efficiency**: same quality, less cost/time (prompt engineering, batching, caching).
-4. **Parameter tuning**: config knob adjustments. Lowest priority, most likely to overfit.
+- Never tune to specific test cases (memorization, not improvement).
+- Validate on held-out cases when a larger set exists.
+- Prefer architectural over parameter changes (more durable).
+- Watch Goodhart's Law: if metric improves but experience feels worse, the metric is wrong — fix the metric.
+- 3+ reps minimum, 5 for noisy targets. Use Cohen's d, not raw delta.
 
-## Phase 5: Execute Experiments
+## Execute
 
 Run independent hypotheses in parallel:
-
 - **Worktrees** for conflicting code changes
 - **API mutations** (PUT/POST) for config/prompt changes
 - **Subagents** for independent research or implementation
 
-Each experiment: make change → build/deploy → **verify it's live** → measure → compare.
+Each experiment: change → build/deploy → **verify it's live** → measure → compare. No fixed parallelism limit — the constraint is verify-and-compare each one before promoting.
 
-**There is no fixed limit on parallel experiments.** Run as many as are genuinely independent. The constraint is: you must verify and compare each one before promoting.
+## Verify
 
-## Phase 6: Verify
-
-**Before looking at scores, confirm:**
-
+Before looking at scores, confirm:
 - [ ] Change is actually deployed (check DB, API, production state)
 - [ ] Measurement ran against the changed version (not cached/stale)
 - [ ] Results are structurally valid (not defaults or placeholders)
 
-If verification fails → fix the deployment. Don't report unverified results.
+Verification fails → fix the deployment. Don't report unverified results. **This is the step most loops skip and most failures trace to.**
 
-**This is the step that most loops skip and most failures trace to.** Build it into muscle memory.
+## Compare + decide
 
-## Phase 7: Compare + Decide
+Use `compare()` from `eval-stats.ts`, not eyeballing. Every comparison includes median + 95% CI, Cohen's d, p-value, verdict.
 
-**Use `compare()` from eval-stats.ts, not eyeballing.** Every comparison must include: median with 95% CI, effect size (Cohen's d), p-value, and verdict.
+Quick reference (full verdict tree, BH-FDR correction, paired vs unpaired tests in `stats.md`):
 
-See `stats.md` in this skill directory for the full verdict decision tree, multiple comparison correction (BH FDR), stratified analysis methodology, and when to use paired vs unpaired tests.
-
-Quick reference:
-- d < 0.2 → **NOISE** (regardless of raw delta)
+- d < 0.2 → **NOISE** regardless of raw delta
 - d ≥ 0.5, p < 0.05, no regressions → **KEEP**
 - d ≥ 0.5, p > 0.05 → **ITERATE** (need more reps)
 - Any regression with d > 0.3 → **REVERT** immediately
 
-After deciding, document: what worked, what didn't, regressions with root cause, and next hypotheses.
+After deciding: document what worked, what didn't, regressions with root cause, next hypotheses.
 
-## Phase 8: Iterate
+## Iterate
 
 For ITERATE verdicts:
-1. Verify deployment (failure mode #1)
-2. Try a different approach to the same hypothesis
-3. Check the scorer — maybe the metric doesn't capture what you changed
-4. After 2-3 variations with verified deployment, mark ABANDON
+1. Verify deployment (failure mode #1).
+2. Try a different approach to the same hypothesis.
+3. Check the scorer — maybe the metric doesn't capture what you changed.
+4. After 2–3 variations with verified deployment, mark ABANDON.
 
-For the overall goal:
-- Re-diagnose from *current* state (not original baseline — you've improved)
-- Generate new hypotheses for remaining gaps
-- Execute next round
+For the overall goal: re-diagnose from current state (not original baseline — you've improved), generate new hypotheses for remaining gaps, execute next round.
 
-**Plateau detection**: Score doesn't move > 0.02 for 2 consecutive rounds → report what's structural vs fixable. Ask user whether to accept or push further.
+**Plateau detection**: score doesn't move >0.02 for 2 consecutive rounds → report what's structural vs fixable. Ask the operator whether to accept or push further.
 
-**Escalation to /pursue**: If evolve has plateaued for 3+ rounds AND the remaining gap appears architectural (not tunable), escalate to `/pursue` for a generational redesign. Evolve fine-tunes within a generation; pursue ships a new generation. Don't loop evolve indefinitely when the approach itself needs rethinking.
+**Escalation to /pursue**: evolve plateaued 3+ rounds AND the remaining gap is architectural (not tunable) → dispatch `/pursue`. Don't loop evolve indefinitely when the approach itself needs rethinking.
 
-**Multi-rep stability**: If single-run scores oscillate >15% between runs for the same target, the signal is noise. Run 3 reps and take the median before making decisions. A target that scores 51/84/84 has a true median of 84, not an average of 73.
+**Multi-rep stability**: if single-run scores oscillate >15% between runs, the signal is noise. Run 3 reps, take median. A target scoring 51/84/84 has a true median of 84, not an average of 73.
 
-## Phase 9: Persist — Structured Experiment Data
+## Persist
 
-`.evolve/` is the canonical repo-local state directory for this workflow. Keep all evolve and pursue runtime artifacts there so any later session can resume from one place.
+Every cycle produces three artifacts:
 
-Every evolve cycle produces three artifacts:
+1. **`.evolve/progress.md`** — human-readable resume state. On resume, read this and skip to baseline.
+2. **`.evolve/current.json`** — `{mode, goal, status, round, generation, activePursuit, updatedAt}`. First file an agent reads.
+3. **`.evolve/experiments.jsonl`** — one JSON line per experiment. Schema in `schema.md` (required fields, optional fields, scorecard shape, example). Read it before writing your first experiment of a session.
 
-### 1. Progress file (human-readable, for resume)
+Also write `.evolve/scorecard.json` after each cycle (product flows with scores + targets + status), and append a line to `.evolve/skill-runs.jsonl` (schema in `_common.md`).
 
-Write `.evolve/progress.md` after every round:
-
-```markdown
-# Evolve Progress — <goal>
-Score: 0.74 → target 0.80 (Round 2) — <timestamp>
-## Remaining Gap
-<what's still below target>
-```
-
-On resume: read this, skip to Phase 3, continue from last round.
-
-### 2. Current state pointer (machine-readable, for resume/orchestration)
-
-Write `.evolve/current.json` after every round:
-
-```json
-{
-  "mode": "evolve",
-  "goal": "all agents above 0.80",
-  "status": "in_progress",
-  "round": 2,
-  "generation": null,
-  "activePursuit": null,
-  "updatedAt": "2026-03-20T04:00:00Z"
-}
-```
-
-This is the first file an agent should read to understand the current state of the repo-level improvement loop.
-
-### 3. Experiment log (structured JSON, for analysis)
-
-Append to `.evolve/experiments.jsonl` — one JSON line per experiment. This is the data that enables cross-project learning and meta-analysis.
-
-Full schema (required fields, optional fields, product-scorecard shape, example line) lives in **`schema.md`** in this skill directory. Read it before writing your first experiment of a session.
-
-Key reminders:
-- Baseline and result must be median of ≥3 runs (Phase 0.5 rule).
+Reminders:
+- Baseline and result must be median of ≥3 runs.
 - Include `productValueClaim` so downstream readers can judge proxy vs real movement.
-- Write `.evolve/scorecard.json` after each cycle — product flows with scores + targets + status.
 
-## Composing Skills
+## Statistical rigor
 
-| Need | Skill | When |
-|------|-------|------|
-| Bootstrap measurement | `/improve` | No eval/test exists |
-| Failure triage | `/diagnose` | Many clusters, need ranking |
-| Code quality | `/polish` | Review → fix → re-review |
-| Security | `/critical-audit` | Compliance convergence |
-| Generational redesign | `/pursue` | Evolve has plateaued, need architectural leap |
+Full reference in `stats.md`. The minimum bar:
 
-## External Orchestration
+- Report **median**, not mean. Means are dragged by outliers.
+- Always include **N**.
+- Use **Cohen's d** for comparisons (d < 0.2 is negligible regardless of raw delta).
+- 3 reps minimum, 5 for noisy targets.
+- Include **95% CI** ("median 85% [79%, 91%]" tells the reader how trustworthy the estimate is).
+- Flag instability (CV > 20% means too noisy — fix variance source before optimizing the score).
 
-Any external orchestrator should treat `.evolve/` as the contract:
-- read `.evolve/current.json` first
-- use `.evolve/progress.md` for human-readable resume state
-- use `.evolve/experiments.jsonl` and `.evolve/scorecard.json` for analysis
+A reference `eval-stats.ts` library lives in this directory. Copy it into any project's `tests/eval/lib/` for `describe()`, `compare()`, `histogram()`, `summaryReport()` functions.
 
-## Domain Specs
+## Domain specs
 
-Evolve is domain-agnostic. Domain-specific knowledge lives in **specs**, not in this skill.
-
-When a project has a `docs/EVOLVE-SPEC.md` (or equivalent), read it first. It tells you:
-- How to measure (what command, what output format)
-- What levers to pull (API mutations, code changes, infra)
-- What to verify (DB state, deployment, caching)
-- Known scoring artifacts to exclude
-
-An orchestrator can pass extra context, but the skill itself stays domain-agnostic.
-
-## Statistical Rigor
-
-See `stats.md` in this skill directory for the full statistical reference. Key rules:
-
-- **Report median, not mean.** Means are dragged by outliers.
-- **Always include N.** "85% accuracy" vs "85% accuracy (N=5, CV=8%)" are different claims.
-- **Use effect size for comparisons.** Cohen's d tells you if a change is real or noise. d < 0.2 is negligible regardless of raw delta.
-- **3 reps minimum.** Never make decisions on N=1. 5 reps for noisy targets.
-- **Include confidence intervals.** "median 85% [79%, 91%]" tells the reader how trustworthy the estimate is.
-- **Flag instability.** CV > 20% means the target is too noisy for reliable measurement — fix the variance source before optimizing the score.
-
-A reference `eval-stats.ts` library is available in this skill directory. Copy it into any project's `tests/eval/lib/` for describe(), compare(), histogram(), and summaryReport() functions.
+Evolve is domain-agnostic. Domain knowledge lives in **specs** (`docs/EVOLVE-SPEC.md` or equivalent), not in this skill. When a spec exists, read it first — it tells you how to measure, what levers to pull, what to verify, known scoring artifacts to exclude.
 
 ## Rules
 
-- **Read state first.** Start with `.evolve/current.json` and `.evolve/progress.md` when present.
-- **Verify, then report.** Determine which, not "maybe A or B."
-- **Persist always.** Progress survives interruption.
-- **Score honestly.** 1.00 means perfect. Don't inflate.
-- **5 rounds max per invocation.** Persist and stop. Re-invoke to continue.
-
-## Decision Capture & Reflection
-
-- Record important pivots and architectural decisions with `/capture-decisions` when available.
-- Run `/reflect` after each round to capture what worked, what failed, and what to try next.
-- Put durable writeups in `research/decisions/` and `research/failures/` when the repo uses them.
+- Read state first (`.evolve/current.json`, `.evolve/progress.md`).
+- Verify, then report. Determine which, not "maybe A or B."
+- Score honestly. 1.00 means perfect.
+- 5 rounds max per invocation. Persist and stop. Re-invoke to continue.
+- Every cycle ends with one explicit dispatch line: `Next: /evolve targeting <X>` or `Next: /pursue — plateaued on <metric>` or `Stop: <reason>`.
