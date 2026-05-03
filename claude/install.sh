@@ -52,11 +52,12 @@ fi
 link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
 
 # Skills (only real directories, skip broken symlinks)
-mkdir -p "$CLAUDE_DIR/skills"
+mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   [ -d "$skill_dir" ] || continue
   skill="$(basename "$skill_dir")"
   link "$skill_dir" "$CLAUDE_DIR/skills/$skill"
+  link "$skill_dir" "$CODEX_DIR/skills/$skill"
 done
 
 # Commands
@@ -130,7 +131,7 @@ if [ -d "$HOME/.pi/agent" ]; then
 fi
 
 # Clean up stale symlinks in skills, commands, hooks
-for dir in "$CLAUDE_DIR/skills" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
+for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
   [ -d "$dir" ] || continue
   find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print | while read -r stale; do
     echo "  PRUNE $stale (dead symlink)"

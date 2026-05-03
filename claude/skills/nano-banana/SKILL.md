@@ -1,6 +1,6 @@
 ---
 name: nano-banana
-description: Generate and edit images using Nano Banana (Gemini CLI). Use for blog images, thumbnails, icons, diagrams, and any visual content. Trigger on: generate image, create graphic, make thumbnail, draw diagram, edit photo, visualize.
+description: "Generate and edit images using Nano Banana (Gemini CLI). Use for blog images, thumbnails, icons, diagrams, and any visual content. Trigger on: generate image, create graphic, make thumbnail, draw diagram, edit photo, visualize."
 allowed-tools: Bash(gemini:*)
 ---
 

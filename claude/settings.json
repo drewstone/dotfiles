@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/rtk-rewrite.sh"
+            "command": "$HOME/code/dotfiles/claude/hooks/rtk-rewrite.sh"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/ssh-guard.sh"
+            "command": "$HOME/code/dotfiles/claude/hooks/ssh-guard.sh"
           }
         ]
       }
@@ -50,7 +50,9 @@
     "frontend-design@claude-plugins-official": true,
     "codex@openai-codex": true,
     "last30days@last30days-skill": true,
-    "tangle-blueprint-innovate@tangle-network-skills": true
+    "tangle-blueprint-innovate@tangle-network-skills": true,
+    "agent-factory@tangle-skills-internal": true,
+    "agent-platform@tangle-skills-internal": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -75,6 +77,12 @@
       "source": {
         "source": "github",
         "repo": "tangle-network/skills"
+      }
+    },
+    "tangle-skills-internal": {
+      "source": {
+        "source": "github",
+        "repo": "tangle-network/skills-internal"
       }
     }
   },
