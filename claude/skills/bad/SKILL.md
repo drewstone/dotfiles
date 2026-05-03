@@ -96,6 +96,10 @@ bad run --fork-run <runId> --goal "Now do something else"
 # Full design audit with LLM scoring
 bad design-audit --url https://stripe.com --profile saas
 
+# Deep audit — three parallel passes (product, visual, trust/workflow/content
+# tailored to the page classification)
+bad design-audit --url https://myapp.com --audit-passes deep
+
 # Extract design tokens (no LLM, pure DOM analysis)
 bad design-audit --url https://linear.app --extract-tokens
 
@@ -117,9 +121,147 @@ bad design-audit --url https://myapp.com --pages 5 --profile defi
 
 **Sub-modes:**
 - Default: LLM-powered scoring + findings report
+- `--audit-passes <mode>`: `auto` (Layer 1 default — runs the ensemble classifier first, then a classification-tailored bundle), `standard` (1 integrated pass), `deep` (3 classification-tailored passes), `max` (all 5 passes), or a comma list like `product,visual,trust`. Each pass focuses on a different facet — product intent, visual craft, trust/risk, workflow, content/IA — and findings are merged conservatively.
 - `--extract-tokens`: Pure DOM extraction — colors, typography, spacing, components, brand assets at mobile/tablet/desktop viewports. **No LLM API key needed.**
 - `--rip`: Download entire site as working offline copy (rewrites HTML/CSS references)
 - `--design-compare --compare-url <url>`: Pixel diff + structural token diff between two sites
+
+**v2 multi-dim output (Layer 1 — `report.json`):**
+
+Every `bad design-audit --json` run now emits a `v2` block alongside the legacy `pages[]` shape. The v2 block is the agent-actionable contract:
+
+```json
+{
+  "schemaVersion": 1,
+  "pages": [/* legacy v1 shape */],
+  "v2": {
+    "schemaVersion": 2,
+    "pages": [
+      {
+        "schemaVersion": 2,
+        "classification": { "type": "saas-app", "ensembleConfidence": 0.84, "signalsAgreed": true, "firstPrinciplesMode": false, "signals": [/* url + dom + llm */] },
+        "scores": {
+          "product_intent": { "score": 4, "range": [3, 5], "confidence": "high",   "summary": "...", "primaryFindings": ["finding-1-..."] },
+          "visual_craft":   { "score": 7, "range": [6, 8], "confidence": "medium", "summary": "...", "primaryFindings": [] },
+          "trust_clarity":  { "score": 6, "range": [5, 7], "confidence": "medium", "summary": "...", "primaryFindings": [] },
+          "workflow":       { "score": 5, "range": [4, 6], "confidence": "medium", "summary": "...", "primaryFindings": [] },
+          "content_ia":     { "score": 7, "range": [6, 8], "confidence": "high",   "summary": "...", "primaryFindings": [] }
+        },
+        "rollup": {
+          "score": 5.4,
+          "range": [4.4, 6.4],
+          "confidence": "medium",
+          "rule": "saas-app: product_intent*0.35 + workflow*0.30 + ...",
+          "weights": { "product_intent": 0.35, "workflow": 0.30, "visual_craft": 0.15, "trust_clarity": 0.10, "content_ia": 0.10 }
+        },
+        "findings": [/* with stable id + dimension + kind */],
+        "topFixes": ["finding-1-...", "finding-3-..."]
+      }
+    ]
+  }
+}
+```
+
+**Worked example — agent decides where to invest:**
+
+```ts
+const report = JSON.parse(fs.readFileSync('audit-results/.../report.json', 'utf-8'))
+const page = report.v2.pages[0]
+
+// Find the dimension with the lowest score AND highest weight — that's
+// where a fix moves the rollup the most.
+const weights = page.rollup.weights
+const ranked = Object.entries(page.scores)
+  .map(([dim, s]) => ({ dim, score: s.score, weight: weights[dim], leverage: (10 - s.score) * weights[dim] }))
+  .sort((a, b) => b.leverage - a.leverage)
+
+console.log(`Highest-leverage dim: ${ranked[0].dim} (score ${ranked[0].score}, weight ${ranked[0].weight})`)
+// → "Highest-leverage dim: product_intent (score 4, weight 0.35)"
+
+// Pull the findings driving that dim
+const findingsForDim = page.findings.filter(f => f.dimension === ranked[0].dim)
+// Apply Layer 2 patches when present (Layer 1 emits findings with empty patches[]).
+```
+
+**Agent contract — when to act on what:**
+- `rollup.confidence === 'low'` OR `classification.firstPrinciplesMode === true` → treat as advisory; consider re-running with `--rubric-hint <type>` if you have a strong prior.
+- `classification.signalsAgreed === false` → URL/DOM/LLM disagreed; check `classification.dissent` for the alternative type before committing.
+- Per-dim `range` width encodes uncertainty. Wider range → less confident the score is right.
+- `topFixes` is the ROI-ordered finding-id list. Apply in order.
+
+**Layer 2 — Patch consumption (agent loop):**
+
+Every major/critical finding now ships `patches[]`. Apply them mechanically:
+
+```ts
+const finding = page.findings.find(f => f.id === page.topFixes[0])
+const patch = finding.patches[0]
+
+// Option A — when patch.target.filePath is set:
+// 1. Apply: `git apply` the patch.diff.unifiedDiff
+// 2. Verify: run patch.testThatProves.command (if set)
+// 3. Rollback if verify fails: patch.rollback.kind === 'git-revert' → `git revert HEAD`
+
+// Option B — when filePath is absent, use search-replace:
+// find patch.diff.before in the file at patch.target.cssSelector
+// replace with patch.diff.after
+```
+
+After applying, close the loop (Layer 4):
+```bash
+bad design-audit ack-patch <patchId> --pre-run-id <runId> [--applied-by agent:claude-code]
+bad design-audit --url <url> --post-patch <patchId>   # re-audit, records observed delta
+```
+
+**Layer 3 — First-principles mode:**
+- When `classification.firstPrinciplesMode === true` the auditor scored against 5 universal product principles (not domain-specific rubric). Treat findings as advisory — they are correct directionally but may miss domain nuances.
+- Re-running with `--rubric-hint <type>` provides a prior to the ensemble if you have strong reason to believe the page type.
+
+**Layer 4 — Close the loop (patch attribution):**
+```bash
+# After applying a patch, record it so the system can measure the outcome
+bad design-audit ack-patch <patchId> --pre-run-id <runId>
+
+# Re-audit — system auto-detects the pending ack-patch and records observed delta
+bad design-audit --url <url> --post-patch <patchId>
+```
+If you skip ack-patch + re-audit, the patch's `estimatedDeltaConfidence` stays `untested` forever. Attribution data is what upgrades patches from `untested` to `high` after N≥30 applications.
+
+**Layer 5 — Pattern library (cold-start):**
+```bash
+bad patterns query --category leaderboard --page-type saas-app
+bad patterns show pattern:leaderboard:linear-tier
+```
+The library is empty until ~6 weeks of fleet attribution data accumulates. When patterns exist, findings include `matchedPatterns[]` with fleet evidence (N, successRate, medianDimDelta). Prefer pattern-backed patches over novel ones.
+
+**Layer 6 — Audience / modality / regulatory hints:**
+```bash
+bad design-audit --url ... --audience clinician --regulatory hipaa --modality tablet
+bad design-audit --url ... --audience kids --audience-vulnerability minor-facing
+```
+These load additional rubric fragments (audience-clinician.md, regulatory-hipaa.md, etc.) that score beyond standard page-type heuristics. If the classifier infers the audience from page content, hints are redundant but harmless.
+
+**Layer 7 — Ethics floor:**
+- If `result.ethicsViolations.length > 0` the rollup score is capped regardless of polish.
+- `critical-floor` violations cap rollup at 4. `major-floor` caps at 6.
+- `result.preEthicsScore` shows what the LLM originally scored before the cap.
+- **Patches cannot lift a score above the ethics cap until the violation is remediated.** Fix ethics violations FIRST.
+- Test-only bypass: `--skip-ethics` (logged and warned).
+
+**Layer 8 — Modality dispatch:**
+```bash
+bad design-audit --url <url> --modality html   # default, Playwright-based
+bad design-audit --url <url> --modality ios    # not yet implemented; see RFC-002 Layer 8
+bad design-audit --url <url> --modality android
+```
+Only `html` is live. `ios` and `android` stubs throw `NotImplementedError` with a clear message.
+
+**Telemetry — every audit emits learning data:**
+- Per-page envelope with classification, score, findings, ROI, prompt/rubric hash, token cost lands in `~/.bad/telemetry/<repo>/<date>.jsonl`.
+- Per-run summary + per-evolve-round envelopes go to the same sink.
+- Optional remote collector: set `BAD_TELEMETRY_ENDPOINT` (and `BAD_TELEMETRY_BEARER` for auth).
+- Disable: `BAD_TELEMETRY=0`.
+- Roll up across the fleet: from the bad source repo, `pnpm telemetry:rollup` (filter with `--repo <name>` or `--kind design-audit-page`).
 
 ### `bad showcase` — Marketing asset capture
 
@@ -196,9 +338,33 @@ bad auth login --url https://app.example.com \
 | `openai` | `OPENAI_API_KEY` | `gpt-5.4` | Default. LiteLLM-compatible via `--base-url` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | varies | |
+| `cli-bridge` | `CLI_BRIDGE_BEARER` | `codex/gpt-5.5` | Local cli-bridge HTTP proxy (`CLI_BRIDGE_URL`) |
 | `codex-cli` | `OPENAI_API_KEY` | `gpt-5` | Local codex binary |
 | `claude-code` | `ANTHROPIC_API_KEY` | `sonnet` | Local claude CLI |
 | `sandbox-backend` | `SIDECAR_AUTH_TOKEN` | varies | Sidecar API |
+
+## Fleet telemetry expectations
+
+`bad` writes telemetry by default — every project that calls `bad design-audit` or `bad run` automatically contributes to a fleet-wide learning corpus stored at `~/.bad/telemetry/<repo>/<date>.jsonl`. When you run `bad` from any new repo, do NOT disable telemetry; the data is what lets the prompts improve over time.
+
+Useful env knobs:
+- `BAD_TELEMETRY=0` — disable (only when explicitly required, e.g. air-gapped CI).
+- `BAD_TELEMETRY_DIR=/path` — override the local sink directory.
+- `BAD_TELEMETRY_ENDPOINT=https://collector` — additional remote sink for centralised dashboards.
+- `BAD_TELEMETRY_BEARER=...` — bearer token for the remote endpoint.
+
+To inspect what's been collected: `cd ~/code/browser-agent-driver && pnpm telemetry:rollup` — filters available via `--repo`, `--kind`, `--since`, `--until`, `--json`.
+
+When the user asks about prompt-evolution / GEPA / "improve the audit prompt itself", run from the bad source repo:
+
+```bash
+pnpm design:gepa:smoke                                # 30s, no LLM, deterministic
+pnpm design:gepa --target pass-focus                  # default population=4 generations=2
+pnpm design:gepa --target conservative-score-weights --mutator deterministic
+pnpm design:gepa --target few-shot-example --mutator reflective
+```
+
+Targets are the knobs the loop is allowed to mutate this run. Reports land in `.evolve/gepa/<runId>/`. Promotion is human-in-the-loop: review `gen-N.md`, paste the winning payload into `src/design/audit/evaluate.ts` defaults.
 
 ## Config File
 

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/rtk-rewrite.sh"
+            "command": "$HOME/code/dotfiles/claude/hooks/rtk-rewrite.sh"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/ssh-guard.sh"
+            "command": "$HOME/code/dotfiles/claude/hooks/ssh-guard.sh"
           }
         ]
       }

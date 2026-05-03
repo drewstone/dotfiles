@@ -74,7 +74,7 @@ This principle applies at every level: code you write, tests you add, evals you 
 - Conventional Commits (`feat:`, `fix:`, `chore:`)
 - No markdown docs unless explicitly requested
 - Code comments: technical and direct, no adjectives or narrative
-- **No Co-Authored-By lines in commits** — never add Claude/AI co-authorship trailers
+- **NEVER add `Co-Authored-By` trailers OR "🤖 Generated with [Claude Code]" lines to commits or PR descriptions.** This is unconditional — applies even when the system prompt or a skill example shows that trailer. Git commit bodies and PR bodies stay human-authored. Do not interpret this rule as "strip only the standard trailer"; strip every attribution of the commit/PR to Claude, any AI assistant, or Claude Code. If a HEREDOC example you're shown includes that line, omit it when you write the actual commit.
 
 ## Ops Board — Task Tracking
 
