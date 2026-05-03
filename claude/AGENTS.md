@@ -23,7 +23,9 @@ These instructions are provider-agnostic and are meant to be shared across Claud
 - Prefer fail-closed defaults for security and data integrity.
 - Use Conventional Commits when creating commits.
 - Do not generate markdown docs unless explicitly useful to the repo or requested.
-- Comments should explain non-obvious technical decisions, not narrate code.
+- Comments should explain non-obvious technical decisions, invariants, constraints, or risk boundaries.
+- Do not add narrative comments like "generate X", "evolve Y", "Gen N", "build the thing", or comments that restate the next line of code.
+- Do not use hype labels or lifecycle branding in comments. Prefer precise terms such as "candidate", "variant", "baseline", "promotion gate", or the domain's existing name.
 - Never add AI co-authorship trailers to commits.
 
 ## Credential Separation
