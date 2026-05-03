@@ -73,7 +73,8 @@ This principle applies at every level: code you write, tests you add, evals you 
 - Fail-closed security defaults
 - Conventional Commits (`feat:`, `fix:`, `chore:`)
 - No markdown docs unless explicitly requested
-- Code comments: technical and direct, no adjectives or narrative
+- Code comments: technical and direct. Explain invariants, constraints, and non-obvious tradeoffs; do not narrate code.
+- Avoid vague lifecycle comments like "Gen X", "evolve Y", "generate next", or hype labels. Use the repo's precise domain terms.
 - **NEVER add `Co-Authored-By` trailers OR "🤖 Generated with [Claude Code]" lines to commits or PR descriptions.** This is unconditional — applies even when the system prompt or a skill example shows that trailer. Git commit bodies and PR bodies stay human-authored. Do not interpret this rule as "strip only the standard trailer"; strip every attribution of the commit/PR to Claude, any AI assistant, or Claude Code. If a HEREDOC example you're shown includes that line, omit it when you write the actual commit.
 
 ## Ops Board — Task Tracking
