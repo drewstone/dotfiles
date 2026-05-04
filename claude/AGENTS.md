@@ -37,6 +37,19 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
+## Plan before challenging changes
+
+Non-trivial change (feature, refactor, cleanup, infra, hard bug) — surface a 4-line plan **before touching code**:
+
+- **Problem** — one sentence.
+- **Change** — one sentence.
+- **Why long-term right** — root not symptom, no shim, no "fix later", matches the codebase's grain. *This* is how we boil the ocean.
+- **Cost** — files touched, risk, rollback path.
+
+Skip for trivial fixes (typo, one-liner, format). Bar: would a senior reviewer need this to follow the change without reading every line? If yes, plan first.
+
+The plan IS the lead. After surfacing it, default to action unless one sharp question is needed. Never "we'll patch now and improve later" — surface the permanent solve and ship it. If the permanent solve is out of scope, say so explicitly with a reason; don't smuggle it in as a temporary fix that rots.
+
 ## Preferences
 
 - Take full ownership. Do not defer routine execution.
