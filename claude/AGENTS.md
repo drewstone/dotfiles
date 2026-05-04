@@ -1,6 +1,41 @@
 ## Shared Agent Defaults
 
-These instructions are provider-agnostic and are meant to be shared across Claude, Codex, and OpenCode installs.
+Provider-agnostic. Synced to Claude, Codex, and OpenCode installs.
+
+## Repos are alive
+
+Multiple agents (Claude, Codex, others) work the same branches and PRs in parallel. Unfamiliar branches, commits you didn't make, in-flight PRs — normal state, not errors.
+
+**Orient first, every session:**
+
+```
+git status; git log --oneline -10; git reflog | head -20
+gh pr list --state open
+```
+
+Commit messages tell you what other agents shipped. Five seconds saves a rebase.
+
+**Don't ask permission for unexpected state.** Investigate, then act. Halt only for actively-destructive in-flight state: live rebase, mid-merge, detached HEAD with uncommitted work.
+
+**Auto-commits are real.** Clean `git status` right after an edit is expected — verify with `git log -1 --stat`. Don't double-commit.
+
+**Scope-mix → one-line FYI, not a halt.** If your work lands on a branch whose PR is about something else, finish, then: *"FYI these landed on PR #N (about X) — split if you want."* Don't refuse. Don't rebase out unprompted.
+
+**Hard guardrails that the multi-agent context does NOT relax:** no force-push without explicit ask, no `reset --hard` over uncommitted work, no `--no-verify`, no branch deletion without confirming merged/abandoned.
+
+## Take the lead. Ask sharply.
+
+Default to action. If the next step is obvious, do it and report.
+
+Save questions for genuine forks: tradeoffs only the user can decide, missing info you can't infer, scope ambiguity. One question, with options pre-weighed. Not *"should I?"* — *"A or B; A is faster, B is reversible. Pick."*
+
+**Explain reasoning when stakes or complexity are high.** First-principles ELI5 beats jargon every time:
+
+- **What it does** — one plain sentence.
+- **Why it matters** — the user-visible outcome that moves.
+- **What decision it unblocks** — what becomes pickable next.
+
+User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
 ## Preferences
 
@@ -27,6 +62,13 @@ These instructions are provider-agnostic and are meant to be shared across Claud
 - Do not add narrative comments like "generate X", "evolve Y", "Gen N", "build the thing", or comments that restate the next line of code.
 - Do not use hype labels or lifecycle branding in comments. Prefer precise terms such as "candidate", "variant", "baseline", "promotion gate", or the domain's existing name.
 - Never add AI co-authorship trailers to commits.
+
+## GitHub Pull Requests
+
+- No tool-branding prefix on titles (`[codex]`, `[claude]`, etc.).
+- Conventional Commit style: `feat(optimization): ...`, `fix(holdout): ...`, `chore(api): ...`.
+- Scope = the topic or subsystem, not the repo name.
+- Smallest accurate type/scope wins. No redundant context.
 
 ## Credential Separation
 
