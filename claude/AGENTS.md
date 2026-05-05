@@ -102,3 +102,11 @@ When asked to inspect the latest screenshot or `$IMG`, first check the newest fi
 
 - If a third-party deploy is opaque and you lack logs, pivot to infrastructure you control.
 - A successful build-hook POST only proves the hook accepted the request, not that the build succeeded.
+
+## Operating runbooks live in `~/company/devops/processes/`
+
+When triaging a production incident, ALWAYS check `~/company/devops/processes/` before re-deriving the diagnosis. Each runbook has the SSH target, the canonical DB query, the live-probe one-liners, and the failure-class decision tree. Per-project incident runbooks are named `incident-<project>-<topic>.md`.
+
+Discoverability rule: every project's `CLAUDE.md` should link to the matching runbook(s). If you write a new runbook, add the link to that project's `CLAUDE.md` so the next agent sees it from session start without having to grep.
+
+Server inventory: `~/company/devops/servers/<project>/README.md` documents the box (host, container names, /srv layout, deploy script). Use this before guessing where a service runs.
