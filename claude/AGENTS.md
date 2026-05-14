@@ -82,6 +82,9 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Conventional Commit style: `feat(optimization): ...`, `fix(holdout): ...`, `chore(api): ...`.
 - Scope = the topic or subsystem, not the repo name.
 - Smallest accurate type/scope wins. No redundant context.
+- For Drew/Tangle repos, create PRs through `gh-drew`, not raw `gh`. `gh-drew api user --jq .login` must print `drewstone` before any PR create/edit/review action.
+- Push branches over SSH when needed: `git push git@github.com:OWNER/REPO.git HEAD`. SSH auth proves git transport only; it does not prove the GitHub API account used by PR creation.
+- If `gh-drew` cannot find a valid Drew token, stop and report the missing/expired `DREW_GH_TOKEN`. Do not silently fall back to `tangletools` or any other `gh` account.
 
 ## Credential Separation
 

@@ -20,6 +20,7 @@ Includes:
 - `settings.json` — hooks, plugins, trusted directories
 - 18 portable skills (`/polish`, `/verify`, `/work-status`, `/critical-audit`, `/code-review`, etc.)
 - `claude-profile` in `~/bin` — switch Claude credentials by named profile
+- `gh-drew` in `~/bin` — run GitHub CLI commands only after validating the API account is `drewstone`
 - Langfuse observability hook
 
 Project-specific skills (tangle-blueprint-expert, blueprint-frontend, sandbox-blueprint) are kept in their respective project repos, not here.
