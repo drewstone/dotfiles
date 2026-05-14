@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+expected_login="${GH_DREW_EXPECTED_LOGIN:-drewstone}"
+secrets_file="${GH_DREW_SECRETS_FILE:-$HOME/company/devops/secrets/agent-state.env}"
+
+read_secret() {
+  local key="$1"
+
+  if command -v dotenvx >/dev/null 2>&1 && [[ -f "$secrets_file" ]]; then
+    dotenvx get "$key" -f "$secrets_file" --overload 2>/dev/null || true
+  fi
+}
+
+try_token() {
+  local token="$1"
+
+  [[ -n "$token" ]] || return 1
+  GH_TOKEN="$token" gh api user --jq .login 2>/dev/null || true
+}
+
+for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
+  token="${!key-}"
+  login="$(try_token "$token" || true)"
+
+  if [[ "$login" == "$expected_login" ]]; then
+    exec env GH_TOKEN="$token" gh "$@"
+  fi
+done
+
+for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
+  token="$(read_secret "$key")"
+  login="$(try_token "$token" || true)"
+
+  if [[ "$login" == "$expected_login" ]]; then
+    exec env GH_TOKEN="$token" gh "$@"
+  fi
+done
+
+cat >&2 <<EOF
+gh-drew: no valid Drew GitHub API token found.
+
+Required:
+- Add DREW_GH_TOKEN to $secrets_file, or export it in the shell.
+- The token must authenticate as '$expected_login'.
+- It needs repository and pull request write access for the target repos.
+
+Do not fall back to raw 'gh' for PR creation in Drew/Tangle repos; that can
+silently use another configured account.
+EOF
+exit 2
