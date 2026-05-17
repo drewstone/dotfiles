@@ -72,6 +72,7 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Use Conventional Commits when creating commits.
 - Do not generate markdown docs unless explicitly useful to the repo or requested.
 - Comments should explain non-obvious technical decisions, invariants, constraints, or risk boundaries.
+- **No historical narrative.** Comments describe what the code does and why — never what it used to do, what it replaced, which audit found the bug, or what the prior version looked like. That belongs in commit messages and PR descriptions, where it rots in place instead of rotting in the source tree. `// fixes the X bug from last quarter` and `// replaces the inline retry loop` are deletions, not comments. Same rule for docstrings, README sections, and SKILL.md files: describe the current state, not the path that got there.
 - Do not add narrative comments like "generate X", "evolve Y", "Gen N", "build the thing", or comments that restate the next line of code.
 - Do not use hype labels or lifecycle branding in comments. Prefer precise terms such as "candidate", "variant", "baseline", "promotion gate", or the domain's existing name.
 - Never add AI co-authorship trailers to commits.
