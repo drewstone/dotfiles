@@ -86,6 +86,12 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Push branches over SSH when needed: `git push git@github.com:OWNER/REPO.git HEAD`. SSH auth proves git transport only; it does not prove the GitHub API account used by PR creation.
 - If `gh-drew` cannot find a valid Drew token, stop and report the missing/expired `DREW_GH_TOKEN`. Do not silently fall back to `tangletools` or any other `gh` account.
 
+## PR references — always full URLs, never bare `#N`
+
+When listing or referencing PRs in chat, always render the **full GitHub URL** (`https://github.com/OWNER/REPO/pull/N`), never bare `#N` or `repo#N`. The user lives in chat; bare numbers are not clickable. Same rule for issues, commits, and gists — always paste a clickable URL.
+
+In code (commit bodies, PR descriptions, code comments referencing the same repo) `#N` is fine because GitHub auto-links. The full-URL rule is for **chat output** to the user.
+
 ## Credential Separation
 
 Never mix credentials between unrelated organizations or personal/company environments. Verify which organization a credential belongs to before using it.
@@ -93,6 +99,23 @@ Never mix credentials between unrelated organizations or personal/company enviro
 ## Screenshots / Clipboard Images
 
 When asked to inspect the latest screenshot or `$IMG`, first check the newest file under `~/.claude/image-cache/`. If that is stale or empty, check `~/.tmux/clipboard/images/`.
+
+## No fallbacks. Fail loud.
+
+Sloppy fallback patterns are junior-engineer practice and they corrupt every signal downstream.
+
+**What "no fallbacks" means in practice:**
+
+- **No silent zeros.** A judge that aborts, an LLM that times out, a parse that fails — the trial is *failed*, not `score: 0`. Mark the outcome `succeeded: false` with a typed error; let the aggregator exclude it. A zero in a mean is a lie that looks like data.
+- **No silent defaults that hide config holes.** `model ?? 'sonnet'`, `endpoint ?? localhost`, `apiKey ?? ''` — each one is a future incident. If the caller didn't pass it, throw. The user will see the error once; the silent fallback will mislead them forever.
+- **No "OR empty string" / "OR empty object" on required fields.** `.url ?? ''`, `.config ?? {}`, `.tools ?? []` when downstream code depends on a real value. Throw on missing; let the type system carry the optionality if it's truly optional.
+- **No try/catch that swallows + returns a default.** If you can't handle the error, let it propagate. A function that returns `null` on three different failure modes erases the diagnostic information the caller needs to do the right thing.
+- **No "legacy back-compat mode" that defaults on.** If a mode exists for a corrupted historical path (e.g. `zero-fill` aggregation), the *new* default must be the correct mode. Document the legacy mode's failure case in the type itself.
+- **No fallback model rotation without the caller asking.** If the primary judge is configured, use it. Rotating to a "backup" silently means the user can't tell when their primary is broken.
+
+**The discipline:** Every call site that touches an external boundary (LLM, network, FS, subprocess) returns a *typed outcome*, not a defaulted scalar. Callers MUST inspect `succeeded` before using `value`. The library refuses to decide what to substitute on failure — that's a product decision, not an SDK decision.
+
+**When a fallback IS correct:** it has a name, a documented invariant, a test covering the failed-primary path, and the caller opted in explicitly. `policy.fallbackModels: ['kimi-code/k2p6']` is fine. A bare `?? 'kimi'` deep in a helper is not.
 
 ## Anti-Patterns
 

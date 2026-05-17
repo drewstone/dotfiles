@@ -140,6 +140,41 @@ The tmux clipboard bridge commonly writes remote screenshots to `~/.tmux/clipboa
 - Evaluation loops: if the reviewer evaluates artifact A (JSON) but the deliverable is artifact B (rendered PPTX), the loop cannot converge on visual quality. Always evaluate the final artifact.
 - Never generate decks with hallucinated/fictional company data. Every data point needs a real, cited source.
 
+## Supply-chain hardening (package installs)
+
+The Aug/Sept 2025 wave (shai-hulud, @tanstack/*, debug/chalk, ua-parser-js historically) all share one signature: **malicious version published → yanked within hours/days**. Defenses below catch them automatically.
+
+**Machine-level (`~/.npmrc`):**
+- `ignore-scripts=true` — postinstall/preinstall payload can't fire even if a malicious version slips through
+- `audit-level=high` — fail install on high-severity advisories by default
+
+**pnpm per-repo (`package.json` → `"pnpm"` block):**
+```json
+{
+  "pnpm": {
+    "minimumReleaseAge": 4320,
+    "minimumReleaseAgeExclude": [],
+    "onlyBuiltDependencies": ["esbuild", "better-sqlite3"]
+  }
+}
+```
+- `minimumReleaseAge: 4320` (minutes = 3 days) — quarantines fresh publishes. Long enough to catch yank-window attacks, short enough to not block legit patches.
+- `minimumReleaseAgeExclude: []` — explicit allowlist for fresh packages you've audited and need now.
+- `onlyBuiltDependencies` — whitelist for packages allowed to run build scripts (since `ignore-scripts=true` is the default).
+
+**Override for one install** (when you've reviewed the release):
+```bash
+pnpm add foo --config.minimumReleaseAge=0
+```
+
+**Other ecosystems:**
+- **npm raw**: install `npq` globally and alias `npm install` to wrap through it
+- **Python**: prefer `uv` over `pip`; use `uv pip install --exclude-newer <date>` for age gating; pin with `--require-hashes`
+- **Rust**: `cargo-deny` policy for yank-policy + author allowlists; no native age gate (less critical — smaller compromise surface)
+- **Go**: GOPROXY private proxies + GOSUMDB give cryptographic verification
+
+When adding deps to any repo, verify the `pnpm.minimumReleaseAge` block exists. If it doesn't, add it before the install.
+
 ## Deployment Debugging
 
 - **If a third-party deploy is broken and you lack dashboard access, pivot to infrastructure you control.** Don't retry/wait on opaque build hooks — check what credentials are available (`~/company/agent-state/secrets/`) and use them.
