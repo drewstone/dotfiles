@@ -89,7 +89,9 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 
 ## PR references — always full URLs, never bare `#N`
 
-When listing or referencing PRs in chat, always render the **full GitHub URL** (`https://github.com/OWNER/REPO/pull/N`), never bare `#N` or `repo#N`. The user lives in chat; bare numbers are not clickable. Same rule for issues, commits, and gists — always paste a clickable URL.
+**ALWAYS render full GitHub URLs (`https://github.com/OWNER/REPO/pull/N`) — every time, in every status update, in every table cell, in every list, in every sentence that mentions a PR.** Never bare `#N`, never `repo#N`, never "PR #123". The user lives in chat; bare numbers are not clickable. Same rule for issues, commits, and gists — always paste a clickable URL.
+
+This applies to **every** chat surface: status reports, summaries, follow-ups, table rows, "see PR X" mentions, "merge order: A then B" plans. If you find yourself typing `#` followed by a digit in chat, stop and write the full URL instead. There are no exceptions for "obvious from context" or "I already linked it once" or "the table column is too narrow." Full URL, every time.
 
 In code (commit bodies, PR descriptions, code comments referencing the same repo) `#N` is fine because GitHub auto-links. The full-URL rule is for **chat output** to the user.
 
