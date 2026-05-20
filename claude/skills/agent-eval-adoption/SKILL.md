@@ -106,6 +106,105 @@ readiness, not as autonomous optimization.
 - deployment and model gateway
 - real user outcome telemetry
 
+## Closing the loop — analyst-loop wiring pattern
+
+Capture is half the system. The other half is consumption: every run must
+produce *durable findings* (not prose), diff against the prior run, and
+propose mutations to either the knowledge base or the agent's mutable
+surfaces (system prompt, tool docs, rubric, personas). This separates
+"we have eval logs" from "the agent gets better".
+
+The wiring is identical across vertical agents. Copy this shape into each
+product's eval lib at `<eval-root>/lib/analyst-loop.ts`; only the per-vertical
+`ImprovementAdapter` differs.
+
+```ts
+import {
+  AnalystRegistry,
+  FindingsStore,
+  createTraceAnalystKind,
+  DEFAULT_TRACE_ANALYST_KINDS,
+} from '@tangle-network/agent-eval'
+import { OtlpFileTraceStore } from '@tangle-network/agent-eval/traces'
+import { runAnalystLoop } from '@tangle-network/agent-runtime/analyst-loop'
+import {
+  proposeFromFindings,
+  applyKnowledgeWriteBlocks,
+} from '@tangle-network/agent-knowledge'
+
+const registry = new AnalystRegistry()
+for (const spec of DEFAULT_TRACE_ANALYST_KINDS) {
+  registry.register(createTraceAnalystKind(spec, { ai, model }))
+}
+
+const findingsStore = new FindingsStore(`${findingsDir}/findings.jsonl`)
+const traceStore = new OtlpFileTraceStore({ path: otlpPath })
+
+const result = await runAnalystLoop({
+  runId,
+  registry,
+  inputs: { traceStore },
+  findingsStore,
+  knowledgeAdapter: {
+    proposeFromFindings,
+    apply: async (proposals) => {
+      // write each proposal's blocks via applyKnowledgeWriteBlocks(knowledgeRoot, block.content)
+    },
+  },
+  improvementAdapter: createVerticalImprovementAdapter({ repoRoot }),
+  autoApply: {
+    knowledge: true,           // wiki writes are git-reversible
+    knowledgeConfidenceThreshold: 0.85,
+    improvement: false,        // prompt/tool/rubric edits stay in the report until reviewed
+    improvementConfidenceThreshold: 0.9,
+  },
+})
+```
+
+The four analyst kinds (`failure-mode`, `knowledge-gap`, `knowledge-poisoning`,
+`improvement`) emit findings with a stable `subject` field that the adapters
+route on:
+
+| Subject prefix                       | Adapter                            | Action                                                  |
+| ------------------------------------ | ---------------------------------- | ------------------------------------------------------- |
+| `agent-knowledge:wiki:<slug>[#h]`    | `KnowledgeAdapter`                 | create/update `.agent-knowledge/<slug>.md`              |
+| `agent-knowledge:claim:<topic>`      | `KnowledgeAdapter`                 | draft a claim row                                       |
+| `agent-knowledge:raw:<source-id>`    | `KnowledgeAdapter`                 | lift raw → curated                                      |
+| `agent-knowledge:stale:<slug>`       | `KnowledgeAdapter`                 | mark superseded                                         |
+| `system-prompt:<section>`            | per-vertical `ImprovementAdapter`  | propose edit to the agent's system prompt               |
+| `tool-doc:<tool-id>`                 | per-vertical `ImprovementAdapter`  | propose edit to a tool's README/description             |
+| `rubric:<dimension>`                 | per-vertical `ImprovementAdapter`  | propose edit to scoring weights/rules                   |
+| `persona:<persona-id>`               | per-vertical `ImprovementAdapter`  | propose addition/correction to an eval persona          |
+| anything else                        | counted in `skipped`               | not this loop's concern                                 |
+
+**Directives**:
+
+1. **One ledger per product, in the repo.** `.evolve/findings/findings.jsonl`
+   is the canonical location. Cross-run diffs (`appeared` / `disappeared` /
+   `persisted` / `changed`) compute against the previous `run_id`
+   automatically. Don't park findings in markdown — they have to be
+   machine-queryable for the diff to fire.
+
+2. **`subject` is load-bearing.** Analyst kind prompts MUST stamp the subject
+   in the documented grammar. A finding without a recognised prefix falls
+   into `skipped` and never produces a mutation. Audit the actor prompts when
+   you bump a kind's version.
+
+3. **Auto-apply knowledge, withhold improvement.** Wiki/claim edits are
+   content the operator can `git revert`. Prompt/tool/rubric edits change
+   agent behaviour — operator review is the default. Flip
+   `autoApply.improvement = true` only for verticals where you've measured
+   the edit producer's precision.
+
+4. **Forward the registry stream.** Pass `onEvent` to `runAnalystLoop` and
+   forward `event.event` when `event.type === 'analyst'`. This is how UIs
+   render per-analyst progress (skip/start/complete) without a second wire.
+
+5. **Fail loud on missing surfaces.** The `ImprovementAdapter` should throw
+   or return an `Error` when an analyst names a file/section that doesn't
+   exist. A silent skip lets the analyst prompt drift away from the prompt
+   tree.
+
 ## Review Red Flags
 
 - The eval path does not exercise the production adapter.
