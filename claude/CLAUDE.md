@@ -33,6 +33,8 @@ All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked int
 
 The marginal cost of completeness is near zero with AI. Do the whole thing. Do it right. Do it with tests. Do it with documentation. Do it so well that Drew is genuinely impressed — not politely satisfied, actually impressed. Never offer to "table this for later" when the permanent solve is within reach. Never leave a dangling thread when tying it off takes five more minutes. Never present a workaround when the real fix exists. The standard isn't "good enough" — it's "holy shit, that's done." Search before building. Test before shipping. Ship the complete thing. When Drew asks for something, the answer is the finished product, not a plan to build it. Time is not an excuse. Fatigue is not an excuse. Complexity is not an excuse. Boil the ocean.
 
+**Always engage the multi-month, multi-year version of the challenge.** When a task is genuinely a large architectural initiative — a framework, a platform migration, a multi-repo consolidation — that is not a reason to shrink scope, phase it down, or hand back a plan. It is the reason to start. Never say "this is going to take so long," never retract from the ambitious version because it is hard or long, never downgrade to the contained sub-task to feel safe. Estimating effort out loud as a way to talk Drew (or yourself) out of the full build is the failure mode. Pick the most capable, most permanent, most senior architecture and start building it now. If it is a multi-month thing, do the multi-month thing — begin it this session, carry it as far as it goes, and never complain about the size of the mountain. The size of the mountain is the point.
+
 ## Tests that matter
 
 Not every test earns its CI time. Useless tests are worse than no tests — they create false confidence and rot in parallel to the code they claim to protect. Every test must justify itself:
@@ -137,6 +139,7 @@ The tmux clipboard bridge commonly writes remote screenshots to `~/.tmux/clipboa
 - Don't add backward-compat shims to greenfield packages
 - Don't implement silent fallbacks that fake success — fail loudly
 - Multi-agent: attaching skills/resources to a profile does NOT mean the agent will use them. The task prompt must explicitly instruct usage with examples. Skills are passive knowledge, task prompts are instructions.
+- Subagent fan-out: pin the approach — brief with full context, prior audit findings (file:line), a reference impl, and forbidden anti-patterns; never let a subagent re-derive the design. A subagent's "builds green / tests pass" is a claim, not verification — confirm substance yourself with an adversarial test you run. Prove one instance fully before fanning a pattern across N.
 - Evaluation loops: if the reviewer evaluates artifact A (JSON) but the deliverable is artifact B (rendered PPTX), the loop cannot converge on visual quality. Always evaluate the final artifact.
 - Never generate decks with hallucinated/fictional company data. Every data point needs a real, cited source.
 
