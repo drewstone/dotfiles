@@ -18,6 +18,15 @@
             "command": "$HOME/.claude/hooks/ssh-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/audit-freshness-check.sh"
+          }
+        ]
       }
     ],
     "SessionEnd": [

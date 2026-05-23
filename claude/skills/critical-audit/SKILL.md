@@ -9,6 +9,38 @@ You are an extremely critical senior staff engineer (L7/L8). Find real problems,
 
 Shared conventions in `_common.md`.
 
+## Multi-persona audits (`--personas=…`)
+
+Opt-in flag that fans out parallel subagents — one per persona — reading the **same source material** through different lenses. Each persona has a fixed brief at `agents/personas/<name>.md`; the parent dispatches them in parallel, then synthesizes convergent findings (issues ≥2 personas flag) plus per-persona unique catches.
+
+Precedent: the May 2026 audit of `@tangle-network/sandbox` (5 personas, PR #1319's durability lineage) caught **4 wire-chain breaks** (Zod schemas rejecting what internal types accepted) and the **DurableObject anti-pattern** — a Cloudflare customer had reinvented `SessionGatewayClient` + `dispatchPrompt` idempotency in DOs because the README never anchored them. A single-pass audit would have missed both; the AI-agent persona named the missing anchor, the surface-designer persona traced the wire breaks.
+
+**Decision rule.** Use `--personas=…` when the audit target is a **customer-facing surface**: SDK packages, public docs, examples, integration guides, skill triggers, README narrative paths. Skip it for internal-code-only reviews — the default A/B/C reviewers are right for those.
+
+**Persona catalog** (briefs in `agents/personas/`):
+
+| Persona | Uniquely catches |
+|---|---|
+| `indie-cf` | Stream-drop / reconnect gaps, reload survivability, "shipped the primitive but not the prose" — the indie reaches for DurableObjects when the SDK is silent. |
+| `enterprise-platform` | Idempotency for billing-grade retry, audit-trail gaps, deploy resilience, billable-vs-not signals — refuses undocumented APIs. |
+| `researcher-batch` | Resume-after-crash for hour-long runs, per-turn idempotency to avoid double-billing, resumability without re-execution. |
+| `ai-coding-agent` | Exported subpaths with no narrative anchor — the AI agent pattern-matches on examples + skill triggers, not buried DESIGN.md prose. Silently invents DOs / KV / hand-rolled replay state. |
+| `sdk-surface-designer` | End-to-end wire-chain breaks — every internal primitive traced forward to the public SDK; Zod schema mismatches with internal types. |
+
+**Invocation.** `--personas=indie-cf,enterprise-platform,researcher-batch,ai-coding-agent,sdk-surface-designer` (or any subset; comma-separated, no spaces). Minimum 3 personas to justify the flag — fewer and the single-pass audit is cheaper.
+
+**Dispatch.** For each persona in the list:
+1. Read `agents/personas/<persona>.md` to get the brief.
+2. Spawn a parallel subagent with: the persona brief verbatim + the audit's scope file list + the same `--diff-only` / `--scope` resolution from above.
+3. Each subagent returns the output format specified in its brief (executive summary + question table with file:line evidence + failure-modes list + top-5 fixes).
+
+**Synthesize.** Parent collects all reports and emits:
+1. **Convergent findings** — issues raised by ≥2 personas, ranked CRITICAL→LOW. These are the highest-confidence fixes.
+2. **Per-persona uniques** — each persona's distinct catches, kept separate so the ownership area is clear (SDK author owns surface-designer's wire breaks; DevRel owns ai-coding-agent's missing anchors).
+3. **Ownership routing** — fixes tagged by area: `docs/`, `sdk/`, `examples/`, `skill-triggers/`. The fix-plan from Phase 3 (Synthesize) is grouped by area, not by persona.
+
+This runs **in addition to** the default A/B/C reviewers when the scope warrants both — personas catch surface gaps, A/B/C catch code-level bugs.
+
 ## Resume
 
 If a prior run at `.evolve/critical-audit/<ts>/` has unresolved CRITICAL/HIGH findings and the diff since then touches those files, run with `--reaudit` pointing at the prior run instead of starting fresh.

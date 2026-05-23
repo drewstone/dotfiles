@@ -405,6 +405,9 @@ cmd_shell_hook() {
 # child process. Wrap it in a shell function that evals the printed export.
 claude-profile() {
   case "${1:-}" in
+    "")
+      return 0
+      ;;
     use)
       local _out
       _out=$(_CLAUDE_PROFILE_VIA_FUNCTION=1 command claude-profile "$@") || return $?
@@ -483,10 +486,11 @@ EOF
 
 # --- dispatch ---
 
-cmd="${1:-help}"
+cmd="${1:-}"
 [[ $# -gt 0 ]] && shift || true
 
 case "$cmd" in
+  '')                       exit 0 ;;
   list|ls)                 cmd_list ;;
   current)                 cmd_current ;;
   add)                     cmd_add "$@" ;;
