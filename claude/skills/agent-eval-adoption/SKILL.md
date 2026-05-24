@@ -1,6 +1,6 @@
 ---
 name: agent-eval-adoption
-description: "Adopt @tangle-network/agent-eval (0.34.x) in a real agent product. Use for eval harnesses, autoresearch / analyst loops, production trace capture, scorecard + ship-gate CI, held-out promotion, and release confidence."
+description: "Adopt @tangle-network/agent-eval (0.36.x) + @tangle-network/agent-runtime (0.21.x) in a real agent product. Use for eval harnesses, driven loops (refine / fanout-vote), MCP delegation tools, production trace capture, scorecard + ship-gate CI, held-out promotion, cross-profile matrix benchmarks, and release confidence."
 ---
 
 # Agent Eval Adoption
@@ -73,6 +73,371 @@ Minimum surface area in a product repo:
 
 If any of the above is missing, the loop is not closed — see
 `feedback_loop_closure_is_empirical` in operator memory.
+
+## Driven loops — `runLoop` + topology drivers + profile presets
+
+The substrate ships a topology-agnostic loop kernel in
+`@tangle-network/agent-runtime/loops` (0.19+). The kernel orchestrates around
+the sandbox SDK: each iteration is `sandboxClient.create({ backend: { profile } })`
++ `box.streamPrompt`. The kernel owns iteration accounting, concurrency,
+abort propagation, cost aggregation, and trace emission. The driver owns
+topology, the validator owns scoring, the output adapter owns event-stream
+decode.
+
+```ts
+import { runLoop, createRefineDriver, createFanoutVoteDriver } from '@tangle-network/agent-runtime/loops'
+import { coderProfile, createCoderValidator } from '@tangle-network/agent-runtime/profiles'
+
+const { spec, output } = coderProfile({ harness: 'claude-code', task })
+const validator = createCoderValidator(task)
+const result = await runLoop({
+  task,
+  agentRuns: [spec],                         // round-robin across N specs for ensemble
+  output,
+  validator,
+  driver: createRefineDriver({ maxIterations: 3 }),
+  ctx: { sandboxClient, traceEmitter, signal },
+})
+```
+
+### Foundational primitives — two profiles
+
+`@tangle-network/agent-runtime/profiles` ships ONE profile preset today:
+
+- **`coderProfile`** — task-completion (`src/profiles/coder.ts`). Bundles an
+  `AgentProfile` (default harness selectable: `claude-code`, `codex`,
+  `opencode`), `formatCoderPrompt`, `parseCoderEvents` (output adapter), and
+  `createCoderValidator` (diff size, forbidden paths, test+typecheck verdicts).
+  Use for any "produce a validated patch" task.
+
+The **researcher** primitive is NOT a shipped profile preset. It's a
+`ResearcherDelegate` interface (`src/mcp/delegates.ts`) consumers wire against
+their own retrieval / corpus loop. The MCP server's `delegate_research`
+forwards to whatever `ResearcherDelegate` you inject at `createMcpServer`
+construction. The optional `@tangle-network/agent-knowledge` peer ships a
+`multiHarnessResearcherFanout` consumers can adapt; the bin (`agent-runtime-mcp`)
+auto-wires it when the peer is installed.
+
+### Topologies — Refine + FanoutVote shipped; others deferred
+
+`@tangle-network/agent-runtime/loops/drivers/`:
+
+- **`createRefineDriver({ maxIterations })`** — single-task-per-iteration,
+  feed the prior output back into the prompt, stop on validator success or
+  iteration cap. Use for: incremental patches, document revision, anything
+  monotonic.
+- **`createFanoutVoteDriver({ variants, scoreFn })`** — N tasks per
+  iteration in parallel, then `scoreFanoutVoteIterations` picks the winner.
+  Use for: multi-harness coder fanout (`multiHarnessCoderFanout` is the
+  shipped composition), redundant research with disagreement detection.
+
+Deferred (NOT shipped — do not pretend they exist in adoption code):
+**Council** (judge-of-judges over fanout outputs), **Decompose** (planner
+splits task → subtasks → re-aggregate), **Pipeline** (typed handoff
+between specialist agents). When a product reaches for one, build a custom
+`Driver` against the kernel's interface (`src/loops/types.ts:Driver`); do
+NOT vendor a forked kernel.
+
+### Gotchas
+
+- `runLoop` validates `ctx.sandboxClient.create` exists or throws
+  `ValidationError`. A `null` sandbox client never reaches the LLM — fail
+  loud at the boundary, do not stub.
+- The kernel emits `loop.started`, `loop.iteration.dispatch`,
+  `loop.iteration.ended`, `loop.decision`, `loop.ended` via
+  `ctx.traceEmitter`. Wire this into the same OTLP sink as the chat path
+  (section 3) so loop telemetry is queryable alongside chat turns.
+- `runLoop` ROUND-ROBINS across `agentRuns[]`. To compare two harnesses on
+  the same task, pass two specs and read winner index from `result.winner`.
+- The output adapter MUST return a typed value or throw. A `null` /
+  `undefined` adapter return silently drops the iteration from scoring.
+
+## MCP delegation tools — `@tangle-network/agent-runtime/mcp`
+
+The substrate ships an in-process or stdio MCP server (0.20+) that exposes
+the five delegation tools to any agent harness that can mount MCP servers
+(Claude Code, Codex, etc.). The server is profile-agnostic: it takes a
+`CoderDelegate` and (optionally) a `ResearcherDelegate` you compose against
+your sandbox client + loop topology.
+
+### The five tools
+
+Names, descriptions, and input schemas are exported verbatim from the
+substrate. Use them in product system prompts unedited so the model receives
+the same surface in prod and eval.
+
+- **`delegate_code`** — "Delegate a coding task to specialist coder agents
+  that produce a validated patch. ... Returns immediately with a taskId.
+  Poll delegation_status to retrieve the patch + validator verdict
+  (typically minutes-to-hours...). Identical inputs return the same taskId —
+  safe to retry. When variants > 1, multiple coder harnesses (claude-code,
+  codex, opencode) attempt the task in parallel and the highest-scoring
+  patch wins (smallest passing diff)."
+- **`delegate_research`** — "Delegate a research question to specialist
+  researcher agents that produce source-grounded, evidence-bearing
+  knowledge items. ... Returns immediately with a taskId. ... When variants
+  > 1, multiple researcher harnesses run in parallel and the highest-scoring
+  valid output wins (citation density × source diversity × recency match ×
+  gap coverage). ... Multi-tenant isolation: every item carries `namespace`.
+  The validator hard-fails when any item is scoped outside `namespace`.
+  Never pass another tenant's namespace."
+- **`delegation_status`** — "Poll the status of an async delegation. ...
+  Throws NotFoundError when taskId is unknown — never silently returns
+  `pending` for a typo."
+- **`delegation_history`** — "Read past delegations newest-first. ...
+  Filters: `namespace` (multi-tenant scope), `profile` (\"coder\" |
+  \"researcher\"), `since` (ISO date). `limit` defaults to 50, capped at 500."
+- **`delegate_feedback`** — "Record feedback on a delegation, artifact, or
+  outcome. Synchronous — the event is durably stored when this call returns.
+  ... `refersTo.kind`: \"delegation\" | \"artifact\" | \"outcome\". `by`:
+  \"agent\" | \"user\" | \"downstream-judge\"."
+
+### Mounting pattern — production AgentProfile.mcp
+
+Compose at runtime, never declare statically in the SDK profile (the
+sandbox-SDK's `AgentProfileMcpServer.env` doesn't template the
+sandbox-scoped key). Reference impl from `gtm-agent/src/lib/.server/sandbox/index.ts:104`:
+
+```ts
+import type { AgentProfileMcpServer } from '@tangle-network/sandbox'
+
+const DELEGATION_MCP_SERVER_KEY = 'agent-runtime-delegation'
+
+export function buildDelegationMcpServer(
+  options: { sandboxApiKey?: string; sandboxBaseUrl?: string } = {},
+): Record<string, AgentProfileMcpServer> | undefined {
+  const sandboxApiKey = options.sandboxApiKey ?? process.env.TANGLE_API_KEY
+  if (!sandboxApiKey) return undefined                           // fail closed
+  return {
+    [DELEGATION_MCP_SERVER_KEY]: {
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@tangle-network/agent-runtime', 'mcp'],     // bin: agent-runtime-mcp
+      env: {
+        TANGLE_API_KEY: sandboxApiKey,
+        SANDBOX_BASE_URL: options.sandboxBaseUrl ?? sandboxBaseUrl(),
+      },
+      enabled: true,
+      metadata: {
+        surface: 'delegation:dispatch',
+        tools: ['delegate_code', 'delegate_research', 'delegate_feedback',
+                'delegation_status', 'delegation_history'],
+      },
+    },
+  }
+}
+```
+
+Then merge into the per-turn `streamPrompt` profile (see
+`composeProductionAgentProfile`).
+
+### `TANGLE_API_KEY` — scope matters
+
+The MCP server requires a `TANGLE_API_KEY` that can drive `new Sandbox({ apiKey })`.
+
+- **`sk_sb_*`** — sandbox-scoped key. Can spawn sibling sandboxes and run
+  delegations against the sandbox executor. Default for free-tier sandbox
+  consumers. Cannot drive the paid router.
+- **`orch_prod_*`** — orchestrator/production key. Drives both sandbox AND
+  the paid router. Use for production worker secrets.
+
+Set `AGENT_RUNTIME_MCP_ALLOW_NO_KEY=1` ONLY for the queue-only diagnostic
+subset (feedback / status / history). The bin exits 2 with a clear message
+when neither the key nor the opt-in is set.
+
+### Sibling vs fleet mode — `TANGLE_FLEET_ID`
+
+- **Sibling mode (default)** — `createSiblingSandboxExecutor`. Each
+  delegation spawns a new sandbox alongside the caller's. Worker patches
+  land in the worker's filesystem; the caller copies them out via the
+  delegation result's `patch` field.
+- **Fleet mode** — set `TANGLE_FLEET_ID` before launching the MCP server.
+  `createFleetWorkspaceExecutor` dispatches into the fleet's shared
+  workspace. Worker diffs land directly on the caller's filesystem with
+  no cross-sandbox boundary. The parent sandbox sets this when launching
+  the MCP server inside a fleet-aware harness.
+- `TANGLE_FLEET_EXCLUDE_MACHINES` — comma-separated machine ids to skip
+  during fleet round-robin (typically the coordinator machine the MCP
+  server is itself running on).
+
+The bin auto-detects with `detectExecutor({ sandboxClient })`; the choice
+is logged to stderr at startup. Refuse to silently degrade — if
+`TANGLE_FLEET_ID` is set but the key can't resolve the handle, the bin
+exits 2.
+
+### Other bin env knobs
+
+- `MCP_MAX_CONCURRENT_SANDBOXES` — default 4; the kernel's `maxConcurrency`.
+- `MCP_CODER_FANOUT_HARNESSES` — comma-separated harness ids for variants > 1.
+- `MCP_DISABLE_CODER` / `MCP_DISABLE_RESEARCHER` — omit a tool selectively.
+- `SANDBOX_BASE_URL` — sandbox-SDK base URL override.
+
+### When to use each tool
+
+| Tool | Use when |
+| --- | --- |
+| `delegate_code` | The user needs code written / fixed / refactored in a real repo; ≥ 50 lines, multiple files, or test coverage matters. Skip for trivial inline scripts. |
+| `delegate_research` | Recency-bound web evidence, competitor teardowns, audience research, corpus lookups — anything needing source-grounded `items[]` with provenance. |
+| `delegation_status` | Poll every 30–60s while waiting on `delegate_code` / `delegate_research`. Never busy-poll. |
+| `delegation_history` | Before delegating a question you might have asked before. Feed into routing + calibration. |
+| `delegate_feedback` | After you've used a delegation output and formed a judgment. Append-only — every call is a new event. |
+
+## Production-profile reuse — the trap evals fall into
+
+The eval MUST drive the same `AgentProfile` composer as production. If the
+eval builds a parallel "eval profile" that omits the MCP servers / file
+mounts / permissions block, the eval is structurally incapable of testing
+delegation, tool calls, or any capability the profile gates — and the
+scorecard rubric measures the gap between the toy profile and the real one,
+not the agent's behaviour.
+
+### The pattern
+
+Export a single composer from `src/lib/.server/sandbox/` and import it from
+both the chat handler AND the eval canonical runner.
+
+```ts
+// src/lib/.server/sandbox/index.ts
+export function composeProductionAgentProfile(
+  options: ComposeProductionAgentProfileOptions = {},
+): AgentProfile {
+  const delegationMcp = buildDelegationMcpServer({
+    sandboxApiKey: options.sandboxApiKey,
+    sandboxBaseUrl: options.sandboxBaseUrl,
+  })
+  // ... merge MCP, files, permissions, prompt
+  return { ...baseProfile, mcp: mergedMcp, /* ... */ }
+}
+```
+
+```ts
+// eval/canonical.ts — DO import the production composer
+import { composeProductionAgentProfile } from '../src/lib/.server/sandbox'
+
+const profile = composeProductionAgentProfile({ sandboxApiKey: process.env.TANGLE_API_KEY })
+// Pass `profile` into the sandbox client used by `runLoop` or the
+// equivalent `runChatThroughRuntime` backend, never into a vanilla
+// `createOpenAICompatibleBackend` — that transport posts plain
+// `chat/completions` with no `tools` field; MCP tools never surface.
+```
+
+### Guard test — assert profile shape parity
+
+Catch drift the moment the eval and production composers diverge:
+
+```ts
+// eval/profile-parity.test.ts
+import { describe, it, expect } from 'vitest'
+import { composeProductionAgentProfile } from '../src/lib/.server/sandbox'
+
+describe('eval AgentProfile mirrors production', () => {
+  it('mounts the delegation MCP server', () => {
+    const profile = composeProductionAgentProfile({ sandboxApiKey: 'sk_sb_test' })
+    expect(profile.mcp).toHaveProperty('agent-runtime-delegation')
+    expect(profile.mcp?.['agent-runtime-delegation']?.metadata?.tools).toContain('delegate_research')
+  })
+  it('keeps prompt + permissions blocks from production', () => {
+    const prod = composeProductionAgentProfile({ sandboxApiKey: 'sk_sb_test' })
+    const evalP = composeProductionAgentProfile({ sandboxApiKey: 'sk_sb_test', name: 'eval-shadow' })
+    expect(evalP.prompt.systemPrompt).toBe(prod.prompt.systemPrompt)
+    expect(Object.keys(evalP.permissions ?? {}).sort()).toEqual(Object.keys(prod.permissions ?? {}).sort())
+  })
+})
+```
+
+### Anti-patterns
+
+- **Parallel "eval profile"** that hand-rolls a subset of MCP servers,
+  permissions, or files. The eval scorecard will diff against itself over
+  time, never against production.
+- **Backend transport with no tools support.** `createOpenAICompatibleBackend`
+  POSTs `{ model, stream, messages }` only — no `tools` field. MCP tools
+  declared in the profile never reach the LLM through this transport. If
+  the eval uses it AND scores on tool-call presence, every run scores 0
+  with no error. Use a backend that goes through the sandbox client
+  (which respects `profile.mcp`), or build an MCP-aware backend.
+- **Silently swallowed transport errors.** A 402 / 401 / 5xx from the
+  router becomes a `backend_error` event in the runtime stream, which
+  the chat-style harness collects but doesn't propagate to
+  `result.error`. The rubric then records "agent didn't call the tool"
+  when reality is "agent never reached the model." Surface backend errors
+  as harness-level failures, not as zero-score scenario results.
+
+## Cross-profile matrix — `runAgentMatrix` (agent-eval 0.36+)
+
+`@tangle-network/agent-eval/matrix` (types shipped in 0.36; runner lands
+next minor) sweeps scenarios × profiles × replicates and aggregates by
+axis. Use for: cross-provider benchmarking ("does claude-sonnet-4-7 beat
+deepseek-chat on persona X?"), thinking-level ablations, harness selection
+("which coder harness wins on this repo?").
+
+```ts
+import type {
+  MatrixScenario, RunAgentMatrixOptions,
+} from '@tangle-network/agent-eval/matrix'
+import { axisExtractors } from '@tangle-network/agent-eval/matrix'
+
+const result = await runAgentMatrix({
+  scenarios,                               // MatrixScenario<Task>[]
+  profiles: [claudeProfile, codexProfile], // AgentProfile[] from @tangle-network/sandbox
+  runCell: async (cell, signal) => {
+    // cell carries { scenario, profile, repIndex, axes }. You spawn the
+    // sandbox, drive the loop, score, return { score, costUsd, output? }.
+    const { spec, output } = coderProfile({ harness: cell.profile, task: cell.scenario.task })
+    const loopResult = await runLoop({ task: cell.scenario.task, agentRuns: [spec], output, validator, driver, ctx: { sandboxClient, signal } })
+    return { score: loopResult.winner?.verdict.score ?? 0, costUsd: loopResult.costUsd, output: loopResult.winner?.output }
+  },
+  axes: {
+    harness: axisExtractors.harness,            // built-in
+    model: axisExtractors.model,
+    thinkingLevel: axisExtractors.thinkingLevel,
+    persona: (profile) => profile.metadata?.persona as string | undefined,
+  },
+  reps: 3,
+  maxConcurrency: 4,
+  costCeiling: 5.0,                          // abort cleanly when cumulative cost crosses $5
+})
+```
+
+### Aggregation
+
+`result.byAxis` carries `AxisSummary[]` per axis (passRate, meanScore,
+totalCostUsd, sampleSize). `result.summary` carries totals +
+`costCeilingReached` + `aborted` + `skippedCells`. Use these for the
+public benchmark dashboard; do NOT recompute by hand from `cells[]` —
+the substrate's aggregator already handles `skipped` correctly.
+
+### Gotchas
+
+- `runCell` may throw; the matrix captures throws as `CellResult.error`
+  WITHOUT aborting the rest of the run. Partial completion is observable
+  via `summary.skippedCells`.
+- `costCeiling` is a soft abort — in-flight cells finish; new ones don't
+  start. Set it conservatively for paid-backend matrices.
+- `signal` propagates a child `AbortSignal` into your `runCell`; honour
+  it or the matrix can't abort cleanly.
+
+## Live trace flow — the production-to-evolution pipeline
+
+The same trace surface a chat turn emits is the substrate the analyst loop
+and production loop consume. Wire once; every flow downstream is free.
+
+```txt
+runLoop / runChatThroughRuntime
+  └─ SandboxEvent stream (text_delta / tool_call / tool_result / artifact)
+       └─ output.parse(events)        — typed Output (CoderOutput, research items, chat finalText)
+            └─ validator.validate     — DefaultVerdict { score, valid, error? }
+                 └─ trace events       — LoopTraceEvent + RuntimeStreamEvent
+                      └─ ingestion mount — createProductionTraceSink → OTLP + RunRecord
+                           └─ .production-data/traces/events.ndjson
+                                └─ analyst loop — runAnalystLoop → FindingsStore
+                                     └─ production-loop — held-out gate + re-eval
+                                          └─ ship — httpGithubClient auto-PR
+```
+
+Every arrow is a substrate seam, not a product hand-roll. Skipping any
+link breaks the loop closure — see "Bug classes the substrate now
+prevents" below.
 
 ## 1. `defineAgent` manifest
 
@@ -573,6 +938,27 @@ omits any one of them is shipping the bug class it prevents:
 9. **`renderPromptFile` emitting invalid TS.** The production-loop commits
    the rendered file verbatim. A missing closing brace ships a broken
    main. Round-trip every renderer through `tsc --noEmit` in tests.
+10. **Eval backend lacks MCP tool support.** `createOpenAICompatibleBackend`
+    POSTs `{ model, stream, messages }` only — no `tools`. An eval that
+    scores on `delegate_research` / `delegate_code` tool_call presence
+    through this transport scores 0 with `error: null` on every run. The
+    fix is "use the sandbox client that respects `profile.mcp`," not
+    "tweak the rubric."
+11. **Parallel eval AgentProfile drifting from production.** A
+    hand-rolled `evalAgentProfile` that omits the MCP servers (or
+    permissions, or file mounts, or system prompt) makes the eval
+    structurally incapable of testing the capabilities production gates
+    on. The scorecard timeline then tracks drift between the two
+    profiles, not agent behaviour. Import the production composer; add a
+    guard test on shape parity.
+12. **Silent transport failure becomes "agent didn't delegate."** A 402 /
+    401 / 5xx from the router lands in the stream as `backend_error`,
+    not as a thrown exception. A harness that drains the stream and
+    treats stream-end as success records `toolCalls: []` + `finalText:
+    ''` + `error: null` and the rubric reports "agent regression." The
+    operator has no signal pointing at "out of credits / wrong key /
+    upstream 5xx." Inspect `backend_error` events and surface them on
+    `result.error`.
 
 # Review red flags
 
@@ -587,6 +973,17 @@ omits any one of them is shipping the bug class it prevents:
 - Auto-apply improvement runs without operator review and without a measured
   precision floor.
 - Reports claim wins without `runId` + `commitSha` + scorecard diff link.
+- Eval uses `createOpenAICompatibleBackend` and the rubric scores on MCP
+  tool calls. The transport posts plain `chat/completions` with no
+  `tools` field — the rubric can never pass.
+- Eval builds a parallel `AgentProfile` instead of importing the
+  production composer (`composeProductionAgentProfile` or equivalent
+  from `src/lib/.server/sandbox/`).
+- `runLoop` / `runChatThroughRuntime` errors are swallowed — `backend_error`
+  events in the stream don't propagate to harness-level failure.
+- MCP delegation server mounted via static `AgentProfileMcpServer.env`
+  rather than the runtime composer. The SDK doesn't template
+  `mcp.env.TANGLE_API_KEY` so the static path ships an empty key.
 
 # Acceptance checklist
 
@@ -627,13 +1024,44 @@ A freshly-adopted product is correctly wired iff ALL hold:
       documented; supports `--dry-run` workflow_dispatch input.
 - [ ] `package.json` script `eval:improve` runs the analyst loop;
       `eval:production-loop` runs the held-out promotion cycle.
+- [ ] `src/lib/.server/sandbox/` exports `composeProductionAgentProfile`
+      (or equivalent); eval canonical runner imports it instead of
+      hand-rolling its own profile.
+- [ ] `eval/profile-parity.test.ts` (or equivalent) asserts the eval
+      profile mounts the delegation MCP server and matches production's
+      prompt / permissions / file-mount shape.
+- [ ] When mounting the MCP delegation tools: `buildDelegationMcpServer`
+      composes at runtime with a non-empty `TANGLE_API_KEY` and is
+      merged into `profile.mcp` per turn — never declared statically.
+- [ ] The eval's backend understands `profile.mcp`. If using
+      `createOpenAICompatibleBackend`, the rubric does NOT score on
+      tool-call presence (that transport has no `tools` field). Score
+      tool calls only when the backend rides the sandbox SDK.
+- [ ] When `runLoop` is in use, `ctx.traceEmitter` forwards to the same
+      OTLP sink as the chat path so loop telemetry is queryable
+      alongside chat turns.
+- [ ] Harness surfaces `backend_error` runtime events on `result.error`
+      — a 402 / 401 / 5xx does NOT become a silent `toolCalls: []`
+      scenario result.
 
 Canonical scaffold delivery: `agent-builder#198`. Reference impls to mirror
 file-for-file: `creative-agent`, `tax-agent`, `legal-agent`, `gtm-agent`.
 
 # Key docs
 
-- `@tangle-network/agent-eval` README
+- `@tangle-network/agent-eval@0.36.x` README
 - `@tangle-network/agent-eval/docs/wire-protocol.md`
-- `@tangle-network/agent-runtime/agent` — `defineAgent`, `createSurface*Adapter`, `createProductionTraceSink`
-- `@tangle-network/agent-knowledge` — `proposeFromFindings`, `applyKnowledgeWriteBlocks`
+- `@tangle-network/agent-eval/matrix` — `runAgentMatrix` (runner lands
+  next minor), `MatrixScenario`, `MatrixAxes`, axis extractors
+- `@tangle-network/agent-runtime@0.21.x/loops` — `runLoop`,
+  `createRefineDriver`, `createFanoutVoteDriver`, `Driver` /
+  `OutputAdapter` / `Validator` interfaces
+- `@tangle-network/agent-runtime/profiles` — `coderProfile`,
+  `createCoderValidator`, `multiHarnessCoderFanout`
+- `@tangle-network/agent-runtime/mcp` — `createMcpServer`,
+  `createDefaultCoderDelegate`, `createSiblingSandboxExecutor`,
+  `createFleetWorkspaceExecutor`; bin `agent-runtime-mcp`
+- `@tangle-network/agent-runtime/agent` — `defineAgent`,
+  `createSurface*Adapter`, `createProductionTraceSink`
+- `@tangle-network/agent-knowledge@1.4.x` — `proposeFromFindings`,
+  `applyKnowledgeWriteBlocks`, optional `multiHarnessResearcherFanout`
