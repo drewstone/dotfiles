@@ -957,6 +957,27 @@ function defaultConfig() {
   };
 }
 
+function globalBaselineConfig() {
+  return {
+    artifactsDir: ".git/ai-agent-hooks/runs",
+    hooks: {
+      "pre-commit": {
+        checks: [
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+      "pre-push": {
+        checks: [
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+    },
+  };
+}
+
 async function loadConfig(repoRoot) {
   const modulePath = join(repoRoot, ".ai-agent-hooks.mjs");
   if (existsSync(modulePath)) {
@@ -967,6 +988,10 @@ async function loadConfig(repoRoot) {
   const jsonPath = join(repoRoot, ".ai-agent-hooks.json");
   if (existsSync(jsonPath)) {
     return JSON.parse(readFileSync(jsonPath, "utf8"));
+  }
+
+  if (process.env.AI_AGENT_HOOKS_GLOBAL_BASELINE === "1") {
+    return globalBaselineConfig();
   }
 
   return defaultConfig();

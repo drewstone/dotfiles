@@ -23,6 +23,14 @@ Commit messages tell you what other agents shipped. Five seconds saves a rebase.
 
 **Hard guardrails that the multi-agent context does NOT relax:** no force-push without explicit ask, no `reset --hard` over uncommitted work, no `--no-verify`, no branch deletion without confirming merged/abandoned.
 
+## Git Etiquette
+
+- Before opening or updating a PR, fetch the target base and prove the branch merges cleanly into it. Locally: `git fetch origin main && git merge-tree --write-tree origin/main HEAD`.
+- If a push/PR would be conflict-prone, rebase or merge locally, resolve conflicts, rerun tests, and only then push.
+- Do not use `--no-verify` to skip hooks. If a hook blocks, read its artifact and fix the underlying issue or the hook itself.
+- Global dotfiles install sets fast Git guards via `~/code/dotfiles/git/install.sh`: conflict markers + suspicious secrets on commit, and mergeability with `origin/main` on push.
+- Repo-specific `.ai-agent-hooks.mjs` can add stronger gates such as Codex review; those are part of the repo contract once checked in.
+
 ## Take the lead. Ask sharply.
 
 Default to action. If the next step is obvious, do it and report.

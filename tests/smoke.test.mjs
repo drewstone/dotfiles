@@ -115,6 +115,24 @@ result = run("node", [scriptPath, "run", "pre-push"], conflictRepo);
 assert.equal(result.status, 1, result.stderr || result.stdout);
 assert.match(result.stdout, /failed mergeable-with-base/);
 
+const globalBaselineRepo = mkdtempSync(join(tmpdir(), "ai-agent-hooks-global-"));
+result = run("git", ["clone", remoteRoot, globalBaselineRepo], process.cwd());
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.email", "test@example.com"], globalBaselineRepo);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.name", "Test User"], globalBaselineRepo);
+assert.equal(result.status, 0, result.stderr);
+writeFileSync(join(globalBaselineRepo, "README.txt"), "global baseline\n", "utf8");
+result = run("git", ["commit", "-am", "global baseline"], globalBaselineRepo);
+assert.equal(result.status, 0, result.stderr);
+result = run("node", [scriptPath, "run", "pre-push"], globalBaselineRepo, {
+  ...process.env,
+  AI_AGENT_HOOKS_GLOBAL_BASELINE: "1",
+});
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok mergeable-with-base/);
+assert.doesNotMatch(result.stdout, /codex-review/);
+
 writeFileSync(
   configPath,
   `export default {
