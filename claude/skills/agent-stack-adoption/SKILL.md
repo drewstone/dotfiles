@@ -52,8 +52,8 @@ packages plus `@tangle-network/tcloud` for LLM calls.
 ```json
 {
   "dependencies": {
-    "@tangle-network/agent-eval": "^0.36.0",
-    "@tangle-network/agent-runtime": "^0.21.0",
+    "@tangle-network/agent-eval": "^0.38.0",
+    "@tangle-network/agent-runtime": "^0.23.0",
     "@tangle-network/agent-knowledge": "^1.4.0",
     "@tangle-network/sandbox": "0.2.1",
     "@tangle-network/tcloud": "^0.4.6"
@@ -63,7 +63,7 @@ packages plus `@tangle-network/tcloud` for LLM calls.
     "minimumReleaseAgeExclude": [],
     "onlyBuiltDependencies": ["esbuild", "better-sqlite3"],
     "overrides": {
-      "@tangle-network/agent-eval": "0.36.0"
+      "@tangle-network/agent-eval": "^0.38.0"
     }
   }
 }
@@ -1232,6 +1232,47 @@ is the WHEN and SEQUENCE; that skill is the HOW and WHY.
 - `@tangle-network/sandbox@0.2.x` SDK — `Sandbox`, `SandowInstance`,
   `AgentProfile`, `AgentProfileMcpServer`, `SandboxEvent`,
   `exportTraceBundle`, `toOtelJson`.
+
+---
+
+## Canonical eval surface — what scripts every product MUST expose
+
+Across 5 audited products, eval scripts have sprawled (12 in gtm, 9 in
+creative, only 1 in agent-builder, two-pointing-at-the-same-script bugs
+in gtm). Standardize on a single canonical surface so consumers can swap
+between products without re-learning the CLI.
+
+**Required scripts** (every product exposes these by name):
+
+| Script | What | Owner module |
+|---|---|---|
+| `eval` | Canonical single-shot persona-driven eval. One scenario or all. | per-product `eval/canonical.ts` or `tests/eval/canonical.ts` |
+| `eval:multishot` | Single multi-turn driver-agent run (debug + iterate before matrix) | `@tangle-network/agent-eval/multishot` |
+| `eval:matrix` | Sweep `AgentProfile[] × persona[] × reps`. The quality dashboard. | `@tangle-network/agent-eval/multishot` `runMultishotMatrix` |
+| `eval:improve` | Analyst loop — reads production traces → findings | `@tangle-network/agent-runtime/analyst-loop` `runAnalystLoop` |
+| `eval:calibrate` | Calibrate judge models against gold data | per-product |
+| `eval:optimize` | Mutator generates N candidates + matrix scores them + gate decides | `@tangle-network/agent-eval/optimization` |
+| `eval:production-loop` | Scheduled job: improve + optimize + gate + open PR. Different from `eval:optimize` — adds the cron + PR-opening layer. | per-product `scripts/evals/run-production-loop.ts` |
+| `eval:viewer` | Single-file HTML viewer of any run artifact | per-product `eval/viewer/serve.mjs` |
+
+**Optional scripts** (domain-specific, name freely):
+
+- `eval:redteam` — adversarial scenarios
+- `eval:delegation` — agents-call-MCP-tools-as-tests (gtm-style)
+- `eval:harvest` — pull gold items from production traces
+- `eval:video-*`, `eval:product`, `eval:dual` — per-domain extensions
+
+**Forbidden:**
+
+- **Two scripts pointing at the same .ts file** — pick one canonical name and delete the other. gtm currently has `eval:optimize` === `eval:production-loop` as the same file. That's a bug, not a feature.
+- **`eval:evolve` as a separate script** — prompt evolution belongs inside `eval:optimize` (it's one of the mutator strategies). Keep the legacy script as a thin alias for one minor, then delete.
+- **`eval:driver` as a separate script** — multi-turn driver-agent IS `eval:multishot`. Rename one-off `eval:driver` scripts to `eval:multishot` so the substrate's pattern propagates.
+
+**Cross-references:**
+
+- agent-stack-adoption skill Phase 7 — how to wire multishot + matrix on the substrate
+- agent-eval-adoption skill — the substrate primitives for each script
+- gtm-agent #161, legal-agent #106, tax-agent #101 — reference implementations of the canonical surface
 
 ---
 
