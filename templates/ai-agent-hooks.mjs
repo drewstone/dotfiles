@@ -10,6 +10,7 @@ export default {
     "pre-push": {
       checks: [
         { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+        { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
         { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
         {
           id: "codex-review",
