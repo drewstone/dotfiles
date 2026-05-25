@@ -728,62 +728,124 @@ pnpm eval:delegation --scenario competitor-dashboard
 
 ---
 
-### Phase 7 — viewer + matrix
+### Phase 7 — viewer + matrix over AgentProfile[] + multishot driver-agent
 
-**Goal:** two surfaces:
+**Goal:** three surfaces:
 - **Viewer** — single-file HTML at `eval/viewer/viewer.html` that loads a
   run's NDJSON artifacts and renders the trace + delegation timeline.
-  Operators run `pnpm eval:viewer` to inspect any run locally.
-- **Matrix** — `runAgentMatrix` (agent-eval 0.36+) sweeps the cartesian
-  product of (profile × scenario × persona × rep), aggregating by axis.
+- **Matrix** — `runAgentMatrix` (agent-eval 0.37+) sweeps the cartesian
+  product of (**AgentProfile** × persona × rep), aggregating by axis.
+- **Multishot driver-agent** — `runMultishot` simulates a real user (LLM
+  driver as persona) chatting with the agent across 10+ turns, with REAL
+  inline tool execution (delegate_research + delegate_code), then runs THREE
+  separate judges (conversation, code-review, content-quality).
+
+**The PRIMARY matrix axis MUST be `AgentProfile[]` from `@tangle-network/sandbox`.**
+
+Not `harness[]`, not `model[]`, not `reasoningLevel[]`. AgentProfile
+encapsulates ALL of those (systemPrompt, tools, mcp, reasoning level,
+harness preference, skills, knowledge namespace). When you test variations,
+you're testing PROFILES — different production composers, different system
+prompts, different MCP topologies. Same persona, radically different agent
+surface. Custom user-supplied profiles will eventually become first-class
+matrix participants; build for that today.
 
 **Files:**
 
 - `eval/viewer/viewer.html` + `eval/viewer/extract.ts` + `eval/viewer/serve.mjs`.
-- `eval/matrix.ts` — wraps `runAgentMatrix` against the production composer.
+- `eval/agent-profiles.ts` — define 3+ AgentProfile variants (baseline + A/B).
+- `eval/multishot.ts` — driver-agent runner with inline tool execution.
+- `eval/multishot-judges.ts` — conversation + code-review + content-quality.
+- `eval/matrix.ts` — wraps `runAgentMatrix` over the profiles.
 
-**Code template — matrix:**
+**Code template — agent-profiles.ts:**
+
+```ts
+// eval/agent-profiles.ts
+import type { AgentProfile } from '@tangle-network/sandbox'
+import { composeProductionAgentProfile } from '../src/lib/.server/sandbox'
+
+// Baseline = exact production composer output (eval must equal production)
+export const profileBaseline: AgentProfile = composeProductionAgentProfile()
+
+// Delegation-heavy = same composer + override systemPrompt to push tool use
+export const profileDelegationHeavy: AgentProfile = {
+  ...profileBaseline,
+  systemPrompt: `${profileBaseline.systemPrompt}\n\nIMPORTANT: ALWAYS use delegate_research before answering audience questions. ALWAYS use delegate_code when the user asks for scripts, pipelines, or dashboards.`,
+}
+
+// Interview-first = mandate 3 interview turns before any artifact
+export const profileInterviewFirst: AgentProfile = {
+  ...profileBaseline,
+  systemPrompt: `${profileBaseline.systemPrompt}\n\nMANDATORY: Spend the first 3 turns interviewing the user about audience, metrics, constraints. Do not produce artifacts until you have these answers.`,
+}
+
+export const PROFILES = {
+  baseline: profileBaseline,
+  'delegation-heavy': profileDelegationHeavy,
+  'interview-first': profileInterviewFirst,
+} as const
+```
+
+**Code template — multishot.ts (driver-agent with REAL tool execution):**
+
+```ts
+// eval/multishot.ts
+// Multi-turn simulation: LLM driver acts as persona, agent has tools,
+// tool_calls execute inline (researcher / coder LLM calls), 10+ turns.
+import type { AgentProfile } from '@tangle-network/sandbox'
+import type { Persona } from './personas'
+
+export async function runMultishot(opts: {
+  profile: AgentProfile
+  persona: Persona
+  maxTurns: number  // recommended: 10+
+}): Promise<{ transcript: Msg[]; artifacts: Artifact[]; toolCalls: number; costUsd: number }> {
+  // 1. Driver = LLM as persona (reactive, non-deterministic)
+  // 2. Agent has OpenAI tools[] for delegate_research + delegate_code
+  // 3. When agent emits tool_call → inline execution:
+  //    - delegate_research(question) → researcher LLM call → research brief
+  //    - delegate_code(goal) → coder LLM call → real code block
+  // 4. Tool_result returned to agent → agent continues
+  // 5. Driver responds reactively → repeat for maxTurns
+  // 6. Defend against driver empty content (retry once, then fail loud)
+  // 7. Bypass any readiness gates on the AGENT side (eval-only)
+}
+```
+
+**Code template — matrix.ts:**
 
 ```ts
 // eval/matrix.ts
 import { runAgentMatrix } from '@tangle-network/agent-eval/matrix'
-import { composeProductionAgentProfile } from '../src/lib/.server/sandbox'
-import { runChatThroughRuntime } from '../src/lib/.server/agent-runtime/chat'
-import { DELEGATION_SCENARIOS } from './scenarios/delegation-build-tools'
+import { PROFILES } from './agent-profiles'
+import { PERSONAS } from './personas'
+import { runMultishot } from './multishot'
+import { scoreConversation, scoreCodeArtifacts, scoreContentArtifacts } from './multishot-judges'
 
 const result = await runAgentMatrix({
   axes: [
-    { name: 'scenario', values: DELEGATION_SCENARIOS.map((s) => ({ id: s.id, value: s })) },
-    { name: 'harness',  values: [
-        { id: 'claude-code', value: 'claude-code' as const },
-        { id: 'codex',       value: 'codex'       as const },
-        { id: 'opencode',    value: 'opencode'    as const },
-      ] },
-    { name: 'model',    values: [
-        { id: 'sonnet-4-7',    value: 'anthropic/claude-sonnet-4-7' },
-        { id: 'deepseek-v4',   value: 'opencode/deepseek/deepseek-v4-pro' },
-      ] },
+    { name: 'profile', values: Object.entries(PROFILES).map(([id, value]) => ({ id, value })) },
+    { name: 'persona', values: PERSONAS.map((p) => ({ id: p.id, value: p })) },
   ],
-  reps: 3,
-  maxConcurrency: 4,
-  costCeiling: 5.0,
+  reps: 1,
+  maxConcurrency: 2,
+  costCeiling: 10.0,
   async runCell(cell, signal) {
-    const scenario = cell.axes.scenario.value as DelegationScenario
-    const harness  = cell.axes.harness.value  as 'claude-code' | 'codex' | 'opencode'
-    const model    = cell.axes.model.value    as string
-    const profile  = composeProductionAgentProfile({
-      sandboxApiKey: process.env.TANGLE_API_KEY,
-    })
-    const res = await runChatThroughRuntime({
-      profile, harness, model, message: scenario.userMessage, signal,
-    })
-    const score = scoreDelegationOutput(res, scenario)
-    return { score, costUsd: res.costUsd, output: res.finalText }
+    const profile = cell.axes.profile.value as AgentProfile
+    const persona = cell.axes.persona.value as Persona
+    const sim     = await runMultishot({ profile, persona, maxTurns: 10 })
+    // THREE separate judge passes (DO NOT combine — each is too important)
+    const convoScore   = await scoreConversation(sim.transcript, persona)
+    const codeScore    = await scoreCodeArtifacts(sim.artifacts.filter((a) => a.type === 'code'))
+    const contentScore = await scoreContentArtifacts(sim.artifacts.filter((a) => a.type !== 'code'))
+    const composite    = (convoScore.composite + codeScore.composite + contentScore.composite) / 3
+    return { score: composite, costUsd: sim.costUsd, output: { transcript: sim.transcript, artifacts: sim.artifacts, scores: { convoScore, codeScore, contentScore } } }
   },
 })
 
-console.log('byAxis.harness:', result.byAxis.harness)
-console.log('cost ceiling reached:', result.summary.costCeilingReached)
+console.log('byAxis.profile:', result.byAxis.profile)
+console.log('byAxis.persona:', result.byAxis.persona)
 ```
 
 **Verify:**
@@ -797,18 +859,33 @@ pnpm eval:matrix --reps 1 --max-concurrency 2
 
 **Anti-patterns:**
 
-- **Building a parallel matrix that hand-rolls profile.** The matrix consumer
-  adapter MUST go through `composeProductionAgentProfile`. Bespoke profiles
-  in the matrix mean you're measuring drift between two profiles, not
-  cross-axis behavior.
-- **Recomputing aggregations from `cells[]` by hand.** The substrate
-  aggregator handles `error` / `skipped` cells correctly (they count 0
-  toward both passRate AND meanScore). Hand-rolling almost always under-
-  counts skipped cells.
-- **Setting `costCeiling` too high for paid backends.** `runAgentMatrix`
-  soft-aborts when cumulative cost crosses the ceiling — in-flight cells
-  finish, new ones don't start. Set it conservatively for paid runs ($5-$10
-  for nightly).
+- **Eval bypasses the production path entirely.** This is the most
+  expensive bug class. If your eval uses bareback `fetch()` to
+  `/chat/completions` (or a "sandbox-backend" that's actually OpenAI-compat
+  direct), MCP tools never fire, harness routing never happens, knowledge
+  gates never trigger. The eval scores fictional behavior. **Route through
+  `runChatThroughRuntime` + the same composer as production** — OR run
+  multishot with inline tool execution that mimics what the harness would do.
+- **Matrix axis is `model[]` or `harness[]` instead of `AgentProfile[]`.**
+  Profile is the canonical surface (encapsulates everything else). Test
+  profile variations, not orthogonal axes you'd never ship.
+- **Single composite score from ONE judge.** A scalar score is too weak.
+  Use 3 separate judges (conversation, code-review, content-quality) and
+  surface per-dimension breakdowns. The MOSS-paper lesson: lock the rubric
+  at baseline, compare candidates against same keypoints.
+- **Generating text and scoring keywords.** "Does the response contain
+  'plan' and 'week'?" is not a real eval. Score on artifact quality (real
+  code runs? real research has citations? content audience-fit?) via
+  separate judge passes.
+- **Hand-rolling aggregations from `cells[]`.** The substrate aggregator
+  handles `error` / `skipped` cells correctly. Hand-rolling almost always
+  under-counts skipped cells.
+- **`costCeiling` too high for paid backends.** Set conservatively
+  ($5-$10 for nightly, $25-$50 for ad-hoc full sweeps).
+- **Driver-empty-content silently passing.** When the persona-simulating
+  LLM returns empty content, the loop must retry once then fail loudly.
+  Silent empty responses produce fake adaptive scores ("agent gave up
+  asking", "user went silent").
 
 **Cross-references:**
 
@@ -1143,10 +1220,122 @@ is the WHEN and SEQUENCE; that skill is the HOW and WHY.
 
 - [`agent-eval-adoption`](../agent-eval-adoption/SKILL.md) — substrate
   primitives, traces, judges, scorecard, ship-gate. Pair with this skill.
-- `@tangle-network/agent-runtime@0.21.x` README + `/loops` + `/profiles` +
-  `/mcp` + `/agent` + `/analyst-loop`.
-- `@tangle-network/agent-eval@0.36.x` README + `/matrix` + `/wire` + `/traces`.
+- `@tangle-network/agent-runtime@0.23.x` README + `/loops` + `/profiles` +
+  `/mcp` + `/agent` + `/analyst-loop`. **0.23.0** adds OTEL exporter +
+  TraceId propagation through MCP subprocess + worker-sandbox trace bundle
+  export + validator span emission.
+- `@tangle-network/agent-eval@0.37.x` README + `/matrix` + `/wire` +
+  `/traces`. **0.37.0** adds judge + analyst + mutator span emission +
+  pipeline-level OTEL export.
 - `@tangle-network/agent-knowledge@1.4.x` README — `searchKnowledge`,
   `proposeFromFindings`, `applyKnowledgeWriteBlocks`.
-- `@tangle-network/sandbox@0.2.x` SDK — `Sandbox`, `SandboxInstance`,
-  `AgentProfile`, `AgentProfileMcpServer`, `SandboxEvent`.
+- `@tangle-network/sandbox@0.2.x` SDK — `Sandbox`, `SandowInstance`,
+  `AgentProfile`, `AgentProfileMcpServer`, `SandboxEvent`,
+  `exportTraceBundle`, `toOtelJson`.
+
+---
+
+## Phase 10 — full distributed tracing + OTEL export
+
+**Goal:** every LLM call across the entire self-improvement loop — agent
+turns, judges, analysts, mutators, MCP dispatches, worker sandboxes,
+validators — emits spans into one joinable trace tree. When the user sets
+`OTEL_EXPORTER_OTLP_ENDPOINT`, ALL of those spans export to their
+observability stack (Langfuse, Datadog, Honeycomb, custom collector).
+
+**Why it matters:** you cannot improve the improver if the improver is
+opaque. When the production-loop fails to converge, you need to debug WHY:
+did the judge mis-score? did the analyst misdiagnose the failure surface?
+did the mutator produce a non-sequitur? Without per-call spans, each is a
+black box. Customer-facing deployments REQUIRE OTEL — observability is not
+optional infra.
+
+**Files:**
+
+- agent-runtime 0.23+ exports `createOtelExporter()` + `withOtelPipeline()`.
+- agent-eval 0.37+ wraps judge/analyst/mutator LLM calls in spans via
+  `traceJudge`, `tracedAnalyzeTraces`, `traceMutator`.
+
+**Code template — enable end-to-end OTEL:**
+
+```ts
+// At the top of any eval/production entrypoint
+process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??= 'http://localhost:4318'
+// optional: process.env.OTEL_EXPORTER_OTLP_HEADERS = 'authorization=Bearer ${LANGFUSE_PUBLIC_KEY},x-langfuse-secret=${LANGFUSE_SECRET}'
+
+// That's it. Every kernel iteration, every judge call, every analyst run,
+// every mutator pass auto-exports.
+```
+
+**TraceId propagation through MCP subprocess:**
+
+When the agent harness launches the `agent-runtime-mcp` subprocess for
+delegation, it MUST pass `TRACE_ID` + `PARENT_SPAN_ID` env vars so the
+subprocess's internal runLoop spans become children of the dispatching
+agent's delegation span. Without this, MCP-internal work shows as a
+separate trace tree.
+
+```ts
+// in the production composer when building the MCP entry:
+const mcpEntry: AgentProfileMcpServer = {
+  transport: 'stdio',
+  command: 'npx',
+  args: ['-y', '@tangle-network/agent-runtime', 'mcp'],
+  env: {
+    TANGLE_API_KEY: sandboxApiKey,
+    SANDBOX_BASE_URL: baseUrl,
+    // OTEL + tracing propagation (set by the kernel at delegation dispatch time):
+    OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? '',
+    TRACE_ID: ctx.traceEmitter?.traceId ?? '',
+    PARENT_SPAN_ID: ctx.traceEmitter?.currentSpanId ?? '',
+  },
+  enabled: true,
+}
+```
+
+**Worker sandbox trace export:**
+
+After any worker sandbox (delegated coder / researcher) completes, call
+`exportTraceBundle(box)` and merge events into the parent trace store with
+`parentSpanId` pointed at the delegation's loop.iteration span. The
+sandbox SDK exports this helper at `@tangle-network/sandbox`. Without this
+the worker's internal LLM calls + tool calls live ONLY inside the
+sandbox process and are lost on teardown.
+
+**Verify:**
+
+```bash
+# Local OTEL collector (one-time setup):
+docker run -p 4318:4318 otel/opentelemetry-collector:0.95.0
+
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 pnpm eval:multishot --persona <id> --profile baseline --turns 6
+# Expect: collector logs show per-LLM-call spans with traceId joins.
+
+OTEL_EXPORTER_OTLP_ENDPOINT=https://cloud.langfuse.com OTEL_EXPORTER_OTLP_HEADERS='authorization=Basic ...' pnpm eval:matrix
+# Expect: Langfuse UI shows the full matrix run with judge/analyst/mutator child spans.
+```
+
+**Anti-patterns:**
+
+- **Opaque judges.** A judge that returns `{score: 0.45}` with no traced
+  reasoning chain cannot be debugged. Wrap every judge LLM call in a span
+  with input context + output scores + dimensions as span attributes.
+- **Disjoint trace trees.** If the agent's chat-turn trace and the MCP
+  subprocess's trace have different traceIds, you can't query "show me the
+  full causal chain of THIS user message". Propagate traceId via env at
+  every subprocess boundary.
+- **OTEL as opt-in extra.** When `OTEL_EXPORTER_OTLP_ENDPOINT` is set,
+  EVERYTHING must auto-export with no further code changes. If a call site
+  bypasses the exporter, that span is missing from the user's dashboard —
+  silently. Audit every LLM call for span wrapping.
+- **Worker sandbox traces dropped on teardown.** Call `exportTraceBundle`
+  in a `finally` block; tearing down the sandbox without exporting loses
+  every internal LLM call the worker made.
+
+**Cross-references:**
+
+- agent-runtime 0.23.0 OTEL exporter source.
+- agent-eval 0.37.0 judge + analyst + mutator span wrappers.
+- `@tangle-network/sandbox` `exportTraceBundle` + `toOtelJson` helpers.
+- Phase 7 multishot — every conversation step emits spans; matrix-level
+  spans wrap the cell execution.
