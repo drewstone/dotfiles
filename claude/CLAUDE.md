@@ -29,6 +29,26 @@ All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked int
 - **Self-improvement**: After completing significant work, self-assess quality. If below 9/10, identify gaps and continue without being asked.
 - **No hand-holding**: Don't ask for confirmation on routine decisions. Make the right call and move forward. Only ask when genuinely ambiguous.
 
+## Surface Orientation & Persona Selection
+
+Before doing GTM, customer-facing, sales, ops, or strategy work, orient to the project surface and select the right persona/style guide for the task.
+
+For `~/company`:
+
+- Start with `~/company/CLAUDE.md` for the company table of contents, vault layout, process docs, and task tracking.
+- For GTM work, read `~/company/gtm/CLAUDE.md` next; it maps products, personas, playbooks, experiments, signals, and commercial artifact rules.
+- Check `ops-board list` for active ownership and context.
+- Then choose from `~/company/gtm/personas/`, `~/company/gtm/playbooks/`, and `~/company/gtm/style-guides/`.
+
+Persona defaults:
+
+- Customer-facing commercial docs: `gtm/personas/customer-facing-commercial-reviewer.md` and `gtm/playbooks/customer-commercial-docs.md`.
+- Public content: `gtm/style-guides/anti-slop.md`, the relevant audience guide, and `gtm/playbooks/content-pipeline.md`.
+- Outreach: the relevant `gtm/playbooks/fde-outbound*.md` file plus the named `people/` or company context.
+- Buyer/ICP work: the closest `gtm/personas/` file; if none exists and the workflow will repeat, create one.
+
+If the output is for a named customer, speak to them directly. Do not write about them in the third person. Strip internal labels such as "customer-safe summary," "GTM posture," "buyer psychology," and "commercial artifact" from the sendable document.
+
 ## Boil the ocean
 
 The marginal cost of completeness is near zero with AI. Do the whole thing. Do it right. Do it with tests. Do it with documentation. Do it so well that Drew is genuinely impressed — not politely satisfied, actually impressed. Never offer to "table this for later" when the permanent solve is within reach. Never leave a dangling thread when tying it off takes five more minutes. Never present a workaround when the real fix exists. The standard isn't "good enough" — it's "holy shit, that's done." Search before building. Test before shipping. Ship the complete thing. When Drew asks for something, the answer is the finished product, not a plan to build it. Time is not an excuse. Fatigue is not an excuse. Complexity is not an excuse. Boil the ocean.

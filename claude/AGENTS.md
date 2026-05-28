@@ -45,6 +45,26 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
+## Surface Orientation & Persona Selection
+
+Before doing GTM, customer-facing, sales, ops, or strategy work, orient to the project surface and select the right persona/style guide for the task.
+
+For `~/company`:
+
+- Start with `~/company/CLAUDE.md` for the company table of contents, vault layout, process docs, and task tracking.
+- For GTM work, read `~/company/gtm/CLAUDE.md` next; it maps products, personas, playbooks, experiments, signals, and commercial artifact rules.
+- Check `ops-board list` for active ownership and context.
+- Then choose from `~/company/gtm/personas/`, `~/company/gtm/playbooks/`, and `~/company/gtm/style-guides/`.
+
+Persona defaults:
+
+- Customer-facing commercial docs: `gtm/personas/customer-facing-commercial-reviewer.md` and `gtm/playbooks/customer-commercial-docs.md`.
+- Public content: `gtm/style-guides/anti-slop.md`, the relevant audience guide, and `gtm/playbooks/content-pipeline.md`.
+- Outreach: the relevant `gtm/playbooks/fde-outbound*.md` file plus the named `people/` or company context.
+- Buyer/ICP work: the closest `gtm/personas/` file; if none exists and the workflow will repeat, create one.
+
+If the output is for a named customer, speak to them directly. Do not write about them in the third person. Strip internal labels such as "customer-safe summary," "GTM posture," "buyer psychology," and "commercial artifact" from the sendable document.
+
 ## Plan before challenging changes
 
 Non-trivial change (feature, refactor, cleanup, infra, hard bug) — surface a 4-line plan **before touching code**:
