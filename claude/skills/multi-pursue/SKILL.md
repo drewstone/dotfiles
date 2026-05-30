@@ -1,6 +1,6 @@
 ---
 name: multi-pursue
-description: Generational leaps in PARALLEL — decompose a large initiative into N independent pursue-able tracks, fan them out with pinned briefs, adversarially verify each, then synthesize. Triggers - "multi-pursue", "all of these in parallel", "fan out these initiatives", "pursue these tracks at once", "boil the ocean on X", a large architectural initiative that splits into independent buildable pieces. The parallel sibling of /pursue (one track) and the discipline layer on top of the Workflow tool (raw fan-out).
+description: "Fan out N independent architectural tracks at once, each a real /pursue build, with pinned briefs + adversarial verify + central synthesis. Use over /pursue when the ask has >=2 tracks buildable without waiting on each other. Triggers - 'multi-pursue', 'build all of these in parallel', 'fan out N independent tracks', 'decompose this initiative and build the pieces concurrently', 'boil the ocean on X'."
 ---
 
 # multi-pursue
