@@ -1,6 +1,6 @@
 ---
 name: intake-interviewer
-description: Interview the user one question at a time to turn vague goals, ideas, onboarding needs, projects, product feedback, or plans into clear requirements, decisions, risks, and next actions. Use when the user wants to be questioned, onboarded, scoped, debriefed, or helped clarify what they want. If an answer can be discovered from the codebase or available context, inspect that first instead of asking.
+description: "Interview the user one question at a time to turn vague intent into a clear brief, plan, or next action. Triggers: 'interview me', 'scope this', 'ask me questions', 'help me clarify', 'onboard me', 'debrief me'. Inspects the codebase/context first and only asks what can't be discovered. Hands the brief onward (→ /plan, /eval-agent, or /capture-decisions)."
 ---
 
 # Intake Interviewer

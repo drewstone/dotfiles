@@ -1,6 +1,6 @@
 ---
 name: writing-profile
-description: "Constraints-first writing profile from any source (Twitter/X, blogs, Reddit, LinkedIn, raw text). Captures what the writer does AND doesn't do; catches AI cadence; guides authentic content. Triggers: 'writing-profile', 'learn my voice', 'how does X write'."
+description: "Constraints-first writing profile from any source (Twitter/X, blogs, Reddit, LinkedIn, raw text). Captures what the writer does AND doesn't do; catches AI cadence; guides authentic content. Triggers: 'writing-profile', 'voice profile', 'learn my voice', 'match my writing style', 'sound like me', 'de-AI my drafts', 'how does X write'."
 ---
 
 # Voice Profile — Constraints-First Writing Analysis
