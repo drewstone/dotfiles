@@ -115,6 +115,21 @@ After all reviewers complete:
 
    Every entry must have an action AND a verification line. Findings without an actionable fix are not findings — they are vibes and must be dropped.
 
+5. **Emit the verdict** — the audit ends with one mandatory gate line:
+
+   ```
+   APPROVE — <brief reason>
+   ```
+   or
+   ```
+   REQUEST_CHANGES — <brief reason>
+   ```
+
+   **Gate:** `REQUEST_CHANGES` if any CRITICAL or HIGH finding remains, or a MEDIUM that will cause a
+   production incident. Otherwise `APPROVE` — MEDIUM/LOW are suggestions, not blockers. When this audit
+   reviews a PR diff, the verdict maps directly to the P-priority convention reviewers expect:
+   CRITICAL/HIGH = **P1** (blocking), MEDIUM = **P2** (should fix), LOW = **P3** (nice to have).
+
 ## Persist
 
 Write the run under `.evolve/critical-audit/<iso-timestamp>/`:
