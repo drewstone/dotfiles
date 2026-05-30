@@ -194,7 +194,7 @@ For projects using bad-app as a control plane, trigger runs via the CI API:
 ```yaml
       - name: Trigger bad-app run
         run: |
-          curl -X POST https://browser.tangle.tools/api/ci/trigger \
+          curl -X POST "${BAD_APP_CONTROL_PLANE_URL}/api/ci/trigger" \
             -H "Authorization: Bearer ${{ secrets.BAD_APP_CI_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d '{

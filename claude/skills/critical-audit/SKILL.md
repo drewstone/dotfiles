@@ -13,7 +13,7 @@ Shared conventions in `_common.md`.
 
 Opt-in flag that fans out parallel subagents — one per persona — reading the **same source material** through different lenses. Each persona has a fixed brief at `agents/personas/<name>.md`; the parent dispatches them in parallel, then synthesizes convergent findings (issues ≥2 personas flag) plus per-persona unique catches.
 
-Precedent: the May 2026 audit of `@tangle-network/sandbox` (5 personas, PR #1319's durability lineage) caught **4 wire-chain breaks** (Zod schemas rejecting what internal types accepted) and the **DurableObject anti-pattern** — a Cloudflare customer had reinvented `SessionGatewayClient` + `dispatchPrompt` idempotency in DOs because the README never anchored them. A single-pass audit would have missed both; the AI-agent persona named the missing anchor, the surface-designer persona traced the wire breaks.
+Precedent: a multi-persona audit of a streaming SDK (5 personas) caught **4 wire-chain breaks** (schemas rejecting what internal types accepted) and a **durable-state anti-pattern** — a customer had reinvented the SDK's session-client + idempotency logic in their own durable objects because the README never anchored them. A single-pass audit would have missed both; the AI-agent persona named the missing anchor, the surface-designer persona traced the wire breaks.
 
 **Decision rule.** Use `--personas=…` when the audit target is a **customer-facing surface**: SDK packages, public docs, examples, integration guides, skill triggers, README narrative paths. Skip it for internal-code-only reviews — the default A/B/C reviewers are right for those.
 
