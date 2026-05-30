@@ -240,7 +240,7 @@ await runProductionLoop({
   evolve: { /* runPromptEvolution opts */ },
   ship: {
     gate: heldOutGateConfig,
-    client: httpGithubClient({ owner: 'tangle-network', repo: 'gtm-agent', token: process.env.GH_TOKEN! }),
+    client: httpGithubClient({ owner: 'your-org', repo: 'your-agent', token: process.env.GH_TOKEN! }),
     render: (ctx) => ({ title: '...', body: '...', branch: '...', baseBranch: 'main' }),
   },
 })
