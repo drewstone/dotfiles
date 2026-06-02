@@ -65,6 +65,14 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Parallelize independent audit, review, and research work when possible.
 - If quality is below 9/10, identify the remaining gap and keep pushing.
 
+## Product Design Defaults
+
+- For visible UI work, invoke the `product-design` skill when available.
+- Reference real products or design systems before inventing a visual direction; inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
+- Do not add obvious labels, procedural step cards, route/status narration, or explanatory copy that restates what controls already show.
+- The active product mode should change the actual component: text input for text, upload/record for audio, sample/consent for cloning, chat/intake for agents.
+- Kill dead panels, giant default selections, repeated action words, and fake readiness states before claiming design quality.
+
 ## Cross-Project Conventions
 
 - TypeScript: strict, single quotes, 2-space indent, no semicolons unless the repo clearly uses them.

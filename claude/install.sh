@@ -179,10 +179,10 @@ if [ -d "$HOME/.pi/agent" ]; then
   echo "  Pi: ${pi_skill_count} skills synced"
 fi
 
-# Codex integration: mirror CLAUDE.md → AGENTS.md, commands → prompts,
-# and Claude skills → Codex skills. Codex has no hook analog here.
+# Codex integration: mirror shared AGENTS.md, commands → prompts, and Claude
+# skills → Codex skills. Codex has no hook analog here.
 if [ -d "$HOME/.codex" ]; then
-  link "$SCRIPT_DIR/CLAUDE.md" "$HOME/.codex/AGENTS.md"
+  link "$AGENTS_SRC" "$HOME/.codex/AGENTS.md"
 
   mkdir -p "$HOME/.codex/skills"
   for skill_dir in "$SCRIPT_DIR/skills"/*/; do
