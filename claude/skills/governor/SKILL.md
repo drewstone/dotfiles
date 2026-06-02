@@ -61,10 +61,21 @@ Each is a boolean or short verdict.
 - **Below target with movable metric**: scorecard flow below target AND CV < 15%.
 - **Unresolved HIGH findings from critical-audit** → exploit those before anything else.
 
+### Triage (favor `/diagnose`)
+- **Failing test suite or eval pass-rate dropped** with many failures and no ROI ranking yet → cluster + rank before fixing.
+- **Operator asks "why is this failing" / "triage these failures"** → route there. `/diagnose` feeds its ranked clusters into `/evolve`.
+
 ### Explore-light (favor `/pursue`)
 - **Plateau**: last 3 experiments on same metric have delta < 1%.
 - **Newest reflection's dispatch-at-end names `/pursue`**: trust it.
 - **Current generation complete (ADVANCE) but no follow-up pursuit** → design the next.
+
+### Explore-multi (favor `/multi-pursue`)
+- **Initiative decomposes into ≥2 independent buildable tracks** (distinct subsystems, not one architectural change) → parallel generational build. `/pursue` is single-track; `/multi-pursue` runs the tracks as a unit.
+
+### Codebase hygiene (favor `/deep-clean`)
+- **A big merge or migration just landed** (recent merge commit / branch consolidation in `git log`) → proactive sweep before building on it.
+- **Operator asks to clean up / remove dead code / fix all types / canonicalize an area** → route there. `/deep-clean` chains to `/harden`.
 
 ### Explore-heavy (favor `/meta-harness`)
 - **Plateau + `/pursue` already ran 3+ rounds with <2% cumulative delta** → architecture is stuck.
@@ -93,15 +104,18 @@ Each is a boolean or short verdict.
 First match wins.
 
 ```
-1. Retreat fires            → revert last gen + dispatch /evolve on prior baseline
-2. Measurement-gap fires    → dispatch /eval-agent
-3. Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
-4. Reflection-due fires     → dispatch /reflect; governor re-runs after
-5. Explore-heavy fires      → dispatch /meta-harness
-6. Explore-light fires      → dispatch /pursue
-7. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
-8. Hand-off fires           → closing reflection + stop
-9. No match                 → surface to operator
+1.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
+2.  Measurement-gap fires    → dispatch /eval-agent
+3.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
+4.  Reflection-due fires     → dispatch /reflect; governor re-runs after
+5.  Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
+6.  Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
+7.  Explore-heavy fires      → dispatch /meta-harness
+8.  Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
+9.  Explore-light fires      → dispatch /pursue
+10. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
+11. Hand-off fires           → closing reflection + stop
+12. No match                 → surface to operator
 ```
 
 ## Log the decision

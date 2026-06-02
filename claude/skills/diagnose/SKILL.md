@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: "Analyze failure traces: cluster by root cause, rank by impact × fix complexity, generate concrete fix hypotheses. Works with JUnit XML, JSON reports, CI logs, benchmark results. Triggers: 'why is this failing', 'analyze failures', 'diagnose', 'triage results'."
+description: "Analyze failure traces: cluster by root cause, rank by impact × fix complexity, generate concrete fix hypotheses. Works with JUnit XML, JSON reports, CI logs, benchmark results. Triggers: 'why is this failing', 'analyze failures', 'diagnose', 'triage results', 'failing test suite', 'eval pass rate dropped', 'which failures to fix first', 'cluster these errors', 'what's the root cause'."
 ---
 
 # Diagnose — Failure Trace Analysis

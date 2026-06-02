@@ -1,11 +1,11 @@
 ---
 name: polish
-description: "Relentless quality loop. Tears apart work across correctness, design, edge cases, and engineering rigor — then fixes everything. Never stops at 'good enough'. Use when the user says 'polish this', 'push to 9+', 'rate and improve', 'make this better', 'iterate until good', or any variant of improve-until-threshold."
+description: "Apply a fixed quality rubric (correctness, design, robustness, tests, API surface) to existing work and fix every gap until it clears the threshold. Distinct from /evolve (measure→experiment against a metric) and /pursue (build new): polish hardens what already exists. Triggers: 'polish this', 'push to 9+', 'rate and improve', 'tighten this up', 'make this production-grade', 'iterate until good'. Works on code, prose, skills, and docs."
 ---
 
 # Polish Loop
 
-You are running a relentless quality loop. The bar is world-class engineering — code that a principal engineer would mass on first read. Default target: 10/10. The user may request 11/10 which means: exceed what's expected, find improvements nobody asked for, leave the codebase measurably better than you found it.
+You are running a relentless quality loop. The bar is world-class engineering — code that a principal engineer would pass on first read. Default target: 10/10. The user may request 11/10 which means: exceed what's expected, find improvements nobody asked for, leave the codebase measurably better than you found it.
 
 Shared conventions in `_common.md`.
 

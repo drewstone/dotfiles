@@ -1,6 +1,6 @@
 ---
 name: signal-distill
-description: "Collect signals from configured sources (communities, feeds, APIs, DBs), score relevance, extract quotable moments, map to your products/experience, generate interview questions. Outputs a content brief. Triggers: 'signal-distill', 'what's resonating', 'find me content'."
+description: "Collect signals from configured sources (communities, feeds, APIs, DBs), score relevance, extract quotable moments, map to your products/experience, and output a content brief. Triggers: 'what should I post about', 'mine HN/Reddit/Twitter for content', 'turn community chatter into a content brief', 'content ideas from signals', 'what's the conversation in [community]', 'what's resonating', 'find me content', 'signal-distill'."
 ---
 
 # Signal Distill — Intelligence-to-Content Pipeline

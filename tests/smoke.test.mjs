@@ -10,9 +10,10 @@ function run(cmd, args, cwd, env = process.env) {
 }
 
 const repoRoot = mkdtempSync(join(tmpdir(), "ai-agent-hooks-"));
+const remoteRoot = mkdtempSync(join(tmpdir(), "ai-agent-hooks-remote-"));
 const scriptPath = resolve("bin/ai-agent-hooks.mjs");
 
-let result = run("git", ["init"], repoRoot);
+let result = run("git", ["init", "-b", "main"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
 
 result = run("git", ["config", "user.email", "test@example.com"], repoRoot);
@@ -25,6 +26,15 @@ writeFileSync(join(repoRoot, "README.txt"), "hello\n", "utf8");
 result = run("git", ["add", "README.txt"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
 result = run("git", ["commit", "-m", "init"], repoRoot);
+assert.equal(result.status, 0, result.stderr);
+
+result = run("git", ["init", "--bare"], remoteRoot);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["remote", "add", "origin", remoteRoot], repoRoot);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["push", "-u", "origin", "main"], repoRoot);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["symbolic-ref", "HEAD", "refs/heads/main"], remoteRoot);
 assert.equal(result.status, 0, result.stderr);
 
 result = run("node", [scriptPath, "install", "--repo", repoRoot, "--init-config"], process.cwd());
@@ -49,11 +59,79 @@ assert.equal(result.status, 0, result.stderr || result.stdout);
 const configPath = join(repoRoot, ".ai-agent-hooks.mjs");
 const config = readFileSync(configPath, "utf8");
 assert.match(config, /merge-conflict-markers/);
+assert.match(config, /mergeable-with-base/);
 assert.match(config, /codex-review/);
 assert.match(config, /required:\s*true/);
 assert.match(config, /model:\s*"gpt-5\.4"/);
 assert.match(config, /reasoningEffort:\s*"high"/);
 assert.match(config, /failOnSeverities:\s*\["high", "critical"\]/);
+
+writeFileSync(
+  configPath,
+  `export default {
+  artifactsDir: ".git/ai-agent-hooks/runs",
+  hooks: {
+    "pre-push": {
+      checks: [
+        { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true }
+      ]
+    }
+  }
+};
+`,
+  "utf8",
+);
+
+result = run("node", [scriptPath, "run", "pre-push"], repoRoot);
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok mergeable-with-base/);
+
+const conflictRepo = mkdtempSync(join(tmpdir(), "ai-agent-hooks-conflict-"));
+result = run("git", ["clone", remoteRoot, conflictRepo], process.cwd());
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.email", "test@example.com"], conflictRepo);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.name", "Test User"], conflictRepo);
+assert.equal(result.status, 0, result.stderr);
+writeFileSync(join(conflictRepo, ".ai-agent-hooks.mjs"), readFileSync(configPath, "utf8"), "utf8");
+writeFileSync(join(conflictRepo, "README.txt"), "local\n", "utf8");
+result = run("git", ["commit", "-am", "local"], conflictRepo);
+assert.equal(result.status, 0, result.stderr);
+
+const remoteWriter = mkdtempSync(join(tmpdir(), "ai-agent-hooks-remote-writer-"));
+result = run("git", ["clone", remoteRoot, remoteWriter], process.cwd());
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.email", "test@example.com"], remoteWriter);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.name", "Test User"], remoteWriter);
+assert.equal(result.status, 0, result.stderr);
+writeFileSync(join(remoteWriter, "README.txt"), "remote\n", "utf8");
+result = run("git", ["commit", "-am", "remote"], remoteWriter);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["push", "origin", "main"], remoteWriter);
+assert.equal(result.status, 0, result.stderr);
+
+result = run("node", [scriptPath, "run", "pre-push"], conflictRepo);
+assert.equal(result.status, 1, result.stderr || result.stdout);
+assert.match(result.stdout, /failed mergeable-with-base/);
+
+const globalBaselineRepo = mkdtempSync(join(tmpdir(), "ai-agent-hooks-global-"));
+result = run("git", ["clone", remoteRoot, globalBaselineRepo], process.cwd());
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.email", "test@example.com"], globalBaselineRepo);
+assert.equal(result.status, 0, result.stderr);
+result = run("git", ["config", "user.name", "Test User"], globalBaselineRepo);
+assert.equal(result.status, 0, result.stderr);
+writeFileSync(join(globalBaselineRepo, "README.txt"), "global baseline\n", "utf8");
+result = run("git", ["commit", "-am", "global baseline"], globalBaselineRepo);
+assert.equal(result.status, 0, result.stderr);
+result = run("node", [scriptPath, "run", "pre-push"], globalBaselineRepo, {
+  ...process.env,
+  AI_AGENT_HOOKS_GLOBAL_BASELINE: "1",
+});
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok mergeable-with-base/);
+assert.doesNotMatch(result.stdout, /codex-review/);
 
 writeFileSync(
   configPath,
@@ -134,6 +212,9 @@ const modelOutput = readFileSync(join(latestRunDir, "codex-review.result.json"),
 assert.match(summary, /codex-review/);
 assert.match(summary, /"overallStatus": "pass"/);
 assert.match(promptOutput, /Changed files list:/);
+assert.match(promptOutput, /Changed files:\n- README\.txt/);
+assert.match(promptOutput, /Unified diff:\n```diff/);
+assert.match(promptOutput, /hello again/);
 assert.match(codexArgs, /exec/);
 assert.match(codexArgs, /model="gpt-5\.4"/);
 assert.match(codexArgs, /model_reasoning_effort="high"/);

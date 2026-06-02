@@ -152,7 +152,7 @@ Before advancing to Build, answer in the pursuit spec. Any yes = review is block
 
 All no → mark gate passed in spec: `Review gate: passed (all-no)`.
 
-This exists because two independent reflections (blueprint-agent hosting, agent-dev-container skills-workflow) documented review being silently skipped on trust-boundary changes and CRITs being caught post-merge.
+This exists because multiple independent reflections documented review being silently skipped on trust-boundary changes and CRITs being caught post-merge.
 
 ## Build — complete before testing
 
@@ -181,7 +181,7 @@ Before declaring done, audit the diff. Does new code match codebase patterns? Re
 
 **Fallback:** `bash ${SKILL_DIR}/diff-audit.sh`.
 
-Either path: fix every CRITICAL and HIGH before Evaluate. Skip only for one-file reversible changes. Three independent reflections (skills-workflow, hosting-skill-workflow, gpu-providers-session) show CRITs landing in main because this step was treated as optional — it is not.
+Either path: fix every CRITICAL and HIGH before Evaluate. Skip only for one-file reversible changes. Multiple independent reflections show CRITs landing in main because this step was treated as optional — it is not.
 
 ## Evaluate
 

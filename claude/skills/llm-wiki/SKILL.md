@@ -1,6 +1,6 @@
 ---
 name: llm-wiki
-description: "Maintain an Obsidian-compatible LLM wiki: ingest raw sources, update interlinked markdown pages, answer questions with citations, lint contradictions/staleness/orphans, and run a maintainer+critic loop for compounding knowledge bases."
+description: "Maintain an Obsidian-compatible LLM wiki: ingest raw sources, update interlinked markdown pages, answer questions with citations, lint contradictions/staleness/orphans, and run a maintainer+critic loop for compounding knowledge bases. Triggers: 'build a knowledge base', 'maintain an Obsidian vault', 'second brain', 'ingest these sources/transcripts into a wiki', 'lint the wiki', 'keep my notes interlinked', 'knowledge wiki', 'answer from my notes with citations'."
 ---
 
 # LLM Wiki

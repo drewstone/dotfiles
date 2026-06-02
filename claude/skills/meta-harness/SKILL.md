@@ -233,11 +233,11 @@ curl -X POST http://localhost:7374/api/evolve-code -H 'Content-Type: application
   "iterations": 10,
   "parallelism": 2,
   "dimensions": ["accuracy", "efficiency"],
-  "backend": "tangle"
+  "backend": "<your-remote-backend>"
 }'
 ```
 
-Dispatches N parallel proposers (tmux locally or Tangle Sandbox containers remotely), each reading the shared frontier. Foreman tracks goals, costs, sessions, taste signals.
+Foreman is an optional external orchestrator. Dispatches N parallel proposers (tmux locally or remote sandbox containers), each reading the shared frontier. Foreman tracks goals, costs, sessions, taste signals.
 
 Without Foreman: run the loop manually in a single CC session. Propose → Validate → Record, repeated.
 

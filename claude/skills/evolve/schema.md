@@ -43,7 +43,7 @@ One JSON object per line. This is the canonical structured log of every evolve e
 ## Example
 
 ```jsonl
-{"id":"exp_001","project":"phony","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-huberman","agent-mark-hyman","agent-peter-attia"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Health creators need disclaimers. Judge flagged medical advice without caveats.","learnings":["Safety disclaimers lift all health agents universally","Single-line 'consult your physician' insufficient — need 5-6 specific guidelines"],"reps":3,"productValueClaim":"safety score >= 0.70 means fewer compliance complaints from health vertical customers"}
+{"id":"exp_001","project":"your-product","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-a","agent-b","agent-c"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Domain agents need disclaimers. Judge flagged advice without caveats.","learnings":["Safety disclaimers lift all agents in the vertical universally","A single-line disclaimer is insufficient — need 5-6 specific guidelines"],"reps":3,"productValueClaim":"safety score >= 0.70 means fewer compliance issues from regulated-vertical customers"}
 ```
 
 ## Product Quality Scorecard
@@ -52,7 +52,7 @@ One JSON object per line. This is the canonical structured log of every evolve e
 
 ```json
 {
-  "product": "phony",
+  "product": "your-product",
   "timestamp": "2026-03-20T04:00:00Z",
   "flows": [
     {"name": "synthetic_conversation", "score": 0.80, "target": 0.85, "status": "pass"},
@@ -67,7 +67,7 @@ One JSON object per line. This is the canonical structured log of every evolve e
 
 ## Why structured data matters
 
-1. **Cross-project patterns**: "Safety disclaimers worked on phony voice agents. Do they work on scribe meeting bots?" — queryable from the JSONL.
+1. **Cross-project patterns**: "Safety disclaimers worked on the voice agents. Do they work on the meeting-notes bots?" — queryable from the JSONL.
 2. **Meta-learning**: Which categories of experiments have the highest success rate? Prompt? Config? Code?
 3. **Failure analysis**: What's the most common failure mode? Deployment verification? Scoring artifacts?
 4. **Research potential**: Aggregate data across projects → methodology papers on autonomous improvement.
