@@ -9,6 +9,7 @@ For every route/page:
 - URL/route
 - Page job
 - Primary persona and decision
+- Product brief alignment
 - Primary data
 - Secondary data
 - Primary action
@@ -53,7 +54,8 @@ For every component/subcomponent:
 
 Score each option 1-10:
 
-- User fit: Does this match the user's domain workflow?
+- Product brief fit: Does this match the product's stated job, users, workflows, posture, and non-goals?
+- User fit: Does this match the user's actual workflow?
 - Information hierarchy: Is the right data obvious first?
 - Density: Is it compact without becoming illegible?
 - Interaction clarity: Does the user know what can be clicked, expanded, dragged, copied, or edited?
@@ -82,18 +84,35 @@ For every concrete user complaint or prior unresolved risk:
 
 Do not collapse multiple complaints into a vague bucket. "Light theme is wrong" is a category; "Top agent hover has dark text on dark hover in light mode" is a checkable item.
 
-## Product UI Heuristics
+## Product Brief Fields
 
-For trading, crypto, DeFi, and AI-operator tools:
+Before judging the UI, create or update `PRODUCT_BRIEF.md` and answer:
 
-- Show current state, risk, exposure, recent activity, provenance, and next action before explanatory copy.
-- Prefer tables, ledgers, charts, tapes, inspectors, and command surfaces over marketing cards.
-- Keep route and account context persistent but compact.
-- Make addresses, IDs, transactions, vaults, runs, and references copyable when they matter.
-- Show venue/asset identity with logos or recognizable marks when available.
-- Preserve auditability: decisions, traces, fills, and validations must be inspectable.
-- Do not hide critical state behind hover-only UI.
-- Do not use fake success states, fake trades, or synthetic transcripts.
+- Product: What is this product, in one concrete sentence?
+- Status: Prototype, internal tool, beta, production, marketing site, admin console, workflow app, marketplace, game, etc.
+- Primary users: Who uses it, what expertise do they have, and what do they already understand?
+- Core jobs: What must the product help them decide or do?
+- Primary workflows: What are the 3-7 workflows the UI must make obvious?
+- Critical data: What records, metrics, objects, statuses, or media are users acting on?
+- Primary actions: What commands, submissions, edits, approvals, navigation, or inspections matter?
+- Trust/risk/compliance: What must be accurate, auditable, accessible, permissioned, reversible, or safe?
+- Design posture: Dense operations tool, creative editor, consumer app, marketplace, executive dashboard, technical docs, marketing page, game, etc.
+- Non-goals: What patterns would be tempting but wrong for this product?
+- Evidence: Which files, screenshots, routes, APIs, docs, or user statements support the brief?
+- Open questions: What cannot be inferred yet?
+
+## Domain Heuristics
+
+Derive product-specific heuristics from `PRODUCT_BRIEF.md`. Examples:
+
+- Operations tools: prioritize current state, owner, risk, next action, history, and exception handling over explanatory copy.
+- Creative tools: prioritize canvas/output, fast iteration controls, asset provenance, undo/redo, and export confidence.
+- Marketplaces: prioritize item identity, comparison, trust, pricing, availability, reviews, and checkout path.
+- Developer tools: prioritize setup state, API keys, logs, errors, docs adjacency, copyable commands, and integration proof.
+- Admin/compliance tools: prioritize audit trail, permissions, validation state, irreversible actions, and exact record identity.
+- Trading/financial tools: prioritize balances, risk, exposure, orders/executions, provenance, venue/account identity, and reconciliation.
+
+Use examples only after the product brief proves the category. Do not impose a category because it appears in this matrix.
 
 ## Visual Verification Checklist
 
@@ -142,3 +161,4 @@ The pass is not complete while any of these are true:
 - A user complaint is marked fixed without a command, screenshot, or source-code proof.
 - A deploy was requested but only the push succeeded. Production must be checked after the deploy workflow finishes.
 - A route still has duplicated navigation systems unless the trace explains each layer's distinct job.
+- The audit makes domain-specific claims that are not grounded in `PRODUCT_BRIEF.md` evidence.
