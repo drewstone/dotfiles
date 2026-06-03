@@ -21,6 +21,9 @@ For every route/page:
 - Light/dark behavior
 - Screenshots checked
 - Score before/after
+- User complaints mapped
+- Unresolved risks
+- Ship/live proof if production-facing
 
 ## Component Inventory Fields
 
@@ -42,6 +45,9 @@ For every component/subcomponent:
 - Theme risk
 - Accessibility risk
 - Verification method
+- Screenshot or DOM proof
+- Delete/merge/keep decision
+- Score before/after
 
 ## Alternative Scoring
 
@@ -60,6 +66,21 @@ Winner selection rule:
 - Pick the highest product score, not the easiest patch.
 - If two options tie, choose the one that removes duplication and improves future system consistency.
 - If the best option requires a real infrastructure change, start it; do not replace it with a deceptive local workaround.
+
+## Complaint Ledger Fields
+
+For every concrete user complaint or prior unresolved risk:
+
+- Source: user turn, screenshot, trace section, test failure, live smoke, or audit finding
+- Surface: route/page/component/subcomponent
+- Failure type: product hierarchy, visual craft, density, theme, interaction, data truth, accessibility, responsiveness, deployment
+- Current evidence
+- Expected proof
+- Fix decision: fix now, prove already fixed, defer with reason, or blocked
+- Verification command or screenshot
+- Status: open, fixed, verified, unresolved
+
+Do not collapse multiple complaints into a vague bucket. "Light theme is wrong" is a category; "Top agent hover has dark text on dark hover in light mode" is a checkable item.
 
 ## Product UI Heuristics
 
@@ -96,6 +117,8 @@ Check at least:
 - 768px tablet if supported
 - 1280px and 1440px desktop
 
+For 10/10 mode, also produce or inspect a contact sheet or screenshot set that includes the routes named in the complaint ledger. Check the screenshot pixels, not only the test exit code.
+
 Flag immediately:
 
 - Body scroll on core desktop workspaces
@@ -108,3 +131,14 @@ Flag immediately:
 - Labels that do not help the user decide or act
 - Cards inside cards
 - Components whose visible data does not match the user workflow
+
+## Hard Gates
+
+The pass is not complete while any of these are true:
+
+- A primary route has no screenshot proof.
+- A component was changed but no hover/focus/theme state was inspected when relevant.
+- A table/chart/data surface shows values that cannot be reconciled to the available data source.
+- A user complaint is marked fixed without a command, screenshot, or source-code proof.
+- A deploy was requested but only the push succeeded. Production must be checked after the deploy workflow finishes.
+- A route still has duplicated navigation systems unless the trace explains each layer's distinct job.
