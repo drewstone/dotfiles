@@ -100,6 +100,9 @@ fi
 # Reflections (cross-project analysis)
 link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
 
+# Directives (per-response interaction-style layer; read by hooks/inject-directive.sh)
+link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
+
 # Skills (only real directories, skip broken symlinks)
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
