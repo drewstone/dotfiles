@@ -255,8 +255,8 @@ When adding new pages (service pages, etc.) that don't exist on the original:
 - Use the SAME CSS classes (wf-section-hero, wf-section-wrapper, etc.)
 - Match the same section structure, heading sizes, and spacing
 - Don't invent a new design language — extend the existing one
-- Use page-scoped CSS (ba-*, sb-*, bp-* prefixes) for page-specific styles
-- Keep max-widths consistent across all pages (80rem standard)
+- Use a consistent page-scoped CSS prefix (e.g. `pg-*`) for page-specific styles
+- Keep max-widths consistent across all pages (match the source site's container width)
 
 ### Product screenshots > SVG mockups:
 When showcasing products on marketing pages:

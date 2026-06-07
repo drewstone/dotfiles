@@ -64,7 +64,3 @@ Higher quality: `export NANOBANANA_MODEL=gemini-3-pro-image-preview`
 1. List `./nanobanana-output/` for the file
 2. Show to user, offer variations if needed
 3. For changes: re-run with adjusted prompt or use `/edit`
-
-## Local Python Alternative (this project)
-
-For content-engine pipelines, use `render_nanobanana` from `~/tools/content-engine/content_engine/math_image.py` — calls `gemini-3-pro-image-preview` directly and stamps the Tangle logo.

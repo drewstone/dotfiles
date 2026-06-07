@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
+
+if [ -x "$HOME/code/dotfiles/bin/ai-agent-hooks.mjs" ]; then
+  exec "$HOME/code/dotfiles/bin/ai-agent-hooks.mjs" run pre-push "$@"
+fi
+
+if command -v ai-agent-hooks >/dev/null 2>&1; then
+  exec ai-agent-hooks run pre-push "$@"
+fi
+
+echo "ai-agent-hooks not found. Expected $HOME/code/dotfiles/bin/ai-agent-hooks.mjs or ai-agent-hooks in PATH." >&2
+exit 1

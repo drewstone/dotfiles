@@ -21,15 +21,6 @@
         ]
       },
       {
-        "matcher": "Bash|Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/ssh-guard.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Agent",
         "hooks": [
           {
@@ -71,7 +62,29 @@
     "last30days@last30days-skill": true,
     "tangle-blueprint-innovate@tangle-network-skills": true,
     "agent-factory@tangle-skills-internal": true,
-    "agent-platform@tangle-skills-internal": true
+    "agent-platform@tangle-skills-internal": true,
+    "blueprint-launch@tangle-skills-internal": true,
+    "brand-system@tangle-skills-internal": true,
+    "cold-email@tangle-skills-internal": true,
+    "community-marketing@tangle-skills-internal": true,
+    "competitor-alternatives@tangle-skills-internal": true,
+    "content-review@tangle-skills-internal": true,
+    "content-strategy@tangle-skills-internal": true,
+    "customer-research@tangle-skills-internal": true,
+    "free-tool-strategy@tangle-skills-internal": true,
+    "launch-strategy@tangle-skills-internal": true,
+    "lunour-branding-playbook@tangle-skills-internal": true,
+    "persona-workshop@tangle-skills-internal": true,
+    "pricing-strategy@tangle-skills-internal": true,
+    "programmatic-seo@tangle-skills-internal": true,
+    "sales-enablement@tangle-skills-internal": true,
+    "tangle-positioning@tangle-skills-internal": true,
+    "vault-audit@tangle-skills-internal": true,
+    "website-craft@tangle-skills-internal": true,
+    "content-engine-images@tangle-skills-internal": true,
+    "agent-eval-adoption@tangle-network-skills": true,
+    "agent-stack-adoption@tangle-network-skills": true,
+    "postiz@tangle-skills-internal": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -107,5 +120,7 @@
   },
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "auto"
+  "theme": "auto",
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true
 }

@@ -31,6 +31,26 @@ Skill inventory and maintenance notes live in `claude/skills/README.md`. Tool do
 
 AI-assisted review gates via `ai-agent-hooks`.
 
+## Global Git Etiquette Guard
+
+Install the universal fast guards once:
+
+```bash
+./git/install.sh
+```
+
+This sets:
+
+- `core.hooksPath=/home/drew/code/dotfiles/git/hooks`
+- `init.templateDir=/home/drew/code/dotfiles/git/templates`
+
+Global baseline behavior:
+
+- `pre-commit`: blocks merge conflict markers and suspicious hard-coded secrets.
+- `pre-push`: blocks merge conflict markers, suspicious hard-coded secrets, and branches that do not merge cleanly into `origin/main`.
+
+Repos can still opt into stricter review gates with a checked-in `.ai-agent-hooks.mjs`; that config overrides the global baseline for that repo.
+
 ## What It Does
 
 `ai-agent-hooks` installs reusable `pre-commit` and `pre-push` hooks into any Git repository.

@@ -18,11 +18,12 @@ const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 const HOOK_TEMPLATES_DIR = join(PACKAGE_ROOT, "hooks");
 const CONFIG_TEMPLATE_PATH = join(PACKAGE_ROOT, "templates", "ai-agent-hooks.mjs");
 
-const BUILTIN_IDS = new Set(["merge-conflict-markers", "suspicious-secrets"]);
+const BUILTIN_IDS = new Set(["merge-conflict-markers", "suspicious-secrets", "mergeable-with-base"]);
 const FINDING_SEVERITIES = ["low", "medium", "high", "critical"];
 const DEFAULT_FAIL_ON_SEVERITIES = ["high", "critical"];
 const DEFAULT_AUDIT_PROMPT =
   "Review this change before it is pushed. Focus on correctness, regressions, security issues, missing tests, and production-readiness gaps. Return concise findings only. If there are no findings, say 'No findings'.";
+const DEFAULT_PROMPT_DIFF_MAX_CHARS = 200_000;
 
 function parseArgs(args) {
   const flags = new Map();
@@ -319,6 +320,52 @@ function checkSuspiciousSecrets(repoRoot, files) {
   return { ok: true, status: 0, output: "No suspicious secrets found." };
 }
 
+function checkMergeableWithBase(repoRoot, check) {
+  const baseRef = typeof check.baseRef === "string" && check.baseRef.trim()
+    ? check.baseRef.trim()
+    : "origin/main";
+  const remote = typeof check.remote === "string" && check.remote.trim()
+    ? check.remote.trim()
+    : "origin";
+  const remoteBranch = typeof check.remoteBranch === "string" && check.remoteBranch.trim()
+    ? check.remoteBranch.trim()
+    : baseRef.replace(/^refs\/remotes\//, "").replace(`${remote}/`, "");
+
+  if (check.fetch !== false) {
+    const fetch = runGit(repoRoot, ["fetch", "--quiet", remote, remoteBranch], true);
+    if (!fetch.ok) {
+      return {
+        ok: false,
+        status: fetch.status || 1,
+        output: fetch.stderr || `Failed to fetch ${remote} ${remoteBranch}`,
+      };
+    }
+  }
+
+  const base = runGit(repoRoot, ["rev-parse", "--verify", baseRef], true);
+  if (!base.ok) {
+    return {
+      ok: false,
+      status: base.status || 1,
+      output: `Base ref is not available: ${baseRef}`,
+    };
+  }
+
+  const merge = runGit(repoRoot, ["merge-tree", "--write-tree", baseRef, "HEAD"], true);
+  if (!merge.ok) {
+    return {
+      ok: false,
+      status: merge.status || 1,
+      output:
+        `HEAD does not merge cleanly into ${baseRef}.\n` +
+        `Rebase or merge ${baseRef}, resolve conflicts locally, rerun tests, then push.\n\n` +
+        `${merge.stdout}${merge.stderr}`,
+    };
+  }
+
+  return { ok: true, status: 0, output: `HEAD merges cleanly into ${baseRef}.` };
+}
+
 function runBuiltin(builtin, context) {
   if (builtin === "merge-conflict-markers") {
     return checkMergeConflictMarkers(context.repoRoot, context.files);
@@ -326,6 +373,10 @@ function runBuiltin(builtin, context) {
 
   if (builtin === "suspicious-secrets") {
     return checkSuspiciousSecrets(context.repoRoot, context.files);
+  }
+
+  if (builtin === "mergeable-with-base") {
+    return checkMergeableWithBase(context.repoRoot, context.check);
   }
 
   return { ok: false, status: 1, output: `Unknown builtin check: ${builtin}` };
@@ -511,6 +562,11 @@ function buildAuditPrompt(check, context, artifactPaths) {
   const basePrompt = typeof check.prompt === "string" && check.prompt.trim()
     ? check.prompt.trim()
     : DEFAULT_AUDIT_PROMPT;
+  const promptDiffMaxChars =
+    typeof check.promptDiffMaxChars === "number" && Number.isFinite(check.promptDiffMaxChars)
+      ? Math.max(0, check.promptDiffMaxChars)
+      : DEFAULT_PROMPT_DIFF_MAX_CHARS;
+  const diffForPrompt = truncateForPrompt(context.diff || "", promptDiffMaxChars);
 
   return [
     basePrompt,
@@ -526,8 +582,22 @@ function buildAuditPrompt(check, context, artifactPaths) {
     `Changed files list: ${artifactPaths.changedFilesPath}`,
     `Unified diff patch: ${artifactPaths.diffPath}`,
     "",
-    "Read the changed files list and diff patch before producing findings.",
+    "The changed-files list and unified diff are embedded below; use the artifact paths only for reruns/debugging.",
+    "",
+    "Changed files:",
+    context.files.length > 0 ? context.files.map((file) => `- ${file}`).join("\n") : "(none)",
+    "",
+    "Unified diff:",
+    "```diff",
+    diffForPrompt,
+    "```",
   ].join("\n");
+}
+
+function truncateForPrompt(value, maxChars) {
+  if (maxChars === 0 || value.length <= maxChars) return value;
+  const omitted = value.length - maxChars;
+  return `${value.slice(0, maxChars)}\n\n[diff truncated: ${omitted} chars omitted; inspect artifact file for full patch]`;
 }
 
 function writeAuditArtifacts(runDir, checkId, context, check) {
@@ -802,7 +872,18 @@ function normalizeChecks(hookConfig) {
       if (!BUILTIN_IDS.has(check.builtin)) {
         throw new Error(`Unknown builtin '${check.builtin}' for check '${id}'`);
       }
-      return { id, required, group, timeoutSec, kind: "builtin", builtin: check.builtin };
+      return {
+        id,
+        required,
+        group,
+        timeoutSec,
+        kind: "builtin",
+        builtin: check.builtin,
+        baseRef: typeof check.baseRef === "string" ? check.baseRef : "",
+        remote: typeof check.remote === "string" ? check.remote : "",
+        remoteBranch: typeof check.remoteBranch === "string" ? check.remoteBranch : "",
+        fetch: check.fetch !== false,
+      };
     }
 
     if (typeof check.audit === "object" && check.audit !== null) {
@@ -827,6 +908,10 @@ function normalizeChecks(hookConfig) {
           ? check.audit.failOnSeverities.filter((value) => FINDING_SEVERITIES.includes(value))
           : DEFAULT_FAIL_ON_SEVERITIES,
         skipIfMissing: check.audit.skipIfMissing === true,
+        promptDiffMaxChars:
+          typeof check.audit.promptDiffMaxChars === "number"
+            ? check.audit.promptDiffMaxChars
+            : DEFAULT_PROMPT_DIFF_MAX_CHARS,
       };
     }
 
@@ -845,6 +930,7 @@ function defaultConfig() {
       "pre-commit": {
         checks: [
           { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
           { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
         ],
       },
@@ -871,6 +957,27 @@ function defaultConfig() {
   };
 }
 
+function globalBaselineConfig() {
+  return {
+    artifactsDir: ".git/ai-agent-hooks/runs",
+    hooks: {
+      "pre-commit": {
+        checks: [
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+      "pre-push": {
+        checks: [
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+    },
+  };
+}
+
 async function loadConfig(repoRoot) {
   const modulePath = join(repoRoot, ".ai-agent-hooks.mjs");
   if (existsSync(modulePath)) {
@@ -881,6 +988,10 @@ async function loadConfig(repoRoot) {
   const jsonPath = join(repoRoot, ".ai-agent-hooks.json");
   if (existsSync(jsonPath)) {
     return JSON.parse(readFileSync(jsonPath, "utf8"));
+  }
+
+  if (process.env.AI_AGENT_HOOKS_GLOBAL_BASELINE === "1") {
+    return globalBaselineConfig();
   }
 
   return defaultConfig();
@@ -957,7 +1068,7 @@ async function runHookCommand(rawArgs) {
 
     let outcome;
     if (check.kind === "builtin") {
-      outcome = runBuiltin(check.builtin, context);
+      outcome = runBuiltin(check.builtin, { ...context, check });
       writeFileSync(logPath, outcome.output || "", "utf8");
       outcome.elapsedMs = Date.now() - started;
     } else if (check.kind === "audit") {
@@ -1000,7 +1111,7 @@ async function runHookCommand(rawArgs) {
         const started = Date.now();
 
         if (check.kind === "builtin") {
-          const outcome = runBuiltin(check.builtin, context);
+          const outcome = runBuiltin(check.builtin, { ...context, check });
           writeFileSync(logPath, outcome.output || "", "utf8");
           return {
             id: check.id,
