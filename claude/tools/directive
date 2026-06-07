@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# directive — control surface for the per-response interaction directive.
+#
+# The directive is the response-shaping layer injected into every agent turn by
+# hooks/inject-directive.sh. This CLI switches the active variant, enables A/B
+# rotation, scaffolds new variants, and tails the assignment log.
+#
+# Source of truth lives in dotfiles (so changes sync to every machine); this CLI
+# edits the dotfiles copy and the ~/.claude symlink resolves to it.
+
+set -euo pipefail
+
+# Resolve the dotfiles directives dir (real files), not the ~/.claude symlink,
+# so writes land in the repo and get committed/synced.
+DOTFILES_DIR="${CLAUDE_DOTFILES_DIR:-$HOME/dotfiles/claude}"
+DIR="$DOTFILES_DIR/directives"
+VARIANTS="$DIR/variants"
+ACTIVE_FILE="$DIR/active"
+LOG="$HOME/.claude/directives-log.jsonl"
+
+die() { echo "directive: $*" >&2; exit 1; }
+[ -d "$VARIANTS" ] || die "no directives dir at $DIR (run install.sh?)"
+
+list_variants() {
+  for f in "$VARIANTS"/*.md; do
+    [ -e "$f" ] || continue
+    basename "$f" .md
+  done
+}
+
+current() { tr -d '[:space:]' < "$ACTIVE_FILE" 2>/dev/null || true; }
+
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status|"")
+    cur="$(current)"
+    echo "active: ${cur:-<none>}"
+    if [ "${cur#rotate:}" != "$cur" ]; then
+      echo "  (A/B rotation across ${cur#rotate:})"
+    fi
+    echo "variants:"
+    while read -r v; do
+      [ -n "$v" ] || continue
+      mark=" "
+      [ "$v" = "$cur" ] && mark="*"
+      printf "  %s %s\n" "$mark" "$v"
+    done < <(list_variants)
+    ;;
+
+  list)
+    list_variants
+    ;;
+
+  show)
+    cur="$(current)"
+    slug="${1:-$cur}"
+    # If active is a rotation spec and no slug given, show the first in the pool.
+    if [ "${slug#rotate:}" != "$slug" ]; then slug="${slug#rotate:}"; slug="${slug%%,*}"; fi
+    file="$VARIANTS/$slug.md"
+    [ -f "$file" ] || die "no variant '$slug'"
+    echo "=== $slug ==="
+    cat "$file"
+    ;;
+
+  set)
+    [ $# -ge 1 ] || die "usage: directive set <slug>"
+    slug="$1"
+    [ -f "$VARIANTS/$slug.md" ] || die "no variant '$slug' (have: $(list_variants | paste -sd, -))"
+    printf '%s\n' "$slug" > "$ACTIVE_FILE"
+    echo "active -> $slug"
+    ;;
+
+  rotate)
+    [ $# -ge 1 ] || die "usage: directive rotate <slug,slug,...>"
+    spec="$1"
+    IFS=',' read -ra pool <<< "$spec"
+    for s in "${pool[@]}"; do
+      [ -f "$VARIANTS/$s.md" ] || die "no variant '$s'"
+    done
+    printf 'rotate:%s\n' "$spec" > "$ACTIVE_FILE"
+    echo "active -> rotate:$spec (deterministic per-session A/B)"
+    ;;
+
+  new)
+    [ $# -ge 1 ] || die "usage: directive new <slug>"
+    slug="$1"
+    file="$VARIANTS/$slug.md"
+    [ -e "$file" ] && die "variant '$slug' already exists"
+    cat > "$file" <<'EOF'
+Per-response interaction directive (NEW VARIANT — encode one distinct hypothesis about
+what makes a response better; not a cosmetic tweak). Shapes HOW you respond, not what
+rules apply (those live in CLAUDE.md).
+
+## Voice
+
+## Lead
+
+## Close
+EOF
+    echo "created $file — edit it, then: directive rotate $(current | sed 's/^rotate://'),$slug"
+    ;;
+
+  log)
+    n="${1:-20}"
+    [ -f "$LOG" ] || die "no log yet at $LOG"
+    tail -n "$n" "$LOG"
+    ;;
+
+  *)
+    die "unknown command '$cmd' (status|list|show|set|rotate|new|log)"
+    ;;
+esac
