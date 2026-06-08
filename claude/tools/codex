@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+self="$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")"
+nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+
+run_codex() {
+  local candidate="$1"
+  shift
+
+  [ -x "$candidate" ] || return 1
+
+  local resolved
+  resolved="$(readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate")"
+  [ "$resolved" != "$self" ] || return 1
+
+  PATH="$(dirname "$candidate"):$PATH" exec "$candidate" "$@"
+}
+
+if [ -s "$nvm_dir/nvm.sh" ]; then
+  . "$nvm_dir/nvm.sh"
+
+  if nvm use --silent default >/dev/null 2>&1; then
+    prefix="$(npm prefix -g 2>/dev/null || true)"
+    if [ -n "$prefix" ]; then
+      run_codex "$prefix/bin/codex" "$@" || true
+    fi
+  fi
+fi
+
+for candidate in "$nvm_dir"/versions/node/*/bin/codex; do
+  run_codex "$candidate" "$@" || true
+done
+
+printf 'codex not found under %s/versions/node/*/bin/codex\n' "$nvm_dir" >&2
+exit 127
