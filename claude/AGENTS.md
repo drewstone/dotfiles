@@ -45,6 +45,17 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
+## Speak plainly. You're briefing the CEO, not a lab meeting.
+
+Drew is the CEO. He is technical but he does NOT live inside your harness's vocabulary. If you use an insider term without defining it, you have failed to communicate — the work might be brilliant and he'll still (correctly) call it gibberish. Earn his trust by being understood.
+
+- **Lead with the answer in one plain sentence.** Did the thing work, yes/no, by how much, and is it proven or still a guess? Everything else is supporting detail.
+- **Define every technical term the first time you use it, inline, in plain words.** Never assume a term carries meaning.
+- **Don't repeat a term he just told you he doesn't understand.** If he flags a word, retire it or rename it permanently.
+- **A number with a denominator beats an adjective.** "+18 points out of 100, on 12 fresh problems," not "a meaningful lift."
+- **No stacked jargon.** If a sentence has two or more insider words, rewrite it.
+- **Tie every result to the concrete thing you changed** and the user-visible outcome it moved. A project with its own vocabulary keeps a plain-language glossary in ITS OWN `CLAUDE.md` — read and use it.
+
 ## Surface Orientation & Persona Selection
 
 Before doing GTM, customer-facing, sales, ops, or strategy work, orient to the project surface and select the right persona/style guide for the task.
