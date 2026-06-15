@@ -18,12 +18,12 @@ Includes:
 - `CLAUDE.md` — global defaults (quality bar, work style, succinctness)
 - `AGENTS.md` — shared agent instructions synced to Claude, Codex, and OpenCode homes
 - `settings.json` — hooks, plugins, trusted directories
-- 18 portable skills (`/polish`, `/verify`, `/work-status`, `/critical-audit`, `/code-review`, etc.)
+- portable skills (`/polish`, `/verify`, `/critical-audit`, `/docs-slop-audit`, `/tangle-blueprint-expert`, etc.)
 - `claude-profile` in `~/bin` — switch Claude credentials by named profile
 - `gh-drew` in `~/bin` — run GitHub CLI commands only after validating the API account is `drewstone`
 - Langfuse observability hook
 
-Project-specific skills (tangle-blueprint-expert, blueprint-frontend, sandbox-blueprint) are kept in their respective project repos, not here.
+Blueprint documentation and copy-audit skills that enforce global agent behavior live here. Blueprint implementation skills that only apply inside one product repo stay with that repo.
 
 Skill inventory and maintenance notes live in `claude/skills/README.md`. Tool docs live in `claude/tools/README.md`.
 

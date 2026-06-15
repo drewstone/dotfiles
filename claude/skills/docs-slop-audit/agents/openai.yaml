@@ -1,0 +1,4 @@
+interface:
+  display_name: "Docs Slop Audit"
+  short_description: "Audit technical docs for slop and claim risk"
+  default_prompt: "Use $docs-slop-audit to review a docs section for slop, weak claims, and unclear product boundaries."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tangle Blueprint Expert"
+  short_description: "Ground Tangle blueprint docs and architecture in repo evidence"
+  default_prompt: "Use $tangle-blueprint-expert to review or write Tangle blueprint docs with correct blueprint/operator/service-instance boundaries and repo-grounded claims."
