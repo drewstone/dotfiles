@@ -32,7 +32,7 @@ const excludedDirs = new Set([
 const extensions = new Set(['.md', '.mdx', '.txt'])
 
 const opencodePeerContext =
-  /\b(Claude Code|Codex|AMP|Factory Droids|Kimi Code|Pi|Forge|ACP|Cursor|Hermes|CLI base|Gemini CLI|\/infrastructure\/harnesses|\/api\/capabilities|supported harnesses|peer harnesses|other supported harnesses)\b/i
+  /\b(Claude Code|Codex|AMP|Factory Droids|Kimi Code|Pi|Forge|ACP|Cursor|OpenClaw|NanoClaw|Hermes|CLI base|Gemini CLI|\/infrastructure\/harnesses|\/api\/capabilities|supported harnesses|peer harnesses|other supported harnesses)\b/i
 
 const boundarySeparationContext =
   /\b(raw protocol|protocol fallback|without implying any protocol guarantee|depends on a registered blueprint service instance|chain\/indexer|live operator|operator endpoint|product\/API-key|hosted app owns|protocol page owns|generic protocol route|raw service state)\b/i
