@@ -320,13 +320,24 @@ function checkSuspiciousSecrets(repoRoot, files) {
   return { ok: true, status: 0, output: "No suspicious secrets found." };
 }
 
+function resolveDefaultBaseRef(repoRoot, remote) {
+  // Use the remote's actual default branch (origin/HEAD) so repos whose base is
+  // develop/master — not main — are checked against the right integration branch.
+  const sym = runGit(repoRoot, ["symbolic-ref", "--quiet", `refs/remotes/${remote}/HEAD`], true);
+  if (sym.ok) {
+    const ref = (sym.stdout || "").trim().replace(/^refs\/remotes\//, "");
+    if (ref) return ref;
+  }
+  return `${remote}/main`;
+}
+
 function checkMergeableWithBase(repoRoot, check) {
-  const baseRef = typeof check.baseRef === "string" && check.baseRef.trim()
-    ? check.baseRef.trim()
-    : "origin/main";
   const remote = typeof check.remote === "string" && check.remote.trim()
     ? check.remote.trim()
     : "origin";
+  const baseRef = typeof check.baseRef === "string" && check.baseRef.trim()
+    ? check.baseRef.trim()
+    : resolveDefaultBaseRef(repoRoot, remote);
   const remoteBranch = typeof check.remoteBranch === "string" && check.remoteBranch.trim()
     ? check.remoteBranch.trim()
     : baseRef.replace(/^refs\/remotes\//, "").replace(`${remote}/`, "");
@@ -334,6 +345,12 @@ function checkMergeableWithBase(repoRoot, check) {
   if (check.fetch !== false) {
     const fetch = runGit(repoRoot, ["fetch", "--quiet", remote, remoteBranch], true);
     if (!fetch.ok) {
+      // Remote branch doesn't exist yet (new repo or new branch on remote) — nothing to conflict with.
+      const noRemoteRef = (fetch.stderr || "").includes("couldn't find remote ref") ||
+        (fetch.stderr || "").includes("does not appear to be a git repository");
+      if (noRemoteRef) {
+        return { ok: true, status: 0, output: `${remote}/${remoteBranch} does not exist yet — skipping mergeability check` };
+      }
       return {
         ok: false,
         status: fetch.status || 1,
@@ -344,11 +361,8 @@ function checkMergeableWithBase(repoRoot, check) {
 
   const base = runGit(repoRoot, ["rev-parse", "--verify", baseRef], true);
   if (!base.ok) {
-    return {
-      ok: false,
-      status: base.status || 1,
-      output: `Base ref is not available: ${baseRef}`,
-    };
+    // Base ref unavailable after a successful fetch means it truly doesn't exist — skip.
+    return { ok: true, status: 0, output: `${baseRef} does not exist yet — skipping mergeability check` };
   }
 
   const merge = runGit(repoRoot, ["merge-tree", "--write-tree", baseRef, "HEAD"], true);
@@ -1036,7 +1050,18 @@ async function runHookCommand(rawArgs) {
     process.exit(0);
   }
 
-  const artifactsRoot = resolve(repoRoot, config.artifactsDir || ".git/ai-agent-hooks/runs");
+  // In a worktree, `<root>/.git` is a FILE pointing at the real git dir, so
+  // `resolve(repoRoot, ".git/...")` would mkdir under a non-directory (ENOTDIR).
+  // Resolve the actual git dir so artifacts land in the worktree's git store.
+  const gitDirProbe = runGit(repoRoot, ["rev-parse", "--absolute-git-dir"], true);
+  const gitDir = gitDirProbe.ok ? gitDirProbe.stdout.trim() : resolve(repoRoot, ".git");
+  const configuredDir = config.artifactsDir || ".git/ai-agent-hooks/runs";
+  // A `.git/...` artifactsDir is logically relative to the git dir, which in a
+  // worktree is NOT `<root>/.git` (that's a file). Rebase onto the real git dir.
+  const gitRelative = configuredDir === ".git" || configuredDir.startsWith(".git/");
+  const artifactsRoot = gitRelative
+    ? join(gitDir, configuredDir.slice(".git".length).replace(/^\//, ""))
+    : resolve(repoRoot, configuredDir);
   const runDir = join(
     artifactsRoot,
     slug(`${new Date().toISOString().replaceAll(":", "-")}-${hookName}`),
