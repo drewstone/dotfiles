@@ -1,6 +1,6 @@
 ---
 name: agent-eval
-description: Trace-first evaluation framework for code-generator + LLM-in-the-loop systems. AgentProfile + scorecard substrate, runEvalCampaign with capture-integrity by construction, assertRealBackend (Phase A guard), HeldOutGate, runProductionLoop, AnalystRegistry, sandbox-harness + multi-layer verifier, propose-review loop, RL bridge. Directives below encode shipped-bug lessons — read before writing integration code.
+description: Trace-first evaluation framework for code-generator + LLM-in-the-loop systems. AgentProfile + scorecard substrate, runEvalCampaign with capture-integrity by construction, assertRealBackend (Phase A guard), HeldOutGate, proposeAutomatedPullRequest (auto-PR), AnalystRegistry, sandbox-harness + multi-layer verifier, propose-review loop, RL bridge. Directives below encode shipped-bug lessons — read before writing integration code.
 ---
 
 # agent-eval — usage directives
@@ -11,11 +11,17 @@ If you are only **adopting** agent-eval in a product (chat handler + an eval har
 
 ---
 
+## Where this sits in the stack
+
+agent-eval is the **bottom substrate**. `@tangle-network/agent-runtime` (~0.63) and `@tangle-network/agent-knowledge` sit ABOVE it and import from it; agent-eval imports from neither — never add an upward dependency. The package ships ~30 subpaths; this skill documents the integrator-relevant ones (root barrel + `/rl`, `/reporting`, `/traces`, `/campaign`, `/matrix`, `/control`, `/diagnose`, `/adapters/{langchain,http,otel}`).
+
 ## Vocabulary
+
+> **Two `AgentProfile` types, same name, distinct shapes.** agent-eval's `AgentProfile` (`agent-profile.ts`) is the narrow **eval-side fingerprint** — the scorecard's unit-of-variation: `id` / `model` / `skills` / `promptVersion` / `tools` / `metadata`, hashed by `agentProfileHash`. It is NOT the richer **harness** `AgentProfile` (prompt + skills + tools + mcp + subagents + hooks + permissions) now owned by `@tangle-network/agent-interface` (~0.9.0, which also owns `HarnessType` / `ReasoningEffort` / `Part` / `ToolPart`). agent-eval does **not** depend on agent-interface (keep it that way) — when you import `AgentProfile`, know which one you mean.
 
 | Term | Plain English |
 |---|---|
-| **AgentProfile** | The eval harness's unit of variation. Pins model + skills + promptVersion + tools. `agentProfileHash` is its behaviour identity. |
+| **AgentProfile** | The eval harness's unit of variation (the agent-eval type, see note above). Pins model + skills + promptVersion + tools. `agentProfileHash` is its behaviour identity. |
 | **Scorecard cell** | `(scenarioId, profileHash)`. The thing you compare across commits. |
 | **RunRecord** | The typed schema every campaign emits. Snapshot-pinned model, costed, hashed prompt/config, captured tokens. |
 | **Sink** | `RawProviderSink` — first-class HTTP-level capture alongside `LlmSpan`. NDJSON, auto-redacted. |
@@ -32,7 +38,7 @@ If you are only **adopting** agent-eval in a product (chat handler + an eval har
 
 Categorised index of the public exports an integrator reaches for. File paths are `src/`-relative inside `@tangle-network/agent-eval`.
 
-### Identity + scoring substrate (the 0.34 spine)
+### Identity + scoring substrate (the identity + scoring spine)
 
 | Primitive | Module | Purpose |
 |---|---|---|
@@ -50,8 +56,7 @@ Categorised index of the public exports an integrator reaches for. File paths ar
 | `runEvalCampaign` | `eval-campaign.ts` | Opinionated matrix runner: variants × scenarios × seeds → `RunRecord[]` + integrity reports + (optional) `researchReport`. Wires `assertLlmRoute` at preflight, builds `TraceStore` + `RawProviderSink` per cell, asserts `assertRunCaptured` after every `endRun`, optionally fires `onRunComplete` hooks. This is the entry point for new evals. |
 | `HeldOutGate` | `held-out-gate.ts` | Paired-delta + overfit-gap promotion gate. Three rejection codes: `few_runs` / `negative_delta` / `overfit_gap`. Pairs by `(experimentId, seed)`; reads `splitTag === 'holdout'` for the paired delta and the search-split for the overfit gap. |
 | `bootstrapCi`, `judgeReplayGate` | `promotion-gate.ts` | Lower-level "is this real" gate — bootstrap CI for paired deltas. Use alongside `HeldOutGate`, not instead. |
-| `runProductionLoop` | `production-loop.ts` | The auto-PR cycle: cluster production failures → evolve on the cluster → gate the candidate → render PR body. Decision types: ship / hold / equivalent / reject / needs_more_data. |
-| `proposeAutomatedPullRequest`, `httpGithubClient`, `ghCliClient` | `auto-pr.ts` | The GitHub client contract for the production loop. `httpGithubClient` for the in-process call; `ghCliClient` when shelling out is preferred. |
+| `proposeAutomatedPullRequest`, `httpGithubClient`, `ghCliClient`, `AutoPrClient` | `auto-pr.ts` | The auto-PR primitive (barrel: "Production loop primitive"). `proposeAutomatedPullRequest(client, input)` validates then creates branch → writes `fileChanges` → commits → pushes → opens a PR; idempotent on `branchName`. Pick a transport: `httpGithubClient` (in-process REST) or `ghCliClient` (shells out to `gh`). The packaged orchestrator is `runImprovementLoop` (formerly `runProductionLoop`); or compose the loop yourself from cluster → evolve → `HeldOutGate` → `proposeAutomatedPullRequest` (see Pattern 2). |
 | `pairedEvalueSequence`, `evaluateInterimReleaseConfidence` | `sequential.ts` | Anytime-valid sequential evaluation (Waudby-Smith & Ramdas 2024 + Howard et al. 2021). Decide at every interim look without inflating type-I error. |
 | `researchReport`, `summaryTable`, `paretoChart`, `gainHistogram` | `summary-report.ts` | Launch-grade artifacts. `researchReport` is async (Web Crypto for the fingerprint). `minPairs` hard floor is `RESEARCH_REPORT_HARD_PAIR_FLOOR = 6`. |
 
@@ -100,7 +105,7 @@ Categorised index of the public exports an integrator reaches for. File paths ar
 
 `@tangle-network/agent-eval/rl`:
 
-`trialsToRunRecords`, `extractVerifiableReward`, `filterDeterministicallyRewarded`, `extractPreferences`, `inverseProbabilityWeighting`, `selfNormalizedImportanceWeighting`, `doublyRobust`, `offPolicyEstimateAll`, `extractStepRewards`, `prmTrainingPairs`, `runContaminationProbe`, `fitBradleyTerry`, `applyEloUpdate`, `buildPairwiseFromCampaign`, `adversarialScenarioSearch`, `runComputeCurve`, `bestOfN`, `selfConsistency`, `paretoFrontier`.
+`campaignToRunRecords`, `observationsFromRunRecords`, `extractVerifiableReward`, `filterDeterministicallyRewarded`, `extractPreferences`, `inverseProbabilityWeighting`, `selfNormalizedImportanceWeighting`, `doublyRobust`, `offPolicyEstimateAll`, `extractStepRewards`, `prmTrainingPairs`, `runContaminationProbe`, `fitBradleyTerry`, `applyEloUpdate`, `buildPairwiseFromCampaign`, `adversarialScenarioSearch`, `runComputeCurve`, `bestOfN`, `selfConsistency`, `paretoFrontier`.
 
 **Do not move these to the root barrel.** The subpath is the contract — RL consumers depend on it for tree-shaking and to opt in to the larger surface explicitly. Reach for the campaign primitive at root first; the RL bridge consumes its `RunRecord[]` output.
 
@@ -228,21 +233,30 @@ console.log(formatScorecardDiff(diff))
 if (diff.summary.regressed > 0) process.exit(1)
 ```
 
-### Pattern 2 — Production loop with httpGithubClient
+### Pattern 2 — Production loop (`runImprovementLoop`, or composed from primitives)
+
+The packaged orchestrator is **`runImprovementLoop`** (the renamed `runProductionLoop`). To customize the cycle, compose it from the primitives instead: cluster production failures → evolve a candidate on the cluster → gate with `HeldOutGate` → open a PR with `proposeAutomatedPullRequest`. The only GitHub primitive is the transport (`httpGithubClient` / `ghCliClient`). (Verify `runImprovementLoop`'s exact signature against the agent-eval barrel before calling it.)
 
 ```ts
-import { runProductionLoop, httpGithubClient } from '@tangle-network/agent-eval'
+import { HeldOutGate, proposeAutomatedPullRequest, httpGithubClient } from '@tangle-network/agent-eval'
 
-await runProductionLoop({
-  productionRuns: await loadProductionRuns(),
-  scenarios,
-  failureCluster: { /* clustering knobs */ },
-  evolve: { /* runPromptEvolution opts */ },
-  ship: {
-    gate: heldOutGateConfig,
-    client: httpGithubClient({ owner: 'your-org', repo: 'your-agent', token: process.env.GH_TOKEN! }),
-    render: (ctx) => ({ title: '...', body: '...', branch: '...', baseBranch: 'main' }),
-  },
+// 1. cluster + evolve are YOUR composition (failure-clustering + runPromptEvolution / your evolve loop)
+const candidate = await evolveOnFailureCluster(await loadProductionRuns(), scenarios)
+
+// 2. gate the candidate — paired delta on holdout + overfit gap
+const gate = new HeldOutGate(heldOutGateConfig)
+const verdict = gate.evaluate({ baselineRuns, candidateRuns: candidate.runs })
+if (verdict.decision !== 'ship') return  // hold / few_runs / negative_delta / overfit_gap
+
+// 3. open the PR — proposeAutomatedPullRequest(client, input); idempotent on branchName
+const client = httpGithubClient({ owner: 'your-org', repo: 'your-agent', token: process.env.GH_TOKEN! })
+await proposeAutomatedPullRequest(client, {
+  repo: { owner: 'your-org', repo: 'your-agent' },
+  baseBranch: 'main',
+  branchName: `auto/${candidate.id}`,
+  fileChanges: candidate.fileChanges,   // [{ path, content }]
+  title: candidate.title,
+  body: candidate.prBody,
 })
 ```
 
