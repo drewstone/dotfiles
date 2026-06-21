@@ -1,11 +1,20 @@
 ---
 name: eval-agent
-description: "Build LLM-as-judge systems with rubrics generated from real reference material (not hand-written). Scores targets, returns structured findings, drives improvement loops. Triggers: 'build an evaluator', 'LLM as judge', 'scoring pipeline', 'quality gate', 'rubric generation'."
+description: "Build LLM-as-judge systems with rubrics generated from real reference material (not hand-written). Scores targets, returns structured findings, drives improvement loops. Triggers: 'build an evaluator', 'LLM as judge', 'scoring pipeline', 'quality gate', 'rubric generation'. NARROWER than agent-eval / agent-eval-adoption / agent-stack-adoption — this skill is judge-component only; the others cover the full closed loop, substrate primitives, and end-to-end pipeline respectively."
 ---
 
 # Eval Agent — Build Agentic Evaluation Systems
 
 Build LLM-as-judge systems that evaluate targets (code, conversations, outputs, agents) using dynamically generated rubrics grounded in real reference material. Shared conventions in `_common.md`.
+
+## Related skills — what to read when
+
+| If you are... | Read |
+|---|---|
+| Building a judge component (this skill's scope) | **THIS skill** |
+| Wiring a closed-loop improvement cycle that USES a judge — substrate, drivers, gates, the canonical `eval/` folder | `agent-eval` (project skill, auto-loaded in agent-eval repo) — full substrate footgun bible + product-agent canonical layout |
+| Adopting agent-eval primitives across a product (defineAgent, runLoop, MCP delegation, TraceSource, scorecard, analyst-loop, assertRealBackend) | `agent-eval-adoption` — substrate-primitive reference |
+| Wiring the full 4-package stack end-to-end across 9 phases | `agent-stack-adoption` |
 
 ## Prerequisites
 

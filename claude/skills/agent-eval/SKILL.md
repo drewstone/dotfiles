@@ -13,21 +13,21 @@ If you are only **adopting** agent-eval in a product (chat handler + an eval har
 
 ## Where this sits in the stack
 
-agent-eval is the **bottom substrate**. `@tangle-network/agent-runtime` (~0.63) and `@tangle-network/agent-knowledge` sit ABOVE it and import from it; agent-eval imports from neither — never add an upward dependency. The package ships ~30 subpaths; this skill documents the integrator-relevant ones (root barrel + `/rl`, `/reporting`, `/traces`, `/campaign`, `/matrix`, `/control`, `/diagnose`, `/adapters/{langchain,http,otel}`).
+agent-eval is the **bottom evaluation substrate**. `@tangle-network/agent-runtime` and `@tangle-network/agent-knowledge` sit ABOVE it and import from it. agent-eval may depend only on shared substrate contracts such as `@tangle-network/agent-interface`; never add an upward runtime/product dependency. The package ships ~30 subpaths; this skill documents the integrator-relevant ones (root barrel + `/rl`, `/reporting`, `/traces`, `/campaign`, `/matrix`, `/control`, `/diagnose`, `/adapters/{langchain,http,otel}`).
 
 ## Vocabulary
 
-> **Two `AgentProfile` types, same name, distinct shapes.** agent-eval's `AgentProfile` (`agent-profile.ts`) is the narrow **eval-side fingerprint** — the scorecard's unit-of-variation: `id` / `model` / `skills` / `promptVersion` / `tools` / `metadata`, hashed by `agentProfileHash`. It is NOT the richer **harness** `AgentProfile` (prompt + skills + tools + mcp + subagents + hooks + permissions) now owned by `@tangle-network/agent-interface` (~0.9.0, which also owns `HarnessType` / `ReasoningEffort` / `Part` / `ToolPart`). agent-eval does **not** depend on agent-interface (keep it that way) — when you import `AgentProfile`, know which one you mean.
+> **One `AgentProfile` type.** The canonical profile contract is `AgentProfile` from `@tangle-network/agent-interface`. agent-eval re-exports that type and adds eval-side helpers (`agentProfileId`, `agentProfileModelId`, `agentProfileHash`) plus `AgentProfileCell` for run identity stamping. Do not recreate local profile shapes with `id` / `model` / `skills` / `promptVersion`; put behavior in the canonical profile (`name`, `version`, `prompt`, `model.default`, `resources`, `tools`, `permissions`, etc.).
 
 | Term | Plain English |
 |---|---|
-| **AgentProfile** | The eval harness's unit of variation (the agent-eval type, see note above). Pins model + skills + promptVersion + tools. `agentProfileHash` is its behaviour identity. |
+| **AgentProfile** | The shared public profile from `@tangle-network/agent-interface`. It is the eval unit of variation; `agentProfileHash` is its behavior identity. |
 | **Scorecard cell** | `(scenarioId, profileHash)`. The thing you compare across commits. |
 | **RunRecord** | The typed schema every campaign emits. Snapshot-pinned model, costed, hashed prompt/config, captured tokens. |
 | **Sink** | `RawProviderSink` — first-class HTTP-level capture alongside `LlmSpan`. NDJSON, auto-redacted. |
 | **TraceStore** | Append-only span log. `FileSystemTraceStore` for runs; `OtlpFileTraceStore` for consuming production OTLP exports. |
 | **Layer** | One stage of `MultiLayerVerifier` (install / typecheck / build / semantic / …). |
-| **Cell join** | `buildSandboxAgentProfileCell` cross-products manifests × harnesses × scenarios with a canonical identity. |
+| **Cell join** | `buildAgentInterfaceProfileCell` stamps a canonical `AgentProfile` identity onto runs so manifests × harnesses × scenarios join cleanly. |
 | **L0 / L1 / L2** | Builder session / app-build / app-runtime trace layers. |
 | **Backend integrity** | `assertRealBackend` — distinguishes "agent failed" from "eval ran blind against a stub." |
 | **Capture integrity** | The four directives that turn a run into a launch-grade artifact. `runEvalCampaign` wires them by construction. |
@@ -42,10 +42,10 @@ Categorised index of the public exports an integrator reaches for. File paths ar
 
 | Primitive | Module | Purpose |
 |---|---|---|
-| `AgentProfile`, `agentProfileHash` | `agent-profile.ts` | The unit of variation. `id` is human-facing and **not** part of the hash; `skills`/`tools` are order-insensitive; throws if `model` is empty. Two profiles with the same model but different skills hash differently. |
+| `AgentProfile`, `agentProfileId`, `agentProfileModelId`, `agentProfileHash` | `agent-profile.ts` | Re-export of the canonical `@tangle-network/agent-interface` profile plus eval helpers. `name`/`description` are labels and not part of the behavior hash; `model.default` is required for recordable eval runs. |
 | `recordRuns`, `recordRunsToScorecard`, `appendScorecard`, `loadScorecard` | `scorecard.ts` | Append-only JSONL keyed `(scenarioId, profileHash)`. One line per cell per commit. Concurrent-append-safe (no read-modify-write). Malformed lines are skipped on read. |
 | `diffScorecard`, `formatScorecardDiff` | `scorecard.ts` | Latest-vs-prior cell comparison. Verdicts: `improved` / `regressed` / `flat` / `new`. Cohen's d + Welch's t-test gate when ≥ 2 scores per side; raw-delta fallback otherwise. Returns NaN p-value when variance is zero — guard your consumer. |
-| `AGENT_PROFILE_KINDS`, `toAgentProfileJson`, `buildSandboxAgentProfileCell`, `requireAgentProfileCell`, `assertRunAgentProfileCell`, `verifyAgentProfileCell`, `groupRunsByAgentProfileCell`, `AgentProfileCellValidationError` | `agent-profile-cell.ts` | Cross-product cell-join canonicalisation. Stamps a profile-cell onto a run; `RunRecord` carries the canonical cell identity. Distinct from the scorecard log — the scorecard records timelines, cells stamp identity onto runs. They coexist. |
+| `AGENT_PROFILE_KINDS`, `toAgentProfileJson`, `buildAgentInterfaceProfileCell`, `requireAgentProfileCell`, `assertRunAgentProfileCell`, `verifyAgentProfileCell`, `groupRunsByAgentProfileCell`, `AgentProfileCellValidationError` | `agent-profile-cell.ts` | Cross-product cell-join canonicalisation. Stamps a profile-cell onto a run; `RunRecord` carries the canonical cell identity. Distinct from the scorecard log — the scorecard records timelines, cells stamp identity onto runs. They coexist. |
 | `RunRecord`, `validateRunRecord` | `run-record.ts` | Typed run schema. Throws on missing fields **and** on bare model aliases — record the dated snapshot (`claude-sonnet-4-6@2025-04-15`). |
 | `summarizeBackendIntegrity`, `assertRealBackend`, `BackendIntegrityError`, `BackendIntegrityReport` | `integrity/backend-integrity.ts` | The Phase A guard. Stub-mode = `tokenUsage.input === 0 && .output === 0` across **all** records → throws. Verdict `'mixed'` (partial backend failure) passes by default; reject with `{ allowMixed: false }` for CI gates. |
 
@@ -56,7 +56,7 @@ Categorised index of the public exports an integrator reaches for. File paths ar
 | `runEvalCampaign` | `eval-campaign.ts` | Opinionated matrix runner: variants × scenarios × seeds → `RunRecord[]` + integrity reports + (optional) `researchReport`. Wires `assertLlmRoute` at preflight, builds `TraceStore` + `RawProviderSink` per cell, asserts `assertRunCaptured` after every `endRun`, optionally fires `onRunComplete` hooks. This is the entry point for new evals. |
 | `HeldOutGate` | `held-out-gate.ts` | Paired-delta + overfit-gap promotion gate. Three rejection codes: `few_runs` / `negative_delta` / `overfit_gap`. Pairs by `(experimentId, seed)`; reads `splitTag === 'holdout'` for the paired delta and the search-split for the overfit gap. |
 | `bootstrapCi`, `judgeReplayGate` | `promotion-gate.ts` | Lower-level "is this real" gate — bootstrap CI for paired deltas. Use alongside `HeldOutGate`, not instead. |
-| `proposeAutomatedPullRequest`, `httpGithubClient`, `ghCliClient`, `AutoPrClient` | `auto-pr.ts` | The auto-PR primitive (barrel: "Production loop primitive"). `proposeAutomatedPullRequest(client, input)` validates then creates branch → writes `fileChanges` → commits → pushes → opens a PR; idempotent on `branchName`. Pick a transport: `httpGithubClient` (in-process REST) or `ghCliClient` (shells out to `gh`). The packaged orchestrator is `runImprovementLoop` (formerly `runProductionLoop`); or compose the loop yourself from cluster → evolve → `HeldOutGate` → `proposeAutomatedPullRequest` (see Pattern 2). |
+| `proposeAutomatedPullRequest`, `httpGithubClient`, `ghCliClient`, `AutoPrClient` | `auto-pr.ts` | The auto-PR primitive. `proposeAutomatedPullRequest(client, input)` validates then creates branch → writes `fileChanges` → commits → pushes → opens a PR; idempotent on `branchName`. Pick a transport: `httpGithubClient` (in-process REST) or `ghCliClient` (shells out to `gh`). The packaged orchestrator is `runImprovementLoop` from `@tangle-network/agent-eval/campaign`; or compose the loop yourself from cluster → evolve → `HeldOutGate` → `proposeAutomatedPullRequest` (see Pattern 2). Do not import the removed predecessor name. |
 | `pairedEvalueSequence`, `evaluateInterimReleaseConfidence` | `sequential.ts` | Anytime-valid sequential evaluation (Waudby-Smith & Ramdas 2024 + Howard et al. 2021). Decide at every interim look without inflating type-I error. |
 | `researchReport`, `summaryTable`, `paretoChart`, `gainHistogram` | `summary-report.ts` | Launch-grade artifacts. `researchReport` is async (Web Crypto for the fingerprint). `minPairs` hard floor is `RESEARCH_REPORT_HARD_PAIR_FLOOR = 6`. |
 
@@ -181,7 +181,7 @@ A flat baseline should not block CI. `diffScorecard`'s verdict can be `'new'` fo
 
 ### Directive F — profile-cell stamping ≠ scorecard log
 
-`buildSandboxAgentProfileCell` + `assertRunAgentProfileCell` stamp the canonical cell identity **onto** a `RunRecord`. `recordRunsToScorecard` appends a **timeline entry** keyed by that identity. They coexist:
+`buildAgentInterfaceProfileCell` + `assertRunAgentProfileCell` stamp the canonical cell identity **onto** a `RunRecord`. `recordRunsToScorecard` appends a **timeline entry** keyed by that identity. They coexist:
 
 - Cell stamping enforces "every run knows which cell it belongs to" (no orphan rows).
 - Scorecard logging is the cross-commit timeline that answers "did this commit move this cell?"
@@ -212,7 +212,12 @@ import {
   formatScorecardDiff, assertRealBackend,
 } from '@tangle-network/agent-eval'
 
-const profile = { id: 'sonnet-baseline', model: 'claude-sonnet-4-6@2025-04-15', skills: [...], promptVersion: 'v3' }
+const profile = {
+  name: 'sonnet-baseline',
+  version: 'v3',
+  model: { default: 'claude-sonnet-4-6@2025-04-15' },
+  resources: { skills: [...] },
+}
 
 const { runs, integrityReports, report } = await runEvalCampaign({
   campaignId: 'gtm-2026-q2',
@@ -233,9 +238,9 @@ console.log(formatScorecardDiff(diff))
 if (diff.summary.regressed > 0) process.exit(1)
 ```
 
-### Pattern 2 — Production loop (`runImprovementLoop`, or composed from primitives)
+### Pattern 2 — Improvement loop (`runImprovementLoop`, or composed from primitives)
 
-The packaged orchestrator is **`runImprovementLoop`** (the renamed `runProductionLoop`). To customize the cycle, compose it from the primitives instead: cluster production failures → evolve a candidate on the cluster → gate with `HeldOutGate` → open a PR with `proposeAutomatedPullRequest`. The only GitHub primitive is the transport (`httpGithubClient` / `ghCliClient`). (Verify `runImprovementLoop`'s exact signature against the agent-eval barrel before calling it.)
+The packaged orchestrator is **`runImprovementLoop`** from `@tangle-network/agent-eval/campaign`. To customize the cycle, compose it from the primitives instead: cluster production failures → evolve a candidate on the cluster → gate with `HeldOutGate` → open a PR with `proposeAutomatedPullRequest`. The only GitHub primitive is the transport (`httpGithubClient` / `ghCliClient`). Verify the exact signature against the campaign subpath before calling it.
 
 ```ts
 import { HeldOutGate, proposeAutomatedPullRequest, httpGithubClient } from '@tangle-network/agent-eval'
@@ -263,22 +268,25 @@ await proposeAutomatedPullRequest(client, {
 ### Pattern 3 — Custom analyst kind
 
 ```ts
-import { AnalystRegistry, createTraceAnalystKind, OtlpFileTraceStore } from '@tangle-network/agent-eval'
+import { AnalystRegistry, buildTraceToolsForGroup, createTraceAnalystKind } from '@tangle-network/agent-eval/analyst'
+import { OtlpFileTraceStore } from '@tangle-network/agent-eval/traces'
 
 const myKind = createTraceAnalystKind({
   id: 'gtm-message-quality',
-  inputKind: 'trace',
+  area: 'message-quality',
+  version: '1',
   description: 'Score outbound messages on hook strength + concrete-ask presence',
-  schema: z.object({ /* findings shape */ }),
-  prompt: ({ trace, priorFindings }) => buildPrompt(trace, renderPriorFindings(priorFindings)),
-})
+  actorDescription: 'Find concrete outbound-message quality failures in the trace.',
+  buildTools: (store) => buildTraceToolsForGroup('discovery', store),
+  cost: { kind: 'llm', est_usd_per_run: 0.25 },
+}, { ai, model })
 
 const registry = new AnalystRegistry({ chat, hooks: { onAfterAnalyze, onError } })
 registry.register(myKind)
 
-const result = await registry.run({
-  inputs: { trace: traceStore.getRun(runId), priorFindings: await store.recent(runId, 7) },
-  runId,
+const traceStore = new OtlpFileTraceStore({ path: `${runDir}/otlp-spans.jsonl` })
+const result = await registry.run(runId, { traceStore }, {
+  priorFindings: await store.recent(runId, 7),
 })
 ```
 
@@ -288,7 +296,7 @@ The framework ships the **eval-side** analyst contract. The **product-side** ada
 
 - `createSurfaceImprovementAdapter` — routes a parsed `FindingSubject` to a real on-disk path via the agent's `AgentSurfaces` map. Modes: `none` / `edit` / `open-pr` (the last requires `ghRepo`, falls back loudly if missing).
 - `createSurfaceKnowledgeAdapter` — writes knowledge-page blocks against the agent's `.agent-knowledge` root.
-- `runAnalystLoop` (in agent-runtime) is what closes the eval → improvement → re-eval cycle; it consumes `AnalystRegistry.runStream`.
+- `AnalystRegistry.run(...)` produces findings from trace inputs; product-side adapters decide which findings become knowledge writes, prompt edits, or PRs.
 
 Do not re-implement these in agent-eval. The eval framework owns measurement; the runtime owns the apply-side.
 
