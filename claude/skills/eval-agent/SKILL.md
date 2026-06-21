@@ -269,7 +269,7 @@ Run 3 evaluators (different models) on same target, take median score. Use when 
 
 ```typescript
 const scores = await Promise.all([
-  evaluate(rubric, target, { model: 'claude-opus-4-6' }),
+  evaluate(rubric, target, { model: 'claude-opus-4-8' }),
   evaluate(rubric, target, { model: 'gpt-5.4' }),
   evaluate(rubric, target, { model: 'zai/glm-5.1' }),
 ])
