@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Innovation Audit"
+  short_description: "First-principles innovation audit"
+  default_prompt: "Use $product-innovation-audit to ask the hardest first-principles questions, compare against real substitutes, map the world-class user experience, fan out critique lanes, and compress the product bet into what to kill, what to ship, and how to prove it."
