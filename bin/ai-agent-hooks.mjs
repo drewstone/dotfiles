@@ -331,7 +331,30 @@ function resolveDefaultBaseRef(repoRoot, remote) {
   return `${remote}/main`;
 }
 
-function checkMergeableWithBase(repoRoot, check) {
+const zeroOid = /^0+$/;
+
+/** Pre-push hands us, on stdin, one line per ref being pushed:
+ *  `<local ref> <local sha> <remote ref> <remote sha>`. Returns [] when stdin is a
+ *  TTY (a manual run) or unavailable, so callers fall back to the default behaviour. */
+function readPrePushRefUpdates() {
+  if (process.stdin.isTTY) return [];
+  let text = "";
+  try {
+    text = readFileSync(0, "utf8");
+  } catch {
+    return [];
+  }
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [localRef, localSha, remoteRef, remoteSha] = line.split(/\s+/);
+      return { localRef, localSha, remoteRef, remoteSha };
+    });
+}
+
+function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
   const remote = typeof check.remote === "string" && check.remote.trim()
     ? check.remote.trim()
     : "origin";
@@ -365,6 +388,30 @@ function checkMergeableWithBase(repoRoot, check) {
     return { ok: true, status: 0, output: `${baseRef} does not exist yet — skipping mergeability check` };
   }
 
+  // A non-fast-forward push to the base branch itself is an intentional history
+  // rewrite — "does HEAD merge into <base>" is not a meaningful question when you are
+  // deliberately overwriting <base>. Skip mergeability (the secret + conflict-marker
+  // checks still run). A normal OR force-pushed feature branch is unaffected: this
+  // only triggers when the pushed remote ref IS the base branch and is non-ff.
+  const rewritingBase = refUpdates.some((u) => {
+    if (!u || !u.remoteRef || !u.remoteSha || !u.localSha) return false;
+    const targetsBase =
+      u.remoteRef === `refs/heads/${remoteBranch}` || u.remoteRef.endsWith(`/${remoteBranch}`);
+    if (!targetsBase) return false;
+    if (zeroOid.test(u.remoteSha) || zeroOid.test(u.localSha)) return false; // create / delete
+    const ff = runGit(repoRoot, ["merge-base", "--is-ancestor", u.remoteSha, u.localSha], true);
+    return !ff.ok; // remote tip not reachable from the new tip → non-fast-forward
+  });
+  if (rewritingBase) {
+    return {
+      ok: true,
+      status: 0,
+      output:
+        `Force-push (non-fast-forward) of ${remoteBranch} — intentional history rewrite; ` +
+        `mergeability check skipped.`,
+    };
+  }
+
   const merge = runGit(repoRoot, ["merge-tree", "--write-tree", baseRef, "HEAD"], true);
   if (!merge.ok) {
     return {
@@ -390,7 +437,7 @@ function runBuiltin(builtin, context) {
   }
 
   if (builtin === "mergeable-with-base") {
-    return checkMergeableWithBase(context.repoRoot, context.check);
+    return checkMergeableWithBase(context.repoRoot, context.check, context.pushRefUpdates);
   }
 
   return { ok: false, status: 1, output: `Unknown builtin check: ${builtin}` };
@@ -1075,6 +1122,7 @@ async function runHookCommand(rawArgs) {
     hookName,
     branch: currentBranch(repoRoot),
     pushContext,
+    pushRefUpdates: hookName === "pre-push" ? readPrePushRefUpdates() : [],
     files,
     diff: diffText(repoRoot, hookName, pushContext),
   };
