@@ -1,6 +1,6 @@
 ---
 name: harden
-description: "Autonomous adversarial validator. Derives invariants, fuzz targets, attack surface, and benchmark gaps from the codebase, then extends the project's existing harness to cover them. Triggers: 'harden this', 'try to break this', 'red team', 'find the exploits', 'what's not covered'."
+description: "Autonomous adversarial validator. Derives invariants, fuzz targets, attack surface, and benchmark gaps from the codebase, then extends the project's existing harness to cover them. Triggers: 'harden this' (security sense), 'try to break this', 'red team', 'find the exploits', 'what's not covered'. Do NOT use for build/CI robustness, deploy hardening, or cleanup (that is /converge or /deep-clean) — harden is SECURITY adversarial validation only."
 ---
 
 # Harden — Autonomous Adversarial Validator
