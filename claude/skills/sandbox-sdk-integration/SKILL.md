@@ -60,22 +60,25 @@ export default {
 ```
 
 ```typescript
-// Browser / mobile reconnect — DO NOT hand-roll the event handling.
-// `SessionGatewayClient` wraps autoReconnect + Last-Event-ID replay + gap
-// detection. Read its README for the exact constructor + event-consumption
-// API — it evolves with the SDK, so don't copy a signature from memory:
-//   @tangle-network/sandbox/session-gateway
+// Browser-direct streaming (no proxy through your server)
 import { SessionGatewayClient } from "@tangle-network/sandbox/session-gateway";
 
-// The durable, process-death-safe consumption path (verified primitives):
-// dispatch once by sessionId, then replay buffered events from ANY fresh
-// process — server-side buffering + Last-Event-ID resume are platform-managed.
-await box.dispatchPrompt(message, { sessionId });
-for await (const event of box.session(sessionId).events({ since: lastEventId })) {
-  render(event);
-  lastEventId = event.id;
-}
-const final = await box.session(sessionId).result();
+const client = new SessionGatewayClient({
+  url: "wss://your-api.example.com/session",
+  token: await fetchScopedToken(),          // box.mintScopedToken({ scope: "session", sessionId })
+  sessionId,
+  autoReconnect: true,
+  enableReplayPersistence: true,            // persists lastEventId across reloads
+  replayStorage: localStorageAdapter,        // your impl of ReplayStateStorage
+  handlers: {
+    onMessage: (event) => render(event),
+    onReplayStart: ({ since }) => showSpinner(`replay from ${since}`),
+    onReplayComplete: () => hideSpinner(),
+    onBackpressureWarning: ({ suggestReplay }) =>
+      suggestReplay && client.replay(client.stats.replay.lastEventId),
+  },
+});
+client.connect();
 ```
 
 ## Forbidden patterns (with what to use instead)
