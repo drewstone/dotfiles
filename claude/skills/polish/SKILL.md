@@ -1,6 +1,6 @@
 ---
 name: polish
-description: "Apply a fixed quality rubric (correctness, design, robustness, tests, API surface) to existing work and fix every gap until it clears the threshold. Distinct from /evolve (measure→experiment against a metric) and /pursue (build new): polish hardens what already exists. Triggers: 'polish this', 'push to 9+', 'rate and improve', 'tighten this up', 'make this production-grade', 'iterate until good'. Works on code, prose, skills, and docs."
+description: "Apply a fixed quality rubric (correctness, design, robustness, tests, API surface) to existing work and fix every gap until it clears the threshold. Distinct from /evolve (measure→experiment against a metric) and /pursue (build new): polish hardens what already exists. Triggers: 'polish this', 'push to 9+', 'rate and improve', 'tighten this up', 'make this production-grade', 'iterate until good'. Works on code, prose, skills, and docs. Do NOT use for metric-targeted optimization or experimentation (that is /evolve) — polish is a fixed-rubric pass on existing work with no measured metric."
 ---
 
 # Polish Loop

@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Drive CI to green: diagnose remote failures, fix root causes, commit, push, wait, repeat. Persists to `.evolve/converge-progress.md` to resume across sessions. No shortcuts (no `continue-on-error`, no `--no-verify`). Triggers: 'get CI green', 'fix CI', 'land this PR'."
+description: "Drive CI to green: diagnose remote failures, fix root causes, commit, push, wait, repeat. Persists to `.evolve/converge-progress.md` to resume across sessions. No shortcuts (no `continue-on-error`, no `--no-verify`). Triggers: 'get CI green', 'fix CI', 'land this PR'. NOT general code or metric improvement (that is /evolve) — converge is strictly red-CI → green."
 ---
 
 # Converge — CI Green Loop
