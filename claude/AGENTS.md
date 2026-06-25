@@ -2,6 +2,12 @@
 
 Provider-agnostic. Synced to Claude, Codex, and OpenCode installs.
 
+## Skills chain forward, not sideways
+
+Skills may reference each other, but **only as a post-hook**: a `## Then consider` footer at the END of a SKILL.md that names the next skill + the *condition* to invoke it. Finish the skill's intent first, then surface the next one — a reference at the *front* of a skill's flow hijacks it before it does its job. The single exception is a **guard skill** whose entire purpose is to gate (e.g. `calibrate-before-measure` is the pre-check for any eval); there the interruption *is* the intent. When you finish executing a skill, read its `## Then consider` footer and act on any whose condition is met.
+
+A footer can only name the peers its author knew about. For the rest, **discover dynamically**: run `skills` (or `skills <substring>`) to list every installed skill's name + one-line description before deciding there's no relevant one. Hardcoded cross-references go stale; the lister never does.
+
 ## Repos are alive
 
 Multiple agents (Claude, Codex, others) work the same branches and PRs in parallel. Unfamiliar branches, commits you didn't make, in-flight PRs — normal state, not errors.
