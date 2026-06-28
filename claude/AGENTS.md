@@ -107,6 +107,7 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Complete tasks fully. Verify the result before claiming success.
 - Be critical of slop, duplication, overengineering, and weak assumptions.
 - Prefer minimal, durable changes over broad rewrites.
+- When making technical decisions, do not give much weight to development cost. Optimize for correctness, durability, security, maintainability, and user impact; treat implementation effort as a weak tie-breaker only.
 - Parallelize independent audit, review, and research work when possible.
 - If quality is below 9/10, identify the remaining gap and keep pushing.
 
