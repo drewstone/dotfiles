@@ -1,14 +1,16 @@
 ---
 name: site-clone
-description: "Merged into /bad. Ripping or cloning a site's design is now a flag on the bad CLI: `bad design-audit --url <site> --rip` (extract the design), and `--design-compare --compare-url <competitor>` to diff against another site. Use /bad."
+description: Legacy shim for site ripping/cloning. Use /bad and `bad design-audit` for rip, token extraction, visual comparison, and browser-backed clone evidence.
 ---
 
-# site-clone — merged into /bad
+# site-clone
 
-Site ripping/cloning now lives in the **`bad`** CLI (Browser Agent Driver):
+Use `bad`; this skill only preserves the old trigger.
 
-- `bad design-audit --url https://example.com --rip` — rip the site's design
-- `bad design-audit --url https://you.com --design-compare --compare-url https://competitor.com` — compare two sites
-- `bad design-audit --url https://example.com --extract-tokens` — pull the design tokens
+- Rip design: `bad design-audit --url https://example.com --rip`
+- Compare sites: `bad design-audit --url https://you.com --design-compare --compare-url https://competitor.com`
+- Extract tokens: `bad design-audit --url https://example.com --extract-tokens`
 
-See the **`bad`** skill for the full command surface.
+## Then consider
+
+- `bad` for command details and evidence capture.

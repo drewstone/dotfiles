@@ -1,63 +1,40 @@
 ---
 name: polish
-description: "Apply a fixed quality rubric (correctness, design, robustness, tests, API surface) to existing work and fix every gap until it clears the threshold. Distinct from /evolve (measure→experiment against a metric) and /pursue (build new): polish hardens what already exists. Triggers: 'polish this', 'push to 9+', 'rate and improve', 'tighten this up', 'make this production-grade', 'iterate until good'. Works on code, prose, skills, and docs. Do NOT use for metric-targeted optimization or experimentation (that is /evolve) — polish is a fixed-rubric pass on existing work with no measured metric."
+description: Apply a fixed quality rubric to existing work and fix every gap: correctness, design, robustness, tests, and public interface. Triggers: polish, tighten, production-grade.
 ---
 
-# Polish Loop
+# Polish
 
-You are running a relentless quality loop. The bar is world-class engineering — code that a principal engineer would pass on first read. Default target: 10/10. The user may request 11/10 which means: exceed what's expected, find improvements nobody asked for, leave the codebase measurably better than you found it.
+Use this for completed work that needs a quality pass.
+Do not use it for metric optimization, red CI, or half-built generations.
 
-Shared conventions in `_common.md`.
+## Rubric
 
-## Prerequisites
+Score honestly across:
 
-- Polish needs a completed, testable chunk (feature, module, PR-sized diff). Half-built work → `/pursue` first to finish the generation. Polishing half-built work paints a veneer over a broken foundation.
-- Tests pass before audit. Failing → fix or `/converge` before rating.
-- Domain-specific polish (design systems, voice-agent quality, deck output) → dispatch `/eval-agent` for a rubric from real reference material; the 5-dim default below misses domain-specific issues.
-- If `.evolve/current.json` shows a `/pursue` generation in flight, join its Evaluate phase — the generation's own criteria take precedence.
+1. Correctness: works in edge cases, not only the happy path.
+2. Design: simple structure, justified abstractions, no avoidable complexity.
+3. Robustness: errors fail loud and recoverably.
+4. Tests: behavior coverage that would catch regressions.
+5. Interface: clean names, defaults, docs, CLI/API, and reader path.
 
-## Process
+## Flow
 
-1. **Audit** the current state across these dimensions. Be ruthlessly honest. If something is merely "fine", that's a 6, not an 8.
-
-   - **Correctness** — Does it actually work in all cases? Edge cases, error paths, concurrency, empty inputs, huge inputs, malformed inputs. Not "does the happy path work."
-   - **Design** — Is the architecture right? Are abstractions justified? Would you have to explain any of this to a new engineer, or does it explain itself? Is anything over-engineered or under-engineered?
-   - **Robustness** — Error handling, failure modes, invariants. What happens when things go wrong? Silent failures are a 0.
-   - **Tests** — Are the tests actually testing behavior, or just asserting that code runs? Do they cover edge cases? Would a subtle regression slip through?
-   - **API surface** — Is the public interface clean? Would a user of this code curse you? Are defaults sane? Is the CLI/API self-documenting?
-
-2. **List every issue** — no matter how small. Group by severity. Don't hedge with "might want to consider" — either it's a problem or it isn't.
-
-3. **Fix everything** in priority order. Use subagents to parallelize independent fixes. Don't ask permission for obvious improvements.
-
-4. **Run tests.** If anything breaks, that's a regression you introduced — fix it immediately before re-rating.
-
-5. **Re-rate** with before/after. Show what moved and why.
-
-6. **Repeat** until target is met or you've genuinely exhausted improvements (and can articulate why).
+1. Audit the current artifact against the rubric.
+2. List concrete issues by severity.
+3. Fix issues in priority order.
+4. Run meaningful checks.
+5. Re-score and repeat, up to five rounds.
 
 ## Rules
 
-- **No score inflation.** A 9 means a senior staff engineer would approve with zero comments. A 10 means they'd learn something from reading it. An 8 means "solid but I have notes." Most code starts at 5-7.
-- **No fluff fixes.** Adding comments that restate the code is negative value. Adding a docstring to a private helper is noise. Every change must make the code measurably better for the next person who reads or modifies it.
-- **Design thinking > cosmetics.** A well-designed module with no comments beats a poorly-designed one with perfect docs. Prioritize structural improvements over surface polish.
-- **Tests must be meaningful.** A test that mocks everything and asserts `True` is worse than no test. Tests should break when behavior changes.
-- **Keep fixes surgical.** The best improvements are small, precise, and obvious in hindsight. If a fix requires 50 lines of scaffolding, the design is wrong — fix the design instead.
-- **Maximum 5 rounds.** If not at target after 5, report what's blocking honestly.
-- **Broken tests = stop everything.** Fix the regression before touching anything else.
+- No score inflation; fine is a 6, not an 8.
+- No fluff comments or cosmetic-only changes.
+- Broken tests stop the pass until fixed.
 
-## Output per round
+Use `references/RUBRIC.md` for scoring anchors and `references/full-reference.md` for the old full loop.
 
-```
-Round N — Score: X/10 (target: Y)
-  Correctness:  X/10 — <honest assessment>
-  Design:       X/10 — <honest assessment>
-  Robustness:   X/10 — <honest assessment>
-  Tests:        X/10 — <honest assessment>
-  API surface:  X/10 — <honest assessment>
+## Then consider
 
-  Issues: <count>
-  <prioritized list — what's wrong and why it matters>
-```
-
-Append a `.evolve/skill-runs.jsonl` line on completion. See `_common.md`.
+- `evolve` for measurable optimization.
+- `converge` if checks are red.
