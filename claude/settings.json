@@ -17,6 +17,11 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/rtk-rewrite.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/git-push-preflight.sh",
+            "timeout": 180
           }
         ]
       },
