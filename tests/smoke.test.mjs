@@ -37,7 +37,8 @@ assert.equal(result.status, 0, result.stderr);
 result = run("git", ["symbolic-ref", "HEAD", "refs/heads/main"], remoteRoot);
 assert.equal(result.status, 0, result.stderr);
 
-result = run("node", [scriptPath, "install", "--repo", repoRoot, "--init-config"], process.cwd());
+// Keep the temp repo isolated from any global core.hooksPath on the host machine.
+result = run("node", [scriptPath, "install", "--repo", repoRoot, "--hooks-dir", ".githooks", "--init-config"], process.cwd());
 assert.equal(result.status, 0, result.stderr || result.stdout);
 
 assert.equal(existsSync(join(repoRoot, ".githooks", "pre-commit")), true);

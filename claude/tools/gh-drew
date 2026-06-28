@@ -10,7 +10,7 @@ read_secret() {
 
   if command -v dotenvx >/dev/null 2>&1 && [[ -f "$secrets_file" ]]; then
     if [[ -f "$keys_file" ]]; then
-      dotenvx get "$key" -f "$keys_file" -f "$secrets_file" --overload 2>/dev/null || true
+      dotenvx get "$key" -fk "$keys_file" -f "$secrets_file" --overload 2>/dev/null || true
     else
       dotenvx get "$key" -f "$secrets_file" --overload 2>/dev/null || true
     fi
