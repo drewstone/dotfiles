@@ -109,7 +109,11 @@
     }
   },
   "effortLevel": "high",
+  "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
-  "agentPushNotifEnabled": true,
-  "inputNeededNotifEnabled": true
+  "theme": "dark",
+  "autoCompactEnabled": true,
+  "switchModelsOnFlag": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
 }

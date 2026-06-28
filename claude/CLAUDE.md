@@ -8,6 +8,7 @@ All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked int
 
 - Shared behavior lives in `AGENTS.md`. If a rule should apply to Claude, Codex, and OpenCode, edit `AGENTS.md`, not this file.
 - Claude-specific config lives here: install behavior, settings, hooks, commands, and Claude-only operational notes.
+- Claude inherits shared technical decision rules from `AGENTS.md`, including the rule to give development cost little weight.
 - Skills live in `~/dotfiles/claude/skills/<name>/SKILL.md` and are symlinked into both Claude and Codex by `install.sh`.
 - Hooks live in `~/dotfiles/claude/hooks/`.
 - Commands live in `~/dotfiles/claude/commands/`.

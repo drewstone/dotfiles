@@ -2,6 +2,12 @@
 
 Provider-agnostic. Synced to Claude, Codex, and OpenCode installs.
 
+## Skills chain forward, not sideways
+
+Skills may reference each other, but **only as a post-hook**: a `## Then consider` footer at the END of a SKILL.md that names the next skill + the *condition* to invoke it. Finish the skill's intent first, then surface the next one — a reference at the *front* of a skill's flow hijacks it before it does its job. The single exception is a **guard skill** whose entire purpose is to gate (e.g. `calibrate-before-measure` is the pre-check for any eval); there the interruption *is* the intent. When you finish executing a skill, read its `## Then consider` footer and act on any whose condition is met.
+
+A footer can only name the peers its author knew about. For the rest, **discover dynamically**: run `skills` (or `skills <substring>`) to list every installed skill's name + one-line description before deciding there's no relevant one. Hardcoded cross-references go stale; the lister never does.
+
 ## Repos are alive
 
 Multiple agents (Claude, Codex, others) work the same branches and PRs in parallel. Unfamiliar branches, commits you didn't make, in-flight PRs — normal state, not errors.
@@ -25,6 +31,11 @@ Commit messages tell you what other agents shipped. Five seconds saves a rebase.
 
 ## Git Etiquette
 
+- **Pull the latest PR review yourself — never wait to be handed a link.** Reviewers (humans and the automated multi-shot bot) post AFTER each push, so the newest comment is the one that decides merge. After every push to a PR, and before you claim a review is "addressed" or report done, read the current state directly:
+  - `gh pr view <n> --comments` — issue comments + review summaries (newest last).
+  - `gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | {state, user:.user.login, submitted_at}'` — formal reviews; the LAST `CHANGES_REQUESTED`/`COMMENTED` is the live verdict, not an earlier `APPROVED`.
+  - `gh api repos/<owner>/<repo>/pulls/<n>/comments` — inline line-level threads.
+  - The CI multi-shot reviewer lands ~1–3 min after a push and re-runs on every commit, so a fix can draw a NEW blocking finding — after pushing a fix, wait and re-check rather than declaring green. On Tangle repos use `gh-drew` for these reads.
 - Before opening or updating a PR, fetch the target base and prove the branch merges cleanly into it. Locally: `git fetch origin main && git merge-tree --write-tree origin/main HEAD`.
 - If a push/PR would be conflict-prone, rebase or merge locally, resolve conflicts, rerun tests, and only then push.
 - Do not use `--no-verify` to skip hooks. If a hook blocks, read its artifact and fix the underlying issue or the hook itself.
@@ -111,6 +122,9 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Complete tasks fully. Verify the result before claiming success.
 - Be critical of slop, duplication, overengineering, and weak assumptions.
 - Prefer minimal, durable changes over broad rewrites.
+- When making technical decisions, give development cost little weight; prefer quality, simplicity, robustness, scalability, and long-term maintainability.
+- For bug fixes, first reproduce the bug in a realistic end-user flow, then fix the root cause.
+- Treat lint failures, test failures, and test flakiness as quality problems to fix when you encounter them, even if your change did not cause them.
 - Parallelize independent audit, review, and research work when possible.
 - If quality is below 9/10, identify the remaining gap and keep pushing.
 
@@ -118,6 +132,7 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 
 - For visible UI work, invoke the `product-design` skill when available.
 - Reference real products or design systems before inventing a visual direction; inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
+- During product testing, be picky about UI quality, pixel alignment, and visual polish; fix obvious issues you encounter, even outside the immediate task.
 - Do not add obvious labels, procedural step cards, route/status narration, or explanatory copy that restates what controls already show.
 - The active product mode should change the actual component: text input for text, upload/record for audio, sample/consent for cloning, chat/intake for agents.
 - Kill dead panels, giant default selections, repeated action words, and fake readiness states before claiming design quality.
@@ -127,11 +142,12 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - TypeScript: strict, single quotes, 2-space indent, no semicolons unless the repo clearly uses them.
 - Prefer fail-closed defaults for security and data integrity.
 - Use Conventional Commits when creating commits.
+- Never add AI, agent, Claude, or tool co-authorship trailers to commits.
 - Do not generate markdown docs unless explicitly useful to the repo or requested.
+- When writing or substantially editing long Markdown files, put each full sentence on its own physical line while preserving normal Markdown structure.
 - Comments should explain non-obvious technical decisions, invariants, constraints, or risk boundaries.
 - Do not add narrative comments like "generate X", "evolve Y", "Gen N", "build the thing", or comments that restate the next line of code.
 - Do not use hype labels or lifecycle branding in comments. Prefer precise terms such as "candidate", "variant", "baseline", "promotion gate", or the domain's existing name.
-- Never add AI co-authorship trailers to commits.
 
 ## GitHub Pull Requests
 
@@ -171,6 +187,7 @@ When the user asks an analytical / status / "did X work" / "how did X perform" /
 - **Get the data first.** Query the files/artifacts/processes before answering. Never answer from memory or vibes; if a number is unknowable, say so — that's a finding.
 - **BLUF.** First line = the answer + the single most decision-relevant number. If a premise of the question is wrong, correct it first.
 - **Numbers, not adjectives.** Never "fast / most / healthy / a lot." Always the quantity + distribution (`min / median / p90 / max`) + `n`. Every claim carries a number and a denominator.
+- **Show EVERY dimension you have — a curated subset is a failure, every time.** When you present a chart, table, or any data answer, dump the FULL picture: (1) provenance first — `n`/reps, model, harness+version, search/tool provider + endpoint + mode, every arm, persona, shots, dates, the exact command; (2) then EVERY measured column for EVERY unit — all verification layers, firing counts, tokens in/out, cost, wall-time, every outcome/enrichment signal — not the 3 you find interesting; (3) then the distribution. If the data has 10+ dimensions, show 10+. A `0`/`null`/uncaptured value IS data — show it and label it, never silently drop it. **Surface every confound and asymmetry between compared groups (unequal n, unequal attempts/shots, telemetry gaps, different termination) BEFORE the verdict** — a clean-looking comparison that hides an asymmetry is the single worst failure. Default to the raw per-unit dump + the summary, not the summary alone. (Drew, verbatim: *"I never want to see shitty columns like this ever; if you have 10+ dimensions of data I want you to share this with me ALWAYS — why are you skimping out always!"*)
 - **Structure over paragraphs** — tables/distributions. Skeleton: Verdict → Method (provenance) → Results (tables) → Interpretation (tag measured vs inferred) → Threats to validity → Next actions → "didn't ask but should know."
 - **Pick the lens by domain** — eval/benchmark → experimental results section; infra/scaling/reliability → SRE ops report (SLIs, utilization, anomalies); dataset → EDA; perf → p50/p95/p99 + cost; security → severity×likelihood findings. The artifact shape IS the expertise.
 - **Answer the question behind the question.** The user is often unsure what to ask — anticipate the decision-relevant metrics and volunteer what matters. Scale the artifact to the decision (a quick status check gets a 3-line verdict + small table, not the full skeleton).

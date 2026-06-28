@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""List all installed skills (name + one-line description) for discovery.
+
+Skills chain forward via each SKILL.md's `## Then consider` footer; this command
+is the *discovery* complement — when a skill's footer can't know every relevant
+peer, run `skills` (optionally `skills <substr>`) to see the full menu.
+"""
+import os
+import re
+import sys
+
+ROOTS = [
+    os.path.expanduser("~/.claude/skills"),
+    os.path.expanduser("~/.codex/skills"),
+]
+
+
+def frontmatter(path):
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return None, None
+    m = re.match(r"^---\n(.*?)\n---", text, re.S)
+    if not m:
+        return None, None
+    fm = m.group(1)
+    name = None
+    desc = None
+    lines = fm.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("name:"):
+            name = line[5:].strip().strip("\"'")
+        elif line.startswith("description:"):
+            val = line[12:].strip()
+            if val in (">-", ">", "|", "|-"):  # folded/block scalar → take continuation
+                cont = []
+                for nxt in lines[i + 1 :]:
+                    if nxt and not nxt[0].isspace():
+                        break
+                    cont.append(nxt.strip())
+                desc = " ".join(c for c in cont if c)
+            else:
+                desc = val.strip("\"'")
+    return name, desc
+
+
+def main():
+    needle = sys.argv[1].lower() if len(sys.argv) > 1 else None
+    seen = {}
+    for root in ROOTS:
+        if not os.path.isdir(root):
+            continue
+        for entry in sorted(os.listdir(root)):
+            sk = os.path.join(root, entry, "SKILL.md")
+            if not os.path.isfile(sk) or entry in seen:
+                continue
+            name, desc = frontmatter(sk)
+            seen[entry] = (name or entry, desc or "")
+    rows = sorted(seen.values())
+    if needle:
+        rows = [r for r in rows if needle in r[0].lower() or needle in r[1].lower()]
+    if not rows:
+        print("no skills found" + (f" matching {needle!r}" if needle else ""))
+        return
+    width = max(len(n) for n, _ in rows)
+    for name, desc in rows:
+        one = (desc.split(". ")[0])[:96]
+        print(f"  {name.ljust(width)}  {one}")
+    print(f"\n{len(rows)} skill(s)" + (f" matching {needle!r}" if needle else ""))
+
+
+if __name__ == "__main__":
+    main()

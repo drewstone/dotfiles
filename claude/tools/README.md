@@ -2,6 +2,18 @@
 
 Custom CLI tools for managing Claude Code. Installed via `install.sh` which symlinks tools to `~/bin/`.
 
+## agent-doc-lengths
+
+Measure Markdown and skill size across the dotfiles repo:
+
+```bash
+agent-doc-lengths --top 25
+agent-doc-lengths --all --format markdown
+agent-doc-lengths --format json
+```
+
+Reports lines, words, chars, approximate tokens, category totals, largest files, largest `SKILL.md` files, and threshold findings for oversized docs.
+
 ## claude-profile
 
 Switch between multiple Claude Code accounts (Max, Pro, Codex, etc.) cleanly — no shared-file races, no "oops my session logged me out when I cd'd," no sync step after re-auth.
