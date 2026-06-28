@@ -1,0 +1,492 @@
+#!/usr/bin/env python3
+"""Report length metrics for agent-facing Markdown docs and skills."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import os
+import re
+import sys
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+
+DEFAULT_ROOT = Path(__file__).resolve().parents[2]
+EXCLUDED_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".turbo",
+    ".venv",
+    "coverage",
+    "dist",
+    "node_modules",
+}
+MARKDOWN_SUFFIXES = {".md", ".mdx"}
+WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?")
+
+
+@dataclass(frozen=True)
+class FileSize:
+    path: str
+    category: str
+    subject: str
+    lines: int
+    nonblank_lines: int
+    words: int
+    chars: int
+    approx_tokens: int
+
+
+@dataclass(frozen=True)
+class CategorySize:
+    category: str
+    files: int
+    lines: int
+    words: int
+    chars: int
+    approx_tokens: int
+    largest_file: str
+
+
+@dataclass(frozen=True)
+class Finding:
+    path: str
+    category: str
+    approx_tokens: int
+    lines: int
+    reason: str
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Measure length of Markdown docs, skills, skill references, commands, and reflections.",
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        help="Files or directories to scan. Defaults to the dotfiles repo root.",
+    )
+    parser.add_argument(
+        "--root",
+        default=str(DEFAULT_ROOT),
+        help=f"Root used for relative paths in output. Default: {DEFAULT_ROOT}",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=20,
+        help="Number of largest files to show in text/markdown reports. Default: 20.",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Show every scanned file instead of only the largest files.",
+    )
+    parser.add_argument(
+        "--sort",
+        choices=("approx_tokens", "lines", "words", "chars"),
+        default="approx_tokens",
+        help="Metric used to sort file tables. Default: approx_tokens.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "markdown", "json", "csv"),
+        default="text",
+        help="Output format. Default: text.",
+    )
+    parser.add_argument(
+        "--chars-per-token",
+        type=float,
+        default=4.0,
+        help="Approximate token conversion. Default: 4 chars per token.",
+    )
+    parser.add_argument(
+        "--max-skill-lines",
+        type=int,
+        default=400,
+        help="Warn when a SKILL.md exceeds this line count. Default: 400.",
+    )
+    parser.add_argument(
+        "--max-doc-lines",
+        type=int,
+        default=1000,
+        help="Warn when a non-SKILL markdown doc exceeds this line count. Default: 1000.",
+    )
+    parser.add_argument(
+        "--max-skill-tokens",
+        type=int,
+        default=8000,
+        help="Warn when a SKILL.md exceeds this approximate token count. Default: 8000.",
+    )
+    parser.add_argument(
+        "--max-doc-tokens",
+        type=int,
+        default=16000,
+        help="Warn when a non-SKILL markdown doc exceeds this approximate token count. Default: 16000.",
+    )
+    parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help="Exit with status 2 if any file exceeds the configured limits.",
+    )
+    return parser.parse_args()
+
+
+def format_int(value: int) -> str:
+    return f"{value:,}"
+
+
+def rel_path(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def iter_markdown_files(paths: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    for path in paths:
+        if path.is_file() and path.suffix.lower() in MARKDOWN_SUFFIXES:
+            files.append(path)
+            continue
+        if not path.is_dir():
+            continue
+        for current, dirs, filenames in os.walk(path):
+            dirs[:] = [name for name in dirs if name not in EXCLUDED_DIRS]
+            for filename in filenames:
+                candidate = Path(current) / filename
+                if candidate.suffix.lower() in MARKDOWN_SUFFIXES:
+                    files.append(candidate)
+    return sorted(set(files), key=lambda item: item.as_posix())
+
+
+def classify(path: Path, root: Path) -> tuple[str, str]:
+    relative = Path(rel_path(path, root))
+    parts = relative.parts
+
+    if len(parts) >= 3 and parts[0] == "claude" and parts[1] == "skills":
+        skill = parts[2]
+        if relative.name == "SKILL.md":
+            return "skill", skill
+        return "skill-reference", skill
+
+    if len(parts) >= 2 and parts[0] == "claude":
+        if parts[1] == "commands":
+            return "command", relative.stem
+        if parts[1] == "reflections":
+            return "reflection", relative.stem
+        if parts[1] == "tools":
+            return "tool-doc", relative.stem
+        if relative.name in {"AGENTS.md", "AUDIT.md", "CLAUDE.md", "README.md", "RTK.md"}:
+            return "agent-doc", relative.name
+
+    if relative.name in {"AGENTS.md", "CLAUDE.md", "README.md"}:
+        return "agent-doc", relative.name
+
+    return "markdown", relative.stem
+
+
+def measure(path: Path, root: Path, chars_per_token: float) -> FileSize:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    words = WORD_RE.findall(text)
+    category, subject = classify(path, root)
+    return FileSize(
+        path=rel_path(path, root),
+        category=category,
+        subject=subject,
+        lines=len(lines),
+        nonblank_lines=sum(1 for line in lines if line.strip()),
+        words=len(words),
+        chars=len(text),
+        approx_tokens=math.ceil(len(text) / chars_per_token) if text else 0,
+    )
+
+
+def summarize_by_category(rows: list[FileSize]) -> list[CategorySize]:
+    groups: dict[str, list[FileSize]] = defaultdict(list)
+    for row in rows:
+        groups[row.category].append(row)
+
+    summaries: list[CategorySize] = []
+    for category, items in groups.items():
+        largest = max(items, key=lambda row: row.approx_tokens)
+        summaries.append(
+            CategorySize(
+                category=category,
+                files=len(items),
+                lines=sum(item.lines for item in items),
+                words=sum(item.words for item in items),
+                chars=sum(item.chars for item in items),
+                approx_tokens=sum(item.approx_tokens for item in items),
+                largest_file=largest.path,
+            ),
+        )
+    return sorted(summaries, key=lambda row: row.approx_tokens, reverse=True)
+
+
+def find_oversized(rows: list[FileSize], args: argparse.Namespace) -> list[Finding]:
+    findings: list[Finding] = []
+    for row in rows:
+        if row.category == "skill":
+            max_lines = args.max_skill_lines
+            max_tokens = args.max_skill_tokens
+        else:
+            max_lines = args.max_doc_lines
+            max_tokens = args.max_doc_tokens
+
+        reasons = []
+        if row.lines > max_lines:
+            reasons.append(f"{format_int(row.lines)} lines > {format_int(max_lines)}")
+        if row.approx_tokens > max_tokens:
+            reasons.append(f"~{format_int(row.approx_tokens)} tokens > ~{format_int(max_tokens)}")
+        if reasons:
+            findings.append(
+                Finding(
+                    path=row.path,
+                    category=row.category,
+                    approx_tokens=row.approx_tokens,
+                    lines=row.lines,
+                    reason="; ".join(reasons),
+                ),
+            )
+    return sorted(findings, key=lambda row: (row.approx_tokens, row.lines), reverse=True)
+
+
+def sorted_files(rows: list[FileSize], sort_key: str) -> list[FileSize]:
+    return sorted(rows, key=lambda row: getattr(row, sort_key), reverse=True)
+
+
+def print_table(headers: list[str], data: list[list[str]]) -> None:
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in data)) if data else len(headers[index])
+        for index in range(len(headers))
+    ]
+    print("  " + "  ".join(headers[index].ljust(widths[index]) for index in range(len(headers))))
+    print("  " + "  ".join("-" * width for width in widths))
+    for row in data:
+        print("  " + "  ".join(row[index].ljust(widths[index]) for index in range(len(headers))))
+
+
+def file_rows(rows: list[FileSize]) -> list[list[str]]:
+    return [
+        [
+            row.path,
+            row.category,
+            row.subject,
+            format_int(row.lines),
+            format_int(row.words),
+            format_int(row.chars),
+            f"~{format_int(row.approx_tokens)}",
+        ]
+        for row in rows
+    ]
+
+
+def print_text(rows: list[FileSize], categories: list[CategorySize], findings: list[Finding], args: argparse.Namespace, root: Path) -> None:
+    total_lines = sum(row.lines for row in rows)
+    total_words = sum(row.words for row in rows)
+    total_chars = sum(row.chars for row in rows)
+    total_tokens = sum(row.approx_tokens for row in rows)
+    print(f"Scanned {format_int(len(rows))} Markdown files under {root}")
+    print(
+        "Totals: "
+        f"{format_int(total_lines)} lines | "
+        f"{format_int(total_words)} words | "
+        f"{format_int(total_chars)} chars | "
+        f"~{format_int(total_tokens)} tokens"
+    )
+
+    print("\nBy category")
+    print_table(
+        ["category", "files", "lines", "words", "chars", "approx_tokens", "largest_file"],
+        [
+            [
+                row.category,
+                format_int(row.files),
+                format_int(row.lines),
+                format_int(row.words),
+                format_int(row.chars),
+                f"~{format_int(row.approx_tokens)}",
+                row.largest_file,
+            ]
+            for row in categories
+        ],
+    )
+
+    limit = len(rows) if args.all else args.top
+    largest = sorted_files(rows, args.sort)[:limit]
+    title = "All files" if args.all else f"Largest {min(limit, len(rows))} files by {args.sort}"
+    print(f"\n{title}")
+    print_table(["path", "category", "subject", "lines", "words", "chars", "approx_tokens"], file_rows(largest))
+
+    skills = [row for row in rows if row.category == "skill"]
+    if skills and not args.all:
+        largest_skills = sorted_files(skills, args.sort)[: min(args.top, len(skills))]
+        print(f"\nLargest {len(largest_skills)} SKILL.md files by {args.sort}")
+        print_table(["path", "category", "subject", "lines", "words", "chars", "approx_tokens"], file_rows(largest_skills))
+
+    print("\nThreshold findings")
+    if findings:
+        print_table(
+            ["path", "category", "lines", "approx_tokens", "reason"],
+            [
+                [
+                    row.path,
+                    row.category,
+                    format_int(row.lines),
+                    f"~{format_int(row.approx_tokens)}",
+                    row.reason,
+                ]
+                for row in findings
+            ],
+        )
+    else:
+        print("  No files exceed configured limits.")
+
+
+def markdown_table(headers: list[str], data: list[list[str]]) -> str:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in data:
+        lines.append("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |")
+    return "\n".join(lines)
+
+
+def print_markdown(rows: list[FileSize], categories: list[CategorySize], findings: list[Finding], args: argparse.Namespace, root: Path) -> None:
+    total_lines = sum(row.lines for row in rows)
+    total_words = sum(row.words for row in rows)
+    total_chars = sum(row.chars for row in rows)
+    total_tokens = sum(row.approx_tokens for row in rows)
+    print("# Agent Doc Lengths")
+    print()
+    print(f"- Root: `{root}`")
+    print(f"- Files: {format_int(len(rows))}")
+    print(f"- Total lines: {format_int(total_lines)}")
+    print(f"- Total words: {format_int(total_words)}")
+    print(f"- Total chars: {format_int(total_chars)}")
+    print(f"- Approx tokens: ~{format_int(total_tokens)}")
+    print()
+    print("## By Category")
+    print()
+    print(
+        markdown_table(
+            ["category", "files", "lines", "words", "chars", "approx_tokens", "largest_file"],
+            [
+                [
+                    row.category,
+                    str(row.files),
+                    str(row.lines),
+                    str(row.words),
+                    str(row.chars),
+                    f"~{row.approx_tokens}",
+                    f"`{row.largest_file}`",
+                ]
+                for row in categories
+            ],
+        )
+    )
+    limit = len(rows) if args.all else args.top
+    print()
+    print("## Files")
+    print()
+    print(
+        markdown_table(
+            ["path", "category", "subject", "lines", "words", "chars", "approx_tokens"],
+            [
+                [f"`{row.path}`", row.category, row.subject, str(row.lines), str(row.words), str(row.chars), f"~{row.approx_tokens}"]
+                for row in sorted_files(rows, args.sort)[:limit]
+            ],
+        )
+    )
+    print()
+    print("## Threshold Findings")
+    print()
+    if findings:
+        print(
+            markdown_table(
+                ["path", "category", "lines", "approx_tokens", "reason"],
+                [
+                    [f"`{row.path}`", row.category, str(row.lines), f"~{row.approx_tokens}", row.reason]
+                    for row in findings
+                ],
+            )
+        )
+    else:
+        print("No files exceed configured limits.")
+
+
+def print_json(rows: list[FileSize], categories: list[CategorySize], findings: list[Finding], args: argparse.Namespace, root: Path) -> None:
+    payload = {
+        "root": str(root),
+        "files_scanned": len(rows),
+        "chars_per_token": args.chars_per_token,
+        "totals": {
+            "lines": sum(row.lines for row in rows),
+            "nonblank_lines": sum(row.nonblank_lines for row in rows),
+            "words": sum(row.words for row in rows),
+            "chars": sum(row.chars for row in rows),
+            "approx_tokens": sum(row.approx_tokens for row in rows),
+        },
+        "thresholds": {
+            "max_skill_lines": args.max_skill_lines,
+            "max_doc_lines": args.max_doc_lines,
+            "max_skill_tokens": args.max_skill_tokens,
+            "max_doc_tokens": args.max_doc_tokens,
+        },
+        "categories": [asdict(row) for row in categories],
+        "findings": [asdict(row) for row in findings],
+        "files": [asdict(row) for row in sorted_files(rows, args.sort)],
+    }
+    print(json.dumps(payload, indent=2))
+
+
+def print_csv(rows: list[FileSize], sort_key: str) -> None:
+    writer = csv.DictWriter(
+        sys.stdout,
+        fieldnames=["path", "category", "subject", "lines", "nonblank_lines", "words", "chars", "approx_tokens"],
+    )
+    writer.writeheader()
+    for row in sorted_files(rows, sort_key):
+        writer.writerow(asdict(row))
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(args.root).expanduser().resolve()
+    scan_paths = [Path(path).expanduser() for path in args.paths] if args.paths else [root]
+    scan_paths = [(root / path).resolve() if not path.is_absolute() else path.resolve() for path in scan_paths]
+
+    if args.chars_per_token <= 0:
+        print("error: --chars-per-token must be greater than 0", file=sys.stderr)
+        return 2
+
+    files = iter_markdown_files(scan_paths)
+    rows = [measure(path, root, args.chars_per_token) for path in files]
+    categories = summarize_by_category(rows)
+    findings = find_oversized(rows, args)
+
+    if args.format == "json":
+        print_json(rows, categories, findings, args, root)
+    elif args.format == "csv":
+        print_csv(rows, args.sort)
+    elif args.format == "markdown":
+        print_markdown(rows, categories, findings, args, root)
+    else:
+        print_text(rows, categories, findings, args, root)
+
+    if findings and args.fail_on_findings:
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
