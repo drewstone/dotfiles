@@ -7,6 +7,7 @@ description: Audit technical docs for weak claims, AI slop, unclear product boun
 
 Use this for technical docs, READMEs, whitepapers, launch notes, product pages, and generated MDX.
 The goal is truth and reader utility, not prettier prose.
+For public writing, blog, research, marketing, or product pages, also read the relevant `docs/anti-patterns/` file before editing.
 
 ## Flow
 
@@ -22,7 +23,8 @@ The goal is truth and reader utility, not prettier prose.
 Return findings with file:line, risk, evidence, and suggested edit.
 If editing, make the changes and run the repo's doc/check commands.
 
-Use `references/patterns.md` and `references/full-reference.md` for full rules and scanner details.
+Use `references/patterns.md` and `references/full-reference.md` for scanner details.
+Use `docs/anti-patterns/` for durable anti-slop doctrine.
 
 ## Then consider
 

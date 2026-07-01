@@ -131,6 +131,7 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 ## Product Design Defaults
 
 - For visible UI work, invoke the `product-design` skill when available.
+- For public writing, research, marketing, homepage, product-design, or blog work, read the relevant file in `docs/anti-patterns/` before producing copy or UI.
 - Reference real products or design systems before inventing a visual direction; inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
 - During product testing, be picky about UI quality, pixel alignment, and visual polish; fix obvious issues you encounter, even outside the immediate task.
 - Do not add obvious labels, procedural step cards, route/status narration, or explanatory copy that restates what controls already show.
@@ -178,6 +179,9 @@ When asked to inspect the latest screenshot or `$IMG`, first check the newest fi
 - Do not add backward-compat shims to greenfield packages unless explicitly required.
 - Do not claim an eval or deployment worked without verifying the live artifact.
 - Do not optimize the metric while making the real user experience worse.
+- `docs/anti-patterns/` is the durable doctrine for writing and design failures.
+  Skills may summarize it, but they do not replace it.
+  For blog/research work, start with `docs/anti-patterns/blog-and-research.md`, `docs/anti-patterns/copywriting.md`, `docs/anti-patterns/product-design.md`, and `docs/anti-patterns/review-gates.md` as relevant.
 
 ## Deployment / Debugging
 

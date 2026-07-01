@@ -9,6 +9,7 @@ metadata:
 
 Use this before creating or revising visible UI.
 The interface should do the job, not explain the job.
+For public pages, blog/research surfaces, marketing pages, or broad design-system work, read the relevant `docs/anti-patterns/` file before implementing.
 
 ## Flow
 
@@ -29,7 +30,7 @@ The interface should do the job, not explain the job.
 - Do not market raw inventory counts unless the count is the reader's decision.
 - Do not claim UI quality from a build alone.
 
-Use `references/full-reference.md` for full anti-patterns and detailed design rules.
+Use `references/full-reference.md` for execution rules and `docs/anti-patterns/` for durable writing/design doctrine.
 
 ## Then consider
 
