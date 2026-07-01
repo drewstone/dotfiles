@@ -18,6 +18,11 @@ Adapted from `hardikpandya/stop-slop`, the local Tangle anti-slop guide, and the
 - False agency: "the data tells us", "the decision emerges", "the system unlocks" when a human, contract, or service performs the action.
 - Abstract nouns: "landscape", "ecosystem", "paradigm", "synergy", "holistic" unless the page literally discusses a protocol ecosystem.
 - Decorative structure: counting headlines, rule-of-three lists, quote-like closers, and em dashes used for drama.
+- Inventory theater: "80 posts published", "50 integrations", "12 primitives", or any raw count that is not itself the buyer or reader decision.
+  Replace with the path the reader should take: series, topic, date, task, argument, or product surface.
+- Markdown-as-design: long pages made only of headings, bullets, fenced text blocks, and repeated tables.
+  Replace with a real artifact when possible: screenshot, diagram, trace, terminal proof, comparison matrix, or designed cover.
+- Fake research posture: product comparisons, SEO explainers, or market summaries presented as research without method, data, trace evidence, or a falsifiable claim.
 
 ## Low severity
 

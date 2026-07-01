@@ -15,7 +15,7 @@ The interface should do the job, not explain the job.
 1. Identify the product type, user, primary workflow, and domain expectations.
 2. Inspect relevant references or existing design system before inventing a direction.
 3. Choose controls that match the task: icons, tabs, toggles, menus, sliders, upload/record, chat/intake, or direct commands.
-4. Remove obvious labels, procedural step cards, dead panels, repeated action words, fake readiness states, and decorative clutter.
+4. Remove obvious labels, raw inventory counts, procedural step cards, dead panels, repeated action words, fake readiness states, and decorative clutter.
 5. Implement in the app's existing component/style patterns.
 6. Verify rendered desktop and mobile screenshots; fix text overflow and visible polish issues.
 
@@ -24,6 +24,9 @@ The interface should do the job, not explain the job.
 - Mode changes must change the actual component, not just the label.
 - Operational tools should be dense, calm, and scannable.
 - Product/venue/person pages need real visual assets in the first viewport.
+- Blog indexes should organize by reader path: series, topic, date, or argument.
+- Research indexes should organize by claim and evidence standard, not by SEO category or product taxonomy.
+- Do not market raw inventory counts unless the count is the reader's decision.
 - Do not claim UI quality from a build alone.
 
 Use `references/full-reference.md` for full anti-patterns and detailed design rules.

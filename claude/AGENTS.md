@@ -134,6 +134,10 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Reference real products or design systems before inventing a visual direction; inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
 - During product testing, be picky about UI quality, pixel alignment, and visual polish; fix obvious issues you encounter, even outside the immediate task.
 - Do not add obvious labels, procedural step cards, route/status narration, or explanatory copy that restates what controls already show.
+- Do not market raw inventory counts on public editorial pages.
+  Post totals, repo totals, integration totals, and feature totals are not proof unless the page is explicitly helping the reader choose by volume.
+- Blog indexes should organize by reader path: series, topic, date, or argument.
+  Research indexes should organize by claim and evidence standard, not by SEO category or product taxonomy.
 - The active product mode should change the actual component: text input for text, upload/record for audio, sample/consent for cloning, chat/intake for agents.
 - Kill dead panels, giant default selections, repeated action words, and fake readiness states before claiming design quality.
 
