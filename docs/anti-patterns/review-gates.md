@@ -122,4 +122,3 @@ Pass only if:
 - at least one concrete pattern is extracted
 - at least one anti-pattern is extracted
 - implementation is checked against the extracted pattern
-

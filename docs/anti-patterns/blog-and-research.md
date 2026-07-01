@@ -96,4 +96,3 @@ Research page should feel like:
 - date, title, short claim
 - no theatrical sections
 - no marketing CTA
-

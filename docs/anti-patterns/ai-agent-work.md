@@ -77,4 +77,3 @@ First classify:
 - future bets
 
 Then show only the layer that belongs to the current artifact.
-

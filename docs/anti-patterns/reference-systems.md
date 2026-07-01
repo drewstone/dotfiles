@@ -226,4 +226,3 @@ Source can influence doctrine only if it gives at least one of:
 - research evidence
 - implementation details
 - repeatable review criteria
-

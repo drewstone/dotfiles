@@ -112,4 +112,3 @@ Better:
 Best:
 
 No CTA, if the page is research or reference.
-

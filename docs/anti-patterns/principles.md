@@ -93,4 +93,3 @@ Symptoms:
 Kill test:
 
 Pick one: product spine, audience path, proof artifact, or argument. Hide the rest.
-

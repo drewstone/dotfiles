@@ -88,4 +88,3 @@ Do not expose a bad information architecture in the nav.
 If pages are weak, remove the links. A small site with Blog and Research is better than a large broken site.
 
 Nav should not be a company org chart.
-

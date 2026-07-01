@@ -171,4 +171,3 @@ Tangle should avoid:
 - card farms
 - tiny labels
 - fake terminal windows as decoration
-

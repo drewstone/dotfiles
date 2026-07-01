@@ -114,4 +114,3 @@ For AI product guidance, collect:
 - how model/system boundaries are named
 
 If these are absent, the source may be visually useful but not AI-product doctrine.
-
