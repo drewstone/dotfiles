@@ -1,0 +1,4 @@
+interface:
+  display_name: "Simplify"
+  short_description: "Run a branch-safe simplification pass."
+  default_prompt: "Find and ship the highest-value simplification without losing capability."
