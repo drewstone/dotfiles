@@ -91,17 +91,22 @@ Use references only after extracting concrete patterns.
 Do not cite a popular blog because it is popular.
 
 - OpenAI News and blog pages work because posts are organized around releases, research updates, and product changes with strong media treatment.
+  Source: https://openai.com/news/
   Transferable pattern: writing categories map to reader intent, not internal taxonomy.
   Do not copy: generic launch-page polish without artifact proof.
 - Anthropic News works because safety, policy, product, and research posts keep distinct claims and evidence standards.
+  Source: https://www.anthropic.com/news
   Transferable pattern: research-facing pieces should not use the same voice as product announcements.
   Do not copy: institution-sized caveats when a startup needs sharper builder decisions.
 - Stripe Engineering and company writing work because posts explain decisions with implementation detail, diagrams, and constraints.
+  Sources: https://stripe.com/blog and https://stripe.com/blog/engineering
   Transferable pattern: make the decision and tradeoff visible.
   Do not copy: long institutional history unless it directly changes the reader's implementation choice.
 - Vercel and Linear writing work because they omit more than they show.
+  Sources: https://vercel.com/blog and https://linear.app/changelog
   Transferable pattern: small archives can feel serious when hierarchy and visual rhythm are strong.
   Do not copy: minimalism as empty whitespace or a list with no artifact.
 - Cloudflare writing works because technical posts carry operational evidence and concrete failure modes.
+  Source: https://blog.cloudflare.com/
   Transferable pattern: name the incident, constraint, benchmark, protocol behavior, or system boundary.
   Do not copy: overwhelming chronology when the audience needs the decision first.
