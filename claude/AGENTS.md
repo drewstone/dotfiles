@@ -56,6 +56,21 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
+## Ground-truth harness FIRST — see the whole system before you touch it
+
+The costliest failure isn't a wrong fix — it's optimizing or debugging a system you can't fully SEE, so you act on a number true only in a narrower context than you present it (local ≠ production, one slice ≠ end-to-end, "lever exists in code" ≠ "measured firing on the real path"). A multi-day effort can burn on a fake baseline — a "~32ms" measured locally/un-jailed that never once worked on the real jailed path, sitting in the docs as real for days — because the real path was never stood up until forced. The per-claim Verification gates below catch "did you check THIS claim"; they do NOT catch "did you build visibility into the real system before fixing it." This does.
+
+**Trigger** — any *make X faster / more reliable*, *why is X slow / broken / flaky*, *optimize / benchmark / harden*, *ship-and-prove* task. Opening move is the harness, not a fix. Before touching a fix, answer with real-environment numbers: **"what is the measured, real-path, end-to-end breakdown right now, and which term dominates?"** Can't answer → build the harness.
+
+**Stand it up in ONE parallel fan-out (dispatch concurrent, converge — never grind serially over days):**
+- **Instrument every hop** — per-stage timing on the ACTUAL path (client→edge→API→orchestrator→host→thing), zero dark segments; an uninstrumented segment is the first PR, before any optimization.
+- **Benchmark the REAL path** — where code actually runs (jailed, deployed, cross-region), not the local stand-in; label every number's boundary (vantage, env, warm/cold, n).
+- **Reversible test loop** — prove changes on real infra without mutating shared state (local real-infra e2e / isolated cell / dry run); if the only way to test is hand-patching shared staging, building the loop IS the task.
+- **Trace your own run** — `~/code/traces` / the repo's failure-mode analyst on the session EARLY (not once the user is furious) — catches status-without-a-moved-number, re-measure churn, an ungrounded baseline.
+- **Baseline + ranked lever map** — one measured number + the decomposition naming the dominant term and what's irreducible (security/physics floor) vs cuttable; cut the biggest REAL term first.
+
+The harness IS the real work; the fixes are easy once you can see. Don't collapse it because it feels like a detour — every wasted cycle in a long effort traces to a fix attempted before the system was visible.
+
 ## Verification gates — run the check before you assert, before you spend
 
 The one recurring failure of long sessions is acting on a belief before grounding it: reporting a number you never read, launching a multi-hour run you never smoke-tested, naming a root cause you never checked against the data. "Take the lead / default to action" means don't delay the WORK — it NEVER means skip these gates. Fast IS the cheap check, because the cheap check is what prevents the slow, expensive redo. Run all three. **Show the check inline so its absence is visible** — a claim with no check next to it is a defect anyone can spot.
