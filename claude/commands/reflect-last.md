@@ -8,8 +8,14 @@ You just finished (or paused) a substantial piece of work. Turn the trace analyz
 Run it, read it, act on it — don't just print the findings:
 
 1. **Analyze this session's trace:**
-   `cd ~/code/traces && node dist/cli.js analyze --harness claude-code --last 1`
-   (Reads the Claude Code transcript on disk — zero instrumentation, no API cost for the deterministic pass. If `~/code/traces` isn't present, fall back to the repo's failure-mode analyst, or grep the session JSONL under `~/.claude/projects/*/` for tool-retry and re-measure loops.)
+   ```bash
+   if command -v traces >/dev/null 2>&1; then
+     traces analyze --harness claude-code --last 1
+   else
+     npx --yes @tangle-network/traces@latest analyze --harness claude-code --last 1
+   fi
+   ```
+   (Reads the Claude Code transcript on disk — zero instrumentation, no API cost for the deterministic pass. For a persistent install, run `curl -fsSL https://raw.githubusercontent.com/tangle-network/traces/main/install.sh | bash`. If Node/npm/network are unavailable, fall back to the repo's failure-mode analyst, or grep the session JSONL under `~/.claude/projects/*/` for tool-retry and re-measure loops.)
 
 2. **Read the signal that matters, not the whole dump:** the corrective-to-positive ratio and its trigger pairs (what prose of yours drew a correction — usually status-without-a-number), stuck/duplicate loops, monotonic token growth, and any HIGH efficiency finding.
 
