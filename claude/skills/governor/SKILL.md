@@ -25,6 +25,7 @@ It does not perform the work; it dispatches once and exits.
 - `eval-agent`: no evaluator exists for a subjective target.
 - `eval-harness-diagnose`: an eval harness exists but pass/fail is suspect — deltas can't be attributed, or repeated auth/route/judge/baseline failures suggest harness contamination, not agent failure.
 - `diagnose`: many failures need clustering and ROI order.
+- `finalize`: an experiment/pursuit branch carries several mixed changes worth shipping — split it into clean atomic PRs before landing.
 - `reflect`: the useful work is learning from sessions/projects.
 - `stop`: no useful next skill or the task is already complete.
 

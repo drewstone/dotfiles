@@ -33,6 +33,7 @@ Do not use it for vague quality polish, red CI, or one-off analysis.
 - Stop after five rounds or when the next step needs a different skill.
 
 Use `references/full-reference.md` for statistical details, structured-hypothesis mode, and state schemas.
+Use `references/deterministic-loop.md` for the tamper-proof `measure.sh` harness, auto-revert discipline, the ≥2× noise-floor keep-check, and the resumable playbook — the loop that makes evolve safe to run unattended for hours.
 
 ## Then consider
 
