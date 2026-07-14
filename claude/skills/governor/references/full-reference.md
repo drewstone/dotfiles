@@ -81,10 +81,19 @@ Each is a boolean or short verdict.
 - **Plateau + `/pursue` already ran 3+ rounds with <2% cumulative delta** → architecture is stuck.
 - **Operator asks "think bigger" / "what structural changes"** → route there.
 
+### Ceiling (favor `/breakout`)
+- **Plateau persists after `/meta-harness` already ran** (architecture evolved, still <2% and near a ceiling) → the *target* is the cap, not the code. Question and raise it.
+- **Near target and the win feels small** — within a few pp of target with no product step-change → interrogate whether the target is the real ceiling.
+- **Operator asks "why are we capped" / "10x this" / "think way bigger" / "this metric is a cage"** → route there. `/breakout` sets the raised target and hands the build back to `/pursue` or `/multi-pursue`.
+
 ### Measurement gap (favor `/eval-agent`)
 - **Goal defined but no baseline in `.evolve/`** → bootstrap the judge.
 - **Scorecard has `status: unmeasured` flows with `target` set**.
 - **Metric has no `productValueClaim`** (gate from evolve/pursue/meta-harness) → either redefine or build a judge that ties to product value.
+
+### Eval-harness integrity (favor `/eval-harness-diagnose`)
+- **An eval harness exists but pass/fail is suspect** — deltas can't be attributed to agent behavior, or auth/route/judge/baseline/transport failures recur across runs → suspect harness contamination, not agent failure.
+- **"Improve the harness" keeps being the next action** instead of "optimize the agent" → diagnose the harness before trusting any more numbers.
 
 ### Retreat (favor revert + `/evolve` on last-known-good)
 - **Last generation regressed** (REGRESSION/PARTIAL verdict) → revert to prior baseline first.
@@ -106,16 +115,18 @@ First match wins.
 ```
 1.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
 2.  Measurement-gap fires    → dispatch /eval-agent
-3.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
-4.  Reflection-due fires     → dispatch /reflect; governor re-runs after
-5.  Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
-6.  Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
-7.  Explore-heavy fires      → dispatch /meta-harness
-8.  Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
-9.  Explore-light fires      → dispatch /pursue
-10. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
-11. Hand-off fires           → closing reflection + stop
-12. No match                 → surface to operator
+3.  Eval-harness integrity   → dispatch /eval-harness-diagnose (don't explore/exploit on a lying harness)
+4.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
+5.  Reflection-due fires     → dispatch /reflect; governor re-runs after
+6.  Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
+7.  Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
+8.  Ceiling fires            → dispatch /breakout (plateau survived meta-harness, or operator wants 10x)
+9.  Explore-heavy fires      → dispatch /meta-harness
+10. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
+11. Explore-light fires      → dispatch /pursue
+12. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
+13. Hand-off fires           → closing reflection + stop
+14. No match                 → surface to operator
 ```
 
 ## Log the decision

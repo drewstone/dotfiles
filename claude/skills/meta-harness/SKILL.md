@@ -36,4 +36,5 @@ Use `references/full-reference.md` for the full setup, state files, and integrat
 ## Then consider
 
 - `evolve` when the architecture is stable and the next step is metric tuning.
+- `breakout` when even automated architecture evolution plateaus near a ceiling — the target is the cap, not the code. Question and raise it.
 - `autopsy` when a run result is surprising or suspicious.

@@ -36,5 +36,6 @@ Use `references/full-reference.md` for the full pursuit template and verificatio
 ## Then consider
 
 - `evolve` to tune a working generation.
+- `breakout` when the generation lands but the ceiling still feels small — the honest next move is a higher target, not a better point under this one.
 - `polish` when the generation works but quality gaps remain.
 - `autopsy` if the generation result is null or suspicious.
