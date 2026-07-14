@@ -1,4 +1,5 @@
 {
+  "model": "opus[1m]",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -22,6 +23,10 @@
             "type": "command",
             "command": "$HOME/.claude/hooks/git-push-preflight.sh",
             "timeout": 180
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/poll-guard.sh"
           }
         ]
       },
@@ -41,6 +46,12 @@
           {
             "type": "command",
             "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/halo-profile.sh",
             "timeout": 30,
             "async": true
           }

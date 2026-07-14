@@ -5,6 +5,9 @@ description: "Merged into /evolve's structured-hypothesis mode. Use /evolve for 
 
 # Research — merged into /evolve
 
-This skill was folded into **`/evolve`**. Its measure → diagnose → experiment → verify loop, anti-overfitting rules, and statistical rigor were already evolve's core; its unique surface (competitive-landscape step, bootstrap-CI promotion gate, promotion scope) now lives in evolve's **Structured-hypothesis mode**.
+This skill was folded into the improvement loop. Its two halves now live in dedicated skills:
 
-Use **`/evolve`** and engage the "Structured-hypothesis mode (optional)" section. The promotion gate is documented at `evolve/references/STATS.md`.
+- **The front half — competitive landscape, hypothesis generation, ranking — is `/hypothesize`.** Research the space, generate a diverse field, rank by expected value, sequence by information gain.
+- **The back half — running the experiments and the bootstrap-CI promotion gate — is `/evolve`.** The gate is documented at `evolve/references/STATS.md`.
+
+Use **`/hypothesize`** to decide what to try, then **`/evolve`** to run it.

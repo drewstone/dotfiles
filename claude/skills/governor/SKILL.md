@@ -1,6 +1,6 @@
 ---
 name: governor
-description: Read repo/session state and choose the single next skill: exploit with evolve/polish, explore with pursue/meta-harness, bootstrap with eval-agent, or step back with reflect.
+description: Read repo/session state and choose the single next skill: exploit (evolve/polish), explore (pursue/meta-harness/breakout), bootstrap (eval-agent), diagnose (diagnose/eval-harness-diagnose), or step back (reflect). One dispatch, then exit.
 ---
 
 # Governor
@@ -16,12 +16,16 @@ It does not perform the work; it dispatches once and exits.
 
 ## Decision
 
-- `evolve`: measurable target, metric can still move.
+- `hypothesize`: about to optimize but "what to try" isn't obvious, or the field keeps repeating one idea, or no one surveyed how the world beats this ceiling — build a researched, ranked portfolio before spending compute.
+- `evolve`: measurable target, metric can still move, and the next bet is clear (or `/hypothesize` already ranked it).
 - `polish`: fixed-quality cleanup on existing work.
 - `pursue`: current approach is wrong or needs a designed generation.
 - `meta-harness`: architecture evolution can be automated against a benchmark.
+- `breakout`: near the target or plateaued across 2+ pursue/meta-harness cycles — the ceiling *is* the target. Question and raise it before climbing again.
 - `eval-agent`: no evaluator exists for a subjective target.
+- `eval-harness-diagnose`: an eval harness exists but pass/fail is suspect — deltas can't be attributed, or repeated auth/route/judge/baseline failures suggest harness contamination, not agent failure.
 - `diagnose`: many failures need clustering and ROI order.
+- `finalize`: an experiment/pursuit branch carries several mixed changes worth shipping — split it into clean atomic PRs before landing.
 - `reflect`: the useful work is learning from sessions/projects.
 - `stop`: no useful next skill or the task is already complete.
 

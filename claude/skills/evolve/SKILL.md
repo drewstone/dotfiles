@@ -18,7 +18,7 @@ Do not use it for vague quality polish, red CI, or one-off analysis.
 ## Loop
 
 1. Diagnose the largest measured gap.
-2. Propose one hypothesis with a mechanism and a falsifiable result.
+2. Pick the top bet. If the next lever is obvious, propose one hypothesis with a mechanism and a falsifiable result. If more than one plausible lever exists — or you haven't surveyed how the world beats this ceiling — run `/hypothesize` first and pull the top-ranked bet from its portfolio.
 3. Make the smallest change that tests the hypothesis.
 4. Re-run the exact baseline check plus any needed regression checks.
 5. Compare against baseline with enough samples for the claim.
@@ -33,9 +33,11 @@ Do not use it for vague quality polish, red CI, or one-off analysis.
 - Stop after five rounds or when the next step needs a different skill.
 
 Use `references/full-reference.md` for statistical details, structured-hypothesis mode, and state schemas.
+Use `references/deterministic-loop.md` for the tamper-proof `measure.sh` harness, auto-revert discipline, the ≥2× noise-floor keep-check, and the resumable playbook — the loop that makes evolve safe to run unattended for hours.
 
 ## Then consider
 
+- `hypothesize` when "what to try next" is no longer obvious — build a researched, ranked portfolio instead of guessing one lever.
 - `meta-harness` or `pursue` after repeated measured plateaus.
 - `autopsy` for surprising or null results.
 - `polish` when the metric is fine but quality still needs fixed-rubric cleanup.

@@ -224,21 +224,21 @@ A reference `eval-stats.ts` library lives in this directory. Copy it into any pr
 
 Evolve is domain-agnostic. Domain knowledge lives in **specs** (`docs/EVOLVE-SPEC.md` or equivalent), not in this skill. When a spec exists, read it first — it tells you how to measure, what levers to pull, what to verify, known scoring artifacts to exclude.
 
-## Structured-hypothesis mode (optional)
+## Structured-hypothesis mode
 
-When the question is "which approach wins" and you're promoting winners into baselines/defaults
-(not just confirming a single fix moved a number), run the core loop in structured-hypothesis mode.
-Everything above still applies — measure → diagnose → experiment → verify is the same loop, and the
-anti-overfitting rules already stated hold. This mode only adds three things:
+When the question is "which approach wins" (not just "did this one fix move a number"), the front half —
+research the space, generate a diverse field, rank by expected value, sequence by information gain — now
+lives in **`/hypothesize`**. Run it first; it hands back a ranked portfolio and writes
+`.evolve/hypotheses/<date>-<slug>.md`. Evolve then executes the top bet through the same
+measure → diagnose → experiment → verify loop, with the anti-overfitting rules above still in force.
 
-1. **Competitive landscape (before hypothesizing).** Survey what alternatives/competitors do on this
-   metric: their approach, published numbers, where they're better or worse. Be honest — if they win
-   somewhere, say so. Feeds the gap analysis that ranks hypotheses.
-2. **Bootstrap-CI promotion gate (instead of eyeballing).** A winning experiment graduates to a baseline
+Evolve owns the back half — judging whether a winning bet is durable enough to ship:
+
+1. **Bootstrap-CI promotion gate (instead of eyeballing).** A winning experiment graduates to a baseline
    only via the deterministic promote/reject/candidate/inconclusive gate in `references/STATS.md`
    (bootstrap CI on the control→treatment delta; `ciLow > 0` → promote, `ciHigh < 0` → reject,
    positive point estimate but `ciLow ≤ 0` → candidate). Compute it, don't guess.
-3. **Promotion scope.** A `promote` still picks a target: safe for all users → global defaults; safe only
+2. **Promotion scope.** A `promote` still picks a target: safe for all users → global defaults; safe only
    in controlled environments → benchmark/test profiles; needs more validation → follow-up, defaults unchanged.
 
 ## Rules
