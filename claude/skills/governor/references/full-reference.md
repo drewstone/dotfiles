@@ -56,6 +56,10 @@ git log --oneline origin/main..HEAD      # uncommitted work, recent PRs
 
 Each is a boolean or short verdict.
 
+### Think (favor `/hypothesize`)
+- **About to optimize but "what to try" isn't obvious** — more than one plausible lever, or the last 2–3 experiments were variations of a single idea → build a ranked portfolio first.
+- **No competitive/prior-art survey exists** for this metric → someone has likely hit this ceiling; research before betting. `/hypothesize` dispatches `/deep-research` for web depth and hands `/evolve` or `/pursue` a ranked field.
+
 ### Exploit (favor `/evolve` / `/polish`)
 - **Active gains**: last 2 experiments KEEP with delta ≥ 3% → keep exploiting.
 - **Below target with movable metric**: scorecard flow below target AND CV < 15%.
@@ -124,9 +128,10 @@ First match wins.
 9.  Explore-heavy fires      → dispatch /meta-harness
 10. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
 11. Explore-light fires      → dispatch /pursue
-12. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
-13. Hand-off fires           → closing reflection + stop
-14. No match                 → surface to operator
+12. Think fires              → dispatch /hypothesize (about to spend, but field unmapped / unresearched)
+13. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
+14. Hand-off fires           → closing reflection + stop
+15. No match                 → surface to operator
 ```
 
 ## Log the decision

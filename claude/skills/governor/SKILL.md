@@ -16,7 +16,8 @@ It does not perform the work; it dispatches once and exits.
 
 ## Decision
 
-- `evolve`: measurable target, metric can still move.
+- `hypothesize`: about to optimize but "what to try" isn't obvious, or the field keeps repeating one idea, or no one surveyed how the world beats this ceiling — build a researched, ranked portfolio before spending compute.
+- `evolve`: measurable target, metric can still move, and the next bet is clear (or `/hypothesize` already ranked it).
 - `polish`: fixed-quality cleanup on existing work.
 - `pursue`: current approach is wrong or needs a designed generation.
 - `meta-harness`: architecture evolution can be automated against a benchmark.

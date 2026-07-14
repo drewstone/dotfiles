@@ -18,7 +18,7 @@ The output is a working generation with tests, not a proposal.
 ## Build
 
 1. Audit the current system and constraints.
-2. Design one coherent change set; avoid unrelated cleanup.
+2. Design as a tournament, not a single guess: put ≥2 competing architectures in contention (pull the ranked field from `/hypothesize` when one exists), argue them against each other, pick the winner by predicted leverage, and graft the best ideas from the runners-up. Then commit to one coherent change set; avoid unrelated cleanup.
 3. Implement all required pieces as a unit.
 4. Run the repo's relevant tests, type checks, builds, and product checks.
 5. Compare against the old approach where possible.
@@ -35,6 +35,7 @@ Use `references/full-reference.md` for the full pursuit template and verificatio
 
 ## Then consider
 
+- `hypothesize` before designing, when the architecture field is wide open — get a researched, ranked set of candidate designs to run the tournament on.
 - `evolve` to tune a working generation.
 - `breakout` when the generation lands but the ceiling still feels small — the honest next move is a higher target, not a better point under this one.
 - `polish` when the generation works but quality gaps remain.
