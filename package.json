@@ -12,7 +12,7 @@
     "templates"
   ],
   "scripts": {
-    "test": "node ./tests/smoke.test.mjs"
+    "test": "node --test ./tests/codex-wrapper.test.mjs && node ./tests/smoke.test.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
