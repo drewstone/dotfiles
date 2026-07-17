@@ -18,6 +18,12 @@ if [ "${TANGLE_INTELLIGENCE_OTEL:-}" = "1" ] && [ -r "$otel_env" ]; then
   export OTEL_LOG_USER_PROMPTS
 fi
 
+# Older agent-runtime releases call `codex run`; current Codex uses `exec`.
+if [ "${1:-}" = "run" ]; then
+  shift
+  set -- exec "$@"
+fi
+
 run_codex() {
   local candidate="$1"
   shift
