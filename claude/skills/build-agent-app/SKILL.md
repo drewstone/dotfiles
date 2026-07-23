@@ -1,110 +1,112 @@
 ---
 name: build-agent-app
-description: "Adopt @tangle-network/agent-app — the shared application-shell framework for agent products — either greenfield (new product) or by migrating an existing app (from ANY stack). Starts with a discovery interview (product surface, agent surface, eval surface, features, sandbox-or-not, billing, integrations), then routes to the right module set + path. Covers the engine/shell/domain layering rule, per-module seams, sandbox AND non-sandbox (browser/edge copilot) wiring, the migration lift-loop, and anti-patterns. Use when standing up a new agent product, deciding what belongs in the app vs the framework, or porting an existing app onto agent-app."
+description: Build or migrate an agent product with agent-app modules, billing, integrations, and evals.
 ---
 
-# Adopt agent-app — build new or migrate, on the shared app shell
+# Build Agent App
 
-`@tangle-network/agent-app` is the application-**shell** framework for agent products. The substrate packages (`@tangle-network/{agent-eval, agent-runtime, agent-integrations, tcloud, sandbox}`) are the *engine*; agent-app is the opinionated assembly every product otherwise rebuilds: a structured agent→app tool side channel (human-in-the-loop approvals, dated follow-ups, generated UI, grounded citations), the bounded chat tool-loop, capability auth, model config, per-workspace billing, integration-hub wiring, field crypto, SSE normalization, an eval bridge, and self-service login. Products supply **domain** through typed seams.
+Use this when building the product shell around an agent: chat, tools, approvals, persistence, billing, integrations, and visible workflows.
+Read the installed `@tangle-network/agent-app` README, exports, types, current scaffolder, and nearest maintained product before choosing modules.
+Do not copy API names from this skill.
 
-## Step 0 — DISCOVER (always start here; do not write code until these are answered)
+## Confirm The Boundary
 
-Interview the stakeholder (or read the existing app) for:
+| Concern | Owner |
+|---|---|
+| Product routes, UI, auth, persistence, billing, and approvals | Product and `agent-app` |
+| Portable agent behavior | `agent-interface` |
+| Agent execution, streaming, workers, and candidate activation | `agent-runtime` |
+| Cases, scoring, comparison, and release evidence | `agent-eval` |
+| Sources, retrieval, memory, and knowledge candidates | `agent-knowledge` |
+| Connector contracts and provider execution | `agent-integrations` |
+| Isolated compute and durable sandbox sessions | `sandbox` |
 
-1. **Product surface** — what is it? back-office automation, a customer-facing chat product, an in-app copilot, a batch/workflow runner?
-2. **Agent surface** — pick per surface (an app can have both):
-   - **Sandboxed agent** — long-running, owns a container, file/tool access, delegated work. Uses the sandbox profile + per-turn MCP servers.
-   - **Browser / edge copilot** — lightweight inference, no container. Wires `streamTurn` to the model directly (Tangle Router / tcloud SDK / Vercel AI SDK). **agent-app fully supports this — the runtime loop + tool side channel are sandbox-free.**
-3. **Eval surface** — full campaign (personas, traces, judges, scorecards via agent-eval) / an inline completion gate / none yet?
-4. **Product features** (each maps to a module): human-in-the-loop approvals? dated cadence/reminders? generated UI? grounded citations? which integrations (providers)? per-user/workspace billing? PII at rest? delegated long-running research/build?
-5. **Path** — greenfield, or migrating an existing app? If migrating, **from what stack** (anything — a forked agent app, Next/Remix/Express, a notebook)? What's already hand-rolled vs missing?
+Keep product nouns, permissions, schemas, prompts, and policy in the product.
+Move reusable behavior to its owning package instead of copying it between products.
 
-Discovery output = the **module set** (below) + the **path** (greenfield §A / migration §B).
+## Start From One User Flow
 
-**Greenfield default flow:** `npx create-agent-app` → interview the user → fill `agent.config.ts` + seed `knowledge/` → `pnpm knowledge:ingest` → verify. The scaffolder emits a typechecking skeleton plus the agent-followable breadcrumb docs (`AGENTS.md` / `CUSTOMIZE.md` / `KNOWLEDGE.md`) that ARE the schema floor you drive — read them, then walk `CUSTOMIZE.md` in order. See §A.
+Record:
 
-## The layering rule (governs every decision)
+- the user and job;
+- input and final artifact;
+- agent backend and session lifetime;
+- tools, knowledge, integrations, and side effects;
+- approval and tenant boundaries;
+- persistence, billing, cancellation, and resume behavior;
+- objective and semantic success checks.
 
-> **Does the capability make sense without THIS app's tool side-channel / approval queue / chat route?**
-> **Yes → ENGINE** → it's in (or belongs in) `agent-eval`/`agent-runtime`/`agent-integrations`/`tcloud`/`sandbox`; consume it (peer-dep), and if it's missing there, **contribute it down** — never fork it.
-> **No → agent-app shell.** **Domain** (the product's nouns, prompts, schema, taxonomy) → **your app.**
+Build the actual working flow first.
+Do not start from a module inventory or a marketing page.
 
-Corollary — **extend, never duplicate.** Before writing anything that completes, scores, loops, parses a tool name, encrypts, or talks to a hub, check the engine's exports. Reimplementing an engine primitive (e.g. completion/scoring that agent-eval already exports) is the cardinal sin — the weaker copy drifts.
+## Greenfield
 
-## Module set (map discovery answers to these)
+1. Use the current official scaffolder when it supports the selected runtime and deployment target.
+2. Install only the package subpaths and peer packages the flow uses.
+3. Define one product-owned profile, taxonomy, handlers, storage boundary, and approval policy.
+4. Wire the production agent entrypoint through the app's tool and event path.
+5. Persist final output, run identity, errors, usage, cost, and latency.
+6. Add the smallest real knowledge, integration, billing, and UI pieces required by the flow.
+7. Prove one real request before adding another workflow.
 
-| Need | Module | Seam you supply |
-|---|---|---|
-| Human-in-the-loop approvals + structured actions | `/tools` | `AppToolHandlers` (persist to your store) + `AppToolTaxonomy` (your action types) + `verifyToken` |
-| Dated cadence / generated UI / grounded citations | `/tools` (`schedule_followup` / `render_ui` / `add_citation`) | same handlers |
-| Chat turn loop (sandbox OR browser) | `/runtime` `streamAppToolLoop` / `runAppToolLoop` | `streamTurn` (wrap any backend) + `executeToolCall` |
-| Model config (Tangle Router / BYOK) | `/runtime` `resolveTangleModelConfig` | env |
-| Eval | `/eval` | `producedFromToolEvents` bridge + re-exports agent-eval's `verifyCompletion`/`weightedComposite` (peer-dep) |
-| Integration-hub actions | `/integrations` | peer-dep `agent-integrations` + `apiKeyResolver` |
-| Per-workspace budget-capped billing | `/billing` | key store + crypto + tcloud provisioner seams |
-| Field PII crypto | `/crypto` | the encryption key |
-| Web boundary (body/context/rate-limit/headers) | `/web` | KV (rate-limit) |
-| PII redaction / SSE normalization | `/redact` / `/stream` | — |
-| Self-service login → broker token | `/tangle` | the apps client |
-| Delegated long-running work (**sandbox only**) | `/delegation` | platform key |
-| Sandbox MCP server entries (**sandbox only**) | `/tools` `buildAppToolMcpServer` / `buildHttpMcpServer` | token + ctx |
+Generated starter docs are guidance for that starter version, not a permanent API reference.
+Confirm every symbol from installed types.
 
-## Agent surface — sandbox vs browser/edge copilot
+## Migration
 
-Both consume the SAME `/tools`, `/runtime`, `/eval`, `/billing`, `/crypto`. They differ only in how the agent reaches the tools:
+Inventory the existing product and classify each concern:
 
-- **Sandboxed**: the in-container agent calls per-turn **MCP servers** (`buildAppToolMcpServer`) over HTTP; the app's routes (`handleAppToolRequest`) execute them. Delegated work via `/delegation`.
-- **Browser / edge copilot (no sandbox)**: the app runs the loop in-process — `streamAppToolLoop({ streamTurn, executeToolCall, … })` where `streamTurn` wraps the **Tangle Router** (`resolveTangleModelConfig`) / **tcloud SDK** / **AI SDK** call directly, and `executeToolCall` routes to `createAppToolRuntimeExecutor(handlers)`. No container, no MCP. The structured side channel, billing, crypto, and eval bridge all still apply. (`/delegation` + the MCP-server builder are simply not used.)
+| Class | Action |
+|---|---|
+| Shared package behavior | Import the current package and delete the local copy |
+| Product behavior | Keep it and adapt at a typed boundary |
+| Compatibility contract | Preserve deliberately and test the exact wire behavior |
+| Dead or foreign product code | Prove it is unreachable, then delete it |
 
-## §A — Greenfield (drive the scaffolder; don't hand-wire)
+Migrate one coherent concern at a time.
+Keep the product runnable after each change.
+Do not leave both old and new implementations reachable.
+Do not preserve a wrapper that only renames the package API.
 
-Do NOT copy another agent app and do NOT hand-assemble the module wiring from scratch. The scaffolder generates a typechecking skeleton (filled `agent.config.ts` via `defineAgentApp`, a wired chat route over `@tangle-network/agent-app/preset-cloudflare`, an empty `knowledge/` dir, and the breadcrumb docs). Your job is to interview the user and fill the DATA.
+For each migrated concern, prove the installed dependency resolves, production code imports it, the replaced path has no callers, and the user-visible flow still works.
+Changing test count or line count is not success by itself.
 
-1. **Scaffold.** `npx create-agent-app <dir> --name <product>` (run from the agent-app repo's `create-agent-app/` if not yet published). Then `cd <dir> && pnpm install && pnpm typecheck && pnpm test` — confirm the empty skeleton is green BEFORE editing.
-2. **Read the breadcrumbs the scaffold emitted** — they are the schema floor you drive:
-   - `AGENTS.md` (+`CLAUDE.md`) — the behavior contract: the layering rule, DATA (`agent.config.ts` + `knowledge/`) vs CODE (composer/route overrides), the fail-closed invariants (human-in-the-loop, grounding, trusted context).
-   - `CUSTOMIZE.md` — the ordered fill-checklist (① identity ② taxonomy+regulated ③ knowledge-requirement `satisfiedBy` specs ④ drop docs in `knowledge/` + list sources ⑤ integrations ⑥ ingest ⑦ verify), each step paired with its discovery question.
-   - `KNOWLEDGE.md` — build-loop (acquire) vs act-gate (block), multimodal sources, tuning the confidence/judge/freshness gate.
-3. **Interview the user and FILL `agent.config.ts`**, walking `CUSTOMIZE.md` in order. Ask the discovery question at each step, then write the answer as DATA: identity (persona/disclaimers), taxonomy (`proposalTypes` + the regulated subset — keep `regulatedTypes ⊆ proposalTypes`), `knowledge.requirements` (declarative `satisfiedBy` rules), `knowledge.sources`, `integrations.enabled`. The type `AgentAppConfig` (+ its `agentAppConfigJsonSchema` floor) from `@tangle-network/agent-app/config` validates the shape.
-4. **Seed `knowledge/`** — drop the user's real domain docs in, then `pnpm knowledge:ingest` (DRY) to confirm the inputs, and `--run` with a model-backed driver to drive the acquisition loop (KNOWLEDGE.md).
-5. **Override CODE only when forced.** Default to the preset handlers in `src/agent-app.ts`. Drop to a custom `AppToolHandlers`/store only when the house D1+KV stack genuinely can't express your persistence — that's the one CODE seam. Add `/billing`,`/integrations`,`/tangle`,`/eval` as features dictate.
-6. **Verify** — `pnpm typecheck && pnpm test && pnpm knowledge:ingest` green; the human-in-the-loop invariant test stays green (regulated proposals never auto-execute).
+## Runtime Choices
 
-## §B — Migration (from ANY existing app)
+Use the backend the product actually needs:
 
-The trace-proven loop — keep the app's tests **green at every step**:
+- direct or edge execution for bounded in-process turns;
+- runtime-managed execution for resumable tasks, workers, or richer control;
+- sandbox execution for isolated files, tools, or long-lived compute.
 
-1. **Audit + classify** every server module: **ENGINE** (→ peer-dep the substrate) · **SHELL** (→ lift to / consume from agent-app) · **DOMAIN** (→ keep) · **DEAD** (→ delete — fork-inherited cruft is often the single biggest win; verify zero importers first).
-2. **Delete the dead** first (free compression, zero behavior change, prove it green).
-3. **Lift shell concerns in dependency order.** Per concern: import the agent-app module → supply the seam (handlers/taxonomy/verifyToken/store/resolver) → **delete the local implementation, leaving a thin shim that preserves the public names callers use** → run the suite → green or revert. Preserve exact wire details (header names, error codes, token prefixes) in the shim.
-4. **One class identity for shared errors** — import the framework's error type, don't keep a local copy (a second `instanceof` class silently misroutes).
-5. **De-dupe against engines** — if a lifted thing duplicates an engine export, compose/re-export the engine instead.
-6. **What NOT to lift** (it's not shell): domain logic; auth/RBAC bound to your own schema + auth library; substrate *adoption* (trace ingestion is agent-eval, not agent-app); thin domain-content wrappers.
+These paths may share product tools and records.
+They must not silently change identity, approval, billing, replay, or error behavior.
 
-### Surface mapping — your hand-rolled code → the shell-v2 primitive
+## Safety
 
-Grounded in a real consumer migration. The split that matters: **dedup primitives are clean swaps on a running agent; the preset's *backend* is greenfield-first** (an existing agent keeps its working schema and supplies only the accessor seam).
+- Structured side effects use validated tool calls, not prose parsing.
+- Writes require explicit approval unless stored product policy authorizes them.
+- Browser events are not authoritative for billing or completion.
+- Credentials remain server-side and are redacted before export.
+- State-changing requests and callbacks are idempotent.
+- Tenant, user, runtime, and billing identities remain distinct.
+- Mocks cover adapters; one real backend and storage path proves the product flow.
 
-| What the agent hand-rolls | → primitive | Migration type |
-|---|---|---|
-| `buildXKnowledgeRequirements` + `deriveXRuntimeKnowledge` (the act-gate) | `agent-app/knowledge` `buildKnowledgeRequirements` + `deriveSignals`; the specs move into **`config.knowledge.requirements`** as declarative `satisfiedBy` rules | **clean swap / dedup** — the count/config checks *become* rules; delete the bespoke scoring |
-| Scattered domain data — persona, proposal-type constants + the regulated subset, disclaimers (typically spread across prompt/profile files) | `config.identity` / `config.taxonomy` / `config.identity.disclaimers` | **consolidation** into one `agent.config.ts` |
-| DB schema (proposals/threads/deadlines) + `AppToolHandlers` | `agent-app/preset-cloudflare` default schema + handlers | **greenfield-first** — a running agent **keeps** its schema; new agents get the preset |
-| The row-count seam to resolve `satisfiedBy` over the agent's own tables | `createD1KnowledgeStateAccessor` (preset) when your status column is literally `status`; otherwise supply a thin custom `KnowledgeStateAccessor` (~20 lines) mapping each table to its status column | **adopt** (works over your existing tables, no preset schema) |
-| Bespoke knowledge ingestion wiring | `agent-app/knowledge-loop` `createKnowledgeLoop` | **swap** |
-| `buildDelegationMcpServer` sandbox wiring | **`config.delegation.enabled`** + `delegationMcpForConfig` | **clean swap** (one boolean) |
-| tools/runtime/integrations/crypto/web/redact/stream/billing | the matching `agent-app/*` modules (Module set above) | per the lift-loop |
+## Completion
 
-Rule of thumb: on an **existing** agent do the clean swaps (gate → `/knowledge`+`config`, domain data → `config`, ingestion → `/knowledge-loop`, delegation → one boolean) and adopt the generic accessor — each *deletes* code. Reserve the preset's **schema/handlers** and `create-agent-app` for **greenfield**.
+One customer-like path must prove:
 
-## Anti-patterns
+```text
+authenticate -> submit work -> agent executes -> tools and knowledge run
+-> final artifact persists -> approval commits once -> usage records once
+-> interruption resumes or fails clearly -> result is evaluated
+```
 
-- **Don't fork another agent app.** You inherit its domain leftovers (e.g. one app shipped a *different* domain's filing scripts because it was copy-forked). Start empty, add agent-app.
-- **Don't hand-roll the side channel / loop / hub client / token.** They're in agent-app or the engine — compose them; a reimplementation is the weaker copy that drifts.
-- **Never scrape structured output from prose** (fenced blocks, regex on the reply). Side effects are validated **tool calls** that return a result the model reads.
-- **Keep domain out of the framework** — an action type, a price, a disclaimer, a rubric is a *parameter*, never baked in.
-- **Don't bundle the engines** — peerDependency, so the product pins the version (no BOM lock, no forced fleet bump).
+Report installed versions, exact subpaths, retained product adapters, deleted competing paths, run IDs, artifact paths, checks, cost, latency, and deployed result when deployment is in scope.
 
-## Related skills
-- **agent-stack-adoption / agent-eval-adoption** — wiring the substrate *engines* (loops, eval campaigns, ingestion). This skill is the SHELL layer above them.
-- **substrate-release** — when you wrote something engine-general here, lift it INTO the engine + publish.
+## Then consider
+
+- `build-with-agent-runtime` for execution, workers, resume, or candidate activation.
+- `agent-stack-adoption` for a complete package-boundary audit.
+- `agent-eval-adoption` for product evaluation and comparison.
+- `build-with-agent-knowledge` for retrieval, memory, or knowledge improvement.

@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Analyze sessions or projects for patterns, misses, product signals, process improvements, automation opportunities, and skill effectiveness. Modes: session, project, portfolio.
+description: Find repeated misses, product signals, process improvements, automation, and skill gaps.
 ---
 
 # Reflect

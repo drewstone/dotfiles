@@ -1,6 +1,6 @@
 ---
 name: critical-audit
-description: Staff-engineer review of diffs, branches, docs, APIs, SDKs, and customer-facing surfaces. Findings first, severity ranked, file:line grounded, with a concrete fix plan.
+description: Review code, docs, APIs, SDKs, or products for correctness and risk, with ranked fixes.
 ---
 
 # Critical Audit

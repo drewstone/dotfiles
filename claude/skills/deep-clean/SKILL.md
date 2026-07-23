@@ -1,6 +1,6 @@
 ---
 name: deep-clean
-description: Measured codebase cleanup: dead code, dependency cycles, weak types, duplicate logic, deprecated paths, test debt, and complexity, using real tools and before/after proof.
+description: Remove dead code, cycles, weak types, duplication, obsolete paths, and needless complexity.
 ---
 
 # Deep Clean

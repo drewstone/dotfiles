@@ -12,7 +12,22 @@ agent-doc-lengths --all --format markdown
 agent-doc-lengths --format json
 ```
 
-Reports lines, words, chars, approximate tokens, category totals, largest files, largest `SKILL.md` files, and threshold findings for oversized docs.
+Reports lines, words, chars, approximate tokens, skill-description size, category totals, largest files, and threshold findings.
+Skill descriptions default to a 96-character limit because every description competes for the discovery context before a skill is selected.
+
+## skills
+
+List installed skills or check the discovery catalog budget:
+
+```bash
+skills
+skills eval
+skills --check
+```
+
+The check scans Claude, Codex, shared Agent Skills, and Codex system roots.
+It flags descriptions over 160 characters and reproduces Codex's fair-share description allocation against the 4,000-token metadata budget, including names and resolved source paths.
+It fails on duplicate skill names, omitted skills, or the visible 2% warning; smaller silent shortening is reported.
 
 ## claude-profile
 

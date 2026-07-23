@@ -1,6 +1,6 @@
 ---
 name: ui-test
-description: Adversarial UI QA with real browsers via bad. Use for product UI testing, PR QA, visual regressions, auth flows, responsive states, and finding user-facing bugs.
+description: Test product UI in real browsers for workflow, visual, auth, responsive, and usability defects.
 ---
 
 # ui-test

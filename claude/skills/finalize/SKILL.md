@@ -1,6 +1,6 @@
 ---
 name: finalize
-description: "Split one messy experiment branch into N clean, independent branches — one logical change each, built from the merge-base, disjoint change-sets, each an isolated reviewable PR. Triggers: 'finalize', 'split this branch', 'atomize this', 'make reviewable PRs', 'decompose this mess'."
+description: Split a mixed experiment branch into clean branches and reviewable pull requests.
 ---
 
 # Finalize

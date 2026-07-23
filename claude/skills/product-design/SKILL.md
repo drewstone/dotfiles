@@ -1,6 +1,6 @@
 ---
 name: product-design
-description: Design or revise visible product UI with reference-first judgment, real mode-specific controls, low-copy surfaces, and screenshot-based verification.
+description: Design visible product UI from real references, then verify it with browser screenshots.
 metadata:
   short-description: Reference-first product UI without label/step slop
 ---

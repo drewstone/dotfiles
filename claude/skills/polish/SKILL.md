@@ -1,6 +1,6 @@
 ---
 name: polish
-description: Apply a fixed quality rubric to existing work and fix every gap: correctness, design, robustness, tests, and public interface. Triggers: polish, tighten, production-grade.
+description: Apply a fixed quality rubric and fix gaps in behavior, design, tests, and public APIs.
 ---
 
 # Polish

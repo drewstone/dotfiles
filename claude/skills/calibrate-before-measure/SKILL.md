@@ -1,32 +1,36 @@
 ---
 name: calibrate-before-measure
-description: Before running any eval, A/B, benchmark, or experiment, prove the metric can actually see what you claim to measure — and prove the task is hard enough to need the capability. Skip this and you measure the wrong thing for three experiments straight.
+description: Before an eval, prove the metric separates good and bad cases and rejects a trivial baseline.
 ---
 
-# Calibrate before you measure
+# Calibrate Before Measure
 
-You are about to run an eval, A/B, benchmark, or experiment. **Stop.** The metric *is* the experiment. If it measures a proxy, every number downstream is noise wearing a lab coat.
+This is a guard skill.
+Complete it before spending on an eval, benchmark, A/B test, or optimization run.
 
-## Gate 1 — the metric must discriminate (do this BEFORE the run, not after)
+## Prove The Metric Separates Quality
 
-1. Build a deliberately-**strong** instance and a deliberately-**weak** instance of the thing you claim to measure — a great solution and a terrible one, a deep answer and a shallow one, a real thesis and a ticker summary.
-2. Score both with your metric. They **must** separate by a wide, unambiguous margin (weak <30%, strong >70%).
-3. If they don't separate, **the metric is measuring a proxy, not the thing.** Stop. Fix the metric. Do **not** run the experiment on top of an invalid metric.
-4. Calibration also catches metric *bugs* — surface-word matches, grader slack, leakage. (Real case: a "research depth" exam graded by substring-on-collected-pages scored a shallow ticker summary at 60%, because it was measuring retrieval, not research. Caught only at calibration; tightened until the gap was clean.)
+1. Build one clearly capable fixture and one realistic bad fixture for the behavior being measured.
+2. Score both through the exact production scoring path.
+3. Require a wide separation around the decision boundary.
+4. Inspect every scoring input and intermediate result for leakage, constant outputs, missing evidence, and proxy metrics.
+5. Repair the metric and repeat if the bad fixture passes or the capable fixture fails.
 
-## Gate 2 — the task must be hard enough
+Do not choose universal score cutoffs when the domain already has a meaningful pass boundary.
+Record the two fixtures, scores, and margin.
 
-Run the **dumbest baseline first** — a single search, a constant, blind collection. If the dumb baseline ties or wins, the task is too easy to exercise the capability: every topology will tie, you'll get nulls, and you'll call them findings. Pick a task where the capability is *required* to succeed (a correctable middle band), not one a trivial baseline already aces.
+## Prove The Task Needs The Capability
 
-## Why this exists
+Run the simplest plausible baseline, such as a constant answer, one search, or one unguided attempt.
+If it ties the intended system, the case is too easy, saturated, or measuring the wrong behavior.
+Strengthen the case before comparing systems.
 
-An entire research arc produced "null" results — "the verifier just dedups," "driving doesn't beat collection" — that were artifacts of a trivial domain plus a retrieval metric, **not** facts about the system. The capability was invisible to the eval. The moment the metric was calibrated and the task made hard, the real signal appeared. The metric and the domain were the broken part the whole time, not the thing under test.
+## Completion
 
-**A result on an uncalibrated metric is not a result. It's a number.** Report the calibration gap (weak% vs strong%) alongside every eval claim, the way you report a confidence interval.
+Report the strong score, weak score, separation, simple-baseline score, sample count, exact command, and artifact paths.
+No broader run starts until both checks pass.
 
-## Then consider (post-hook — after this skill completes)
+## Then consider
 
-- **Calibration passed and you have a positive result** → `push-past-easy`: try to *kill* the result before reporting it (re-run for variance, hunt the confound).
-- **Calibration FAILED** (metric didn't discriminate, or a dumb baseline won) → `push-past-easy`: the task is too easy or the metric is a proxy — pick a harder task / a real metric, don't run on top of the invalid one.
-
-> This skill is itself a **guard** — it is the *pre*-hook for any "run an eval / A/B / benchmark" work. That a guard interrupts before the run is its intent, not a disruption. (Forward-chaining references go at the END like this; only guard skills belong at the front of another skill's flow.)
+- `push-past-easy` when calibration passes and the result still needs an adversarial replication.
+- `eval-engineering` when calibration fails because the case or scoring design must be rebuilt.

@@ -1,6 +1,6 @@
 ---
 name: governor
-description: Read repo/session state and choose the single next skill: exploit (evolve/polish), explore (pursue/meta-harness/breakout), bootstrap (eval-agent), diagnose (diagnose/eval-harness-diagnose), or step back (reflect). One dispatch, then exit.
+description: Read current work, choose the next improvement skill, dispatch it once, and stop.
 ---
 
 # Governor

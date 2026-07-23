@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: Goal-pursuit loop: measure, diagnose, experiment, verify, compare, and iterate against a measurable target. Triggers: evolve, optimize, make this better, push to target.
+description: Improve a measured target through diagnosis, experiments, verification, and retained results.
 ---
 
 # Evolve

@@ -1,6 +1,6 @@
 ---
 name: converge
-description: Drive failing CI to green by reading remote failures, reproducing locally when possible, fixing root causes, pushing, waiting, and repeating without shortcuts.
+description: Drive failing CI to green by reproducing failures, fixing root causes, pushing, and rechecking.
 ---
 
 # Converge

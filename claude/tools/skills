@@ -12,7 +12,12 @@ import sys
 ROOTS = [
     os.path.expanduser("~/.claude/skills"),
     os.path.expanduser("~/.codex/skills"),
+    os.path.expanduser("~/.agents/skills"),
 ]
+MAX_DESCRIPTION_CHARS = 160
+MAX_CATALOG_TOKENS = 4_000
+APPROX_BYTES_PER_TOKEN = 4
+TRUNCATION_WARNING_CHARS_PER_SKILL = 100
 
 
 def frontmatter(path):
@@ -44,26 +49,190 @@ def frontmatter(path):
     return name, desc
 
 
+def skill_paths(root):
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.is_dir(follow_symlinks=True):
+            continue
+        skill = os.path.join(entry.path, "SKILL.md")
+        if os.path.isfile(skill):
+            yield skill
+            continue
+        if entry.name != ".system":
+            continue
+        try:
+            system_entries = sorted(os.scandir(entry.path), key=lambda item: item.name)
+        except OSError:
+            continue
+        for system_entry in system_entries:
+            skill = os.path.join(system_entry.path, "SKILL.md")
+            if system_entry.is_dir(follow_symlinks=True) and os.path.isfile(skill):
+                yield skill
+
+
+def rendered_line(name, desc, path):
+    if desc:
+        return f"- {name}: {desc} (file: {path})\n"
+    return f"- {name}: (file: {path})\n"
+
+
+def approximate_tokens(text):
+    return (len(text.encode("utf-8")) + APPROX_BYTES_PER_TOKEN - 1) // APPROX_BYTES_PER_TOKEN
+
+
+def catalog_allocation(rows):
+    minimum_costs = [
+        approximate_tokens(rendered_line(name, "", path))
+        for name, _, path in rows
+    ]
+    minimum_tokens = sum(minimum_costs)
+    if minimum_tokens > MAX_CATALOG_TOKENS:
+        return {
+            "minimum_tokens": minimum_tokens,
+            "full_tokens": sum(
+                approximate_tokens(rendered_line(name, desc, path))
+                for name, desc, path in rows
+            ),
+            "truncated_chars": sum(len(desc) for _, desc, _ in rows),
+            "truncated_count": len(rows),
+            "average_truncated_chars": 0,
+            "minimum_exceeds_budget": True,
+        }
+
+    extra_costs = []
+    for (name, desc, path), minimum in zip(rows, minimum_costs, strict=True):
+        costs = [0]
+        for chars in range(1, len(desc) + 1):
+            costs.append(
+                approximate_tokens(rendered_line(name, desc[:chars], path)) - minimum
+            )
+        extra_costs.append(costs)
+
+    allocations = [0] * len(rows)
+    current_extra_costs = [0] * len(rows)
+    remaining = MAX_CATALOG_TOKENS - minimum_tokens
+    while True:
+        changed = False
+        for index, (_, desc, _) in enumerate(rows):
+            if allocations[index] >= len(desc):
+                continue
+            next_chars = allocations[index] + 1
+            next_cost = extra_costs[index][next_chars]
+            delta = next_cost - current_extra_costs[index]
+            if delta <= remaining:
+                allocations[index] = next_chars
+                current_extra_costs[index] = next_cost
+                remaining -= delta
+                changed = True
+        if not changed:
+            break
+
+    truncated = [
+        len(desc) - allocations[index]
+        for index, (_, desc, _) in enumerate(rows)
+    ]
+    truncated_chars = sum(truncated)
+    total = len(rows)
+    average = (truncated_chars + total - 1) // total if total else 0
+    return {
+        "minimum_tokens": minimum_tokens,
+        "full_tokens": minimum_tokens
+        + sum(costs[-1] for costs in extra_costs),
+        "truncated_chars": truncated_chars,
+        "truncated_count": sum(chars > 0 for chars in truncated),
+        "average_truncated_chars": average,
+        "minimum_exceeds_budget": False,
+    }
+
+
 def main():
-    needle = sys.argv[1].lower() if len(sys.argv) > 1 else None
+    args = sys.argv[1:]
+    check = "--check" in args
+    filters = [arg for arg in args if arg != "--check"]
+    if len(filters) > 1:
+        print("usage: skills [--check] [substring]", file=sys.stderr)
+        raise SystemExit(2)
+    needle = filters[0].lower() if filters else None
     seen = {}
     for root in ROOTS:
         if not os.path.isdir(root):
             continue
-        for entry in sorted(os.listdir(root)):
-            sk = os.path.join(root, entry, "SKILL.md")
-            if not os.path.isfile(sk) or entry in seen:
+        for sk in skill_paths(root):
+            canonical = os.path.realpath(sk)
+            if canonical in seen:
                 continue
             name, desc = frontmatter(sk)
-            seen[entry] = (name or entry, desc or "")
-    rows = sorted(seen.values())
+            fallback_name = os.path.basename(os.path.dirname(sk))
+            seen[canonical] = (name or fallback_name, desc or "", canonical)
+    rows = sorted(seen.values(), key=lambda row: (row[0], row[2]))
     if needle:
         rows = [r for r in rows if needle in r[0].lower() or needle in r[1].lower()]
     if not rows:
         print("no skills found" + (f" matching {needle!r}" if needle else ""))
         return
-    width = max(len(n) for n, _ in rows)
-    for name, desc in rows:
+    if check:
+        paths_by_name = {}
+        for name, _, path in rows:
+            paths_by_name.setdefault(name, []).append(path)
+        duplicates = {
+            name: paths
+            for name, paths in paths_by_name.items()
+            if len(paths) > 1
+        }
+        oversized = [
+            (name, len(desc), path)
+            for name, desc, path in rows
+            if len(desc) > MAX_DESCRIPTION_CHARS
+        ]
+        description_chars = sum(len(desc) for _, desc, _ in rows)
+        allocation = catalog_allocation(rows)
+        for name, chars, path in oversized:
+            print(
+                f"WARN {name}: {chars} description chars > {MAX_DESCRIPTION_CHARS} ({path})",
+                file=sys.stderr,
+            )
+        catalog_failed = False
+        if not needle:
+            for name, paths in sorted(duplicates.items()):
+                print(
+                    f"FAIL duplicate skill name {name!r}: " + " | ".join(paths),
+                    file=sys.stderr,
+                )
+            catalog_failed = bool(duplicates)
+        if not needle and allocation["minimum_exceeds_budget"]:
+            print(
+                f"FAIL catalog: names and paths alone need ~{allocation['minimum_tokens']} "
+                f"tokens > {MAX_CATALOG_TOKENS}; Codex must omit skills",
+                file=sys.stderr,
+            )
+            catalog_failed = True
+        elif (
+            not needle
+            and allocation["average_truncated_chars"]
+            > TRUNCATION_WARNING_CHARS_PER_SKILL
+        ):
+            print(
+                "FAIL catalog: Codex would shorten "
+                f"{allocation['truncated_count']} descriptions by "
+                f"{allocation['average_truncated_chars']} chars/skill on average "
+                f"and emit the 2% warning ({allocation['full_tokens']}/"
+                f"{MAX_CATALOG_TOKENS} full metadata tokens)",
+                file=sys.stderr,
+            )
+            catalog_failed = True
+        if catalog_failed:
+            raise SystemExit(2)
+        print(
+            f"OK: {len(rows)} skills, {description_chars} description chars, "
+            f"~{allocation['full_tokens']}/{MAX_CATALOG_TOKENS} full metadata tokens, "
+            f"{allocation['average_truncated_chars']} chars/skill shortened"
+        )
+        return
+    width = max(len(name) for name, _, _ in rows)
+    for name, desc, _ in rows:
         one = (desc.split(". ")[0])[:96]
         print(f"  {name.ljust(width)}  {one}")
     print(f"\n{len(rows)} skill(s)" + (f" matching {needle!r}" if needle else ""))

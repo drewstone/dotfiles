@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Merged into /critical-audit. Use /critical-audit for staff-engineer review of a diff/branch/commit with P1/P2/P3 priorities and an APPROVE / REQUEST_CHANGES verdict."
+description: Compatibility alias for critical-audit when reviewing code or pull requests.
 ---
 
 # Code Review — merged into /critical-audit

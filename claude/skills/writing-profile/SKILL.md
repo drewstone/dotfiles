@@ -1,6 +1,6 @@
 ---
 name: writing-profile
-description: Build a constraints-first writing profile from real samples so future drafts match a person or source without AI cadence or generic voice.
+description: Build a writing profile from real samples without generic AI cadence.
 ---
 
 # Writing Profile

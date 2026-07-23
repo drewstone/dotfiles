@@ -1,6 +1,6 @@
 ---
 name: harness-escalation-audit
-description: "Re-audit how every coding-agent harness surfaces user-interaction escalations (permission / question / plan) in its headless and interactive modes, and update the dated capability matrix. Use when the user says 'audit harnesses', 'harness escalation', 'which harnesses support interaction/MCP/hooks', 'refresh the escalation matrix', 'can a user wire their own harness', or asks what's wired vs wireable vs blocked for interactive/headless agent interactions. Repo: tangle-network/agent-dev-container."
+description: Audit how coding backends surface permissions, questions, plans, hooks, and MCP.
 ---
 
 # harness-escalation-audit

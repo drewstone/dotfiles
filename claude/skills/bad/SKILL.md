@@ -1,6 +1,6 @@
 ---
 name: bad
-description: Browser Agent Driver CLI operator for browser automation, UI/design audits, auth state, showcases, and benchmark runs. Triggers: "run bad", "browser agent", "design audit", "webbench", "automate this site".
+description: Operate Browser Agent Driver for automation, UI audits, auth, screenshots, and web benchmarks.
 ---
 
 # bad

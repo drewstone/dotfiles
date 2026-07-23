@@ -1,6 +1,6 @@
 ---
 name: site-clone
-description: Legacy shim for site ripping/cloning. Use /bad and `bad design-audit` for rip, token extraction, visual comparison, and browser-backed clone evidence.
+description: Legacy site-clone alias; use bad for browser-backed cloning and visual comparison.
 ---
 
 # site-clone

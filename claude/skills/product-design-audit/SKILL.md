@@ -1,6 +1,6 @@
 ---
 name: product-design-audit
-description: Product UI audit/redesign for apps, dashboards, workflows, marketing pages, fake components, visual slop, information architecture, copy hierarchy, and rendered proof.
+description: Audit and fix product UI workflows, information structure, states, responsiveness, and polish.
 ---
 
 # Product Design Audit

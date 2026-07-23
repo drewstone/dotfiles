@@ -1,6 +1,6 @@
 ---
 name: push-past-easy
-description: When you catch yourself doing the safe/easy version of a task or experiment, force the harder one that could actually fail. Timidity disguises itself as "let's start simple" and as the flattering result you didn't try to kill.
+description: Push an experiment beyond the easy case when a harder test could reverse its conclusion.
 ---
 
 # Push past the easy version

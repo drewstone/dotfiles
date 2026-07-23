@@ -1,6 +1,6 @@
 ---
 name: research
-description: "Merged into /evolve's structured-hypothesis mode. Use /evolve for hypothesis-driven experimentation, competitive landscape, and the bootstrap-CI promotion gate."
+description: Use evolve for hypothesis-driven research, experiments, comparisons, and measured decisions.
 ---
 
 # Research — merged into /evolve

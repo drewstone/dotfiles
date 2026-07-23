@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Dynamic multi-agent workflow composition: decompose a goal no single skill covers, pick a dependency structure, layer coordination policies, wire skills as stages, compile to a Workflow script, run, synthesize. Triggers: 'orchestrate', 'compose a workflow', 'too big for one skill', 'fan this out', 'pipeline of agents'."
+description: Decompose and run a multi-agent workflow when no single skill covers the goal.
 ---
 
 # Orchestrate

@@ -1,6 +1,6 @@
 ---
 name: multi-pursue
-description: Run multiple independent /pursue-grade architecture tracks in parallel, each with its own brief, build, verification, and central synthesis.
+description: Run independent architecture tracks in parallel, then verify and synthesize their results.
 ---
 
 # Multi-Pursue

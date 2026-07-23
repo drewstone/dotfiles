@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Produce a session-to-session brief with current state, git/PR status, decisions, blockers, verification, and exact next actions for a fresh agent.
+description: Create a session brief with state, git status, decisions, proof, blockers, and next actions.
 ---
 
 # Handoff

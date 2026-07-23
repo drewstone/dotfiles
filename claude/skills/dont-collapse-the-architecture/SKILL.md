@@ -1,6 +1,6 @@
 ---
 name: dont-collapse-the-architecture
-description: When tempted to collapse an ambitious-but-unproven architecture (multi-agent topology, context-lifecycle management, a recursive loop system) into a dumb/old pattern because an early A/B looked marginal — don't. Marginal-early almost always means the regime that makes the architecture pay off wasn't active. Find that regime, build the missing competency, then judge.
+description: Test whether an ambitious architecture ran in the right regime before simplifying it.
 ---
 
 # Don't collapse the architecture

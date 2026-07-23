@@ -1,6 +1,6 @@
 ---
 name: hypothesize
-description: "The THINK phase before you spend compute. Research the solution space (prior art, competitors, the real ceiling), generate a diverse field of candidate mechanisms, rank them by expected value, sequence by information gain, and hand a ranked portfolio to /evolve or /pursue. Turns greedy poke-and-measure into science. Triggers: 'hypothesize', 'what should we try', 'research the space first', 'generate options', 'before we optimize', 'what are the bets'."
+description: Research prior art, generate mechanisms, rank them, and hand off an experiment portfolio.
 ---
 
 # Hypothesize

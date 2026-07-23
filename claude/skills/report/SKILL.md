@@ -1,6 +1,6 @@
 ---
 name: report
-description: "Answer analytical / status / 'did X work' / 'how did X perform' questions as a domain expert's research artifact — BLUF + quantified tables/distributions + threats-to-validity + next actions — not assistant prose. Triggers: 'what's the status', 'how did X go/work/perform', 'did X work', 'analyze/assess/evaluate this run/system/data', 'give me the numbers', 'what happened with', 'how are the runs', 'is X healthy', any vague analytical ask where the user wants findings, not exposition."
+description: Answer analytical questions with complete measured data, uncertainty, limits, and a decision.
 ---
 
 # Report — expert findings, not exposition

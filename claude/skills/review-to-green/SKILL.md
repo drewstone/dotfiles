@@ -1,6 +1,6 @@
 ---
 name: review-to-green
-description: Drive a pull request to an approving / no-blockers review by triaging each finding against the real code before acting, fixing genuine ones (and proving each fix catches its bug), answering false positives with evidence, gating locally before every push, and stopping at a named terminal state. Use after opening or updating a PR, or when asked to "address the review", "get it to green", or "fix the review comments".
+description: Drive a pull request to approval by fixing findings, proving fixes, and rechecking reviews.
 ---
 
 # Review-to-green
