@@ -16,16 +16,16 @@ The output is decisions and reusable lessons, not a diary.
 
 ## Flow
 
-1. Collect source material: transcript, git history, PRs, `.evolve/` logs, test results, release state, and user corrections.
-2. Separate facts from interpretation.
-3. Score outcome, quality, communication, wasted motion, and reusable learning.
-4. Identify repeated failure modes and high-leverage process changes.
-5. Write only durable lessons that future agents can act on.
-6. Dispatch the next skill or stop.
+1. Collect source material: trace/session IDs, transcript, git history, PRs, test results, release state, user corrections, and outcome records.
+2. Separate observed facts, unlinked repository history, and interpretation.
+3. Link a skill to a session and an outcome before calling it effective; a catalog, document read, or `.evolve/skill-runs.jsonl` row alone is not enough.
+4. Identify repeated outcome-defined failures and the smallest process change that could address them.
+5. Propose a new skill only when the same failure appears in at least 5 independent sessions, no existing skill covers it, and a fresh comparison can measure the result.
+6. Write only durable lessons that future agents can act on, then dispatch the next skill or stop.
 
 ## Output
 
-Return top findings, evidence, what to change, what to keep doing, and where to store any durable note.
+Return top findings, evidence, measurement status, what to change, what to keep doing, and where to store any durable note.
 Use `references/full-reference.md` for portfolio workflow and reflection templates.
 
 ## Then consider
