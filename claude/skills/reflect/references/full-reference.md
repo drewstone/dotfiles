@@ -66,11 +66,23 @@ For each active project: trajectory (improving/stalled/degrading), test coverage
 
 ### Skill & system assessment
 
-- Which skills have the highest success rate? (read `.evolve/skill-runs.jsonl` if present)
-- Which get redispatched most (initial failure)?
-- Which get operator-overridden most (governor recommended X, operator ran Y)?
-- Are prompts specific enough? Too long? Too short?
-- Confidence calibration — high-conf runs correlate with success?
+Classify every skill conclusion before ranking it:
+
+| Status | Required evidence | Allowed conclusion |
+|---|---|---|
+| Observed | A trace shows an explicit invocation or successful document read | The session inspected or invoked the skill. No quality claim. |
+| Linked | One session ID connects skill use and a task outcome | Describe the case. Do not generalize. |
+| Comparative | Matched baseline and skill-enabled cases with outcome labels | Estimate benefit or harm, with `n` and uncertainty. |
+
+`.evolve/skill-runs.jsonl` without a matching session ID is repository history, not proof that a selected session used or benefited from a skill.
+Never rank success rate, redispatch rate, overrides, prompt quality, or confidence calibration when the needed links are absent; report the missing link instead.
+
+Propose a new skill only when all four are true:
+
+1. The same outcome-defined failure appears in at least 5 independent sessions.
+2. Trace evidence shows that no existing skill already covers the workflow.
+3. The proposed instruction is narrower than the repeated failure.
+4. A fresh comparison can measure the result against a baseline.
 
 ## Output format
 
@@ -90,7 +102,11 @@ Date: [date]
 ## Cross-Project Patterns
 
 ## Skill Effectiveness
-[which work best, which need improvement, override rates]
+
+| Skill | Observed uses | Outcomes linked | Comparison | Status | Next action |
+|---|---:|---:|---|---|---|
+
+Use `not measured` rather than a score when outcomes or a fair comparison are absent.
 
 ## Product Signals
 
@@ -116,7 +132,8 @@ Extract 3–5 durable learnings to memory (`memory/`) — anti-patterns discover
 
 If the project uses an ops board, create tasks for action items.
 
-Append a `.evolve/skill-runs.jsonl` line on completion.
+Do not append a manual `.evolve/skill-runs.jsonl` line as evidence of effectiveness.
+When the runner supports it, emit a structured record with session ID, skill name and version, activation type, and outcome reference.
 
 ## When to run
 
@@ -144,11 +161,11 @@ End with explicit, executable dispatch: `Next: /evolve targeting X with baseline
 If the project has measurement infrastructure, use it:
 - `.evolve/experiments.jsonl` — verdicts, learnings (schema in `evolve/schema.md`)
 - `.evolve/scorecard.json` — measured flows with scores and targets
-- `.evolve/skill-runs.jsonl` — skill invocation history (schema in `_common.md`)
+- `.evolve/skill-runs.jsonl` — repository history; use for context only unless rows link to the analyzed session ID
 - `.evolve/governor.jsonl` — governor decisions + operator overrides
 - Per-turn metrics if available
 - Prompt registry if available
-- Trace store if available — read actual failure traces, not summaries
+- Trace store if available — use actual trace IDs, explicit skill events or successful document reads, and outcome links
 
 ## Rules
 
@@ -159,3 +176,4 @@ If the project has measurement infrastructure, use it:
 5. Think recursively. This reflection is itself a session — what does IT reveal?
 6. Propose actions. Every insight has a next step.
 7. Cross-pollinate. Best insights come from patterns across projects, not within one.
+8. Do not confuse a skill catalog, a document read, or unlinked history with a successful intervention.
