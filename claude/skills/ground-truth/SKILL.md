@@ -1,6 +1,6 @@
 ---
 name: ground-truth
-description: Before optimizing, debugging, or speeding up any LIVE system, stand up the FULL measured harness of the real production path FIRST — instrument every hop, benchmark the real (not local) path, build a reversible test loop, trace your own run, baseline + decompose — in one parallel fan-out. Skip it and you burn days optimizing a system you can't see, acting on a number true only in a narrower context than you present it.
+description: Measure every stage on the real production path before optimizing a live system.
 ---
 
 # Ground-truth harness first

@@ -1,6 +1,6 @@
 ---
 name: release-conductor
-description: Run opaque or custom releases to production with a ledger, artifact decision, deploy proof, smoke checks, rollback path, ETA updates, and handoff.
+description: Run a custom release with artifact tracking, live checks, rollback, updates, and handoff.
 ---
 
 # Release Conductor

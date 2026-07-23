@@ -1,6 +1,6 @@
 ---
 name: sandbox-sdk-integration
-description: Integrate @tangle-network/sandbox SDK without rebuilding stream durability, session replay, browser-safe clients, or idempotent dispatch already provided by the platform.
+description: Adopt sandbox without rebuilding streaming, replay, browser clients, or idempotent dispatch.
 ---
 
 # Sandbox SDK Integration

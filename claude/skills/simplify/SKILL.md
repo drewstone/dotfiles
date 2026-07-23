@@ -1,6 +1,6 @@
 ---
 name: simplify
-description: Capability-preserving simplification for active code work. Use when the user asks to simplify, modularize, remove god objects, reduce duplication, make code reusable, clean up abstractions, deep clean without losing capability, or asks "anything else to simplify?" after a feature/refactor/PR.
+description: Reduce duplication and complexity while preserving behavior, public APIs, tests, and capability.
 ---
 
 # Simplify

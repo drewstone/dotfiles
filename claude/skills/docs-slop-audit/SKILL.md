@@ -1,6 +1,6 @@
 ---
 name: docs-slop-audit
-description: Audit technical docs for weak claims, AI slop, unclear product boundaries, false promises, and prose that misleads builders or buyers.
+description: Audit technical docs for weak claims, AI slop, unclear boundaries, and misleading prose.
 ---
 
 # Docs Slop Audit

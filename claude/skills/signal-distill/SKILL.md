@@ -1,6 +1,6 @@
 ---
 name: signal-distill
-description: Turn real community, feed, API, or database signals into scored content briefs with quotes, relevance, product mapping, and concrete post angles.
+description: Turn real community, feed, API, or database signals into scored content briefs.
 ---
 
 # Signal Distill

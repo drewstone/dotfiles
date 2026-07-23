@@ -1,6 +1,6 @@
 ---
 name: pursue
-description: Design and build a generational improvement when the current approach is wrong or plateaued. Audit, choose a coherent architecture, implement, test, and hand off.
+description: Replace a plateaued approach with a coherent architecture; build, test, compare, and hand off.
 ---
 
 # Pursue

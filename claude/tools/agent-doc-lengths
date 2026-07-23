@@ -29,6 +29,7 @@ EXCLUDED_DIRS = {
 }
 MARKDOWN_SUFFIXES = {".md", ".mdx"}
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?")
+FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class FileSize:
     words: int
     chars: int
     approx_tokens: int
+    description_chars: int | None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class Finding:
     category: str
     approx_tokens: int
     lines: int
+    description_chars: int | None
     reason: str
 
 
@@ -125,6 +128,12 @@ def parse_args() -> argparse.Namespace:
         help="Warn when a SKILL.md exceeds this approximate token count. Default: 8000.",
     )
     parser.add_argument(
+        "--max-skill-description-chars",
+        type=int,
+        default=96,
+        help="Warn when a skill description exceeds this character count. Default: 96.",
+    )
+    parser.add_argument(
         "--max-doc-tokens",
         type=int,
         default=16000,
@@ -176,6 +185,9 @@ def classify(path: Path, root: Path) -> tuple[str, str]:
             return "skill", skill
         return "skill-reference", skill
 
+    if relative.name == "SKILL.md":
+        return "skill", relative.parent.name
+
     if len(parts) >= 2 and parts[0] == "claude":
         if parts[1] == "commands":
             return "command", relative.stem
@@ -192,6 +204,27 @@ def classify(path: Path, root: Path) -> tuple[str, str]:
     return "markdown", relative.stem
 
 
+def skill_description_chars(text: str) -> int | None:
+    match = FRONTMATTER_RE.match(text)
+    if not match:
+        return None
+
+    lines = match.group(1).splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("description:"):
+            continue
+        value = line.removeprefix("description:").strip()
+        if value in {">", ">-", "|", "|-"}:
+            continuation: list[str] = []
+            for next_line in lines[index + 1 :]:
+                if next_line and not next_line[0].isspace():
+                    break
+                continuation.append(next_line.strip())
+            return len(" ".join(part for part in continuation if part))
+        return len(value.strip("\"'"))
+    return None
+
+
 def measure(path: Path, root: Path, chars_per_token: float) -> FileSize:
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
@@ -206,6 +239,7 @@ def measure(path: Path, root: Path, chars_per_token: float) -> FileSize:
         words=len(words),
         chars=len(text),
         approx_tokens=math.ceil(len(text) / chars_per_token) if text else 0,
+        description_chars=skill_description_chars(text) if category == "skill" else None,
     )
 
 
@@ -246,6 +280,15 @@ def find_oversized(rows: list[FileSize], args: argparse.Namespace) -> list[Findi
             reasons.append(f"{format_int(row.lines)} lines > {format_int(max_lines)}")
         if row.approx_tokens > max_tokens:
             reasons.append(f"~{format_int(row.approx_tokens)} tokens > ~{format_int(max_tokens)}")
+        if (
+            row.category == "skill"
+            and row.description_chars is not None
+            and row.description_chars > args.max_skill_description_chars
+        ):
+            reasons.append(
+                f"{format_int(row.description_chars)} description chars > "
+                f"{format_int(args.max_skill_description_chars)}"
+            )
         if reasons:
             findings.append(
                 Finding(
@@ -253,6 +296,7 @@ def find_oversized(rows: list[FileSize], args: argparse.Namespace) -> list[Findi
                     category=row.category,
                     approx_tokens=row.approx_tokens,
                     lines=row.lines,
+                    description_chars=row.description_chars,
                     reason="; ".join(reasons),
                 ),
             )
@@ -284,6 +328,7 @@ def file_rows(rows: list[FileSize]) -> list[list[str]]:
             format_int(row.words),
             format_int(row.chars),
             f"~{format_int(row.approx_tokens)}",
+            format_int(row.description_chars) if row.description_chars is not None else "-",
         ]
         for row in rows
     ]
@@ -294,6 +339,7 @@ def print_text(rows: list[FileSize], categories: list[CategorySize], findings: l
     total_words = sum(row.words for row in rows)
     total_chars = sum(row.chars for row in rows)
     total_tokens = sum(row.approx_tokens for row in rows)
+    skill_description_total = sum(row.description_chars or 0 for row in rows if row.category == "skill")
     print(f"Scanned {format_int(len(rows))} Markdown files under {root}")
     print(
         "Totals: "
@@ -302,6 +348,7 @@ def print_text(rows: list[FileSize], categories: list[CategorySize], findings: l
         f"{format_int(total_chars)} chars | "
         f"~{format_int(total_tokens)} tokens"
     )
+    print(f"Skill descriptions: {format_int(skill_description_total)} chars")
 
     print("\nBy category")
     print_table(
@@ -324,24 +371,31 @@ def print_text(rows: list[FileSize], categories: list[CategorySize], findings: l
     largest = sorted_files(rows, args.sort)[:limit]
     title = "All files" if args.all else f"Largest {min(limit, len(rows))} files by {args.sort}"
     print(f"\n{title}")
-    print_table(["path", "category", "subject", "lines", "words", "chars", "approx_tokens"], file_rows(largest))
+    print_table(
+        ["path", "category", "subject", "lines", "words", "chars", "approx_tokens", "description_chars"],
+        file_rows(largest),
+    )
 
     skills = [row for row in rows if row.category == "skill"]
     if skills and not args.all:
         largest_skills = sorted_files(skills, args.sort)[: min(args.top, len(skills))]
         print(f"\nLargest {len(largest_skills)} SKILL.md files by {args.sort}")
-        print_table(["path", "category", "subject", "lines", "words", "chars", "approx_tokens"], file_rows(largest_skills))
+        print_table(
+            ["path", "category", "subject", "lines", "words", "chars", "approx_tokens", "description_chars"],
+            file_rows(largest_skills),
+        )
 
     print("\nThreshold findings")
     if findings:
         print_table(
-            ["path", "category", "lines", "approx_tokens", "reason"],
+            ["path", "category", "lines", "approx_tokens", "description_chars", "reason"],
             [
                 [
                     row.path,
                     row.category,
                     format_int(row.lines),
                     f"~{format_int(row.approx_tokens)}",
+                    format_int(row.description_chars) if row.description_chars is not None else "-",
                     row.reason,
                 ]
                 for row in findings
@@ -366,6 +420,7 @@ def print_markdown(rows: list[FileSize], categories: list[CategorySize], finding
     total_words = sum(row.words for row in rows)
     total_chars = sum(row.chars for row in rows)
     total_tokens = sum(row.approx_tokens for row in rows)
+    skill_description_total = sum(row.description_chars or 0 for row in rows if row.category == "skill")
     print("# Agent Doc Lengths")
     print()
     print(f"- Root: `{root}`")
@@ -374,6 +429,7 @@ def print_markdown(rows: list[FileSize], categories: list[CategorySize], finding
     print(f"- Total words: {format_int(total_words)}")
     print(f"- Total chars: {format_int(total_chars)}")
     print(f"- Approx tokens: ~{format_int(total_tokens)}")
+    print(f"- Skill description chars: {format_int(skill_description_total)}")
     print()
     print("## By Category")
     print()
@@ -400,9 +456,18 @@ def print_markdown(rows: list[FileSize], categories: list[CategorySize], finding
     print()
     print(
         markdown_table(
-            ["path", "category", "subject", "lines", "words", "chars", "approx_tokens"],
+            ["path", "category", "subject", "lines", "words", "chars", "approx_tokens", "description_chars"],
             [
-                [f"`{row.path}`", row.category, row.subject, str(row.lines), str(row.words), str(row.chars), f"~{row.approx_tokens}"]
+                [
+                    f"`{row.path}`",
+                    row.category,
+                    row.subject,
+                    str(row.lines),
+                    str(row.words),
+                    str(row.chars),
+                    f"~{row.approx_tokens}",
+                    str(row.description_chars) if row.description_chars is not None else "-",
+                ]
                 for row in sorted_files(rows, args.sort)[:limit]
             ],
         )
@@ -413,9 +478,16 @@ def print_markdown(rows: list[FileSize], categories: list[CategorySize], finding
     if findings:
         print(
             markdown_table(
-                ["path", "category", "lines", "approx_tokens", "reason"],
+                ["path", "category", "lines", "approx_tokens", "description_chars", "reason"],
                 [
-                    [f"`{row.path}`", row.category, str(row.lines), f"~{row.approx_tokens}", row.reason]
+                    [
+                        f"`{row.path}`",
+                        row.category,
+                        str(row.lines),
+                        f"~{row.approx_tokens}",
+                        str(row.description_chars) if row.description_chars is not None else "-",
+                        row.reason,
+                    ]
                     for row in findings
                 ],
             )
@@ -435,11 +507,15 @@ def print_json(rows: list[FileSize], categories: list[CategorySize], findings: l
             "words": sum(row.words for row in rows),
             "chars": sum(row.chars for row in rows),
             "approx_tokens": sum(row.approx_tokens for row in rows),
+            "skill_description_chars": sum(
+                row.description_chars or 0 for row in rows if row.category == "skill"
+            ),
         },
         "thresholds": {
             "max_skill_lines": args.max_skill_lines,
             "max_doc_lines": args.max_doc_lines,
             "max_skill_tokens": args.max_skill_tokens,
+            "max_skill_description_chars": args.max_skill_description_chars,
             "max_doc_tokens": args.max_doc_tokens,
         },
         "categories": [asdict(row) for row in categories],
@@ -452,7 +528,17 @@ def print_json(rows: list[FileSize], categories: list[CategorySize], findings: l
 def print_csv(rows: list[FileSize], sort_key: str) -> None:
     writer = csv.DictWriter(
         sys.stdout,
-        fieldnames=["path", "category", "subject", "lines", "nonblank_lines", "words", "chars", "approx_tokens"],
+        fieldnames=[
+            "path",
+            "category",
+            "subject",
+            "lines",
+            "nonblank_lines",
+            "words",
+            "chars",
+            "approx_tokens",
+            "description_chars",
+        ],
     )
     writer.writeheader()
     for row in sorted_files(rows, sort_key):

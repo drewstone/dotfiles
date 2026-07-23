@@ -1,6 +1,6 @@
 ---
 name: product-innovation-audit
-description: First-principles product innovation audit for product bets, workflows, AI agents, marketplaces, developer tools, enterprise apps, differentiation, kill/ship decisions, and 10/10 marketability.
+description: Audit a product bet for user value, differentiation, feasibility, risk, and ship decision.
 ---
 
 # Product Innovation Audit

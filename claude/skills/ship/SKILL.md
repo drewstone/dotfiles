@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Execute a full release path: confirm target, typecheck, test, build, deploy, smoke live behavior, and report proof without skipped checks.
+description: Run typecheck, tests, build, deploy, and live checks for a release; report exact proof.
 ---
 
 # Ship

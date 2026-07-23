@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Analyze test, CI, benchmark, or eval failures; cluster by root cause; rank by impact and fix effort; produce concrete fix hypotheses.
+description: Cluster test, CI, benchmark, or eval failures by root cause and rank concrete fixes.
 ---
 
 # Diagnose

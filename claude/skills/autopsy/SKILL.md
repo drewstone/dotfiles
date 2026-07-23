@@ -1,6 +1,6 @@
 ---
 name: autopsy
-description: Root-cause one null, surprising, or suspicious run result. Verify raw data, classify the cause, and decide whether to fix code, metric, design, or belief.
+description: Explain one null, surprising, or suspect run from raw data and choose the correct next action.
 ---
 
 # Autopsy

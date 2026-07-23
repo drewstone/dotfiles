@@ -1,6 +1,6 @@
 ---
 name: tangle-blueprint-expert
-description: "Document, design, implement, and validate Tangle Blueprints with correct blueprint/operator/service-instance hierarchy, product-vs-protocol boundaries, and repo-grounded claims."
+description: Build or review Tangle Blueprints using current protocol, operator, and repository evidence.
 ---
 
 # Tangle Blueprint Expert

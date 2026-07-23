@@ -1,92 +1,61 @@
 ---
 name: agent-integrations-adoption
-description: "Adopt @tangle-network/agent-integrations in products, generated apps, sandboxes, and agent workflows. Use for OAuth connections, manifests, grants, capabilities, invocation, approvals, webhooks, and connector runtime strategy."
+description: Build connector contracts and runtimes with agent-integrations, including auth and approvals.
 ---
 
 # Agent Integrations Adoption
 
-Use this skill when wiring `@tangle-network/agent-integrations` into a product
-or generated app platform.
+Use this when building connector definitions, provider adapters, local or hosted execution, webhook intake, grants, or approval policy with `@tangle-network/agent-integrations`.
+Use `hub-sdk` when a product only needs to consume the hosted Tangle Hub.
 
-## Principle
+## Read Current Truth
 
-Products own users, persistence, UI, policy, and secrets. The package owns the
-stable integration contract.
+Inspect the installed package version, exports, types, README, connector registry, and relevant runtime implementation.
+Search the product for existing connection, grant, approval, secret, audit, webhook, and idempotency stores before adding any.
 
-```txt
-user connection
-  -> IntegrationConnection + secret refs
-  -> IntegrationManifest
-  -> IntegrationGrant
-  -> short-lived capability bundle
-  -> /v1/integrations/invoke
-  -> policy + approval + idempotency + audit
-  -> provider/runtime action
-```
+The package owns vendor-neutral connector and execution contracts.
+The product owns users, tenant policy, durable storage, secret infrastructure, UI, and external-action authority.
 
-Generated apps and sandboxes must never receive provider refresh tokens, API
-keys, or raw OAuth credentials.
+## Implement The Required Layer
 
-## Adoption Checklist
+Choose only the layer the product needs:
 
-1. Build the registry with `buildDefaultIntegrationRegistry()`.
-2. Choose enabled connectors and backend strategy: native adapter, hosted
-   gateway, Tangle catalog runtime, or product-specific provider.
-3. Implement stores for connections, grants, approvals, audit, healthchecks,
-   workflows, events, capabilities, and idempotency.
-4. Back `IntegrationSecretStore` with production vault/KMS.
-5. Render OAuth/API-key setup UI from `IntegrationSpec`.
-6. Resolve generated app or agent requirements through `IntegrationManifest`.
-7. Create user-approved `IntegrationGrant` records.
-8. Inject sandbox capability bundles with `buildIntegrationBridgeEnvironment()`.
-9. Route app/sandbox actions through a product `/v1/integrations/invoke`
-   endpoint.
-10. Install `createDefaultIntegrationActionGuard()` for approval, audit,
-    idempotency, dry-run handling, and rate limits.
-11. Run healthchecks after connect/rotate and on a schedule.
-12. Ingest webhooks through `receiveIntegrationWebhook()`.
+| Need | Package surface |
+|---|---|
+| Connector metadata and action schemas | Catalog, specs, or registry |
+| OAuth or API-key lifecycle | Connect and credential contracts |
+| Direct provider execution | Connector adapter |
+| Long-tail package execution | Catalog runtime |
+| Product request enforcement | Guard or middleware |
+| Generated app access | Consumer bridge with scoped capability |
+| Provider events | Webhook normalization and deduplication |
 
-## Runtime Rules
+Confirm current subpaths and symbols from installed types.
+Do not copy an old registry recipe or package-wide checklist into product code.
 
-- Reads can run after explicit grant.
-- Writes should require approval by default.
-- Destructive actions should be denied unless product policy explicitly enables
-  them.
-- Capability tokens must be short-lived and scoped to subject, connection,
-  connector, scopes, and actions.
-- Use idempotency keys for state-changing actions.
-- Store audit events for connect, grant, invoke, approve, revoke, rotate, and
-  webhook flows.
+## Security Rules
 
-## Connector Coverage
+- Store provider credentials in a vault or KMS and expose only references.
+- Give generated apps and agents short-lived capabilities bound to subject, connection, scopes, and actions.
+- Require approval for writes by default and explicit policy for destructive actions.
+- Use idempotency keys for every state-changing action and provider event.
+- Verify webhook signatures before parsing trusted fields.
+- Record connect, grant, invoke, approve, revoke, rotate, and webhook outcomes.
+- Keep denied, unavailable, and failed execution distinct.
+- Do not advertise a connector action until an audited execution backend is configured.
 
-The registry separates contract coverage from backend execution state:
+## Prove The Integration
 
-- contract: normalized connector/action/trigger/auth shape exists
-- setup-ready: product can render setup/admin metadata
-- native adapter: direct reviewed adapter ships
-- gateway executable: hosted provider can execute
-- catalog runtime executable: deployed runtime can execute long-tail packages
+Test one read, one approved write, one denied action, expired or revoked credentials, duplicate delivery, malformed provider output, and secret redaction.
+Run the package's execution audit when adopting its catalog runtime.
+Use a real provider test account for the primary product path; mocks cover adapters only.
 
-Do not expose long-tail tools as executable until the product has configured and
-audited the backend.
+## Completion
 
-## Review Red Flags
+Report the installed version and subpaths, connector and backend selected, product-owned stores, capability and approval policy, audit records, real provider result, and failure tests.
 
-- Generated app code receives provider credentials.
-- Product code imports a vendor SDK directly instead of routing through an
-  `IntegrationProvider` or `ConnectorAdapter`.
-- OAuth setup steps are hand-written instead of rendered from `IntegrationSpec`.
-- Writes skip approval or idempotency.
-- Webhooks are accepted without signature verification and provider-event dedupe.
-- The UI says a connector works when no execution backend is configured.
+## Then consider
 
-## Key Docs
-
-- `@tangle-network/agent-integrations` README
-- `docs/external-product-integration.md`
-- `docs/architecture.md`
-- `docs/catalog-registry.md`
-- `docs/provider-decision-matrix.md`
-- `docs/integration-execution-audit.md`
-- `docs/production-completion-checklist.md`
+- `hub-sdk-adoption` when exposing these connectors through the hosted Hub.
+- `harden` for credential, webhook, approval, or destructive-action changes.
+- `verify` before release.

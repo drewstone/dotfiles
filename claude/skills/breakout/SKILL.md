@@ -1,6 +1,6 @@
 ---
 name: breakout
-description: "Raise the ceiling, don't climb toward it. When a target is nearly hit or a metric has plateaued, question the target itself: name the binding constraint, separate the physics floor from the assumed floor, design the regime change that makes 10x reachable, commit through the valley. Triggers: 'breakout', '10x this', 'raise the ceiling', 'why are we capped', 'think way bigger', 'this metric is a cage'."
+description: Find the constraint behind a plateau and design a step-change approach.
 ---
 
 # Breakout

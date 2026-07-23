@@ -1,6 +1,6 @@
 ---
 name: agent-behavior-audit
-description: Audit whether an autonomous agent actually observes state, uses tools, improves from outcomes, and stays aligned to user intent using traces, logs, and artifacts.
+description: Audit whether an autonomous agent observes state, uses tools, learns, and follows user intent.
 ---
 
 # Agent Behavior Audit

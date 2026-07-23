@@ -1,6 +1,6 @@
 ---
 name: semgrep
-description: Run Semgrep static analysis for security findings. Supports important-only or full scans, Semgrep Pro when available, merged SARIF, triage, and remediation plans.
+description: Run and triage Semgrep security scans with SARIF output and focused remediation.
 allowed-tools:
   - Bash
   - Read

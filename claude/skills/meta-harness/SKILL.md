@@ -1,6 +1,6 @@
 ---
 name: meta-harness
-description: Automated architecture evolution after metric progress plateaus. Discover the code loop, create missing evals, run parallel proposers, benchmark variants, and keep the best patches.
+description: Evolve a plateaued improvement system by changing architecture and comparing implementations.
 ---
 
 # Meta-Harness

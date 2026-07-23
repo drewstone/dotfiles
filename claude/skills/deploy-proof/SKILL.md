@@ -1,6 +1,6 @@
 ---
 name: deploy-proof
-description: "Prove that a merged change is actually live and production behavior is measured against the deployed artifact. Use after merge, before claiming deployed/live/validated, for Cloudflare Pages/Workers deploys, cache claims, perf claims, and release closeout."
+description: Prove a merged change is live and correct in production, including caches and performance.
 ---
 
 # Deploy Proof

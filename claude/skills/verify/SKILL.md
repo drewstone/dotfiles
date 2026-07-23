@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Verify work is complete and correct before shipping. Runs tests, checks git status, confirms nothing is broken or missing. Use when the user says 'verify', 'are you sure', 'is this done', 'double check', 'confirm everything works', or any variant of completion verification. Do NOT use for browser/UI verification (that is /ui-test or /bad) or for hypothesis-driven measurement (that is /evolve) — this skill is build/test/git completion checks only."
+description: Run relevant tests, builds, checks, and git inspection; report proof and unchecked work.
 ---
 
 # Verify Before Ship

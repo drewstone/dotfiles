@@ -1,6 +1,6 @@
 ---
 name: harden
-description: Security adversarial validation: derive invariants, attack surface, fuzz targets, credential risks, race conditions, and coverage gaps; extend existing tests to prove fixes.
+description: Test security boundaries, credentials, races, malformed input, and invariants; prove each fix.
 ---
 
 # Harden
