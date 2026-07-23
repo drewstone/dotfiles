@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -S
 """List all installed skills (name + one-line description) for discovery.
 
 Skills chain forward via each SKILL.md's `## Then consider` footer; this command

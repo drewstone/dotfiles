@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -S
 import argparse
 import json
 from pathlib import Path
