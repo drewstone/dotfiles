@@ -85,4 +85,4 @@ function promotionGate(
 }
 ```
 
-Record the decision, `delta`, and `[ciLow, ciHigh]` on the experiment line in `.evolve/experiments.jsonl`.
+Record the decision, `delta`, and `[ciLow, ciHigh]` on the experiment line in `.agent/experiments.jsonl`.

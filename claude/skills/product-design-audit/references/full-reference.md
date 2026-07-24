@@ -38,7 +38,7 @@ At 10/10, the work is not complete until:
 
 ## Workflow
 
-1. **Recover context.** Read recent trace files, `.evolve/` records, screenshots, open tasks, git diffs, prior commits, and existing design docs. Identify prior decisions, failures, and proof gaps before changing code.
+1. **Recover context.** Read recent trace files, `.agent/` records, screenshots, open tasks, git diffs, prior commits, and existing design docs. Identify prior decisions, failures, and proof gaps before changing code.
 2. **Build the complaint ledger.** Extract every concrete user complaint and every prior unresolved risk. Turn them into checkable items with owner route/component, expected proof, status, and whether they are product, visual, data, interaction, theme, or deployment failures.
 3. **Write the product brief.** Create or update `PRODUCT_BRIEF.md` at the product/repo root unless the repo already has an equivalent canonical brief. Keep it concise and evidence-backed. It must answer: what product is this, who uses it, what job it performs, what the primary workflows are, what data matters, what actions matter, what trust/risk/accessibility constraints exist, what design posture fits, and what non-goals should be avoided.
 4. **Orient to the user.** Use the product brief to define the primary persona, job-to-be-done, domain conventions, and what data must be visible first. For current products, competitors, APIs, or standards, verify with current primary sources.
@@ -51,7 +51,7 @@ At 10/10, the work is not complete until:
 11. **Run iterative passes.** After the first implementation pass, re-open screenshots and the complaint ledger. Run at least one adversarial second pass. For 10/10 mode, keep iterating until new findings are minor, duplicate, or blocked by a real external constraint.
 12. **Verify final artifacts.** Run typecheck/tests/build plus browser screenshots or the repo's existing smoke harness. Check desktop and mobile where relevant, light/dark themes, hover/focus, overflow, table corners, dropdown placement, and real data density.
 13. **Ship proof when asked.** If the user asked for deployment, push the intended commit, monitor the deploy workflow to completion, verify the live URL, and run production smoke or HTTP checks against the deployed app.
-14. **Record the trace.** Update or create a dated audit record under `.evolve/` with inventory, product brief link, complaint ledger, alternatives, decisions, shipped changes, verification, screenshots, deployment proof, unresolved risks, and next highest-value pass.
+14. **Record the trace.** Update or create a dated audit record under `.agent/` with inventory, product brief link, complaint ledger, alternatives, decisions, shipped changes, verification, screenshots, deployment proof, unresolved risks, and next highest-value pass.
 
 ## Audit Rules
 
@@ -101,7 +101,7 @@ Keep the brief short enough to be read before every design decision. It is not a
 
 ## Trace Format
 
-Use this structure in `.evolve/<product>-design-audit-YYYY-MM-DD.md`:
+Use this structure in `.agent/<product>-design-audit-YYYY-MM-DD.md`:
 
 ```markdown
 # Product Design Audit

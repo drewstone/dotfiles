@@ -1,6 +1,6 @@
 ---
 name: critical-audit
-description: "Staff-engineer code review with --diff-only / --scope flags. Serial by default (rate-limit safe), parallel opt-in. Outputs a fix-plan keyed by file:line, persists under .evolve/critical-audit/. Triggers: 'audit this', 'review critically', 'senior engineer review'."
+description: "Staff-engineer code review with --diff-only / --scope flags. Serial by default (rate-limit safe), parallel opt-in. Outputs a fix-plan keyed by file:line, persists under .agent/critical-audit/. Triggers: 'audit this', 'review critically', 'senior engineer review'."
 ---
 
 # Critical Audit — Staff-Engineer Code Review
@@ -43,7 +43,7 @@ This runs **in addition to** the default A/B/C reviewers when the scope warrants
 
 ## Resume
 
-If a prior run at `.evolve/critical-audit/<ts>/` has unresolved CRITICAL/HIGH findings and the diff since then touches those files, run with `--reaudit` pointing at the prior run instead of starting fresh.
+If a prior run at `.agent/critical-audit/<ts>/` has unresolved CRITICAL/HIGH findings and the diff since then touches those files, run with `--reaudit` pointing at the prior run instead of starting fresh.
 
 If the repo has a PR-review workflow (CODEOWNERS, review templates), prefer `--diff-only` over whole-repo scans — out-of-diff findings are noise for a reviewer.
 
@@ -132,16 +132,16 @@ After all reviewers complete:
 
 ## Persist
 
-Write the run under `.evolve/critical-audit/<iso-timestamp>/`:
+Write the run under `.agent/critical-audit/<iso-timestamp>/`:
 
 ```
-.evolve/critical-audit/2026-04-17T20:30:00Z/
+.agent/critical-audit/2026-04-17T20:30:00Z/
 ├── manifest.json        # {scope, base, head, project_type, flags, findings_count_by_severity}
 ├── findings.jsonl       # one JSON per finding: {severity, file, line, issue, action, verification}
 └── summary.md           # the human-readable fix-plan from Phase 3
 ```
 
-This enables `--reaudit` and comparison across runs. Append to `.evolve/skill-runs.jsonl` on completion.
+This enables `--reaudit` and comparison across runs. Append to `.agent/skill-runs.jsonl` on completion.
 
 ## Re-audit (when `--reaudit`)
 
@@ -149,7 +149,7 @@ After fixes land:
 
 1. Read the prior run's `findings.jsonl`.
 2. For each finding, check the current HEAD: is the file:line reference still valid, and does the issue still occur?
-3. Emit a new run at `.evolve/critical-audit/<new-timestamp>/` with a `priorRun` field in `manifest.json` linking to the previous one, and per-finding resolution status: `resolved | still-present | moved(file:line) | unverifiable`.
+3. Emit a new run at `.agent/critical-audit/<new-timestamp>/` with a `priorRun` field in `manifest.json` linking to the previous one, and per-finding resolution status: `resolved | still-present | moved(file:line) | unverifiable`.
 4. If any CRITICAL or HIGH remains `still-present`, the audit blocks whatever workflow called it (e.g., `/pursue` diff-audit step).
 
 ## Rules

@@ -27,7 +27,7 @@ Shared conventions in `_common.md`. This absorbs and strengthens what was evolve
 2. **Generate the field — a diverse set, never one.** Each hypothesis is a row: **mechanism** (one causal sentence), **predicted effect** (number + direction), **cost** (compute/time/risk), **killer** (the result that falsifies it), **evidence class** (prior-art-backed / first-principles / hunch). If all your rows are the same family, you haven't thought — force a structurally different branch.
 3. **Rank by expected value, not by confidence.** `EV ≈ P(true) × effect ÷ cost`. Prior-art-backed raises `P(true)`; a hunch lowers it but a hunch with named upside still earns a slot. The top of the ranked list is what you spend on first.
 4. **Sequence by information gain.** Among high-EV bets, run the one that most reduces uncertainty about the *rest* of the portfolio first — a cheap test that would kill or confirm three downstream bets beats a marginally-higher-EV bet that teaches nothing. Information compounds; a single win doesn't.
-5. **Hand off the portfolio.** Write `.evolve/hypotheses/<date>-<slug>.md` (the ranked field, evidence, sequence). Dispatch `/evolve` to run the top bet, `/pursue` if the top bet is architectural, or `/breakout` if the *whole field* caps below the target — that means the target is the cage, not your ideas.
+5. **Hand off the portfolio.** Write `.agent/hypotheses/<date>-<slug>.md` (the ranked field, evidence, sequence). Dispatch `/evolve` to run the top bet, `/pursue` if the top bet is architectural, or `/breakout` if the *whole field* caps below the target — that means the target is the cage, not your ideas.
 
 ## Rules
 

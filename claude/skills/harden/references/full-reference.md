@@ -17,7 +17,7 @@ Shared conventions in `_common.md`. Three rules govern everything:
 
 - **A runnable system to attack.** Services, full-stack apps, agents, CLIs. Pure-library repos: harden's value is limited — `/critical-audit` is usually right. If harden anyway, inventory must find a harness to attack through (example app, integration tests, CLI).
 - **The project's test harness exists.** Extending a non-existent harness means building one — out of scope. Route to `/pursue` first.
-- **Resume**: prior `.evolve/harden/<date>-report.md` findings unresolved? Re-run those targets first before discovering new ones.
+- **Resume**: prior `.agent/harden/<date>-report.md` findings unresolved? Re-run those targets first before discovering new ones.
 
 ## When harden vs critical-audit
 
@@ -45,14 +45,14 @@ Map what the project has to measure, test, observe. You will extend this — nev
 bash ${SKILL_DIR}/inventory.sh
 ```
 
-Record in `.evolve/harden/<date>-inventory.md`:
+Record in `.agent/harden/<date>-inventory.md`:
 
 ```markdown
 ## Test infra
 - Runner, location, real-vs-mocked ratio, coverage report number
 
 ## Eval infra
-- Suite (.evolve/, evals/, none), scenarios, judges, scoring dimensions, scorecard
+- Suite (.agent/, evals/, none), scenarios, judges, scoring dimensions, scorecard
 
 ## Benchmark infra
 - Runner, metrics tracked, regression threshold, where baseline lives
@@ -67,7 +67,7 @@ If something doesn't exist, note it — but extend what IS there, don't fork.
 
 ## Adversarial scan
 
-Derive the attack surface by reading code. Write every target with attack class and risk to `.evolve/harden/<date>-surface.md`. Six dimensions — run in parallel subagents:
+Derive the attack surface by reading code. Write every target with attack class and risk to `.agent/harden/<date>-surface.md`. Six dimensions — run in parallel subagents:
 
 ### 1. Invariants
 
@@ -139,7 +139,7 @@ Each 1–10. Pick top 10–20 fitting the compute budget.
 For each selected target:
 
 - **Unit tests** → existing test runner. Same directory, same naming, imports from same sources. No new directory, no new runner.
-- **Eval scenarios** → existing eval suite. If `.evolve/` or `evals/` exists, add a scenario file in the right shape, register in the index.
+- **Eval scenarios** → existing eval suite. If `.agent/` or `evals/` exists, add a scenario file in the right shape, register in the index.
 - **Fuzz targets** → existing property-based harness (fast-check, hypothesis, cargo fuzz). Add one only if the test runner supports plugin patterns.
 - **Benchmarks** → existing bench runner that CI runs. No CI bench job → surface in report, flag for `/pursue`. Don't fork.
 - **Observability** → existing telemetry channel.
@@ -196,7 +196,7 @@ const successes = results.filter(r => r.status === 'fulfilled' && r.value.ok)
 
 ## Report
 
-Write `.evolve/harden/<date>-report.md`:
+Write `.agent/harden/<date>-report.md`:
 
 ```markdown
 # Harden Report — <scope>
@@ -236,7 +236,7 @@ curl -H "Authorization: Bearer sk-tan-abc123" https://target/api/sandbox/list
 
 ## Extended infra
 - Added N property-based tests to existing vitest suite
-- Added N eval scenarios to existing .evolve/ suite
+- Added N eval scenarios to existing .agent/ suite
 - Added N benchmarks to existing bench runner
 - Flagged: no CI bench regression gate — needs /pursue
 
@@ -255,19 +255,19 @@ End with explicit routing:
 - **Every coverage gap** → `/pursue` to build missing infra ("no CI bench gate — needs generational addition").
 - **Every tunable metric uncovered** → `/evolve` with the new baseline.
 
-Write `.evolve/current.json`:
+Write `.agent/current.json`:
 ```json
 {"mode":"evolve|pursue|harden","status":"findings_pending|clean","activeHarden":"<date>-report.md","critical":N,"high":N}
 ```
 
 ## Persist
 
-- Inventory → `.evolve/harden/<date>-inventory.md`
-- Surface → `.evolve/harden/<date>-surface.md`
-- Report → `.evolve/harden/<date>-report.md`
+- Inventory → `.agent/harden/<date>-inventory.md`
+- Surface → `.agent/harden/<date>-surface.md`
+- Report → `.agent/harden/<date>-report.md`
 - Global index → `~/.claude/harden/INDEX.md` (one line per run)
 - Durable findings → project memory for repeat regression prevention
-- `.evolve/skill-runs.jsonl` line on completion
+- `.agent/skill-runs.jsonl` line on completion
 
 ## Rules
 

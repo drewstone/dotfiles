@@ -126,4 +126,4 @@ Unclustered / One-off Failures:
 - **Don't guess.** If you can't determine root cause from the trace, say "insufficient data" and suggest what additional instrumentation would help.
 - **Use parallel subagents** to read multiple failure traces simultaneously.
 
-Append a `.evolve/skill-runs.jsonl` line on completion. See `_common.md`.
+Append a `.agent/skill-runs.jsonl` line on completion. See `_common.md`.

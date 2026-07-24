@@ -72,9 +72,9 @@ Into exactly one of {infra-bug, design-flaw, dead-metric, real-result}. State it
 
 ## Persist
 
-- Write a short autopsy note to `.evolve/autopsies/YYYY-MM-DD-<run-slug>.md` (create the dir if missing): the run, the verified findings (each with its ground-truth check), the classification, the go-plan.
+- Write a short autopsy note to `.agent/autopsies/YYYY-MM-DD-<run-slug>.md` (create the dir if missing): the run, the verified findings (each with its ground-truth check), the classification, the go-plan.
 - Extract a durable learning to memory if the cause is a class you'll hit again (a dead-metric pattern, an infra no-op, a saturation regime).
-- Append a `.evolve/skill-runs.jsonl` line on completion if the project uses one.
+- Append a `.agent/skill-runs.jsonl` line on completion if the project uses one.
 
 ## Dispatch at end
 

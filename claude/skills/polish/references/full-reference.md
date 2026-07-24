@@ -14,7 +14,7 @@ Shared conventions in `_common.md`.
 - Polish needs a completed, testable chunk (feature, module, PR-sized diff). Half-built work → `/pursue` first to finish the generation. Polishing half-built work paints a veneer over a broken foundation.
 - Tests pass before audit. Failing → fix or `/converge` before rating.
 - Domain-specific polish (design systems, voice-agent quality, deck output) → dispatch `/eval-agent` for a rubric from real reference material; the 5-dim default below misses domain-specific issues.
-- If `.evolve/current.json` shows a `/pursue` generation in flight, join its Evaluate phase — the generation's own criteria take precedence.
+- If `.agent/current.json` shows a `/pursue` generation in flight, join its Evaluate phase — the generation's own criteria take precedence.
 
 ## Process
 
@@ -60,4 +60,4 @@ Round N — Score: X/10 (target: Y)
   <prioritized list — what's wrong and why it matters>
 ```
 
-Append a `.evolve/skill-runs.jsonl` line on completion. See `_common.md`.
+Append a `.agent/skill-runs.jsonl` line on completion. See `_common.md`.

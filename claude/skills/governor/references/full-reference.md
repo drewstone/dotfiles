@@ -27,11 +27,11 @@ Before reading evolve state, figure out which skills are even applicable.
 
 | Signal | Repo shape | Applicable skills |
 |---|---|---|
-| `.evolve/` exists + `experiments.jsonl` | **Optimization repo** | full library |
-| `tests/` + CI + no `.evolve/` | **Product/service** | `/harden`, `/verify`, `/critical-audit`, `/converge`; evolve-family needs `/eval-agent` bootstrap |
+| `.agent/` exists + `experiments.jsonl` | **Optimization repo** | full library |
+| `tests/` + CI + no `.agent/` | **Product/service** | `/harden`, `/verify`, `/critical-audit`, `/converge`; evolve-family needs `/eval-agent` bootstrap |
 | `src/lib/` + public `package.json` + changelog | **Library** | `/harden`, `/critical-audit`, `/verify`; evolve-family only with a benchmark suite |
 | Infra + deploy configs + SLA monitors | **Service** | `/converge`, `/harden`, `/verify`; evolve-family only with a user-visible metric |
-| No tests, no CI, raw prototype | **Greenfield** | `/pursue` or `/meta-harness` to scaffold; bootstrap `.evolve/` + `/eval-agent` first |
+| No tests, no CI, raw prototype | **Greenfield** | `/pursue` or `/meta-harness` to scaffold; bootstrap `.agent/` + `/eval-agent` first |
 
 Record the detection in the decision log. Ambiguous shape → ask before dispatching.
 
@@ -40,15 +40,15 @@ Record the detection in the decision log. Ambiguous shape → ask before dispatc
 Skip any that don't exist:
 
 ```
-.evolve/current.json                     # last active mode + active pursuit
-.evolve/progress.md                      # human-readable cycle history
-.evolve/experiments.jsonl                # last 10–20 entries: deltas, verdicts
-.evolve/scorecard.json                   # current flow scores vs targets
-.evolve/skill-runs.jsonl                 # what skill ran last, what it dispatched to
-.evolve/reflections/ (newest 3)          # grading + dispatch-at-end of prior sessions
-.evolve/meta-harness/frontier.json       # if present: non-dominated variants
-.evolve/pursuits/ (newest)               # current generation thesis + status
-.evolve/critical-audit/ (newest)         # unresolved CRITICAL/HIGH findings
+.agent/current.json                     # last active mode + active pursuit
+.agent/progress.md                      # human-readable cycle history
+.agent/experiments.jsonl                # last 10–20 entries: deltas, verdicts
+.agent/scorecard.json                   # current flow scores vs targets
+.agent/skill-runs.jsonl                 # what skill ran last, what it dispatched to
+.agent/reflections/ (newest 3)          # grading + dispatch-at-end of prior sessions
+.agent/meta-harness/frontier.json       # if present: non-dominated variants
+.agent/pursuits/ (newest)               # current generation thesis + status
+.agent/critical-audit/ (newest)         # unresolved CRITICAL/HIGH findings
 git log --oneline origin/main..HEAD      # uncommitted work, recent PRs
 ```
 
@@ -91,7 +91,7 @@ Each is a boolean or short verdict.
 - **Operator asks "why are we capped" / "10x this" / "think way bigger" / "this metric is a cage"** → route there. `/breakout` sets the raised target and hands the build back to `/pursue` or `/multi-pursue`.
 
 ### Measurement gap (favor `/eval-agent`)
-- **Goal defined but no baseline in `.evolve/`** → bootstrap the judge.
+- **Goal defined but no baseline in `.agent/`** → bootstrap the judge.
 - **Scorecard has `status: unmeasured` flows with `target` set**.
 - **Metric has no `productValueClaim`** (gate from evolve/pursue/meta-harness) → either redefine or build a judge that ties to product value.
 
@@ -107,6 +107,30 @@ Each is a boolean or short verdict.
 - **≥5 rounds since last reflection** → patterns piling up unlogged.
 - **Dispatch chain drift** (last 3 picks contradict, A→B→A→B) → reflect on the oscillation.
 
+### CI-red (favor `/converge`)
+- Latest push has a failing required check, or `gh pr checks` shows any `fail`.
+- Preempts everything: a red branch means later measurements describe a build nobody can land.
+
+### Surprising-result (favor `/autopsy`)
+- One run returned null, zero, or a number too good to believe, and no one has read the raw rows.
+- Distinct from Triage: Triage clusters many failures, autopsy explains a single result.
+
+### Visibility-gap (favor `/ground-truth`)
+- A "make X faster / why is X slow / optimize X" task on a live system, with no per-hop timing on the real path.
+- Symptoms: the only numbers are local, or a benchmark was never run where the code actually executes.
+- The harness is the work. Build it before any fix, or you optimize a system you cannot see.
+
+### Uncalibrated-metric (favor `/calibrate-before-measure`)
+- An eval or A/B exists and is about to run, but nobody proved the metric moves when the thing it measures moves, or that the task is hard enough to require the capability.
+- Distinct from Measurement-gap (no evaluator at all) and Eval-harness integrity (evaluator exists but is contaminated).
+
+### Ship-ready (favor `/verify`)
+- Work reads as complete and is about to merge or deploy, with no test run, no clean git state, and no check against the real artifact.
+
+### Context-exhausted (favor `/handoff`)
+- Session is ending or context is nearly full while work is still in flight.
+- Cheaper than letting the next session re-derive state from scratch.
+
 ### Hand-off (stop governing)
 - **All scorecard flows meet target** → converged. Closing reflection + stop.
 - **Budget exhausted** (cost/time cap in `current.json`) → report, stop.
@@ -117,26 +141,34 @@ Each is a boolean or short verdict.
 First match wins.
 
 ```
-1.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
-2.  Measurement-gap fires    → dispatch /eval-agent
-3.  Eval-harness integrity   → dispatch /eval-harness-diagnose (don't explore/exploit on a lying harness)
-4.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
-5.  Reflection-due fires     → dispatch /reflect; governor re-runs after
-6.  Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
-7.  Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
-8.  Ceiling fires            → dispatch /breakout (plateau survived meta-harness, or operator wants 10x)
-9.  Explore-heavy fires      → dispatch /meta-harness
-10. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
-11. Explore-light fires      → dispatch /pursue
-12. Think fires              → dispatch /hypothesize (about to spend, but field unmapped / unresearched)
-13. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
-14. Hand-off fires           → closing reflection + stop
-15. No match                 → surface to operator
+1.  CI red on the branch     → dispatch /converge (nothing downstream is trustworthy until green)
+2.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
+3.  Surprising-result fires  → dispatch /autopsy (one null/too-good result, root-cause before believing it)
+4.  Visibility-gap fires     → dispatch /ground-truth (optimizing a live system with no measured real-path breakdown)
+5.  Measurement-gap fires    → dispatch /eval-agent
+6.  Uncalibrated-metric      → dispatch /calibrate-before-measure (eval exists but was never proven to see the effect)
+7.  Eval-harness integrity   → dispatch /eval-harness-diagnose (don't explore/exploit on a lying harness)
+8.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
+9.  Reflection-due fires     → dispatch /reflect; governor re-runs after
+10. Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
+11. Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
+12. Ceiling fires            → dispatch /breakout (plateau survived meta-harness, or operator wants 10x)
+13. Explore-heavy fires      → dispatch /meta-harness
+14. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
+15. Explore-light fires      → dispatch /pursue
+16. Think fires              → dispatch /hypothesize (about to spend, but field unmapped / unresearched)
+17. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
+18. Ship-ready fires         → dispatch /verify (work looks done; prove it before it lands)
+19. Context-exhausted fires  → dispatch /handoff (work in flight, session ending)
+20. Hand-off fires           → closing reflection + stop
+21. No match                 → surface to operator
 ```
+
+Order is not cosmetic. A red CI, an unexplained result, an uninstrumented system, or an uncalibrated metric each make every downstream signal untrustworthy, so they preempt explore and exploit.
 
 ## Log the decision
 
-Append one line to `.evolve/governor.jsonl`:
+Append one line to `.agent/governor.jsonl`:
 
 ```json
 {"ts":"2026-04-25T20:00:00Z","repoShape":"optimization","signals":{"plateau":true,"exploit":false,"measurementGap":false},"decision":"/pursue","reason":"3 rounds <1% on accuracy, pursue for architectural leap","priorChain":["/evolve","/evolve","/evolve"],"operatorOverride":null}
@@ -146,7 +178,7 @@ Append one line to `.evolve/governor.jsonl`:
 
 On operator override, log it with `operatorOverride: "/skill-X"` and extend `reason` with the operator's stated reason. Override data is how governor learns operator taste.
 
-Also append to `.evolve/skill-runs.jsonl` (schema in `_common.md`) with `dispatchedTo` = the picked skill.
+Also append to `.agent/skill-runs.jsonl` (schema in `_common.md`) with `dispatchedTo` = the picked skill.
 
 ## Dispatch
 
@@ -173,22 +205,22 @@ Example brief for `/pursue`:
 
 ## Repo-shape adapters
 
-Governor doesn't force `.evolve/` on every repo:
+Governor doesn't force `.agent/` on every repo:
 
-| Repo has | Use that instead of `.evolve/` |
+| Repo has | Use that instead of `.agent/` |
 |---|---|
 | `docs/decisions/` (ADRs) | Write reflections as ADRs there |
-| `.bench/` with baseline.json | Use as scorecard; skip duplicate `.evolve/scorecard.json` |
+| `.bench/` with baseline.json | Use as scorecard; skip duplicate `.agent/scorecard.json` |
 | GitHub Project / Linear | Consume as goal source; write decisions as tasks |
 | CI-green is the only measurement | Recommend `/converge` + `/eval-agent` to add a quality dimension |
 
-When adapting, write `.evolve/governor-config.json` naming the adopted conventions so every following skill uses the same paths.
+When adapting, write `.agent/governor-config.json` naming the adopted conventions so every following skill uses the same paths.
 
 ## Idempotency + resume
 
 Governor is safe to re-run. Every run reads state fresh, checks `priorChain` for oscillation (last 3 = A→B→A → break the loop with `/reflect`), and validates the last dispatched skill actually ran (look for its artifact — new pursuit file, new experiment line, new reflection). If not, re-dispatch with a note.
 
-`.evolve/governor.jsonl` is append-only. Never rewrite prior decisions — that erases operator-override evidence.
+`.agent/governor.jsonl` is append-only. Never rewrite prior decisions — that erases operator-override evidence.
 
 ## Rules
 

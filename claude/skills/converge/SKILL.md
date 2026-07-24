@@ -14,7 +14,7 @@ The goal is genuinely green, not hidden failures.
 2. Read current CI status, newest logs, and any review comments tied to checks.
 3. Group failures by root cause, not workflow name.
 4. Reproduce locally when practical before editing.
-5. Record progress in `.evolve/converge-progress.md` if the loop spans turns.
+5. Record progress in `.agent/converge-progress.md` if the loop spans turns.
 
 ## Loop
 

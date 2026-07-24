@@ -30,7 +30,7 @@ Do **not** use it to dodge honest hill-climbing. If the metric is still moving o
 3. **Design the regime change.** The lever is usually *not* the artifact. Change the **metric** (the current one may be the cage), the **problem** (eliminate the work instead of speeding it), the **constraint** (retest the "can't"), or the **substrate** (different foundation). One regime change, stated as a thesis with a falsifiable payoff.
 4. **Set the raised target + the smallest proof the regime is reachable.** A number that would be *absurd* under the current regime and *natural* under the new one, plus the cheapest experiment that shows the new regime is real (not that it's finished).
 5. **Commit through the valley.** A regime change usually regresses the old metric before it clears it. Authorize that explicitly, pair with `/dont-collapse-the-architecture` so early marginal evidence doesn't kill the bet, and set the bootstrap-CI gate (`_common.md`) for when the bet is finally judged.
-6. **Externalize the bet, then dispatch.** Write the thesis, raised target, valley budget, and kill-condition to `.evolve/pursuits/<date>-breakout-<slug>.md`. Hand the build to `/pursue` (single track) or `/multi-pursue` (independent tracks); `/evolve` tunes once inside the new regime.
+6. **Externalize the bet, then dispatch.** Write the thesis, raised target, valley budget, and kill-condition to `.agent/pursuits/<date>-breakout-<slug>.md`. Hand the build to `/pursue` (single track) or `/multi-pursue` (independent tracks); `/evolve` tunes once inside the new regime.
 
 ## Rules
 

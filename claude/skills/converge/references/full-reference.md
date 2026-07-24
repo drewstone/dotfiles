@@ -1,6 +1,6 @@
 ---
 name: converge
-description: "Drive CI to green: diagnose remote failures, fix root causes, commit, push, wait, repeat. Persists to `.evolve/converge-progress.md` to resume across sessions. No shortcuts (no `continue-on-error`, no `--no-verify`). Triggers: 'get CI green', 'fix CI', 'land this PR'. NOT general code or metric improvement (that is /evolve) — converge is strictly red-CI → green."
+description: "Drive CI to green: diagnose remote failures, fix root causes, commit, push, wait, repeat. Persists to `.agent/converge-progress.md` to resume across sessions. No shortcuts (no `continue-on-error`, no `--no-verify`). Triggers: 'get CI green', 'fix CI', 'land this PR'. NOT general code or metric improvement (that is /evolve) — converge is strictly red-CI → green."
 ---
 
 # Converge — CI Green Loop
@@ -18,7 +18,7 @@ Evolve runs a local measure script in <60s. CI convergence is fundamentally diff
 
 ## Resume Protocol
 
-**Before doing anything else, check for `.evolve/converge-progress.md`.** Also check the old location `converge-progress.md` in the project root (legacy — migrate if found).
+**Before doing anything else, check for `.agent/converge-progress.md`.** Also check the old location `converge-progress.md` in the project root (legacy — migrate if found).
 
 ### If it exists:
 
@@ -126,7 +126,7 @@ One root cause per commit. Don't over-split.
 
 ## Phase 7: Persist Progress
 
-Write `.evolve/converge-progress.md` after every round:
+Write `.agent/converge-progress.md` after every round:
 
 ```markdown
 # Converge Progress
@@ -211,4 +211,4 @@ Write `.evolve/converge-progress.md` after every round:
 - **Don't re-fix.** Unless it regressed.
 - **Trust progress, verify against reality.** Progress says what WAS true. `gh run list` says what IS true.
 
-Append a `.evolve/skill-runs.jsonl` line on completion (CONVERGED / BLOCKED / etc.). See `_common.md`.
+Append a `.agent/skill-runs.jsonl` line on completion (CONVERGED / BLOCKED / etc.). See `_common.md`.

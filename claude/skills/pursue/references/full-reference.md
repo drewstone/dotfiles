@@ -21,9 +21,9 @@ Shared conventions in `_common.md`.
 
 ## Resume
 
-Read in order: `.evolve/current.json`, `.evolve/progress.md`, newest in `.evolve/pursuits/`, tail of `.evolve/experiments.jsonl`, project spec. If `current.json` names a different active skill within 24h, reconcile or dispatch `/governor` — don't start a new pursuit while another generation is in flight.
+Read in order: `.agent/current.json`, `.agent/progress.md`, newest in `.agent/pursuits/`, tail of `.agent/experiments.jsonl`, project spec. If `current.json` names a different active skill within 24h, reconcile or dispatch `/governor` — don't start a new pursuit while another generation is in flight.
 
-If the repo uses `docs/decisions/` (ADRs), `.bench/`, Linear, or another convention, adopt it via `.evolve/governor-config.json`.
+If the repo uses `docs/decisions/` (ADRs), `.bench/`, Linear, or another convention, adopt it via `.agent/governor-config.json`.
 
 If a prior baseline exists, run the smoke path once. >10% drift vs recorded → re-seed first (a generation built on a stale baseline regresses on re-measurement, not on merit).
 
@@ -37,9 +37,9 @@ Each cycle ships a GENERATION — a coherent set of changes. `/evolve` fine-tune
 
 ## Audit
 
-Read the actual code and `.evolve/` state. Not your memory. Not summaries.
+Read the actual code and `.agent/` state. Not your memory. Not summaries.
 
-Write `.evolve/pursuits/<date>-<goal-slug>.md`:
+Write `.agent/pursuits/<date>-<goal-slug>.md`:
 
 ```markdown
 # Pursuit: {goal}
@@ -177,7 +177,7 @@ Run the complete pipeline end-to-end with ALL changes active. Full eval battery.
 
 Before declaring done, audit the diff. Does new code match codebase patterns? Reuse existing utilities? Every branch covered?
 
-**Preferred:** dispatch `/critical-audit --diff-only`. It serializes reviewers (no 429s), outputs a fix-plan keyed by `file:line`, persists under `.evolve/critical-audit/` so Evaluate can compare.
+**Preferred:** dispatch `/critical-audit --diff-only`. It serializes reviewers (no 429s), outputs a fix-plan keyed by `file:line`, persists under `.agent/critical-audit/` so Evaluate can compare.
 
 **Fallback:** `bash ${SKILL_DIR}/diff-audit.sh`.
 
@@ -202,11 +202,11 @@ Either path: fix every CRITICAL and HIGH before Evaluate. Skip only for one-file
 ## Persist — hand off to evolve
 
 1. Update pursuit spec with results.
-2. Append to `.evolve/experiments.jsonl` (schema in `evolve/schema.md`).
+2. Append to `.agent/experiments.jsonl` (schema in `evolve/schema.md`).
 3. Update baselines.
-4. Write `.evolve/progress.md`.
-5. Write `.evolve/current.json`: `mode: "evolve", generation: N, activePursuit: null`.
-6. Append to `.evolve/skill-runs.jsonl`.
+4. Write `.agent/progress.md`.
+5. Write `.agent/current.json`: `mode: "evolve", generation: N, activePursuit: null`.
+6. Append to `.agent/skill-runs.jsonl`.
 7. End with explicit dispatch: `Next: /evolve targeting <X> against baseline <Y>`.
 
 If new judges were added, run them on previous-gen artifacts to establish backward-compatible baselines.
@@ -218,5 +218,5 @@ If new judges were added, run them on previous-gen artifacts to establish backwa
 3. Match the codebase before writing new code.
 4. Build the whole generation before testing.
 5. Diff-audit before declaring done.
-6. Persist in `.evolve/`.
+6. Persist in `.agent/`.
 7. Think in generations. Take risks. Evaluate honestly.

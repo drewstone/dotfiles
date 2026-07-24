@@ -206,7 +206,7 @@ done
 ```
 
 **Metric-delta attribution — read first, re-run only with an additivity check.**
-`/evolve` and `/meta-harness` already tie each kept commit to a measured delta in `.evolve/experiments.jsonl` / scorecard history.
+`/evolve` and `/meta-harness` already tie each kept commit to a measured delta in `.agent/experiments.jsonl` / scorecard history.
 Carry that commit's recorded delta into the branch's PR body — no re-run, no requirement that the branch build in isolation, and it reconciles with the artifacts that already exist.
 File-disjointness is **not** metric-separability: two independent code changes can still interact in the measured number, and a `depends-on: A` branch may not even build alone.
 So if you must re-run a grader, measure each branch **and** the full union, then verify additivity and report the residual as the interaction term:
@@ -251,6 +251,6 @@ git branch -D <messy-experiment-branch>                                     # on
 
 ## Persist
 
-Write `.evolve/finalize/<date>-<slug>.md` with the KEEP/SKIP triage, the partition (group → units), the forced/symbol edges, the dependency flags, the `T` hash, and the union-check result.
+Write `.agent/finalize/<date>-<slug>.md` with the KEEP/SKIP triage, the partition (group → units), the forced/symbol edges, the dependency flags, the `T` hash, and the union-check result.
 Append a `skill-runs.jsonl` line (`skill: /finalize`, `verdict: SHIP` when the union matched and branches are base-mergeable, else `BLOCKED`).
 The record must let a fresh agent re-derive the branches from `M` and `T` without your context.

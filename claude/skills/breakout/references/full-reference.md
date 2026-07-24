@@ -45,7 +45,7 @@ Most breakouts are one of these. The artifact is rarely the lever.
 
 A regime change that improves the old metric immediately is suspicious — it probably wasn't a regime change. Expect a valley.
 
-1. Record the pre-breakout baseline (the ceiling) in `.evolve/pursuits/<date>-breakout-<slug>.md`.
+1. Record the pre-breakout baseline (the ceiling) in `.agent/pursuits/<date>-breakout-<slug>.md`.
 2. Build the regime via `/pursue` or `/multi-pursue`. During the build, the old metric may regress — that is inside the valley budget from the worksheet.
 3. Do **not** judge on interim numbers. Pair with `/dont-collapse-the-architecture`: marginal early evidence is not a kill signal; the kill condition from the worksheet is.
 4. At the gate (valley budget exhausted, or the smallest-proof experiment resolves), apply the bootstrap-CI promotion gate (`_common.md`): promote if the new regime clears the *raised* target with `ciLow > 0`; reject if the kill condition fired; extend the valley once if it's a `candidate` with real signal and unspent ambition.
@@ -53,7 +53,7 @@ A regime change that improves the old metric immediately is suspicious — it pr
 
 ## Persist
 
-Write `.evolve/pursuits/<date>-breakout-<slug>.md` with the full worksheet, the regime thesis, the valley budget, and the kill condition. Append a `skill-runs.jsonl` line. The bet must survive a context reset intact — a breakout that can't be resumed from its file is not externalized, and endurance collapses to whatever fits in one context window.
+Write `.agent/pursuits/<date>-breakout-<slug>.md` with the full worksheet, the regime thesis, the valley budget, and the kill condition. Append a `skill-runs.jsonl` line. The bet must survive a context reset intact — a breakout that can't be resumed from its file is not externalized, and endurance collapses to whatever fits in one context window.
 
 ## Dispatch-at-end
 

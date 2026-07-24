@@ -9,7 +9,7 @@ This file is documentation for **skill authors** (me, future me, anyone editing 
 
 ## Why this file exists
 
-Three independent reviews of the skill system flagged the same problem: every skill copy-pastes the same rules ("read state first", "decision capture & reflection", "save to .evolve/", "5 rounds max", "every claim needs evidence", "no AI attribution"). When the rule needed to evolve, it evolved in 8 places, drifted, and the weakest version won.
+Three independent reviews of the skill system flagged the same problem: every skill copy-pastes the same rules ("read state first", "decision capture & reflection", "save to .agent/", "5 rounds max", "every claim needs evidence", "no AI attribution"). When the rule needed to evolve, it evolved in 8 places, drifted, and the weakest version won.
 
 Going forward: the rule lives here, with rationale. Skills cite it (`see _common.md`) for context, but inline only the one or two lines they actually need at runtime.
 
@@ -17,26 +17,40 @@ Going forward: the rule lives here, with rationale. Skills cite it (`see _common
 
 These are invariants. A skill that violates them is a bug, not a stylistic choice.
 
+### The artifact directory is `.agent/`
+
+Every skill that persists anything writes under `.agent/` at the repo root. One directory, so a later skill can find what an earlier one left without knowing which skill wrote it.
+
+It used to be `.evolve/`, which read like it belonged to the `evolve` skill even though `governor`, `handoff`, `reflect`, `pursue`, `verify`, and a dozen others shared it. That name is why some skills quietly invented their own destinations instead of joining the convention.
+
+**Migrating a repo that still has `.evolve/`:** move the contents and delete the old directory.
+
+```sh
+[ -d .evolve ] && mkdir -p .agent && cp -R .evolve/. .agent/ && rm -rf .evolve
+```
+
+Until you do, tooling keeps reading `.evolve/` so an in-flight run never loses its history: `skill-run-log` prefers `.agent/` and falls back to `.evolve/` when only the old directory exists. Nothing breaks if you migrate late, and nothing breaks if you never had `.evolve/` at all. Once `.evolve/` is gone, the fallback stops mattering and can be deleted from `skill-run-log` and `harden/inventory.sh`.
+
 ### State-first
 
-If `.evolve/` exists in the repo, read in this order before acting:
+If `.agent/` exists in the repo, read in this order before acting:
 
-1. `.evolve/current.json` — what skill is active, what mode, what round/generation
-2. `.evolve/progress.md` — human-readable cycle history
-3. Tail of `.evolve/experiments.jsonl` — last 10–20 entries
-4. `.evolve/scorecard.json` — current flow scores vs targets
-5. Newest file in `.evolve/pursuits/` if a pursuit is in flight
-6. `.evolve/skill-runs.jsonl` tail — what skill ran last, what it dispatched to
+1. `.agent/current.json` — what skill is active, what mode, what round/generation
+2. `.agent/progress.md` — human-readable cycle history
+3. Tail of `.agent/experiments.jsonl` — last 10–20 entries
+4. `.agent/scorecard.json` — current flow scores vs targets
+5. Newest file in `.agent/pursuits/` if a pursuit is in flight
+6. `.agent/skill-runs.jsonl` tail — what skill ran last, what it dispatched to
 
-If `.evolve/` doesn't exist, skip — don't bootstrap unless the skill's purpose is to bootstrap. Use the repo's existing conventions where they exist (`.bench/`, `docs/decisions/`, Linear, GitHub Project) — `.evolve/governor-config.json` records adopted paths if `/governor` ran.
+If `.agent/` doesn't exist, skip — don't bootstrap unless the skill's purpose is to bootstrap. Use the repo's existing conventions where they exist (`.bench/`, `docs/decisions/`, Linear, GitHub Project) — `.agent/governor-config.json` records adopted paths if `/governor` ran.
 
 ### Persist always
 
 After every round, write:
-- `.evolve/current.json` — updated mode, status, round, timestamp
-- `.evolve/progress.md` — appended round summary
-- `.evolve/experiments.jsonl` — one JSON line per experiment (schema: `evolve/schema.md`)
-- `.evolve/skill-runs.jsonl` — one line per skill invocation (schema below)
+- `.agent/current.json` — updated mode, status, round, timestamp
+- `.agent/progress.md` — appended round summary
+- `.agent/experiments.jsonl` — one JSON line per experiment (schema: `evolve/schema.md`)
+- `.agent/skill-runs.jsonl` — one line per skill invocation (schema below)
 
 State must survive interruption. A skill that completes work but doesn't persist it loses ground next session.
 
@@ -81,7 +95,7 @@ Never add `Co-Authored-By: Claude` trailers, `🤖 Generated with [Claude Code]`
 
 The model already follows clear instructions. The shouting is for the human writing the skill, not the model running it.
 
-## `.evolve/skill-runs.jsonl` schema
+## `.agent/skill-runs.jsonl` schema
 
 One JSON line per skill invocation. Skills SHOULD append a line on completion. `/reflect` and `/governor` consume it to grade skill effectiveness over time and detect drift.
 
@@ -97,7 +111,7 @@ One JSON line per skill invocation. Skills SHOULD append a line on completion. `
   "dispatchedTo": "/governor | /pursue | /reflect | stop | ...",
   "operatorOverride": null,
   "transcriptPath": "~/.claude/projects/<slug>/<sessionId>.jsonl",
-  "traceDir": ".evolve/runs/<skill>-<ts>/"
+  "traceDir": ".agent/runs/<skill>-<ts>/"
 }
 ```
 
@@ -111,7 +125,7 @@ Skills can call `tools/skill-run-log.sh` (symlinked to `~/bin/skill-run-log`) to
 skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor
 ```
 
-The helper handles `.evolve/` creation, ISO timestamps, and project detection. (Trace-path fields are appended by `/reflect` post-hoc — the running skill rarely knows its own session ID.)
+The helper handles `.agent/` creation, ISO timestamps, and project detection. (Trace-path fields are appended by `/reflect` post-hoc — the running skill rarely knows its own session ID.)
 
 ## Tracking intermediate data — pointers, not copies
 
@@ -121,29 +135,29 @@ The principle: **append-only logs preserve decisions; pointers preserve traces; 
 
 | Artifact | Where | Lifecycle |
 |---|---|---|
-| Experiments | `.evolve/experiments.jsonl` | append-only |
-| Governor decisions + overrides | `.evolve/governor.jsonl` | append-only |
-| Skill invocations | `.evolve/skill-runs.jsonl` | append-only |
-| Reflections | `.evolve/reflections/<ts>.md` | timestamped, never overwritten |
-| Pursuits | `.evolve/pursuits/<date>-<slug>.md` | timestamped per pursuit |
-| Audit runs | `.evolve/critical-audit/<ts>/` | timestamped per run |
-| Harden runs | `.evolve/harden/<date>-*.md` | timestamped per run |
-| Meta-harness variants | `.evolve/meta-harness/variants/<name>.<ext>` + `.meta.json` | source kept pre-merge, compacted to just `.meta.json` post-merge |
+| Experiments | `.agent/experiments.jsonl` | append-only |
+| Governor decisions + overrides | `.agent/governor.jsonl` | append-only |
+| Skill invocations | `.agent/skill-runs.jsonl` | append-only |
+| Reflections | `.agent/reflections/<ts>.md` | timestamped, never overwritten |
+| Pursuits | `.agent/pursuits/<date>-<slug>.md` | timestamped per pursuit |
+| Audit runs | `.agent/critical-audit/<ts>/` | timestamped per run |
+| Harden runs | `.agent/harden/<date>-*.md` | timestamped per run |
+| Meta-harness variants | `.agent/meta-harness/variants/<name>.<ext>` + `.meta.json` | source kept pre-merge, compacted to just `.meta.json` post-merge |
 | Doc versions | git history | already authoritative — don't duplicate |
 
 ### What to add (cheap, high-leverage)
 
 - **`transcriptPath`** on every JSONL row — pointer to the Claude session that produced the row. The session lives at `~/.claude/projects/<slug>/<sessionId>.jsonl`. `/reflect` can fill this in post-hoc when it grades a run.
-- **`traceDir`** on rows whose skill produced custom artifacts (eval outputs, audit JSONL, harden PoCs, deep-clean baselines). Points at the run-scoped subdir, e.g. `.evolve/critical-audit/<ts>/` or `.evolve/runs/evolve-<ts>/`.
+- **`traceDir`** on rows whose skill produced custom artifacts (eval outputs, audit JSONL, harden PoCs, deep-clean baselines). Points at the run-scoped subdir, e.g. `.agent/critical-audit/<ts>/` or `.agent/runs/evolve-<ts>/`.
 - **`rejected: [{hypothesis, reason}]`** optional field on `experiments.jsonl` rows — records dead ends so future runs don't re-propose them. Cheap negative-knowledge.
 
-### Optional: `.evolve/archive/` for state snapshots
+### Optional: `.agent/archive/` for state snapshots
 
-Most overwritten files (`current.json`, `progress.md`, `scorecard.json`) reflect the *latest* state and don't need archiving — git captures the diff. But when a skill's verdict depends on a prior snapshot (e.g., promoting a pursuit means proving the new scorecard beats the one at the start), the skill MAY write `.evolve/archive/<file>-<ts>.<ext>` so the comparison is reproducible without `git show`. Use sparingly — bloat is a real cost.
+Most overwritten files (`current.json`, `progress.md`, `scorecard.json`) reflect the *latest* state and don't need archiving — git captures the diff. But when a skill's verdict depends on a prior snapshot (e.g., promoting a pursuit means proving the new scorecard beats the one at the start), the skill MAY write `.agent/archive/<file>-<ts>.<ext>` so the comparison is reproducible without `git show`. Use sparingly — bloat is a real cost.
 
 ### What NOT to track
 
-- **Don't duplicate doc versions.** SKILL.md history lives in git. Adding `.evolve/archive/SKILL-md-<ts>` is duplication for no gain.
+- **Don't duplicate doc versions.** SKILL.md history lives in git. Adding `.agent/archive/SKILL-md-<ts>` is duplication for no gain.
 - **Don't copy transcripts.** Pointers handle this; copies inflate the repo by an order of magnitude.
 - **Don't archive every intermediate file.** Append-only logs + timestamped run dirs already cover the load-bearing data.
 
@@ -184,11 +198,11 @@ Before merging a new or edited skill:
 - [ ] Cites `_common.md` for shared rules instead of inlining them
 - [ ] Has a clear dispatch-at-end pattern (or explicit stop verdict)
 - [ ] If long-form reference content exists, it's in a companion `.md`, not the SKILL.md
-- [ ] Logs to `.evolve/skill-runs.jsonl` (or notes it's a leaf-level skill that doesn't)
+- [ ] Logs to `.agent/skill-runs.jsonl` (or notes it's a leaf-level skill that doesn't)
 
 ## Why we measure skills
 
-Without `.evolve/skill-runs.jsonl`, every "should we merge X with Y" / "is this skill earning its place" decision is vibes. With it:
+Without `.agent/skill-runs.jsonl`, every "should we merge X with Y" / "is this skill earning its place" decision is vibes. With it:
 
 - `/reflect` can grade skill effectiveness empirically (operator-override rate, average duration, dispatch accuracy)
 - `/governor` can weight its picks by historical operator-acceptance, not just signal heuristics

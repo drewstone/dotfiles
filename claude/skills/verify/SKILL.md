@@ -12,7 +12,7 @@ Perform a thorough verification that work is complete and ready to ship. Do NOT 
 1. **Repo shape**: verify works on any git repo. No bootstrap required.
 2. **Build present**: if the repo has no build step and no test command, verify's scope is reduced to diff review + secrets + debug-artifact scan. Surface this explicitly in the report so the operator doesn't infer false coverage.
 3. **Git state**: if HEAD has no changes relative to origin, there's nothing to verify — tell the operator and stop.
-4. **Resume check**: if `.evolve/current.json` shows a `/pursue` or `/converge` session in flight, verify's report is the INPUT to their evaluate/stop steps, not a standalone deliverable. Include the active skill's session ID in the report so the caller can correlate.
+4. **Resume check**: if `.agent/current.json` shows a `/pursue` or `/converge` session in flight, verify's report is the INPUT to their evaluate/stop steps, not a standalone deliverable. Include the active skill's session ID in the report so the caller can correlate.
 
 ## Pre-loaded Context
 

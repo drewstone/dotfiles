@@ -364,7 +364,7 @@ pnpm design:gepa --target conservative-score-weights --mutator deterministic
 pnpm design:gepa --target few-shot-example --mutator reflective
 ```
 
-Targets are the knobs the loop is allowed to mutate this run. Reports land in `.evolve/gepa/<runId>/`. Promotion is human-in-the-loop: review `gen-N.md`, paste the winning payload into `src/design/audit/evaluate.ts` defaults.
+Targets are the knobs the loop is allowed to mutate this run. Reports land in `.agent/gepa/<runId>/`. Promotion is human-in-the-loop: review `gen-N.md`, paste the winning payload into `src/design/audit/evaluate.ts` defaults.
 
 ## Config File
 

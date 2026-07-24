@@ -64,7 +64,7 @@ Sequence: run **A** first (highest EV *and* cheap), but before **B** run a one-h
 
 ## Persist
 
-Write `.evolve/hypotheses/<date>-<slug>.md`: the landscape from the research step, the full ranked table (all columns), the chosen sequence with its information-value rationale, and the dispatch. A resuming agent reads this to continue betting without re-researching. Append a `skill-runs.jsonl` line.
+Write `.agent/hypotheses/<date>-<slug>.md`: the landscape from the research step, the full ranked table (all columns), the chosen sequence with its information-value rationale, and the dispatch. A resuming agent reads this to continue betting without re-researching. Append a `skill-runs.jsonl` line.
 
 ## Dispatch-at-end
 

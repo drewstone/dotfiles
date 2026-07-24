@@ -112,7 +112,7 @@ Notice the shape: a `/hypothesize` survey stage wasn't needed (the approaches we
 
 ## Persist and dispatch
 
-Write `.evolve/pursuits/<date>-orchestrate-<slug>.md`: the decomposition graph, the structure + policies chosen per edge, the skill filling each stage, the compiled `Workflow` outline, the expected agent count, and the synthesis rule. Append a `skill-runs.jsonl` line. A workflow that can't be resumed from its file after a context reset isn't externalized.
+Write `.agent/pursuits/<date>-orchestrate-<slug>.md`: the decomposition graph, the structure + policies chosen per edge, the skill filling each stage, the compiled `Workflow` outline, the expected agent count, and the synthesis rule. Append a `skill-runs.jsonl` line. A workflow that can't be resumed from its file after a context reset isn't externalized.
 
 The dispatch is a single action — run the composed workflow, not a per-stage checklist handed back to the operator:
 
