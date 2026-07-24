@@ -1,0 +1,15 @@
+# Global ignores, wired to core.excludesfile by git/install.sh.
+#
+# Only genuinely universal junk belongs here. Anything a repo might reasonably
+# want to commit stays out, because a global ignore is invisible from inside the
+# repo and silently drops new files.
+#
+# Deliberately NOT ignored: the .agent/ artifact directory (and its legacy name
+# .evolve/). A survey of 84 local repos found 51 of them tracking .evolve/ on
+# purpose — pursuits, reflections, and scorecards are part of those repos'
+# record. Ten repos in the blueprint-agent family also keep a checked-in
+# .agent/workflows/. Ignoring either globally would make new files there vanish
+# from git status with no local .gitignore line to explain why. Repos that do
+# treat these as scratch already carry their own .gitignore entry.
+
+.DS_Store

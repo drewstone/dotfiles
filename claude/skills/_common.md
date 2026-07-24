@@ -23,13 +23,23 @@ Every skill that persists anything writes under `.agent/` at the repo root. One 
 
 It used to be `.evolve/`, which read like it belonged to the `evolve` skill even though `governor`, `handoff`, `reflect`, `pursue`, `verify`, and a dozen others shared it. That name is why some skills quietly invented their own destinations instead of joining the convention.
 
-**Migrating a repo that still has `.evolve/`:** move the contents and delete the old directory.
+**Migrating a repo that still has `.evolve/`:** check whether git tracks it first, because most repos commit these artifacts on purpose — a survey of 84 local repos found 51 tracking `.evolve/`. Copy-then-delete on a tracked directory shows up as 100+ deletions and drops the history out of the repo.
 
 ```sh
-[ -d .evolve ] && mkdir -p .agent && cp -R .evolve/. .agent/ && rm -rf .evolve
+if [ -d .evolve ]; then
+  if git ls-files --error-unmatch .evolve >/dev/null 2>&1; then
+    git mv .evolve .agent          # tracked: one rename, history follows
+  else
+    mkdir -p .agent && cp -Rn .evolve/. .agent/ && rm -rf .evolve
+  fi
+fi
 ```
 
-Until you do, tooling keeps reading `.evolve/` so an in-flight run never loses its history: `skill-run-log` prefers `.agent/` and falls back to `.evolve/` when only the old directory exists. Nothing breaks if you migrate late, and nothing breaks if you never had `.evolve/` at all. Once `.evolve/` is gone, the fallback stops mattering and can be deleted from `skill-run-log` and `harden/inventory.sh`.
+`git mv` refuses if `.agent/` already exists, which is the correct outcome — some repos (the blueprint-agent family) keep a checked-in `.agent/workflows/` that predates this convention. Merge by hand there: `git mv .evolve/<item> .agent/` per item.
+
+Until you migrate, tooling keeps reading `.evolve/` so an in-flight run never loses its history: `skill-run-log` prefers `.agent/` and falls back to `.evolve/` when only the old directory exists. Nothing breaks if you migrate late, and nothing breaks if you never had `.evolve/` at all. Once no repo has `.evolve/` left, the fallback can be deleted from `skill-run-log` and `harden/inventory.sh`.
+
+Do not add `.agent/` to a global gitignore. It is invisible from inside the repo, and with most repos committing these artifacts it would make new files vanish from `git status` with nothing local to explain why. A repo that wants them ignored says so in its own `.gitignore`.
 
 ### State-first
 
