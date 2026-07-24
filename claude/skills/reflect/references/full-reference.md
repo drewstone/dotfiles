@@ -17,7 +17,7 @@ Shared conventions in `_common.md`.
 
 **Portfolio (parallel dispatch)** — `/reflect on everything from this week`. Dispatches sub-agents per project, aggregates findings.
 
-For portfolio: enumerate active projects (recent git activity in common working dirs), group by recency, analyze `.evolve/` state + git history + session transcripts per project, aggregate, cross-pollinate (patterns appearing across projects).
+For portfolio: enumerate active projects (recent git activity in common working dirs), group by recency, analyze `.agent/` state + git history + session transcripts per project, aggregate, cross-pollinate (patterns appearing across projects).
 
 ## What to analyze
 
@@ -74,7 +74,7 @@ Classify every skill conclusion before ranking it:
 | Linked | One session ID connects skill use and a task outcome | Describe the case. Do not generalize. |
 | Comparative | Matched baseline and skill-enabled cases with outcome labels | Estimate benefit or harm, with `n` and uncertainty. |
 
-`.evolve/skill-runs.jsonl` without a matching session ID is repository history, not proof that a selected session used or benefited from a skill.
+`.agent/skill-runs.jsonl` without a matching session ID is repository history, not proof that a selected session used or benefited from a skill.
 Never rank success rate, redispatch rate, overrides, prompt quality, or confidence calibration when the needed links are absent; report the missing link instead.
 
 Propose a new skill only when all four are true:
@@ -121,10 +121,10 @@ Use `not measured` rather than a score when outcomes or a fair comparison are ab
 
 Every reflection persists in two places:
 
-1. **Project-level**: `.evolve/reflections/YYYY-MM-DD-HHMMSS.md` in the current project — canonical, lives with the code it analyzes. Create `.evolve/reflections/` if missing.
+1. **Project-level**: `.agent/reflections/YYYY-MM-DD-HHMMSS.md` in the current project — canonical, lives with the code it analyzes. Create `.agent/reflections/` if missing.
 2. **Global index**: append a one-line summary to `~/.claude/reflections/INDEX.md`:
    ```
-   - [2026-04-25] starter-foundry — 8.5/10, 30 commits, TS migration + 8 gen routing [.evolve/reflections/2026-04-25-143042.md]
+   - [2026-04-25] starter-foundry — 8.5/10, 30 commits, TS migration + 8 gen routing [.agent/reflections/2026-04-25-143042.md]
    ```
    For significant sessions, also write a full copy to `~/.claude/reflections/YYYY-MM-DD-project-slug.md`.
 
@@ -132,7 +132,7 @@ Extract 3–5 durable learnings to memory (`memory/`) — anti-patterns discover
 
 If the project uses an ops board, create tasks for action items.
 
-Do not append a manual `.evolve/skill-runs.jsonl` line as evidence of effectiveness.
+Do not append a manual `.agent/skill-runs.jsonl` line as evidence of effectiveness.
 When the runner supports it, emit a structured record with session ID, skill name and version, activation type, and outcome reference.
 
 ## When to run
@@ -159,10 +159,10 @@ End with explicit, executable dispatch: `Next: /evolve targeting X with baseline
 ## Data sources
 
 If the project has measurement infrastructure, use it:
-- `.evolve/experiments.jsonl` — verdicts, learnings (schema in `evolve/schema.md`)
-- `.evolve/scorecard.json` — measured flows with scores and targets
-- `.evolve/skill-runs.jsonl` — repository history; use for context only unless rows link to the analyzed session ID
-- `.evolve/governor.jsonl` — governor decisions + operator overrides
+- `.agent/experiments.jsonl` — verdicts, learnings (schema in `evolve/schema.md`)
+- `.agent/scorecard.json` — measured flows with scores and targets
+- `.agent/skill-runs.jsonl` — repository history; use for context only unless rows link to the analyzed session ID
+- `.agent/governor.jsonl` — governor decisions + operator overrides
 - Per-turn metrics if available
 - Prompt registry if available
 - Trace store if available — use actual trace IDs, explicit skill events or successful document reads, and outcome links

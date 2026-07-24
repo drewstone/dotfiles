@@ -1,5 +1,7 @@
 node_modules/
 __pycache__/
 *.pyc
+.agent/
+# legacy artifact dir, safe to remove once repos migrate
 .evolve/
 .DS_Store

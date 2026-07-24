@@ -10,7 +10,7 @@ Do not use it for vague quality polish, red CI, or one-off analysis.
 
 ## Start
 
-1. Read existing `.evolve/` state if present.
+1. Read existing `.agent/` state if present.
 2. Define the target metric, baseline, acceptable variance, and user value connection.
 3. Run the smallest real baseline before changing anything.
 4. If no metric exists, build or choose one first.
@@ -23,7 +23,7 @@ Do not use it for vague quality polish, red CI, or one-off analysis.
 4. Re-run the exact baseline check plus any needed regression checks.
 5. Compare against baseline with enough samples for the claim.
 6. Keep, revert, or iterate based on the measured result.
-7. Persist experiment rows, progress, and next dispatch in `.evolve/`.
+7. Persist experiment rows, progress, and next dispatch in `.agent/`.
 
 ## Rules
 

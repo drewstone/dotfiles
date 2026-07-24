@@ -42,7 +42,7 @@ Read the configs — they are the codebase's own quality opinion: `tsconfig.json
 
 Then **read, don't just scan**. Open the largest and highest-churn files (`git log --format= --name-only | sort | uniq -c | sort -rn | head`). Tools miss design smells — a 600-line function, a module everything imports, an abstraction with one caller. Add what you find to the work list.
 
-Write every metric to `.evolve/deep-clean-baseline.json`.
+Write every metric to `.agent/deep-clean-baseline.json`.
 
 ## Phase 1 — Structure
 
@@ -102,7 +102,7 @@ Verify: tests + types + build + lint pass.
 
 ## Phase 4 — Measure again
 
-Re-run every Phase 0 tool. Tabulate before / after / Δ for every metric, plus test pass rate and build status. Write `.evolve/deep-clean-result.json`, append `.evolve/progress.md`, append one line to `.evolve/skill-runs.jsonl`.
+Re-run every Phase 0 tool. Tabulate before / after / Δ for every metric, plus test pass rate and build status. Write `.agent/deep-clean-result.json`, append `.agent/progress.md`, append one line to `.agent/skill-runs.jsonl`.
 
 **If test pass rate dropped or the build broke: revert the last phase and investigate.** A cleanup that breaks things is worse than no cleanup.
 

@@ -10,7 +10,7 @@ ls claude/skills/
 
 ## Authoring conventions
 
-**Read [`_common.md`](./_common.md) before writing or editing a skill.** It defines the shared rules (state-first reads, persist-to-`.evolve/`, dispatch-at-end, no AI attribution, the `skill-runs.jsonl` schema, the `transcriptPath` / `traceDir` pointer pattern) so skills don't copy-paste them eight times. It also lists what NOT to put in a skill (no Decision Capture blocks, no defensive fit-check routing, no decorative banners).
+**Read [`_common.md`](./_common.md) before writing or editing a skill.** It defines the shared rules (state-first reads, persist-to-`.agent/`, dispatch-at-end, no AI attribution, the `skill-runs.jsonl` schema, the `transcriptPath` / `traceDir` pointer pattern) so skills don't copy-paste them eight times. It also lists what NOT to put in a skill (no Decision Capture blocks, no defensive fit-check routing, no decorative banners).
 
 The skill writing checklist at the bottom of `_common.md` is the merge gate.
 
@@ -25,4 +25,4 @@ The skill writing checklist at the bottom of `_common.md` is the merge gate.
 
 ## Measurement
 
-Every skill SHOULD append one line to `.evolve/skill-runs.jsonl` on completion via `tools/skill-run-log` (symlinked into `~/bin/skill-run-log`). Schema and rationale in `_common.md`. `/reflect` and `/governor` consume this log to grade skills empirically and detect drift; without it every "should we merge / archive" decision is vibes.
+Every skill SHOULD append one line to `.agent/skill-runs.jsonl` on completion via `tools/skill-run-log` (symlinked into `~/bin/skill-run-log`). Schema and rationale in `_common.md`. `/reflect` and `/governor` consume this log to grade skills empirically and detect drift; without it every "should we merge / archive" decision is vibes.

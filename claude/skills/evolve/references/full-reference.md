@@ -7,7 +7,7 @@ description: "Goal-pursuit engine: measure → diagnose → experiment → verif
 
 Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 
-Shared conventions (state-first reads, persist-to-`.evolve/`, dispatch-at-end, no AI attribution, 5-rounds-max) live in `_common.md`. This skill inlines only what's evolve-specific.
+Shared conventions (state-first reads, persist-to-`.agent/`, dispatch-at-end, no AI attribution, 5-rounds-max) live in `_common.md`. This skill inlines only what's evolve-specific.
 
 ## When evolve vs other skills
 
@@ -23,9 +23,9 @@ Shared conventions (state-first reads, persist-to-`.evolve/`, dispatch-at-end, n
 
 ## Resume
 
-If `.evolve/` exists, read in order: `current.json`, `progress.md`, tail of `experiments.jsonl`, newest `pursuits/*.md`, project spec (`docs/EVOLVE-SPEC.md`). If `mode` names a different active skill within 24h, reconcile or dispatch `/governor`.
+If `.agent/` exists, read in order: `current.json`, `progress.md`, tail of `experiments.jsonl`, newest `pursuits/*.md`, project spec (`docs/EVOLVE-SPEC.md`). If `mode` names a different active skill within 24h, reconcile or dispatch `/governor`.
 
-If a project uses `.bench/`, ADRs, Linear, or another canonical scorecard, use that — `.evolve/governor-config.json` records adopted paths.
+If a project uses `.bench/`, ADRs, Linear, or another canonical scorecard, use that — `.agent/governor-config.json` records adopted paths.
 
 ## The loop
 
@@ -52,7 +52,7 @@ For every metric in the success criteria, write one sentence:
 
 If you can't, the metric is wrong. Stop. Evolve converges on whatever metric you point it at — proxy metrics are the default failure mode of offline evals. Force the linkage now, or you ship "wins" that don't move anything users feel.
 
-Store the claim per-metric in `.evolve/current.json` under `metricClaims[<metric>]` so future rounds can validate.
+Store the claim per-metric in `.agent/current.json` under `metricClaims[<metric>]` so future rounds can validate.
 
 - Bad: "expected-capability jaccard ≥ 0.5" with no claim that matching the list improves downstream agent success.
 - Good: "p95 latency < 100ms" with claim "this path gates the user's first keystroke; jank shows up in session replay above 100ms."
@@ -90,7 +90,7 @@ If the goal is **subjective** (writing quality, conversation fit, design match) 
 
 If the goal is **objective** (compiles, test passes, HTTP 200, string match) → write a test. LLM-as-judge on objective criteria adds variance.
 
-Audit existing eval infrastructure: ≥5 scoring dimensions with explicit weights, per-turn metrics if multi-turn, prompt versioning (`.evolve/prompts/`), trace storage (JSONL + per-run files), statistical library (`evolve/eval-stats.ts` is a copy-in reference), cost tracking, multi-rep support (3-rep median minimum).
+Audit existing eval infrastructure: ≥5 scoring dimensions with explicit weights, per-turn metrics if multi-turn, prompt versioning (`.agent/prompts/`), trace storage (JSONL + per-run files), statistical library (`evolve/eval-stats.ts` is a copy-in reference), cost tracking, multi-rep support (3-rep median minimum).
 
 The eval infrastructure IS the product for improvement. A project with 3 dimensions and no traces can't improve systematically — fix that before running experiments.
 
@@ -197,11 +197,11 @@ For the overall goal: re-diagnose from current state (not original baseline — 
 
 Every cycle produces three artifacts:
 
-1. **`.evolve/progress.md`** — human-readable resume state. On resume, read this and skip to baseline.
-2. **`.evolve/current.json`** — `{mode, goal, status, round, generation, activePursuit, updatedAt}`. First file an agent reads.
-3. **`.evolve/experiments.jsonl`** — one JSON line per experiment. Schema in `schema.md` (required fields, optional fields, scorecard shape, example). Read it before writing your first experiment of a session.
+1. **`.agent/progress.md`** — human-readable resume state. On resume, read this and skip to baseline.
+2. **`.agent/current.json`** — `{mode, goal, status, round, generation, activePursuit, updatedAt}`. First file an agent reads.
+3. **`.agent/experiments.jsonl`** — one JSON line per experiment. Schema in `schema.md` (required fields, optional fields, scorecard shape, example). Read it before writing your first experiment of a session.
 
-Also write `.evolve/scorecard.json` after each cycle (product flows with scores + targets + status), and append a line to `.evolve/skill-runs.jsonl` (schema in `_common.md`).
+Also write `.agent/scorecard.json` after each cycle (product flows with scores + targets + status), and append a line to `.agent/skill-runs.jsonl` (schema in `_common.md`).
 
 Reminders:
 - Baseline and result must be median of ≥3 runs.
@@ -229,7 +229,7 @@ Evolve is domain-agnostic. Domain knowledge lives in **specs** (`docs/EVOLVE-SPE
 When the question is "which approach wins" (not just "did this one fix move a number"), the front half —
 research the space, generate a diverse field, rank by expected value, sequence by information gain — now
 lives in **`/hypothesize`**. Run it first; it hands back a ranked portfolio and writes
-`.evolve/hypotheses/<date>-<slug>.md`. Evolve then executes the top bet through the same
+`.agent/hypotheses/<date>-<slug>.md`. Evolve then executes the top bet through the same
 measure → diagnose → experiment → verify loop, with the anti-overfitting rules above still in force.
 
 Evolve owns the back half — judging whether a winning bet is durable enough to ship:
@@ -243,7 +243,7 @@ Evolve owns the back half — judging whether a winning bet is durable enough to
 
 ## Rules
 
-- Read state first (`.evolve/current.json`, `.evolve/progress.md`).
+- Read state first (`.agent/current.json`, `.agent/progress.md`).
 - Verify, then report. Determine which, not "maybe A or B."
 - Score honestly. 1.00 means perfect.
 - 5 rounds max per invocation. Persist and stop. Re-invoke to continue.

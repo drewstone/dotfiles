@@ -41,12 +41,12 @@ expected duration, and what signal will prove success.
 Before editing or deploying, read:
 
 - Project instructions: `AGENTS.md`, `CLAUDE.md`, `README.md`, deploy docs.
-- Existing release ledger: `.evolve/release-progress.md` if present.
+- Existing release ledger: `.agent/release-progress.md` if present.
 - Git state: branch, dirty files, last commit, upstream status.
 - Live service state: actual service/process, URL, binary/container path,
   current version or mtime, logs, and health endpoint.
 
-Create or update `.evolve/release-progress.md` immediately with:
+Create or update `.agent/release-progress.md` immediately with:
 
 ```markdown
 # Release Progress
@@ -164,7 +164,7 @@ If smoke fails:
 
 ## Phase 6 — Close The Loop
 
-Update `.evolve/release-progress.md` with:
+Update `.agent/release-progress.md` with:
 
 - final commit
 - artifact hash/path
@@ -202,7 +202,7 @@ The adapter belongs in the project, not this generic skill.
 - Rebuilding on a tiny remote box when a local artifact is faster and safer.
 - Restarting a service by name from memory.
 - Saying “deployed” after upload but before live smoke.
-- Letting a context/session die without `.evolve/release-progress.md`.
+- Letting a context/session die without `.agent/release-progress.md`.
 - Retrying failed prod smoke instead of rolling back.
 - Copying files onto a divergent remote repo to “sync” it.
 - Reporting “latest is live” without commit/artifact/service proof.

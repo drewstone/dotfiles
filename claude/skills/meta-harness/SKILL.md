@@ -10,7 +10,7 @@ It is automated `/pursue`: multiple isolated proposers change code, then the rep
 
 ## Start
 
-1. Read `.evolve/meta-harness/` if it exists: config, frontier, variants, and latest run notes.
+1. Read `.agent/meta-harness/` if it exists: config, frontier, variants, and latest run notes.
 2. Discover the current evaluator, benchmark, or product check; create the smallest missing check before proposing code.
 3. Prove the metric connects to user value and can move.
 4. Seed a baseline from at least three runs when the check is noisy.
@@ -21,7 +21,7 @@ It is automated `/pursue`: multiple isolated proposers change code, then the rep
 2. Require structural mechanism changes; reject pure parameter tweaks.
 3. Run the same smoke, benchmark, and repo checks for every variant.
 4. Keep only variants that beat baseline and pass the checks.
-5. Record lineage, hypothesis, result, and rejected ideas under `.evolve/meta-harness/`.
+5. Record lineage, hypothesis, result, and rejected ideas under `.agent/meta-harness/`.
 6. Merge only after the winning mechanism is clear and reproducible.
 
 ## Rules

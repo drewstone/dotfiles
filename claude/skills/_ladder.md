@@ -29,7 +29,7 @@ Four phases, one cycle. LEARN feeds back into THINK — that return edge is the 
 
 Two skills sit *above* the phases:
 
-- **`/governor` is the router.** It reads `.evolve/` state, git, and the objective, picks the single next phase/skill, dispatches once, and exits. It does no work itself.
+- **`/governor` is the router.** It reads `.agent/` state, git, and the objective, picks the single next phase/skill, dispatches once, and exits. It does no work itself.
 - **`/orchestrate` is the composer.** When a goal is too big or too novel for any single skill, it *chooses* the workflow shape — pipeline, parallel barrier, judge-panel, loop-until-dry, adversarial-verify, multi-modal sweep — and wires other skills in as the stages, then synthesizes. `/governor` picks one skill; `/orchestrate` composes many.
 
 `/multi-pursue` is the fixed-shape composer under `/orchestrate`: always N independent `/pursue` tracks plus one synthesis.
@@ -163,10 +163,10 @@ So the same four-phase loop can point at its *own* skills, with skill quality as
 
 | Phase | What it does here | Files that make it real |
 |---|---|---|
-| **MEASURE** | Read where skills waste effort or get overridden. | `.evolve/skill-runs.jsonl` (`operatorOverride` vs `dispatchedTo`), `~/.claude/halo/profiles.jsonl` (one loop-waste profile per session), `.evolve/reflections/<ts>.md` |
+| **MEASURE** | Read where skills waste effort or get overridden. | `.agent/skill-runs.jsonl` (`operatorOverride` vs `dispatchedTo`), `~/.claude/halo/profiles.jsonl` (one loop-waste profile per session), `.agent/reflections/<ts>.md` |
 | **THINK** | Hypothesize which skill edit lowers override / loop-waste. | `/hypothesize` over the three sources above |
 | **BUILD** | Edit the skill's markdown. | `~/dotfiles/claude/skills/<name>/SKILL.md`, then rerun `~/dotfiles/claude/install.sh` |
-| **MEASURE again** | Did the override rate actually fall over the next runs? | re-read `.evolve/skill-runs.jsonl` |
+| **MEASURE again** | Did the override rate actually fall over the next runs? | re-read `.agent/skill-runs.jsonl` |
 
 The metric, computed today in one command — per-skill operator-override rate over the log, the single best evidence a skill's routing is wrong:
 
@@ -174,14 +174,14 @@ The metric, computed today in one command — per-skill operator-override rate o
 jq -rs 'group_by(.skill)[]
   | {skill: .[0].skill, n: length,
      overrides: (map(select(.operatorOverride != null)) | length)}
-  | "\(.skill): \(.overrides)/\(.n) overridden"' .evolve/skill-runs.jsonl
+  | "\(.skill): \(.overrides)/\(.n) overridden"' .agent/skill-runs.jsonl
 ```
 
 The tooling that makes capture real — deterministic, fail-silent, roughly constant memory:
 
 - **Capture** — `hooks/halo-profile.sh` runs on Claude Code SessionEnd, pipes the transcript to `tools/halo-extract.mjs`, and appends one loop-profile per session to `~/.claude/halo/profiles.jsonl`.
 - **Triage** — `tools/halo-report.mjs --flagged` scores each profile for loop-waste (e.g. ≥100 hand CI-polls, high tool-error rate, deploy/CI churn) and forwards only the worst sessions to the expensive trace-analyst. Profile everything; analyze the tail.
-- **Per-run log** — `tools/skill-run-log` (symlinked to `~/bin/skill-run-log`) appends one row to `.evolve/skill-runs.jsonl` on skill completion.
+- **Per-run log** — `tools/skill-run-log` (symlinked to `~/bin/skill-run-log`) appends one row to `.agent/skill-runs.jsonl` on skill completion.
 - **Self-analysis** — `/reflect` (skill) and `reflect-last` (a *command*, `commands/reflect-last.md`, not a `skills/` folder) run the published `@tangle-network/traces` CLI: `traces analyze --harness claude-code --last 1` on the session's own transcript.
 
 What is wired vs what is not — stated plainly, because this is the leapfrog capability and it still has one hand-operated step:

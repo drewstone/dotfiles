@@ -10,7 +10,7 @@ It does not perform the work; it dispatches once and exits.
 
 ## Inputs
 
-1. Read `.evolve/` state, recent skill runs, progress, scorecards, and active pursuit files.
+1. Read `.agent/` state, recent skill runs, progress, scorecards, and active pursuit files.
 2. Read git status and recent commits if the repo is active.
 3. Identify the user's current objective and whether progress is measured, blocked, or unclear.
 

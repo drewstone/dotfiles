@@ -12,7 +12,7 @@ It imports pi-autoresearch's enforcement rigor — a measurement the agent canno
 This is the mechanism that makes long unattended runs safe: stopping is free because a fresh agent resumes the exact run from one file, and the measure cannot be gamed because `decide.sh`, not your eyes, chooses keep vs revert.
 That is the same property `/breakout` cites in "endurance is a state property, not willpower" — this harness is what makes the claim literally true.
 
-Shared conventions in `_common.md` (append-only `.evolve/`, no AI attribution, real measurement only).
+Shared conventions in `_common.md` (append-only `.agent/`, no AI attribution, real measurement only).
 
 ## When to use
 
@@ -31,9 +31,9 @@ Against the bootstrap gate in `STATS.md`: the noise-floor guard here judges **ke
 
 ## The harness
 
-Lives in `.evolve/<session>/`: `measure.sh`, `decide.sh`, `playbook.md`, `ideas.md`, an append-only `loop.jsonl` (one row per candidate), and a `state.env` (current baseline + revert streak).
+Lives in `.agent/<session>/`: `measure.sh`, `decide.sh`, `playbook.md`, `ideas.md`, an append-only `loop.jsonl` (one row per candidate), and a `state.env` (current baseline + revert streak).
 `checks.sh` is optional.
-Every KEPT candidate also appends a row to the top-level `.evolve/experiments.jsonl` per `../schema.md`.
+Every KEPT candidate also appends a row to the top-level `.agent/experiments.jsonl` per `../schema.md`.
 
 ### 1. `measure.sh` — the single source of truth
 
@@ -48,7 +48,7 @@ For a stable >30s benchmark, `K=1` is fine — don't pay 5x for variance you don
 ### 2. `decide.sh` — auto-keep on improve, auto-revert on worse-or-equal
 
 The deterministic engine the agent calls after applying one candidate edit.
-It runs `measure.sh`, applies the noise-floor guard, runs `checks.sh`, then either commits (**KEEP**) or restores the in-scope code (**REVERT**) — and never touches `.evolve/`.
+It runs `measure.sh`, applies the noise-floor guard, runs `checks.sh`, then either commits (**KEEP**) or restores the in-scope code (**REVERT**) — and never touches `.agent/`.
 The revert reads its pathspecs from `state`-generated `scope` (part 5), so the append-only logs, the playbook, and the recorded dead-ends survive every revert: reverted knowledge is never lost, only reverted code.
 Full script under "Concrete `decide.sh`" below — it is the one authoritative copy.
 
@@ -73,7 +73,7 @@ The self-contained file a fresh agent reads to resume the *exact* optimization w
 If resuming needed anything not in this file, the file is missing a field — fix the playbook, not the agent.
 
 `Files in scope` is the single source of truth for what a revert may touch.
-At session start (and whenever the playbook's list changes) the machine form is regenerated from it into `.evolve/<session>/scope` — one literal pathspec per line, directories or files, **no globs** — and `decide.sh` reverts against that file only.
+At session start (and whenever the playbook's list changes) the machine form is regenerated from it into `.agent/<session>/scope` — one literal pathspec per line, directories or files, **no globs** — and `decide.sh` reverts against that file only.
 One list, two renderings; they cannot drift because one is generated from the other.
 Every pathspec must exist at session start (a missing path makes `git restore`/`clean`/`add` fatal), so list the enclosing **directory** when a candidate will create new files under it — `git clean` then sweeps whatever the candidate added there.
 
@@ -86,7 +86,7 @@ The loop is the agent reading the playbook and the tried-list, popping the top-r
 
 ```bash
 # outer loop — apply_edit is the AGENT (reads playbook + tried-list, writes code); everything else is the script
-export SESSION=.evolve/<session>
+export SESSION=.agent/<session>
 while :; do
   idea="$(sed -n '1p' "$SESSION/ideas.md")"                       # ranked queue, top first
   [ -z "$idea" ] && { echo "STOP starved: ideas.md empty"; break; }  # stop condition: field exhausted
@@ -105,7 +105,7 @@ Nothing runs forever on willpower; it runs until the target is met, the field of
 
 ```bash
 #!/usr/bin/env bash
-# .evolve/<session>/measure.sh — single source of truth for keep vs revert.
+# .agent/<session>/measure.sh — single source of truth for keep vs revert.
 # Emits `METRIC name=value` on stdout; decide.sh reads ONLY these lines.
 # Keep it fast: this runs once per candidate, hundreds of times per unattended run.
 set -euo pipefail
@@ -138,13 +138,13 @@ echo "METRIC p50_ms_noise=$sd"      # run-to-run noise floor for the 2x guard
 
 ```bash
 #!/usr/bin/env bash
-# .evolve/<session>/decide.sh — the deterministic keep/revert engine.
+# .agent/<session>/decide.sh — the deterministic keep/revert engine.
 # The agent calls this AFTER applying one candidate edit to in-scope code.
 # measure -> worse-or-equal? -> within-noise re-run -> checks -> KEEP or REVERT,
 # then records the row, advances the baseline, and prints SIGNAL CONTINUE|STOP <reason>.
 # The agent reads ONLY the SIGNAL line to decide whether to loop again.
 set -euo pipefail
-SESSION="${SESSION:?set SESSION=.evolve/<session>}"
+SESSION="${SESSION:?set SESSION=.agent/<session>}"
 cd "$(git rev-parse --show-toplevel)"
 
 . "$SESSION/state.env"                 # BASE, BASE_NOISE, CONSEC_REVERTS
@@ -157,7 +157,7 @@ REVERT_LIMIT="${REVERT_LIMIT:-8}"      # consecutive reverts before declaring th
 SCOPE=()
 while IFS= read -r line; do [ -n "$line" ] && SCOPE+=("$line"); done < "$SESSION/scope"
 
-revert_code() {                        # restore in-scope code to last kept commit; .evolve untouched
+revert_code() {                        # restore in-scope code to last kept commit; .agent untouched
   git restore --source=HEAD --staged --worktree -- "${SCOPE[@]}"   # tracked edits AND deletions
   git clean -fdq -- "${SCOPE[@]}"                                  # untracked files the candidate created
 }
@@ -214,7 +214,7 @@ if [ -x "$SESSION/checks.sh" ] && ! "$SESSION/checks.sh"; then
   revert_code; bump_revert; record REVERT checks-failed; signal; exit 0
 fi
 
-# KEEP: commit in-scope code + prior .evolve state (no AI trailer, per _common.md), advance baseline.
+# KEEP: commit in-scope code + prior .agent state (no AI trailer, per _common.md), advance baseline.
 # add and commit on SEPARATE lines: a `git add ... && git commit ...` compound hides an add
 # failure from set -e, which would silently record a fake KEEP. Separate => a git error fails closed.
 git add -- "${SCOPE[@]}" "$SESSION"
@@ -239,9 +239,9 @@ e.g. "Cold-start API responses feel instant; the p50 hot path drops below the 25
 - Noise floor: `p50_ms_noise` (population stddev of K=5 reps). Keep guard = 2x this.
 
 ## How to run
-- Measure:  `.evolve/<session>/measure.sh`      (emits the METRIC lines)
-- Decide:   `SESSION=.evolve/<session> .evolve/<session>/decide.sh`   (keep/revert after one edit)
-- Checks:   `.evolve/<session>/checks.sh`        (optional; must exit 0 to allow a keep)
+- Measure:  `.agent/<session>/measure.sh`      (emits the METRIC lines)
+- Decide:   `SESSION=.agent/<session> .agent/<session>/decide.sh`   (keep/revert after one edit)
+- Checks:   `.agent/<session>/checks.sh`        (optional; must exit 0 to allow a keep)
 
 ## Files in scope   (the ONLY revert target; regenerated into `scope`, one literal pathspec per line, no globs)
 - src/hot-path
@@ -249,14 +249,14 @@ e.g. "Cold-start API responses feel instant; the p50 hot path drops below the 25
 
 ## Off-limits   (never edit)
 - src/api/contract.ts   (wire format is frozen)
-- .evolve                (state survives every revert)
+- .agent                (state survives every revert)
 
 ## Constraints / invariants   (must hold for any keep; checks.sh asserts them)
 - Public API stays wire-compatible.
 - No new network calls on the hot path.
 
 ## Ideas queue
-- Ranked candidates live in `.evolve/<session>/ideas.md`, top first; the loop pops from it and stops when it empties.
+- Ranked candidates live in `.agent/<session>/ideas.md`, top first; the loop pops from it and stops when it empties.
 - Refill from `/hypothesize` when the field runs dry.
 
 ## Current baseline   (also machine-readable in state.env)

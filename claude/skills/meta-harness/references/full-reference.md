@@ -1,13 +1,13 @@
 ---
 name: meta-harness
-description: "Automated code-level evolution. Discover the harness, create evals if missing, run parallel CC proposers that evolve architecture (not parameters). State in `.evolve/meta-harness/`. Triggers: 'meta-harness', 'evolve the architecture', evolve plateau on parameters."
+description: "Automated code-level evolution. Discover the harness, create evals if missing, run parallel CC proposers that evolve architecture (not parameters). State in `.agent/meta-harness/`. Triggers: 'meta-harness', 'evolve the architecture', evolve plateau on parameters."
 ---
 
 # Meta-Harness — Automated Code Architecture Evolution
 
 Drop into any project. Discover what to evolve. Create evals if missing. Run parallel proposers that write structurally different code. Track a Pareto frontier. Converge.
 
-State lives in `.evolve/meta-harness/` — part of the evolve ecosystem, not separate. Shared conventions in `_common.md`.
+State lives in `.agent/meta-harness/` — part of the evolve ecosystem, not separate. Shared conventions in `_common.md`.
 
 **Use meta-harness when** `/evolve` has plateaued on parameter tuning and the gap is architectural.
 **Use `/evolve` when** the goal is a measurable metric and parameter changes can move it.
@@ -15,14 +15,14 @@ State lives in `.evolve/meta-harness/` — part of the evolve ecosystem, not sep
 
 ## Resume / bootstrap
 
-If `.evolve/meta-harness/` exists, read in order:
+If `.agent/meta-harness/` exists, read in order:
 1. `config.json` — dimensions AND `dimensionClaims`. Any dimension lacking a claim → fix that before proposing anything.
 2. `frontier.json` — non-dominated variants
 3. `evolution.jsonl` — what's been tried, what worked, why
 4. `variants/` — prior variant source + `.meta.json`
-5. `.evolve/current.json` — current evolve state
+5. `.agent/current.json` — current evolve state
 
-If `.evolve/meta-harness/` does NOT exist, bootstrap (Discover phase).
+If `.agent/meta-harness/` does NOT exist, bootstrap (Discover phase).
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ Meta-harness is the most expensive skill in the library (N parallel proposers, f
 1. **`/evolve` has plateaued.** 3+ rounds with cumulative delta <2%. Otherwise dispatch `/evolve` first — parameter tuning is cheaper than structural rewrites.
 2. **Stable median-of-≥3 baseline exists.** Without it, parallel proposers can't tell noise from signal. Single-run or >10% drift → re-seed.
 3. **At least one dimension has a `productValueClaim`.** N×cost on proxy metrics is wasted compute.
-4. **No other skill mid-flight.** If `.evolve/current.json` names a `/pursue` generation in flight, parallel edits conflict — dispatch `/governor` first.
+4. **No other skill mid-flight.** If `.agent/current.json` names a `/pursue` generation in flight, parallel edits conflict — dispatch `/governor` first.
 5. **Repo shape fits.** Optimization repos (model harnesses, agent platforms) work well. Library/service repos: confirm a single highest-blast-radius file exists before committing.
 
 ## Discover + bootstrap
@@ -46,7 +46,7 @@ The harness is the code that wraps core logic — scaffolding that determines be
 2. The harness is NOT: model weights, test fixtures, config constants, CI scripts.
 3. Pick the file with highest blast radius on output quality. One file. Proposers evolve THIS.
 
-Write to `.evolve/meta-harness/config.json`:
+Write to `.agent/meta-harness/config.json`:
 
 ```json
 {
@@ -81,7 +81,7 @@ If the project has no eval suite, CREATE ONE. Non-negotiable.
 
 **Branch on goal shape:**
 - **Objective** (route correctness, compile, test pass, string match, HTTP code): write tests. Skip `/eval-agent`.
-- **Subjective** (generated code quality, conversation fit, design match): dispatch `/eval-agent` to generate a rubric from real reference material under `.evolve/eval-agent/rubrics/`. Meta-harness reads the rubric's scoring function as its eval.
+- **Subjective** (generated code quality, conversation fit, design match): dispatch `/eval-agent` to generate a rubric from real reference material under `.agent/eval-agent/rubrics/`. Meta-harness reads the rubric's scoring function as its eval.
 
 For objective evals:
 1. Read existing tests. Understand what's tested.
@@ -106,7 +106,7 @@ Same rule applies to variants: any variant claiming frontier-dominance must be m
 ### Initialize state
 
 ```
-.evolve/
+.agent/
 ├── current.json           # mode = "meta-harness"
 ├── meta-harness/
 │   ├── config.json        # harness path, eval command, dimensions, dimensionClaims
@@ -118,7 +118,7 @@ Same rule applies to variants: any variant claiming frontier-dominance must be m
 ```
 
 **Pre-dispatch hygiene** (before parallel proposers):
-- Commit `.evolve/meta-harness/` on main so worktrees inherit config + baseline.
+- Commit `.agent/meta-harness/` on main so worktrees inherit config + baseline.
 - Commit any `scripts/` additions (eval runner, collectors, helpers) so worktrees inherit them. Proposers dispatched before a script is committed will silently re-implement it and diverge.
 - Add `.claude/worktrees/` to `.gitignore`.
 
@@ -135,10 +135,10 @@ For each iteration, you ARE the proposer. Read full diagnostic state, then write
    4. Read the SAME failing scenarios for frontier variants. How do they handle it differently?
 4. **Read top 2–3 frontier variants AND 2–3 worst failures**. Understand mechanisms.
 5. **Falsifiable hypothesis**: "Changing [mechanism X] to [mechanism Y] will improve [dimension Z] because [evidence from traces/evolution.jsonl shows W]". NOT "increase N from 16 to 32" (parameter — rejected). NOT "try a different approach" (vague — rejected). YES "Add a verification stage after draft prediction to catch false positives by retrieving challengers" (structural, falsifiable).
-6. **Write the variant** — complete, compilable source at `.evolve/meta-harness/variants/<snake_case>.<ext>`. Not a diff. Match codebase style exactly — read 3 existing files first.
+6. **Write the variant** — complete, compilable source at `.agent/meta-harness/variants/<snake_case>.<ext>`. Not a diff. Match codebase style exactly — read 3 existing files first.
 7. **Write `pending_eval.json`**:
    ```json
-   {"name":"draft_verification","hypothesis":"Adding a verification stage...","base_system":"baseline","changes":["Add second retrieval","Retrieve challengers"],"axis":"exploration","file":".evolve/meta-harness/variants/draft_verification.ts"}
+   {"name":"draft_verification","hypothesis":"Adding a verification stage...","base_system":"baseline","changes":["Add second retrieval","Retrieve challengers"],"axis":"exploration","file":".agent/meta-harness/variants/draft_verification.ts"}
    ```
 
 ## Validate + benchmark
@@ -249,6 +249,6 @@ Without Foreman: run the loop manually in a single CC session. Propose → Valid
 - Proposer can't form a novel hypothesis (mechanisms exhausted).
 - **Metric-linkage broken**: dimensions moving but no product signal → convergence is meaningless. Stop, flag the proxy-metric problem, redesign the eval against a product-grounded metric or hand off to a skill that can.
 
-Update `.evolve/current.json`: `{"mode": "evolve", "generation": N, "note": "meta-harness converged, hand off to /evolve for fine-tuning"}`.
+Update `.agent/current.json`: `{"mode": "evolve", "generation": N, "note": "meta-harness converged, hand off to /evolve for fine-tuning"}`.
 
 End with: `Next: /evolve targeting <dimension> at frontier <baseline>`.

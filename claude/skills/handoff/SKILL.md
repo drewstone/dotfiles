@@ -11,7 +11,7 @@ The output must let the next session continue without rediscovery.
 ## Flow
 
 1. Read current git status, recent commits, open PRs/issues, and active task state.
-2. Read `.evolve/` state if present.
+2. Read `.agent/` state if present.
 3. Capture what changed, what was verified, what failed, and what remains.
 4. Name blockers with exact commands, files, credentials, or decisions needed.
 5. Write a compact brief in the repo's existing handoff/reflection location or provide it inline if no convention exists.

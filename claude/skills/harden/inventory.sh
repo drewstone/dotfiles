@@ -35,11 +35,11 @@ echo
 echo "## Eval infra"
 echo
 
-if [ -d .evolve ]; then
-  echo "- \`.evolve/\` present"
-  [ -f .evolve/current.json ] && echo "  - current.json: $(cat .evolve/current.json | head -c 200)..."
-  [ -d .evolve/pursuits ] && echo "  - pursuits: $(ls .evolve/pursuits 2>/dev/null | wc -l | tr -d ' ') files"
-  [ -f .evolve/experiments.jsonl ] && echo "  - experiments.jsonl: $(wc -l < .evolve/experiments.jsonl | tr -d ' ') records"
+if [ -d .agent ] || [ -d .evolve ]; then
+  echo "- \`.agent/\` present"
+  [ -f .agent/current.json ] && echo "  - current.json: $(cat .agent/current.json | head -c 200)..."
+  [ -d .agent/pursuits ] && echo "  - pursuits: $(ls .agent/pursuits 2>/dev/null | wc -l | tr -d ' ') files"
+  [ -f .agent/experiments.jsonl ] && echo "  - experiments.jsonl: $(wc -l < .agent/experiments.jsonl | tr -d ' ') records"
 fi
 
 evals_dirs=$(find . -maxdepth 5 -type d -name 'evals' -not -path "*/node_modules/*" 2>/dev/null | head -5)
@@ -54,7 +54,7 @@ if [ -n "$evals_dirs" ]; then
     [ -n "$scenarios" ] && echo "$scenarios" | sed 's/^/    - scenarios: /'
   done
 fi
-[ -z "$evals_dirs" ] && [ ! -d .evolve ] && echo "- (no eval infra detected — flag for /pursue if this is a project that should have one)"
+[ -z "$evals_dirs" ] && [ ! -d .agent ] && [ ! -d .evolve ] && echo "- (no eval infra detected — flag for /pursue if this is a project that should have one)"
 echo
 
 # ─── Benchmark infra ──────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Append one structured line to .evolve/skill-runs.jsonl per skill invocation.
+# Append one structured line to .agent/skill-runs.jsonl per skill invocation.
 #
 # Usage:
 #   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
@@ -7,9 +7,9 @@
 #
 # Example:
 #   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor \
-#                 --trace-dir .evolve/runs/evolve-2026-04-25/
+#                 --trace-dir .agent/runs/evolve-2026-04-25/
 #
-# Writes to <git-root>/.evolve/skill-runs.jsonl — falls back to $PWD/.evolve/ if not in a git repo.
+# Writes to <git-root>/.agent/skill-runs.jsonl — falls back to $PWD/.agent/ if not in a git repo.
 # Creates the directory and file if missing. Append-only; never rewrites prior lines.
 #
 # Schema (see ~/dotfiles/claude/skills/_common.md):
@@ -50,17 +50,31 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Artifact dir is .agent/. A repo that still has the legacy .evolve/ keeps using
+# it until someone migrates, so no in-flight run loses its history. Delete
+# .evolve/ once its contents are moved and this picks up .agent/ on the next run.
+artifact_dir() {
+  local root="$1"
+  if [ -d "$root/.agent" ]; then
+    printf '%s/.agent' "$root"
+  elif [ -d "$root/.evolve" ]; then
+    printf '%s/.evolve' "$root"
+  else
+    printf '%s/.agent' "$root"
+  fi
+}
+
 # Resolve project root: prefer git, fall back to $PWD basename
 if [ -z "$project" ]; then
   if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
     project="$(basename "$git_root")"
-    target_dir="$git_root/.evolve"
+    target_dir="$(artifact_dir "$git_root")"
   else
     project="$(basename "$PWD")"
-    target_dir="$PWD/.evolve"
+    target_dir="$(artifact_dir "$PWD")"
   fi
 else
-  target_dir="$PWD/.evolve"
+  target_dir="$(artifact_dir "$PWD")"
 fi
 
 mkdir -p "$target_dir"

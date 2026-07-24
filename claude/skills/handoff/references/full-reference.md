@@ -1,11 +1,11 @@
 ---
 name: handoff
-description: Produce a session-to-session knowledge transfer brief. Reads current session work, git history, open PRs, memory, and `.evolve/` state, then writes a structured handoff doc the next session can execute immediately. Use when wrapping up a long session, switching projects, or after a major milestone. Triggers - "wrap up", "hand off", "prepare for next session", "save context".
+description: Produce a session-to-session knowledge transfer brief. Reads current session work, git history, open PRs, memory, and `.agent/` state, then writes a structured handoff doc the next session can execute immediately. Use when wrapping up a long session, switching projects, or after a major milestone. Triggers - "wrap up", "hand off", "prepare for next session", "save context".
 ---
 
 # Handoff — Session-to-Session Knowledge Transfer
 
-Produce a dispatchable brief for the next session. Reads the current session's work, project state, git history, open issues, memory, and `.evolve/` state — then writes a structured handoff document that a fresh session can execute immediately.
+Produce a dispatchable brief for the next session. Reads the current session's work, project state, git history, open issues, memory, and `.agent/` state — then writes a structured handoff document that a fresh session can execute immediately.
 
 ## When to Use
 
@@ -25,12 +25,12 @@ A `HANDOFF.md` in the project root (gitignored) with:
 - Test results from this session
 
 ### 2. Evolve/Pursue State
-If `.evolve/current.json` exists, include:
+If `.agent/current.json` exists, include:
 - Mode (evolve/pursue), goal, round, generation
 - Active pursuit path (if any)
-- Current prompt version (from `.evolve/prompts/registry.json` if exists)
-- Tail of `.evolve/progress.md` (where we are vs target)
-- Last experiment verdict from `.evolve/experiments.jsonl`
+- Current prompt version (from `.agent/prompts/registry.json` if exists)
+- Tail of `.agent/progress.md` (where we are vs target)
+- Last experiment verdict from `.agent/experiments.jsonl`
 
 This is **critical** — without it, the next session won't know if it's mid-experiment, mid-pursuit, or between cycles. Include the raw JSON of `current.json`.
 
@@ -45,7 +45,7 @@ This is **critical** — without it, the next session won't know if it's mid-exp
 Each action specifies **which skill to run**:
 - "Run `/evolve` targeting [specific target] with baseline [number]%"
 - "Run `/pursue` — evolve has plateaued for 3 rounds on [dimension]"
-- "Run `/diagnose` on the failing traces in `.evolve/traces/`"
+- "Run `/diagnose` on the failing traces in `.agent/traces/`"
 - "Run design audit on [URL] to verify UX quality"
 
 Each action has: what to do, which files to touch, acceptance criteria, skill to invoke.
@@ -66,11 +66,11 @@ Flag any blockers or dependencies.
 ## Process
 
 1. Read `git log` for this session's commits
-2. Read `.evolve/current.json` and `.evolve/progress.md` — understand the improvement loop state
-3. Read `.evolve/scorecard.json` if it exists — know all measured flows
+2. Read `.agent/current.json` and `.agent/progress.md` — understand the improvement loop state
+3. Read `.agent/scorecard.json` if it exists — know all measured flows
 4. Read open issues/PRs on the repo
 5. Read `.memory/` for persistent context
-6. Read any pursuit or evolve docs in `.evolve/pursuits/`
+6. Read any pursuit or evolve docs in `.agent/pursuits/`
 7. Synthesize into the handoff document
 8. Save to `/tmp/handoff-{project}-{timestamp}.md` (not in project tree)
 9. Print the path so the next session can read it
@@ -81,7 +81,7 @@ Flag any blockers or dependencies.
 - **Be specific.** "Fix the scaffold builder" is useless. "In `scripts/experiments/scaffold-builder.ts`, the validation at line 570 only checks file count. Add `pnpm build` exit code check. See issue #1588 checklist item 1." is useful.
 - **Include commands.** The next session should be able to run verification commands immediately.
 - **Route to skills.** Every next-action should specify which skill to invoke, not just what to do.
-- **Include .evolve/ state.** The next session MUST know the evolve/pursue state to avoid re-doing work or breaking mid-experiment.
+- **Include .agent/ state.** The next session MUST know the evolve/pursue state to avoid re-doing work or breaking mid-experiment.
 - **Don't duplicate memory.** Reference memory entries, don't rewrite them. But DO extract new learnings into memory.
 - **Capture the user's temperature.** If they're frustrated, note what caused it. If they're excited, note what's working.
 - **Be honest about quality.** If the work is 70% done, say so. Don't round up.

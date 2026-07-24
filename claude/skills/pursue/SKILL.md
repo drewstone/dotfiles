@@ -10,7 +10,7 @@ The output is a working generation with tests, not a proposal.
 
 ## Start
 
-1. Read repo state, existing `.evolve/` progress, prior pursuits, and current failures.
+1. Read repo state, existing `.agent/` progress, prior pursuits, and current failures.
 2. State why incremental improvement is insufficient.
 3. Define the generation: what changes together, what stays stable, and what success means.
 4. Identify the smallest proof that the new architecture works.
