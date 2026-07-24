@@ -30,12 +30,18 @@ if [ -d .evolve ]; then
   if git ls-files --error-unmatch .evolve >/dev/null 2>&1; then
     git mv .evolve .agent          # tracked: one rename, history follows
   else
-    mkdir -p .agent && cp -Rn .evolve/. .agent/ && rm -rf .evolve
+    mkdir -p .agent
+    # -n never overwrites, so anything already in .agent/ wins.
+    if cp -Rn .evolve/. .agent/; then
+      rm -rf .evolve
+    else
+      echo ".evolve kept: some paths already exist under .agent/. Merge those by hand." >&2
+    fi
   fi
 fi
 ```
 
-`git mv` refuses if `.agent/` already exists, which is the correct outcome — some repos (the blueprint-agent family) keep a checked-in `.agent/workflows/` that predates this convention. Merge by hand there: `git mv .evolve/<item> .agent/` per item.
+Both halves refuse to overwrite. `git mv` fails outright if `.agent/` exists; `cp -n` skips colliding paths and exits non-zero, which is why the `rm -rf` is guarded rather than chained — an unguarded `&&` leaves `.evolve/` behind silently and reads as success. Some repos (the blueprint-agent family) keep a checked-in `.agent/workflows/` that predates this convention, so a collision is a real case, not a hypothetical. Merge those by hand: `git mv .evolve/<item> .agent/` per item.
 
 Until you migrate, tooling keeps reading `.evolve/` so an in-flight run never loses its history: `skill-run-log` prefers `.agent/` and falls back to `.evolve/` when only the old directory exists. Nothing breaks if you migrate late, and nothing breaks if you never had `.evolve/` at all. Once no repo has `.evolve/` left, the fallback can be deleted from `skill-run-log` and `harden/inventory.sh`.
 
