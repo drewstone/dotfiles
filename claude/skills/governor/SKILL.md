@@ -16,8 +16,14 @@ It does not perform the work; it dispatches once and exits.
 
 ## Decision
 
+- `ground-truth`: about to optimize, debug, or benchmark a live system with no measured end-to-end breakdown of the real path. Stand up the harness before touching a fix, or you tune a number that is only true in a narrower context than you think.
+- `calibrate-before-measure`: an eval, A/B, or benchmark is about to run but nobody proved the metric can see the effect being claimed, or that the task is hard enough to need the capability. Calibrate first; otherwise you measure the wrong thing for three experiments straight.
 - `hypothesize`: about to optimize but "what to try" isn't obvious, or the field keeps repeating one idea, or no one surveyed how the world beats this ceiling — build a researched, ranked portfolio before spending compute.
 - `evolve`: measurable target, metric can still move, and the next bet is clear (or `/hypothesize` already ranked it).
+- `converge`: CI is red on the working branch. Nothing downstream is trustworthy until it is green, so fix root causes and land it before dispatching anything else.
+- `autopsy`: a single result came back null, surprising, or too good. Root-cause that one result before believing it, and separate a real effect from an artifact, a no-op, saturation, or a measurement bug.
+- `verify`: the work looks finished and is about to ship. Prove it with tests, git state, and the real artifact rather than declaring done.
+- `handoff`: the session is ending or context is nearly exhausted with work still in flight. Write the brief so the next session resumes instead of re-deriving.
 - `polish`: fixed-quality cleanup on existing work.
 - `pursue`: current approach is wrong or needs a designed generation.
 - `meta-harness`: architecture evolution can be automated against a benchmark.

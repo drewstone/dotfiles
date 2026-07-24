@@ -107,6 +107,30 @@ Each is a boolean or short verdict.
 - **≥5 rounds since last reflection** → patterns piling up unlogged.
 - **Dispatch chain drift** (last 3 picks contradict, A→B→A→B) → reflect on the oscillation.
 
+### CI-red (favor `/converge`)
+- Latest push has a failing required check, or `gh pr checks` shows any `fail`.
+- Preempts everything: a red branch means later measurements describe a build nobody can land.
+
+### Surprising-result (favor `/autopsy`)
+- One run returned null, zero, or a number too good to believe, and no one has read the raw rows.
+- Distinct from Triage: Triage clusters many failures, autopsy explains a single result.
+
+### Visibility-gap (favor `/ground-truth`)
+- A "make X faster / why is X slow / optimize X" task on a live system, with no per-hop timing on the real path.
+- Symptoms: the only numbers are local, or a benchmark was never run where the code actually executes.
+- The harness is the work. Build it before any fix, or you optimize a system you cannot see.
+
+### Uncalibrated-metric (favor `/calibrate-before-measure`)
+- An eval or A/B exists and is about to run, but nobody proved the metric moves when the thing it measures moves, or that the task is hard enough to require the capability.
+- Distinct from Measurement-gap (no evaluator at all) and Eval-harness integrity (evaluator exists but is contaminated).
+
+### Ship-ready (favor `/verify`)
+- Work reads as complete and is about to merge or deploy, with no test run, no clean git state, and no check against the real artifact.
+
+### Context-exhausted (favor `/handoff`)
+- Session is ending or context is nearly full while work is still in flight.
+- Cheaper than letting the next session re-derive state from scratch.
+
 ### Hand-off (stop governing)
 - **All scorecard flows meet target** → converged. Closing reflection + stop.
 - **Budget exhausted** (cost/time cap in `current.json`) → report, stop.
@@ -117,22 +141,30 @@ Each is a boolean or short verdict.
 First match wins.
 
 ```
-1.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
-2.  Measurement-gap fires    → dispatch /eval-agent
-3.  Eval-harness integrity   → dispatch /eval-harness-diagnose (don't explore/exploit on a lying harness)
-4.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
-5.  Reflection-due fires     → dispatch /reflect; governor re-runs after
-6.  Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
-7.  Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
-8.  Ceiling fires            → dispatch /breakout (plateau survived meta-harness, or operator wants 10x)
-9.  Explore-heavy fires      → dispatch /meta-harness
-10. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
-11. Explore-light fires      → dispatch /pursue
-12. Think fires              → dispatch /hypothesize (about to spend, but field unmapped / unresearched)
-13. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
-14. Hand-off fires           → closing reflection + stop
-15. No match                 → surface to operator
+1.  CI red on the branch     → dispatch /converge (nothing downstream is trustworthy until green)
+2.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
+3.  Surprising-result fires  → dispatch /autopsy (one null/too-good result, root-cause before believing it)
+4.  Visibility-gap fires     → dispatch /ground-truth (optimizing a live system with no measured real-path breakdown)
+5.  Measurement-gap fires    → dispatch /eval-agent
+6.  Uncalibrated-metric      → dispatch /calibrate-before-measure (eval exists but was never proven to see the effect)
+7.  Eval-harness integrity   → dispatch /eval-harness-diagnose (don't explore/exploit on a lying harness)
+8.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
+9.  Reflection-due fires     → dispatch /reflect; governor re-runs after
+10. Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
+11. Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
+12. Ceiling fires            → dispatch /breakout (plateau survived meta-harness, or operator wants 10x)
+13. Explore-heavy fires      → dispatch /meta-harness
+14. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
+15. Explore-light fires      → dispatch /pursue
+16. Think fires              → dispatch /hypothesize (about to spend, but field unmapped / unresearched)
+17. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
+18. Ship-ready fires         → dispatch /verify (work looks done; prove it before it lands)
+19. Context-exhausted fires  → dispatch /handoff (work in flight, session ending)
+20. Hand-off fires           → closing reflection + stop
+21. No match                 → surface to operator
 ```
+
+Order is not cosmetic. A red CI, an unexplained result, an uninstrumented system, or an uncalibrated metric each make every downstream signal untrustworthy, so they preempt explore and exploit.
 
 ## Log the decision
 
