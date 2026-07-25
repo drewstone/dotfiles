@@ -174,6 +174,7 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - No tool-branding prefix on titles (`[codex]`, `[claude]`, etc.).
 - Conventional Commit style: `feat(optimization): ...`, `fix(holdout): ...`, `chore(api): ...`.
 - Scope = the topic or subsystem, not the repo name.
+- **Any PR that changes visible UI includes a screenshot (before/after when redesigning); flows get a short video/GIF.** Capture via the `bad` browser tooling or a local dev server; attach with `gh-drew pr comment --body` markdown image links (upload via the PR body or a gist). A UI PR with no visual is incomplete.
 - Smallest accurate type/scope wins. No redundant context.
 - For Drew/Tangle repos, create PRs through `gh-drew`, not raw `gh`. `gh-drew api user --jq .login` must print `drewstone` before any PR create/edit/review action.
 - `gh-drew` must resolve `DREW_GH_TOKEN` from `~/company/devops/secrets/.env.keys` plus `~/company/devops/secrets/agent-state.env` via `dotenvx`. If raw `gh` says "must be a collaborator" or uses the wrong account, retry with `gh-drew` before reporting failure.

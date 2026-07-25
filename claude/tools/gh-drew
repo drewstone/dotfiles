@@ -17,11 +17,94 @@ read_secret() {
   fi
 }
 
+# Identity verification used to spend a `gh api user` REST call on EVERY
+# gh-drew invocation — and the loops below try up to three candidate keys, so a
+# single command could cost 2-4 calls before doing any work. With several agents
+# sharing one token (one 5,000/hr core bucket) that alone can exhaust the quota
+# and lock out merges. Cache the verdict per token fingerprint; the token's
+# identity does not change between calls.
+verify_cache_dir="${GH_DREW_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/gh-drew}"
+verify_ttl="${GH_DREW_VERIFY_TTL:-21600}" # 6h
+
+token_fingerprint() {
+  printf '%s' "$1" | sha256sum | cut -c1-16
+}
+
 try_token() {
   local token="$1"
 
   [[ -n "$token" ]] || return 1
-  GH_TOKEN="$token" gh api user --jq .login 2>/dev/null || true
+
+  local fp cache now stamp
+  fp="$(token_fingerprint "$token")"
+  cache="$verify_cache_dir/$fp"
+  now="$(date +%s)"
+
+  if [[ -r "$cache" ]]; then
+    stamp="$(head -1 "$cache" 2>/dev/null || true)"
+    if [[ "$stamp" =~ ^[0-9]+$ ]] && (( now - stamp < verify_ttl )); then
+      tail -1 "$cache" 2>/dev/null
+      return 0
+    fi
+  fi
+
+  local login
+  login="$(GH_TOKEN="$token" gh api user --jq .login 2>/dev/null || true)"
+  if [[ -n "$login" ]]; then
+    mkdir -p "$verify_cache_dir" 2>/dev/null || true
+    printf '%s\n%s\n' "$now" "$login" > "$cache" 2>/dev/null || true
+    chmod 600 "$cache" 2>/dev/null || true
+  fi
+  printf '%s' "$login"
+}
+
+# Reads must never starve writes. /rate_limit does not count against the core
+# quota, so this check is free. Below the floor, refuse read-only commands (the
+# polling loops that cause exhaustion) while letting mutations through, so a
+# runaway status poll can never block a merge or a deploy dispatch.
+core_floor="${GH_DREW_MIN_CORE:-150}"
+
+guard_reads() {
+  local token="$1"; shift
+  [[ "$core_floor" =~ ^[0-9]+$ ]] && (( core_floor > 0 )) || return 0
+
+  case "${1-}" in
+    api)
+      # Only GETs are reads; an explicit -X/--method other than GET mutates.
+      # /rate_limit is exempt: it costs nothing and is how an operator inspects
+      # the very exhaustion this guard reports.
+      for a in "$@"; do
+        case "$a" in
+          -X|--method) return 0 ;;
+          rate_limit|/rate_limit) return 0 ;;
+        esac
+      done
+      ;;
+    run|pr|issue|release|workflow|repo|cache)
+      case "${2-}" in
+        list|view|status|checks|diff|download|watch) ;;
+        *) return 0 ;;
+      esac
+      ;;
+    *) return 0 ;;
+  esac
+
+  local remaining
+  remaining="$(GH_TOKEN="$token" gh api rate_limit --jq .resources.core.remaining 2>/dev/null || true)"
+  [[ "$remaining" =~ ^[0-9]+$ ]] || return 0
+  if (( remaining < core_floor )); then
+    local reset
+    reset="$(GH_TOKEN="$token" gh api rate_limit --jq '.resources.core.reset' 2>/dev/null || true)"
+    cat >&2 <<EOF
+gh-drew: refusing a read — core quota $remaining left, reserved floor $core_floor.
+The remainder is held for writes (merge, PR create, workflow dispatch).
+Resets: $( [[ "$reset" =~ ^[0-9]+$ ]] && date -u -d "@$reset" 2>/dev/null || echo unknown )
+
+Watch the live service instead of polling CI (curl the deployed endpoint) — that
+costs no quota. Override with GH_DREW_MIN_CORE=0 if this read is load-bearing.
+EOF
+    exit 3
+  fi
 }
 
 for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
@@ -29,6 +112,7 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
   login="$(try_token "$token" || true)"
 
   if [[ "$login" == "$expected_login" ]]; then
+    guard_reads "$token" "$@"
     exec env GH_TOKEN="$token" gh "$@"
   fi
 done
@@ -38,6 +122,7 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
   login="$(try_token "$token" || true)"
 
   if [[ "$login" == "$expected_login" ]]; then
+    guard_reads "$token" "$@"
     exec env GH_TOKEN="$token" gh "$@"
   fi
 done

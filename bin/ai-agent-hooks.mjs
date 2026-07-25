@@ -241,7 +241,7 @@ function checkMergeConflictMarkers(repoRoot, files) {
 
   const result = spawnSync(
     "git",
-    ["grep", "-nE", "^(<<<<<<<|=======|>>>>>>>)", "--", ...files],
+    ["grep", "-nE", "^(<<<<<<<( .*)?|\\|\\|\\|\\|\\|\\|\\|( .*)?|=======|>>>>>>>( .*)?)$", "--", ...files],
     { cwd: repoRoot, encoding: "utf8" },
   );
 
