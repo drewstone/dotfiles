@@ -5,3 +5,6 @@ __pycache__/
 # legacy artifact dir, safe to remove once repos migrate
 .evolve/
 .DS_Store
+
+# Claude Code writes machine-local project settings here; never shared.
+.claude/settings.local.json
