@@ -3,14 +3,16 @@ set -euo pipefail
 
 export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
 
-HOOKS_BIN="${AI_AGENT_HOOKS_BIN:-$HOME/dotfiles/bin/ai-agent-hooks.mjs}"
-if [ -x "$HOOKS_BIN" ]; then
-  exec "$HOOKS_BIN" run pre-commit "$@"
-fi
+# Copied into a repo's .git/hooks, so this cannot resolve relative to the
+# dotfiles checkout the way git/hooks/* does. The checkout lives at ~/dotfiles
+# on some machines and ~/code/dotfiles on others; try both, then PATH.
+for candidate in "${AI_AGENT_HOOKS_BIN:-}" "$HOME/dotfiles/bin/ai-agent-hooks.mjs" "$HOME/code/dotfiles/bin/ai-agent-hooks.mjs"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] && exec "$candidate" run pre-commit "$@"
+done
 
 if command -v ai-agent-hooks >/dev/null 2>&1; then
   exec ai-agent-hooks run pre-commit "$@"
 fi
 
-echo "ai-agent-hooks not found. Expected $HOOKS_BIN or ai-agent-hooks in PATH." >&2
+echo "ai-agent-hooks not found. Expected ai-agent-hooks.mjs under ~/dotfiles or ~/code/dotfiles, or ai-agent-hooks in PATH." >&2
 exit 1
