@@ -9,8 +9,8 @@ Companion to `_common.md`.
 Same status: this is documentation for **skill authors**, not a skill the harness ever loads or invokes.
 `_common.md` holds the shared *rules*; this file holds the shared *shape* — how the flat skill names compose into one system.
 
-`skills/` holds 53 entries today: 52 local skill folders (each with a `SKILL.md`) plus one symlink to an external skill (`build-with-agent-runtime`, sourced from the agent-runtime repo).
-Of the 52 local folders, 49 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
+`skills/` holds 54 entries today: 53 local skill folders (each with a `SKILL.md`) plus one symlink to an external skill (`build-with-agent-runtime`, sourced from the agent-runtime repo).
+Of the 53 local folders, 50 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
 The flat directory hides how those ~50 live skills fit together. This map restores that structure.
 
 The inventory here can lag; **`ls skills/` and each `SKILL.md` frontmatter are always authoritative, this file never is.**
@@ -93,6 +93,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | Skill | Role in the loop |
 |---|---|
 | `/eval-agent` | Build the LLM-as-judge when a subjective target has no evaluator yet (the bootstrap phase). |
+| `/eval-engineering` | Turn real production code and traces into the first calibrated eval; expand only once that one works. Start here when the eval doesn't exist yet and the product does. |
 | `/evolve` | The core measure → diagnose → experiment → verify → compare loop, with the keep/promote gates from Section A. |
 | `/eval-harness-diagnose` | When pass/fail looks contaminated (auth / route / judge / baseline), suspect the ruler, not the agent. |
 
@@ -107,6 +108,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | `/orchestrate` | Compose several skills into a bespoke multi-stage plan when no single skill fits. |
 | `/arena-experiment` | Equal-compute controlled comparison of architectures across a difficulty axis. |
 | `/converge` | Drive failing CI to green by fixing root causes. |
+| `/finalize` | Split an experiment branch's mixed changes into clean atomic PRs before any of it lands. |
 | `/review-to-green` | Drive a PR to an approving / no-blockers review. |
 | `/ship` | Full release path with live smoke proof. |
 | `/deploy-proof` | Prove the merged change is actually live in production. |

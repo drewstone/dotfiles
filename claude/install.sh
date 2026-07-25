@@ -103,11 +103,17 @@ link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
 # Directives (per-response interaction-style layer; read by hooks/inject-directive.sh)
 link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 
-# Skills (only real directories, skip broken symlinks)
+# Skills. A skill can be a symlink into another repo's checkout, so a missing
+# target just means that repo isn't cloned here — install the rest, but say which
+# one vanished. Skipping silently is how build-with-agent-runtime pointed at a
+# Linux path on a macOS machine without anyone noticing.
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
-  [ -d "$skill_dir" ] || continue
   skill="$(basename "$skill_dir")"
+  if [ ! -d "$skill_dir" ]; then
+    [ -L "${skill_dir%/}" ] && echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
+    continue
+  fi
   link "$skill_dir" "$CLAUDE_DIR/skills/$skill"
   link "$skill_dir" "$CODEX_DIR/skills/$skill"
 done

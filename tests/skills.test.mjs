@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -90,4 +90,45 @@ test('rejects distinct installed skills with the same name', () => {
     assert.equal(result.status, 2)
     assert.match(result.stderr, /duplicate skill name 'duplicate'/)
   })
+})
+
+test('flags a skill directory whose symlink target is gone', () => {
+  withHome((home) => {
+    const root = join(home, '.claude', 'skills')
+    writeSkill(root, 'real', 'A real skill')
+    symlinkSync(join(home, 'nowhere'), join(root, 'orphan'))
+
+    const result = runSkills(home, ['--check'])
+    assert.equal(result.status, 2)
+    assert.match(result.stderr, /dangling skill link 'orphan'/)
+  })
+})
+
+// The source repo is what drifts. skill_paths() silently drops a broken symlink
+// and install.sh silently declines to install it, so nothing else notices when a
+// skill stops resolving — build-with-agent-runtime pointed at a Linux path on a
+// macOS machine for months.
+test('every skill directory in the repo resolves', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const broken = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isSymbolicLink() && !existsSync(join(skillsDir, e.name)))
+    .map((e) => `${e.name} -> ${readlinkSync(join(skillsDir, e.name))}`)
+  assert.deepEqual(broken, [], `dangling skill symlinks: ${broken.join(', ')}`)
+})
+
+// _ladder.md is the only place the flat skill names are given a structure. It is
+// hand-maintained, so it drifts silently unless something checks it.
+test('_ladder.md names every skill in the repo, and no skill it names is gone', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const ladder = readFileSync(join(skillsDir, '_ladder.md'), 'utf8')
+  const skills = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(skillsDir, e.name, 'SKILL.md')))
+    .map((e) => e.name)
+
+  const unmapped = skills.filter((name) => !ladder.includes(name))
+  assert.deepEqual(unmapped, [], `skills missing from _ladder.md: ${unmapped.join(', ')}`)
+
+  const cited = [...new Set([...ladder.matchAll(/`\/([a-z][a-z0-9-]*)`/g)].map((m) => m[1]))]
+  const phantom = cited.filter((name) => !existsSync(join(skillsDir, name, 'SKILL.md')))
+  assert.deepEqual(phantom, [], `_ladder.md cites skills that do not exist: ${phantom.join(', ')}`)
 })

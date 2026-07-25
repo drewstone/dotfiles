@@ -73,6 +73,36 @@ def skill_paths(root):
                 yield skill
 
 
+def dangling_links(root):
+    """Symlinked skill dirs whose target is gone.
+
+    skill_paths() filters these out via is_dir(follow_symlinks=True), so a
+    broken link is invisible to every other code path — it just silently stops
+    being a skill. That is how build-with-agent-runtime sat in the repo pointing
+    at a Linux path (/home/drew/...) on a macOS machine without anything saying
+    so.
+    """
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in entries:
+        if entry.is_symlink() and not os.path.exists(entry.path):
+            yield entry.name, entry.path, os.readlink(entry.path)
+
+
+def footer_targets(path):
+    """Skill names a SKILL.md's `## Then consider` footer points at."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return set()
+    m = re.search(r"^## Then consider\s*$(.*)", text, re.S | re.M)
+    if not m:
+        return set()
+    return set(re.findall(r"`/([a-z][a-z0-9-]*)`", m.group(1)))
+
+
 def rendered_line(name, desc, path):
     if desc:
         return f"- {name}: {desc} (file: {path})\n"
@@ -196,12 +226,31 @@ def main():
             )
         catalog_failed = False
         if not needle:
+            installed = {name for name, _, _ in rows}
+            for root in ROOTS:
+                for link_name, link_path, target in dangling_links(root):
+                    print(
+                        f"FAIL dangling skill link {link_name!r}: "
+                        f"{link_path} -> {target} (target missing)",
+                        file=sys.stderr,
+                    )
+                    catalog_failed = True
+            # A footer naming an absent skill is a dead end for the model, but
+            # it can also just mean the peer ships in a plugin this machine
+            # hasn't installed — warn rather than fail.
+            for name, _, path in rows:
+                for target in sorted(footer_targets(path) - installed):
+                    print(
+                        f"WARN {name}: 'Then consider' points at /{target}, "
+                        "which is not installed",
+                        file=sys.stderr,
+                    )
             for name, paths in sorted(duplicates.items()):
                 print(
                     f"FAIL duplicate skill name {name!r}: " + " | ".join(paths),
                     file=sys.stderr,
                 )
-            catalog_failed = bool(duplicates)
+            catalog_failed = catalog_failed or bool(duplicates)
         if not needle and allocation["minimum_exceeds_budget"]:
             print(
                 f"FAIL catalog: names and paths alone need ~{allocation['minimum_tokens']} "
