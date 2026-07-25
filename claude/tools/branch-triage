@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# branch-triage — classify every remote branch by CONTENT, not by commit SHA.
+#
+# Usage:
+#   branch-triage [--base main] [--repo /path/to/repo]
+#
+# Why this exists: `git cherry` and "N commits ahead" both compare SHAs, and a
+# squash merge rewrites N commits into one. A branch whose every line already
+# landed still reports N unmerged commits forever. Trusting that number means
+# either keeping dead branches indefinitely or, worse, re-merging a branch whose
+# content main has since deleted on purpose.
+#
+# The only question that matters is: if I merged this, would main change?
+#
+#   REDUNDANT  merging changes nothing — every line is already on base
+#   CONFLICTS  merging needs manual resolution; read the diff before trusting it
+#   LIVE       carries files or content base does not have
+#
+# REDUNDANT is safe to delete. Tag first if you want the SHAs back:
+#   git tag archive/<name> origin/<branch> && git push origin refs/tags/archive/<name>
+
+set -uo pipefail
+
+base=main
+repo=.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base) base="$2"; shift 2;;
+    --repo) repo="$2"; shift 2;;
+    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) echo "branch-triage: unknown arg $1" >&2; exit 2;;
+  esac
+done
+
+cd "$repo" || exit 2
+git rev-parse --git-dir >/dev/null 2>&1 || { echo "branch-triage: not a git repo: $repo" >&2; exit 2; }
+git fetch -q origin --prune 2>/dev/null
+
+git rev-parse -q --verify "origin/$base" >/dev/null || {
+  echo "branch-triage: origin/$base does not exist" >&2; exit 2; }
+
+printf '%-46s %-10s %s\n' BRANCH VERDICT DETAIL
+redundant=0; live=0; conflicted=0
+
+while IFS= read -r ref; do
+  b=${ref#origin/}
+  [ "$b" = "$base" ] && continue
+
+  tree=$(git merge-tree --write-tree "origin/$base" "$ref" 2>/dev/null | head -1)
+  if [ -z "$tree" ] || ! git cat-file -e "$tree" 2>/dev/null; then
+    printf '%-46s %-10s %s\n' "$b" CONFLICTS "merge failed outright — inspect by hand"
+    conflicted=$((conflicted+1)); continue
+  fi
+
+  changed=$(git diff --name-only "origin/$base" "$tree" 2>/dev/null | wc -l | tr -d ' ')
+  # merge-tree writes conflict markers into the tree it emits, so a "changed"
+  # file may be a conflict rather than content. Count them separately.
+  markers=$(git diff "origin/$base" "$tree" 2>/dev/null | grep -c '^+<<<<<<<')
+
+  if [ "$changed" -eq 0 ]; then
+    printf '%-46s %-10s %s\n' "$b" REDUNDANT "0 files change if merged — safe to delete"
+    redundant=$((redundant+1))
+  elif [ "$markers" -gt 0 ] && [ "$markers" -ge "$changed" ]; then
+    printf '%-46s %-10s %s\n' "$b" CONFLICTS "$changed file(s), all conflicting — likely both sides edited the same lines"
+    conflicted=$((conflicted+1))
+  else
+    mb=$(git merge-base "origin/$base" "$ref")
+    adds=0
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      git cat-file -e "origin/$base:$f" 2>/dev/null && continue
+      git cat-file -e "$ref:$f" 2>/dev/null && adds=$((adds+1))
+    done < <(git diff --name-only "$mb..$ref" 2>/dev/null)
+    printf '%-46s %-10s %s\n' "$b" LIVE "$changed file(s) would change, $adds file(s) base lacks"
+    live=$((live+1))
+  fi
+done < <(git branch -r --format='%(refname:short)' | grep '/' | grep -v 'HEAD')
+
+echo
+echo "$redundant redundant, $conflicted conflicting, $live live"
+[ "$redundant" -gt 0 ] && echo "Delete a redundant branch only after tagging it; the commits go unreachable otherwise."
+exit 0
