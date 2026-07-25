@@ -143,7 +143,13 @@ skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /g
 
 The helper handles `.agent/` creation, ISO timestamps, and project detection. (Trace-path fields are appended by `/reflect` post-hoc — the running skill rarely knows its own session ID.)
 
-**The instruction lives in each `SKILL.md`, under `## Log the run` — not only here.** This file is author-side: the harness loads a skill's own `SKILL.md` and nothing else, so a rule stated only in `_common.md` is invisible to the model actually running the skill. That is exactly what happened — the schema above was documented for months while zero skills wrote a line, so `.agent/skill-runs.jsonl` stayed empty and `/reflect` had nothing to grade. A repo test now fails if a live skill loses its `## Log the run` section.
+**The instruction lives in each `SKILL.md`, under `## Log the run` — not only here.** This file is author-side: the harness loads a skill's own `SKILL.md` and nothing else, so a rule stated only here reaches the model only when it happens to read this file.
+
+This instrumentation worked, then a compaction pass deleted it and nothing noticed for four weeks.
+
+Thirteen `SKILL.md` files carried the instruction through May. `docs(skills): compact active skill instructions` (2026-06-28) took that to **0**. Two came back on 2026-07-14; `enforce context budgets` (#63, 2026-07-22) took it to 0 again. The log followed exactly: across 27 local repos it holds 543 schema-conformant lines — 161 in May, 244 in June, then **6 in July**. A 97% collapse, from an edit whose stated purpose was saving context.
+
+That is the failure mode to design against. Compaction passes optimize a number they can see (catalog tokens) against instrumentation whose absence produces no error — the skill still runs, it just stops recording that it ran. A repo test now fails if a live skill loses its `## Log the run` section, so the next compaction has to delete the test on purpose rather than the instruction by accident.
 
 This is also the only usage signal that works in both harnesses. `skillUsage` in `~/.claude.json` counts Claude Code dispatches only, and Codex sessions record no skill invocation at all — the skill catalog is injected into every Codex prompt, so grepping a transcript for a skill name measures the catalog, not use. Neither can answer whether a skill earns its slot; the log can.
 
