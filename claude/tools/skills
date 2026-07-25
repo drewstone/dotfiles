@@ -17,7 +17,12 @@ ROOTS = [
 MAX_DESCRIPTION_CHARS = 160
 MAX_CATALOG_TOKENS = 4_000
 APPROX_BYTES_PER_TOKEN = 4
-TRUNCATION_WARNING_CHARS_PER_SKILL = 100
+# Any truncation at all is a failure. A shortened description is a menu entry
+# with its end cut off, and the end is usually the "use this when ..." clause the
+# model routes on — so the skill stops being reachable for the case it was
+# written for. This was 100, which let a catalog sitting 52% over budget and
+# losing 79 chars from every description report OK for weeks.
+TRUNCATION_WARNING_CHARS_PER_SKILL = 0
 
 
 def frontmatter(path):
