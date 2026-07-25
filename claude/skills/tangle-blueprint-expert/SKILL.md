@@ -68,3 +68,11 @@ For docs-only work:
 - Claiming a repo has infrastructure it does not ship.
 - Claiming hosted service behavior is enforced by onchain contracts.
 - Describing protocol state as proof of runtime health, trade safety, credit redemption, model quality, or endpoint honesty.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /tangle-blueprint-expert --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -79,3 +79,11 @@ Do not stop at “rate limited” or “unavailable”; include the failed probe
 - `eval-engineering` when the case design or scoring contract must be rebuilt.
 - `evolve` when measurement is valid and the remaining failures belong to the agent.
 - `diagnose` when the failure is outside evaluation or benchmarking.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /eval-harness-diagnose --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -132,3 +132,18 @@ test('_ladder.md names every skill in the repo, and no skill it names is gone', 
   const phantom = cited.filter((name) => !existsSync(join(skillsDir, name, 'SKILL.md')))
   assert.deepEqual(phantom, [], `_ladder.md cites skills that do not exist: ${phantom.join(', ')}`)
 })
+
+// The harness loads a skill's own SKILL.md and nothing else, so the logging rule
+// has to live there. Stated only in _common.md it was invisible to the model and
+// zero skills wrote a line for months, leaving /reflect nothing to grade.
+test('every live skill tells the model to log its run', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  // Shims only redirect to another skill; the skill they name does the logging.
+  const shims = new Set(['code-review', 'research', 'site-clone'])
+  const missing = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !shims.has(e.name))
+    .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
+    .filter((e) => !readFileSync(join(skillsDir, e.name, 'SKILL.md'), 'utf8').includes('## Log the run'))
+    .map((e) => e.name)
+  assert.deepEqual(missing, [], `skills with no '## Log the run' section: ${missing.join(', ')}`)
+})

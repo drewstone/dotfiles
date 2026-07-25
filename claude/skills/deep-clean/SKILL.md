@@ -37,3 +37,11 @@ Use `references/full-reference.md` for tool commands, phase details, and reporti
 - `harden` for security-sensitive surfaces discovered during cleanup.
 - `converge` if cleanup leaves CI red.
 - `polish` for a narrower final quality pass.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /deep-clean --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

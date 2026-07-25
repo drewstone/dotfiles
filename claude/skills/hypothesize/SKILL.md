@@ -46,3 +46,11 @@ Use `references/full-reference.md` for the EV scoring worked example, the eviden
 - `pursue` — when the top bet is architectural, not a parameter; feed it the ranked field as competing designs.
 - `breakout` — when the entire ranked field caps below the target: the target is the ceiling, not your options.
 - `deep-research` — dispatched mid-skill for web-depth surveys; return here to rank what it found.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /hypothesize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

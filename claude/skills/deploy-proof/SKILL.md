@@ -76,3 +76,11 @@ Follow-ups:
 ```
 
 If the verdict is not `LIVE`, create or update the ops-board task with the exact retry command.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /deploy-proof --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

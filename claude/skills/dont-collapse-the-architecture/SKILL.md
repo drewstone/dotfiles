@@ -28,3 +28,11 @@ Hold the thesis. Find where it bites. Build the policy. Then — and only then �
 
 - About to A/B the architecture? → `calibrate-before-measure`: prove the metric discriminates a good policy from a bad one AND that the test sits in the regime where the constraint is active. A tie outside that regime is uninformative, not a verdict.
 - Sitting on a marginal/null result? → `push-past-easy`: the next move is the experiment *in the right regime with the competency built* — never a collapse to the old pattern.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /dont-collapse-the-architecture --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -49,3 +49,11 @@ Use `references/full-reference.md` for regime-change patterns, the ceiling-analy
 - `dont-collapse-the-architecture` — the moment the first measurement comes back marginal.
 - `evolve` — tune once the new regime is standing and the metric moves again.
 - `autopsy` — if the breakout thesis dies, root-cause whether the regime was wrong or the proof was.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /breakout --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

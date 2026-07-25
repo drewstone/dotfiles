@@ -35,3 +35,11 @@ Use `references/full-reference.md` for multi-persona details, report format, and
 - `review-to-green` when the audit maps to an active PR review.
 - `harden` when findings involve security boundaries.
 - `converge` when fixes must drive CI green.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /critical-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -32,3 +32,11 @@ Use existing reference files for adversarial patterns, CI workflow, and eval rec
 
 - `bad` when you need lower-level browser automation help.
 - `product-design-audit` when failures point to broader product design problems.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /ui-test --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

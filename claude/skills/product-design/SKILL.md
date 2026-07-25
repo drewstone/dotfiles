@@ -36,3 +36,11 @@ Use `references/full-reference.md` for execution rules and `docs/anti-patterns/`
 
 - `ui-test` for adversarial browser QA.
 - `product-design-audit` for a broader redesign pass.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /product-design --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

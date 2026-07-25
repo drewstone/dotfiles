@@ -67,3 +67,11 @@ shim for the MCP-refusers (pi, openclaw).
   surface it as a candidate for the next wiring PR and note it on `ROADMAP.md`.
 - If an open live-test is now closeable (e.g. acp MCP-injection, amp/forge MCP
   call-semantics), run that one e2e before trusting the cell.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /harness-escalation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -35,3 +35,11 @@ Use `references/full-reference.md` for the full ledger format and release decisi
 
 - `converge` when CI is the blocking release input.
 - `ship` when the project has a reliable one-command deploy path.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /release-conductor --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

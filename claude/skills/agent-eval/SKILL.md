@@ -42,3 +42,11 @@ Run package typecheck, build, package verification, and the full suite for share
 - `eval-agent` when adding or calibrating a model judge.
 - `harden` when changing redaction, credentials, wire input, or release authority.
 - `verify` before publishing.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /agent-eval --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -41,3 +41,11 @@ Use `references/deterministic-loop.md` for the tamper-proof `measure.sh` harness
 - `meta-harness` or `pursue` after repeated measured plateaus.
 - `autopsy` for surprising or null results.
 - `polish` when the metric is fine but quality still needs fixed-rubric cleanup.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /evolve --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

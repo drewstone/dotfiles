@@ -34,3 +34,11 @@ No broader run starts until both checks pass.
 
 - `push-past-easy` when calibration passes and the result still needs an adversarial replication.
 - `eval-engineering` when calibration fails because the case or scoring design must be rebuilt.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /calibrate-before-measure --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

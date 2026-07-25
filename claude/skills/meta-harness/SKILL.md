@@ -38,3 +38,11 @@ Use `references/full-reference.md` for the full setup, state files, and integrat
 - `evolve` when the architecture is stable and the next step is metric tuning.
 - `breakout` when even automated architecture evolution plateaus near a ceiling — the target is the cap, not the code. Question and raise it.
 - `autopsy` when a run result is surprising or suspicious.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /meta-harness --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

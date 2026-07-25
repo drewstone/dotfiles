@@ -29,3 +29,11 @@ Use `references/full-reference.md` for the full handoff template.
 ## Then consider
 
 Stop after the handoff unless the user asks to continue.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /handoff --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

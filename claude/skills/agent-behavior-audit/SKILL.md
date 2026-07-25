@@ -27,3 +27,11 @@ Use `references/full-reference.md` for the full question list and red flags.
 
 - `harden` if fake or unsafe behavior creates a security risk.
 - `eval-agent` if the product needs a repeatable behavior evaluator.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /agent-behavior-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

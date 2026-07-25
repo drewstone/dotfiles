@@ -29,3 +29,11 @@ Innovation is the experiment that could embarrass you, run honestly — not the 
 
 - **You've committed to the hard, falsifiable version and it involves an eval/A/B/benchmark** → `calibrate-before-measure` *before* you run it (prove the metric discriminates and the task isn't trivially winnable).
 - **You have a "promising but underpowered" result** → the next move is the experiment that makes it *proven or killed* (power it up, n≥24, fix the confound) — not a victory lap.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /push-past-easy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

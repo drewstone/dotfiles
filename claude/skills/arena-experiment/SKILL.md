@@ -88,3 +88,11 @@ A single aggregate score across all difficulty levels does not answer the questi
 - `autopsy` when a result is null, surprising, or unusually clean.
 - `dont-collapse-the-architecture` when one tested regime does not exercise the architecture's claimed mechanism.
 - `report` when the experiment is ready for a complete results table and decision.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /arena-experiment --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

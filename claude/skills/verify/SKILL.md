@@ -61,3 +61,11 @@ If any check fails, explain what needs fixing before shipping. Be specific.
 - If `SHIP IT`: report complete, no further action.
 - If `HOLD` with ≥1 FAIL: do NOT ship. Dispatch to the fix (`/pursue` if the fix is non-trivial, direct code edit if trivial), then re-run this skill.
 - Never mark `SHIP IT` with HOLD reasons outstanding to "come back to later" — that's how defects ship.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

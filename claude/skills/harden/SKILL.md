@@ -36,3 +36,11 @@ Use `references/full-reference.md` for the full legacy playbook and report templ
 
 - `converge` for red CI after the security fix lands.
 - `critical-audit` for broad code review once exploit paths are covered.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

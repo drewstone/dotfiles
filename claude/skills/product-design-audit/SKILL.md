@@ -34,3 +34,11 @@ Use `references/audit-matrix.md` for the scoring matrix and `references/full-ref
 
 - `ui-test` for adversarial browser QA after redesign.
 - `product-innovation-audit` if the issue is product strategy, not UI execution.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /product-design-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

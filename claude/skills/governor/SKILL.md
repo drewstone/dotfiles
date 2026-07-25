@@ -45,3 +45,11 @@ Use `references/full-reference.md` for the full decision matrix and state detail
 ## Then consider
 
 Stop after dispatch; the selected skill owns the next turn.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /governor --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

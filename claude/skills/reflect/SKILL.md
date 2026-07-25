@@ -32,3 +32,11 @@ Use `references/full-reference.md` for portfolio workflow and reflection templat
 
 - `governor` when reflection should choose the next action.
 - `evolve` when a measurable process improvement is ready.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /reflect --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

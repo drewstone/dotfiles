@@ -42,3 +42,11 @@ Use `references/full-reference.md` for the full question stack, scoring rubric, 
 
 - `product-design-audit` when the next move is UI/workflow redesign.
 - `evolve` when there is a measurable product metric to improve.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /product-innovation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

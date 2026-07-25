@@ -69,3 +69,11 @@ Report the installed version, exact imports, removed files and dependencies, ret
 - `agent-integrations-adoption` when implementing connector or provider execution behind the Hub.
 - `harden` for credentials, capability tokens, webhooks, or destructive tools.
 - `verify` before release.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /hub-sdk-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

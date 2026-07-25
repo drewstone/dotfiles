@@ -135,13 +135,17 @@ One JSON line per skill invocation. Skills SHOULD append a line on completion. `
 
 `transcriptPath` and `traceDir` are pointers, not copies — they point at where the model session and any custom run artifacts live. Pointers cost nothing; copies bloat the repo. With pointers, `/reflect` and future AxGEPA-style optimizers can replay any prior run, score it retrospectively, and turn the skill markdown itself into an optimization target. Without them, every "what did the agent actually do" question requires reconstructing from memory.
 
-Skills can call `tools/skill-run-log.sh` (symlinked to `~/bin/skill-run-log`) to append a line without writing the JSON manually:
+Skills call `claude/tools/skill-run-log` (symlinked to `~/bin/skill-run-log`) to append a line without writing the JSON manually:
 
 ```bash
 skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor
 ```
 
 The helper handles `.agent/` creation, ISO timestamps, and project detection. (Trace-path fields are appended by `/reflect` post-hoc — the running skill rarely knows its own session ID.)
+
+**The instruction lives in each `SKILL.md`, under `## Log the run` — not only here.** This file is author-side: the harness loads a skill's own `SKILL.md` and nothing else, so a rule stated only in `_common.md` is invisible to the model actually running the skill. That is exactly what happened — the schema above was documented for months while zero skills wrote a line, so `.agent/skill-runs.jsonl` stayed empty and `/reflect` had nothing to grade. A repo test now fails if a live skill loses its `## Log the run` section.
+
+This is also the only usage signal that works in both harnesses. `skillUsage` in `~/.claude.json` counts Claude Code dispatches only, and Codex sessions record no skill invocation at all — the skill catalog is injected into every Codex prompt, so grepping a transcript for a skill name measures the catalog, not use. Neither can answer whether a skill earns its slot; the log can.
 
 ## Tracking intermediate data — pointers, not copies
 

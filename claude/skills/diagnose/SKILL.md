@@ -26,3 +26,11 @@ Use `references/full-reference.md` for supported formats and parsing details.
 
 - `converge` when the next step is fixing CI.
 - `autopsy` when one result is suspicious rather than many failures.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /diagnose --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

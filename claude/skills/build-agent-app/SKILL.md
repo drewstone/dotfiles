@@ -110,3 +110,11 @@ Report installed versions, exact subpaths, retained product adapters, deleted co
 - `agent-stack-adoption` for a complete package-boundary audit.
 - `agent-eval-adoption` for product evaluation and comparison.
 - `build-with-agent-knowledge` for retrieval, memory, or knowledge improvement.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /build-agent-app --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

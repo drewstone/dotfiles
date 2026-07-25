@@ -24,3 +24,11 @@ Don't shave the easiest-to-reach term — measure, then cut the dominant one. If
 - Harness up + baseline measured → `evolve` to drive the dominant lever to target with the ratchet.
 - `report` to present the decomposition + threats-to-validity + ranked actions as a domain-expert artifact, not prose.
 - First measurement marginal → `dont-collapse-the-architecture` (the regime that makes the lever pay off may not be active yet).
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /ground-truth --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -38,3 +38,11 @@ Use `references/RUBRIC.md` for scoring anchors and `references/full-reference.md
 
 - `evolve` for measurable optimization.
 - `converge` if checks are red.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /polish --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -31,3 +31,11 @@ Use `references/full-reference.md` for the full durability table and migration w
 
 - `harden` if auth, tenant isolation, or capability tokens are involved.
 - `ui-test` if the integration includes browser-visible chat or stream UI.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /sandbox-sdk-integration --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -30,3 +30,11 @@ Use `docs/anti-patterns/` for durable anti-slop doctrine.
 
 - `humanizer` for non-technical voice cleanup after facts are fixed.
 - `critical-audit` when docs expose API or SDK contract risk.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /docs-slop-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

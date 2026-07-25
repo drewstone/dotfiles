@@ -89,3 +89,11 @@ The judge is ready only when known good and bad examples separate, order and inj
 - `eval-harness-diagnose` when a deployed judge may be producing misleading results.
 - `agent-eval` when changing shared judge types or execution inside the package.
 - `evolve` after the measurement path is calibrated.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /eval-agent --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

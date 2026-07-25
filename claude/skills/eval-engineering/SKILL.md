@@ -110,3 +110,11 @@ It is complete when the intended capability ran, the expected evidence was obser
 - `eval-harness-diagnose` when an existing result may be contaminated or misclassified.
 - `arena-experiment` when comparing agent architectures at equal compute.
 - `evolve` when the eval is valid and the next task is optimizing against it.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /eval-engineering --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

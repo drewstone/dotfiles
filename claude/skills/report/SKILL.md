@@ -128,3 +128,11 @@ Question: *"We completed hundreds super fast. Did autoscaling work, and did they
 ## Output discipline
 
 Match length to the question — a one-metric status check gets a 3-line verdict + a tiny table, not the full skeleton. Scale the artifact to the decision. The skeleton is the ceiling, not a quota.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /report --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

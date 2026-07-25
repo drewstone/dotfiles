@@ -36,3 +36,11 @@ Use `references/full-reference.md` for the full resume protocol and GitHub comma
 
 - `review-to-green` when CI is green but review still blocks merge.
 - `release-conductor` when green CI must become a live release.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

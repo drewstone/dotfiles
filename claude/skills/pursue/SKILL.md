@@ -40,3 +40,11 @@ Use `references/full-reference.md` for the full pursuit template and verificatio
 - `breakout` when the generation lands but the ceiling still feels small — the honest next move is a higher target, not a better point under this one.
 - `polish` when the generation works but quality gaps remain.
 - `autopsy` if the generation result is null or suspicious.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /pursue --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

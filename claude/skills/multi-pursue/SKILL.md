@@ -29,3 +29,11 @@ Use `references/full-reference.md` for full dispatch format and synthesis templa
 
 - `pursue` when the work is one coherent generation.
 - `evolve` after landed tracks need metric tuning.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /multi-pursue --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

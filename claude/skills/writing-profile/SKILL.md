@@ -29,3 +29,11 @@ Use `references/full-reference.md` for source-specific commands and profile temp
 
 - `humanizer` when editing a specific draft.
 - `signal-distill` when the writing needs current source material.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /writing-profile --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

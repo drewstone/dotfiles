@@ -29,3 +29,11 @@ Use `references/full-reference.md` for the full classification table and report 
 - `diagnose` for many failures.
 - `evolve` after fixing the metric or mechanism.
 - `pursue` if the result shows the approach cannot work.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /autopsy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

@@ -60,3 +60,11 @@ Higher quality: `export NANOBANANA_MODEL=gemini-3-pro-image-preview`
 1. List `./nanobanana-output/` for the file
 2. Show to user, offer variations if needed
 3. For changes: re-run with adjusted prompt or use `/edit`
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /nano-banana --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

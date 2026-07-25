@@ -51,3 +51,11 @@ Use `references/full-reference.md` for the full repeatable loop, measurement com
 - `polish` when the feature works but needs a fixed-rubric quality pass.
 - `harden` when the simplification touches auth, credentials, billing, sandbox lifecycle, networking, or external execution.
 - `converge` if checks are red after the simplification.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /simplify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```

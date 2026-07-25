@@ -71,3 +71,11 @@ Use `references/full-reference.md` for the structure×policy tables, the Workflo
 - `hypothesize` — as the first stage when "what should the stages even be" is itself unknown; rank the approaches, then compose.
 - `critical-audit` / `harden` — the skeptic stage inside a verification barrier.
 - `autopsy` — when a composed workflow returns null or contradictory results; root-cause whether the structure or a single stage was wrong.
+
+## Log the run
+
+On completion, append one line so `/reflect` and `/governor` can grade this skill later:
+
+```bash
+skill-run-log /orchestrate --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
