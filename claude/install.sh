@@ -105,8 +105,8 @@ link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 
 # Skills. A skill can be a symlink into another repo's checkout, so a missing
 # target just means that repo isn't cloned here — install the rest, but say which
-# one vanished. Skipping silently is how build-with-agent-runtime pointed at a
-# Linux path on a macOS machine without anyone noticing.
+# one vanished. Skipping silently is how build-with-agent-runtime went missing for
+# eleven days.
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   skill="$(basename "$skill_dir")"
@@ -116,6 +116,26 @@ for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   fi
   link "$skill_dir" "$CLAUDE_DIR/skills/$skill"
   link "$skill_dir" "$CODEX_DIR/skills/$skill"
+done
+
+# Skills owned by a sibling repo are resolved here, not committed as a symlink.
+# An absolute link checked into the repo cannot be right on more than one machine:
+# agent-runtime sits at ~/webb/agent-runtime on the laptop and ~/code/agent-runtime
+# on the dev box, so whichever path is committed dangles on the other and the skill
+# silently disappears.
+for candidate in \
+  "$HOME/webb/agent-runtime/skills" \
+  "$HOME/code/agent-runtime/skills" \
+  "${AGENT_RUNTIME_DIR:-}/skills"; do
+  [ -d "$candidate" ] || continue
+  for ext in "$candidate"/*/; do
+    [ -f "$ext/SKILL.md" ] || continue
+    name="$(basename "$ext")"
+    [ -e "$SCRIPT_DIR/skills/$name" ] && continue   # a local skill of the same name wins
+    link "$ext" "$CLAUDE_DIR/skills/$name"
+    link "$ext" "$CODEX_DIR/skills/$name"
+  done
+  break
 done
 
 # Commands

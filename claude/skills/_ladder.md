@@ -9,8 +9,8 @@ Companion to `_common.md`.
 Same status: this is documentation for **skill authors**, not a skill the harness ever loads or invokes.
 `_common.md` holds the shared *rules*; this file holds the shared *shape* — how the flat skill names compose into one system.
 
-`skills/` holds 54 entries today: 53 local skill folders (each with a `SKILL.md`) plus one symlink to an external skill (`build-with-agent-runtime`, sourced from the agent-runtime repo).
-Of the 53 local folders, 50 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
+`skills/` holds 53 local skill folders, each with a `SKILL.md`. Skills owned by a sibling repo (the agent-runtime family) are not committed here — `claude/install.sh` finds that checkout at install time and links them in, because an absolute symlink in the repo dangles on any machine that clones elsewhere.
+Of those, 50 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
 The flat directory hides how those ~50 live skills fit together. This map restores that structure.
 
 The inventory here can lag; **`ls skills/` and each `SKILL.md` frontmatter are always authoritative, this file never is.**
@@ -137,7 +137,7 @@ Audit siblings — the same fixed-bar review shape aimed at other surfaces: `/pr
 | `/agent-integrations-adoption` | `@tangle-network/agent-integrations`. |
 | `/hub-sdk-adoption` | `@tangle-network/hub-sdk`. |
 | `/sandbox-sdk-integration` | `@tangle-network/sandbox` SDK. |
-| `/build-with-agent-runtime` | External skill — a symlink into the agent-runtime repo, not a local folder; adopts that runtime's app framework. |
+| build-with-agent-runtime | External skill — a symlink into the agent-runtime repo, not a local folder; adopts that runtime's app framework. |
 
 ### Outside the loop
 
