@@ -33,8 +33,13 @@ Use `references/full-reference.md` for the full phase checklist.
 
 ## Then consider
 
-- `release-conductor` for opaque or custom release paths.
-- `converge` if CI blocks the release.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Deploy command exits 0 | `/deploy-proof` | expected SHA + the live endpoint and behavior probe |
+| CI blocks the release | `/converge` | the failing job + the release target |
+| The release path is opaque, custom, or multi-artifact | `/release-conductor` | the artifact list + the rollback path |
+| Live smoke fails after a successful deploy | `/diagnose` | the smoke output + the served revision |
+| Release is live and proven | `/reflect` | the proof block + the loop this closed |
 
 ## Log the run
 

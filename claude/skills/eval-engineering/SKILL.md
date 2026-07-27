@@ -106,10 +106,13 @@ It is complete when the intended capability ran, the expected evidence was obser
 
 ## Then consider
 
-- `eval-agent` when semantic scoring needs a calibrated model judge.
-- `eval-harness-diagnose` when an existing result may be contaminated or misclassified.
-- `arena-experiment` when comparing agent architectures at equal compute.
-- `evolve` when the eval is valid and the next task is optimizing against it.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Scoring is semantic and no calibrated judge exists | `/eval-agent` | the rubric draft + 5 pass and 5 fail examples |
+| An existing result may be contaminated or misclassified | `/eval-harness-diagnose` | the suspect run IDs + what looks wrong |
+| ≥2 architectures must be compared at equal compute | `/arena-experiment` | the case set + the compute budget per arm |
+| The case executes and a trivial baseline fails it | `/calibrate-before-measure` | the case ID, the baseline score, and the metric |
+| Eval is valid and the score sits below target | `/evolve` | the case set, the baseline number, and its noise floor |
 
 ## Log the run
 

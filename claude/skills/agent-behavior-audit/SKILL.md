@@ -25,8 +25,13 @@ Use `references/full-reference.md` for the full question list and red flags.
 
 ## Then consider
 
-- `harden` if fake or unsafe behavior creates a security risk.
-- `eval-agent` if the product needs a repeatable behavior evaluator.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Observed fake success, silent fallback, or credential exposure (≥1 finding) | `/harden` | the finding's file:line + the exact prompt/input that reproduces it |
+| The gap is the coding backend not surfacing permissions, questions, plans, hooks, or MCP | `/harness-escalation-audit` | the harness name + the surface it failed to expose |
+| ≥3 behavior defects and no case scores this behavior | `/eval-agent` | the defect list as candidate rubric items + 2 pass and 2 fail transcripts |
+| A behavior score exists and sits below target for ≥2 runs | `/evolve` | the score as baseline metric, its noise floor, and the failing transcripts |
+| 0 P1 findings and score ≥ 8/10 | `/reflect` | the audit artifact path + this run's `.agent/skill-runs.jsonl` row |
 
 ## Log the run
 

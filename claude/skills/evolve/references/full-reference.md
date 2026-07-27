@@ -1,9 +1,6 @@
----
-name: evolve
-description: "Goal-pursuit engine: measure → diagnose → experiment → verify → iterate against a measurable target. Domain-agnostic — works on agents, code, content, design, GTM. Triggers: 'evolve', 'make this better', 'converge', 'push to 0.9', 'optimize'."
----
+# Evolve — long-form worked examples (non-normative)
 
-# Evolve — Goal-Pursuit Engine
+`../SKILL.md` is the single normative contract: its hard rules, output template, self-gate, and dispatch table win on any conflict. This file holds the long-form methodology behind those rules.
 
 Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 

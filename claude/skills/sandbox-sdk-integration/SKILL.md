@@ -29,8 +29,12 @@ Use `references/full-reference.md` for the full durability table and migration w
 
 ## Then consider
 
-- `harden` if auth, tenant isolation, or capability tokens are involved.
-- `ui-test` if the integration includes browser-visible chat or stream UI.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Auth, tenant isolation, or capability tokens are involved | `/harden` | the boundary crossed + the token scopes |
+| The integration includes browser-visible chat or stream UI | `/ui-test` | the route + the streaming flow to exercise |
+| ≥1 hand-rolled SSE, replay, or dispatch path exists | `/simplify` | the hand-rolled call sites + the SDK primitive that replaces them |
+| Integration lands and ≥1 real session streams end-to-end | `/verify` | the session ID + the non-mocked stream output |
 
 ## Log the run
 

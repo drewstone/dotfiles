@@ -63,14 +63,16 @@ Use `references/full-reference.md` for the structure×policy tables, the Workflo
 
 ## Then consider
 
-- `governor` — if, after decomposing, the whole goal reduces to one skill: dispatch that and skip orchestration.
-- `multi-pursue` — when the authored plan is exactly N independent `/pursue` tracks; it's the fixed, specialized version.
-- `deep-research` — when the goal is web research: sweep → verify → cited report is already composed; dispatch it, don't re-author.
-- `arena-experiment` — when the goal is an equal-compute architecture comparison; the selection policy shipped whole, with its own calibration gate.
-- `calibrate-before-measure` / `eval-agent` — the guard and rubric-builder for any judge-panel stage; prove the judge can see the quality gap before you trust the panel.
-- `hypothesize` — as the first stage when "what should the stages even be" is itself unknown; rank the approaches, then compose.
-- `critical-audit` / `harden` — the skeptic stage inside a verification barrier.
-- `autopsy` — when a composed workflow returns null or contradictory results; root-cause whether the structure or a single stage was wrong.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| After decomposition the whole goal reduces to 1 skill | `/governor` | the decomposition + the single candidate skill |
+| The plan is exactly N independent `/pursue` tracks plus a synthesis | `/multi-pursue` | the N track briefs + the shared metric |
+| The goal is an equal-compute comparison of ≥2 architectures | `/arena-experiment` | the arms + the compute budget per arm |
+| Any stage is a judge panel or scored gate | `/calibrate-before-measure` | the stage's metric + the trivial baseline it must reject |
+| "What should the stages even be" is itself unknown | `/hypothesize` | the goal + the constraints on the solution space |
+| A stage is an adversarial verification barrier | `/critical-audit` | the artifact under review + the severity bar |
+| A composed run returns null or contradictory results | `/autopsy` | the stage outputs + which stage first disagreed |
+| Workflow completes with ≥3 stages logged | `/reflect` | the stage ledger + the per-stage cost |
 
 ## Log the run
 

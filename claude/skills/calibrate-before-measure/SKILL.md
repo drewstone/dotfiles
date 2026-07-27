@@ -32,8 +32,13 @@ No broader run starts until both checks pass.
 
 ## Then consider
 
-- `push-past-easy` when calibration passes and the result still needs an adversarial replication.
-- `eval-engineering` when calibration fails because the case or scoring design must be rebuilt.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Calibration passes: the metric separates good from bad and the trivial baseline fails | `/push-past-easy` | the calibrated metric + the harder variant that could reverse the result |
+| Metric separation between the known-good and known-bad case is inside 2× the noise floor | `/eval-engineering` | the separation number + the case/scoring design that failed |
+| A trivial baseline (no tools, no search, empty diff) scores ≥ 80% of the real run | `/eval-engineering` | the baseline score + the case that is too easy |
+| Judge disagrees with human labels on > 10% of ≥20 labeled examples | `/eval-agent` | the disagreement rows + the current rubric |
+| Calibration passes and a measured target already exists | `/evolve` | the calibrated metric, its noise floor, and the baseline number |
 
 ## Log the run
 

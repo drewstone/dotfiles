@@ -11,3 +11,10 @@ This skill was folded into the improvement loop. Its two halves now live in dedi
 - **The back half — running the experiments and the bootstrap-CI promotion gate — is `/evolve`.** The gate is documented at `evolve/references/STATS.md`.
 
 Use **`/hypothesize`** to decide what to try, then **`/evolve`** to run it.
+
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Deciding what to try (landscape, mechanisms, ranking) | `/hypothesize` | the target, the constraints, and the known ceiling |
+| Running the ranked bets against a baseline | `/evolve` | the ranked field + the baseline number and its noise floor |

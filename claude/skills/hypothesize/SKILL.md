@@ -42,10 +42,13 @@ Use `references/full-reference.md` for the EV scoring worked example, the eviden
 
 ## Then consider
 
-- `evolve` — run the top-ranked bet against a measured baseline.
-- `pursue` — when the top bet is architectural, not a parameter; feed it the ranked field as competing designs.
-- `breakout` — when the entire ranked field caps below the target: the target is the ceiling, not your options.
-- `deep-research` — dispatched mid-skill for web-depth surveys; return here to rank what it found.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Top-ranked bet is a parameter, prompt, or config change | `/evolve` | the ranked field + the baseline number to beat |
+| Top-ranked bet is architectural, not a parameter | `/pursue` | the ranked field as competing designs + the cap on the current one |
+| The whole ranked field's expected value caps below the target | `/breakout` | the ceiling estimate + the constraint that sets it |
+| ≥3 top bets are independent and budget allows parallel tracks | `/multi-pursue` | one brief per track + the shared metric |
+| No repeatable measurement exists for the target yet | `/ground-truth` | the target + the hops that would have to be instrumented |
 
 ## Log the run
 

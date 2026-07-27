@@ -27,8 +27,11 @@ Use `references/full-reference.md` for source-specific commands and profile temp
 
 ## Then consider
 
-- `humanizer` when editing a specific draft.
-- `signal-distill` when the writing needs current source material.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The draft needs current source material | `/signal-distill` | the topic + the platforms to sweep |
+| The profile will be applied to technical docs | `/docs-slop-audit` | the pages + the claims to check against source |
+| Fewer than 5 real samples were available | stop | the samples found + what else must be collected first |
 
 ## Log the run
 

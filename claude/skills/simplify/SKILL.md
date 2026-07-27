@@ -47,10 +47,13 @@ Use `references/full-reference.md` for the full repeatable loop, measurement com
 
 ## Then consider
 
-- `deep-clean` when the measurements show broad static-analysis debt beyond the active branch.
-- `polish` when the feature works but needs a fixed-rubric quality pass.
-- `harden` when the simplification touches auth, credentials, billing, sandbox lifecycle, networking, or external execution.
-- `converge` if checks are red after the simplification.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| ≥10 dead exports, cycles, or duplicate modules exist beyond the active branch | `/deep-clean` | the repo-wide measurement + the baseline JSON path |
+| Behavior works and only fixed-rubric gaps remain | `/polish` | the rubric + the gaps it flags |
+| The change touches auth, credentials, billing, sandbox lifecycle, networking, or external execution | `/harden` | the changed file:line list + the invariant each path relies on |
+| Checks go red after the simplification | `/converge` | the failing job + the behavior that must be preserved |
+| 0 tests cover the simplified path | `/verify` | the changed path + the tests that would prove behavior preservation |
 
 ## Log the run
 

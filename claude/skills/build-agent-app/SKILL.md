@@ -106,10 +106,13 @@ Report installed versions, exact subpaths, retained product adapters, deleted co
 
 ## Then consider
 
-- `build-with-agent-runtime` for execution, workers, resume, or candidate activation.
-- `agent-stack-adoption` for a complete package-boundary audit.
-- `agent-eval-adoption` for product evaluation and comparison.
-- `build-with-agent-knowledge` for retrieval, memory, or knowledge improvement.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Work needs execution, workers, resume, or candidate activation | `build-with-agent-runtime` | the flow that needs it + the current wiring |
+| The product has 0 evals over its main flow | `/eval-engineering` | one real production trace to convert into a pinned case |
+| Diff touches auth, billing, tenant isolation, or secret storage | `/harden` | the changed file:line list + the tenant boundary it crosses |
+| Shell lands and ≥1 flow runs end-to-end against real infra | `/verify` | the flow name + the non-mocked run output |
+| App-shell diff > 200 lines before review | `/critical-audit` | the diff scope (`--diff-only`) + the contracts it changes |
 
 ## Log the run
 

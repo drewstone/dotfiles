@@ -84,10 +84,13 @@ A single aggregate score across all difficulty levels does not answer the questi
 
 ## Then consider
 
-- `calibrate-before-measure` when the pilot has not yet proved task and metric sensitivity.
-- `autopsy` when a result is null, surprising, or unusually clean.
-- `dont-collapse-the-architecture` when one tested regime does not exercise the architecture's claimed mechanism.
-- `report` when the experiment is ready for a complete results table and decision.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| No calibration run recorded for this metric/task pair | `/calibrate-before-measure` | the metric, the trivial baseline, and the good/bad case pair |
+| A result is null or the arm delta is inside 2× the noise floor | `/autopsy` | the raw per-cell rows + the measured noise floor |
+| Only 1 regime tested and the winner's margin is marginal | `/dont-collapse-the-architecture` | the regime axis + the mechanism the architecture claims to exploit |
+| All arms complete with n ≥ 24 per arm | `/report` | the full per-arm table, every measured column, and the equal-compute accounting |
+| Winner's bootstrap CI on the delta excludes zero | `/evolve` | the winning architecture as the new baseline + its measured number |
 
 ## Log the run
 

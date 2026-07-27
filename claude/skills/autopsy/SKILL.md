@@ -26,9 +26,13 @@ Use `references/full-reference.md` for the full classification table and report 
 
 ## Then consider
 
-- `diagnose` for many failures.
-- `evolve` after fixing the metric or mechanism.
-- `pursue` if the result shows the approach cannot work.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| ≥5 failures share the symptom you just root-caused | `/diagnose` | the failure list + the root cause you confirmed for this one |
+| Root cause was the metric or harness, and it is now fixed | `/evolve` | the corrected measurement command + the pre-fix number to discard |
+| Root cause names a mechanism that caps the current approach | `/pursue` | the named cap + the evidence it is structural, not a parameter |
+| The number was never measured on the real path (local stand-in, warm cache, wrong env) | `/ground-truth` | the hop that was dark + the real-path command that would measure it |
+| Root cause is the agent ignoring state, skipping tools, or reporting unearned success | `/agent-behavior-audit` | the transcript span + the state it failed to read |
 
 ## Log the run
 

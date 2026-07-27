@@ -85,10 +85,12 @@ The judge is ready only when known good and bad examples separate, order and inj
 
 ## Then consider
 
-- `eval-engineering` when the judge belongs inside a new executable case.
-- `eval-harness-diagnose` when a deployed judge may be producing misleading results.
-- `agent-eval` when changing shared judge types or execution inside the package.
-- `evolve` after the measurement path is calibrated.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The judge belongs inside a new executable case | `/eval-engineering` | the rubric + the production path the case should pin |
+| A deployed judge's pass rate moved > 20pp with no agent change | `/eval-harness-diagnose` | the run record IDs + the judge version on each side |
+| The change is to shared judge types or execution inside the package | `/agent-eval` | the type/API surface being changed + its consumers |
+| Judge agreement ≥ 0.9 on ≥20 labeled examples | `/evolve` | the calibrated judge + the current score as baseline |
 
 ## Log the run
 

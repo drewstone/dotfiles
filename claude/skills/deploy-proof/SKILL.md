@@ -77,6 +77,16 @@ Follow-ups:
 
 If the verdict is not `LIVE`, create or update the ops-board task with the exact retry command.
 
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Served revision ≠ expected SHA | `/release-conductor` | expected SHA, served SHA, and the deploy workflow run URL |
+| Deploy workflow is red | `/converge` | the failing job name + its log excerpt |
+| Served SHA matches but a behavior probe fails | `/diagnose` | the probe command, its output, and the expected result |
+| p50 latency regressed > 20% vs the pre-deploy baseline | `/evolve` | both p50/p90 numbers, n, and the dominant hop |
+| Verdict LIVE with cache/perf proof captured | `/reflect` | the proof block + the ops-board task ID it closes |
+
 ## Log the run
 
 On completion, append one line so `/reflect` and `/governor` can grade this skill later:

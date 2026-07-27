@@ -129,6 +129,16 @@ Question: *"We completed hundreds super fast. Did autoscaling work, and did they
 
 Match length to the question — a one-metric status check gets a 3-line verdict + a tiny table, not the full skeleton. Scale the artifact to the decision. The skeleton is the ceiling, not a quota.
 
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| A reported number is null, surprising, or unusually clean | `/autopsy` | the raw rows behind that number + the query used |
+| The report shows a metric below target with a named lever | `/evolve` | the metric, its baseline, its noise floor, and the lever |
+| ≥5 failures in the data share candidate root causes | `/diagnose` | the failure rows grouped by symptom |
+| A decision-relevant number is unknowable because a stage is uninstrumented | `/ground-truth` | the dark stage + the real-path command to measure it |
+| The report answers the question with 0 open threats to validity | `/reflect` | the report path + the decision it unblocked |
+
 ## Log the run
 
 On completion, append one line so `/reflect` and `/governor` can grade this skill later:

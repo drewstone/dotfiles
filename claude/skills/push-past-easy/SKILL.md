@@ -25,10 +25,14 @@ The failure mode isn't doing bad work. It's doing **safe** work — the easy tas
 
 Innovation is the experiment that could embarrass you, run honestly — not the one that confirms what you hoped. Default to the version that could fail. If you're about to ship a soft win, a proxy metric, or an easy task, name it out loud as the timid choice and take the harder one instead.
 
-## Then consider (post-hook — after this skill completes)
+## Then consider
 
-- **You've committed to the hard, falsifiable version and it involves an eval/A/B/benchmark** → `calibrate-before-measure` *before* you run it (prove the metric discriminates and the task isn't trivially winnable).
-- **You have a "promising but underpowered" result** → the next move is the experiment that makes it *proven or killed* (power it up, n≥24, fix the confound) — not a victory lap.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The hard version involves an eval, A/B, or benchmark | `/calibrate-before-measure` | the metric, the trivial baseline, and the regime |
+| Result is promising but n < 24 or a confound is unresolved | `/evolve` | the underpowered result, the confound, and the powered design |
+| The hard version needs a different architecture, not more n | `/pursue` | the named cap + the design that removes it |
+| The hard version fails and the reason is unclear | `/autopsy` | the raw rows + the artifact-vs-real-effect checks |
 
 ## Log the run
 

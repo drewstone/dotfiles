@@ -28,8 +28,12 @@ Use `docs/anti-patterns/` for durable anti-slop doctrine.
 
 ## Then consider
 
-- `humanizer` for non-technical voice cleanup after facts are fixed.
-- `critical-audit` when docs expose API or SDK contract risk.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| ≥1 claim describes API or SDK behavior the code does not implement | `/critical-audit` | the claim, its doc line, and the source file:line that contradicts it |
+| ≥5 stale claims trace to one removed code path | `/deep-clean` | the removed path + every doc reference to it |
+| Facts are correct and cadence still reads generic | `/writing-profile` | the draft + the target voice samples |
+| 0 unsupported claims across the audited pages | `/reflect` | the page list + the claims verified against source |
 
 ## Log the run
 

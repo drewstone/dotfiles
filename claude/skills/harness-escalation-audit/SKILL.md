@@ -63,10 +63,12 @@ shim for the MCP-refusers (pi, openclaw).
 
 ## Then consider
 
-- After updating the matrix, if a harness moved into Tier 2 (capable, unwired),
-  surface it as a candidate for the next wiring PR and note it on `ROADMAP.md`.
-- If an open live-test is now closeable (e.g. acp MCP-injection, amp/forge MCP
-  call-semantics), run that one e2e before trusting the cell.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| ≥1 harness moved into Tier 2 (capable, unwired) | `/pursue` | the harness name, the capability, and the wiring gap |
+| ≥1 open live-test is now closeable | `/verify` | the harness + the exact e2e command to run |
+| ≥3 harnesses fail the same escalation surface | `/diagnose` | the surface + the per-harness evidence |
+| Matrix updated with 0 tier changes | `/reflect` | the matrix diff (empty) + the cells still unproven |
 
 ## Log the run
 

@@ -28,8 +28,12 @@ Use `references/full-reference.md` for discovery commands, scoring schema, and o
 
 ## Then consider
 
-- `content-strategy` or GTM playbooks when turning the brief into a campaign.
-- `writing-profile` when adapting the brief to a specific voice.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The brief must be written in a specific voice | `/writing-profile` | the brief + ≥5 real samples of the target voice |
+| The brief needs original imagery | `/nano-banana` | the visual concept + the target dimensions |
+| ≥3 signals name the same missing product capability | `/product-innovation-audit` | the signal quotes + their engagement counts |
+| Briefs are scored and the top one is ready to publish | stop | the brief path + its score and source links |
 
 ## Log the run
 

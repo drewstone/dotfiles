@@ -69,6 +69,16 @@ For docs-only work:
 - Claiming hosted service behavior is enforced by onchain contracts.
 - Describing protocol state as proof of runtime health, trade safety, credit redemption, model quality, or endpoint honesty.
 
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| `cargo check` or tests come back red | `/converge` | the failing crate/test + the last green SHA |
+| Protocol or runtime behavior changed | `/verify` | the deploy/register/request/approve/job proof commands + their output |
+| The service spans more than one user or tenant boundary | `/harden` | the boundary + the auth path that enforces it |
+| Docs-only work with ≥1 product-specific claim | `/docs-slop-audit` | the pages + the source files behind each claim |
+| UI changed | `/ui-test` | the routes + one non-mocked happy path |
+
 ## Log the run
 
 On completion, append one line so `/reflect` and `/governor` can grade this skill later:

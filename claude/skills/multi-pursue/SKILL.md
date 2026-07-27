@@ -27,8 +27,14 @@ Use `references/full-reference.md` for full dispatch format and synthesis templa
 
 ## Then consider
 
-- `pursue` when the work is one coherent generation.
-- `evolve` after landed tracks need metric tuning.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The work is actually one coherent generation | `/pursue` | the merged design + the single metric |
+| One track wins with a bootstrap CI on the delta excluding zero | `/evolve` | the winning track's branch + its measured number |
+| ≥2 tracks tie inside 2× the noise floor | `/arena-experiment` | the tied tracks + the difficulty axis to separate them |
+| Tracks land as mixed changes on one branch | `/finalize` | the branch + the per-track change map |
+| All N tracks land inside 2× the noise floor of the incumbent | `/meta-harness` | the N designs as a search space + the benchmark to search against |
+| Synthesis complete and ≥3 tracks logged | `/reflect` | the per-track results + the cost of each |
 
 ## Log the run
 

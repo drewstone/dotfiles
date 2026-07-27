@@ -1,129 +1,58 @@
----
-name: diagnose
-description: "Analyze failure traces: cluster by root cause, rank by impact × fix complexity, generate concrete fix hypotheses. Works with JUnit XML, JSON reports, CI logs, benchmark results. Triggers: 'why is this failing', 'analyze failures', 'diagnose', 'triage results', 'failing test suite', 'eval pass rate dropped', 'which failures to fix first', 'cluster these errors', 'what's the root cause'."
----
+# Diagnose — worked examples
 
-# Diagnose — Failure Trace Analysis
+Examples only. `../SKILL.md` is the normative contract: rules, taxonomy codes, output template, self-gate, dispatch. Nothing here overrides it.
 
-Given test or benchmark results, figure out WHY things fail, cluster similar failures, produce a ranked list of what to fix. Shared conventions in `_common.md`.
+## Example 1 — filled artifact (10/10, reconstructed from log run 2026-07-04)
 
-## Input Discovery
+```markdown
+# Diagnose: @products/platform-api full suite — 2026-07-04 — 44 failed / 2877 cases (1.5%)
 
-Find the results to analyze. Check (in order):
-1. Arguments passed after `/diagnose` (file path, directory, URL)
-2. Most recent test/benchmark output in the project (check `agent-results/`, `test-results/`, `coverage/`, CI artifacts)
-3. Ask the user if nothing found
+**Verdict:** fix "test harness bypasses production SQLite retry/WAL wrapper" first — clears 44/44 failures (100%), effort 1-file. measured
+**Next:** /converge on fix/intelligence-trace-completeness; green check = `pnpm -F @products/platform-api test` → expect 2833/2833
 
-Supported formats:
-- JSON test reports (Jest, Vitest, custom)
-- JUnit XML
-- TAP output
-- Raw CI logs
-- Benchmark JSON/CSV
-- Custom report formats (read and adapt)
-
-## Extract failures
-
-For each failure, extract:
-- **Test/case ID**: which test failed
-- **Error message**: the immediate error
-- **Stack trace**: if available
-- **Context**: what was happening before the failure (prior steps, state)
-- **Timing**: how long it ran, when it failed relative to the test lifecycle
-- **Environment**: what conditions were active (config, feature flags, external deps)
-
-## Classify root causes
-
-Assign each failure to a root cause category. Common categories (adapt to the project):
-
-| Category | Pattern |
+## Corpus
+| Field | Value |
 |---|---|
-| **Logic error** | Wrong output, incorrect computation, off-by-one |
-| **Timeout** | Hit time limit, hung waiting for something |
-| **Crash/exception** | Unhandled error, null reference, type error |
-| **External dependency** | Network failure, API error, service down |
-| **Race condition** | Flaky, passes sometimes, timing-dependent |
-| **Resource exhaustion** | OOM, disk full, connection pool depleted |
-| **Configuration** | Wrong config, missing env var, wrong mode |
-| **Stale state** | Cache poisoning, leftover data, mutation leak |
-| **Verification error** | Test assertion wrong, not the code |
-| **Environment mismatch** | Works locally, fails in CI (or vice versa) |
+| Source | `.agent/runs/platform-api-2026-07-04/vitest.json` |
+| Parsed | n=2877: 2833 pass / 44 fail / 0 skip |
+| Traces read | 6 of 44 (cases 3, 9, 14, 27, 31, 40) |
+| Not inspected | 38 traces — 6/6 read showed the identical SQLITE_BUSY frame |
 
-For LLM/agent systems, add:
-| **Wrong strategy** | Agent took fundamentally wrong approach |
-| **Navigation error** | Went to wrong page/element |
-| **Snapshot stale** | Acted on outdated state representation |
-| **Anti-bot/blocked** | External system rejected the agent |
-| **Dialog obstruction** | Popup/modal blocked the intended action |
-| **Model hallucination** | LLM produced incorrect/impossible output |
+## Clusters — 1 of 1, ranked by failures cleared ÷ effort
+| # | Cluster | Occurs | Root cause (code) | Evidence | Status | Fix | Effort | Cost incurred | Saving if fixed | Confidence |
+|---:|---|---:|---|---|---|---|---|---:|---:|---:|
+| 1 | Test DB helper skips retry/WAL wrapper | 44/44 | `config` — test helper builds its own client | `tests/helpers/db.ts:22` vs `src/db/client.ts:41` | measured (`vitest run --repeat 3` → same 44) | share `createDatabaseFromClient` across prod + test helpers | 1-file | 3 blocked PRs, 5 reruns × 11 min = 55 min | 44 failures, 55 min/attempt | 6/6 traces agree |
 
-## Cluster
+## Fix #1
+| Field | Value |
+|---|---|
+| Change | `tests/helpers/db.ts:22` → call `createDatabaseFromClient` instead of `new Database()` |
+| Predicted | 44 failures pass: all SQLITE_BUSY ids |
+| Falsifier | failures persist with concurrency 1 → cause is not the missing WAL wrapper |
+| Risk | test DB now honors prod retry timeouts; slow cases could hit the 5 s limit |
+| Verification | `pnpm -F @products/platform-api test` → expect 2833/2833, `dbRetry 14/14` |
 
-Group failures that share the same root cause. A cluster is actionable when:
-- 2+ failures share the same root cause
-- OR 1 failure is in a critical path
-
-For each cluster:
-```
-Cluster: <name>
-  Failures: <count> (<list of test IDs>)
-  Root cause: <specific explanation>
-  Affected code: <file:line or module>
-  Fix complexity: trivial / moderate / significant / architectural
-  Expected impact: fixing this would resolve <N> failures (<X>% of total)
+## Self-gate
+8/8 passed — failed: none.
 ```
 
-## Rank
+## Example 2 — counterexample (0/10, verbatim log entry)
 
-Sort clusters by **expected impact / fix complexity**. Best targets: high-impact, low-complexity.
-
-## Generate hypotheses
-
-For each top cluster, produce a concrete hypothesis:
-
-```
-Hypothesis: <id>
-  Cluster: <which failure cluster this addresses>
-  Diagnosis: <what's wrong and why>
-  Proposed fix: <specific code change — files, functions, approach>
-  Expected result: <which failures should turn to passes>
-  Risk: <what could regress>
-  Verification: <how to confirm the fix worked>
+```json
+{"name": "unknown eval flag footgun", "fix": "enable strict CLI argument parsing"}
 ```
 
-## Output
+Defects: 0 occurrence count, 0 `path:line`, 0 status label, 0 cost, 0 verification command, no test-bug-vs-code-bug call. Unfixable as written — a reader cannot tell whether 1 or 40 cases were affected.
 
-```
-Failure Diagnosis — <source>
-Generated: <date>
+## Example 3 — parse commands by source format
 
-Summary:
-  Total:    <N> tests/cases
-  Passed:   <N> (<X>%)
-  Failed:   <N> (<X>%)
-  Skipped:  <N>
+| Source | Command |
+|---|---|
+| Vitest/Jest JSON | `jq -r '.testResults[].assertionResults[] \| select(.status=="failed") \| [.fullName, .failureMessages[0]] \| @tsv' report.json` |
+| JUnit XML | `xq -r '.testsuites.testsuite.testcase[] \| select(.failure) \| .["@name"]' junit.xml` |
+| TAP | `grep -n '^not ok' out.tap` |
+| GitHub Actions | `gh run view <id> --log-failed \| grep -E 'FAIL\|Error:' \| sort \| uniq -c \| sort -rn` |
+| Benchmark CSV | `python3 -c "import csv,collections;..."` → counts per error string |
+| Agent/eval traces | `jq -r 'select(.outcome!="pass") \| [.caseId,.failureClass] \| @tsv' results.jsonl \| sort -k2 \| uniq -c` |
 
-Failure Clusters (ranked by impact):
-  1. <cluster name> — <N> failures, <fix complexity>
-     <root cause explanation>
-
-  2. <cluster name> — <N> failures, <fix complexity>
-     <root cause explanation>
-
-Top Hypotheses:
-  1. <hypothesis with specific fix proposal>
-  2. <hypothesis with specific fix proposal>
-
-Unclustered / One-off Failures:
-  <list of failures that don't fit a pattern>
-```
-
-## Rules
-
-- **Read the actual traces**, not just the summary. The summary says "failed", the trace says WHY.
-- **Be specific about code locations.** "The retry logic is wrong" → "The retry loop in `src/client.ts:142` doesn't backoff, causing rapid retries that trigger rate limiting."
-- **Distinguish test bugs from code bugs.** If the assertion is wrong but the code is right, say so.
-- **Don't guess.** If you can't determine root cause from the trace, say "insufficient data" and suggest what additional instrumentation would help.
-- **Use parallel subagents** to read multiple failure traces simultaneously.
-
-Append a `.agent/skill-runs.jsonl` line on completion. See `_common.md`.
+Every command's purpose is the same: produce `count × error-signature` rows so clustering starts from counts, not impressions.
