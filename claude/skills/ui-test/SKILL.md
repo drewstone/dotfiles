@@ -30,8 +30,12 @@ Use existing reference files for adversarial patterns, CI workflow, and eval rec
 
 ## Then consider
 
-- `bad` when you need lower-level browser automation help.
-- `product-design-audit` when failures point to broader product design problems.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Lower-level browser automation or a capture setup is needed | `/bad` | the target URLs, auth state, and viewports |
+| ≥3 failures point to information architecture or workflow, not bugs | `/product-design-audit` | the failing flows + the screenshots |
+| ≥1 failure is a code defect inside the PR diff | `/critical-audit` | the reproduction + the suspect file:line |
+| All flows pass across the tested breakpoints | `/verify` | the flow list, breakpoints, and screenshot paths |
 
 ## Log the run
 

@@ -45,10 +45,13 @@ Use `references/full-reference.md` for regime-change patterns, the ceiling-analy
 
 ## Then consider
 
-- `pursue` / `multi-pursue` — build the regime you just defined.
-- `dont-collapse-the-architecture` — the moment the first measurement comes back marginal.
-- `evolve` — tune once the new regime is standing and the metric moves again.
-- `autopsy` — if the breakout thesis dies, root-cause whether the regime was wrong or the proof was.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The new regime is one coherent build | `/pursue` | the regime definition + the constraint it removes |
+| ≥2 independent regimes are worth building and budget allows | `/multi-pursue` | one track brief per regime + the shared metric |
+| First measurement in the new regime lands inside 2× the noise floor | `/dont-collapse-the-architecture` | the regime-active check + the mechanism that should have fired |
+| The new regime stands and the metric moves again | `/evolve` | the new baseline number + the dominant remaining lever |
+| Target still unreached after n ≥ 12 in the new regime | `/autopsy` | the raw rows + whether the regime or the proof was wrong |
 
 ## Log the run
 

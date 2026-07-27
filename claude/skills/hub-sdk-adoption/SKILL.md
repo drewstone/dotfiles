@@ -66,9 +66,12 @@ Report the installed version, exact imports, removed files and dependencies, ret
 
 ## Then consider
 
-- `agent-integrations-adoption` when implementing connector or provider execution behind the Hub.
-- `harden` for credentials, capability tokens, webhooks, or destructive tools.
-- `verify` before release.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Connector or provider execution must be implemented behind the Hub | `/agent-integrations-adoption` | the connector contract + the auth mode |
+| Diff touches credentials, capability tokens, webhooks, or destructive tools | `/harden` | the changed file:line list + the policy each call must satisfy |
+| ≥1 primitive was re-implemented instead of imported | `/simplify` | the duplicate implementation + the SDK export that replaces it |
+| Adoption lands and ≥1 real OAuth round-trip succeeds | `/verify` | the provider + the non-mocked call output |
 
 ## Log the run
 

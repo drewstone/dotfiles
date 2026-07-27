@@ -1,222 +1,90 @@
 ---
-name: pursue
-description: "Generational leaps, not parameter tuning. Audits the system, designs a coherent set of architectural changes, builds them all, tests as a unit. Triggers: 'pursue this', 'think bigger', 'next generation', 'this approach isn't working', evolve plateau."
+name: pursue-worked-examples
+description: "Non-normative worked examples for /pursue. The contract lives in SKILL.md; this file only shows filled-in instances of its sections."
 ---
 
-# Pursue — Generational Goal Pursuit
+# Pursue — worked examples
 
-Most improvement comes from architectural shifts, not parameter tuning. `/evolve` runs tight experiment loops. `/pursue` redesigns the system, ships a generation, hands off to `/evolve` for fine-tuning.
+Not a contract. Every rule, gate, and section name is defined in `../SKILL.md`; these are instances of those same sections, plus two calibration points from the real corpus.
 
-Shared conventions in `_common.md`.
+## Calibration
 
-## Pursue vs evolve vs polish
+| Grade | Artifact | Words | Table rows | Numerals/line | What decided it |
+|---|---|---:|---:|---:|---|
+| 0/10 | `agent-dev-container/.evolve/pursuits/2026-07-15-infrastructure-intent-and-reliability-audit.md` | 3,809 | 0 | 0.84 | 5.4× the 700-word cap, 0 tables, no baseline-vs-new, no Δ, no kill condition |
+| 10/10 | `agent-lab/.evolve/pursuits/2026-06-27-appworld-spotify-route-audit-r93.md` | 343 | 11 | 2.25 | Under cap, 11 table rows, per-run n, evidence as run ids |
 
-| Signal | Skill |
-|--------|-------|
-| "Make this metric go up" | `/evolve` |
-| "This approach isn't working" | `/pursue` |
-| "Think bigger" | `/pursue` |
-| Score plateau across 2+ evolve cycles | `/pursue` |
-| Correctness fine, gap is rubric-driven | `/polish` |
-
-## Resume
-
-Read in order: `.agent/current.json`, `.agent/progress.md`, newest in `.agent/pursuits/`, tail of `.agent/experiments.jsonl`, project spec. If `current.json` names a different active skill within 24h, reconcile or dispatch `/governor` — don't start a new pursuit while another generation is in flight.
-
-If the repo uses `docs/decisions/` (ADRs), `.bench/`, Linear, or another convention, adopt it via `.agent/governor-config.json`.
-
-If a prior baseline exists, run the smoke path once. >10% drift vs recorded → re-seed first (a generation built on a stale baseline regresses on re-measurement, not on merit).
-
-## The cycle
-
-```
-AUDIT → DESIGN → REVIEW → BUILD → DIFF-AUDIT → TEST → EVALUATE → PERSIST
-```
-
-Each cycle ships a GENERATION — a coherent set of changes. `/evolve` fine-tunes within it.
-
-## Audit
-
-Read the actual code and `.agent/` state. Not your memory. Not summaries.
-
-Write `.agent/pursuits/<date>-<goal-slug>.md`:
+## Output template
 
 ```markdown
-# Pursuit: {goal}
-Generation: {N}
-Status: auditing
+# Pursue: cut sandbox time-to-first-token — Gen 3 — 2026-06-27
 
-## Metric → product-value claim (REQUIRED before moving on)
-For each metric in the goal, write one sentence:
-"If this number moves, what user-visible product outcome moves with it?"
+**Verdict:** ADVANCE — TTFT p50 4.10s → 1.28s (Δ −69%, n=12 runs each side, measured)
+**Cost:** 9 turns, 14 files, +812/−1,190 net lines · **Saving if shipped:** ~2.8s × 4,000 creates/day = 3.1 h/day of user wait (assumption: create rate holds at the 30-day mean)
+**Next:** /evolve targeting TTFT p90 against baseline 2.9s
 
-If you can't write it, the metric is wrong. Stop and rescope.
-Pursue converges happily on proxy metrics — that's how "successful"
-generations ship with no measurable product effect.
+## Plateau → generation
+| Field | Value |
+|---|---|
+| Plateau metric | TTFT p50 — product value: the delay before a user sees the agent's first word |
+| Plateau evidence | 3 `/evolve` cycles, best Δ +1.4%, runs `bench-0611`, `bench-0619`, `bench-0624` |
+| Baseline (re-seeded) | median 4.10s, n=5 runs, spread ±6%, `pnpm bench:create --host staging-3` |
+| Thesis | Boot cost is image pull + cold sidecar; a pre-warmed pool moves both off the request path |
+| Moonshot | Snapshot-restore every sandbox from a frozen VM image — rejected: needs the KVM cell, not built |
+| Kill condition | p50 >3.0s after warm pool lands · rollback: `git revert 9f2c1ab && pnpm deploy:staging` |
 
-## System Audit
-- What exists and works
-- What exists but isn't integrated
-- What was tested and failed (with WHY)
-- What doesn't exist yet
-- Measurement gaps
+## Changes — 6 shipped, 2 architectural
+| # | Change | Files | Net lines | Coupled to | Status |
+|---:|---|---:|---:|---|---|
+| 1 | Warm pool allocator | 5 | +410 | 2, 3 | shipped |
+| 2 | Sidecar prestart on pool fill | 4 | −180 | 1 | shipped |
+| 3 | Pool-exhaustion 503 + retry | 2 | +96 | 1 | shipped |
 
-## Baselines (median of ≥3 runs)
-Run each measurement ≥3 times. Record median + individual values.
-If spread >10% of mean on any dimension, run 5 more and either
-(a) note the metric is too noisy to evolve against, or
-(b) tighten measurement (more scenarios, deterministic judge).
-A single-run baseline causes false wins on Gen N and phantom regressions
-on Gen N+1.
+## Baseline vs new
+| Metric | Baseline | Gen 3 | Δ | n each | Status | Evidence |
+|---|---:|---:|---:|---:|---|---|
+| TTFT p50 | 4.10s | 1.28s | −69% | 12 | measured | run `bench-0627-a` |
+| TTFT p90 | 7.60s | 2.90s | −62% | 12 | measured | run `bench-0627-a` |
+| Create success | 100% | 98.3% | −1.7pt | 120 | measured | 2 pool-exhaustion 503s, `host-agent.log:8812` |
+| Host RSS at idle | 1.9 GB | 3.4 GB | +79% | 3 | measured | `docker stats --no-stream` |
 
-If a metric's product-value claim names a subjective outcome (writing
-quality, conversation fit, scaffold usefulness, design match) and no
-judge exists, dispatch `/eval-agent` to build one before baselining.
-
-## Diagnosis
-[root cause — what's architectural vs tunable]
+## Not measured
+| What | Why | Risk if the assumption is wrong |
+|---|---|---|
+| TTFT under >50 concurrent creates | Staging host caps at 24 | Pool drains; p50 reverts toward 4.1s |
 ```
 
-## Design — think in generations
+The `Create success` and `Host RSS` rows are the point of the example: a table showing only the 2 wins is a defect under the show-every-regression rule.
 
-A generation = 5–20 coordinated changes + at least 1 architectural change + a clear thesis ("Gen N works because of shift X").
+## Tournament
 
-### The five rules
+| # | Architecture | Predicted leverage | Chosen | Why it lost / what was grafted |
+|---:|---|---:|---|---|
+| 1 | Pre-warmed pool | −65% TTFT | yes | — |
+| 2 | Lazy image layers | −25% TTFT | no | Smaller ceiling; grafted its layer-order fix into #1 |
+| 3 | Snapshot restore | −90% TTFT | no | Needs a `/dev/kvm` cell that does not exist; re-open when it does |
 
-1. **Moonshot check.** Write one paragraph describing the 10× redesign (not 10%). Adopt or reject. If you can't name what you rejected, you didn't try hard enough.
+A pursuit carrying only row 1 is `/evolve` in costume — the losing rows are what make the choice auditable.
 
-2. **Match the codebase.** Before writing code that calls an existing API, find 3 existing callsites and match their pattern exactly — imports, auth wrappers, error handling, logging, file layout. Pattern-deviation is the #1 cause of post-merge criticals. Run the preflight:
-   ```bash
-   bash ${SKILL_DIR}/preflight.sh <pattern1> <pattern2> ...
-   # e.g., preflight.sh secureFetch withSidecarUpstreamAuth
-   ```
+## Gates
 
-3. **Design for interaction.** Coupled changes ship together. Don't A/B test coupled changes.
+| Gate | Result | Evidence |
+|---|---|---|
+| Review gate | blocking (lifecycle create/delete; diff 14 files >5) | `.agent/pursuits/2026-06-27-ttft.md:41` |
+| Adversarial review | 11 concerns, 2 would-block, 11 closed | `.agent/reviews/2026-06-27-ttft.md` |
+| Diff audit | CRIT 1 / HIGH 3, all fixed | `.agent/critical-audit/2026-06-27/` |
+| Tests · typecheck · build | 1,478/1,484 · clean · clean | `pnpm preflight → 6 skipped (kvm)` |
 
-4. **Include measurement.** If the eval can't detect the improvement, the eval must change too — new judges, new dimensions.
+## Self-gate
 
-5. **Reject safe.** If every change is low-risk, this is `/evolve`, not `/pursue`. The point is bold bets.
-
-### Spec addition
-
-```markdown
-## Generation {N} Design
-
-### Thesis
-[one sentence: why Gen N is dramatically better]
-
-### Moonshot considered
-[the 10× redesign — adopted or rejected, with reason]
-
-### Codebase conventions matched
-- Auth: [pattern + existing callsites]
-- Errors: [pattern + existing callsites]
-- Logging: [pattern + existing callsites]
-
-### Changes (ordered by impact)
-#### Architectural (must ship together)
-#### Measurement
-#### Infrastructure
-
-### Alternatives
-- [approach X] — rejected because [reason]
-
-### Risk + Success criteria
-- [what could go wrong, rollback plan, reversibility]
-- [metric → from → to]
+```
+8/10 passed — failed: 7 (cost both sides — saving unmeasured, no create-rate telemetry), 9 (regressions shown — RSS row added only after review flagged it).
 ```
 
-## Adversarial review
+Reporting the 2 failures is the pass condition; a silent 10/10 is the defect.
 
-**Mandatory** for changes touching: auth, crypto, TLS, data boundaries, concurrency, external APIs, lifecycle (create/delete), or any trust boundary. Skip only for one-file reversible changes.
+## Dispatch
 
-1. **Map the change.** Every file, process, event, external dependency.
-2. **Spawn adversarial perspectives in parallel.** Security, reliability, performance, UX, red team. Each produces verdict + concerns (severity) + alternative + would-block flag.
-3. **Enumerate failure modes mechanically.** For each spawn/fetch/write/event/shared-resource: what fails, how it manifests, propagates, recovers.
-4. **Red team round.** Day 1, day 30, day 90. Under load, partial failure, concurrent users, adversarial input. Each attack: mitigated / accepted / blocks plan.
-5. **Pick the strongest plan, not the highest-scoring.** 8/8/8/8 beats 9/9/9/3 — the 3 is the hole that fails.
-6. **Capture the decision** in the pursuit spec.
-
-Done well, saves more time than it spends. Done as ritual, worse than nothing.
-
-### Blocking gate
-
-Before advancing to Build, answer in the pursuit spec. Any yes = review is blocking.
-
-- Does any diff file touch auth, crypto, TLS, signing, or trust boundaries?
-- Does any diff file touch billing, payments, subscriptions, credits?
-- Total diff >5 files or >300 lines?
-- Add or modify an external API endpoint?
-- Modify lifecycle operations (create, delete, provision)?
-- Introduce concurrency, locking, or shared mutable state?
-
-All no → mark gate passed in spec: `Review gate: passed (all-no)`.
-
-This exists because multiple independent reflections documented review being silently skipped on trust-boundary changes and CRITs being caught post-merge.
-
-## Build — complete before testing
-
-Build ALL coupled changes before testing any. No A/B on coupled changes.
-
-A generation is complete or it's nothing. No "coming soon," no TODO markers on critical paths, no "wire it next round." If the change requires three files to ship and you've built two, you have not built a generation — you've accumulated debt. Finish.
-
-Track in the spec:
-
-```markdown
-### Build Status
-| # | Change | Status | Files | Tests |
 ```
-
-Integration checklist: compiles, no conflicts, measurement updated, checkpoints work.
-
-## Test
-
-Run the complete pipeline end-to-end with ALL changes active. Full eval battery. Compare to previous generation baselines.
-
-## Diff audit — catch pattern deviations
-
-Before declaring done, audit the diff. Does new code match codebase patterns? Reuse existing utilities? Every branch covered?
-
-**Preferred:** dispatch `/critical-audit --diff-only`. It serializes reviewers (no 429s), outputs a fix-plan keyed by `file:line`, persists under `.agent/critical-audit/` so Evaluate can compare.
-
-**Fallback:** `bash ${SKILL_DIR}/diff-audit.sh`.
-
-Either path: fix every CRITICAL and HIGH before Evaluate. Skip only for one-file reversible changes. Multiple independent reflections show CRITs landing in main because this step was treated as optional — it is not.
-
-## Evaluate
-
-```markdown
-## Generation {N} Results
-
-### Scores
-| Judge | Prev | Now | Δ | Verdict |
-
-### Human assessment
-[read actual output. rate honestly. quote passages.]
-
-### What worked / didn't / surprised
-### Verdict: ADVANCE / PARTIAL / REVERT
-### Seeds for Gen {N+1}
+/evolve — triggered by Δ −69% ≥ +5% threshold and metric still moving — passing baseline TTFT p90 2.9s + the 2 remaining knobs (pool size, prefetch depth)
 ```
-
-## Persist — hand off to evolve
-
-1. Update pursuit spec with results.
-2. Append to `.agent/experiments.jsonl` (schema in `evolve/schema.md`).
-3. Update baselines.
-4. Write `.agent/progress.md`.
-5. Write `.agent/current.json`: `mode: "evolve", generation: N, activePursuit: null`.
-6. Append to `.agent/skill-runs.jsonl`.
-7. End with explicit dispatch: `Next: /evolve targeting <X> against baseline <Y>`.
-
-If new judges were added, run them on previous-gen artifacts to establish backward-compatible baselines.
-
-## Rules
-
-1. Audit before designing.
-2. Design before building.
-3. Match the codebase before writing new code.
-4. Build the whole generation before testing.
-5. Diff-audit before declaring done.
-6. Persist in `.agent/`.
-7. Think in generations. Take risks. Evaluate honestly.

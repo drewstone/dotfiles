@@ -34,8 +34,13 @@ Use `references/full-reference.md` for the full legacy playbook and report templ
 
 ## Then consider
 
-- `converge` for red CI after the security fix lands.
-- `critical-audit` for broad code review once exploit paths are covered.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Fix lands and CI goes red | `/converge` | the failing job + the security test that must stay green |
+| ≥1 exploit class is pattern-detectable across the repo | `/semgrep` | the vulnerable pattern + the rule that would catch it |
+| Exploit paths covered and the diff exceeds 200 lines | `/critical-audit` | the diff scope + the invariants the fix relies on |
+| The fix only counts once it is live in production | `/deploy-proof` | the merge SHA + the probe that proves the hole is closed |
+| ≥5 findings share one missing invariant | `/diagnose` | the finding list + the invariant that would kill all of them |
 
 ## Log the run
 

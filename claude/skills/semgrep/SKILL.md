@@ -40,8 +40,12 @@ Use `references/full-reference.md` and `workflows/scan-workflow.md` for the full
 
 ## Then consider
 
-- `harden` when static findings imply exploitable security paths.
-- `converge` when fixes must drive CI green.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| ≥1 finding implies an exploitable path (reachable from untrusted input) | `/harden` | the rule ID, the file:line, and the reachability argument |
+| Fixes land and CI goes red | `/converge` | the failing job + the rule the fix satisfies |
+| ≥10 findings trace to one obsolete module | `/deep-clean` | the module + the finding list scoped to it |
+| 0 HIGH/CRITICAL findings across the scanned paths | stop | the SARIF path + the rule set and paths scanned |
 
 ## Log the run
 

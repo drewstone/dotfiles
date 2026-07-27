@@ -13,4 +13,7 @@ Use `bad`; this skill only preserves the old trigger.
 
 ## Then consider
 
-- `bad` for command details and evidence capture.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Always — this alias does no work of its own | `/bad` | the target URL, viewports, and the evidence to capture |
+| The clone must be compared against the original in a browser | `/ui-test` | both URLs + the flows and breakpoints to diff |

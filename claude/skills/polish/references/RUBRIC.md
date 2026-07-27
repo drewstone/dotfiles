@@ -1,35 +1,22 @@
-# Polish Rubric — the five dimensions
+# Check catalog — worked examples
 
-The single source of truth for what polish audits. SKILL.md cites this file; a per-dimension subagent reads its own brief here verbatim. Score each dimension 1–10 with the anchors at the bottom — no inflation.
+Non-normative. `SKILL.md` is the contract; this file is a menu of checks that produce a `PASS`/`FAIL` with a command behind it. Pick ≥1 per criterion, or write a better one for the artifact at hand.
 
-For prose, skills, and docs, the mappings in parentheses apply: the dimension is the same, the artifact is different.
+The artifact changes, the criterion does not: for prose/skills/docs read Correctness as factual accuracy, API surface as reader interface, Tests as "would a wrong edit be caught".
 
-## Correctness (for prose: factual accuracy)
+| Criterion | Example check (run it, keep the output) | `FAIL` looks like |
+|---|---|---|
+| Correctness | Feed the 6 hostile inputs: empty, 1 element, 10k elements, malformed, duplicate concurrent call, unicode/NUL. | 4 of 6 inputs crash or return a wrong value; `path:line` for each. |
+| Correctness | Delete a branch, re-run the suite. Still green ⇒ that branch is untested, not proven. | Suite 41/41 green with the timeout branch deleted. |
+| Design | Count callers of each exported symbol: `rg -n "from '.*<mod>'" \| wc -l`. | 3 of 9 exports have 0 callers; abstraction serves 1 caller. |
+| Design | Time-to-explain: name the file a new engineer must read 2nd. If there is no obvious 2nd, structure is implicit. | Entry point requires reading 5 files in a fixed order that nothing states. |
+| Robustness | `rg -n "catch\s*\{\s*\}|\?\?\s|return null" <dir>` — every hit is a candidate silent failure. | 2 of 7 catch blocks swallow and return a default; caller cannot tell. |
+| Robustness | Kill the dependency mid-call (drop network, revoke key, SIGKILL child). | Returns `{ok:true}` with empty data instead of throwing. |
+| Tests | Mutation check: change one constant / invert one condition, re-run. | 0 of 12 tests fail after inverting the guard. |
+| Tests | Count assertions that only prove code ran: `rg -n "toBeTruthy\(\)|not\.toThrow\(\)|toBeDefined\(\)"`. | 8 of 30 assertions are existence-only. |
+| API surface | Write the smallest correct call from the public docs alone, no source reading. | 2 required options are undocumented; default silently disables retries. |
+| API surface | Name honesty: does every exported name still describe what it does after the last 3 edits? | `syncUser()` performs a delete on one branch. |
 
-Does it actually work in **all** cases, not just the happy path? Exercise edge cases, error paths, concurrency, empty inputs, huge inputs, malformed inputs. The question is never "does the demo pass" — it's "what input breaks this." For prose/docs: every claim is true, every command runs as written, every link resolves, every cited number traces to a real source. A plausible-sounding but wrong statement scores the same as a crashing branch.
+## Ranking gaps
 
-## Design
-
-Is the architecture right? Are the abstractions justified, or is something over- or under-engineered? Would you have to explain any of this to a new engineer, or does it explain itself? The best score goes to a structure so clear the next person never asks "why is this here." Prefer fixing the design over papering it with comments — a well-designed module with no comments beats a poorly-designed one with perfect docs.
-
-## Robustness
-
-Error handling, failure modes, invariants. What happens when things go wrong — does it fail loud and recoverable, or silently corrupt state? A silent failure is an automatic 0 for this dimension. Name the invariants the code relies on and confirm each is enforced, not assumed. For prose: does the argument hold under an adversarial reading, or does one counterexample collapse it?
-
-## Tests
-
-Are the tests testing **behavior**, or just asserting that code runs? `toBeTruthy()` / `not.toThrow()` / a test that mocks everything and asserts `true` is worse than no test — it's false confidence that rots in parallel to the code. Every test should break when the behavior it guards changes, and you should be able to name the specific regression it catches. Cover the edge cases and failure modes from the Correctness and Robustness dimensions, not just the path the author already knew worked.
-
-## API surface (for prose: reader interface)
-
-Is the public interface clean? Would a user of this code curse you? Are the defaults sane, the names honest, the CLI/API self-documenting? Minimize what a caller must know to use it correctly. For prose/docs: is the structure scannable, the lede up front, the next action obvious — does the reader get what they came for without fighting the document.
-
-## Scoring anchors
-
-- **10** — a senior staff engineer would learn something from reading it.
-- **9** — a senior staff engineer would approve with zero comments.
-- **8** — solid, but I have notes.
-- **5–7** — where most work starts. "Fine" is a 6, not an 8.
-- **0** — silent failure, false-confidence test, or a factual claim that's wrong.
-
-A dimension that is merely "fine" is a 6. Do not round up to feel finished.
+User-visible impact = callers or users hit (`n=`) × severity (silent wrong answer > crash > degraded > cosmetic). A silent wrong answer hitting 1 caller outranks a crash hitting 0 in production. Fix effort is not an input to the ranking; it is a column in the fix plan.

@@ -24,10 +24,14 @@ A naive "does 2 agents beat 1" A/B on a task that fits in one context window **w
 
 Hold the thesis. Find where it bites. Build the policy. Then — and only then — judge.
 
-## Then consider (post-hook)
+## Then consider
 
-- About to A/B the architecture? → `calibrate-before-measure`: prove the metric discriminates a good policy from a bad one AND that the test sits in the regime where the constraint is active. A tie outside that regime is uninformative, not a verdict.
-- Sitting on a marginal/null result? → `push-past-easy`: the next move is the experiment *in the right regime with the competency built* — never a collapse to the old pattern.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| About to A/B the architecture | `/calibrate-before-measure` | the metric, the regime where the constraint is active, and the trivial baseline |
+| Result marginal (inside 2× noise) and instrumentation shows the mechanism fired 0 times | `/ground-truth` | the uninstrumented or inactive hop + the activation counter |
+| Result marginal and the regime was never active | `/push-past-easy` | the regime definition + the experiment that activates it |
+| Regime provably active and the architectures still tie at n ≥ 24 | `/pursue` | the tie evidence + the mechanism that failed to pay |
 
 ## Log the run
 

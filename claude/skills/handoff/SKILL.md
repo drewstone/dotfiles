@@ -28,7 +28,12 @@ Use `references/full-reference.md` for the full handoff template.
 
 ## Then consider
 
-Stop after the handoff unless the user asks to continue.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Brief written and the session ends here | stop | nothing — the brief is the artifact |
+| ≥3 skill runs logged this session and none has been graded | `/reflect` | the `.agent/skill-runs.jsonl` tail + the brief path |
+| The resuming agent has ≥2 candidate next actions | `/governor` | the brief path + the objective it should route against |
+| The brief lists ≥1 unproven claim | `/verify` | the claim + the command that would prove it |
 
 ## Log the run
 

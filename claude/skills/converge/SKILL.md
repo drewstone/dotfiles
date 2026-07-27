@@ -34,8 +34,13 @@ Use `references/full-reference.md` for the full resume protocol and GitHub comma
 
 ## Then consider
 
-- `review-to-green` when CI is green but review still blocks merge.
-- `release-conductor` when green CI must become a live release.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| CI green and review still blocks merge | `/review-to-green` | the PR number + the outstanding review verdict |
+| ≥5 failing tests spanning ≥2 subsystems | `/diagnose` | the failure list grouped by suite + the last green SHA |
+| Same job fails on an untouched base commit (binary: reproduced on base) | `/autopsy` | the job name + both run URLs |
+| CI green and the change must become a live release | `/ship` | the merge SHA + the deploy command |
+| Release path is opaque or multi-artifact | `/release-conductor` | the artifact list + the rollback path |
 
 ## Log the run
 

@@ -61,6 +61,14 @@ Higher quality: `export NANOBANANA_MODEL=gemini-3-pro-image-preview`
 2. Show to user, offer variations if needed
 3. For changes: re-run with adjusted prompt or use `/edit`
 
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The image is for product UI | `/product-design` | the generated file path + the surface it fills |
+| The image supports a post or brief | `/signal-distill` | the image path + the brief it illustrates |
+| Image generated and accepted | stop | the output path under `./nanobanana-output/` |
+
 ## Log the run
 
 On completion, append one line so `/reflect` and `/governor` can grade this skill later:

@@ -32,8 +32,12 @@ Use `references/audit-matrix.md` for the scoring matrix and `references/full-ref
 
 ## Then consider
 
-- `ui-test` for adversarial browser QA after redesign.
-- `product-innovation-audit` if the issue is product strategy, not UI execution.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Redesign applied and needs adversarial browser QA | `/ui-test` | the changed routes + the flows to re-run |
+| The problem is product strategy, not UI execution | `/product-innovation-audit` | the workflow that has no user + the evidence |
+| ≥5 findings and all are small rubric gaps | `/polish` | the finding list + the rubric they fail |
+| Fixing requires a new visual direction, not adjustments | `/product-design` | the references to work from + the surfaces to redo |
 
 ## Log the run
 

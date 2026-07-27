@@ -40,10 +40,13 @@ Use `references/full-reference.md` for the deterministic grouping algorithm, the
 
 ## Then consider
 
-- `critical-audit` — review each atomic branch before it becomes a PR.
-- `ship` — once one atomic branch is approved, deploy that single change to prod.
-- `converge` — if an atomic branch's CI comes back red.
-- `autopsy` — if the union hash won't match and you can't find the lost hunk.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Each atomic branch, before it becomes a PR | `/critical-audit` | the branch name + `--diff-only` scope |
+| A branch's CI comes back red | `/converge` | the branch name + the failing job |
+| Union hash does not match the original branch | `/autopsy` | the union diff, the missing hunk, and both hashes |
+| A branch is approved with 0 blockers | `/ship` | the branch SHA + the deploy command |
+| ≥4 branches split and the session ends | `/handoff` | the branch→PR map + which are still unreviewed |
 
 ## Log the run
 

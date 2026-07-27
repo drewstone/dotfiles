@@ -38,10 +38,13 @@ Run package typecheck, build, package verification, and the full suite for share
 
 ## Then consider
 
-- `eval-engineering` when the change needs a new production-derived case.
-- `eval-agent` when adding or calibrating a model judge.
-- `harden` when changing redaction, credentials, wire input, or release authority.
-- `verify` before publishing.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Diff touches redaction, credentials, wire input, or release authority (binary: those files appear in `git diff --name-only`) | `/harden` | the changed file list + the trust boundary each one crosses |
+| 0 existing cases cover the changed production path | `/eval-engineering` | the production trace or code path to convert into one pinned case |
+| Judge agreement with human labels < 0.9 over ≥20 labeled examples | `/eval-agent` | the labeled set + the current disagreement rows |
+| A deployed result looks contaminated (pass rate moved > 20pp with no agent change) | `/eval-harness-diagnose` | the run record IDs on both sides of the jump |
+| Package builds and ≥1 case runs green | `/verify` | the case IDs run + the exact command and its output |
 
 ## Log the run
 

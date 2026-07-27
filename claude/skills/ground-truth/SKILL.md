@@ -21,9 +21,13 @@ Don't shave the easiest-to-reach term — measure, then cut the dominant one. If
 
 ## Then consider
 
-- Harness up + baseline measured → `evolve` to drive the dominant lever to target with the ratchet.
-- `report` to present the decomposition + threats-to-validity + ranked actions as a domain-expert artifact, not prose.
-- First measurement marginal → `dont-collapse-the-architecture` (the regime that makes the lever pay off may not be active yet).
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Harness standing and one hop is ≥ 40% of total time | `/evolve` | the per-hop breakdown, the dominant hop, and its noise floor |
+| Any hop is still dark (no timing emitted on the real path) | `/diagnose` | the uninstrumented segment + the code path that must emit it |
+| The dominant term is an irreducible floor (physics, security, network RTT) | `/breakout` | the floor's size + why the current regime cannot beat it |
+| First measurement is marginal (inside 2× noise) | `/dont-collapse-the-architecture` | the regime check + the lever that should have fired |
+| Breakdown complete and the question was analytical | `/report` | every stage's min/median/p90/max with n, env label, and warm/cold |
 
 ## Log the run
 

@@ -40,8 +40,12 @@ Use `references/full-reference.md` for the full question stack, scoring rubric, 
 
 ## Then consider
 
-- `product-design-audit` when the next move is UI/workflow redesign.
-- `evolve` when there is a measurable product metric to improve.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The next move is UI or workflow redesign | `/product-design-audit` | the audited flow + the value gap it must close |
+| A measurable product metric exists and sits below target | `/evolve` | the metric, its baseline, and the lever |
+| Ship decision is NO because the whole category caps below the bar | `/breakout` | the ceiling evidence + the constraint to change |
+| The bet cannot be judged without data that is not measured | `/ground-truth` | the decision-relevant metric + the hops to instrument |
 
 ## Log the run
 

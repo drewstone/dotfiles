@@ -56,11 +56,16 @@ Overall: SHIP IT / HOLD (reasons)
 
 If any check fails, explain what needs fixing before shipping. Be specific.
 
-## Stop condition + dispatch
+## Then consider
 
-- If `SHIP IT`: report complete, no further action.
-- If `HOLD` with ≥1 FAIL: do NOT ship. Dispatch to the fix (`/pursue` if the fix is non-trivial, direct code edit if trivial), then re-run this skill.
-- Never mark `SHIP IT` with HOLD reasons outstanding to "come back to later" — that's how defects ship.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Overall SHIP IT | `/ship` | the verified SHA + the deploy command |
+| HOLD with ≥1 FAIL and a non-trivial fix | `/pursue` | the failing check + the design the fix needs |
+| HOLD only from fixed-rubric gaps (no FAIL rows) | `/polish` | the rubric gaps + the files they sit in |
+| HOLD because CI or the local gate is red | `/converge` | the failing job + its log excerpt |
+| Real-infra coverage shows ≥1 new code path covered only by mocks | `/harden` | the path + the real-infra test that must replace the mock |
+| SHIP IT and ≥3 skill runs logged this session | `/reflect` | the `.agent/skill-runs.jsonl` tail + the proof table |
 
 ## Log the run
 

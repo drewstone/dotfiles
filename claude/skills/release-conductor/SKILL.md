@@ -33,8 +33,13 @@ Use `references/full-reference.md` for the full ledger format and release decisi
 
 ## Then consider
 
-- `converge` when CI is the blocking release input.
-- `ship` when the project has a reliable one-command deploy path.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| CI is the blocking release input | `/converge` | the failing job + the release deadline |
+| The project has a reliable one-command deploy path | `/ship` | the artifact list + the deploy command |
+| Deploy reports success and the served revision is unverified | `/deploy-proof` | expected SHA + the live endpoint to probe |
+| A rollback was executed | `/autopsy` | the failure signal, the rollback SHA, and the timeline |
+| Release lands and the session ends | `/handoff` | the ledger, the live SHA, and the open follow-ups |
 
 ## Log the run
 

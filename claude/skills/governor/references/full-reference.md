@@ -1,242 +1,70 @@
 ---
-name: governor
-description: "Reads accumulated state and picks the next skill to run — exploit (`/evolve`, `/polish`), explore (`/pursue`, `/meta-harness`), bootstrap (`/eval-agent`), or step back (`/reflect`). One dispatch per invocation. Triggers: 'what's next', 'keep improving', 'governor', 'pick the next skill'."
+name: governor-worked-examples
+description: "Non-normative worked examples for /governor. SKILL.md is the single normative contract; nothing here overrides it."
 ---
 
-# Governor — Explore-Exploit Dispatcher
+# Governor — worked examples
 
-The skills below this one each do one thing well. Picking which one to run at which moment used to be the operator's job. Governor reads state, decides exploit vs explore, dispatches.
+`SKILL.md` holds every rule, the dispatch table, and the output template. This file only shows filled-in instances of them.
 
-Governor is **not** an orchestrator — it picks the single next skill, hands off, and exits. The dispatched skill runs and ends with its own dispatch-at-end. You re-run `/governor` when you want the next pick.
+## Example: a 10/10 emitted artifact
 
-Shared conventions in `_common.md`.
+```markdown
+Next: /pursue — row 12: 3 Δs of 0.008 / 0.012 / 0.004, each < 1% threshold. Target: `src/lib/prompt-planner.ts` capability inference. First check: `tail -3 .agent/experiments.jsonl`.
 
-## When to use
+## State read
+| Source | Rows / mtime | Signal extracted |
+|---|--:|---|
+| `.agent/experiments.jsonl` | 47 rows, 2026-07-26 | last 3 Δ: 0.008, 0.012, 0.004 |
+| `.agent/governor.jsonl` | 12 rows | priorChain /evolve → /evolve → /evolve |
+| `.agent/reflections/` | 1 file, 4 runs ago | row 9 at 4 < 5, does not fire |
+| `gh pr checks` | 7 checks, 0 failing | row 1 does not fire |
 
-| Signal | Use governor? |
+## Signals
+| Row | Signal | Measured | Threshold | Fires | Status | Check |
+|--:|---|--:|--:|:-:|---|---|
+| 1 | CI red | 0 of 7 failing | ≥1 | no | measured | `gh pr checks` |
+| 9 | Reflection due | 4 runs | ≥5 | no | measured | `wc -l .agent/skill-runs.jsonl` |
+| 12 | Plateau | max Δ 1.2% over 3 | <1% each | no→see note | measured | `tail -3 .agent/experiments.jsonl` |
+| 17 | Exploit | 0 KEEP in last 2 | ≥3% ×2 | no | measured | same tail |
+
+Note: row 12 fires on the 2 sub-1% runs plus a 1.2% outlier inside CV 18% → treated as plateau, stated as inferred.
+
+## Rejected — top 2
+| Skill | Measured | Threshold | Why it lost |
+|---|--:|--:|---|
+| `/evolve` | 0 KEEP in last 2 | ≥3% ×2 | row 17 needs 2 KEEPs; last 2 are ITERATE |
+| `/meta-harness` | 0 pursue rounds | ≥3 | row 14 needs 3 prior `/pursue` rounds |
+
+## Brief for /pursue
+| Field | Value |
 |---|---|
-| "What should I work on next" | yes |
-| "Keep improving until converged" | yes (in a loop) |
-| "We hit a plateau, what now" | yes |
-| "I have a specific thing in mind" | no — just invoke that skill |
-| "I want a different skill than governor picks" | override — tell governor, it logs the decision |
+| Reason | row 12: 3 Δs < 1% on accuracy |
+| Prior chain | /evolve → /evolve → /evolve (oscillating: no) |
+| Scope | `src/lib/prompt-planner.ts` |
+| Cost | spends ~25 turns · saves ~40 turns of further sub-1% evolve rounds · assumption: 8 turns/evolve round, measured on 5 prior rounds |
+| First check | `tail -3 .agent/experiments.jsonl` |
+| Ends with | its own dispatch line |
 
-## Detect repo shape
-
-Before reading evolve state, figure out which skills are even applicable.
-
-| Signal | Repo shape | Applicable skills |
-|---|---|---|
-| `.agent/` exists + `experiments.jsonl` | **Optimization repo** | full library |
-| `tests/` + CI + no `.agent/` | **Product/service** | `/harden`, `/verify`, `/critical-audit`, `/converge`; evolve-family needs `/eval-agent` bootstrap |
-| `src/lib/` + public `package.json` + changelog | **Library** | `/harden`, `/critical-audit`, `/verify`; evolve-family only with a benchmark suite |
-| Infra + deploy configs + SLA monitors | **Service** | `/converge`, `/harden`, `/verify`; evolve-family only with a user-visible metric |
-| No tests, no CI, raw prototype | **Greenfield** | `/pursue` or `/meta-harness` to scaffold; bootstrap `.agent/` + `/eval-agent` first |
-
-Record the detection in the decision log. Ambiguous shape → ask before dispatching.
-
-## Read accumulated state
-
-Skip any that don't exist:
-
-```
-.agent/current.json                     # last active mode + active pursuit
-.agent/progress.md                      # human-readable cycle history
-.agent/experiments.jsonl                # last 10–20 entries: deltas, verdicts
-.agent/scorecard.json                   # current flow scores vs targets
-.agent/skill-runs.jsonl                 # what skill ran last, what it dispatched to
-.agent/reflections/ (newest 3)          # grading + dispatch-at-end of prior sessions
-.agent/meta-harness/frontier.json       # if present: non-dominated variants
-.agent/pursuits/ (newest)               # current generation thesis + status
-.agent/critical-audit/ (newest)         # unresolved CRITICAL/HIGH findings
-git log --oneline origin/main..HEAD      # uncommitted work, recent PRs
+## Self-gate
+8/8 passed — failed: none.
 ```
 
-## Compute signals
+## Example: the 0/10 it replaces
 
-Each is a boolean or short verdict.
+`{"decision":"pursue_then_evolve","reason":"<1,200 chars of prose, 0 digits>"}` — two skills in one token, no `priorChain`, no cost, no threshold. 939 of 1,705 logged decisions looked like this.
 
-### Think (favor `/hypothesize`)
-- **About to optimize but "what to try" isn't obvious** — more than one plausible lever, or the last 2–3 experiments were variations of a single idea → build a ranked portfolio first.
-- **No competitive/prior-art survey exists** for this metric → someone has likely hit this ceiling; research before betting. `/hypothesize` dispatches `/deep-research` for web depth and hands `/evolve` or `/pursue` a ranked field.
+## Example: repo-shape adapters
 
-### Exploit (favor `/evolve` / `/polish`)
-- **Active gains**: last 2 experiments KEEP with delta ≥ 3% → keep exploiting.
-- **Below target with movable metric**: scorecard flow below target AND CV < 15%.
-- **Unresolved HIGH findings from critical-audit** → exploit those before anything else.
+When a repo already tracks state elsewhere, record the mapping once in `.agent/governor-config.json` so following skills read the same paths.
 
-### Triage (favor `/diagnose`)
-- **Failing test suite or eval pass-rate dropped** with many failures and no ROI ranking yet → cluster + rank before fixing.
-- **Operator asks "why is this failing" / "triage these failures"** → route there. `/diagnose` feeds its ranked clusters into `/evolve`.
-
-### Explore-light (favor `/pursue`)
-- **Plateau**: last 3 experiments on same metric have delta < 1%.
-- **Newest reflection's dispatch-at-end names `/pursue`**: trust it.
-- **Current generation complete (ADVANCE) but no follow-up pursuit** → design the next.
-
-### Explore-multi (favor `/multi-pursue`)
-- **Initiative decomposes into ≥2 independent buildable tracks** (distinct subsystems, not one architectural change) → parallel generational build. `/pursue` is single-track; `/multi-pursue` runs the tracks as a unit.
-
-### Codebase hygiene (favor `/deep-clean`)
-- **A big merge or migration just landed** (recent merge commit / branch consolidation in `git log`) → proactive sweep before building on it.
-- **Operator asks to clean up / remove dead code / fix all types / canonicalize an area** → route there. `/deep-clean` chains to `/harden`.
-
-### Explore-heavy (favor `/meta-harness`)
-- **Plateau + `/pursue` already ran 3+ rounds with <2% cumulative delta** → architecture is stuck.
-- **Operator asks "think bigger" / "what structural changes"** → route there.
-
-### Ceiling (favor `/breakout`)
-- **Plateau persists after `/meta-harness` already ran** (architecture evolved, still <2% and near a ceiling) → the *target* is the cap, not the code. Question and raise it.
-- **Near target and the win feels small** — within a few pp of target with no product step-change → interrogate whether the target is the real ceiling.
-- **Operator asks "why are we capped" / "10x this" / "think way bigger" / "this metric is a cage"** → route there. `/breakout` sets the raised target and hands the build back to `/pursue` or `/multi-pursue`.
-
-### Measurement gap (favor `/eval-agent`)
-- **Goal defined but no baseline in `.agent/`** → bootstrap the judge.
-- **Scorecard has `status: unmeasured` flows with `target` set**.
-- **Metric has no `productValueClaim`** (gate from evolve/pursue/meta-harness) → either redefine or build a judge that ties to product value.
-
-### Eval-harness integrity (favor `/eval-harness-diagnose`)
-- **An eval harness exists but pass/fail is suspect** — deltas can't be attributed to agent behavior, or auth/route/judge/baseline/transport failures recur across runs → suspect harness contamination, not agent failure.
-- **"Improve the harness" keeps being the next action** instead of "optimize the agent" → diagnose the harness before trusting any more numbers.
-
-### Retreat (favor revert + `/evolve` on last-known-good)
-- **Last generation regressed** (REGRESSION/PARTIAL verdict) → revert to prior baseline first.
-- **Two consecutive explores regressed** → surface to operator. Don't auto-dispatch.
-
-### Reflection-due (favor `/reflect`, then re-dispatch)
-- **≥5 rounds since last reflection** → patterns piling up unlogged.
-- **Dispatch chain drift** (last 3 picks contradict, A→B→A→B) → reflect on the oscillation.
-
-### CI-red (favor `/converge`)
-- Latest push has a failing required check, or `gh pr checks` shows any `fail`.
-- Preempts everything: a red branch means later measurements describe a build nobody can land.
-
-### Surprising-result (favor `/autopsy`)
-- One run returned null, zero, or a number too good to believe, and no one has read the raw rows.
-- Distinct from Triage: Triage clusters many failures, autopsy explains a single result.
-
-### Visibility-gap (favor `/ground-truth`)
-- A "make X faster / why is X slow / optimize X" task on a live system, with no per-hop timing on the real path.
-- Symptoms: the only numbers are local, or a benchmark was never run where the code actually executes.
-- The harness is the work. Build it before any fix, or you optimize a system you cannot see.
-
-### Uncalibrated-metric (favor `/calibrate-before-measure`)
-- An eval or A/B exists and is about to run, but nobody proved the metric moves when the thing it measures moves, or that the task is hard enough to require the capability.
-- Distinct from Measurement-gap (no evaluator at all) and Eval-harness integrity (evaluator exists but is contaminated).
-
-### Ship-ready (favor `/verify`)
-- Work reads as complete and is about to merge or deploy, with no test run, no clean git state, and no check against the real artifact.
-
-### Context-exhausted (favor `/handoff`)
-- Session is ending or context is nearly full while work is still in flight.
-- Cheaper than letting the next session re-derive state from scratch.
-
-### Hand-off (stop governing)
-- **All scorecard flows meet target** → converged. Closing reflection + stop.
-- **Budget exhausted** (cost/time cap in `current.json`) → report, stop.
-- **No signals fire** → surface to operator.
-
-## Decision tree
-
-First match wins.
-
-```
-1.  CI red on the branch     → dispatch /converge (nothing downstream is trustworthy until green)
-2.  Retreat fires            → revert last gen + dispatch /evolve on prior baseline
-3.  Surprising-result fires  → dispatch /autopsy (one null/too-good result, root-cause before believing it)
-4.  Visibility-gap fires     → dispatch /ground-truth (optimizing a live system with no measured real-path breakdown)
-5.  Measurement-gap fires    → dispatch /eval-agent
-6.  Uncalibrated-metric      → dispatch /calibrate-before-measure (eval exists but was never proven to see the effect)
-7.  Eval-harness integrity   → dispatch /eval-harness-diagnose (don't explore/exploit on a lying harness)
-8.  Unresolved HIGH/CRITICAL → dispatch /critical-audit --reaudit OR fix directly
-9.  Reflection-due fires     → dispatch /reflect; governor re-runs after
-10. Triage fires             → dispatch /diagnose (rank clusters, then /evolve)
-11. Codebase-hygiene fires   → dispatch /deep-clean (sweep after merge/migration; chains to /harden)
-12. Ceiling fires            → dispatch /breakout (plateau survived meta-harness, or operator wants 10x)
-13. Explore-heavy fires      → dispatch /meta-harness
-14. Explore-multi fires      → dispatch /multi-pursue (≥2 independent tracks)
-15. Explore-light fires      → dispatch /pursue
-16. Think fires              → dispatch /hypothesize (about to spend, but field unmapped / unresearched)
-17. Exploit fires            → dispatch /evolve (or /polish if rubric-driven)
-18. Ship-ready fires         → dispatch /verify (work looks done; prove it before it lands)
-19. Context-exhausted fires  → dispatch /handoff (work in flight, session ending)
-20. Hand-off fires           → closing reflection + stop
-21. No match                 → surface to operator
-```
-
-Order is not cosmetic. A red CI, an unexplained result, an uninstrumented system, or an uncalibrated metric each make every downstream signal untrustworthy, so they preempt explore and exploit.
-
-## Log the decision
-
-Append one line to `.agent/governor.jsonl`:
-
-```json
-{"ts":"2026-04-25T20:00:00Z","repoShape":"optimization","signals":{"plateau":true,"exploit":false,"measurementGap":false},"decision":"/pursue","reason":"3 rounds <1% on accuracy, pursue for architectural leap","priorChain":["/evolve","/evolve","/evolve"],"operatorOverride":null}
-```
-
-`priorChain` is the last 3 governor decisions — catches oscillation before it wastes cycles.
-
-On operator override, log it with `operatorOverride: "/skill-X"` and extend `reason` with the operator's stated reason. Override data is how governor learns operator taste.
-
-Also append to `.agent/skill-runs.jsonl` (schema in `_common.md`) with `dispatchedTo` = the picked skill.
-
-## Dispatch
-
-Invoke the chosen skill with a brief that includes:
-- The reason for choosing it
-- The signals that fired (so the dispatched skill can verify they're real)
-- The `priorChain` (so the dispatched skill knows if it's been in a loop)
-- Suggested scope (file / dimension / flow)
-- Instruction to end with its own dispatch-at-end
-
-Example brief for `/pursue`:
-
-> You are being dispatched by `/governor` for generational redesign.
->
-> **Reason:** 3 consecutive `/evolve` rounds on the ideasai capability-hit metric produced deltas of 0.008, 0.012, 0.004 — below the 1% plateau threshold. The keyword-matching approach appears exhausted. Explore architectural alternatives.
->
-> **Signals fired:** plateau=true, exploit=false, lastGenerationComplete=true
->
-> **Prior chain:** /evolve → /evolve → /evolve (now /pursue)
->
-> **Suggested scope:** `src/lib/prompt-planner.ts` capability inference path
->
-> End with your own dispatch-at-end so /governor can pick up next.
-
-## Repo-shape adapters
-
-Governor doesn't force `.agent/` on every repo:
-
-| Repo has | Use that instead of `.agent/` |
+| Repo has | Read that instead of `.agent/` |
 |---|---|
-| `docs/decisions/` (ADRs) | Write reflections as ADRs there |
-| `.bench/` with baseline.json | Use as scorecard; skip duplicate `.agent/scorecard.json` |
-| GitHub Project / Linear | Consume as goal source; write decisions as tasks |
-| CI-green is the only measurement | Recommend `/converge` + `/eval-agent` to add a quality dimension |
+| `docs/decisions/` (ADRs) | reflections as ADRs there |
+| `.bench/baseline.json` | as the scorecard; skip `.agent/scorecard.json` |
+| GitHub Project / Linear | as the goal source; decisions written back as tasks |
+| CI-green as the only metric | rows 1 and 5 only until a quality dimension exists |
 
-When adapting, write `.agent/governor-config.json` naming the adopted conventions so every following skill uses the same paths.
+## Example: dispatch brief prose form
 
-## Idempotency + resume
-
-Governor is safe to re-run. Every run reads state fresh, checks `priorChain` for oscillation (last 3 = A→B→A → break the loop with `/reflect`), and validates the last dispatched skill actually ran (look for its artifact — new pursuit file, new experiment line, new reflection). If not, re-dispatch with a note.
-
-`.agent/governor.jsonl` is append-only. Never rewrite prior decisions — that erases operator-override evidence.
-
-## Rules
-
-1. **One dispatch per invocation.** Pick one skill, hand off, exit.
-2. **Surface ambiguity.** If signals don't clearly favor one skill, ask. Don't coin-flip.
-3. **Log every decision, including overrides.** That's what future versions learn from.
-4. **Detection runs every time.** A repo can change shape (added evals, dropped CI, migrated state).
-5. **Retreat before explore after regression.** Re-baseline first or explore runs against a broken baseline.
-6. **Reflect before deep-explore.** `/meta-harness` is expensive — if ≥5 rounds since last reflection, reflect first.
-7. **Respect operator overrides.** Log them and continue.
-
-## Philosophy
-
-Governor is a bandit with three coarse arms (exploit / explore-light / explore-heavy) and history-conditional decisions:
-
-- **Don't explore prematurely.** Every explore burns more than an exploit (new code, new eval, regression risk). Plateau for 3 rounds, not 1.
-- **Don't exploit forever.** 5+ rounds same approach not at target → reflect first, then explore informed.
-- **Retreat is cheap.** A regression caught and reverted costs one round. Iterated on, it costs N rounds of confusion.
-- **Ambiguity is the operator's call, not yours.** Surface, don't guess.
+> Dispatched by `/governor`, row 12. Last 3 `/evolve` rounds on the capability-hit metric returned 0.008, 0.012, 0.004 — under the 1% plateau threshold, so keyword matching is exhausted. Prior chain: /evolve ×3. Scope: `src/lib/prompt-planner.ts`. End with your own dispatch line.

@@ -1,122 +1,72 @@
----
-name: deep-clean
-description: "Codebase cleanup with measurement, real tooling (knip, madge, tsc --strict, jscpd), dependency-ordered phases, verification gates. Chains to /harden on Phase 4. Triggers (reactive): 'clean up the codebase', 'remove dead code', 'fix all the types', 'reduce complexity', 'technical debt'. Triggers (proactive — fire 10x more often): 'after a big merge', 'after migration X lands', 'proactive sweep of area Y', 'audit and canonicalize'."
----
+# Deep Clean — worked examples
 
-# Deep Clean — Measured Codebase Cleanup
+Not normative. `../SKILL.md` is the contract (flow, hard rules, output template, dispatch); where these differ, SKILL.md wins. These are filled-in examples of rows SKILL.md requires.
 
-Thorough quality sweep: run real static analysis, measure before/after, change code in dependency-safe order, verify after every phase.
+## Worked example 1 — a deletion row with both proofs
 
-Measure → three ordered work phases → measure again. Within a phase, parallel subagents are fine (non-conflicting files). Across phases, never — each phase reads the previous phase's output.
-
-```
-Phase 0  Measure        establish ground truth
-Phase 1  Structure      circular deps, canonicalization     → verify: tests + types
-Phase 2  Strengthen     weak types, dead code, tests, errors → verify: tests + types + build
-Phase 3  Polish         AI slop, deprecated paths, format    → verify: tests + types + build + lint
-Phase 4  Measure again  prove the numbers moved
-```
-
-Phase 1 rewrites the import graph → Phase 2 reads it. Phase 2 removes code → Phase 3 reads what's left. Parallelizing across phases corrupts that ordering.
-
-## Scope calibration
-
-The default failure mode is stopping too early. Tools surface mechanical rot; they do not surface a God module, a capability implemented three ways, or a test that asserts nothing. After the tool-driven passes, the bar is: **could a staff engineer reading this diff still find dead weight, a duplicated path, or an untested branch?** If yes, you are not done. Cleanup is finished when a fresh pass finds nothing — not when the first pass finishes.
-
-## Phase 0 — Measure
-
-Run every available tool. Record the numbers — they are the before/after baseline. If you can't measure it, you can't prove the cleanup helped.
+Two SSE parsers existed; `sdk-core`'s is canonical. Before deleting `legacySseParse`:
 
 ```bash
-# TypeScript (primary)
-npx tsc --noEmit 2>&1 | tail -5
-npx knip --reporter json 2>/dev/null              # unused exports / deps / files
-npx madge --circular src/ 2>&1                     # circular deps
-npx jscpd --min-lines 6 --reporters json src/      # duplication
-grep -rEn "as any|: any|: unknown|@ts-(ignore|expect-error)" src/ | wc -l
-grep -rEn "TODO|FIXME|HACK|XXX" src/ | wc -l
+grep -rn "legacySseParse\|legacy-sse" src tests scripts *.json → 0 hits (after 4 callers migrated)
+grep -rn "legacySseParse" --include=*.ts -e 'import(' src → 0            # dynamic import check
+node -e "console.log(require('./package.json').exports)" | grep -c legacy → 0  # not public API
+npx vitest run apps/sidecar/tests/sse.test.ts → 12/12 passed
 ```
-Python: `ruff check . --statistics`, `mypy .`, `vulture .`. Rust: `cargo clippy -- -W clippy::all`, `cargo +nightly udeps`.
 
-Read the configs — they are the codebase's own quality opinion: `tsconfig.json` (which strict flags are off?), `eslint.config.*` / `biome.json`, `knip.json` (what's ignored, and is the reason still true?).
+| # | path:line | What | LOC | Bytes | Dead-proof (command → count) | Capability proof (gate → k/n) | Carrying cost (LOC) | Saving realized (LOC) | Status |
+|---:|---|---|---:|---:|---|---|---:|---:|---|
+| 1 | `src/sse/legacy-sse.ts:1-186` | 2nd SSE parser | 186 | 6,402 | `grep -rn "legacySseParse" src tests scripts → 0` | `tests/sse.test.ts → 12/12` | 558 (186×3 sync sites) | 186 + 1.4s tsc | measured |
 
-Then **read, don't just scan**. Open the largest and highest-churn files (`git log --format= --name-only | sort | uniq -c | sort -rn | head`). Tools miss design smells — a 600-line function, a module everything imports, an abstraction with one caller. Add what you find to the work list.
+The carrying cost is 3 sync sites because every framing fix had to be applied to both parsers plus the shared fixture.
 
-Write every metric to `.agent/deep-clean-baseline.json`.
+## Worked example 2 — a Kept-on-purpose row
 
-## Phase 1 — Structure
+knip reported `src/cli/doctor.ts` as an unused file. It is the `bin.doctor` entry in `package.json:14` — knip's default config does not read that field.
 
-Graph-level changes. Do them first; every later phase reads the graph.
+| path:line | Looked dead because | Kept because | Status |
+|---|---|---|---|
+| `src/cli/doctor.ts:1` | knip `unused files` → 1 hit | `package.json:14` declares `bin.doctor`; `npx doctor --help` → exit 0 | measured |
 
-### 1a. Untangle circular dependencies
-For each cycle: read every file in it, understand why they reference each other, then break it — extract shared types to a leaf module, extract shared utils to a leaf, inject instead of import, or split a God module. Verify `madge --circular` returns 0.
+## Worked example 3 — breaking a cycle (Phase 1)
 
-### 1b. Canonicalize — one path per capability
-The goal is not just DRY; it is a single canonical implementation per capability, so the weaker copy can't win later.
-- Duplicate type shapes (`grep -rEn "^export (type|interface)" src/`) → one shared definition, used at 3+ sites.
-- Same logic implemented twice (`jscpd --min-lines 6 --min-tokens 50`) → if >80% token overlap and shared intent, extract. If coincidental (same shape, different intent), leave it.
-- Same capability with two entrypoints (two HTTP clients, two SSE parsers, two config loaders) → pick the canonical one, migrate callers, delete the other.
-- **Three is a pattern, two is a coincidence — EXCEPT for drift of the same concept.** Two spellings of the same env var (`PLATFORM_URL` vs `PLATFORM_API_URL`), two session-getters, two `agentSessionId` formats: drift IS the bug. Canonicalize at N=2 whenever the two instances name the same concept. Premature abstraction of coincidental shape is bad; tolerating named drift is worse.
+`madge --circular src/` → 3 cycles, all through `src/config/index.ts` re-exporting types from `src/client.ts`.
 
-Verify: tests + types pass.
+Fix: move the 4 shared interfaces to a leaf module `src/types.ts`; both sides import the leaf. Re-run: `npx madge --circular src/ → 0`. Gate: `npx tsc --noEmit → 0 errors`, `vitest run → 218/218`.
 
-## Phase 2 — Strengthen
+Ordering matters: doing this in Phase 2 would have meant knip re-scanned a graph that later changed, invalidating its dead-export list.
 
-### 2a. Weak types
-For each `any` / `unknown` / assertion:
-- External boundary (fetch, third-party return) → real type + runtime validation. `unknown` + narrowing is correct here; keep it.
-- Internal laziness → trace the value, write the real type.
-- Genuinely un-typeable → keep it, add a comment saying why. A documented assertion is acceptable; an undocumented one is not.
+## Worked example 4 — triage tables
 
-### 2b. Dead code
-`knip` / `vulture` / `cargo udeps`. Verify each finding is truly unused — tools miss dynamic imports, CLI entrypoints, test utilities. Unused exports in a published package may be public API; don't delete those. Unused files → `git rm`. Unused deps → drop and rebuild.
+Weak types, 34 `any` at Phase 0 → 6 at Phase 4:
 
-### 2c. Test integrity
-Cleanup that silently drops coverage is not cleanup.
-- When you delete code, delete the tests bound only to it.
-- When you keep a path, confirm a test exercises it — if not, that gap is a finding to hand to `/harden`.
-- Flag assertion-free tests (`toBeTruthy`, `toBeDefined`, `not.toThrow` as the only assertion) and `.skip` with no reason. Fix or delete — a test that cannot fail is dead weight.
+| Case | Count | Action taken |
+|---|---:|---|
+| external boundary (`fetch` JSON, 3rd-party return) | 11 | real type + zod validation at the boundary |
+| internal laziness | 17 | traced the value, wrote the type |
+| genuinely un-typeable (vm context, dynamic plugin) | 6 | kept + 1 comment naming why |
 
-### 2d. Error handling
-Do NOT blind-remove try-catch. For each block, name the specific error it handles:
-- External error (network, FS, input) → keep, type it properly.
-- Internal "shouldn't happen" → remove the catch, fix the root cause.
-- Silent swallow (`catch {}`) → a bug. Handle the error or let it propagate.
-- Fallback/default that hides a real failure → remove. Named, opted-in fallbacks are fine; silent ones are not.
-If you can't name the error, you don't understand the catch — leave it, add a comment, move on.
+Error handling, 22 `try/catch` reviewed:
 
-Verify: tests + types + build pass.
+| Case | Count | Action taken |
+|---|---:|---|
+| external error (network, FS, subprocess) | 13 | kept, error typed |
+| "shouldn't happen" internal | 5 | catch removed, root cause fixed |
+| `catch {}` silent swallow | 3 | treated as a bug; error propagates |
+| fallback hiding a real failure | 1 | removed; now throws with what is missing |
 
-## Phase 3 — Polish
+## Worked example 5 — filled Baseline-vs-after table
 
-### 3a. AI slop & stubs
-`grep -rEn "stub|placeholder|This (function|method|class)|comprehensive|robust|leverage|utilize" src/`. Stubs (`throw new Error('not implemented')`) → implement or delete the function. JSDoc that restates the code → delete. Motion comments ("replaced X", "previously did Y") → delete; git history owns that. WHY comments → keep, tighten.
+| Metric | Before | After | Δ | Command | Status |
+|---|---:|---:|---:|---|---|
+| type errors | 34 | 0 | −34 | `npx tsc --noEmit` | measured |
+| circular deps | 3 | 0 | −3 | `npx madge --circular src/` | measured |
+| duplication % | 6.1 | 1.8 | −4.3 | `npx jscpd --min-lines 6 --min-tokens 50 src/` | measured |
+| unused exports | 41 | 2 | −39 | `npx knip --reporter json` | measured |
+| `as any` / `: any` | 34 | 6 | −28 | `grep -rEn "as any\|: any" src/ \| wc -l` | measured |
+| tests passing | 218/218 | 231/231 | +13 | `npx vitest run` | measured |
+| typecheck wall time | 9.6s | 8.2s | −1.4s | `time npx tsc --noEmit`, n=3 median | measured |
 
-### 3b. Deprecated / legacy paths
-`grep -rEn "@deprecated|DEPRECATED|legacy|backward.?compat|compat shim" src/`. Caller exists → migrate it, then delete the old path. No caller → delete. Public API with external consumers → flag; it needs a version bump.
+## Worked example 6 — what a failed self-gate looks like
 
-### 3c. Format
-Run the project's own formatter only (`biome`, `prettier`, `rustfmt`, `ruff format`). Don't introduce a formatter the project doesn't use. Don't reformat files you didn't otherwise touch.
-
-Verify: tests + types + build + lint pass.
-
-## Phase 4 — Measure again
-
-Re-run every Phase 0 tool. Tabulate before / after / Δ for every metric, plus test pass rate and build status. Write `.agent/deep-clean-result.json`, append `.agent/progress.md`, append one line to `.agent/skill-runs.jsonl`.
-
-**If test pass rate dropped or the build broke: revert the last phase and investigate.** A cleanup that breaks things is worse than no cleanup.
-
-## What NOT to do
-
-- **Don't add complexity.** Cleanup removes. A new `Manager` class is not cleanup; `var`→`const` is. Rewriting a working callback to async/await is risk, not cleanup.
-- **Don't touch what you can't explain.** Unexplained try-catch, weird-looking module — leave it, add a TODO comment, move on.
-- **Don't break external contracts.** Public API signatures stay stable. Don't impose a formatter the project lacks. Don't reformat files you didn't otherwise touch.
-- **Don't delete load-bearing tests.** Assertion-free / `.skip`-no-reason tests yes; coverage you're keeping no.
-
-## Handoff
-
-**`/harden` is mandatory after Phase 4, not optional.** Cleanup changes the attack surface — re-validate it. Fan out the standard harden scans (residual-pattern, security-regression, race, credential, harness-coverage) against the now-cleaned state before declaring done.
-
-Optional follow-ups:
-- Codebase has an agent/harness worth evolving → `/meta-harness`.
-- Metric-driven improvement loop → `/evolve`.
+`6/8 passed — failed: 2 (capability proof), 5 (cost both sides).`
+Two deletions in `src/util/` cite `grep → 0` but name no covering test; carrying cost is `unmeasured (no per-file typecheck timing available)` on 4 rows. Both are reported, not hidden — an unreported gate failure is worse than a failed gate.

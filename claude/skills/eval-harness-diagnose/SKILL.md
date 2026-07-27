@@ -75,10 +75,13 @@ Do not stop at “rate limited” or “unavailable”; include the failed probe
 
 ## Then consider
 
-- `agent-eval` when the root cause requires package-internal changes.
-- `eval-engineering` when the case design or scoring contract must be rebuilt.
-- `evolve` when measurement is valid and the remaining failures belong to the agent.
-- `diagnose` when the failure is outside evaluation or benchmarking.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| Root cause is inside the eval package | `/agent-eval` | the module + the failing execution path |
+| Case design or the scoring contract must be rebuilt | `/eval-engineering` | the contaminated case IDs + what made them invalid |
+| Measurement is valid and ≥30% of cases still fail | `/evolve` | the validated harness + the per-case failure list |
+| The failure is outside evaluation (build, CI, product) | `/diagnose` | the failure set + the evidence it is not the ruler |
+| Harness proven clean and results unchanged | `/report` | the full per-case table + the contamination checks that passed |
 
 ## Log the run
 

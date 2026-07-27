@@ -35,8 +35,11 @@ See `references/full-reference.md` for the full CLI command catalog, auth patter
 
 ## Then consider
 
-- `ui-test` when the task is specifically QA of a product UI or PR.
-- `product-design-audit` when the user wants redesign decisions, not only browser evidence.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The task is QA of a product UI or a PR's visible change | `/ui-test` | the URL/route list + the auth state used |
+| ≥3 captured screenshots show layout, hierarchy, or state defects rather than automation gaps | `/product-design-audit` | the screenshot paths + the defect per screen |
+| Capture complete and 0 defects found | `/reflect` | the screenshot set + the flows proven |
 
 ## Log the run
 

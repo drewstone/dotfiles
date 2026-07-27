@@ -1,11 +1,6 @@
----
-name: evolve
-description: "Reference (not an invokable skill): the deterministic loop harness that makes /evolve safe to run unattended for hours — a fudge-proof measure.sh, decide.sh auto-keep/auto-revert, the 2x-noise-floor keep guard, checks.sh backpressure, and a resumable playbook.md."
----
+# Deterministic Loop Harness — worked example (non-normative)
 
-# Deterministic Loop Harness (evolve reference)
-
-A reference register for `/evolve`, not a skill you invoke.
+A reference register for `/evolve`, not a skill you invoke. `../SKILL.md` is the single normative contract; this file is the unattended-run implementation of its 2× noise-floor keep guard.
 
 It imports pi-autoresearch's enforcement rigor — a measurement the agent cannot fudge, and a keep/revert decision made by a script instead of by eye — into our richer loop (structured-hypothesis mode, the bootstrap-CI promotion gate, cross-project `experiments.jsonl`).
 
@@ -275,8 +270,6 @@ When both hold, round-counting stops mattering and the only real stop conditions
 That is exactly the state `/breakout` names in "endurance is a state property, not a willpower property": you can only refuse to stop when stopping costs nothing and the number can't be gamed.
 If either fact breaks — a field the agent must read to decide, a playbook a fresh agent can't resume from — the harness is under-built; fix the harness, not the agent.
 
-## Then consider
+## Chaining
 
-- `evolve` — this harness is the loop's engine; return to `../SKILL.md` for the diagnose → hypothesize → execute cycle that feeds it candidates, and stand up `measure.sh` + `playbook.md` before the first one.
-- `hypothesize` — when `ideas.md` is empty or all dead ends, research a fresh ranked field before the loop starves.
-- `breakout` — when even a fully-resumable, fudge-proof loop plateaus for 3+ rounds under 2% each: the ceiling is the target, not the code.
+Chaining is decided by the Dispatch table in `../SKILL.md`, not here. Stand up `measure.sh` + `playbook.md` before candidate 1; when `ideas.md` empties or 3 consecutive candidates score `d < 0.2`, that table sends you to `/hypothesize`.

@@ -56,9 +56,12 @@ Report the installed version and subpaths, connector and backend selected, produ
 
 ## Then consider
 
-- `hub-sdk-adoption` when exposing these connectors through the hosted Hub.
-- `harden` for credential, webhook, approval, or destructive-action changes.
-- `verify` before release.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The connector will be exposed through the hosted Hub (binary: it needs OAuth or a capability token) | `/hub-sdk-adoption` | the connector contract + the scopes it requires |
+| Diff touches credential storage, webhook signature checks, approval gates, or destructive actions | `/harden` | the changed file:line list + the destructive tool names |
+| ≥1 hand-rolled path duplicates a package primitive | `/simplify` | the duplicate call sites + the primitive that replaces them |
+| Runtime lands and ≥1 connector executes end-to-end | `/verify` | the connector name + the real (non-mocked) call output |
 
 ## Log the run
 
