@@ -1,11 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { MATRIX, runMatrix, subcommandOf, buildFixture } from "./rtk-fidelity.mjs";
+import {
+  MATRIX,
+  REGIMES,
+  runMatrix,
+  shapeKeyOf,
+  shapeTable,
+  shapeVerdicts,
+  fidelity,
+  announcesTruncation,
+  subcommandOf,
+  shapeOf,
+  commandOf,
+  buildFixture,
+} from "./rtk-fidelity.mjs";
 import { MUTANTS, writeMutant, HOOK_SOURCE } from "./rtk-guard-mutants.mjs";
 
 // Which hook to exercise. Defaults to the one in the repo; a mutant copy is
@@ -15,31 +28,31 @@ const hookPath = process.env.RTK_GUARD_HOOK_PATH
   ? resolve(process.env.RTK_GUARD_HOOK_PATH)
   : HOOK_SOURCE;
 
+const ask = (args, opts = {}) => {
+  const result = spawnSync(hookPath, args, { encoding: "utf8", input: "", ...opts });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result.stdout.trim();
+};
+
+const verdictMemo = new Map();
 const guardVerdict = (command, cwd) => {
-  const result = spawnSync(hookPath, ["--guard-check", command], { cwd, encoding: "utf8", input: "" });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return result.stdout.trim();
+  const key = `${cwd}\u0000${command}`;
+  if (!verdictMemo.has(key)) verdictMemo.set(key, ask(["--guard-check", command], { cwd }));
+  return verdictMemo.get(key);
 };
-
-const allowlistVerdict = (subcommand) => {
-  const result = spawnSync(hookPath, ["--allowlist-check", subcommand], { encoding: "utf8", input: "" });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return result.stdout.trim();
-};
-
-const safeVerdict = (original, rewritten) => {
-  const result = spawnSync(hookPath, ["--safe-check", original, rewritten], { encoding: "utf8", input: "" });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return result.stdout.trim();
-};
+const shapeVerdict = (command, cwd) => ask(["--shape-check", command], { cwd });
+const shapeOfCommand = (command, cwd) => ask(["--shape-of", command], { cwd });
+const hookShapeTable = () => ask(["--list-shapes"]);
+const safeVerdict = (original, rewritten) => ask(["--safe-check", original, rewritten]);
 
 // The PreToolUse contract itself: feed the hook the JSON Claude Code feeds it
 // and return the command string the Bash tool would actually run. Asserting on
 // this rather than on --guard-check means the property under test is what the
 // caller EXECUTES, not what an internal helper reports about it.
-const finalCommand = (command, cwd) => {
+const finalCommand = (command, cwd, env) => {
   const result = spawnSync(hookPath, [], {
     cwd,
+    env: env ?? process.env,
     encoding: "utf8",
     input: JSON.stringify({ tool_input: { command } }),
   });
@@ -60,109 +73,215 @@ const routesToRtk = (finalString, sub) =>
 
 const has = (bin) => spawnSync("sh", ["-c", `command -v ${bin}`]).status === 0;
 
-// Subcommands measured faithful in every form, so the guard has no grounds to
-// refuse them. Naming them here means a guard that "fixes" itself by refusing
-// everything fails this file instead of passing it — which is exactly how the
-// first version of this test managed to assert nothing at all.
-const MUST_REACH_RTK = ["diff", "show-ref"];
+// ---------------------------------------------------------------------------
+// The measurement, taken once per suite run and shared with the mutant children
+// through a file. This is sound because a mutant changes the HOOK; it cannot
+// change what rtk does, and the measurement is entirely about rtk. Re-measuring
+// it inside every mutant child would multiply a 17-second matrix by nine.
+// ---------------------------------------------------------------------------
+const cachePath =
+  process.env.RTK_GUARD_MEASUREMENT_CACHE ?? join(tmpdir(), `rtk-measurement-${process.pid}.json`);
 
-let matrixResults = null;
-const measure = () => {
-  if (!matrixResults) matrixResults = runMatrix();
-  return matrixResults;
+let measurement = null;
+const measure = async () => {
+  if (measurement) return measurement;
+  if (existsSync(cachePath)) {
+    measurement = JSON.parse(readFileSync(cachePath, "utf8"));
+    return measurement;
+  }
+  const full = await runMatrix();
+  const verdicts = shapeVerdicts(full);
+  measurement = {
+    results: full.map((r) => ({
+      command: r.command,
+      shape: r.shape,
+      regime: r.regime,
+      subcommand: subcommandOf(r.entry),
+      namesRevision: r.entry.namesRevision,
+      faithful: r.faithful,
+      reasons: r.reasons,
+      droppedLines: r.droppedLines,
+    })),
+    table: shapeTable(full),
+    allowed: [...verdicts]
+      .filter(([, v]) => v.allowed)
+      .map(([shape]) => shape)
+      .sort(),
+    why: Object.fromEntries([...verdicts].map(([shape, v]) => [shape, v.why])),
+  };
+  writeFileSync(cachePath, JSON.stringify(measurement));
+  return measurement;
 };
 
 // ---------------------------------------------------------------------------
 // The safety property. Iterates what the guard ALLOWS, not what it blocks: a
 // case the guard refuses proves nothing about rtk, so a test built from refused
 // cases measures nothing. Every case that does reach rtk is diffed against real
-// git on object, ref and path identity, and on silent truncation.
+// git on object/ref/path identity, silent truncation, and exit status.
+//
+// The expectation is DERIVED, not listed: an invocation must reach rtk exactly
+// when the measurement says its shape is faithful everywhere and it names no
+// revision. There is no hardcoded pair of subcommands any more, so the suite can
+// express both failures — letting an unfaithful invocation through, and refusing
+// one there is no evidence against.
 // ---------------------------------------------------------------------------
-test("every command the guard hands to rtk reports the same objects real git does", (t) => {
+test("every invocation reaches rtk exactly when the measurement says it may", async (t) => {
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
 
+  const { results, allowed } = await measure();
+  const allow = new Set(allowed);
+
   const fixture = buildFixture("verdict");
-  let results;
+  let rows;
   try {
-    results = measure().map((r) => ({ ...r, verdict: guardVerdict(r.command, fixture.repo) }));
+    rows = results.map((r) => ({ ...r, verdict: guardVerdict(r.command, fixture.repo) }));
   } finally {
     fixture.cleanup();
   }
 
-  const reachedRtk = results.filter((r) => r.verdict === "rtk");
-  const failures = reachedRtk.filter((r) => !r.faithful);
+  const reachedRtk = rows.filter((r) => r.verdict === "rtk");
 
+  // 1. nothing unfaithful reached rtk
   assert.deepEqual(
-    failures.map((r) => `${r.command}: ${r.reasons.join("; ")}`),
+    reachedRtk.filter((r) => !r.faithful).map((r) => `${r.command}: ${r.reasons.join("; ")}`),
     [],
     "the guard let these through to rtk, and rtk did not report what real git reports",
   );
 
-  // Non-vacuity, stated as an assertion rather than as a hope. The first
-  // version of this test skipped all 8 of its cases and ran zero assertions.
+  // 2. and nothing faithful was refused without a reason the measurement knows.
+  const wrong = [];
+  for (const r of rows) {
+    const expected = allow.has(r.shape) && !r.namesRevision ? "rtk" : "real";
+    if (r.verdict !== expected) {
+      wrong.push(
+        `${r.command} [${r.regime}] -> ${r.verdict}, expected ${expected} ` +
+          `(shape ${JSON.stringify(r.shape)}, measured ${allow.has(r.shape) ? "faithful" : "not faithful"}` +
+          `${r.namesRevision ? ", names a revision" : ""})`,
+      );
+    }
+  }
+  assert.deepEqual(wrong, [], "guard verdict disagrees with the measurement");
+
+  // 3. non-vacuity, stated as an assertion rather than as a hope. The first
+  //    version of this test skipped all 8 of its cases and ran zero assertions.
   assert.ok(
     reachedRtk.length > 0,
     "no matrix case reached rtk, so this test measured nothing about rtk's fidelity",
   );
+  assert.ok(allow.size > 0, "the measurement found no faithful invocation at all");
 
-  // And specifically: the subcommands with no measured defect must still be
-  // reaching rtk. This is what stops a blanket refusal from passing.
-  const expected = MATRIX.filter((e) => MUST_REACH_RTK.includes(subcommandOf(e))).map(
-    (e) => `git ${e.args.join(" ")}`,
-  );
-  const actual = reachedRtk.map((r) => r.command);
-  for (const command of expected) {
-    assert.ok(
-      actual.includes(command),
-      `${command} is faithful in every measured form but the guard refused it; ` +
-        `only ${reachedRtk.length}/${results.length} cases reached rtk`,
-    );
-  }
   const truncating = reachedRtk.filter((r) => r.droppedLines > 0);
   t.diagnostic(
-    `compared ${reachedRtk.length} of ${results.length} matrix cases against real git; ` +
+    `${rows.length} invocations measured across ${REGIMES.length} regimes; ` +
+      `${allow.size} shapes faithful everywhere; ${reachedRtk.length} reached rtk; ` +
       `${truncating.length} truncated detail and every one announced it`,
   );
 });
 
 // ---------------------------------------------------------------------------
-// The allowlist is a claim about rtk, so it has to match what rtk actually
-// does — in both directions. Blocking without evidence is how a guard becomes
-// useless; allowing despite evidence is how it becomes dangerous.
+// The table in the hook is a claim about rtk, so it must equal what measuring
+// rtk produces — in both directions. Blocking without evidence is how a guard
+// becomes useless; allowing despite evidence is how it becomes dangerous.
 // ---------------------------------------------------------------------------
-test("the allowlist matches measured rtk fidelity in both directions", (t) => {
+test("the hook's shape table is exactly the set of measured-faithful invocations", async (t) => {
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
 
-  const results = measure();
-  const bySubcommand = new Map();
-  for (const r of results) {
-    const sub = subcommandOf(r.entry);
-    if (!bySubcommand.has(sub)) bySubcommand.set(sub, []);
-    bySubcommand.get(sub).push(r);
-  }
+  const { table, allowed, why } = await measure();
+  const inHook = hookShapeTable().split("\n").filter(Boolean).sort();
+  const derived = [...allowed];
 
-  const wrong = [];
-  for (const [sub, cases] of bySubcommand) {
-    const allFaithful = cases.every((r) => r.faithful);
-    const listed = allowlistVerdict(sub) === "allowed";
-    if (allFaithful && !listed) {
-      wrong.push(`${sub}: faithful in all ${cases.length} measured forms but refused`);
-    }
-    if (!allFaithful && listed) {
-      const bad = cases.find((r) => !r.faithful);
-      wrong.push(`${sub}: on the allowlist but ${bad.command} -> ${bad.reasons.join("; ")}`);
-    }
-  }
-  assert.deepEqual(wrong, [], "allowlist disagrees with measurement");
+  const trustedWithoutEvidence = inHook.filter((s) => !derived.includes(s));
+  const evidenceIgnored = derived.filter((s) => !inHook.includes(s));
 
-  assert.ok(bySubcommand.size > 0, "no subcommands measured");
-  t.diagnostic(
-    `${bySubcommand.size} subcommands measured; allowed: ${[...bySubcommand.keys()]
-      .filter((s) => allowlistVerdict(s) === "allowed")
-      .join(" ")}`,
+  assert.deepEqual(
+    trustedWithoutEvidence.map((s) => `${s}  <- on the hook's table but ${why[s] ?? "never measured"}`),
+    [],
+    "the hook trusts invocations the measurement does not support",
   );
+  assert.deepEqual(
+    evidenceIgnored.map((s) => `${s}  <- faithful in every regime but the hook refuses it`),
+    [],
+    `the hook refuses invocations there is no evidence against.\n` +
+      `Regenerate with: node tests/rtk-fidelity.mjs --shapes\n${table}`,
+  );
+
+  assert.ok(derived.length > 0, "the measurement produced an empty table, so this asserted nothing");
+  t.diagnostic(`${derived.length} measured-faithful shapes, table matches the hook exactly`);
+});
+
+// ---------------------------------------------------------------------------
+// Two implementations compute the shape key — bash in the hook, JS in the
+// matrix — and the table is only meaningful if they agree. A bash extractor
+// that dropped flags would compute `diff` for `git diff --summary` and hand it
+// straight to rtk while the table still looked correct.
+// ---------------------------------------------------------------------------
+test("the hook computes the same shape key the measurement does", (t) => {
+  if (!has("git")) return t.skip("git not installed");
+
+  const fixture = buildFixture("shapekey");
+  const mismatches = [];
+  try {
+    for (const entry of MATRIX) {
+      const expected = shapeOf(entry);
+      const actual = shapeOfCommand(commandOf(entry), fixture.repo);
+      if (actual !== expected) mismatches.push(`${commandOf(entry)}: hook ${actual}, matrix ${expected}`);
+    }
+    // Shapes the matrix never produces, so the two implementations are compared
+    // on argument orders and separators as well as on the measured forms.
+    const extra = [
+      ["git diff --stat --cached", "diff --cached --stat"],
+      ["git diff --cached --stat", "diff --cached --stat"],
+      ["git --no-pager diff --stat", "diff --stat"],
+      ["git -C /tmp diff --stat", "diff --stat"],
+      ["git diff --stat | head -20", "diff --stat"],
+      ["git diff --stat && ls", "diff --stat"],
+      ["git diff -- --weird-file", "diff -- <path>"],
+      ["git diff a.txt b.txt", "diff <path>"],
+      ["git diff --stat --stat", "diff --stat --stat"],
+      ["git show-ref --heads --tags", "show-ref --heads --tags"],
+    ];
+    for (const [command, expected] of extra) {
+      const actual = shapeOfCommand(command, fixture.repo);
+      if (actual !== expected) mismatches.push(`${command}: hook ${actual}, expected ${expected}`);
+      const fromKey = shapeKeyOf(...(() => {
+        const words = command.replace(/\s*[|&].*$/, "").split(/\s+/).slice(1);
+        const globals = { "-C": 1, "-c": 1 };
+        let i = 0;
+        while (words[i]?.startsWith("-")) i += globals[words[i]] ? 2 : 1;
+        return [words[i], words.slice(i + 1)];
+      })());
+      if (fromKey !== expected) mismatches.push(`${command}: shapeKeyOf ${fromKey}, expected ${expected}`);
+    }
+
+    // The key is a SORTED flag list, and bash's `[[ a < b ]]` follows
+    // LC_COLLATE while the table was sorted in byte order. Under en_US.UTF-8 an
+    // unpinned sort puts `git diff -b -B` at "diff -b -B" and the table has
+    // "diff -B -b", so the guard's answer would depend on the caller's locale.
+    const localeCase = "git diff -b -B -w -W";
+    const localeExpected = shapeKeyOf("diff", ["-b", "-B", "-w", "-W"]);
+    const locales = spawnSync("locale", ["-a"], { encoding: "utf8" }).stdout || "";
+    const available = ["C", "POSIX", "en_US.UTF-8", "C.UTF-8", "en_AG.utf8"].filter(
+      (l) => locales.split("\n").some((x) => x.toLowerCase() === l.toLowerCase().replace("-", "")),
+    );
+    assert.ok(available.length > 1, `only ${available.length} locale(s) available to compare`);
+    for (const locale of available) {
+      const result = spawnSync(hookPath, ["--shape-of", localeCase], {
+        cwd: fixture.repo,
+        encoding: "utf8",
+        input: "",
+        env: { ...process.env, LC_ALL: locale },
+      });
+      if (result.stdout.trim() !== localeExpected) {
+        mismatches.push(`${localeCase} under LC_ALL=${locale}: hook ${result.stdout.trim()}, matrix ${localeExpected}`);
+      }
+    }
+  } finally {
+    fixture.cleanup();
+  }
+  assert.deepEqual(mismatches, [], "the hook and the matrix disagree about what invocation this is");
+  t.diagnostic(`${MATRIX.length} matrix cases + 10 hand-written forms agree on the shape key`);
 });
 
 // ---------------------------------------------------------------------------
@@ -171,13 +290,13 @@ test("the allowlist matches measured rtk fidelity in both directions", (t) => {
 // list instead of a hand-written one is what surfaced that rtk also rewrites
 // commit-graph, commit-tree, diff-files, diff-index, difftool, fetch-pack,
 // show-branch and show-index — none of which a hardcoded list contained.
-//
-// The invariant is not "everything is measured". It is: rtk may answer only
-// where there is evidence, and everything else falls through to real git.
 // ---------------------------------------------------------------------------
-test("rtk may answer only where measured; every other subcommand it rewrites is refused", (t) => {
+test("rtk may answer only where measured; every other invocation it rewrites is refused", async (t) => {
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
+
+  const { allowed } = await measure();
+  const allow = new Set(allowed);
 
   // git's own enumeration, not the prose of `git help -a`, whose description
   // lines would otherwise contribute words like "branches" and "addresses".
@@ -193,22 +312,21 @@ test("rtk may answer only where measured; every other subcommand it rewrites is 
   });
   assert.ok(rewritten.length > 0, "rtk rewrote nothing, so this test measured nothing");
 
-  const measured = new Set(MATRIX.map(subcommandOf));
   const fixture = buildFixture("failclosed");
   const violations = [];
   try {
     for (const sub of rewritten) {
-      const allowed = allowlistVerdict(sub) === "allowed";
-      if (allowed && !measured.has(sub)) {
-        violations.push(`${sub}: on the allowlist but never measured by the fidelity matrix`);
+      const bare = allow.has(sub);
+      if (shapeVerdict(`git ${sub}`, fixture.repo) !== (bare ? "allowed" : "refused")) {
+        violations.push(`${sub}: shape rule disagrees with the measurement on the bare form`);
       }
-      if (!allowed && guardVerdict(`git ${sub}`, fixture.repo) !== "real") {
-        violations.push(`${sub}: not on the allowlist but still reached rtk`);
+      if (!bare && guardVerdict(`git ${sub}`, fixture.repo) !== "real") {
+        violations.push(`${sub}: not measured faithful but still reached rtk`);
       }
       // ...and the same subcommand may not become reachable by writing it after
       // a shell separator. This is the round-3 hole, generalised over the whole
       // surface instead of over the eleven subcommands someone thought of.
-      if (!allowed) {
+      if (!bare) {
         const final = finalCommand(`git diff & git ${sub}`, fixture.repo);
         if (routesToRtk(final, sub)) {
           violations.push(`${sub}: reached rtk behind a bare & -> ${final}`);
@@ -220,10 +338,10 @@ test("rtk may answer only where measured; every other subcommand it rewrites is 
   }
   assert.deepEqual(violations, [], "guard is not fail-closed over the full git subcommand surface");
 
-  const unmeasured = rewritten.filter((sub) => !measured.has(sub));
+  const refused = rewritten.filter((sub) => !allow.has(sub));
   t.diagnostic(
     `${subcommands.length} git subcommands scanned; rtk rewrites ${rewritten.length}; ` +
-      `${measured.size} measured; ${unmeasured.length} unmeasured and therefore refused: ${unmeasured.join(" ")}`,
+      `${refused.length} have no measured-faithful bare form and are refused: ${refused.join(" ")}`,
   );
 });
 
@@ -237,7 +355,7 @@ test("rtk may answer only where measured; every other subcommand it rewrites is 
 // character as a separator, plus newline and tab, and asserts on the string the
 // caller would actually execute.
 // ---------------------------------------------------------------------------
-test("a refused subcommand cannot be hidden behind a separator the guard did not anticipate", (t) => {
+test("a refused invocation cannot be hidden behind a separator the guard did not anticipate", (t) => {
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
 
@@ -271,18 +389,28 @@ test("a refused subcommand cannot be hidden behind a separator the guard did not
       "xargs git branch -r",
       "nohup git branch -r",
       "GIT_PAGER=cat git branch -v",
+      // round 4: the same dodge, one level down — a refused FLAG behind a
+      // separator, rather than a refused subcommand
+      "git diff & git diff --summary",
+      "git diff & git diff --exit-code",
+      "git diff | git diff --dirstat",
+      "sleep 1 & git diff -- main",
     ];
     for (const command of named) {
       const final = finalCommand(command, fixture.repo);
       for (const sub of ["branch", "log", "status", "commit"]) {
         if (routesToRtk(final, sub)) leaks.push(`${JSON.stringify(command)} -> ${final}`);
       }
+      for (const flag of ["--summary", "--exit-code", "--dirstat"]) {
+        if (final.includes(`rtk git diff ${flag}`)) leaks.push(`${JSON.stringify(command)} -> ${final}`);
+      }
+      if (/rtk git diff --( |$)/.test(final)) leaks.push(`${JSON.stringify(command)} -> ${final}`);
     }
   } finally {
     fixture.cleanup();
   }
 
-  assert.deepEqual(leaks, [], "these strings hand a refused git subcommand to rtk");
+  assert.deepEqual(leaks, [], "these strings hand a refused git invocation to rtk");
 });
 
 // ---------------------------------------------------------------------------
@@ -316,6 +444,46 @@ test("the walk refuses any rewrite it cannot prove is a safe insertion of rtk", 
       ["stdbuf -oL git branch -r", "rtk stdbuf -oL git branch -r", "unsafe"],
       ["timeout -k 1 5 git branch -r", "rtk timeout -k 1 5 git branch -r", "unsafe"],
 
+      // round 4: the flag, not the subcommand, is what makes it unsafe
+      ["git diff --summary", "rtk git diff --summary", "unsafe"],
+      ["git diff --exit-code", "rtk git diff --exit-code", "unsafe"],
+      ["git diff --dirstat", "rtk git diff --dirstat", "unsafe"],
+      ["git diff --cumulative", "rtk git diff --cumulative", "unsafe"],
+      ["git diff --dirstat-by-file", "rtk git diff --dirstat-by-file", "unsafe"],
+      ["git diff -X", "rtk git diff -X", "unsafe"],
+      ["git diff --no-ignore-matching-lines", "rtk git diff --no-ignore-matching-lines", "unsafe"],
+      // rtk drops `--`, so the operand is re-read as a revision
+      ["git diff -- src/foo.ts", "rtk git diff -- src/foo.ts", "unsafe"],
+      // an unmeasured COMBINATION of two individually faithful flags
+      ["git diff --cached --stat", "rtk git diff --cached --stat", "unsafe"],
+      // a flag spelled with a value, which no measurement covers
+      ["git diff --stat=200", "rtk git diff --stat=200", "unsafe"],
+      ["git diff --unified=5", "rtk git diff --unified=5", "unsafe"],
+      // and the neighbours that ARE measured stay allowed
+      ["git diff --stat -- src/foo.ts", "rtk git diff --stat -- src/foo.ts", "safe"],
+      ["git diff --no-exit-code", "rtk git diff --no-exit-code", "safe"],
+      ["git diff -w", "rtk git diff -w", "safe"],
+
+      // git's own global options redirect git at a different repository or
+      // override its config, and no case in the matrix carries one, so they are
+      // unmeasured. Measured by hand at rtk 0.30.1: rtk DOES honour -C and
+      // --git-dir today. That is exactly why they are refused — "checked once
+      // by hand" is not what this guard runs on.
+      ["git --no-pager diff", "rtk git --no-pager diff", "unsafe"],
+      ["git -C /tmp diff", "rtk git -C /tmp diff", "unsafe"],
+      ["git --git-dir /x/.git diff", "rtk git --git-dir /x/.git diff", "unsafe"],
+      ["git -c a.b=c diff", "rtk git -c a.b=c diff", "unsafe"],
+      ["git --literal-pathspecs diff", "rtk git --literal-pathspecs diff", "unsafe"],
+      // an environment assignment in front of rtk is inherited by the git it
+      // spawns, so it can point that git at another repository
+      ["GIT_DIR=/x git diff", "GIT_DIR=/x rtk git diff", "unsafe"],
+      ["GIT_WORK_TREE=/x git diff", "GIT_WORK_TREE=/x rtk git diff", "unsafe"],
+      ["LC_ALL=C git diff", "LC_ALL=C rtk git diff", "unsafe"],
+      // and a wrapper word on either side of rtk
+      ["command git diff", "rtk command git diff", "unsafe"],
+      ["env git diff", "rtk env git diff", "unsafe"],
+      ["sudo git diff", "sudo rtk git diff", "unsafe"],
+
       // not a pure insertion: rtk changed something other than adding `rtk`
       ["git diff", "rtk git diff --stat", "unsafe"],
       ["git diff", "rtk git branch -r", "unsafe"],
@@ -325,7 +493,14 @@ test("the walk refuses any rewrite it cannot prove is a safe insertion of rtk", 
       // the caller wrote rtk themselves; the hook must not put its name on it
       ["rtk git log", "rtk git log -1", "unsafe"],
 
-      // opaque: only the shell knows what these are
+      // opaque: only the shell knows what these are. Written on an ALLOWED
+      // shape whose operand is not revision-shaped, so opacity is the only
+      // thing left to refuse them — otherwise this pair proves nothing.
+      ["git diff --stat $(echo HEAD)", "rtk git diff --stat $(echo HEAD)", "unsafe"],
+      ["git diff --stat `echo HEAD`", "rtk git diff --stat `echo HEAD`", "unsafe"],
+      ["git diff --stat $REV", "rtk git diff --stat $REV", "unsafe"],
+      ["git diff --stat ${x}", "rtk git diff --stat ${x}", "unsafe"],
+      ["git diff --stat <(cat f)", "rtk git diff --stat <(cat f)", "unsafe"],
       ["git diff $(echo HEAD)", "rtk git diff $(echo HEAD)", "unsafe"],
       ["git diff `echo HEAD`", "rtk git diff `echo HEAD`", "unsafe"],
       ["git diff $REV", "rtk git diff $REV", "unsafe"],
@@ -333,13 +508,14 @@ test("the walk refuses any rewrite it cannot prove is a safe insertion of rtk", 
       // quoting is not structure
       ["g'i't diff", "rtk g'i't diff", "safe"],
       ["g'i't branch -r", "rtk g'i't branch -r", "unsafe"],
+      ["git diff '--summary'", "rtk git diff '--summary'", "unsafe"],
 
       // an unresolvable git shape
       ["git", "rtk git", "unsafe"],
       ["git --wat diff", "rtk git --wat diff", "unsafe"],
       ["git -C", "rtk git -C", "unsafe"],
 
-      // revisions never reach rtk, even on an allowed subcommand
+      // revisions never reach rtk, even on an allowed shape
       ["git diff HEAD~1", "rtk git diff HEAD~1", "unsafe"],
       ["git diff-tree -r HEAD", "rtk git diff-tree -r HEAD", "unsafe"],
     ];
@@ -372,6 +548,23 @@ test("guard refuses any git command that names an explicit revision", (t) => {
       "git branch --contains 928295e",
       "git show HEAD@{1}",
       "git diff-tree --no-commit-id --name-only -r HEAD",
+      // On an ALLOWED shape, so the revision rule is the only thing refusing
+      // them. Without these every case here is already refused by the shape
+      // table and this test proves nothing about the revision rule.
+      "git diff --stat main",
+      "git diff --stat HEAD~1",
+      "git diff --stat origin/main",
+      "git diff --stat 928295e",
+      "git diff --stat -- main",
+      "git diff --stat -- HEAD",
+      "git show-ref main",
+      "git show-ref refs/heads/main",
+      // object spellings that `rev-parse ^{commit}` does not resolve, so only
+      // the colon rule catches them; all three reached rtk before it existed
+      "git diff --stat HEAD:a.txt",
+      "git diff --stat :/base",
+      "git diff --stat :0:a.txt",
+      "git diff --stat main^{tree}",
       // one unsafe part disqualifies the whole string
       "cd /tmp && git log -1 928295e | head -3",
       "pnpm build && git show abc1234",
@@ -386,15 +579,16 @@ test("guard refuses any git command that names an explicit revision", (t) => {
   }
 });
 
-test("guard refuses the subcommands measured unfaithful, with or without a revision", (t) => {
+test("guard refuses the invocations measured unfaithful, with or without a revision", (t) => {
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
   const fixture = buildFixture("unfaithful");
   try {
     // None of these name a revision, so a revision-shaped heuristic would let
-    // every one of them through. This is the exact gap the v3 guard had:
-    // `branch --no-merged` and `branch -r` carry no revision token, and rtk
-    // answers both with a branch that does not exist.
+    // every one of them through. The first block is the round-2 gap (the
+    // subcommand is what is wrong); the second is the round-4 gap (the
+    // subcommand is fine and the FLAG is what is wrong), and no rule that
+    // decides on the subcommand can refuse both.
     const refused = [
       "git branch",
       "git branch -v",
@@ -406,6 +600,7 @@ test("guard refuses the subcommands measured unfaithful, with or without a revis
       "git status",
       "git status --short",
       "git status --porcelain",
+      "git status -b --porcelain",
       "git stash list",
       "git worktree list",
       "git add -A",
@@ -414,6 +609,23 @@ test("guard refuses the subcommands measured unfaithful, with or without a revis
       "git pull origin main",
       "git fetch origin",
       "git log --oneline",
+
+      "git diff --summary",
+      "git diff --dirstat",
+      "git diff --dirstat-by-file",
+      "git diff --cumulative",
+      "git diff -X",
+      "git diff --exit-code",
+      "git diff --no-ignore-matching-lines",
+      "git diff --color",
+      "git diff --color-words",
+      "git diff -- src/foo.ts",
+      "git diff -- .",
+      "git diff --cached --stat",
+      "git diff --stat=200",
+      "git diff --output /tmp/x",
+      "git diff --quiet --summary",
+      "git show-ref --verify refs/heads/main",
     ];
     for (const command of refused) {
       assert.equal(guardVerdict(command, fixture.repo), "real", `expected refusal: ${command}`);
@@ -433,9 +645,15 @@ test("guard still lets rtk answer where it is faithful, and leaves non-git alone
       "git diff --stat",
       "git diff --cached",
       "git diff --name-only",
-      "git diff -- src/foo.ts",
+      "git diff --name-status",
+      "git diff --numstat",
+      "git diff --shortstat",
+      "git diff -w",
+      "git diff --stat -- src/foo.ts",
       "git diff --stat | head -20",
       "git show-ref",
+      "git show-ref --heads",
+      "git diff-tree --stdin",
       "pnpm install",
       "cargo build --release",
       "ls -la",
@@ -446,6 +664,44 @@ test("guard still lets rtk answer where it is faithful, and leaves non-git alone
   } finally {
     fixture.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Calibration: a predicate that cannot fail is not a measurement. Each check
+// below is shown to fire on the defect it exists for AND to stay quiet on the
+// benign case, so "106 shapes are faithful" means something.
+// ---------------------------------------------------------------------------
+test("the fidelity predicate fires on each defect and stays quiet otherwise", () => {
+  const ok = { out: "a.txt\n", err: "", code: 0 };
+  const same = (extra) => fidelity(ok, { ...ok, ...extra });
+
+  assert.ok(same({}).faithful, "identical results must be faithful");
+  assert.ok(!same({ code: 1 }).faithful, "a changed exit status must fail");
+  assert.ok(!same({ err: "fatal: nope\n" }).faithful, "output moved to stderr must fail");
+  assert.ok(!fidelity(ok, { out: "", err: "", code: 0 }).faithful, "an emptied answer must fail");
+  assert.ok(
+    !fidelity({ out: "", err: "", code: 0 }, { out: "ok\n", err: "", code: 0 }).faithful,
+    "an invented answer must fail",
+  );
+  assert.ok(!fidelity(ok, { out: "b.txt\n", err: "", code: 0 }).faithful, "a swapped path must fail");
+  assert.ok(!fidelity(ok, { out: "* \na.txt\n", err: "", code: 0 }).faithful, "a phantom entry must fail");
+
+  // the truncation escape hatch: open only for rtk's own notice, and NOT for
+  // the word appearing in a file's contents, which a diff can carry verbatim
+  assert.equal(announcesTruncation("... (more changes truncated)"), true);
+  assert.equal(announcesTruncation("[full diff: rtk git diff --no-compact]"), true);
+  assert.equal(announcesTruncation("... +3 more"), true);
+  assert.equal(announcesTruncation("+the changelog said the release notes were truncated"), false);
+  assert.equal(announcesTruncation("-  const label = 'truncated';"), false);
+  assert.equal(announcesTruncation(""), false);
+
+  // and it really is what permits the only detail loss the guard allows
+  const realDiff = { out: "+alpha\n+beta\n", err: "", code: 0 };
+  assert.ok(!fidelity(realDiff, { out: "+alpha\n", err: "", code: 0 }).faithful, "silent drop must fail");
+  assert.ok(
+    fidelity(realDiff, { out: "+alpha\n... (more changes truncated)\n", err: "", code: 0 }).faithful,
+    "announced drop is the one permitted loss",
+  );
 });
 
 test("guard recognises object names outside any repository", (t) => {
@@ -461,6 +717,53 @@ test("guard recognises object names outside any repository", (t) => {
 });
 
 // ---------------------------------------------------------------------------
+// The table describes one rtk build. Trusting it against a different build is
+// the same defect as trusting an unmeasured flag: the evidence is about
+// something else. Proved with a stub `rtk` on PATH rather than by uninstalling
+// the real one, so the gate is checked in both directions.
+// ---------------------------------------------------------------------------
+test("a rewrite from an rtk build the table was not measured against is refused", (t) => {
+  if (!has("git")) return t.skip("git not installed");
+  const dir = mkdtempSync(join(tmpdir(), "rtk-guard-version-"));
+  const measured = ask(["--measured-rtk-version"]);
+  try {
+    const stub = (version) => {
+      const path = join(dir, "rtk");
+      writeFileSync(
+        path,
+        `#!/usr/bin/env bash\n` +
+          `case "$1" in\n` +
+          `  --version) echo ${JSON.stringify(version)} ;;\n` +
+          `  rewrite) printf 'rtk %s' "$2" ;;\n` +
+          `esac\n`,
+      );
+      chmodSync(path, 0o755);
+      return { ...process.env, PATH: `${dir}:${process.env.PATH}` };
+    };
+
+    assert.equal(
+      finalCommand("git diff", dir, stub(measured)),
+      "rtk git diff",
+      "the measured rtk build must still be trusted",
+    );
+    for (const other of ["rtk 0.30.0", "rtk 0.31.0", "rtk 1.0.0", "rtk 0.30.1-beta", "rtk 0.30.1 (abc123)", "0.30.1"]) {
+      assert.equal(
+        finalCommand("git diff", dir, stub(other)),
+        "git diff",
+        `${JSON.stringify(other)} was never measured, so nothing may be handed to it`,
+      );
+    }
+    assert.equal(
+      finalCommand("git diff", dir, stub("")),
+      "git diff",
+      "an rtk that will not say what it is must not be trusted",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Does this file actually catch anything? Each mutant re-opens one specific
 // hole this guard has had, and the test that should catch it is run against the
 // mutant hook. A mutant that passes means the assertion protecting it is
@@ -468,10 +771,12 @@ test("guard recognises object names outside any repository", (t) => {
 //
 // Runs only in the parent: the child inherits RTK_GUARD_MUTATION_CHILD.
 // ---------------------------------------------------------------------------
-test("every mutant of the guard is caught by this file", (t) => {
+test("every mutant of the guard is caught by this file", async (t) => {
   if (process.env.RTK_GUARD_MUTATION_CHILD) return t.skip("child run");
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
+
+  await measure(); // so the children read the cache instead of re-measuring rtk
 
   const dir = mkdtempSync(join(tmpdir(), "rtk-guard-mutants-"));
   const survivors = [];
@@ -481,7 +786,12 @@ test("every mutant of the guard is caught by this file", (t) => {
       // NODE_TEST_CONTEXT tells node it is already a test worker; inheriting it
       // makes the grandchild report through the parent and exit 0 whatever it
       // found, which would make this whole test vacuous.
-      const env = { ...process.env, RTK_GUARD_HOOK_PATH: path, RTK_GUARD_MUTATION_CHILD: "1" };
+      const env = {
+        ...process.env,
+        RTK_GUARD_HOOK_PATH: path,
+        RTK_GUARD_MUTATION_CHILD: "1",
+        RTK_GUARD_MEASUREMENT_CACHE: cachePath,
+      };
       delete env.NODE_TEST_CONTEXT;
       const child = spawnSync(
         process.execPath,
