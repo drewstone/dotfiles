@@ -125,31 +125,56 @@ test("the allowlist matches measured rtk fidelity in both directions", (t) => {
 });
 
 // ---------------------------------------------------------------------------
-// The 14 subcommands rtk 0.30.1 rewrites are the guard's whole problem surface.
-// If rtk starts filtering a new one, it must not be silently trusted.
+// The guard must be fail-closed across the WHOLE git surface, not just the
+// subcommands someone remembered to list. Enumerating from `git help -a`
+// instead of a hand-written list is what surfaced that rtk also rewrites
+// commit-graph, commit-tree, diff-files, diff-index, difftool, fetch-pack,
+// show-branch and show-index — none of which a hardcoded list contained.
+//
+// The invariant is not "everything is measured". It is: rtk may answer only
+// where there is evidence, and everything else falls through to real git.
 // ---------------------------------------------------------------------------
-test("every git subcommand rtk rewrites is covered by the matrix", (t) => {
+test("rtk may answer only where measured; every other subcommand it rewrites is refused", (t) => {
+  if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
-  const candidates = [
-    "log", "status", "diff", "show", "branch", "stash", "worktree", "diff-tree",
-    "add", "commit", "push", "pull", "fetch", "show-ref", "reflog", "blame",
-    "rev-list", "rev-parse", "describe", "merge-base", "cat-file", "ls-files",
-    "shortlog", "whatchanged", "switch", "checkout", "restore", "merge",
-    "rebase", "cherry-pick", "revert", "tag", "remote", "config", "clean",
+
+  // git's own enumeration, not the prose of `git help -a`, whose description
+  // lines would otherwise contribute words like "branches" and "addresses".
+  const listed = spawnSync("git", ["--list-cmds=main,others"], { encoding: "utf8" }).stdout || "";
+  const subcommands = [
+    ...new Set(listed.split("\n").filter((word) => /^[a-z][a-z0-9-]+$/.test(word))),
   ];
-  const rewritten = candidates.filter((sub) => {
+  assert.ok(subcommands.length > 50, `git listed only ${subcommands.length} subcommands`);
+
+  const rewritten = subcommands.filter((sub) => {
     const r = spawnSync("rtk", ["rewrite", `git ${sub}`], { encoding: "utf8" });
     return r.status === 0 && r.stdout.trim() !== "" && r.stdout.trim() !== `git ${sub}`;
   });
-  const covered = new Set(MATRIX.map(subcommandOf));
-  const uncovered = rewritten.filter((sub) => !covered.has(sub));
-  assert.deepEqual(
-    uncovered,
-    [],
-    "rtk rewrites these git subcommands but the fidelity matrix never measures them",
-  );
   assert.ok(rewritten.length > 0, "rtk rewrote nothing, so this test measured nothing");
-  t.diagnostic(`rtk rewrites ${rewritten.length} git subcommands: ${rewritten.join(" ")}`);
+
+  const measured = new Set(MATRIX.map(subcommandOf));
+  const fixture = buildFixture("failclosed");
+  const violations = [];
+  try {
+    for (const sub of rewritten) {
+      const listed = allowlistVerdict(sub) === "allowed";
+      if (listed && !measured.has(sub)) {
+        violations.push(`${sub}: on the allowlist but never measured by the fidelity matrix`);
+      }
+      if (!listed && guardVerdict(`git ${sub}`, fixture.repo) !== "real") {
+        violations.push(`${sub}: not on the allowlist but still reached rtk`);
+      }
+    }
+  } finally {
+    fixture.cleanup();
+  }
+  assert.deepEqual(violations, [], "guard is not fail-closed over the full git subcommand surface");
+
+  const unmeasured = rewritten.filter((sub) => !measured.has(sub));
+  t.diagnostic(
+    `${subcommands.length} git subcommands scanned; rtk rewrites ${rewritten.length}; ` +
+      `${measured.size} measured; ${unmeasured.length} unmeasured and therefore refused: ${unmeasured.join(" ")}`,
+  );
 });
 
 test("guard refuses any git command that names an explicit revision", (t) => {
