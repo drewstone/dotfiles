@@ -3,9 +3,10 @@
 // One definition, used by both the audit table and the test, so the property
 // the hook claims and the property the test measures cannot drift apart.
 //
-// A token-saving filter may reformat and may drop DETAIL. It may never change
-// WHICH object, ref or path git reports on, invent one, or hide one. Three
-// checks, each independently sufficient to fail a command:
+// A token-saving filter may reformat and may drop DETAIL, and must say when it
+// does. It may never change WHICH object, ref or path git reports on, invent
+// one, or hide one. Four checks, each independently sufficient to fail a
+// command:
 //
 //   1. EMPTINESS   real prints nothing  <=>  rtk prints nothing.
 //                  Catches `branch -r` -> "* ", `stash list` -> "No stashes",
@@ -20,6 +21,20 @@
 //   3. NO PHANTOM  no rtk line is empty once git's branch decorations are
 //                  stripped. git never emits such a line; rtk emits "* " to
 //                  stand for a branch that does not exist.
+//   4. NO SILENT   every changed line real git printed is either printed by rtk
+//      TRUNCATION  too, or rtk says out loud that it truncated. This is the
+//                  only place detail loss is permitted, and only because it is
+//                  announced: on a 300-file diff rtk prints hunks for the first
+//                  ~174 files and then "... (more changes truncated)" plus
+//                  "[full diff: rtk git diff --no-compact]". Dropping the same
+//                  lines without that notice is a defect.
+//
+// Checks 2 and 4 draw the line this guard cares about. NAMES are the answer to
+// the question — "which files changed", "which branches exist" — so hiding one
+// is a wrong answer however loudly it is announced, which is why `git status`
+// truncating its untracked list to "... +2 more" fails check 2. Hunk TEXT is
+// detail about an answer already given in full, so announced truncation of it
+// is permitted. Silent truncation of it is not.
 //
 // Normalization applied to BOTH sides before check 2: `index <blob>..<blob>`
 // diff headers are removed. They name blobs, not commits, refs or paths; no
@@ -59,6 +74,26 @@ export const identityTokens = (text) => {
 export const phantomEntries = (text) =>
   text.split("\n").filter((line) => line.trim() !== "" && line.replace(/[*+\s]/g, "") === "");
 
+// The +/- lines of a diff, with rtk's indentation and its per-hunk "+1 -0"
+// counter excluded, so the two formats are comparable.
+export const changedLines = (text) => {
+  const lines = new Set();
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!/^[+-]/.test(line)) continue;
+    if (/^(\+\+\+|---)(\s|$)/.test(line)) continue; // file headers, not content
+    if (/^\+\d+ -\d+$/.test(line)) continue; // rtk's per-hunk change counter
+    lines.add(line);
+  }
+  return lines;
+};
+
+// rtk says so when it truncates. These are its exact notices, and the check
+// above has teeth precisely because rtk does NOT print them when it is showing
+// everything — verified on a one-line diff, which carries neither.
+export const announcesTruncation = (text) =>
+  /\(more changes truncated\)|--no-compact|\.\.\. \+\d+ more|\btruncated\b/.test(text);
+
 export const fidelity = (real, rtkOut) => {
   const reasons = [];
 
@@ -82,7 +117,22 @@ export const fidelity = (real, rtkOut) => {
   const phantoms = phantomEntries(rtkOut);
   if (phantoms.length) reasons.push(`${phantoms.length} phantom entry line(s) naming no ref`);
 
-  return { faithful: reasons.length === 0, reasons };
+  const rtkChanged = changedLines(rtkOut);
+  const droppedLines = [...changedLines(real)].filter((line) => !rtkChanged.has(line));
+  const truncationAnnounced = announcesTruncation(rtkOut);
+  if (droppedLines.length && !truncationAnnounced) {
+    reasons.push(
+      `${droppedLines.length} changed line(s) dropped with no truncation notice, ` +
+        `e.g. ${JSON.stringify(droppedLines[0].slice(0, 40))}`,
+    );
+  }
+
+  return {
+    faithful: reasons.length === 0,
+    reasons,
+    droppedLines: droppedLines.length,
+    truncationAnnounced,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -202,6 +252,40 @@ export const buildCleanFixture = (label) => {
   return { root, repo, env, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 };
 
+// 300 modified files, every changed line distinct. This is the scale at which
+// rtk's diff filter stops printing hunks and starts truncating, so it is where
+// the two claims the hook's header makes about `diff` — every path preserved,
+// truncation announced — are actually exercised. A one-file fixture proves
+// neither, which is why the header used to overstate what was measured.
+export const LARGE_DIFF_FILES = 300;
+
+export const buildLargeDiffFixture = (label) => {
+  const root = newRoot(label);
+  const repo = join(root, "repo");
+  const env = fixtureEnv();
+  spawnSync("git", ["init", "--quiet", "--initial-branch=main", repo], { env });
+  const git = (args) => spawnSync("git", args, { cwd: repo, encoding: "utf8", env });
+  git(["config", "core.hooksPath", "/dev/null"]);
+  git(["config", "user.email", "t@example.invalid"]);
+  git(["config", "user.name", "Test"]);
+  git(["config", "commit.gpgsign", "false"]);
+  for (let n = 1; n <= LARGE_DIFF_FILES; n += 1) {
+    writeFileSync(join(repo, `big${n}.txt`), `alpha\nbefore-${n}\nomega\n`);
+  }
+  git(["add", "-A"]);
+  git(["commit", "--quiet", "-m", "base"]);
+  for (let n = 1; n <= LARGE_DIFF_FILES; n += 1) {
+    writeFileSync(join(repo, `big${n}.txt`), `alpha\nafter-${n}\nomega\n`);
+  }
+  return { root, repo, env, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+};
+
+const FIXTURE_BUILDERS = {
+  default: buildFixture,
+  clean: buildCleanFixture,
+  large: buildLargeDiffFixture,
+};
+
 // ---------------------------------------------------------------------------
 // The matrix: every git subcommand rtk 0.30.1 rewrites, in the forms an agent
 // actually types. Enumerated by running `rtk rewrite "git <sub>"` across the
@@ -210,7 +294,8 @@ export const buildCleanFixture = (label) => {
 //   add commit push pull fetch show-ref
 // Every one of those 14 appears below.
 //
-//   clean:    run against the clean fixture instead of the populated one
+//   fixture:  which repo shape to run in — "default", "clean" (nothing staged,
+//             modified or untracked) or "large" (300 modified files)
 //   mutating: needs its own fixture pair, because running real git first would
 //             change the state rtk is then measured against
 //   setup:    git commands run in BOTH copies first. `git push` against an
@@ -220,7 +305,7 @@ export const buildCleanFixture = (label) => {
 //             push, so the case has to create that state first.
 // ---------------------------------------------------------------------------
 
-const c = (args, opts = {}) => ({ args, clean: false, mutating: false, setup: [], ...opts });
+const c = (args, opts = {}) => ({ args, fixture: "default", mutating: false, setup: [], ...opts });
 
 export const MATRIX = [
   c(["branch"]),
@@ -232,8 +317,8 @@ export const MATRIX = [
   c(["branch", "--merged"]),
   c(["branch", "--list", "extra/*"]),
   c(["branch", "--show-current"]),
-  c(["branch", "-r"], { clean: true }),
-  c(["branch", "--no-merged"], { clean: true }),
+  c(["branch", "-r"], { fixture: "clean" }),
+  c(["branch", "--no-merged"], { fixture: "clean" }),
 
   c(["log", "--oneline", "-5"]),
   c(["log", "-1"]),
@@ -247,16 +332,22 @@ export const MATRIX = [
   c(["status", "--short"]),
   c(["status", "--porcelain"]),
   c(["status", "-b", "--porcelain"]),
-  c(["status"], { clean: true }),
-  c(["status", "--short"], { clean: true }),
-  c(["status", "--porcelain"], { clean: true }),
+  c(["status"], { fixture: "clean" }),
+  c(["status", "--short"], { fixture: "clean" }),
+  c(["status", "--porcelain"], { fixture: "clean" }),
 
   c(["diff"]),
   c(["diff", "--stat"]),
   c(["diff", "--cached"]),
   c(["diff", "--name-only"]),
   c(["diff", "--name-status"]),
-  c(["diff"], { clean: true }),
+  c(["diff"], { fixture: "clean" }),
+  // The scale at which rtk's diff filter truncates. Without these three the
+  // matrix only ever measured a one-file diff, and the hook's claim about what
+  // `diff` preserves was true of the fixture and false of a real diff.
+  c(["diff"], { fixture: "large" }),
+  c(["diff", "--stat"], { fixture: "large" }),
+  c(["diff", "--name-only"], { fixture: "large" }),
 
   c(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]),
 
@@ -265,7 +356,7 @@ export const MATRIX = [
   c(["show-ref", "--tags"]),
 
   c(["stash", "list"]),
-  c(["stash", "list"], { clean: true }),
+  c(["stash", "list"], { fixture: "clean" }),
 
   c(["worktree", "list"]),
 
@@ -297,15 +388,20 @@ const capture = (bin, args, repo, env) => {
 // cases get an independent, byte-identical pair so real git and rtk each act on
 // untouched state.
 export const runMatrix = (matrix = MATRIX) => {
-  const shared = { false: null, true: null };
+  const shared = {};
   const results = [];
+  const build = (entry, label) => {
+    const builder = FIXTURE_BUILDERS[entry.fixture];
+    if (!builder) throw new Error(`matrix entry names an unknown fixture: ${entry.fixture}`);
+    return builder(label);
+  };
   try {
     for (const entry of matrix) {
       let realOut;
       let rtkOut;
       if (entry.mutating) {
-        const a = entry.clean ? buildCleanFixture("mutA") : buildFixture("mutA");
-        const b = entry.clean ? buildCleanFixture("mutB") : buildFixture("mutB");
+        const a = build(entry, "mutA");
+        const b = build(entry, "mutB");
         try {
           for (const step of entry.setup) {
             capture("git", step, a.repo, a.env);
@@ -318,10 +414,8 @@ export const runMatrix = (matrix = MATRIX) => {
           b.cleanup();
         }
       } else {
-        const key = String(entry.clean);
-        if (!shared[key]) {
-          shared[key] = entry.clean ? buildCleanFixture("ro") : buildFixture("ro");
-        }
+        const key = entry.fixture;
+        if (!shared[key]) shared[key] = build(entry, "ro");
         const f = shared[key];
         realOut = capture("git", ["--no-pager", ...entry.args], f.repo, f.env);
         rtkOut = capture("rtk", ["git", ...entry.args], f.repo, f.env);
