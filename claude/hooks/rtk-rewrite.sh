@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rtk-hook-version: 3
+# rtk-hook-version: 5
 # RTK Claude Code hook — rewrites commands to use rtk for token savings.
 # Requires: rtk >= 0.23.0, jq
 #
@@ -7,55 +7,102 @@
 # which is the single source of truth (src/discover/registry.rs).
 # To add or change rewrite rules, edit the Rust registry — not this file.
 #
-# EXCEPT for the revision guard below, which lives here because it protects
-# against a defect in the Rust side that this hook cannot fix at the source.
+# EXCEPT for the correctness guard below, which lives here because it protects
+# against defects in the Rust side that this hook cannot fix at the source.
 
 # ---------------------------------------------------------------------------
-# Revision guard
+# Correctness guard
 #
 # Invariant: a token-saving filter may drop output DETAIL. It may NEVER change
-# WHICH object git reports on.
+# WHICH object or ref git reports on, invent one, or hide one.
 #
-# rtk 0.30.1 violates that. Its `git log` filter suppresses merge commits, so a
-# named merge commit vanishes from the result set and the caller is silently
-# handed a DIFFERENT commit. Measured in a repo whose 928295e is a merge:
+# rtk 0.30.1 violates that in most of the git subcommands it filters. Every row
+# below is measured, real git vs `rtk git`, by tests/rtk-fidelity.mjs — which is
+# the same code the test suite runs, so this table cannot drift from the check:
 #
-#   git log --no-walk --oneline 928295e
-#     real -> "928295e Merge pull request #26 from tangle-network/..."
-#     rtk  -> (no output at all)
+#   git log ...            merge commits are dropped from the walk, so a named
+#                          merge vanishes and a DIFFERENT commit is returned
+#   git branch -v/-vv      every sha dropped, a fabricated "git branch" header
+#                          added; output is indistinguishable from plain
+#                          `git branch`, so the caller cannot tell it asked for
+#                          shas and got none
+#   git branch -r          real prints 0 bytes, rtk prints "* " — a branch that
+#                          does not exist
+#   git branch --no-merged the same phantom "* " prepended to the real answer,
+#                          so "everything is merged" reads as "one unmerged"
+#   git branch -a          13 of 13 origin/* refs absent, so a pushed branch is
+#                          displayed exactly like an unpushed one
+#   git status             untracked list truncated at 10 ("... +2 more"), so
+#                          paths git named are hidden
+#   git status --short     on a CLEAN tree real prints 0 bytes and rtk prints
+#   git status --porcelain "ok", which inverts the standard
+#                          `[ -z "$(git status --porcelain)" ]` clean check
+#   git stash list         real prints 0 bytes, rtk prints "No stashes"
+#   git show --name-only   hides the commit sha and the refs it reports on
+#   git worktree list      absolute paths rewritten to a literal "~/..."
+#   git commit             the created commit's sha is replaced by "ok"
+#   git push               "a1b2c3d..e4f5g6h main -> main" becomes "ok main"
+#   git pull               which ref advanced is replaced by "ok (up-to-date)"
+#   git fetch              real prints 0 bytes, rtk prints "ok fetched"
+#   git add                real prints 0 bytes, rtk invents a file-count summary
+#                          (and counts the whole index, not what was added)
 #
-#   git log -1 --format='%H %s' 928295e
-#     real -> 928295edde6eb51c6faf16d904d6dc6601c52713 Merge pull request #26...
-#     rtk  -> 047e4d53f42c1ed3eb4f82a1f82dac3590fddae2 feat(us-tax): exam grown...
+# Faithful in every measured form, and the only subcommands rtk may answer:
+#   git diff (incl. --stat/--cached/--name-only/--name-status, renames,
+#             deletes, binaries, clean tree), git show-ref, git diff-tree.
 #
-#   git log --oneline -8 origin/main
-#     real -> 8 commits, 2 of them merges
-#     rtk  -> the 2 merges omitted and 2 older commits back-filled, so the count
-#             matches and the content does not
+# Two earlier shapes of this guard were wrong, both in the same direction:
+#   v3 denylisted history subcommands (log/whatchanged/shortlog). rtk rewrites
+#      14 subcommands and only ONE of those 3 was among them, so the entire
+#      `git branch` family stayed open.
+#   v4 inverted to an allowlist but seeded it from assumption rather than
+#      measurement: `status` and `add` were on it, and both are unfaithful.
+# The allowlist below is derived from the measured matrix, not from judgement.
 #
-# rtk reproduces `git log --no-merges` exactly, and stops doing so only when
-# --merges is passed explicitly. So the guard is:
+# Two layers:
 #
-#   1. never hand a history listing (log / whatchanged / shortlog) to rtk, with
-#      or without an explicit revision — the substitution needs no revision to
-#      happen; and
-#   2. never hand rtk any other git command that names an explicit revision
-#      (object name, ref, HEAD~n, range), so a future filter regression in
-#      show / diff / branch / stash cannot corrupt a git fact either.
+#   1. Revision guard (pre). Never hand rtk a git command that names an explicit
+#      revision — object name, ref, HEAD~n, range. Cheap, and it holds for
+#      subcommands nobody has audited yet.
+#
+#   2. Subcommand allowlist (post). Run `rtk rewrite`, then inspect what it
+#      ACTUALLY produced. If the rewritten string routes any git subcommand
+#      outside RTK_GUARD_ALLOWED_SUBCOMMANDS to rtk, throw the whole rewrite
+#      away. Checking rtk's real output rather than predicting it means a future
+#      rtk that starts filtering `git rev-parse` is refused by default, and a
+#      subcommand rtk chooses not to touch is not needlessly blocked.
 #
 # Blocked commands are not rewritten at all: real git runs and the caller gets
-# the truth. The cost is output verbosity on those commands. That trade is not
-# negotiable — an agent that reads a rewritten history draws wrong conclusions
-# and has no way to notice.
+# the truth. The cost is output verbosity. That trade is not negotiable — an
+# agent that reads a rewritten history draws wrong conclusions and has no way to
+# notice.
 #
 # Set RTK_HOOK_DEBUG=1 to trace guard decisions on stderr.
-# Run `rtk-rewrite.sh --guard-check '<command>'` to print allow/block for one
-# command string (used by tests/rtk-rewrite.test.mjs).
+# Run `rtk-rewrite.sh --guard-check '<command>'` to print rtk/real for one
+# command string: "rtk" means rtk's output reaches the caller, "real" means it
+# does not. This is the END-TO-END decision, both layers included.
+# Run `rtk-rewrite.sh --allowlist-check '<subcommand>'` to print allowed/refused
+# for layer 2 alone. Both are what tests/rtk-rewrite.test.mjs asserts against.
 # ---------------------------------------------------------------------------
 
-# git subcommands whose rtk filter is known to remove commits from the result
-# set. Never rewritten, regardless of arguments.
-RTK_GUARD_HISTORY_SUBCOMMANDS="log whatchanged shortlog"
+# git subcommands whose rtk filter preserves every object, ref and path real git
+# reports, in every form in the measured matrix. Nothing else is handed to rtk.
+#
+#   diff       reflowed to diffstat + hunks; every changed path and changed line
+#              preserved, including renames, deletes and binaries (the
+#              `index <blob>..<blob>` header is dropped, which names blobs, not
+#              the commits, refs or paths under discussion)
+#   show-ref   byte-identical in every form measured
+#   diff-tree  faithful; in practice it also always names a tree-ish, so layer 1
+#              refuses it independently of this list
+#
+# Everything else rtk rewrites is refused: branch, log, show, status, stash,
+# worktree, add, commit, push, pull, fetch. Each has at least one measured case
+# where it hides, invents or substitutes an object, ref or path — see the table
+# above. tests/rtk-rewrite.test.mjs asserts this list matches the measurement in
+# BOTH directions, so a subcommand cannot be blocked without evidence, and
+# cannot be allowed once evidence exists against it.
+RTK_GUARD_ALLOWED_SUBCOMMANDS="diff show-ref diff-tree"
 
 # git subcommands whose positional arguments are free-form text (commit
 # messages, remotes, paths, config keys) rather than revisions. Scanning these
@@ -119,17 +166,23 @@ rtk_guard_token_is_revision() {
   return 1
 }
 
-# True when this single command segment must not be rewritten.
-rtk_guard_segment_blocks() {
+# Parse one command segment. When it invokes git — directly, behind a prefix
+# such as `command`/`env`, or behind `rtk` — set RTK_GUARD_SUBCOMMAND to the git
+# subcommand and RTK_GUARD_ARGS to everything after it, then return 0.
+# Return 1 for any segment that does not invoke git.
+rtk_guard_parse_git_segment() {
   local -a words
   read -r -a words <<<"$1"
   local count=${#words[@]} i=0
+
+  RTK_GUARD_SUBCOMMAND=""
+  RTK_GUARD_ARGS=()
 
   # Skip leading environment assignments and command prefixes.
   while [ "$i" -lt "$count" ]; do
     case "${words[$i]}" in
       *=*) i=$((i + 1)) ;;
-      command | builtin | env | sudo | nice | time | exec | \\command | \\git) i=$((i + 1)) ;;
+      command | builtin | env | sudo | nice | time | exec | rtk | \\command | \\git) i=$((i + 1)) ;;
       *) break ;;
     esac
   done
@@ -142,7 +195,7 @@ rtk_guard_segment_blocks() {
   i=$((i + 1))
 
   # Skip git global options to reach the subcommand.
-  local subcommand="" word
+  local word
   while [ "$i" -lt "$count" ]; do
     word="${words[$i]}"
     case "$word" in
@@ -154,56 +207,110 @@ rtk_guard_segment_blocks() {
         fi
         ;;
       *)
-        subcommand="$word"
+        RTK_GUARD_SUBCOMMAND="$word"
         i=$((i + 1))
         break
         ;;
     esac
   done
-  [ -n "$subcommand" ] || return 1
+  [ -n "$RTK_GUARD_SUBCOMMAND" ] || return 1
 
-  if rtk_guard_word_in_list "$subcommand" "$RTK_GUARD_HISTORY_SUBCOMMANDS"; then
-    [ -n "$RTK_HOOK_DEBUG" ] && echo "[rtk-guard] block: history listing 'git $subcommand'" >&2
-    return 0
-  fi
-
-  if rtk_guard_word_in_list "$subcommand" "$RTK_GUARD_UNSCANNED_SUBCOMMANDS"; then
-    return 1
-  fi
-
-  local arg
   while [ "$i" -lt "$count" ]; do
-    arg="${words[$i]}"
+    RTK_GUARD_ARGS+=("${words[$i]}")
     i=$((i + 1))
-    [ "$arg" = "--" ] && break # everything after -- is a pathspec
-    if rtk_guard_token_is_revision "$arg"; then
-      [ -n "$RTK_HOOK_DEBUG" ] && echo "[rtk-guard] block: 'git $subcommand' names revision '$arg'" >&2
-      return 0
-    fi
   done
-
-  return 1
+  return 0
 }
 
-# True when any git segment anywhere in the command string must not be
-# rewritten. Blocking the whole string is intentional: rtk rewrites the string
-# as a unit, so a single unsafe segment disqualifies all of it.
-rtk_guard_blocks_rewrite() {
-  local segment
+# Split a command string into segments on shell separators. rtk rewrites the
+# string as a unit, so every segment has to be judged.
+rtk_guard_segments() {
+  printf '%s\n' "$1" | sed -e 's/||/\n/g' -e 's/&&/\n/g' -e 's/[;|()`]/\n/g'
+}
+
+# Layer 1 — true when any git segment names an explicit revision.
+rtk_guard_names_revision() {
+  local segment arg
   RTK_GUARD_IN_REPO=0
   git rev-parse --git-dir >/dev/null 2>&1 && RTK_GUARD_IN_REPO=1
 
   while IFS= read -r segment; do
-    if rtk_guard_segment_blocks "$segment"; then
-      return 0
-    fi
-  done < <(printf '%s\n' "$1" | sed -e 's/||/\n/g' -e 's/&&/\n/g' -e 's/[;|()`]/\n/g')
+    rtk_guard_parse_git_segment "$segment" || continue
+    rtk_guard_word_in_list "$RTK_GUARD_SUBCOMMAND" "$RTK_GUARD_UNSCANNED_SUBCOMMANDS" && continue
+
+    for arg in "${RTK_GUARD_ARGS[@]}"; do
+      [ "$arg" = "--" ] && break # everything after -- is a pathspec
+      if rtk_guard_token_is_revision "$arg"; then
+        [ -n "$RTK_HOOK_DEBUG" ] &&
+          echo "[rtk-guard] refuse: 'git $RTK_GUARD_SUBCOMMAND' names revision '$arg'" >&2
+        return 0
+      fi
+    done
+  done < <(rtk_guard_segments "$1")
 
   return 1
 }
 
+# Layer 2 — true when the string rtk PRODUCED routes some git subcommand outside
+# the allowlist to rtk. Judging rtk's actual output rather than guessing at it
+# is what makes this hold for subcommands rtk has not filtered yet.
+rtk_guard_rewrite_is_unsafe() {
+  local segment
+  while IFS= read -r segment; do
+    case "$segment" in
+      *rtk*) ;;
+      *) continue ;; # segment does not invoke rtk, so rtk cannot answer for it
+    esac
+    rtk_guard_parse_git_segment "$segment" || continue
+    if ! rtk_guard_word_in_list "$RTK_GUARD_SUBCOMMAND" "$RTK_GUARD_ALLOWED_SUBCOMMANDS"; then
+      [ -n "$RTK_HOOK_DEBUG" ] &&
+        echo "[rtk-guard] refuse: rtk would answer 'git $RTK_GUARD_SUBCOMMAND', which is not on the allowlist" >&2
+      return 0
+    fi
+  done < <(rtk_guard_segments "$1")
+
+  return 1
+}
+
+# The whole decision. Prints the rewritten command on stdout and returns 0 when
+# rtk may answer; returns 1 when the caller must be given real git.
+rtk_guard_rewrite() {
+  local command="$1" rewritten
+
+  if rtk_guard_names_revision "$command"; then
+    return 1
+  fi
+
+  rewritten=$(rtk rewrite "$command" 2>/dev/null) || return 1
+  [ "$command" = "$rewritten" ] && return 1
+
+  if rtk_guard_rewrite_is_unsafe "$rewritten"; then
+    return 1
+  fi
+
+  printf '%s' "$rewritten"
+  return 0
+}
+
 if [ "$1" = "--guard-check" ]; then
-  if rtk_guard_blocks_rewrite "$2"; then echo block; else echo allow; fi
+  if ! command -v rtk &>/dev/null; then
+    echo real
+    exit 0
+  fi
+  if rtk_guard_rewrite "$2" >/dev/null; then echo rtk; else echo real; fi
+  exit 0
+fi
+
+# Layer 2 in isolation: may rtk answer for this git subcommand at all? Distinct
+# from --guard-check, which also reflects the revision guard. The test needs
+# both, so that a subcommand refused only because it happens to name a revision
+# is not mistaken for one refused because its filter is unfaithful.
+if [ "$1" = "--allowlist-check" ]; then
+  if rtk_guard_word_in_list "$2" "$RTK_GUARD_ALLOWED_SUBCOMMANDS"; then
+    echo allowed
+  else
+    echo refused
+  fi
   exit 0
 fi
 
@@ -237,20 +344,9 @@ if [ -z "$CMD" ]; then
   exit 0
 fi
 
-# Correctness beats compaction: never let rtk answer a question about a
-# specific git object. See the revision guard notes at the top of this file.
-if rtk_guard_blocks_rewrite "$CMD"; then
-  exit 0
-fi
-
-# Delegate all rewrite logic to the Rust binary.
-# rtk rewrite exits 1 when there's no rewrite — hook passes through silently.
-REWRITTEN=$(rtk rewrite "$CMD" 2>/dev/null) || exit 0
-
-# No change — nothing to do.
-if [ "$CMD" = "$REWRITTEN" ]; then
-  exit 0
-fi
+# Correctness beats compaction: never let rtk answer a question whose answer is
+# which object or ref git is reporting on. See the guard notes at the top.
+REWRITTEN=$(rtk_guard_rewrite "$CMD") || exit 0
 
 ORIGINAL_INPUT=$(echo "$INPUT" | jq -c '.tool_input')
 UPDATED_INPUT=$(echo "$ORIGINAL_INPUT" | jq --arg cmd "$REWRITTEN" '.command = $cmd')
