@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Identity guard: refuse any commit not authored by Drew's real identity.
+# A stray repo-local override (a test harness once left user.name=release-test
+# in a REAL checkout) makes GitHub auto-insert "Co-authored-by: release-test
+# <release@test.invalid>" into every squash merge — five develop squashes
+# carry that line permanently (2026-07-29). Fixture repos are unaffected:
+# they set core.hooksPath=/dev/null (the sanctioned pattern), or export
+# GIT_ALLOW_TEST_IDENTITY=1.
+if [ "${GIT_ALLOW_TEST_IDENTITY:-0}" != "1" ]; then
+  commit_email="$(git config user.email || true)"
+  case "$commit_email" in
+    drewstone329@gmail.com) ;;
+    *)
+      echo "pre-commit: refusing commit as '$(git config user.name || echo '?')' <${commit_email:-unset}>." >&2
+      echo "This repo has a local identity override; run:" >&2
+      echo "  git config --local --unset user.name; git config --local --unset user.email" >&2
+      echo "Fixture repos: set core.hooksPath=/dev/null or GIT_ALLOW_TEST_IDENTITY=1." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
 
 HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
