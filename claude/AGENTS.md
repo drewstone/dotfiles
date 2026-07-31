@@ -56,6 +56,18 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
+### Never convert a build instruction into a plan
+
+Measured failure, one session: 45 human turns, 10 corrective — and **seven were the same sentence** ("finish the work already", "why do I have to repeat myself", "you've treated it like something you're not going to finish", "stop asking and take the lead"). The cause was not laziness or misunderstanding the ask. It was preferring a **defensible increment** over the **requested deliverable**: shipping the mechanism (a proof-of-concept, one calibrated example, a design doc), presenting it as progress, and filing the actual thing under "Next" — then asking A-or-B on top of an instruction already given.
+
+Once the user has said WHAT to build, the turn ends with **the built thing** or an explicit **blocked-on-X**. It does not end with options, and the deliverable never appears in your own Next list.
+
+- **A tier/phase/rung you name in a doc must be authored in the same change.** Writing "L4 — full product" into a design doc and then citing it as a gap for six turns is inventing your own backlog and calling it architecture. If you can't build it now, don't name it.
+- **"Build N things" means N, not one plus a pattern.** One worked example with "the rest follow this shape" is a plan wearing a deliverable's clothes.
+- **Augment beats append when the ask is "make X better."** Adding new items beside the weak ones is the easy move that dodges the request; rewriting the existing ones in place is the request. Notice which you're reaching for.
+- **Scale the fan-out to the ask, not to your comfort.** If the work is 30 items, dispatch 30 — in parallel, in worktrees, delegated to cheaper models with you reviewing. Serial-and-partial while the user waits is the failure.
+- **Re-read the last instruction before writing the final block.** If your Next list restates something the user already told you to do, delete the list and go do it.
+
 ## Ground-truth harness FIRST — see the whole system before you touch it
 
 The costliest failure isn't a wrong fix — it's optimizing or debugging a system you can't fully SEE, so you act on a number true only in a narrower context than you present it (local ≠ production, one slice ≠ end-to-end, "lever exists in code" ≠ "measured firing on the real path"). A multi-day effort can burn on a fake baseline — a "~32ms" measured locally/un-jailed that never once worked on the real jailed path, sitting in the docs as real for days — because the real path was never stood up until forced. The per-claim Verification gates below catch "did you check THIS claim"; they do NOT catch "did you build visibility into the real system before fixing it." This does.
