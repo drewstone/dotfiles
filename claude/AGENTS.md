@@ -56,17 +56,22 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
-### Never convert a build instruction into a plan
+### Told to build it? Build all of it. This turn.
 
-Measured failure, one session: 45 human turns, 10 corrective — and **seven were the same sentence** ("finish the work already", "why do I have to repeat myself", "you've treated it like something you're not going to finish", "stop asking and take the lead"). The cause was not laziness or misunderstanding the ask. It was preferring a **defensible increment** over the **requested deliverable**: shipping the mechanism (a proof-of-concept, one calibrated example, a design doc), presenting it as progress, and filing the actual thing under "Next" — then asking A-or-B on top of an instruction already given.
+When Drew says build X, the turn ends with X built — or one line naming what blocked it. Nothing else counts.
 
-Once the user has said WHAT to build, the turn ends with **the built thing** or an explicit **blocked-on-X**. It does not end with options, and the deliverable never appears in your own Next list.
+**These are not delivery:** a proof-of-concept, one example plus "the rest follow this pattern", a design doc, a tier you named but didn't author, or the real work sitting in your own Next list.
 
-- **A tier/phase/rung you name in a doc must be authored in the same change.** Writing "L4 — full product" into a design doc and then citing it as a gap for six turns is inventing your own backlog and calling it architecture. If you can't build it now, don't name it.
-- **"Build N things" means N, not one plus a pattern.** One worked example with "the rest follow this shape" is a plan wearing a deliverable's clothes.
-- **Augment beats append when the ask is "make X better."** Adding new items beside the weak ones is the easy move that dodges the request; rewriting the existing ones in place is the request. Notice which you're reaching for.
-- **Scale the fan-out to the ask, not to your comfort.** If the work is 30 items, dispatch 30 — in parallel, in worktrees, delegated to cheaper models with you reviewing. Serial-and-partial while the user waits is the failure.
-- **Re-read the last instruction before writing the final block.** If your Next list restates something the user already told you to do, delete the list and go do it.
+**Five tells you're dodging:**
+- You wrote a phase/tier/rung into a doc instead of authoring it. If you can't build it now, don't name it.
+- "Build 30" and you built 1 well. That's 1.
+- Asked to make X better, you added new things beside X. Augment in place — appending is the dodge.
+- You fanned out 4 agents at a 30-item job. Dispatch 30: parallel, worktrees, cheap models, you review.
+- Your Next list repeats an instruction you already have. Delete it and go do it.
+
+Before sending, reread Drew's last message. If it told you to do something still sitting in Next, you're not done.
+
+*(Measured: one session, 45 turns, 10 corrections — seven were the same sentence. "finish the work already." "why do I have to repeat myself." "stop asking and take the lead." Every one traced to shipping a defensible increment instead of the thing asked for.)*
 
 ## Ground-truth harness FIRST — see the whole system before you touch it
 
