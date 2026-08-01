@@ -17,6 +17,13 @@ The rule: when working on public writing, research, marketing pages, product UI,
 - `review-gates.md` - accept/reject gates for copy, design, blog, research, AI products, and source use.
 - `reference-systems.md` - external systems and site-audit lessons this doctrine is based on.
 
+## Positive guides and rubrics
+
+- `../green-patterns/blog-writing.md` - reader-first structures and teachable evidence patterns.
+- `../green-patterns/blog-style-guide.md` - the Tangle voice, article shapes, and reference-specific writing modes.
+- `../green-patterns/blog-reference-notes.md` - rules extracted from real technical articles.
+- `../rubrics/blog-quality.md` - the scored zero-context acceptance rubric and reviewer worksheet.
+
 ## Hard Defaults
 
 - If a section needs a tiny label to explain why it exists, the section probably does not exist yet.

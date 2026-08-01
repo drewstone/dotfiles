@@ -42,6 +42,11 @@ Better as research:
 Avoid:
 
 - SEO posts that never teach
+- posts that assume the reader already knows the company, product, repository, or vocabulary
+- opening with a metric, acronym, commit, or implementation detail before stating the human problem
+- native product terms used as if they were ordinary language
+- internal commands, shell pipelines, local file paths, commit hashes, branch names, or package inspection steps in the article body
+- internal notes, private-repository references, or author-side debugging history presented as reader evidence
 - intro paragraphs that define obvious terms
 - "In this post..."
 - summary sections that repeat the title
@@ -56,6 +61,26 @@ Every blog post should answer:
 - What does the reader know after this?
 - What concrete decision is easier?
 - What source, trace, implementation detail, benchmark, or example backs it?
+
+### Zero-context reader rule
+
+Assume the reader knows none of the company's products, internal names, architecture, history, or abbreviations.
+
+Introduce the reader's problem before introducing the company's solution.
+
+Define every native term in ordinary language at first use.
+
+Explain every acronym, metric, protocol, or file-format name before using its short form.
+
+Keep commands and repository mechanics out of the article body.
+Link to a public source and explain what the source proves instead.
+
+A reader should be able to answer these questions after the opening screen:
+
+- What problem is this article about?
+- Why does the problem matter to someone outside Tangle?
+- What changed, was tested, or was learned?
+- What can the reader decide or do with that information?
 
 ## Comparison Anti-Patterns
 
