@@ -151,3 +151,17 @@ Concrete beats abstract: names, numbers, dates, mechanisms.
 Strong verbs ("made a decision" → "decided"; "has the ability to" → "can").
 Minimum effective edit — preserve the writer's real voice; invent nothing.
 Em dashes: none in short copy; one or two in longer drafts only when they beat other punctuation.
+
+### Repository debris is not reader content
+
+Never put these in a public blog body:
+
+- `git show`, `git log`, `git diff`, `sed`, `awk`, `curl`, `npm view`, or similar author-side commands
+- shell pipelines that ask the reader to inspect our repository
+- local paths such as `src/agent/profile-materialization.ts`
+- bare commit IDs, branch names, worktree names, or internal issue numbers
+- private-repository instructions or notes about how the author verified a claim
+
+Use a named public source link instead.
+Explain the fact the source supports in the sentence before the link.
+The reader needs the conclusion and its evidence, not our investigation transcript.
