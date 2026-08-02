@@ -9,6 +9,7 @@ The rule: when working on public writing, research, marketing pages, product UI,
 - `principles.md` - the global bar and failure taxonomy.
 - `copywriting.md` - prose, labels, headings, UX copy, and marketing language failures.
 - `blog-and-research.md` - blog posts, research notes, comparison posts, and technical arguments.
+- `blog-discovery.md` - SEO, answer-engine, and generative-search discovery failures.
 - `marketing-pages.md` - public pages, homepages, product pages, landing pages, and CTAs.
 - `product-design.md` - UI structure, cards, labels, visual systems, and product proof.
 - `ai-agent-work.md` - how agents should operate when doing design or writing.
@@ -22,7 +23,9 @@ The rule: when working on public writing, research, marketing pages, product UI,
 - `../green-patterns/blog-writing.md` - reader-first structures and teachable evidence patterns.
 - `../green-patterns/blog-style-guide.md` - the Tangle voice, article shapes, and reference-specific writing modes.
 - `../green-patterns/blog-reference-notes.md` - rules extracted from real technical articles.
+- `../green-patterns/blog-discovery.md` - query ownership, answer clarity, evidence, links, metadata, and measurement.
 - `../rubrics/blog-quality.md` - the scored zero-context acceptance rubric and reviewer worksheet.
+- `../rubrics/blog-discovery-quality.md` - the scored search and answer visibility rubric.
 
 ## Hard Defaults
 
