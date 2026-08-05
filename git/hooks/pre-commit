@@ -1,6 +1,63 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Identity guard: refuse any commit not authored by Drew's real identity.
+# A stray repo-local override (a test harness once left user.name=release-test
+# in a REAL checkout) makes GitHub auto-insert "Co-authored-by: release-test
+# <release@test.invalid>" into every squash merge — five develop squashes
+# carry that line permanently (2026-07-29). Fixture repos are unaffected:
+# they set core.hooksPath=/dev/null (the sanctioned pattern), or export
+# GIT_ALLOW_TEST_IDENTITY=1.
+if [ "${GIT_ALLOW_TEST_IDENTITY:-0}" != "1" ]; then
+  commit_email="$(git config user.email || true)"
+  case "$commit_email" in
+    drewstone329@gmail.com) ;;
+    *)
+      # WHY THIS BLOCK NAMES THE FILE. Until 2026-08-05 the message said "this repo has a
+      # local identity override" and advised `git config --local --unset`. That advice is
+      # inert when the override is GLOBAL, and an agent that follows it sees the identity
+      # not change — so it escalates to `git config --global user.email ...` and poisons
+      # the machine. That is not hypothetical: ~/.gitconfig was rewritten to a@a.com and
+      # four supervisor-lab commits landed under it before this hook caught them. The hook
+      # detected the symptom and then handed out the instruction that caused the disease.
+      origin="$(git config --show-origin --get user.email 2>/dev/null | awk '{print $1}' | sed 's/^file://')"
+      echo "pre-commit: refusing commit as '$(git config user.name || echo '?')' <${commit_email:-unset}>." >&2
+      echo "The identity comes from: ${origin:-unknown}" >&2
+      # Match on "not repo-local" rather than on the filename: an earlier version keyed on
+      # */.gitconfig and fell through to the wrong advice for any global config living
+      # elsewhere (GIT_CONFIG_GLOBAL, XDG). Repo-local config is always .git/config.
+      case "$origin" in
+        */.git/config)
+          echo "  Repo-local override; clear it:" >&2
+          echo "    git config --local --unset user.name; git config --local --unset user.email" >&2
+          ;;
+        *)
+          echo >&2
+          echo "  !! That is your GLOBAL git identity and it is WRONG. Nothing on this machine" >&2
+          echo "     should commit as anyone but drewstone329@gmail.com. Restore it:" >&2
+          echo "       git config --global user.name 'Drew Stone'" >&2
+          echo "       git config --global user.email drewstone329@gmail.com" >&2
+          ;;
+      esac
+      echo >&2
+      echo "  FIXTURE / THROWAWAY REPOS: export GIT_ALLOW_TEST_IDENTITY=1 for that command," >&2
+      echo "  or set core.hooksPath=/dev/null in the fixture. NEVER change the global config" >&2
+      echo "  to get past this hook — it is machine-wide and it mis-attributes real work." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# Tripwire, independent of the commit that triggered it: a poisoned global identity is a
+# machine-level fault, and a fixture repo exporting GIT_ALLOW_TEST_IDENTITY=1 would
+# otherwise sail past the check above and never surface it.
+global_email="$(git config --global --get user.email 2>/dev/null || true)"
+if [ -n "$global_email" ] && [ "$global_email" != "drewstone329@gmail.com" ]; then
+  echo "pre-commit: WARNING — global git identity is <$global_email>, not drewstone329@gmail.com." >&2
+  echo "  Every repo on this machine without a local override will mis-attribute. Restore with:" >&2
+  echo "    git config --global user.email drewstone329@gmail.com" >&2
+fi
+
 export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
 
 HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
