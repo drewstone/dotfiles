@@ -56,6 +56,23 @@ Save questions for genuine forks: tradeoffs only the user can decide, missing in
 
 User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
 
+### Told to build it? Build all of it. This turn.
+
+When Drew says build X, the turn ends with X built — or one line naming what blocked it. Nothing else counts.
+
+**These are not delivery:** a proof-of-concept, one example plus "the rest follow this pattern", a design doc, a tier you named but didn't author, or the real work sitting in your own Next list.
+
+**Five tells you're dodging:**
+- You wrote a phase/tier/rung into a doc instead of authoring it. If you can't build it now, don't name it.
+- "Build 30" and you built 1 well. That's 1.
+- Asked to make X better, you added new things beside X. Augment in place — appending is the dodge.
+- You fanned out 4 agents at a 30-item job. Dispatch 30: parallel, worktrees, cheap models, you review.
+- Your Next list repeats an instruction you already have. Delete it and go do it.
+
+Before sending, reread Drew's last message. If it told you to do something still sitting in Next, you're not done.
+
+*(Measured: one session, 45 turns, 10 corrections — seven were the same sentence. "finish the work already." "why do I have to repeat myself." "stop asking and take the lead." Every one traced to shipping a defensible increment instead of the thing asked for.)*
+
 ## Ground-truth harness FIRST — see the whole system before you touch it
 
 The costliest failure isn't a wrong fix — it's optimizing or debugging a system you can't fully SEE, so you act on a number true only in a narrower context than you present it (local ≠ production, one slice ≠ end-to-end, "lever exists in code" ≠ "measured firing on the real path"). A multi-day effort can burn on a fake baseline — a "~32ms" measured locally/un-jailed that never once worked on the real jailed path, sitting in the docs as real for days — because the real path was never stood up until forced. The per-claim Verification gates below catch "did you check THIS claim"; they do NOT catch "did you build visibility into the real system before fixing it." This does.
