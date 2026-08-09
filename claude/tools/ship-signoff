@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# ship-signoff — run the release gates locally, then deploy directly.
+#
+# For any Cloudflare Worker repo. Use it when CI is slow, the runners are
+# occupied, or you want the same verdict in ~2 minutes instead of ~8.
+#
+# The gates, in order — each one catches something the previous cannot:
+#
+#   typecheck   against the workspace that actually ships (a repo-root
+#               typecheck can silently skip the app package)
+#   test        unit suite
+#   build       the bundle CI would build
+#   BOOT        `wrangler versions upload` — uploads the real bundle and runs
+#               Cloudflare's startup validation without serving traffic. This
+#               is the only local check that EXECUTES module scope, so it is
+#               the only one that catches a Worker which builds fine and throws
+#               at init (a polyfill patching a runtime global, a bad chunk
+#               split, a bad import order). `wrangler deploy --dry-run` cannot
+#               do this — it stops after bundling.
+#   deploy      ship it
+#   verify      curl the live route. `wrangler deploy` exiting 0 proves the
+#               upload was ACCEPTED, not that the site answers.
+#
+# Usage:
+#   ship-signoff                 gates only, no deploy (default)
+#   ship-signoff --deploy        gates, deploy, then verify the live site
+#   ship-signoff --skip-tests    gates minus the unit suite
+#
+# Run from a repo root; it locates wrangler.toml itself.
+
+set -euo pipefail
+
+DEPLOY=0
+SKIP_TESTS=0
+for arg in "$@"; do
+  case "$arg" in
+    --deploy) DEPLOY=1 ;;
+    --gate-only) DEPLOY=0 ;;
+    --skip-tests) SKIP_TESTS=1 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $arg" >&2; exit 2 ;;
+  esac
+done
+
+step() { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
+fail() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+ok()   { printf '\033[32m✓ %s\033[0m\n' "$*"; }
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "not a git repo"
+cd "$REPO_ROOT"
+
+# Locate the Worker. A wrong directory would make every wrangler check a no-op,
+# so this resolves it rather than assuming a layout.
+WRANGLER_DIR="$(find . -maxdepth 3 -name wrangler.toml -not -path '*/node_modules/*' -not -path '*/.worktrees/*' -not -path '*/.wt-*/*' -print -quit 2>/dev/null | xargs -r dirname)"
+[ -n "$WRANGLER_DIR" ] || fail "no wrangler.toml found — this does not look like a Worker repo"
+
+# Check the package that ships, not just the workspace root.
+PKG_FILTER=""
+if [ "$WRANGLER_DIR" != "." ]; then
+  PKG_FILTER="$(node -p "require('./$WRANGLER_DIR/package.json').name" 2>/dev/null || echo '')"
+fi
+
+printf '\033[1m%s\033[0m  worker:%s  package:%s\n' "$(basename "$REPO_ROOT")" "$WRANGLER_DIR" "${PKG_FILTER:-<root>}"
+
+run_pkg() {
+  if [ -n "$PKG_FILTER" ]; then pnpm --filter "$PKG_FILTER" "$1"; else pnpm "$1"; fi
+}
+
+step "1/5 typecheck (${PKG_FILTER:-root})"
+run_pkg typecheck || fail "typecheck failed"
+ok "typecheck clean"
+
+if [ "$SKIP_TESTS" = "1" ]; then
+  printf '\033[33m⚠ tests skipped (--skip-tests)\033[0m\n'
+else
+  step "2/5 tests"
+  run_pkg test || fail "tests failed"
+  ok "tests pass"
+fi
+
+step "3/5 build"
+run_pkg build || fail "build failed"
+ok "build clean"
+
+if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  SECRETS_DIR="$HOME/company/devops/secrets"
+  if [ -f "$SECRETS_DIR/agent-state.env" ]; then
+    CLOUDFLARE_API_TOKEN="$(cd "$SECRETS_DIR" && dotenvx get CLOUDFLARE_API_TOKEN -f agent-state.env 2>/dev/null)"
+    export CLOUDFLARE_API_TOKEN
+  fi
+fi
+export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-0c928041f7d1c2caadd7df75cc69c5ef}"
+[ -n "${CLOUDFLARE_API_TOKEN:-}" ] || fail "CLOUDFLARE_API_TOKEN is unset and could not be resolved from the secrets dir"
+
+step "4/5 worker boot (versions upload)"
+# Capture the output: wrangler can exit 0 on errors this gate must not pass
+# (notably "you cannot upload a new version of a Worker that does not yet
+# exist"), so the exit code alone is not a verdict.
+BOOT_LOG="$(mktemp)"
+set +e
+( cd "$WRANGLER_DIR" && pnpm exec wrangler versions upload ) >"$BOOT_LOG" 2>&1
+BOOT_EXIT=$?
+set -e
+cat "$BOOT_LOG"
+
+if grep -qiE 'does not (yet )?exist|code: 10007' "$BOOT_LOG"; then
+  rm -f "$BOOT_LOG"
+  fail "this Worker has never been deployed, so its boot cannot be validated ahead of time.
+     Run the first deploy through your normal pipeline; every run after that is gated here."
+fi
+
+if [ "$BOOT_EXIT" -ne 0 ] || ! grep -q 'Worker Version ID' "$BOOT_LOG"; then
+  rm -f "$BOOT_LOG"
+  fail "the Worker does not boot.
+     It built fine and throws while its modules initialise — a bundling or
+     import-order problem, not a type error. Deploying now would take the site
+     down. Read the output above: it names the module that threw."
+fi
+rm -f "$BOOT_LOG"
+ok "worker boots"
+
+if [ "$DEPLOY" = "0" ]; then
+  printf '\n\033[32m✓ all gates pass\033[0m — re-run with \033[1m--deploy\033[0m to ship.\n'
+  exit 0
+fi
+
+step "5/5 deploy"
+( cd "$WRANGLER_DIR" && pnpm exec wrangler deploy ) || fail "deploy failed"
+
+ROUTE="$(grep -oE 'pattern *= *"[^"]+"' "$WRANGLER_DIR/wrangler.toml" 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/' | sed 's|/\*$||')"
+if [ -n "$ROUTE" ]; then
+  step "verifying https://$ROUTE"
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' "https://$ROUTE/" || echo 000)"
+  [ "$CODE" = "200" ] || fail "deployed, but https://$ROUTE/ returned $CODE — the upload was accepted and the site is not serving"
+  ok "https://$ROUTE/ → 200"
+else
+  printf '\033[33m⚠ no route in wrangler.toml — could not verify the live site\033[0m\n'
+fi
+
+printf '\n\033[32m✓ shipped and verified\033[0m\n'
