@@ -37,8 +37,9 @@ fi
 ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null) || exit 0 # not a git repo → allow
 
 # Only act in preflight repos; fail open everywhere else.
-has_preflight=0
-[ -f "$ROOT/scripts/preflight.sh" ] && has_preflight=1
+has_preflight_script=0
+[ -f "$ROOT/scripts/preflight.sh" ] && has_preflight_script=1
+has_preflight=$has_preflight_script
 if [ "$has_preflight" -eq 0 ] && [ -f "$ROOT/package.json" ]; then
   jq -e '.scripts.preflight // empty' "$ROOT/package.json" >/dev/null 2>&1 && has_preflight=1
 fi
@@ -61,6 +62,13 @@ if [ -f "$ROOT/.githooks/pre-push" ]; then
   fi
   exit 0
 fi
+
+# No hook file and no preflight SCRIPT on disk — there is nothing to run directly.
+# An agent-app product declares `scripts.preflight` as a DEPLOY-time secret-liveness
+# probe (`agent-app-preflight`, needs the production secret set), never a push gate;
+# its merge gate is `pnpm signoff --source head`. Blocking a push on a missing
+# scripts/preflight.sh here fails closed on a check that was never a push check.
+[ "$has_preflight_script" -eq 1 ] || exit 0
 
 # Preflight repo but no pre-push hook file on this branch (it drifted/was dropped):
 # run the quick gate directly and block on red.
