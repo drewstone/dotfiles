@@ -178,6 +178,8 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 
 - TypeScript: strict, single quotes, 2-space indent, no semicolons unless the repo clearly uses them.
 - Prefer fail-closed defaults for security and data integrity.
+- Write technical prose — comments, docs, commit messages, PR bodies — in Simplified Technical English (STE), defined by the ASD-STE100 Standard: active voice, one instruction per sentence, an approved word used in only one meaning, and no synonym for a term already used.
+- Keep STE sentence limits: 20 words for a procedural sentence, 25 for a descriptive one, and at most three nouns in a row.
 - Use Conventional Commits when creating commits.
 - Never add AI, agent, Claude, or tool co-authorship trailers to commits.
 - Do not generate markdown docs unless explicitly useful to the repo or requested.
