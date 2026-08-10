@@ -98,23 +98,16 @@ Skip for trivial fixes (typo, one-liner, format). Bar: would a senior reviewer n
 
 The plan IS the lead. After surfacing it, default to action unless one sharp question is needed. Never "we'll patch now and improve later" — surface the permanent solve and ship it. If the permanent solve is out of scope, say so explicitly with a reason; don't smuggle it in as a temporary fix that rots.
 
-## Preferences
-
-- Take full ownership. Do not defer routine execution.
-- No placeholders, no fake fallbacks, no filler.
-- Quality bar: senior staff engineer. Iterate until it is right.
-- Skip praise, preamble, and fluff. Lead with action or answer.
-
 ## Work Style Defaults
 
-- Complete tasks fully. Verify the result before claiming success.
-- Be critical of slop, duplication, overengineering, and weak assumptions.
-- Prefer minimal, durable changes over broad rewrites.
-- When making technical decisions, give development cost little weight; prefer quality, simplicity, robustness, scalability, and long-term maintainability.
-- For bug fixes, first reproduce the bug in a realistic end-user flow, then fix the root cause.
-- Treat lint failures, test failures, and test flakiness as quality problems to fix when you encounter them, even if your change did not cause them.
-- Parallelize independent audit, review, and research work when possible.
-- If quality is below 9/10, identify the remaining gap and keep pushing.
+- Take full ownership; do not defer routine execution. Skip praise, preamble, and filler — lead with the action or the answer.
+- No placeholders, no fake fallbacks. The quality bar is senior staff engineer: iterate until it is right, and if the result is below 9/10, name the remaining gap and keep going.
+- Complete tasks fully and verify the result before you claim success.
+- Be critical of slop, duplication, overengineering, and weak assumptions. Prefer minimal, durable changes over broad rewrites.
+- Give development cost little weight in a technical decision; prefer quality, simplicity, robustness, scalability, and long-term maintainability. (Projects under `~/code` strengthen this to zero weight — see that tree's `AGENTS.md`.)
+- For a bug fix, reproduce the bug in a realistic end-user flow first, then fix the root cause.
+- Treat a lint failure, a test failure, or test flakiness as a quality problem to fix when you meet it, even when your change did not cause it.
+- Parallelize independent audit, review, and research work.
 
 ## Product Design Defaults
 
