@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+/**
+ * model-freshness — are the model ids our products declare still real, still
+ * served, and still current?
+ *
+ * Three questions, in the order they bite:
+ *
+ *   1. DECLARED  Which ids does each product actually name in its source?
+ *   2. SERVING   Does the router serve that id — and serve THAT ID, not a
+ *                substitute? A failover 200 reads exactly like a healthy 200
+ *                unless the served-model header is compared to the requested
+ *                one. Measured 2026-08-10: `gpt-5.5` answered 200 with
+ *                `body.model = gemini-2.5-flash`, so a catalog check and a
+ *                status check BOTH said "fine" while no OpenAI model worked.
+ *   3. CURRENT   Is a newer generation of the same family in the catalog and
+ *                serving? That is the staleness this tool exists to catch —
+ *                gtm sat on `gemini-2.5-flash-lite` for a generation.
+ *
+ * A failure names its own cause: the router now returns
+ * `X-Tangle-Failure-Category`, so a spend cap, a dead credential and a genuinely
+ * missing model are three different lines here, not one.
+ *
+ * No CI. Run it by hand or from the local crontab; it writes a report and exits
+ * non-zero only when something a human must act on changed.
+ *
+ *   model-freshness              # report to stdout
+ *   model-freshness --json       # machine-readable
+ *   model-freshness --quiet      # print only problems (cron mode)
+ */
+
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
+const ROUTER = process.env.TANGLE_ROUTER_BASE_URL?.replace(/\/+$/, '') ?? 'https://router.tangle.tools'
+const SECRETS = `${process.env.HOME}/company/devops/secrets/agent-state.env`
+const CODE = `${process.env.HOME}/code`
+
+const args = new Set(process.argv.slice(2))
+const JSON_OUT = args.has('--json')
+const QUIET = args.has('--quiet')
+
+/** Where each product declares the ids it will send. Kept as explicit files so
+ *  a scan cannot silently start reading the wrong thing after a refactor. */
+const PRODUCTS = [
+  { repo: 'gtm-agent', files: ['src/lib/gtm-profile-catalog.ts', 'src/lib/.server/chat/model-resolution.ts', 'wrangler.toml'] },
+  { repo: 'tax-agent', files: ['apps/web/app/lib/.server/chat/model-resolution.ts', 'wrangler.toml'] },
+  { repo: 'legal-agent', files: ['src/lib/.server/chat/model-resolution.ts', 'wrangler.toml'] },
+  { repo: 'physim', files: ['apps/server/src/lib/main-agent.ts'] },
+  { repo: 'workcomp-agent', files: ['agent.config.ts', 'wrangler.toml'] },
+  { repo: 'relationships-agent', files: ['agent.config.ts', 'wrangler.toml'] },
+]
+
+/** Model-id shapes worth checking. Deliberately narrow: a regex that matches
+ *  every string finds file paths and prose. */
+const ID_PATTERN =
+  /\b((?:anthropic|openai|google|deepseek|moonshot|zai|x-ai|meta-llama|qwen|mistral)\/)?((?:claude|gpt|o[134]|gemini|gemma|deepseek|kimi|glm|grok|llama|qwen|mistral)[a-z0-9._-]*)\b/gi
+
+/** Families we track a generation for, newest first is decided by the catalog. */
+const FAMILY = (id) => {
+  const bare = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id
+  const m = bare.match(/^(claude-[a-z]+|gpt|gemini|deepseek|kimi|glm|grok|llama|qwen|mistral)/i)
+  return m ? m[1].toLowerCase() : null
+}
+
+function apiKey() {
+  if (process.env.TANGLE_API_KEY) return process.env.TANGLE_API_KEY
+  try {
+    return execFileSync('dotenvx', ['get', 'TANGLE_API_KEY', '-f', SECRETS], { encoding: 'utf8' }).trim()
+  } catch {
+    return null
+  }
+}
+
+async function catalog(key) {
+  // Authenticated: the anonymous catalog is a NARROWER list (499 ids vs 540 on
+  // 2026-08-10), so an unauthenticated check reports ids as "not in catalog"
+  // that a real request would find.
+  const res = await fetch(`${ROUTER}/v1/models`, { headers: key ? { authorization: `Bearer ${key}` } : {} })
+  if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`)
+  const body = await res.json()
+  return (body.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id }))
+}
+
+/**
+ * One real completion. The verdict is not the status code — it is whether the
+ * id we asked for is the id that answered.
+ */
+async function probe(model, key) {
+  let res
+  try {
+    res = await fetch(`${ROUTER}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ok' }], max_tokens: 4 }),
+    })
+  } catch (err) {
+    return { model, verdict: 'unreachable', detail: String(err).slice(0, 120) }
+  }
+  const requested = res.headers.get('x-tangle-requested-model')
+  const served = res.headers.get('x-tangle-served-model')
+  const failover = res.headers.get('x-tangle-failover')
+  const category = res.headers.get('x-tangle-failure-category')
+  let body = null
+  try {
+    body = await res.json()
+  } catch {
+    /* non-JSON body is itself reported through the status below */
+  }
+
+  if (!res.ok) {
+    return {
+      model,
+      verdict: 'not-serving',
+      status: res.status,
+      // The router names its own cause now; fall back to the message only when
+      // talking to a deploy that predates that.
+      cause: category ?? body?.error?.code ?? 'unknown',
+      detail: (body?.error?.message ?? '').slice(0, 140),
+    }
+  }
+
+  const answered = body?.model ?? served ?? null
+  const substituted = answered != null && !sameModel(answered, model)
+  return {
+    model,
+    verdict: substituted ? 'substituted' : 'serving',
+    answered,
+    ...(failover ? { failover } : {}),
+    ...(requested ? { requested } : {}),
+  }
+}
+
+function sameModel(a, b) {
+  const norm = (x) => String(x).toLowerCase().replace(/^.*\//, '')
+  return norm(a) === norm(b)
+}
+
+/** Ids a product actually declares, read out of the files it declares them in. */
+function declaredIds(repo, files) {
+  const found = new Map()
+  for (const rel of files) {
+    const path = join(CODE, repo, rel)
+    if (!existsSync(path)) continue
+    let text
+    try {
+      text = readFileSync(path, 'utf8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      // Only lines that assign or list a value — skip prose and imports.
+      if (!/[:=]|['"`]/.test(line)) continue
+      if (/^\s*(\/\/|\*|#)/.test(line)) continue
+      for (const m of line.matchAll(ID_PATTERN)) {
+        const id = (m[1] ?? '') + m[2]
+        if (id.length < 6) continue
+        if (/\.(ts|tsx|js|mjs|json|md)$/.test(id)) continue
+        found.set(id, (found.get(id) ?? []).concat(`${rel}`))
+      }
+    }
+  }
+  return found
+}
+
+/** Newer members of the same family that the catalog carries. */
+function newerInFamily(id, ids) {
+  const fam = FAMILY(id)
+  if (!fam) return []
+  // A version is the number attached to the FAMILY NAME, not any digit in the
+  // id: `gpt-oss-120b` is not a newer `gpt-5`, and reading its 120 as a version
+  // is how a parameter count becomes a fake upgrade recommendation.
+  const rank = (x) => {
+    const bare = x.includes('/') ? x.slice(x.indexOf('/') + 1) : x
+    const m = bare.match(new RegExp(`^${fam}[-.]?(\\d+)(?:\\.(\\d+))?`, 'i'))
+    if (!m) return null
+    return Number(m[1]) * 1000 + Number(m[2] ?? 0)
+  }
+  const mine = rank(id)
+  if (mine === null) return []
+  return ids
+    .filter((c) => FAMILY(c) === fam)
+    .filter((c) => {
+      const r = rank(c)
+      return r !== null && r > mine
+    })
+    .filter((c) => !/preview|batch|:|\bimage\b|tts|embedding|rerank|-oss-/i.test(c))
+    .sort((a, b) => (rank(b) ?? 0) - (rank(a) ?? 0))
+    .slice(0, 3)
+}
+
+const out = { checkedAt: new Date().toISOString(), router: ROUTER, products: [], problems: [] }
+
+const key = apiKey()
+if (!key) {
+  console.error('model-freshness: no TANGLE_API_KEY (env or agent-state.env) — cannot probe liveness')
+  process.exit(2)
+}
+
+const cat = await catalog(key)
+const catIds = cat.map((m) => m.id)
+const catSet = new Set(catIds)
+
+for (const { repo, files } of PRODUCTS) {
+  if (!existsSync(join(CODE, repo))) continue
+  const declared = declaredIds(repo, files)
+  const rows = []
+  for (const [id, where] of declared) {
+    const inCatalog = catSet.has(id)
+    const result = inCatalog ? await probe(id, key) : { model: id, verdict: 'not-in-catalog' }
+    const newer = newerInFamily(id, catIds)
+    const row = { id, where: [...new Set(where)], inCatalog, ...result, newer }
+    rows.push(row)
+    if (row.verdict !== 'serving') {
+      out.problems.push({ repo, id, verdict: row.verdict, cause: row.cause ?? row.failover ?? row.detail ?? null })
+    } else if (newer.length > 0) {
+      out.problems.push({ repo, id, verdict: 'stale', newer })
+    }
+  }
+  out.products.push({ repo, models: rows })
+}
+
+if (JSON_OUT) {
+  console.log(JSON.stringify(out, null, 2))
+  process.exit(out.problems.length ? 1 : 0)
+}
+
+const ICON = { serving: 'ok  ', substituted: 'SUB ', 'not-serving': 'DEAD', 'not-in-catalog': 'GONE', unreachable: '????' }
+if (!QUIET || out.problems.length) {
+  console.log(`model freshness — ${out.checkedAt} — ${ROUTER}`)
+  console.log(`catalog: ${catIds.length} models\n`)
+  for (const p of out.products) {
+    if (QUIET && p.models.every((m) => m.verdict === 'serving' && m.newer.length === 0)) continue
+    console.log(`${p.repo}`)
+    for (const m of p.models) {
+      if (QUIET && m.verdict === 'serving' && m.newer.length === 0) continue
+      const tail =
+        m.verdict === 'substituted'
+          ? `  answered by ${m.answered}${m.failover ? `  [${m.failover}]` : ''}`
+          : m.verdict === 'not-serving'
+            ? `  ${m.status} ${m.cause}${m.detail ? ` — ${m.detail}` : ''}`
+            : m.newer.length
+              ? `  newer available: ${m.newer.join(', ')}`
+              : ''
+      console.log(`  ${ICON[m.verdict] ?? '??  '} ${m.id.padEnd(30)}${tail}`)
+      if (!QUIET) console.log(`       declared in ${m.where.join(', ')}`)
+    }
+    console.log('')
+  }
+  if (out.problems.length === 0) console.log('every declared model serves itself and is current.')
+}
+
+process.exit(out.problems.length ? 1 : 0)
