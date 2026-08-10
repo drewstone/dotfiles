@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Refuse a commit whose MESSAGE contains a credential.
+#
+# On 2026-07-12 an agent pasted a 216-line `env` dump into an
+# agent-dev-container commit body. It reached origin/main and 2,220 branches,
+# so every clone carries it, and three live API keys sat there for 23 days.
+#
+# Nothing caught it because every secret scanner in the chain — including this
+# repo's own pre-commit guard — reads the DIFF. A commit message is not part of
+# the diff. It is also unfixable after the fact: rewriting it means rewriting
+# every descendant commit, which on a shared main is not an option. So the only
+# place this can be stopped is here, before the object exists.
+#
+# Escape hatch, for a message that legitimately quotes a key-shaped string
+# (a test fixture, a redacted example):
+#   GIT_ALLOW_SECRET_IN_MESSAGE=1 git commit ...
+
+MSG_FILE="${1:?commit-msg hook requires the message file}"
+
+[ "${GIT_ALLOW_SECRET_IN_MESSAGE:-0}" = "1" ] && exit 0
+
+# Strip comment lines — `git commit -v` appends the whole diff below a comment
+# marker, and that content is the pre-commit hook's job, not this one.
+BODY="$(grep -v '^#' "$MSG_FILE" || true)"
+
+findings="$(printf '%s\n' "$BODY" | python3 -c '
+import re,sys
+
+# Two independent signals, because either alone is wrong:
+#   - a NAME that means credential, with a value long enough to be one
+#   - a value with a known vendor prefix, whatever it is assigned to
+# A bare FOO=bar in prose must not trip this, or the hook gets disabled.
+NAMED = re.compile(r"^\s*([A-Z][A-Z0-9_]{2,})\s*=\s*[\"\x27]?(\S{16,})[\"\x27]?\s*$")
+CREDNAME = re.compile(r"KEY|TOKEN|SECRET|PASS|CRED|AUTH")
+# Paths and URLs are assigned to credential-ish names constantly (SSH_AUTH_SOCK,
+# DOCKER_HOST, *_KEY_PATH). They are not secrets.
+NOTSECRET = re.compile(r"^(/|\./|~|https?://|unix:|[A-Za-z]:\\\\)")
+VENDOR = [
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),        "OpenAI/DeepSeek/Moonshot-style key"),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),   "GitHub token"),
+    (re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}"),     "GitLab token"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), "Slack token"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"),           "AWS access key id"),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private key block"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\."), "JWT"),
+]
+
+hits = []
+for n, line in enumerate(sys.stdin.read().splitlines(), 1):
+    m = NAMED.match(line)
+    if m:
+        name, value = m.group(1), m.group(2)
+        if CREDNAME.search(name) and not NOTSECRET.match(value):
+            hits.append((n, name, "credential-named assignment"))
+            continue
+    for pat, what in VENDOR:
+        if pat.search(line):
+            hits.append((n, (m.group(1) if m else "-"), what))
+            break
+
+for n, name, what in hits[:20]:
+    print(f"  line {n}: {name}  ({what})")
+if len(hits) > 20:
+    print(f"  ... and {len(hits)-20} more")
+')"
+
+if [ -n "$findings" ]; then
+  {
+    echo "commit-msg: refusing — this commit MESSAGE appears to contain credentials."
+    echo
+    echo "$findings"
+    echo
+    echo "A secret in a commit message is worse than one in a diff: no scanner that"
+    echo "reads diffs will see it, and it cannot be removed later without rewriting"
+    echo "every descendant commit. The 2026-07-12 env-dump leak reached origin/main"
+    echo "and 2,220 branches this way."
+    echo
+    echo "Remove it from the message. If it was ever real, rotate it — it is already"
+    echo "in your shell history and editor buffer."
+    echo "Legitimate key-shaped text: GIT_ALLOW_SECRET_IN_MESSAGE=1 git commit ..."
+  } >&2
+  exit 1
+fi
+
+exit 0

@@ -23,6 +23,9 @@ The output must let the next session continue without rediscovery.
 - Verification commands and results.
 - Decisions made and why.
 - Risks, blockers, and exact next actions.
+- **Live lanes**: every still-running process/agent — status-file path, ground-truth check command, resume command. Lost live state is the measured top cost of session boundaries.
+- **Open loops — exhaustive**: EVERY item started, promised, or deferred but not finished — one line each (item · state · pointer · next command). Completeness is the rule here; ranking lives in "next actions", not in this table. An item too small to list is an item you finished or explicitly dropped with a reason. Report the table's row count at the top so `/reflect` can track unclosed-loop count across sessions.
+- **To the next agent**: the handoff is you going to sleep; the next session is you waking up. Three things preserve continuity of judgment, not just facts: (1) standing decisions each carry their KILL CONDITION — a decision without one becomes superstition the next instance follows blindly or relitigates expensively; (2) operator corrections paid for this session, stated plainly, so they are never paid for twice; (3) an honest "what I was uncertain about at close" — waking up into overconfident claims is the real lobotomy. Re-verify lane/process state at write time rather than trusting your own earlier status notes; the handoff must not lie to its reader, and its reader is you.
 
 Use `references/full-reference.md` for the full handoff template.
 

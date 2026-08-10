@@ -33,6 +33,7 @@ Use `references/full-reference.md` for the full classification table and report 
 | Root cause names a mechanism that caps the current approach | `/pursue` | the named cap + the evidence it is structural, not a parameter |
 | The number was never measured on the real path (local stand-in, warm cache, wrong env) | `/ground-truth` | the hop that was dark + the real-path command that would measure it |
 | Root cause is the agent ignoring state, skipping tools, or reporting unearned success | `/agent-behavior-audit` | the transcript span + the state it failed to read |
+| The run succeeded and produced well-formed output that discovered nothing — its acceptance criterion could not fail | `/operate` | the task text + the command that should have decided it |
 
 ## Log the run
 

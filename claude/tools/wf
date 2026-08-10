@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# wf — instant GitHub Actions failure diagnosis.
+#
+# Why this exists: `gh run view --log` downloads the entire multi-MB log and is
+# useless once GitHub purges it (HTTP 410, typically days). Check-run
+# ANNOTATIONS persist past log expiry and already contain the failing message,
+# so they are both faster and more durable. This queries annotations first and
+# only falls back to logs when they add something.
+#
+#   wf <workflow.yml> [n]   last n runs: status + failing step + error
+#   wf run <run-id>         one run: every failing step + annotation
+#   wf watch <run-id>       block until the run completes, then diagnose
+#
+# Uses gh-drew (Tangle repos require the drewstone identity).
+set -uo pipefail
+
+GH="${GH_CLI:-gh-drew}"
+REPO="${WF_REPO:-tangle-network/agent-dev-container}"
+
+die() { echo "wf: $*" >&2; exit 1; }
+command -v "$GH" >/dev/null || die "$GH not found"
+
+# Every failing step + its annotation for one run. Annotations are the payload:
+# they outlive logs and name the error without a download.
+diagnose() {
+  local run_id="$1"
+  local meta
+  meta="$($GH api "repos/$REPO/actions/runs/$run_id" \
+    --jq '"\(.display_title) | \(.status)/\(.conclusion // "-") | \(.head_branch) | \(.run_started_at[0:16])"' 2>/dev/null)" \
+    || die "run $run_id not found"
+  echo "── run $run_id — $meta"
+
+  $GH api "repos/$REPO/actions/runs/$run_id/jobs" --paginate \
+    --jq '.jobs[] | select(.conclusion=="failure" or .conclusion=="cancelled")
+          | "\(.id)\t\(.name)\t\(.conclusion)\t\([.steps[]? | select(.conclusion=="failure") | .name] | join(" ; "))"' \
+    2>/dev/null | while IFS=$'\t' read -r job_id job_name concl steps; do
+      echo ""
+      echo "  ✗ ${job_name}  [${concl}]"
+      [ -n "${steps:-}" ] && echo "    step: ${steps}"
+      # The load-bearing line: annotations survive log purges.
+      $GH api "repos/$REPO/check-runs/${job_id}/annotations" \
+        --jq '.[] | "    → \(.annotation_level): \(.message | split("\n")[0] | .[0:240])"' \
+        2>/dev/null | sort -u | head -6
+    done
+  echo ""
+}
+
+case "${1:-}" in
+  "")
+    die "usage: wf <workflow.yml> [n] | wf run <id> | wf watch <id>" ;;
+
+  run)
+    [ $# -ge 2 ] || die "usage: wf run <run-id>"
+    diagnose "$2" ;;
+
+  watch)
+    [ $# -ge 2 ] || die "usage: wf watch <run-id>"
+    run_id="$2"
+    while :; do
+      st="$($GH api "repos/$REPO/actions/runs/$run_id" --jq '.status' 2>/dev/null)"
+      [ "$st" = "completed" ] && break
+      sleep 60
+    done
+    diagnose "$run_id" ;;
+
+  *)
+    wf_file="$1"; limit="${2:-5}"
+    echo "── $wf_file (last $limit)"
+    $GH run list --workflow="$wf_file" --limit "$limit" \
+      --json databaseId,conclusion,status,createdAt,headBranch \
+      --jq '.[] | "\(.databaseId)\t\(.createdAt[0:16])\t\(.status)/\(.conclusion // "-")\t\(.headBranch)"' \
+      2>/dev/null | while IFS=$'\t' read -r id created st branch; do
+        printf '%-12s %s  %-22s %s\n' "$id" "$created" "$st" "$branch"
+        case "$st" in
+          */failure|*/cancelled|*/timed_out)
+            $GH api "repos/$REPO/actions/runs/$id/jobs" --paginate \
+              --jq '.jobs[] | select(.conclusion=="failure")
+                    | "\(.id)\t\([.steps[]? | select(.conclusion=="failure") | .name] | join(" ; "))"' \
+              2>/dev/null | head -3 | while IFS=$'\t' read -r job_id steps; do
+                [ -n "${steps:-}" ] && echo "             step: ${steps}"
+                $GH api "repos/$REPO/check-runs/${job_id}/annotations" \
+                  --jq '.[] | "             → \(.message | split("\n")[0] | .[0:200])"' \
+                  2>/dev/null | sort -u | head -2
+              done ;;
+        esac
+      done ;;
+esac
