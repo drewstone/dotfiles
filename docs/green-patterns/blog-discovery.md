@@ -2,11 +2,11 @@
 
 Use this guide after the reader-first story exists.
 
-SEO makes a useful page discoverable.
+SEO helps people and search systems discover a useful page.
 
-AEO makes the page's answer easy to understand and quote.
+AEO describes making the page's answer easy to understand and quote.
 
-GEO measures whether search-backed answer systems actually retrieve and cite the page.
+GEO describes work to improve and measure visibility in generative answer systems.
 
 These are overlapping outcomes, not three reasons to write three different versions of an article.
 
@@ -175,7 +175,7 @@ Google's [SEO Starter Guide](https://developers.google.com/search/docs/fundament
 
 Google's [people-first guidance](https://developers.google.com/search/docs/fundamentals/creating-helpful-content) warns against producing many pages across unrelated topics, writing to an invented word count, and creating content mainly to attract search visits.
 
-Google's [generative AI search guide](https://developers.google.com/search/docs/fundamentals/ai-optimization-guide) says existing SEO remains the foundation, rejects special AI markup and mandatory chunking, and points owners to Search Console's generative AI performance report.
+Google's [generative AI search guide](https://developers.google.com/search/docs/fundamentals/ai-optimization-guide) says existing SEO remains the foundation, rejects special AI markup and mandatory chunking, and points owners to [Search Console's generative AI performance report](https://support.google.com/webmasters/answer/16984139).
 
 Bing's [AI Performance preview](https://blogs.bing.com/webmaster/February-2026/Introducing-AI-Performance-in-Bing-Webmaster-Tools-Public-Preview) exposes citations, cited pages, and grounding queries, but does not claim that citation counts are rankings or authority scores.
 

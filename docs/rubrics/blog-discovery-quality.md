@@ -43,7 +43,7 @@ Any of these requires revision regardless of the score:
 
 ## Thresholds
 
-- 18–20: ready after factual and live-search checks
+- 18–20: ready after factual, metadata, link, and rendered-page checks
 - 14–17: revise before publication or promotion
 - 0–13 or any hard failure: rewrite the search surface and opening
 
@@ -75,4 +75,4 @@ Hard failures:
 Next edit:
 ```
 
-Do not mark a post ready from this rubric without checking the published URL and the measured query or citation data.
+Use the score to judge content and technical readiness; report search or citation outcomes separately after a named post-publish period.

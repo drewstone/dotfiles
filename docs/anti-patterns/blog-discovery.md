@@ -95,7 +95,7 @@ Measure separately:
 
 - Google Search Console queries, pages, impressions, clicks, click-through rate, and position over a named period
 - Bing Webmaster Tools AI citations, cited pages, and grounding queries when that public preview is available to the property
-- answer-engine citation rate as successful, attributable responses divided by successful measured queries, with provider, model, prompt, date, and failures shown
+- answer-engine citation rate as measured queries that receive a supported citation divided by successful measured queries, with provider, model, prompt, date, and failures shown
 - page-level changes against a comparable prior period rather than against memory
 
 An API failure is not an absence of a citation.
@@ -109,5 +109,6 @@ Do not hide zeroes, missing rows, or provider failures in a summary percentage.
 - [Google's guide to generative AI features in Search](https://developers.google.com/search/docs/fundamentals/ai-optimization-guide)
 - [Google Article structured data guidance](https://developers.google.com/search/docs/appearance/structured-data/article)
 - [Google Search Console Performance report](https://support.google.com/webmasters/answer/17010961)
+- [Google Search Console generative AI performance report](https://support.google.com/webmasters/answer/16984139)
 - [Bing AI Performance in Webmaster Tools](https://blogs.bing.com/webmaster/February-2026/Introducing-AI-Performance-in-Bing-Webmaster-Tools-Public-Preview)
 - [GEO: Generative Engine Optimization](https://arxiv.org/abs/2311.09735)
