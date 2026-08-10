@@ -29,47 +29,24 @@ Commit messages tell you what other agents shipped. Five seconds saves a rebase.
 
 **Hard guardrails that the multi-agent context does NOT relax:** no force-push without explicit ask, no `reset --hard` over uncommitted work, no `--no-verify`, no branch deletion without confirming merged/abandoned.
 
-## Git Etiquette
-
-- **Pull the latest PR review yourself — never wait to be handed a link.** Reviewers (humans and the automated multi-shot bot) post AFTER each push, so the newest comment is the one that decides merge. After every push to a PR, and before you claim a review is "addressed" or report done, read the current state directly:
-  - `gh pr view <n> --comments` — issue comments + review summaries (newest last).
-  - `gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | {state, user:.user.login, submitted_at}'` — formal reviews; the LAST `CHANGES_REQUESTED`/`COMMENTED` is the live verdict, not an earlier `APPROVED`.
-  - `gh api repos/<owner>/<repo>/pulls/<n>/comments` — inline line-level threads.
-  - The CI multi-shot reviewer lands ~1–3 min after a push and re-runs on every commit, so a fix can draw a NEW blocking finding — after pushing a fix, wait and re-check rather than declaring green. On Tangle repos use `gh-drew` for these reads.
-- Before opening or updating a PR, fetch the target base and prove the branch merges cleanly into it. Locally: `git fetch origin main && git merge-tree --write-tree origin/main HEAD`.
-- If a push/PR would be conflict-prone, rebase or merge locally, resolve conflicts, rerun tests, and only then push.
-- Do not use `--no-verify` to skip hooks. If a hook blocks, read its artifact and fix the underlying issue or the hook itself.
-- Global dotfiles install sets fast Git guards via `~/code/dotfiles/git/install.sh`: conflict markers + suspicious secrets on commit, and mergeability with `origin/main` on push.
-- Repo-specific `.ai-agent-hooks.mjs` can add stronger gates such as Codex review; those are part of the repo contract once checked in.
-
 ## Take the lead. Ask sharply.
 
-Default to action. If the next step is obvious, do it and report.
+Default to action. If the next step is obvious, do it and report. Save questions for genuine forks — a tradeoff only the user can decide, missing information you cannot infer, real scope ambiguity. Ask one question with the options pre-weighed: *"A or B; A is faster, B is reversible. Pick."*, never *"should I?"*.
 
-Save questions for genuine forks: tradeoffs only the user can decide, missing info you can't infer, scope ambiguity. One question, with options pre-weighed. Not *"should I?"* — *"A or B; A is faster, B is reversible. Pick."*
-
-**Explain reasoning when stakes or complexity are high.** First-principles ELI5 beats jargon every time:
-
-- **What it does** — one plain sentence.
-- **Why it matters** — the user-visible outcome that moves.
-- **What decision it unblocks** — what becomes pickable next.
-
-User bandwidth is the bottleneck. Make every sentence pay rent. No "I'll go ahead and...", no "great question", no end-of-turn re-summaries of work the user just watched happen.
+**Explain reasoning when stakes or complexity are high**, in three plain lines: what it does, why it matters (the user-visible outcome that moves), what decision it unblocks. User bandwidth is the bottleneck: make every sentence pay rent, and never re-summarize work the user just watched.
 
 ### Told to build it? Build all of it. This turn.
 
-When Drew says build X, the turn ends with X built — or one line naming what blocked it. Nothing else counts.
+When Drew says build X, the turn ends with X built — or one line naming what blocked it. Nothing else counts. **These are not delivery:** a proof-of-concept, one example plus "the rest follow this pattern", a design doc, a tier you named but did not author, or the real work sitting in your own Next list.
 
-**These are not delivery:** a proof-of-concept, one example plus "the rest follow this pattern", a design doc, a tier you named but didn't author, or the real work sitting in your own Next list.
-
-**Five tells you're dodging:**
-- You wrote a phase/tier/rung into a doc instead of authoring it. If you can't build it now, don't name it.
-- "Build 30" and you built 1 well. That's 1.
-- Asked to make X better, you added new things beside X. Augment in place — appending is the dodge.
-- You fanned out 4 agents at a 30-item job. Dispatch 30: parallel, worktrees, cheap models, you review.
+**Five tells you are dodging:**
+- You wrote a phase or tier into a doc instead of authoring it. If you cannot build it now, do not name it.
+- "Build 30" and you built 1 well. That is 1.
+- Asked to improve X, you added new things beside X. Augment in place; appending is the dodge.
+- You sent 4 agents at a 30-item job. Dispatch 30: parallel, worktrees, cheap models, you review.
 - Your Next list repeats an instruction you already have. Delete it and go do it.
 
-Before sending, reread Drew's last message. If it told you to do something still sitting in Next, you're not done.
+Before you send, reread Drew's last message. If it told you to do something still sitting in Next, you are not done.
 
 *(Measured: one session, 45 turns, 10 corrections — seven were the same sentence. "finish the work already." "why do I have to repeat myself." "stop asking and take the lead." Every one traced to shipping a defensible increment instead of the thing asked for.)*
 
@@ -104,23 +81,9 @@ Drew is technical, but he does not live inside your harness's vocabulary. An ins
 
 ## Surface Orientation & Persona Selection
 
-Before doing GTM, customer-facing, sales, ops, or strategy work, orient to the project surface and select the right persona/style guide for the task.
+Before GTM, customer-facing, sales, ops, or strategy work, read `~/company/CLAUDE.md` and then `~/company/gtm/CLAUDE.md`. They own the surface map, the persona and style-guide selection rules, and the commercial-artifact rules; do not restate them here. Check `ops-board list` for active ownership.
 
-For `~/company`:
-
-- Start with `~/company/CLAUDE.md` for the company table of contents, vault layout, process docs, and task tracking.
-- For GTM work, read `~/company/gtm/CLAUDE.md` next; it maps products, personas, playbooks, experiments, signals, and commercial artifact rules.
-- Check `ops-board list` for active ownership and context.
-- Then choose from `~/company/gtm/personas/`, `~/company/gtm/playbooks/`, and `~/company/gtm/style-guides/`.
-
-Persona defaults:
-
-- Customer-facing commercial docs: `gtm/personas/customer-facing-commercial-reviewer.md` and `gtm/playbooks/customer-commercial-docs.md`.
-- Public content: `gtm/style-guides/anti-slop.md`, the relevant audience guide, and `gtm/playbooks/content-pipeline.md`.
-- Outreach: the relevant `gtm/playbooks/fde-outbound*.md` file plus the named `people/` or company context.
-- Buyer/ICP work: the closest `gtm/personas/` file; if none exists and the workflow will repeat, create one.
-
-If the output is for a named customer, speak to them directly. Do not write about them in the third person. Strip internal labels such as "customer-safe summary," "GTM posture," "buyer psychology," and "commercial artifact" from the sendable document.
+If the output is for a named customer, speak to them directly, never about them in the third person. Strip internal labels such as "customer-safe summary", "GTM posture", "buyer psychology", and "commercial artifact" from the sendable document.
 
 ## Plan before challenging changes
 
@@ -156,16 +119,14 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 ## Product Design Defaults
 
 - For visible UI work, invoke the `product-design` skill when available.
-- For public writing, research, marketing, homepage, product-design, or blog work, read the relevant file in `docs/anti-patterns/` before producing copy or UI.
-- Reference real products or design systems before inventing a visual direction; inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
-- During product testing, be picky about UI quality, pixel alignment, and visual polish; fix obvious issues you encounter, even outside the immediate task.
-- Do not add obvious labels, procedural step cards, route/status narration, or explanatory copy that restates what controls already show.
-- Do not market raw inventory counts on public editorial pages.
-  Post totals, repo totals, integration totals, and feature totals are not proof unless the page is explicitly helping the reader choose by volume.
-- Blog indexes should organize by reader path: series, topic, date, or argument.
-  Research indexes should organize by claim and evidence standard, not by SEO category or product taxonomy.
-- The active product mode should change the actual component: text input for text, upload/record for audio, sample/consent for cloning, chat/intake for agents.
-- Kill dead panels, giant default selections, repeated action words, and fake readiness states before claiming design quality.
+- For public writing, research, marketing, homepage, or blog work, read the relevant file in `docs/anti-patterns/` before producing copy or UI. That directory is the durable doctrine; a skill may summarize it but never replaces it.
+- Reference real products or design systems before you invent a visual direction. Inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
+- Be picky during product testing: fix pixel alignment and visual defects you meet, even outside the immediate task.
+- Do not add obvious labels, procedural step cards, route or status narration, or copy that restates what a control already shows.
+- Do not market raw inventory counts on public editorial pages. Totals are not proof unless the page helps the reader choose by volume.
+- Organize a blog index by reader path (series, topic, date, argument) and a research index by claim and evidence standard, never by SEO category.
+- Make the active product mode change the actual component: text input for text, upload or record for audio, sample and consent for cloning, chat or intake for agents.
+- Kill dead panels, giant default selections, repeated action words, and fake readiness states before you claim design quality.
 
 ## Cross-Project Conventions
 
@@ -181,17 +142,15 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Do not add narrative comments like "generate X", "evolve Y", "Gen N", "build the thing", or comments that restate the next line of code.
 - Do not use hype labels or lifecycle branding in comments. Prefer precise terms such as "candidate", "variant", "baseline", "promotion gate", or the domain's existing name.
 
-## GitHub Pull Requests
+## Git, PRs, and reviews
 
-- No tool-branding prefix on titles (`[codex]`, `[claude]`, etc.).
-- Conventional Commit style: `feat(optimization): ...`, `fix(holdout): ...`, `chore(api): ...`.
-- Scope = the topic or subsystem, not the repo name.
-- **Any PR that changes visible UI includes a screenshot (before/after when redesigning); flows get a short video/GIF.** Capture via the `bad` browser tooling or a local dev server; attach with `gh-drew pr comment --body` markdown image links (upload via the PR body or a gist). A UI PR with no visual is incomplete.
-- Smallest accurate type/scope wins. No redundant context.
-- For Drew/Tangle repos, create PRs through `gh-drew`, not raw `gh`. `gh-drew api user --jq .login` must print `drewstone` before any PR create/edit/review action.
-- `gh-drew` must resolve `DREW_GH_TOKEN` from `~/company/devops/secrets/.env.keys` plus `~/company/devops/secrets/agent-state.env` via `dotenvx`. If raw `gh` says "must be a collaborator" or uses the wrong account, retry with `gh-drew` before reporting failure.
-- Push branches over SSH when needed: `git push git@github.com:OWNER/REPO.git HEAD`. SSH auth proves git transport only; it does not prove the GitHub API account used by PR creation.
-- If `gh-drew` cannot find a valid Drew token, stop and report the missing/expired `DREW_GH_TOKEN`. Do not silently fall back to `tangletools` or any other `gh` account.
+- **Pull the latest review yourself; never wait to be handed a link.** Reviewers, human and the CI multi-shot bot, post AFTER each push, so the newest comment decides the merge. Before you claim a review is addressed, read the live state: `gh pr view <n> --comments`, `gh api repos/<owner>/<repo>/pulls/<n>/reviews` (the LAST `CHANGES_REQUESTED`/`COMMENTED` is the verdict, not an earlier `APPROVED`), and `gh api .../pulls/<n>/comments` for inline threads. The bot lands 1-3 min after a push and re-runs on every commit, so a fix can draw a NEW blocking finding — wait and re-check instead of declaring green.
+- Before you open or update a PR, fetch the target base and prove the branch merges cleanly: `git fetch origin main && git merge-tree --write-tree origin/main HEAD`. If a push would conflict, rebase or merge locally, resolve, rerun tests, then push.
+- Never use `--no-verify`. If a hook blocks, read its artifact and fix the cause or the hook. Global git guards come from `~/code/dotfiles/git/install.sh`; a repo's `.ai-agent-hooks.mjs` is part of its contract once checked in.
+- PR titles use Conventional Commit style with the topic as scope — `feat(optimization): ...`, not the repo name. No tool-branding prefix such as `[codex]`. Smallest accurate type and scope wins.
+- **A PR that changes visible UI includes a screenshot** (before/after when redesigning); a flow gets a short video or GIF. Capture with the `bad` browser tooling or a local dev server. A UI PR with no visual is incomplete.
+- For Drew and Tangle repos, use `gh-drew`, not raw `gh`: `gh-drew api user --jq .login` must print `drewstone` before any PR create, edit, or review. It resolves `DREW_GH_TOKEN` from `~/company/devops/secrets/.env.keys` plus `agent-state.env` via `dotenvx`. If raw `gh` reports "must be a collaborator", retry with `gh-drew` before you report failure; if `gh-drew` finds no valid token, stop and report the missing or expired `DREW_GH_TOKEN`, and never fall back to another account.
+- Push over SSH when needed: `git push git@github.com:OWNER/REPO.git HEAD`. SSH proves git transport only, never the API account a PR is created under.
 
 ## Credential Separation
 
