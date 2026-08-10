@@ -97,6 +97,16 @@ if [ -f "$AGENTS_SRC" ]; then
   link "$AGENTS_SRC" "$OPENCODE_DIR/AGENTS.md"
 fi
 
+# Directory-level instructions for the ~/code tree. Scope differs from the
+# shared file above: that one states how to behave in any session, this one
+# states where work lives across the repos under ~/code and how to route it.
+# CLAUDE.md is the one-line import so the two spellings cannot drift.
+CODE_TREE_SRC="$SCRIPT_DIR/code-tree-AGENTS.md"
+if [ -f "$CODE_TREE_SRC" ] && [ -d "$HOME/code" ]; then
+  link "$CODE_TREE_SRC" "$HOME/code/AGENTS.md"
+  printf '@AGENTS.md\n' > "$HOME/code/CLAUDE.md"
+fi
+
 # Reflections (cross-project analysis)
 link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
 
