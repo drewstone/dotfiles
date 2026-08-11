@@ -44,12 +44,20 @@ const QUIET = args.has('--quiet')
  *  a scan cannot silently start reading the wrong thing after a refactor. */
 const PRODUCTS = [
   { repo: 'gtm-agent', files: ['src/lib/gtm-profile-catalog.ts', 'src/lib/.server/chat/model-resolution.ts', 'wrangler.toml'] },
-  { repo: 'tax-agent', files: ['apps/web/app/lib/.server/chat/model-resolution.ts', 'wrangler.toml'] },
+  { repo: 'tax-agent', files: ['apps/web/src/lib/.server/tax/model-resolution.ts', 'apps/web/wrangler.toml'] },
   { repo: 'legal-agent', files: ['src/lib/.server/chat/model-resolution.ts', 'wrangler.toml'] },
-  { repo: 'physim', files: ['apps/server/src/lib/main-agent.ts'] },
+  { repo: 'physim', files: ['apps/server/src/lib/llm.ts'] },
   { repo: 'workcomp-agent', files: ['agent.config.ts', 'wrangler.toml'] },
   { repo: 'relationships-agent', files: ['agent.config.ts', 'wrangler.toml'] },
 ]
+
+/** Harness ids that read like model ids and are not models. `claude-code` names
+ *  the RUNNER; the model it runs is a separate field, and reporting it as a dead
+ *  model is a false alarm that trains a reader to skim the output. */
+const HARNESS_IDS = new Set([
+  'claude-code', 'kimi-code', 'opencode', 'codex', 'gemini-cli', 'cli-base',
+  'openclaw', 'nanoclaw', 'hermes', 'amp', 'crush', 'forge', 'cursor', 'acp', 'droid',
+])
 
 /** Model-id shapes worth checking. Deliberately narrow: a regex that matches
  *  every string finds file paths and prose. */
@@ -139,9 +147,13 @@ function sameModel(a, b) {
 /** Ids a product actually declares, read out of the files it declares them in. */
 function declaredIds(repo, files) {
   const found = new Map()
+  const missing = []
   for (const rel of files) {
     const path = join(CODE, repo, rel)
-    if (!existsSync(path)) continue
+    if (!existsSync(path)) {
+      missing.push(rel)
+      continue
+    }
     let text
     try {
       text = readFileSync(path, 'utf8')
@@ -156,10 +168,16 @@ function declaredIds(repo, files) {
         const id = (m[1] ?? '') + m[2]
         if (id.length < 6) continue
         if (/\.(ts|tsx|js|mjs|json|md)$/.test(id)) continue
+        // A model id carries a VERSION. Without this, prose ("claude models",
+        // "the gemini path") and harness names match and get probed.
+        if (!/\d/.test(id)) continue
+        const bare = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id
+        if (HARNESS_IDS.has(bare)) continue
         found.set(id, (found.get(id) ?? []).concat(`${rel}`))
       }
     }
   }
+  found.missingFiles = missing
   return found
 }
 
@@ -205,6 +223,14 @@ for (const { repo, files } of PRODUCTS) {
   if (!existsSync(join(CODE, repo))) continue
   const declared = declaredIds(repo, files)
   const rows = []
+  // A configured file that is not on disk is why this tool once reported two
+  // products clean while reading nothing at all. Absence of findings is only
+  // good news when the scan actually ran.
+  if (declared.missingFiles.length > 0) {
+    out.problems.push({ repo, id: '(scan)', verdict: 'unreadable', cause: `configured file(s) not found: ${declared.missingFiles.join(', ')}` })
+  } else if (declared.size === 0) {
+    out.problems.push({ repo, id: '(scan)', verdict: 'no-ids-found', cause: `read ${files.length} file(s) and matched no model id — either this product names none, or the paths are wrong` })
+  }
   for (const [id, where] of declared) {
     const inCatalog = catSet.has(id)
     const result = inCatalog ? await probe(id, key) : { model: id, verdict: 'not-in-catalog' }
@@ -217,7 +243,7 @@ for (const { repo, files } of PRODUCTS) {
       out.problems.push({ repo, id, verdict: 'stale', newer })
     }
   }
-  out.products.push({ repo, models: rows })
+  out.products.push({ repo, models: rows, filesRead: files.length - declared.missingFiles.length, filesMissing: declared.missingFiles })
 }
 
 if (JSON_OUT) {
@@ -226,12 +252,20 @@ if (JSON_OUT) {
 }
 
 const ICON = { serving: 'ok  ', substituted: 'SUB ', 'not-serving': 'DEAD', 'not-in-catalog': 'GONE', unreachable: '????' }
+const SCAN_NOTE = (p) =>
+  p.filesMissing.length > 0
+    ? `  !! ${p.filesMissing.length} configured file(s) NOT FOUND: ${p.filesMissing.join(', ')} — this product was not scanned`
+    : p.models.length === 0
+      ? `  !! read ${p.filesRead} file(s), matched no model id — either none is declared or the paths are stale`
+      : null
 if (!QUIET || out.problems.length) {
   console.log(`model freshness — ${out.checkedAt} — ${ROUTER}`)
   console.log(`catalog: ${catIds.length} models\n`)
   for (const p of out.products) {
-    if (QUIET && p.models.every((m) => m.verdict === 'serving' && m.newer.length === 0)) continue
+    if (QUIET && !SCAN_NOTE(p) && p.models.every((m) => m.verdict === 'serving' && m.newer.length === 0)) continue
     console.log(`${p.repo}`)
+    const note = SCAN_NOTE(p)
+    if (note) console.log(note)
     for (const m of p.models) {
       if (QUIET && m.verdict === 'serving' && m.newer.length === 0) continue
       const tail =
