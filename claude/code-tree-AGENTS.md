@@ -33,9 +33,9 @@ Personal (Webb) projects like `phony` never share credentials with Tangle projec
 
 Orient before acting — the global `AGENTS.md` "Repos are alive" section owns the commands and the concurrent-agent rules.
 
-For `blueprint-agent` and `agent-dev-container`, orient on the **running system** too, not only the repo: `bp-ops status` reports production health, provisioning, runner capacity, open PRs and the last deploys in one call.
-Every hour lost on that stack went the same way — a signal named a symptom and the wrong thing got fixed — so `bp-ops` encodes the distinctions the obvious command hides: a cancelled job is not a failure, a "failed deploy" is usually the *product* failing, a credential can be present and revoked, and a check that cannot run must never render as green.
-Command reference and the incident behind each: `~/company/tools/bp-ops/README.md`. The `bp-ops` skill routes a symptom to its command; `adc-infra-triage` goes deeper on the platform.
+For `blueprint-agent` and `agent-dev-container`, orient on the **running system** too, not only the repo: `tangle-ops status` reports production health, provisioning, runner capacity, open PRs and the last deploys in one call.
+Every hour lost on that stack went the same way — a signal named a symptom and the wrong thing got fixed — so `tangle-ops` encodes the distinctions the obvious command hides: a cancelled job is not a failure, a "failed deploy" is usually the *product* failing, a credential can be present and revoked, and a check that cannot run must never render as green.
+Command reference and the incident behind each: `~/company/tools/tangle-ops/README.md`. The `tangle-ops` skill routes a symptom to its command; `adc-infra-triage` goes deeper on the platform.
 
 Reconcile before you create: grep or ls for the existing module, doc, or skill, then say "found X, extending it" or "checked, none exists (grep'd P), building new".
 

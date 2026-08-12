@@ -59,7 +59,7 @@ A file on disk that no repo tracks is lost the moment the directory is cleaned, 
 - **Ready → merge it.** Do not park a finished branch waiting to be told.
 - **Pushed with no PR is the same failure as untracked.** Check `git rev-list --count HEAD --not --remotes` AND `gh pr list --head <branch>` — a branch can be fully pushed and still have no PR open, which is how twelve finished commits sat unmerged for days.
 
-Find the tracked home before concluding there is none. `git check-ignore -v <path>` naming a `/*` line means the repo ignores by default and unignores selectively — that is a convention to follow, not a refusal. And a directory can be its own repo: check the directory itself, not only its children (`~/company/tools` is a repo; `~/company/tools/bp-ops` is not, and testing the child says "not a repo" about the wrong thing).
+Find the tracked home before concluding there is none. `git check-ignore -v <path>` naming a `/*` line means the repo ignores by default and unignores selectively — that is a convention to follow, not a refusal. And a directory can be its own repo: check the directory itself, not only its children (`~/company/tools` is a repo; `~/company/tools/tangle-ops` is not, and testing the child says "not a repo" about the wrong thing).
 
 *(Measured: one session shipped a tool to `~/company/tools`, reported "that directory is gitignored", and stopped. The directory was its own git repo with a GitHub remote the whole time. Same session left twelve pushed dotfiles commits with no PR.)*
 
