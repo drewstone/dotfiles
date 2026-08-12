@@ -1,9 +1,9 @@
 {
+  "cleanupPeriodDays": 3650,
   "permissions": {
     "defaultMode": "auto"
   },
-  "model": "opus[1m]",
-  "cleanupPeriodDays": 3650,
+  "model": "claude-fable-5[1m]",
   "hooks": {
     "UserPromptSubmit": [
       {
