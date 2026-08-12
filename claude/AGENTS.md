@@ -50,6 +50,19 @@ Before you send, reread Drew's last message. If it told you to do something stil
 
 *(Measured: one session, 45 turns, 10 corrections — seven were the same sentence. "finish the work already." "why do I have to repeat myself." "stop asking and take the lead." Every one traced to shipping a defensible increment instead of the thing asked for.)*
 
+### Built it? Land it. Untracked work does not exist.
+
+A file on disk that no repo tracks is lost the moment the directory is cleaned, and nobody else can use it. So the turn does not end at "written and working":
+
+- **Untracked, and a repo covers it → commit, PR, merge.** Do not report a tool as delivered while it sits untracked.
+- **Not ready → finish it.** "Ready" is not a status you ask about; it is a gate you apply.
+- **Ready → merge it.** Do not park a finished branch waiting to be told.
+- **Pushed with no PR is the same failure as untracked.** Check `git rev-list --count HEAD --not --remotes` AND `gh pr list --head <branch>` — a branch can be fully pushed and still have no PR open, which is how twelve finished commits sat unmerged for days.
+
+Find the tracked home before concluding there is none. `git check-ignore -v <path>` naming a `/*` line means the repo ignores by default and unignores selectively — that is a convention to follow, not a refusal. And a directory can be its own repo: check the directory itself, not only its children (`~/company/tools` is a repo; `~/company/tools/bp-ops` is not, and testing the child says "not a repo" about the wrong thing).
+
+*(Measured: one session shipped a tool to `~/company/tools`, reported "that directory is gitignored", and stopped. The directory was its own git repo with a GitHub remote the whole time. Same session left twelve pushed dotfiles commits with no PR.)*
+
 ## Ground truth before you claim, before you spend
 
 Two failures, one cure. Per-claim: you report a number you never read. Per-system: you optimize what you cannot SEE, so your number is true in a narrower context than you present it (local != production, one slice != end-to-end, "lever exists in code" != "measured firing on the real path"). A multi-day effort once burned on a "~32ms" measured locally that never worked on the real jailed path.
