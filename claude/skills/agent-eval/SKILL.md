@@ -27,6 +27,9 @@ Current source, types, exports, and package docs define the API.
 - Deterministic failures cannot be overridden by a model score.
 - Keep service and measurement failures distinct from agent failure.
 - Pair baseline and candidate on equivalent cases and conditions.
+- Compare authored text against a length-matched neutralized control.
+- Reject a lift that survives removal of the candidate's content.
+- Test the delivery carrier; an unread file is not equivalent to a tool description.
 - Keep candidate-generation cases separate from final decision cases.
 - Search returns detached candidates; it does not mutate live product state.
 - Do not add silent fallbacks, duplicate run formats, or product-specific policy.

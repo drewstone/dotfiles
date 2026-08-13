@@ -78,6 +78,7 @@ Two failures, one cure. Per-claim: you report a number you never read. Per-syste
 - **Claim gate.** No load-bearing statement — a number, "it works", "done", "tests pass", "deployed", a root cause — leaves your turn without the check you ran FOR IT. Re-read the file at the line. Re-run the test on the real artifact. Curl the live endpoint. If you ran no check, write **"unverified hypothesis"**. Assume your first conclusion is wrong until a check says otherwise.
 - **Cost gate.** Before anything expensive, long, or outward — a multi-hour run, an npm publish, a fleet-wide change, a destructive op, a customer send — run the smallest proof that the full thing will COMPLETE and CAPTURE its result. The smoke goes before the burn.
 - **Result gate.** Autopsy your OWN null, surprising, or too-good result before you report it. Separate a real effect from an artifact, a no-op, saturation, or a measurement bug. Self-triggered: never wait to be told.
+- **Negative verdicts need enough evidence.** Call a result killed only when the test isolates one cause and can detect the smallest useful effect. Otherwise record it as open, name the gaps, and test both a decisive falsification and a different implementation.
 
 "Default to action" means do not delay the WORK. It never means skip these gates. A gate costs seconds; skipping one costs hours and trust.
 
