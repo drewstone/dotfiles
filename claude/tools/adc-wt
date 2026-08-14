@@ -75,6 +75,14 @@ cmd_claim() {
     && git fetch origin --quiet \
     && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ) \
     || { log "branch checkout FAILED"; return 1; }
+  # A pooled tree carries the dependencies of the develop it was warmed from.
+  # The checkout above moves it to current develop, so a dependency bump since
+  # then leaves the installed tree behind the lockfile. That reads as a code
+  # failure — five agents on 2026-08-14 each lost a gate run to "Cannot find
+  # module" before finding the cause. pnpm no-ops when the tree already
+  # matches, so this costs nothing in the common case.
+  ( cd "$claimed" && CI=true pnpm install --frozen-lockfile >/dev/null 2>&1 ) \
+    || log "dependency refresh failed — run 'CI=true pnpm install --frozen-lockfile' in $claimed"
   ( cd "$REPO" && git worktree repair >/dev/null 2>&1 ) || true
   echo "$claimed"
 }
