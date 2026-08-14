@@ -25,6 +25,13 @@ export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
 BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD)"
 [ "$BRANCH" != "HEAD" ] || { echo "adc-push: $WT is detached" >&2; exit 2; }
 
+# Bind the commit NOW, not when the lock is acquired. The lock serialises every
+# agent on the box, so a queued push can wait minutes; worktrees are shared, and
+# on 2026-08-14 a push that waited 16 minutes acquired the lock after another
+# agent had checked out their own branch in the same tree, and pushed THEIR
+# HEAD. Pushing an explicit sha cannot drift no matter how long it queues.
+COMMIT="$(git -C "$WT" rev-parse HEAD)"
+
 # A repo-local user.email silently shadows the correct global one, and the
 # author identity only becomes visible after the fact: GitHub appends
 # `Co-authored-by: <that address>` to every squash merge. On 2026-08-13 a stale
@@ -43,7 +50,7 @@ case "${ADC_ALLOWED_EMAILS:-drewstone329@gmail.com hello@tangle.tools}" in
 esac
 
 log() { echo "[adc-push $(date +%H:%M:%S)] $*"; }
-local_sha()  { git -C "$WT" rev-parse HEAD; }
+local_sha()  { printf "%s" "$COMMIT"; }
 remote_sha() { git -C "$WT" ls-remote --heads origin "$BRANCH" 2>/dev/null | cut -f1; }
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
@@ -67,11 +74,11 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     flock "$LOCK" env TURBO_CACHE_DIR="$TURBO_CACHE_DIR" \
       git -C "$WT" push \
         "https://x-access-token:${DREW_GH_TOKEN}@github.com/${ADC_REMOTE_SLUG:-tangle-network/agent-dev-container}.git" \
-        "HEAD:refs/heads/$BRANCH" 2>&1 \
+        "$COMMIT:refs/heads/$BRANCH" 2>&1 \
       | grep -vE "x-access-token|dependabot" | tail -5 | sed -E 's/\x1b\[[0-9;]*m//g'
   else
     flock "$LOCK" env TURBO_CACHE_DIR="$TURBO_CACHE_DIR" \
-      git -C "$WT" push -u origin HEAD 2>&1 | tail -5 | sed -E 's/\x1b\[[0-9;]*m//g'
+      git -C "$WT" push origin "$COMMIT:refs/heads/$BRANCH" 2>&1 | tail -5 | sed -E 's/\x1b\[[0-9;]*m//g'
   fi
 
   if [ "$(remote_sha)" = "$(local_sha)" ]; then
