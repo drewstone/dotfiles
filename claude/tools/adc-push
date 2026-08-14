@@ -25,6 +25,23 @@ export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
 BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD)"
 [ "$BRANCH" != "HEAD" ] || { echo "adc-push: $WT is detached" >&2; exit 2; }
 
+# A repo-local user.email silently shadows the correct global one, and the
+# author identity only becomes visible after the fact: GitHub appends
+# `Co-authored-by: <that address>` to every squash merge. On 2026-08-13 a stale
+# `drew@webb.tools` override put a personal address on 28 of the last 30
+# develop commits before anyone noticed. Refuse the push rather than sign work
+# with an account that is not the one merging it.
+AUTHOR_EMAIL="$(git -C "$WT" config user.email 2>/dev/null || true)"
+case "${ADC_ALLOWED_EMAILS:-drewstone329@gmail.com hello@tangle.tools}" in
+  *"$AUTHOR_EMAIL"*) ;;
+  *)
+    echo "adc-push: refusing — commit identity is '${AUTHOR_EMAIL:-<unset>}'." >&2
+    echo "  allowed: ${ADC_ALLOWED_EMAILS:-drewstone329@gmail.com hello@tangle.tools}" >&2
+    echo "  fix: git -C '$WT' config --unset user.email   (falls back to the global identity)" >&2
+    exit 2
+    ;;
+esac
+
 log() { echo "[adc-push $(date +%H:%M:%S)] $*"; }
 local_sha()  { git -C "$WT" rev-parse HEAD; }
 remote_sha() { git -C "$WT" ls-remote --heads origin "$BRANCH" 2>/dev/null | cut -f1; }
