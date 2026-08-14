@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Warm worktree pool for agent-dev-container.
+#
+# A fresh `git worktree add` is not ready to work in. Measured on 2026-08-13,
+# one fresh worktree cost:
+#   checkout 7865 files      ~60s
+#   pnpm install             ~10s
+#   cold turbo cache         619s of rebuilds (dist freshness 322s + types 297s)
+#   missing native addons    120 phantom test failures (better-sqlite3 binding)
+# The last one is the expensive kind of slow: it looks like a code regression.
+#
+# So the pool pre-pays all four, exactly as the product's sandbox warm pool
+# pre-pays a container boot. An agent CLAIMS a ready tree instead of building
+# one.
+#
+# usage:
+#   adc-wt warm [N]        keep N ready trees (default 3)
+#   adc-wt claim <branch>  print the path of a ready tree, on a new branch
+#   adc-wt release <path>  return a tree to the pool (reset + refresh)
+#   adc-wt status
+set -uo pipefail
+
+REPO="${ADC_REPO:-$HOME/code/agent-dev-container}"
+POOL="${ADC_WT_POOL:-$REPO/.worktrees}"
+SEED_PREFIX="wt-warm-"
+export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
+
+log() { echo "[adc-wt $(date +%H:%M:%S)] $*"; }
+
+# The repo owns this: scripts/bootstrap-worktree.sh runs the frozen install, the
+# workspace build, and the native-addon heal in one idempotent shot. Run it with
+# cwd INSIDE the tree — `pnpm -C <dir>` leaves the addon heal pointed at the
+# wrong instance, which is how a worktree reaches a test run with no
+# better-sqlite3 binding and reports 120 failures that look like a code defect.
+prepare_tree() {
+  local dir="$1"
+  ( cd "$dir" && bash scripts/bootstrap-worktree.sh >/dev/null 2>&1 ) \
+    || { log "bootstrap FAILED in $dir"; return 1; }
+  log "ready: $dir"
+}
+
+cmd_warm() {
+  local want="${1:-3}" have=0 i=0
+  mkdir -p "$POOL" "$TURBO_CACHE_DIR"
+  ( cd "$REPO" && git fetch origin --quiet ) || true
+  for d in "$POOL"/${SEED_PREFIX}*; do [ -d "$d" ] && have=$((have + 1)); done
+  log "pool has $have, want $want (shared cache: $TURBO_CACHE_DIR)"
+  while [ "$have" -lt "$want" ]; do
+    i=$((i + 1))
+    local dir="$POOL/${SEED_PREFIX}$(date +%s)-$i"
+    ( cd "$REPO" && git worktree add --detach "$dir" origin/develop >/dev/null 2>&1 ) \
+      || { log "worktree add FAILED"; return 1; }
+    prepare_tree "$dir" || return 1
+    have=$((have + 1))
+  done
+  log "pool warm: $have tree(s)"
+}
+
+cmd_claim() {
+  local branch="${1:?usage: adc-wt claim <branch>}"
+  local dir
+  for d in "$POOL"/${SEED_PREFIX}*; do
+    [ -d "$d" ] || continue
+    dir="$d"; break
+  done
+  if [ -z "${dir:-}" ]; then
+    log "pool empty — building one now (slow path)"
+    dir="$POOL/${SEED_PREFIX}$(date +%s)-cold"
+    ( cd "$REPO" && git worktree add --detach "$dir" origin/develop >/dev/null 2>&1 ) || return 1
+    prepare_tree "$dir" || return 1
+  fi
+  local claimed="$POOL/${branch//\//-}"
+  mv "$dir" "$claimed" 2>/dev/null || claimed="$dir"
+  ( cd "$claimed" \
+    && git fetch origin --quiet \
+    && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ) \
+    || { log "branch checkout FAILED"; return 1; }
+  ( cd "$REPO" && git worktree repair >/dev/null 2>&1 ) || true
+  echo "$claimed"
+}
+
+cmd_release() {
+  local dir="${1:?usage: adc-wt release <path>}"
+  ( cd "$REPO" && git worktree remove --force "$dir" >/dev/null 2>&1 ) || rm -rf "$dir"
+  log "released $dir"
+}
+
+cmd_status() {
+  echo "repo:         $REPO"
+  echo "pool:         $POOL"
+  echo "shared cache: $TURBO_CACHE_DIR ($(du -sh "$TURBO_CACHE_DIR" 2>/dev/null | cut -f1 || echo 0))"
+  local ready=0 claimed=0
+  for d in "$POOL"/*; do
+    [ -d "$d" ] || continue
+    case "$(basename "$d")" in
+      ${SEED_PREFIX}*) ready=$((ready + 1)) ;;
+      *) claimed=$((claimed + 1)) ;;
+    esac
+  done
+  echo "ready:        $ready"
+  echo "claimed:      $claimed"
+}
+
+case "${1:-status}" in
+  warm)    shift; cmd_warm "$@" ;;
+  claim)   shift; cmd_claim "$@" ;;
+  release) shift; cmd_release "$@" ;;
+  status)  cmd_status ;;
+  *) echo "usage: adc-wt {warm [N]|claim <branch>|release <path>|status}" >&2; exit 2 ;;
+esac

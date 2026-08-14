@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Reclaim disk from agent workspaces that nobody is working in.
+#
+# Agents create throwaway clones and worktrees and never remove them. Measured
+# 2026-08-13 on a 1.8T box that had reached 100% full with 12G free:
+#   /home/drew/code/.worktrees   473G across 392 worktrees
+#   127 stale clones under ~/code  98G of node_modules alone
+#   two Rust target/ dirs          21G
+#   regenerable caches             18G
+# Nothing reaps any of it, so the disk fills on a schedule set by agent churn.
+#
+# Staleness is read from `.git` mtime, not from node_modules: a directory's
+# mtime does not change when its files are READ, so an actively-built tree can
+# look untouched. Git activity is the honest signal for "someone works here".
+#
+# Deletes only regenerable artefacts — dependencies, build outputs, caches. It
+# never removes a worktree, a clone, or anything git tracks, so a reaped tree is
+# one `pnpm install` away from working.
+#
+# usage:
+#   adc-reap [--days N] [--apply]      default 14 days, dry-run unless --apply
+set -uo pipefail
+
+DAYS=14
+APPLY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --days) DAYS="$2"; shift 2 ;;
+    --apply) APPLY=1; shift ;;
+    *) echo "usage: adc-reap [--days N] [--apply]" >&2; exit 2 ;;
+  esac
+done
+
+ROOTS=("$HOME/code" "$HOME/code/.worktrees")
+ARTEFACTS=(node_modules target .turbo .next dist coverage)
+NOW=$(date +%s)
+CUT=$((NOW - DAYS * 86400))
+
+avail() { df --output=avail / | tail -1; }
+before=$(avail)
+stale=0
+kept=0
+
+for root in "${ROOTS[@]}"; do
+  [ -d "$root" ] || continue
+  for dir in "$root"/*/; do
+    tree="${dir%/}"
+    [ -e "$tree/.git" ] || continue
+    # A worktree's own .worktrees dir is a separate root, already in ROOTS.
+    case "$tree" in "$HOME/code/.worktrees") continue ;; esac
+    mtime=$(stat -c %Y "$tree/.git" 2>/dev/null || echo 0)
+    if [ "$mtime" -ge "$CUT" ]; then
+      kept=$((kept + 1))
+      continue
+    fi
+    stale=$((stale + 1))
+    age=$(((NOW - mtime) / 86400))
+    for name in "${ARTEFACTS[@]}"; do
+      while IFS= read -r -d '' victim; do
+        if [ "$APPLY" -eq 1 ]; then
+          rm -rf "$victim"
+        else
+          echo "would remove (${age}d): $victim"
+        fi
+      done < <(find "$tree" -type d -name "$name" -prune -print0 2>/dev/null)
+    done
+  done
+done
+
+after=$(avail)
+echo
+echo "stale trees (>${DAYS}d): $stale    active (kept): $kept"
+if [ "$APPLY" -eq 1 ]; then
+  echo "freed: $(numfmt --to=iec $(((after - before) * 1024)) 2>/dev/null)"
+  df -h / | tail -1
+else
+  echo "dry run — pass --apply to reclaim"
+fi

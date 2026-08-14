@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Push a branch and PROVE it landed.
+#
+# Measured on 2026-08-13 with 4 agents sharing one box and one GitHub remote:
+#   - concurrent pushes make GitHub drop the SSH connection during ref
+#     advertisement ("Connection to github.com closed by remote host"), and the
+#     drop appears at line 6 of a 28-line log — before the gate even finishes
+#   - the pre-push gate then PASSES and git exits 0 with nothing on the remote
+#   - so `git push` succeeding proves nothing; only ls-remote does
+#   - and because the gate is fused into the push, every transport retry re-pays
+#     the whole gate (measured 375-622s)
+#
+# This serialises the transport across every agent on the box (one flock), then
+# verifies the remote SHA equals the local SHA. It never passes --no-verify: the
+# gate still runs, it just stops being paid for a network failure.
+#
+# usage: adc-push <worktree> [attempts]
+set -uo pipefail
+
+WT="${1:?usage: adc-push <worktree> [attempts]}"
+ATTEMPTS="${2:-4}"
+LOCK="${ADC_PUSH_LOCK:-/tmp/adc-push.lock}"
+export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
+
+BRANCH="$(git -C "$WT" rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" != "HEAD" ] || { echo "adc-push: $WT is detached" >&2; exit 2; }
+
+log() { echo "[adc-push $(date +%H:%M:%S)] $*"; }
+local_sha()  { git -C "$WT" rev-parse HEAD; }
+remote_sha() { git -C "$WT" ls-remote --heads origin "$BRANCH" 2>/dev/null | cut -f1; }
+
+for attempt in $(seq 1 "$ATTEMPTS"); do
+  if [ "$(remote_sha)" = "$(local_sha)" ]; then
+    log "already landed: $BRANCH @ $(local_sha | cut -c1-9)"
+    exit 0
+  fi
+
+  log "attempt $attempt/$ATTEMPTS: waiting for the machine-wide push lock"
+  # The gate runs inside the lock too. That is deliberate: two gates in parallel
+  # on one box starve each other's timeouts (a 13s test tripped its budget and
+  # reported a false failure), so serialising both is what makes each attempt
+  # deterministic.
+  #
+  # HTTPS first. GitHub caps concurrent SSH connections per host, and 8 agent
+  # sessions on one box exhaust it: measured 2026-08-13, one branch failed 3 SSH
+  # pushes — reporting success on two of them — then landed over HTTPS on the
+  # first try, as did every branch after it. SSH stays the fallback for a box
+  # with no token.
+  if [ -n "${DREW_GH_TOKEN:-}" ]; then
+    flock "$LOCK" env TURBO_CACHE_DIR="$TURBO_CACHE_DIR" \
+      git -C "$WT" push \
+        "https://x-access-token:${DREW_GH_TOKEN}@github.com/${ADC_REMOTE_SLUG:-tangle-network/agent-dev-container}.git" \
+        "HEAD:refs/heads/$BRANCH" 2>&1 \
+      | grep -vE "x-access-token|dependabot" | tail -5 | sed -E 's/\x1b\[[0-9;]*m//g'
+  else
+    flock "$LOCK" env TURBO_CACHE_DIR="$TURBO_CACHE_DIR" \
+      git -C "$WT" push -u origin HEAD 2>&1 | tail -5 | sed -E 's/\x1b\[[0-9;]*m//g'
+  fi
+
+  if [ "$(remote_sha)" = "$(local_sha)" ]; then
+    log "LANDED $BRANCH @ $(local_sha | cut -c1-9)"
+    exit 0
+  fi
+  log "attempt $attempt did not land (ls-remote is the proof); backing off"
+  sleep $((attempt * 30))
+done
+
+log "FAILED to land $BRANCH after $ATTEMPTS attempts"
+exit 1
