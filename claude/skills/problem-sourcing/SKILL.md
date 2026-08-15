@@ -19,6 +19,9 @@ The standing store is `~/code/discovery/meta/problem-sourcing/` (README there ow
 
 ## Rules (from the README, enforced here)
 
+- **Verify every "verbatim" quote against raw source text (grep the fetched HTML/PDF), never trust a summarizer's quotation** — WebFetch's model fabricated quotes in a real sweep; two extraction agents caught it only by re-pulling raw text.
+- **Enumerate prolific authors from the arXiv listing API, not Semantic Scholar** — S2 held 10 of 32 recent papers for one author and fragments identities across 4-19 profiles; use S2 for citation counts only.
+
 - Verbatim or `inferred` — never dress a guess as a stated problem.
 - Every fit grade names its executable handle or admits there is none.
 - GPT-Pro or other expensive seats only for stage 3 on high-stakes promotions, never for stage 2 extraction.
