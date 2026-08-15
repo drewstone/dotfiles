@@ -71,9 +71,17 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   # first try, as did every branch after it. SSH stays the fallback for a box
   # with no token.
   if [ -n "${DREW_GH_TOKEN:-}" ]; then
-    flock "$LOCK" env TURBO_CACHE_DIR="$TURBO_CACHE_DIR" \
-      git -C "$WT" push \
-        "https://x-access-token:${DREW_GH_TOKEN}@github.com/${ADC_REMOTE_SLUG:-tangle-network/agent-dev-container}.git" \
+    # The token is passed by NAME, never by value. Interpolating it into the
+    # URL puts the secret in argv, where `ps -eo args` shows it to every local
+    # user for the length of the push — and this box runs many agents as one
+    # user. Git runs the helper with `sh -c`, so `$DREW_GH_TOKEN` expands
+    # inside that shell from the inherited environment; the process table holds
+    # only the literal variable name.
+    flock "$LOCK" env TURBO_CACHE_DIR="$TURBO_CACHE_DIR" DREW_GH_TOKEN="$DREW_GH_TOKEN" \
+      git -C "$WT" \
+        -c 'credential.helper=!f() { printf "username=x-access-token\npassword=%s\n" "$DREW_GH_TOKEN"; }; f' \
+        push \
+        "https://github.com/${ADC_REMOTE_SLUG:-tangle-network/agent-dev-container}.git" \
         "$COMMIT:refs/heads/$BRANCH" 2>&1 \
       | grep -vE "x-access-token|dependabot" | tail -5 | sed -E 's/\x1b\[[0-9;]*m//g'
   else
