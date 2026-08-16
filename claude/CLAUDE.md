@@ -2,6 +2,13 @@
 
 @AGENTS.md
 
+## One committing identity — never set it
+
+Run `git commit`. Never `git -c user.name=… -c user.email=…`, never `git config user.email`.
+The global config is already `Drew Stone <drewstone329@gmail.com>`, the identity GitHub squashes as.
+Any other address — including `drew@tangle.tools` from the session context — makes GitHub read one person as two and permanently insert `Co-authored-by:` into the squash commit.
+No co-authorship trailers, human or AI, ever.
+
 ## Dotfiles
 
 All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked into `~/.claude/` by `~/dotfiles/claude/install.sh`.
