@@ -32,10 +32,19 @@ log() { echo "[adc-wt $(date +%H:%M:%S)] $*"; }
 # cwd INSIDE the tree — `pnpm -C <dir>` leaves the addon heal pointed at the
 # wrong instance, which is how a worktree reaches a test run with no
 # better-sqlite3 binding and reports 120 failures that look like a code defect.
+# Bootstrap output goes to a log rather than /dev/null. A bare "bootstrap
+# FAILED" sends the caller to re-run the same script by hand to learn the
+# reason, and a transient failure then looks like a broken tool.
 prepare_tree() {
   local dir="$1"
-  ( cd "$dir" && bash scripts/bootstrap-worktree.sh >/dev/null 2>&1 ) \
-    || { log "bootstrap FAILED in $dir"; return 1; }
+  local logfile
+  logfile="$(mktemp -t adc-wt-bootstrap-XXXXXX.log)"
+  if ! ( cd "$dir" && bash scripts/bootstrap-worktree.sh >"$logfile" 2>&1 ); then
+    log "bootstrap FAILED in $dir — last 20 lines of $logfile:"
+    tail -20 "$logfile" >&2
+    return 1
+  fi
+  rm -f "$logfile"
   log "ready: $dir"
 }
 
