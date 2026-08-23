@@ -9,7 +9,11 @@ Run it, read it, act on it — don't just print the findings:
 
 1. **Analyze this session's trace:**
    ```bash
-   if command -v traces >/dev/null 2>&1; then
+   # Homebrew ships an unrelated `traces` viewer (v0.4.x, no `analyze`), and the zsh
+   # node/npm functions loop on _nvm_load — probe for `analyze` and bypass both.
+   unset -f node npm npx nvm 2>/dev/null
+   export PATH=/Users/drew/.nvm/versions/node/v24.11.1/bin:$PATH
+   if traces analyze --help >/dev/null 2>&1; then
      traces analyze --harness claude-code --last 1
    else
      npx --yes @tangle-network/traces@latest analyze --harness claude-code --last 1
