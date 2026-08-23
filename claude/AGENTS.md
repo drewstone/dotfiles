@@ -128,7 +128,7 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 
 - For visible UI work, invoke the `product-design` skill when available.
 - For public writing, research, marketing, homepage, or blog work, read the relevant file in `docs/anti-patterns/` before producing copy or UI. That directory is the durable doctrine; a skill may summarize it but never replaces it.
-- Reference real products or design systems before you invent a visual direction. Inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
+- Reference real products or design systems before you invent a visual direction. The reference set includes prior versions Drew shipped and liked — harvest those before generating variants. *(2 sessions lost a design round to this: bmaf 08-10 text-first page rebuilt 2x; wayfind 08-22 all variants under 3/10 while the liked OG timeseries flow sat unharvested.)* Inspect screenshots, DOM, styles, or competitor flows when the work is design-sensitive.
 - Be picky during product testing: fix pixel alignment and visual defects you meet, even outside the immediate task.
 - Do not add obvious labels, procedural step cards, route or status narration, or copy that restates what a control already shows.
 - Do not market raw inventory counts on public editorial pages. Totals are not proof unless the page helps the reader choose by volume.
