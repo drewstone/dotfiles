@@ -48,6 +48,8 @@ When Drew says build X, the turn ends with X built — or one line naming what b
 
 Before you send, reread Drew's last message. If it told you to do something still sitting in Next, you are not done.
 
+**A pending verification is Next-list dodging too.** "Watcher will report" / "CI should pass" / "publish in flight" are promises, not delivery. When the remaining wait is minutes-scale (CI, publish, registry lag), block on it and report the terminal answer in the SAME turn. Delegate to a background watcher only for hours-scale waits, and then say plainly that the result is pending and what will confirm it. *(2026-08-23: ended a turn with "npm publish unverified, watcher polling" — the publish was tag-triggered and had not even been cut; Drew: "why do I always have to remind you to confirm it".)*
+
 *(Measured: one session, 45 turns, 10 corrections — seven were the same sentence. "finish the work already." "why do I have to repeat myself." "stop asking and take the lead." Every one traced to shipping a defensible increment instead of the thing asked for.)*
 
 ### Built it? Land it. Untracked work does not exist.
