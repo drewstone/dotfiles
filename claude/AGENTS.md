@@ -168,6 +168,18 @@ Never mix credentials between unrelated organizations or personal/company enviro
 
 When asked to inspect the latest screenshot or `$IMG`, first check the newest file under `~/.claude/image-cache/`. If that is stale or empty, check `~/.tmux/clipboard/images/`.
 
+## Host hygiene
+
+- Do not write generated artifacts to the top level of `~`.
+  Screenshots, PDFs, logs, dumps, and scratch scripts go to the project directory, the session scratchpad, or `/tmp`.
+  A daily `home-sweep` cron quarantines strays older than 2 days into `~/attic/`.
+- Do not run destructive mount or namespace experiments as root on the host.
+  `unshare --mount` isolates the mount table only.
+  `rm`, `rmdir`, and file creation inside the namespace still change the real disk.
+  On 2026-08-20 a test ran `rmdir /proc; : > /proc` inside a mount namespace.
+  It deleted the real `/proc` mountpoint on disk, and the machine could not boot for 5 days.
+  Simulate a missing kernel filesystem inside a container or a VM, never on the host root.
+
 ## Anti-Patterns
 
 - Do not silently fake success. (This is the Claim gate above — a result with no check next to it is a fake until proven otherwise.)

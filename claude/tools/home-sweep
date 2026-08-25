@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Quarantine loose files that agent sessions drop at the top level of $HOME.
+# Agents must write artifacts to the project directory or the session scratchpad.
+# This sweep is the backstop for the ones that do not.
+# Files older than 2 days move into ~/attic/<YYYY-MM>-home-sweep/. Nothing is deleted.
+set -euo pipefail
+
+home="${HOME:?}"
+attic="$home/attic/$(date +%Y-%m)-home-sweep"
+
+# Files that legitimately live at the top level of $HOME.
+allow=(integrations.env)
+
+is_allowed() {
+  local name=$1
+  for keep in "${allow[@]}"; do
+    [ "$name" = "$keep" ] && return 0
+  done
+  return 1
+}
+
+moved=0
+while IFS= read -r -d '' f; do
+  name=$(basename "$f")
+  is_allowed "$name" && continue
+  mkdir -p "$attic"
+  mv -n "$f" "$attic/" && moved=$((moved + 1))
+done < <(find "$home" -maxdepth 1 -type f ! -name '.*' -mmin +2880 -print0)
+
+echo "home-sweep: moved $moved file(s) to $attic"
