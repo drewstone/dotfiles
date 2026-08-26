@@ -82,7 +82,8 @@
     "last30days@last30days-skill": true,
     "tangle-blueprint-innovate@tangle-network-skills": true,
     "agent-factory@tangle-skills-internal": true,
-    "agent-platform@tangle-skills-internal": true
+    "agent-platform@tangle-skills-internal": true,
+    "mattpocock-skills@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -116,6 +117,7 @@
       }
     }
   },
+  "outputStyle": "Attention-kind",
   "effortLevel": "xhigh",
   "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,

@@ -157,6 +157,15 @@ if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/nul
   done
 fi
 
+# Output styles (Claude-only: Codex and OpenCode have no equivalent)
+if [ -d "$SCRIPT_DIR/output-styles" ] && [ "$(ls -A "$SCRIPT_DIR/output-styles" 2>/dev/null)" ]; then
+  mkdir -p "$CLAUDE_DIR/output-styles"
+  for style in "$SCRIPT_DIR/output-styles"/*.md; do
+    [ -f "$style" ] || continue
+    link "$style" "$CLAUDE_DIR/output-styles/$(basename "$style")"
+  done
+fi
+
 # Hooks
 if [ -d "$SCRIPT_DIR/hooks" ] && [ "$(ls -A "$SCRIPT_DIR/hooks" 2>/dev/null)" ]; then
   mkdir -p "$CLAUDE_DIR/hooks"
