@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Run the poll-guard hook against real corpus commands and score it.
 
-Positives: capped wait loops whose body never writes to stdout (the class that
-measurably loses its answer). Negatives: every other Bash command in a sample of
-real transcripts, which must not trigger the silent-wait note.
+Positives: capped wait loops whose body never writes to stdout, the class that
+measurably loses its answer. Negatives: every other Bash command in a sample of
+real transcripts, which must not be warned about.
+
+Recall is 27 of 30, not 30 of 30: the other 3 already redirect their output to a
+file, so a kill still leaves the log and the hook stays quiet by design.
 """
 import json
 import os
@@ -137,7 +140,3 @@ print("\n=== 4. run_in_background suppresses the note ===")
 demo = "for i in $(seq 1 30); do sleep 20; done; echo done"
 print("  bg=False ->", fire(demo, sid="bgA")[0])
 print("  bg=True  ->", fire(demo, sid="bgB", bg=True)[0])
-
-print("\n=== 5. ci-poll cadence (old hook fired once; new fires 3rd then every 10th) ===")
-seq = [fire("gh-drew pr checks 6243", sid="cadence")[1] for _ in range(25)]
-print("  fired at polls:", [i + 1 for i, v in enumerate(seq) if v is True])
