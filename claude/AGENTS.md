@@ -50,6 +50,17 @@ Before you send, reread Drew's last message. If it told you to do something stil
 
 **A pending verification is Next-list dodging too.** "Watcher will report" / "CI should pass" / "publish in flight" are promises, not delivery. When the remaining wait is minutes-scale (CI, publish, registry lag), block on it and report the terminal answer in the SAME turn. Delegate to a background watcher only for hours-scale waits, and then say plainly that the result is pending and what will confirm it. *(2026-08-23: ended a turn with "npm publish unverified, watcher polling" — the publish was tag-triggered and had not even been cut; Drew: "why do I always have to remind you to confirm it".)*
 
+**Make the wait print as it goes, then pick the waiting tool by how many answers you need.**
+A Bash call that passes its timeout is either moved to the background, which keeps the work and notifies you, or killed.
+A killed call returns only the bytes it already printed.
+A loop that prints after `done` therefore returns nothing.
+Print the state on each iteration.
+For one answer, such as "tell me when CI finishes", start the wait with `run_in_background` and an `until` loop.
+Use `Monitor` for a stream of events; its own contract forbids it for a single notification.
+Long work is not a wait.
+An install, a build, or a hooked commit is 130 of 211 capped calls, and no waiting tool helps it — start it with `run_in_background`.
+*(Measured 2026-08-26 over 1,711 transcripts. Capped wait loops with a silent body lost all output 29 of 30 times; loops that print each iteration lost it 13 of 36. Δ +61pp, bootstrap 95% CI [+43,+78], Cohen's h 1.49, n=66. Per-session cap rate has median 0.000 across 170 sessions with ≥3 waits, so session ff995b36 at 12 of 54 was the 96th percentile, not the norm. `hooks/poll-guard.sh` warns on a silent wait loop.)*
+
 *(Measured: one session, 45 turns, 10 corrections — seven were the same sentence. "finish the work already." "why do I have to repeat myself." "stop asking and take the lead." Every one traced to shipping a defensible increment instead of the thing asked for.)*
 
 ### Built it? Land it. Untracked work does not exist.
