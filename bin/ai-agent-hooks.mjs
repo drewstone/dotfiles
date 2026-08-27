@@ -418,7 +418,7 @@ function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
   // Scope the exemption to the archival namespaces so normal feature-branch
   // pushes keep the PR-readiness guarantee. Secret and conflict-marker checks
   // still run on every push.
-  const archivalRef = /^refs\/heads\/(?:rescue-[^/]+|archive)\//;
+  const archivalRef = /^refs\/heads\/(?:rescue(?:-[^/]+)?|archive)\//;
   if (refUpdates.length > 0 && refUpdates.every((u) => u && u.remoteRef && archivalRef.test(u.remoteRef))) {
     return {
       ok: true,
