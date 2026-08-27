@@ -412,6 +412,21 @@ function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
     };
   }
 
+  // Archival pushes (rescue-<date>/ or archive/ namespaces) preserve historic
+  // work at its exact SHA. "Does HEAD merge into <base>" is not a meaningful
+  // question for them: the pushed ref is not HEAD and is deliberately old.
+  // Scope the exemption to the archival namespaces so normal feature-branch
+  // pushes keep the PR-readiness guarantee. Secret and conflict-marker checks
+  // still run on every push.
+  const archivalRef = /^refs\/heads\/(?:rescue-[^/]+|archive)\//;
+  if (refUpdates.length > 0 && refUpdates.every((u) => u && u.remoteRef && archivalRef.test(u.remoteRef))) {
+    return {
+      ok: true,
+      status: 0,
+      output: "Every pushed ref is archival (rescue-*/ or archive/) — mergeability check skipped.",
+    };
+  }
+
   const merge = runGit(repoRoot, ["merge-tree", "--write-tree", baseRef, "HEAD"], true);
   if (!merge.ok) {
     return {
