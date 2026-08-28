@@ -20,7 +20,7 @@
 #   adc-wt status
 set -uo pipefail
 
-REPO="${ADC_REPO:-$HOME/code/agent-dev-container}"
+REPO="${ADC_REPO:-$HOME/webb/agent-dev-container}"
 POOL="${ADC_WT_POOL:-$REPO/.worktrees}"
 SEED_PREFIX="wt-warm-"
 export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
