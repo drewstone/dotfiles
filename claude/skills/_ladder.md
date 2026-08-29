@@ -9,8 +9,8 @@ Companion to `_common.md`.
 Same status: this is documentation for **skill authors**, not a skill the harness ever loads or invokes.
 `_common.md` holds the shared *rules*; this file holds the shared *shape* — how the flat skill names compose into one system.
 
-`skills/` holds 53 local skill folders, each with a `SKILL.md`. Skills owned by a sibling repo (the agent-runtime family) are not committed here — `claude/install.sh` finds that checkout at install time and links them in, because an absolute symlink in the repo dangles on any machine that clones elsewhere.
-Of those, 50 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
+`skills/` holds 62 local skill folders, each with a `SKILL.md`. Skills owned by a sibling repo (the agent-runtime family) are not committed here — `claude/install.sh` finds that checkout at install time and links them in, because an absolute symlink in the repo dangles on any machine that clones elsewhere.
+Of those, 59 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
 The flat directory hides how those ~50 live skills fit together. This map restores that structure.
 
 The inventory here can lag; **`ls skills/` and each `SKILL.md` frontmatter are always authoritative, this file never is.**
@@ -83,6 +83,8 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | Skill | Loop phase | Role in the loop |
 |---|---|---|
 | `/hypothesize` | THINK | Survey prior art + the real ceiling, generate a diverse field, rank by expected value, hand a portfolio to `/evolve` or `/pursue`. |
+| `/problem-sourcing` | THINK | Turn recent research records into graded, dispatchable open-problem charters. |
+| `/reconcile` | THINK | Test an external idea against current capability, then adopt, adapt, reject, or defer it on record. |
 | `/diagnose` | LEARN | Cluster many failures by root cause; rank by impact × fix effort. |
 | `/autopsy` | LEARN | Root-cause ONE null / surprising result — real effect vs artifact / no-op / measurement bug. |
 | `/reflect` | LEARN | Learn across sessions; grade skills; name the systemic pattern. Fills `operatorOverride` post-hoc. |
@@ -96,12 +98,14 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | `/eval-engineering` | Turn real production code and traces into the first calibrated eval; expand only once that one works. Start here when the eval doesn't exist yet and the product does. |
 | `/evolve` | The core measure → diagnose → experiment → verify → compare loop, with the keep/promote gates from Section A. |
 | `/eval-harness-diagnose` | When pass/fail looks contaminated (auth / route / judge / baseline), suspect the ruler, not the agent. |
+| `/refresh-reasoning-capabilities` | Re-measure the reasoning controls each shipped harness and model accepts. |
 
 ### Execution — build, compose, converge, release, close out
 
 | Skill | Role in the loop |
 |---|---|
 | `/pursue` | BUILD one coherent new generation. |
+| `/discovery-lead` | Build the measuring instrument, v1 system, spend contract, and supervisor boundary before a discovery run. |
 | `/multi-pursue` | BUILD — N parallel `/pursue` tracks + central synthesis. |
 | `/meta-harness` | BUILD — automated architecture evolution after a plateau. |
 | `/breakout` | BUILD — raise the target / change the regime. |
@@ -125,6 +129,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | `/critical-audit` | Staff-engineer review; severity-ranked, file:line findings (absorbed `/code-review`). |
 | `/simplify` | Capability-preserving simplification — kill duplication and god objects without losing behavior. |
 | `/deep-clean` | Measured dead-code / debt cleanup with before/after proof. |
+| `/install-anti-slop` | Install the shared strict Oxlint rules without weakening project types or existing checks. |
 
 Audit siblings — the same fixed-bar review shape aimed at other surfaces: `/product-design-audit`, `/product-innovation-audit`, `/docs-slop-audit`, `/agent-behavior-audit`, `/harness-escalation-audit`, `/ui-test`, `/semgrep`.
 
@@ -141,7 +146,7 @@ Audit siblings — the same fixed-bar review shape aimed at other surfaces: `/pr
 
 ### Outside the loop
 
-Domain / craft skills that aren't loop phases: `/product-design`, `/signal-distill`, `/writing-profile`, `/tangle-blueprint-expert`, `/nano-banana`, `/bad`.
+Domain / craft skills that aren't loop phases: `/product-design`, `/signal-distill`, `/writing-profile`, `/tangle-blueprint-expert`, `/nano-banana`, `/bad`, `/model-freshness`, `/tangle-ops`.
 Merge-shims (redirect, don't invoke): `/code-review` → `/critical-audit`, `/research` → `/evolve`, `/site-clone` → `/bad`.
 
 ## D. When the loop applies at all — the three-precondition test

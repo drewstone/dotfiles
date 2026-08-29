@@ -89,3 +89,9 @@ Install the bundled Oxlint plugin into the current repository and integrate it w
 ## Migration guidance
 
 When replacing an older local copy, compare its rules and diagnostics before overwriting. Keep project-specific rules in their own plugin; anti-slop is intentionally generic. Prefer inference, `as const`, `satisfies`, named owner contracts, and boundary parsing when resolving findings.
+
+## Log the run
+
+```bash
+skill-run-log /install-anti-slop --target "<repository>" --verdict <INSTALLED|BLOCKED> --next /<next-skill-or-stop>
+```

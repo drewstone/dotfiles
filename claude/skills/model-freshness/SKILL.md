@@ -78,3 +78,9 @@ up. Fix the cause, then re-probe.
 `PRODUCTS` at the top of `claude/tools/model-freshness` lists each repo and the
 files it declares model ids in. Explicit paths, not a glob: a scan that wanders
 starts reporting prose and file names as models.
+
+## Log the run
+
+```bash
+skill-run-log /model-freshness --target "<product-or-repository>" --verdict <FRESH|DRIFT|BLOCKED> --next /<next-skill-or-stop>
+```
