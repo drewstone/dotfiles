@@ -13,7 +13,8 @@ Use real browser runs and keep evidence for every failure.
 1. Identify the changed or risky surfaces from git diff, routes, components, screenshots, and product claims.
 2. Start or locate the app exactly as a user would reach it.
 3. Plan tests across functional behavior, adversarial inputs, responsive layout, empty/error/loading states, and visual polish.
-4. Execute with `bad run`, Playwright, or the repo's UI test stack; use `bad auth` when login state is required.
+4. Execute directly with Playwright or the repository's UI test stack.
+   Reuse an authenticated storage-state file when login is required.
 5. Inspect screenshots/DOM for visual defects, not only pass/fail text.
 6. Fix obvious UI, lint, test, and flakiness problems encountered along the way.
 7. Re-run the failing path and include artifact paths in the report.
@@ -25,14 +26,12 @@ A fix is not proven until the original failing user path passes in the rendered 
 
 ## Commands And Templates
 
-Use `references/full-reference.md` for the old full execution guide and report examples.
-Use existing reference files for adversarial patterns, CI workflow, and eval recipes.
+Use `references/adversarial-patterns.md` for adversarial cases.
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Lower-level browser automation or a capture setup is needed | `/bad` | the target URLs, auth state, and viewports |
 | ≥3 failures point to information architecture or workflow, not bugs | `/product-design-audit` | the failing flows + the screenshots |
 | ≥1 failure is a code defect inside the PR diff | `/critical-audit` | the reproduction + the suspect file:line |
 | All flows pass across the tested breakpoints | `/verify` | the flow list, breakpoints, and screenshot paths |

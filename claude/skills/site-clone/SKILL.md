@@ -1,19 +1,19 @@
 ---
 name: site-clone
-description: Legacy site-clone alias; use bad for browser-backed cloning and visual comparison.
+description: Inspect and reproduce a site with direct browser evidence and visual comparison.
 ---
 
 # site-clone
 
-Use `bad`; this skill only preserves the old trigger.
+Use Playwright or the repository's browser test stack directly.
 
-- Rip design: `bad design-audit --url https://example.com --rip`
-- Compare sites: `bad design-audit --url https://you.com --design-compare --compare-url https://competitor.com`
-- Extract tokens: `bad design-audit --url https://example.com --extract-tokens`
+- Capture the reference at desktop and mobile widths.
+- Inspect the live DOM, computed styles, assets, and interaction states.
+- Implement with the target repository's components and tokens.
+- Compare screenshots at the same viewport and fix visible differences.
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Always — this alias does no work of its own | `/bad` | the target URL, viewports, and the evidence to capture |
 | The clone must be compared against the original in a browser | `/ui-test` | both URLs + the flows and breakpoints to diff |
