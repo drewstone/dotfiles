@@ -10,7 +10,7 @@ Same status: this is documentation for **skill authors**, not a skill the harnes
 `_common.md` holds the shared *rules*; this file holds the shared *shape* — how the flat skill names compose into one system.
 
 `skills/` holds 62 local skill folders, each with a `SKILL.md`. Skills owned by a sibling repo (the agent-runtime family) are not committed here — `claude/install.sh` finds that checkout at install time and links them in, because an absolute symlink in the repo dangles on any machine that clones elsewhere.
-Of those, 59 are live skills and 3 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`, `site-clone` → `bad`.
+Of those, 59 are live skills and 2 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`.
 The flat directory hides how those ~50 live skills fit together. This map restores that structure.
 
 The inventory here can lag; **`ls skills/` and each `SKILL.md` frontmatter are always authoritative, this file never is.**
@@ -146,8 +146,8 @@ Audit siblings — the same fixed-bar review shape aimed at other surfaces: `/pr
 
 ### Outside the loop
 
-Domain / craft skills that aren't loop phases: `/product-design`, `/signal-distill`, `/writing-profile`, `/tangle-blueprint-expert`, `/nano-banana`, `/bad`, `/model-freshness`, `/tangle-ops`.
-Merge-shims (redirect, don't invoke): `/code-review` → `/critical-audit`, `/research` → `/evolve`, `/site-clone` → `/bad`.
+Domain / craft skills that aren't loop phases: `/product-design`, `/site-clone`, `/signal-distill`, `/writing-profile`, `/tangle-blueprint-expert`, `/nano-banana`, `/model-freshness`, `/tangle-ops`.
+Merge-shims (redirect, don't invoke): `/code-review` → `/critical-audit`, `/research` → `/evolve`.
 
 ## D. When the loop applies at all — the three-precondition test
 

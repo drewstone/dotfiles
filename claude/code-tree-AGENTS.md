@@ -22,7 +22,7 @@ Match the user's intent to a project before acting; work in that project under i
 | Trace analysis of coding-agent sessions | `traces` |
 | Vertical products | `tax-agent`, `legal-agent`, `gtm-agent`, `insurance-agent`, `workcomp-agent`, `physim`, `blueprint-agent` |
 | Inference routing, model gateway, payments | `tangle-router`; unified SDK/CLI in `tcloud` |
-| Browser automation | `browser-agent-driver` (+ `bad-app`) |
+| Browser automation | Playwright or the product repository's UI test stack |
 | Operator config, skills, hooks, this doctrine | `dotfiles` |
 | Company ops, GTM, secrets, ops-board | `~/company` |
 

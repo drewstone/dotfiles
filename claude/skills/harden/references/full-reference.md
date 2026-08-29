@@ -154,7 +154,7 @@ Run the real system. No mocks beyond process boundaries. Think like an attacker,
 - Real HTTP? Start the real server on a real port.
 - Real container/sandbox? Use the project SDK to spawn real containers. Run PoCs inside.
 - Real agent? Invoke with real tools against real endpoints.
-- Real UI? Drive with Playwright/bad CLI against a real DOM.
+- Real UI? Drive it directly with Playwright against a real DOM.
 
 ### Methodology — every target, in this order
 

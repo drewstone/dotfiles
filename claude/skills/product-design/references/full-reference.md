@@ -29,7 +29,7 @@ Use this skill before creating or revising any visible product UI. The goal is a
 
 Before composing a new visual direction:
 
-1. Inspect 2-3 current products or design systems in the same category. Use `site-clone`, `bad`, Playwright screenshots, computed styles, or live DOM inspection when possible.
+1. Inspect 2-3 current products or design systems in the same category. Use `site-clone`, Playwright screenshots, computed styles, or live DOM inspection when possible.
 2. Extract concrete patterns: density, typography scale, radius, dropdown treatment, media use, spacing, input structure, logos, and motion.
 3. Design from those observed patterns and the existing app design system. Do not invent a generic SaaS layout from memory.
 4. If a source is being cloned or heavily referenced, verify with screenshot comparison and computed style checks, not vibes.

@@ -1,6 +1,7 @@
 # Adversarial Test Patterns
 
-Copy-paste patterns for common UI attack surfaces. Each pattern describes what to test and the `bad` goal phrasing that produces reliable results.
+Copy-paste patterns for common UI attack surfaces.
+Each pattern describes the direct browser actions and assertions that produce reliable results.
 
 ## Forms
 
