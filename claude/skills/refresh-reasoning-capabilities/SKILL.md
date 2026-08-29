@@ -101,3 +101,9 @@ harnesses whose behaviour is most dangerous.
 If a harness has no per-invocation control at all, record that as the finding —
 a binary shape (`shape: "binary"`) is a real answer, and marking it explicitly
 is what stops a mapper inventing tiers that do not exist.
+
+## Log the run
+
+```bash
+skill-run-log /refresh-reasoning-capabilities --target "<repository-or-harness>" --verdict <UPDATED|UNCHANGED|BLOCKED> --next /<next-skill-or-stop>
+```

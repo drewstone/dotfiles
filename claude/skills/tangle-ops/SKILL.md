@@ -59,6 +59,12 @@ Deploys go `develop` → staging → `main` → production. Staging runs three p
 
 Any sandbox you create to test, you delete, and you confirm the delete returns 404 — they cost real money and orphans accumulate. `tangle-ops sandbox ls` finds ones nobody cleaned up.
 
+## Log the run
+
+```bash
+skill-run-log /tangle-ops --target "<environment-or-incident>" --verdict <HEALTHY|DEGRADED|INDETERMINATE> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 - If the problem is inside `agent-dev-container` — fleet health, host drift, settlement backlog, release seeds — invoke the **`adc-infra-triage`** skill next. It goes deeper on the platform than `tangle-ops` does, and its `triage.sh` dumps both environments in one pass.

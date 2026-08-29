@@ -27,6 +27,12 @@ The standing store is `~/code/discovery/meta/problem-sourcing/` (README there ow
 - GPT-Pro or other expensive seats only for stage 3 on high-stakes promotions, never for stage 2 extraction.
 - A candidate covered by an existing line becomes a note on that line's charter, not a new line.
 
+## Log the run
+
+```bash
+skill-run-log /problem-sourcing --target "<source-or-lab>" --verdict <CHARTERED|NO_CANDIDATE|BLOCKED> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
