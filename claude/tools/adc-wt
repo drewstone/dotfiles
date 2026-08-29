@@ -87,6 +87,7 @@ cmd_claim() {
   fi
   local claimed="$POOL/${branch//\//-}"
   mv "$dir" "$claimed" 2>/dev/null || claimed="$dir"
+  ( cd "$REPO" && git worktree repair "$claimed" >/dev/null 2>&1 ) || true
   ( cd "$claimed" \
     && git fetch origin --quiet \
     && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ) \
@@ -99,7 +100,6 @@ cmd_claim() {
   # matches, so this costs nothing in the common case.
   ( cd "$claimed" && CI=true pnpm install --frozen-lockfile >/dev/null 2>&1 ) \
     || log "dependency refresh failed — run 'CI=true pnpm install --frozen-lockfile' in $claimed"
-  ( cd "$REPO" && git worktree repair >/dev/null 2>&1 ) || true
   echo "$claimed"
 }
 
