@@ -38,7 +38,7 @@ Use `references/full-reference.md` for execution rules and `docs/anti-patterns/`
 |---|---|---|
 | UI is implemented and needs adversarial browser QA | `/ui-test` | the routes + the auth state to exercise |
 | ≥3 screens changed or the information architecture moved | `/product-design-audit` | the before/after screenshots + the IA change |
-| Screenshots are needed and the browser driver is not yet set up | `/bad` | the target URLs + the viewport sizes |
+| Screenshots are needed | `/ui-test` | the target URLs + the viewport sizes |
 | Design lands in a diff > 200 lines | `/critical-audit` | the diff scope + the components it changes |
 
 ## Log the run
