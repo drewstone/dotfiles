@@ -2,7 +2,19 @@
 set -euo pipefail
 
 self="$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")"
-nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+# HOME may be redirected — a bridge fs-jail exports the run's agent-home as HOME — but the
+# toolchain lives under the account's home. Resolve nvm from the passwd entry, HOME as the fallback.
+acct_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+nvm_dir="${NVM_DIR:-${acct_home:-$HOME}/.nvm}"
+
+# Inside an fs-jail (cli-bridge WORKER_FS_JAIL=1) $HOME is rebased to the run's
+# .agent-home, so $HOME/.nvm does not exist even though the jail binds the real
+# nvm prefix read-only. The script's own resolved path still names the real
+# home (<home>/code/dotfiles/claude/tools/codex); fall back to it.
+if [ ! -d "$nvm_dir" ]; then
+  real_home="${self%/code/dotfiles/*}"
+  [ -d "$real_home/.nvm" ] && nvm_dir="$real_home/.nvm"
+fi
 otel_env="$HOME/.config/tangle/intelligence-otel.sh"
 
 if [ "${TANGLE_INTELLIGENCE_LOG_USER_PROMPTS:-}" != "1" ]; then
