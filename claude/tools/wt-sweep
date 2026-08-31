@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Remove stale git worktrees from the agent worktree pools.
+# A tree is removed only when ALL are true:
+#   - it is a git worktree with a working `git status`
+#   - the status is clean (no staged, unstaged, or untracked files)
+#   - no file outside .git/ and node_modules/ changed in the last 2 days
+# Commits and branches live in the shared repository, so removal loses nothing.
+# A tree with a broken .git pointer is reported, never removed.
+set -uo pipefail
+
+pools=(
+  "$HOME/webb/_wt"
+  "$HOME/webb/agent-dev-container/.worktrees"
+)
+
+removed=0 kept=0 broken=0
+for pool in "${pools[@]}"; do
+  [ -d "$pool" ] || continue
+  for d in "$pool"/*/; do
+    d=${d%/}
+    name=$(basename "$d")
+    [ "$name" = "bin" ] && continue
+    [ -e "$d/.git" ] || continue
+    if ! git -C "$d" status --porcelain >/tmp/wt-sweep-status.$$ 2>/dev/null; then
+      echo "wt-sweep: BROKEN git in $d — inspect by hand"
+      broken=$((broken + 1))
+      continue
+    fi
+    if [ -s /tmp/wt-sweep-status.$$ ]; then
+      kept=$((kept + 1))
+      continue
+    fi
+    recent=$(find "$d" -type f -mtime -2 -not -path "*/node_modules/*" -not -path "*/.git/*" -print -quit 2>/dev/null)
+    if [ -n "$recent" ]; then
+      kept=$((kept + 1))
+      continue
+    fi
+    rm -rf "$d" && removed=$((removed + 1)) && echo "wt-sweep: removed $d"
+  done
+done
+rm -f /tmp/wt-sweep-status.$$
+
+# Drop stale administrative entries for the trees removed above.
+for repo in "$HOME/webb"/*/; do
+  [ -d "$repo/.git" ] && git -C "$repo" worktree prune 2>/dev/null
+done
+
+echo "wt-sweep: removed=$removed kept=$kept broken=$broken"
