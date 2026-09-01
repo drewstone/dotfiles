@@ -28,3 +28,18 @@ while IFS= read -r -d '' f; do
 done < <(find "$home" -maxdepth 1 -type f ! -name '.*' -mmin +2880 -print0)
 
 echo "home-sweep: moved $moved file(s) to $attic"
+
+# Free-space trend. Three exhaustion events in 19 days (2026-08-14, 08-19, 09-01)
+# were each found only after work had already failed, so the sweep also reports.
+# On macOS, deleted files stay charged to the volume until their APFS local
+# snapshots expire, so report both the raw figure and the snapshot count.
+avail_pct=$(df -P "$home" | awk 'NR==2 {gsub(/%/,"",$5); print 100-$5}')
+avail_h=$(df -h "$home" | awk 'NR==2 {print $4}')
+snaps=0
+if command -v tmutil >/dev/null 2>&1; then
+  snaps=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c 'com.apple.TimeMachine' || true)
+fi
+echo "home-sweep: free ${avail_h} (${avail_pct}%), ${snaps} local snapshot(s)"
+if [ "$avail_pct" -lt 15 ]; then
+  echo "home-sweep: WARNING free space under 15% — run a reclamation pass" >&2
+fi
