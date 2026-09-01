@@ -187,6 +187,10 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
   done
 fi
 
+# The sweep crons redirect into $HOME/attic/sweep.log. A missing directory makes
+# the redirect fail before the script runs, so the sweeps go silently inert.
+mkdir -p "$HOME/attic"
+
 # Platform-specific settings.local.json (trustedDirectories)
 # Uses $HOME so it works on any machine/user without hardcoded paths.
 LOCAL_SETTINGS="$CLAUDE_DIR/settings.local.json"
