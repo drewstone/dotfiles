@@ -1,11 +1,13 @@
 ---
-name: tangle-blueprint-expert
-description: Build or review Tangle Blueprints using current protocol, operator, and repository evidence.
+name: tangle-blockchain-blueprint
+description: Build or review on-chain Tangle Blueprint protocol systems. Do not use for agent apps, sandbox containers, gateways, or general runtime work.
 ---
 
-# Tangle Blueprint Expert
+# Tangle Blockchain Blueprint
 
-Use this skill for blueprint architecture, blueprint docs, operator requirements, service lifecycle, job/query boundaries, product dapp integration, and production-like validation.
+Use this skill for on-chain Blueprint architecture, protocol docs, operator requirements, service lifecycle, job/query boundaries, product dapp integration, and production-like validation.
+
+Do not use this skill for agent apps, sandbox containers, agent gateways, or general runtime work.
 
 ## Required Reading
 
@@ -84,5 +86,5 @@ For docs-only work:
 On completion, append one line so `/reflect` and `/governor` can grade this skill later:
 
 ```bash
-skill-run-log /tangle-blueprint-expert --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /tangle-blockchain-blueprint --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```

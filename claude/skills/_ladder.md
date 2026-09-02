@@ -146,7 +146,7 @@ Audit siblings — the same fixed-bar review shape aimed at other surfaces: `/pr
 
 ### Outside the loop
 
-Domain / craft skills that aren't loop phases: `/product-design`, `/site-clone`, `/signal-distill`, `/writing-profile`, `/tangle-blueprint-expert`, `/nano-banana`, `/model-freshness`, `/tangle-ops`.
+Domain / craft skills that aren't loop phases: `/product-design`, `/site-clone`, `/signal-distill`, `/writing-profile`, `/tangle-blockchain-blueprint`, `/nano-banana`, `/model-freshness`, `/tangle-ops`.
 Merge-shims (redirect, don't invoke): `/code-review` → `/critical-audit`, `/research` → `/evolve`.
 
 ## D. When the loop applies at all — the three-precondition test

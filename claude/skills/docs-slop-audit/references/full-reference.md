@@ -100,5 +100,5 @@ End with one dispatch line:
 ```text
 Stop: docs pass complete.
 Next: /website-craft for visual/navigation gaps.
-Next: /tangle-blueprint-expert if facts about blueprint architecture remain uncertain.
+Next: /tangle-blockchain-blueprint if facts about on-chain Blueprint architecture remain uncertain.
 ```
