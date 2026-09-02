@@ -4,7 +4,15 @@ set -euo pipefail
 self="$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")"
 # HOME may be redirected — a bridge fs-jail exports the run's agent-home as HOME — but the
 # toolchain lives under the account's home. Resolve nvm from the passwd entry, HOME as the fallback.
-acct_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+# `getent` exists on Linux only; macOS answers through Directory Services. Under
+# `set -euo pipefail` a missing command inside the substitution would end the
+# script silently, so each lookup is guarded and an unknown home stays empty.
+acct_home=""
+if command -v getent >/dev/null 2>&1; then
+  acct_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+elif command -v dscl >/dev/null 2>&1; then
+  acct_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)"
+fi
 nvm_dir="${NVM_DIR:-${acct_home:-$HOME}/.nvm}"
 
 # Inside an fs-jail (cli-bridge WORKER_FS_JAIL=1) $HOME is rebased to the run's
