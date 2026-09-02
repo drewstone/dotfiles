@@ -75,6 +75,21 @@ cmd_warm() {
 cmd_claim() {
   local branch="${1:?usage: adc-wt claim <branch>}"
   local dir
+  # Git refuses to check a branch out in two worktrees, so a branch that is
+  # already live somewhere can never be claimed into a pooled tree. That tree
+  # IS the claim: print it and stop, instead of burning a warm tree on a
+  # checkout that cannot succeed.
+  local existing
+  existing="$(cd "$REPO" && git worktree list --porcelain 2>/dev/null \
+    | awk -v want="refs/heads/$branch" '
+        /^worktree /{path=substr($0,10)}
+        /^branch /{if (substr($0,8) == want) {print path; exit}}
+      ')"
+  if [ -n "$existing" ] && [ -d "$existing" ]; then
+    log "branch already checked out; reusing that tree"
+    printf '%s\n' "$existing"
+    return 0
+  fi
   for d in "$POOL"/${SEED_PREFIX}*; do
     [ -d "$d" ] || continue
     dir="$d"; break
@@ -88,10 +103,18 @@ cmd_claim() {
   local claimed="$POOL/${branch//\//-}"
   mv "$dir" "$claimed" 2>/dev/null || claimed="$dir"
   ( cd "$REPO" && git worktree repair "$claimed" >/dev/null 2>&1 ) || true
-  ( cd "$claimed" \
+  if ! ( cd "$claimed" \
     && git fetch origin --quiet \
-    && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ) \
-    || { log "branch checkout FAILED"; return 1; }
+    && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ); then
+    # Leave the tree in the pool under its seed name. A tree stranded under a
+    # branch name is claimed by nobody and warms nothing.
+    local reason
+    reason="$( cd "$claimed" && git checkout -B "$branch" origin/develop 2>&1 | tail -2 )"
+    mv "$claimed" "$POOL/${SEED_PREFIX}$(date +%s)-recycled" 2>/dev/null || true
+    ( cd "$REPO" && git worktree prune >/dev/null 2>&1 ) || true
+    log "branch checkout FAILED: ${reason:-unknown}"
+    return 1
+  fi
   # A pooled tree carries the dependencies of the develop it was warmed from.
   # The checkout above moves it to current develop, so a dependency bump since
   # then leaves the installed tree behind the lockfile. That reads as a code
