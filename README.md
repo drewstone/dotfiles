@@ -31,6 +31,20 @@ Skill inventory and maintenance notes live in `claude/skills/README.md`. Tool do
 
 AI-assisted review gates via `ai-agent-hooks`.
 
+## Tmux recovery
+
+Install the tmux watcher and make its user manager a last-resort memory-pressure target:
+
+```bash
+./tmux/install-heal.sh
+```
+
+The watcher saves a workspace index every minute.
+It also asks tmux-resurrect to save its standard snapshot every 15 minutes when installed.
+After server loss, it recreates session and window names with shells in their prior directories.
+It cannot revive processes, pane splits, scrollback, or unsaved work.
+The installer keeps normal pane processes eligible for memory-pressure cleanup.
+
 ## Global Git Etiquette Guard
 
 Install the universal fast guards once:

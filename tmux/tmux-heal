@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+DEFAULT_SOCKET_DIR="/tmp/tmux-$(id -u)"
+SOCKET_PATH="${TMUX_SOCKET_PATH:-${DEFAULT_SOCKET_DIR}/default}"
+SOCKET_DIR="$(dirname "$SOCKET_PATH")"
+DEFAULT_STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/tmux-heal"
+STATE_DIR="${TMUX_HEAL_STATE_DIR:-$DEFAULT_STATE_DIR}"
+TMUX_BIN="${TMUX_BIN:-/usr/bin/tmux}"
+TMUX_CONF="${TMUX_CONF:-$HOME/.tmux.conf}"
+SLEEP_SECONDS="${TMUX_HEAL_INTERVAL:-60}"
+RESURRECT_DIR="${TMUX_RESURRECT_DIR:-$HOME/.tmux/resurrect}"
+RESURRECT_LAST="${TMUX_RESURRECT_LAST:-$RESURRECT_DIR/last}"
+RESURRECT_SAVE_SCRIPT="${TMUX_RESURRECT_SAVE_SCRIPT:-$HOME/.tmux/plugins/tmux-resurrect/scripts/save.sh}"
+LIVE_STATE="${TMUX_HEAL_LIVE_STATE:-$RESURRECT_DIR/heal-live-state.tsv}"
+RESTORE_LAYOUTS="${TMUX_HEAL_RESTORE_LAYOUTS:-1}"
+SAVE_STAMP="${TMUX_HEAL_SAVE_STAMP:-$STATE_DIR/last-save}"
+SAVE_INTERVAL_SECONDS="${TMUX_HEAL_SAVE_INTERVAL:-900}"
+SOURCE_STAMP="${TMUX_HEAL_SOURCE_STAMP:-$STATE_DIR/conf-mtime}"
+SERVER_STARTED=0
+
+log() {
+  printf '%s tmux-heal: %s\n' "$(date -Is)" "$*"
+}
+
+tmux_cmd() {
+  "$TMUX_BIN" -S "$SOCKET_PATH" "$@"
+}
+
+write_stamp() {
+  local file="$1"
+  local value="$2"
+  local tmp=""
+
+  tmp="$(mktemp "${file}.XXXXXX")" || return 1
+  if ! printf '%s\n' "$value" > "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! mv -f -- "$tmp" "$file"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+ensure_private_directory() {
+  local directory="$1"
+  local owner=""
+
+  if [ -L "$directory" ]; then
+    log "refusing symlinked private directory $directory"
+    return 1
+  fi
+  if [ -e "$directory" ]; then
+    [ -d "$directory" ] || return 1
+    owner="$(stat -c '%u' "$directory")"
+    if [ "$owner" != "$(id -u)" ]; then
+      log "refusing private directory $directory owned by UID $owner"
+      return 1
+    fi
+    chmod 700 "$directory"
+  else
+    install -d -m 700 "$directory"
+  fi
+}
+
+remove_unusable_socket() {
+  if [ -e "$SOCKET_PATH" ] || [ -L "$SOCKET_PATH" ]; then
+    tmux_cmd list-sessions >/dev/null 2>&1 && return 0
+    log "removing unusable socket $SOCKET_PATH"
+    rm -f -- "$SOCKET_PATH"
+  fi
+}
+
+recover_existing_server_socket() {
+  local pid
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    log "tmux socket unavailable; asking existing server $pid to recreate it"
+    kill -USR1 "$pid" 2>/dev/null || continue
+    sleep 1
+    if tmux_cmd list-sessions >/dev/null 2>&1; then
+      return 0
+    fi
+  done < <(pgrep -x -u "$(id -u)" 'tmux: server' 2>/dev/null || true)
+  return 1
+}
+
+ensure_server() {
+  SERVER_STARTED=0
+  ensure_private_directory "$SOCKET_DIR"
+  if tmux_cmd list-sessions >/dev/null 2>&1; then
+    return
+  fi
+  if recover_existing_server_socket; then
+    return
+  fi
+
+  remove_unusable_socket
+  log "starting default tmux server"
+  tmux_cmd -f "$TMUX_CONF" new-session -d -s recovered -c "$HOME"
+  tmux_cmd set-option -gq exit-empty off
+  tmux_cmd set-option -gq exit-unattached off
+  SERVER_STARTED=1
+}
+
+snapshot_file() {
+  if snapshot_is_usable "$LIVE_STATE"; then
+    printf '%s\n' "$LIVE_STATE"
+    return
+  fi
+
+  local file=""
+  if [ -L "$RESURRECT_LAST" ]; then
+    file="$(readlink -f "$RESURRECT_LAST" 2>/dev/null || true)"
+  elif [ -f "$RESURRECT_LAST" ]; then
+    file="$RESURRECT_LAST"
+  fi
+
+  if [ -n "$file" ] && snapshot_is_usable "$file"; then
+    printf '%s\n' "$file"
+    return
+  fi
+
+  while IFS= read -r file; do
+    if snapshot_is_usable "$file"; then
+      printf '%s\n' "$file"
+      return
+    fi
+  done < <(
+    find "$RESURRECT_DIR" -maxdepth 1 -type f -name 'tmux_resurrect_*.txt' -printf '%T@ %p\n' 2>/dev/null |
+      sort -nr |
+      cut -d' ' -f2-
+  )
+  return 1
+}
+
+snapshot_is_usable() {
+  local file="$1"
+  [ -s "$file" ] && [ -n "$(snapshot_specs "$file")" ]
+}
+
+snapshot_specs() {
+  local file="$1"
+  if head -n 1 "$file" 2>/dev/null | grep -qx $'session\twindow\tname\tcwd'; then
+    tail -n +2 "$file" | awk -F '\t' 'NF >= 4 { print $1 "\t" $2 "\t" $3 "\t" $4 }' |
+      sort -t "$(printf '\t')" -k1,1 -k2,2n
+    return
+  fi
+
+  awk -F '\t' '
+    function clean(value) {
+      sub(/^:/, "", value)
+      if (value == "") {
+        value = "bash"
+      }
+      return value
+    }
+    function clean_path(value) {
+      value = clean(value)
+      gsub(/\\ /, " ", value)
+      return value
+    }
+    $1 == "window" {
+      session = $2
+      window = $3
+      name = clean($4)
+      key = session SUBSEP window
+      window_seen[key] = 1
+      window_name[key] = name
+      session_seen[session] = 1
+    }
+    $1 == "pane" {
+      session = $2
+      window = $3
+      pane = $6
+      cwd = clean_path($8)
+      key = session SUBSEP window
+      if ($9 == 1) {
+        window_cwd[key] = cwd
+        window_has_active_pane[key] = 1
+      } else if (!(key in window_cwd) || (!(key in window_has_active_pane) && pane == 0)) {
+        window_cwd[key] = cwd
+      }
+      session_seen[session] = 1
+    }
+    END {
+      for (session in session_seen) {
+        for (key in window_seen) {
+          split(key, parts, SUBSEP)
+          if (parts[1] != session) {
+            continue
+          }
+          window = parts[2]
+          name = window_name[key]
+          cwd = window_cwd[key]
+          if (cwd == "") {
+            cwd = ENVIRON["HOME"]
+          }
+          print session "\t" window "\t" name "\t" cwd
+        }
+      }
+    }
+  ' "$file" | sort -t "$(printf '\t')" -k1,1 -k2,2n
+}
+
+write_live_state() {
+  local tmp="${LIVE_STATE}.$$"
+  local line_count=""
+
+  mkdir -p "$RESURRECT_DIR" || return 1
+  printf 'session\twindow\tname\tcwd\n' > "$tmp" || return 1
+  if ! tmux_cmd list-windows -a -F $'#{session_name}\t#{window_index}\t#{window_name}\t#{pane_current_path}' 2>/dev/null |
+    sort -t "$(printf '\t')" -k1,1 -k2,2n >> "$tmp"; then
+    rm -f "$tmp"
+    log "tmux changed while saving the workspace index; keeping the prior index"
+    return 1
+  fi
+  line_count="$(wc -l < "$tmp")" || {
+    rm -f "$tmp"
+    return 1
+  }
+  if [ "$line_count" -gt 1 ]; then
+    mv "$tmp" "$LIVE_STATE" || {
+      rm -f "$tmp"
+      return 1
+    }
+  else
+    rm -f "$tmp"
+  fi
+}
+
+ensure_window() {
+  local session="$1"
+  local index="$2"
+  local name="$3"
+  local dir="$4"
+
+  [ -d "$dir" ] || dir="$HOME"
+
+  if tmux_cmd list-windows -t "$session" -F '#{window_index}' 2>/dev/null | grep -qx "$index"; then
+    tmux_cmd rename-window -t "${session}:${index}" "$name" >/dev/null 2>&1 || true
+    return
+  fi
+
+  tmux_cmd new-window -d -t "${session}:${index}" -n "$name" -c "$dir"
+}
+
+heal_from_snapshot() {
+  local file="$1"
+  local current_session=""
+  local first_window=""
+  local first_name=""
+  local first_dir=""
+  local rows=()
+
+  mapfile -t rows < <(snapshot_specs "$file")
+  if [ "${#rows[@]}" -eq 0 ]; then
+    return 1
+  fi
+
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r session index name dir <<< "$row"
+    [ -n "$session" ] || continue
+    [ -n "$index" ] || continue
+    [ -d "$dir" ] || dir="$HOME"
+
+    if [ "$session" != "$current_session" ]; then
+      current_session="$session"
+      first_window="$index"
+      first_name="$name"
+      first_dir="$dir"
+      if ! tmux_cmd has-session -t "$session" 2>/dev/null; then
+        log "creating session $session from $(basename "$file")"
+        tmux_cmd new-session -d -s "$session" -n "$first_name" -c "$first_dir"
+        if [ "$first_window" != "0" ]; then
+          tmux_cmd move-window -s "${session}:0" -t "${session}:${first_window}" >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
+    ensure_window "$session" "$index" "$name" "$dir"
+  done
+}
+
+maybe_save_snapshot() {
+  [ -x "$RESURRECT_SAVE_SCRIPT" ] || return 0
+  local now
+  now="$(date +%s)"
+  local last=0
+  if [ -f "$SAVE_STAMP" ]; then
+    IFS= read -r last < "$SAVE_STAMP" || last=0
+  fi
+  if ! [[ "$last" =~ ^(0|[1-9][0-9]{0,10})$ ]] || [ "$last" -gt "$now" ]; then
+    last=0
+  fi
+  if [ $((now - last)) -lt "$SAVE_INTERVAL_SECONDS" ]; then
+    return
+  fi
+  if "$RESURRECT_SAVE_SCRIPT" quiet >/dev/null 2>&1; then
+    write_stamp "$SAVE_STAMP" "$now"
+  else
+    log "tmux-resurrect save failed; retrying on the next pass"
+  fi
+}
+
+heal_once() {
+  ensure_private_directory "$STATE_DIR"
+  ensure_server
+  local conf_mtime=""
+  conf_mtime="$(stat -c '%Y' "$TMUX_CONF" 2>/dev/null || true)"
+  local last_conf_mtime=""
+  [ -f "$SOURCE_STAMP" ] && last_conf_mtime="$(cat "$SOURCE_STAMP" 2>/dev/null || true)"
+  if [ -n "$conf_mtime" ] && [ "$conf_mtime" != "$last_conf_mtime" ]; then
+    tmux_cmd source-file "$TMUX_CONF" >/dev/null 2>&1 || true
+    write_stamp "$SOURCE_STAMP" "$conf_mtime"
+  fi
+  tmux_cmd set-option -gq exit-empty off
+  tmux_cmd set-option -gq exit-unattached off
+  tmux_cmd set-environment -gu NO_COLOR
+  tmux_cmd set-environment -g COLORTERM truecolor
+  tmux_cmd set-environment -g FORCE_COLOR 1
+  tmux_cmd set-environment -g CLICOLOR 1
+
+  if [ "$RESTORE_LAYOUTS" = "1" ] && [ "$SERVER_STARTED" = "1" ]; then
+    local file
+    file="$(snapshot_file || true)"
+    if [ -n "$file" ] && [ -s "$file" ]; then
+      heal_from_snapshot "$file" || true
+    fi
+  fi
+
+  local session_names
+  session_names="$(tmux_cmd list-sessions -F '#{session_name}' 2>/dev/null || true)"
+  if [ -z "$session_names" ]; then
+    log "creating fallback session recovered"
+    tmux_cmd new-session -d -s recovered -c "$HOME"
+  fi
+
+  if ! write_live_state; then
+    log "workspace index save failed"
+  fi
+  maybe_save_snapshot
+}
+
+case "${1:-once}" in
+  once)
+    heal_once
+    ;;
+  --watch|watch)
+    log "watch mode started"
+    while true; do
+      heal_once
+      sleep "$SLEEP_SECONDS"
+    done
+    ;;
+  *)
+    printf 'usage: %s [once|--watch]\n' "$0" >&2
+    exit 2
+    ;;
+esac
