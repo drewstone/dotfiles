@@ -87,20 +87,30 @@ async function catalog(key) {
   const res = await fetch(`${ROUTER}/v1/models`, { headers: key ? { authorization: `Bearer ${key}` } : {} })
   if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`)
   const body = await res.json()
-  return (body.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id }))
+  return (body.data ?? []).map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    interactive: !/:batch$/i.test(m.id),
+    routeable: m.routeability?.routeable !== false && m.routeability?.status !== 'unavailable',
+  }))
 }
 
 /**
  * One real completion. The verdict is not the status code — it is whether the
  * id we asked for is the id that answered.
  */
-async function probe(model, key) {
+async function probe(model, key, maxTokens = 4, reasoningEffort = null) {
   let res
   try {
     res = await fetch(`${ROUTER}/v1/chat/completions`, {
       method: 'POST',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ok' }], max_tokens: 4 }),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'ok' }],
+        max_tokens: maxTokens,
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      }),
     })
   } catch (err) {
     return { model, verdict: 'unreachable', detail: String(err).slice(0, 120) }
@@ -117,13 +127,20 @@ async function probe(model, key) {
   }
 
   if (!res.ok) {
+    const cause = category ?? body?.error?.code ?? 'unknown'
+    // Some reasoning models spend the four-token smoke budget before they
+    // emit visible text. Retry only that explicit failure with enough room;
+    // a quota, credential, or mapping error remains a single cheap request.
+    if (cause === 'reasoning_budget_exhausted' && maxTokens < 128) {
+      return probe(model, key, 128, 'low')
+    }
     return {
       model,
       verdict: 'not-serving',
       status: res.status,
       // The router names its own cause now; fall back to the message only when
       // talking to a deploy that predates that.
-      cause: category ?? body?.error?.code ?? 'unknown',
+      cause,
       detail: (body?.error?.message ?? '').slice(0, 140),
     }
   }
@@ -140,8 +157,16 @@ async function probe(model, key) {
 }
 
 function sameModel(a, b) {
-  const norm = (x) => String(x).toLowerCase().replace(/^.*\//, '')
-  return norm(a) === norm(b)
+  return modelIdentity(a) === modelIdentity(b)
+}
+
+/** One model identity across provider prefixes and dated serving aliases. */
+function modelIdentity(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/^.*\//, '')
+    .replace(/-\d{8}$/, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '')
 }
 
 /** Ids a product actually declares, read out of the files it declares them in. */
@@ -190,7 +215,7 @@ function newerInFamily(id, ids) {
   // is how a parameter count becomes a fake upgrade recommendation.
   const rank = (x) => {
     const bare = x.includes('/') ? x.slice(x.indexOf('/') + 1) : x
-    const m = bare.match(new RegExp(`^${fam}[-.]?(\\d+)(?:\\.(\\d+))?`, 'i'))
+    const m = bare.match(new RegExp(`^${fam}[-.]?(\\d+)(?:[-.](\\d+))?`, 'i'))
     if (!m) return null
     return Number(m[1]) * 1000 + Number(m[2] ?? 0)
   }
@@ -218,6 +243,20 @@ if (!key) {
 const cat = await catalog(key)
 const catIds = cat.map((m) => m.id)
 const catSet = new Set(catIds)
+const interactiveCatIds = cat.filter((model) => model.interactive).map((model) => model.id)
+const routeableCatIds = cat.filter((model) => model.interactive && model.routeable).map((model) => model.id)
+const routeableCatSet = new Set(routeableCatIds)
+const catalogIdentities = new Set(catIds.map(modelIdentity))
+const probeCache = new Map()
+
+async function probeOnce(model) {
+  let pending = probeCache.get(model)
+  if (!pending) {
+    pending = probe(model, key)
+    probeCache.set(model, pending)
+  }
+  return pending
+}
 
 for (const { repo, files } of PRODUCTS) {
   if (!existsSync(join(CODE, repo))) continue
@@ -232,15 +271,23 @@ for (const { repo, files } of PRODUCTS) {
     out.problems.push({ repo, id: '(scan)', verdict: 'no-ids-found', cause: `read ${files.length} file(s) and matched no model id — either this product names none, or the paths are wrong` })
   }
   for (const [id, where] of declared) {
-    const inCatalog = catSet.has(id)
-    const result = inCatalog ? await probe(id, key) : { model: id, verdict: 'not-in-catalog' }
-    const newer = newerInFamily(id, catIds)
-    const row = { id, where: [...new Set(where)], inCatalog, ...result, newer }
+    const inCatalog = catSet.has(id) || catalogIdentities.has(modelIdentity(id))
+    const result = inCatalog ? await probeOnce(id) : { model: id, verdict: 'not-in-catalog' }
+    const newerInCatalog = newerInFamily(id, interactiveCatIds)
+    const routeableNewer = newerInFamily(id, routeableCatIds)
+    const newerChecks = await Promise.all(routeableNewer.map((candidate) => probeOnce(candidate)))
+    const newer = newerChecks
+      .filter((candidate) => candidate.verdict === 'serving')
+      .map((candidate) => candidate.model)
+    const unavailableNewer = newerInCatalog.filter((candidate) => !routeableCatSet.has(candidate))
+    const row = { id, where: [...new Set(where)], inCatalog, ...result, newer, unavailableNewer }
     rows.push(row)
     if (row.verdict !== 'serving') {
       out.problems.push({ repo, id, verdict: row.verdict, cause: row.cause ?? row.failover ?? row.detail ?? null })
     } else if (newer.length > 0) {
       out.problems.push({ repo, id, verdict: 'stale', newer })
+    } else if (unavailableNewer.length > 0) {
+      out.problems.push({ repo, id, verdict: 'newer-unavailable', newer: unavailableNewer })
     }
   }
   out.products.push({ repo, models: rows, filesRead: files.length - declared.missingFiles.length, filesMissing: declared.missingFiles })
@@ -275,6 +322,8 @@ if (!QUIET || out.problems.length) {
             ? `  ${m.status} ${m.cause}${m.detail ? ` — ${m.detail}` : ''}`
             : m.newer.length
               ? `  newer available: ${m.newer.join(', ')}`
+              : m.unavailableNewer.length
+                ? `  newer catalog entry is unavailable: ${m.unavailableNewer.join(', ')}`
               : ''
       console.log(`  ${ICON[m.verdict] ?? '??  '} ${m.id.padEnd(30)}${tail}`)
       if (!QUIET) console.log(`       declared in ${m.where.join(', ')}`)
