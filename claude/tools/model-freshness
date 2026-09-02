@@ -169,20 +169,65 @@ function modelIdentity(value) {
     .replace(/-\d{4}-\d{2}-\d{2}$/, '')
 }
 
-/** Ids a product actually declares, read out of the files it declares them in. */
-function declaredIds(repo, files) {
+/** Read shipped source without switching or changing an active worktree. */
+function resolveProductSource(repo) {
+  const repoPath = join(CODE, repo)
+  try {
+    const remoteHead = execFileSync('git', ['-C', repoPath, 'ls-remote', '--symref', 'origin', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })
+    const branch = remoteHead.match(/^ref: refs\/heads\/([^\t ]+)\s+HEAD$/m)?.[1]
+    const commit = remoteHead.match(/^([0-9a-f]+)\s+HEAD$/m)?.[1]
+    if (!branch || !commit) throw new Error('origin HEAD did not identify a default branch and commit')
+    execFileSync('git', ['-C', repoPath, 'fetch', '--quiet', 'origin', branch], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })
+    execFileSync('git', ['-C', repoPath, 'cat-file', '-e', `${commit}^{commit}`])
+    return {
+      ref: `origin/${branch}`,
+      commit,
+      verified: true,
+      read(rel) {
+        return execFileSync('git', ['-C', repoPath, 'show', `${commit}:${rel}`], {
+          encoding: 'utf8',
+          maxBuffer: 4 * 1024 * 1024,
+        })
+      },
+    }
+  } catch (error) {
+    const detail = String(error?.stderr || error?.message || error).trim().slice(0, 180)
+    let commit = null
+    try {
+      commit = execFileSync('git', ['-C', repoPath, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    } catch {
+      /* the source warning below is authoritative */
+    }
+    return {
+      ref: 'working-tree',
+      commit,
+      verified: false,
+      error: detail,
+      read(rel) {
+        return readFileSync(join(repoPath, rel), 'utf8')
+      },
+    }
+  }
+}
+
+/** Ids a product declares in one resolved source revision. */
+function declaredIds(files, source) {
   const found = new Map()
   const missing = []
   for (const rel of files) {
-    const path = join(CODE, repo, rel)
-    if (!existsSync(path)) {
-      missing.push(rel)
-      continue
-    }
     let text
     try {
-      text = readFileSync(path, 'utf8')
+      text = source.read(rel)
     } catch {
+      missing.push(rel)
       continue
     }
     for (const line of text.split('\n')) {
@@ -260,7 +305,11 @@ async function probeOnce(model) {
 
 for (const { repo, files } of PRODUCTS) {
   if (!existsSync(join(CODE, repo))) continue
-  const declared = declaredIds(repo, files)
+  const source = resolveProductSource(repo)
+  if (!source.verified) {
+    out.problems.push({ repo, id: '(source)', verdict: 'source-unverified', cause: source.error })
+  }
+  const declared = declaredIds(files, source)
   const rows = []
   // A configured file that is not on disk is why this tool once reported two
   // products clean while reading nothing at all. Absence of findings is only
@@ -290,7 +339,13 @@ for (const { repo, files } of PRODUCTS) {
       out.problems.push({ repo, id, verdict: 'newer-unavailable', newer: unavailableNewer })
     }
   }
-  out.products.push({ repo, models: rows, filesRead: files.length - declared.missingFiles.length, filesMissing: declared.missingFiles })
+  out.products.push({
+    repo,
+    source: { ref: source.ref, commit: source.commit, verified: source.verified },
+    models: rows,
+    filesRead: files.length - declared.missingFiles.length,
+    filesMissing: declared.missingFiles,
+  })
 }
 
 if (JSON_OUT) {
