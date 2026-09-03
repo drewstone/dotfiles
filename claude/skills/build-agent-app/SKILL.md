@@ -6,8 +6,28 @@ description: Build or migrate an agent product with agent-app modules, billing, 
 # Build Agent App
 
 Use this when building the product shell around an agent: chat, tools, approvals, persistence, billing, integrations, and visible workflows.
-Read the installed `@tangle-network/agent-app` README, exports, types, current scaffolder, and nearest maintained product before choosing modules.
+Read the installed package, current scaffolder, and nearest maintained product before choosing modules.
 Do not copy API names from this skill.
+
+## Resolve Current Sources
+
+Run these checks before writing product infrastructure:
+
+1. Use `pnpm why @tangle-network/agent-app @tangle-network/sandbox` to find the installed versions.
+2. Read each installed `package.json` export map and the exact `.d.ts` files for the subpaths you will import.
+3. Search the package sources and maintained products for the capability before adding a wrapper.
+4. Read the current scaffold output when the product started from that scaffold.
+
+Use these source maps when the local repositories are available:
+
+- [agent-app architecture](/home/drew/code/agent-app/ARCHITECTURE.md)
+- [agent-app live viewing and history](/home/drew/code/agent-app/AGENTS.md#live-viewing-vs-history-the-measured-model)
+- [resumable turn example](/home/drew/code/agent-app/examples/resumable-turns.md)
+- [Sandbox session gateway exports](/home/drew/webb/agent-dev-container/products/sandbox/sdk/src/session-gateway/index.ts)
+- [Sandbox scoped-token contract](/home/drew/webb/agent-dev-container/products/sandbox/sdk/src/scoped-token-types.ts)
+
+Source and installed types are authoritative.
+Correct a stale document in the same change.
 
 ## Confirm The Boundary
 
@@ -19,7 +39,7 @@ Do not copy API names from this skill.
 | Cases, scoring, comparison, and release evidence | `agent-eval` |
 | Sources, retrieval, memory, and knowledge candidates | `agent-knowledge` |
 | Connector contracts and provider execution | `agent-integrations` |
-| Isolated compute and durable sandbox sessions | `sandbox` |
+| Isolated compute, sandbox sessions, and live session transport | `sandbox` |
 
 Keep product nouns, permissions, schemas, prompts, and policy in the product.
 Move reusable behavior to its owning package instead of copying it between products.
@@ -82,6 +102,37 @@ Use the backend the product actually needs:
 These paths may share product tools and records.
 They must not silently change identity, approval, billing, replay, or error behavior.
 
+## Choose Live Viewing Before Adding Transport
+
+Live viewing, durable history, and single-flight execution are different jobs.
+
+| Job | Current owner | Required composition |
+|---|---|---|
+| Watch an interactive sandbox turn | `sandbox` | Send through the session message lane, mint a short-lived session-scoped read token, and connect the browser with `SessionGatewayClient`. |
+| Read the turn later | Product storage through `agent-app/chat-routes` | Persist the assistant row incrementally while the turn streams. |
+| Stop two drivers from running one turn | `agent-app/turn-stream` | Use the durable turn lock. |
+| Stream a sandbox-free runtime | `agent-app/stream` | Use the product turn buffer because no sandbox session exists. |
+
+For an interactive sandbox product:
+
+1. Resolve an existing sandbox and runtime session after product authorization.
+2. Send the turn with the Sandbox session message API.
+3. Mint `scope: 'session'` with both the public session id and runtime session id.
+4. Return the token only from an authorized server route.
+5. Connect the browser through `@tangle-network/sandbox/session-gateway`.
+6. Let the SDK own WebSocket reconnect, sequence replay, and duplicate suppression.
+7. Let durable message storage own history after the short gateway buffer expires.
+
+The token route must not provision, wake, or replace a sandbox.
+Never persist or log the read token.
+Never put an account API key in browser code.
+Use `replaySinceSeq`; timestamp replay is deprecated.
+
+Do not relay an ordinary sandbox session through a product Worker, SSE route, or new Durable Object.
+`box.streamPrompt()` is the server-worker lane, not a browser API.
+Before relying on detached-run gateway fanout, prove that lane against the deployed platform.
+Keep the existing detached fallback until that production check passes.
+
 ## Safety
 
 - Structured side effects use validated tool calls, not prose parsing.
@@ -103,6 +154,17 @@ authenticate -> submit work -> agent executes -> tools and knowledge run
 ```
 
 Report installed versions, exact subpaths, retained product adapters, deleted competing paths, run IDs, artifact paths, checks, cost, latency, and deployed result when deployment is in scope.
+
+For sandbox live viewing, the proof must include one real mid-turn observer:
+
+```text
+first browser sends -> second browser opens the same deep link mid-turn
+-> ordered partial output arrives -> reload resumes after the saved sequence
+-> final output is present in durable history -> browser console has zero errors
+```
+
+Record the public deep link, runtime session id, first and last sequence, event count, reconnect result, and token expiry.
+Do not use Storybook or a mocked stream as product proof.
 
 ## Then consider
 
