@@ -137,11 +137,13 @@ done
 # agent-runtime sits at ~/webb/agent-runtime on the laptop and ~/code/agent-runtime
 # on the dev box, so whichever path is committed dangles on the other and the skill
 # silently disappears.
+RUNTIME_SKILLS_DIR=""
 for candidate in \
   "${AGENT_RUNTIME_DIR:+$AGENT_RUNTIME_DIR/skills}" \
   "$HOME/webb/agent-runtime/skills" \
   "$HOME/code/agent-runtime/skills"; do
   [ -d "$candidate" ] || continue
+  RUNTIME_SKILLS_DIR="$candidate"
   for ext in "$candidate"/*/; do
     [ -f "$ext/SKILL.md" ] || continue
     name="$(basename "$ext")"
@@ -293,12 +295,59 @@ python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" \
   --skills "$(IFS=,; echo "${PI_SKILLS[*]}")"
 echo "  Agent profiles exported to $PROFILE_DIR"
 
-# A directory without SKILL.md is not a skill, even when its symlink target exists.
+# Return a Git common directory for a path inside a checkout.
+repository_common_dir() {
+  local path="$1"
+  command -v git >/dev/null 2>&1 || return 1
+  git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
+}
+
+# Return the origin that identifies separate clones of one source repository.
+repository_origin() {
+  local path="$1"
+  command -v git >/dev/null 2>&1 || return 1
+  git -C "$path" remote get-url origin 2>/dev/null
+}
+
+DOTFILES_COMMON_DIR=$(repository_common_dir "$SCRIPT_DIR" || true)
+DOTFILES_ORIGIN=$(repository_origin "$SCRIPT_DIR" || true)
+RUNTIME_COMMON_DIR=""
+RUNTIME_ORIGIN=""
+if [ -n "$RUNTIME_SKILLS_DIR" ]; then
+  RUNTIME_COMMON_DIR=$(repository_common_dir "$RUNTIME_SKILLS_DIR" || true)
+  RUNTIME_ORIGIN=$(repository_origin "$RUNTIME_SKILLS_DIR" || true)
+fi
+
+skill_is_current() {
+  local name="$1"
+  [ -f "$SCRIPT_DIR/skills/$name/SKILL.md" ] || \
+    { [ -n "$RUNTIME_SKILLS_DIR" ] && [ -f "$RUNTIME_SKILLS_DIR/$name/SKILL.md" ]; }
+}
+
+skill_link_is_managed() {
+  local link_path="$1"
+  local common_dir origin
+  common_dir=$(repository_common_dir "$link_path" || true)
+  origin=$(repository_origin "$link_path" || true)
+  { [ -n "$common_dir" ] && [ "$common_dir" = "$DOTFILES_COMMON_DIR" ]; } || \
+    { [ -n "$origin" ] && [ "$origin" = "$DOTFILES_ORIGIN" ]; } || \
+    { [ -n "$common_dir" ] && [ "$common_dir" = "$RUNTIME_COMMON_DIR" ]; } || \
+    { [ -n "$origin" ] && [ "$origin" = "$RUNTIME_ORIGIN" ]; }
+}
+
+# A missing SKILL.md is invalid. A managed link absent from the current source
+# is retired, even when an older checkout still makes its target look valid.
 for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"; do
   [ -d "$dir" ] || continue
   find "$dir" -maxdepth 1 -type l -print | while read -r stale; do
     if [ ! -f "$stale/SKILL.md" ]; then
       echo "  PRUNE $stale (invalid skill symlink)"
+      rm "$stale"
+      continue
+    fi
+    name=$(basename "$stale")
+    if ! skill_is_current "$name" && skill_link_is_managed "$stale"; then
+      echo "  PRUNE $stale (retired managed skill)"
       rm "$stale"
     fi
   done
