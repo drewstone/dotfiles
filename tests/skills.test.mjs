@@ -167,12 +167,21 @@ test('installer skips and prunes directories without SKILL.md', () => {
     const invalidSource = join(home, 'invalid-source')
     writeSkill(join(home, 'external'), 'valid-source', 'External skill')
     mkdirSync(invalidSource)
+    const managedOrigin = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }).trim()
+    const oldCheckout = join(home, 'old-dotfiles')
+    const retired = writeSkill(join(oldCheckout, 'claude', 'skills'), 'retired', 'Retired skill')
+    execFileSync('git', ['init', '--quiet'], { cwd: oldCheckout })
+    execFileSync('git', ['remote', 'add', 'origin', managedOrigin], { cwd: oldCheckout })
 
     for (const harness of ['.claude', '.codex']) {
       const root = join(home, harness, 'skills')
       mkdirSync(root, { recursive: true })
       symlinkSync(invalidSource, join(root, 'invalid-source'))
       symlinkSync('../../external/valid-source', join(root, 'valid-source'))
+      symlinkSync(retired, join(root, 'retired'))
     }
 
     const result = spawnSync('bash', [installer], {
@@ -185,10 +194,12 @@ test('installer skips and prunes directories without SKILL.md', () => {
     })
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /invalid skill symlink/)
+    assert.match(result.stdout, /retired managed skill/)
 
     for (const harness of ['.claude', '.codex']) {
       const root = join(home, harness, 'skills')
       assert.throws(() => readlinkSync(join(root, 'invalid-source')), { code: 'ENOENT' })
+      assert.throws(() => readlinkSync(join(root, 'retired')), { code: 'ENOENT' })
       assert.equal(readlinkSync(join(root, 'valid-source')), '../../external/valid-source')
     }
   })
