@@ -32,6 +32,14 @@ For public pages, blog/research surfaces, marketing pages, or broad design-syste
 
 Use `references/full-reference.md` for execution rules and `docs/anti-patterns/` for durable writing/design doctrine.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /product-design --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -40,11 +48,3 @@ Use `references/full-reference.md` for execution rules and `docs/anti-patterns/`
 | ≥3 screens changed or the information architecture moved | `/product-design-audit` | the before/after screenshots + the IA change |
 | Screenshots are needed | `/ui-test` | the target URLs + the viewport sizes |
 | Design lands in a diff > 200 lines | `/critical-audit` | the diff scope + the components it changes |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /product-design --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

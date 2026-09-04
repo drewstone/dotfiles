@@ -31,6 +31,14 @@ The goal is the right artifact live with proof.
 
 Use `references/full-reference.md` for the full ledger format and release decision matrix.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /release-conductor --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -39,12 +47,4 @@ Use `references/full-reference.md` for the full ledger format and release decisi
 | The project has a reliable one-command deploy path | `/ship` | the artifact list + the deploy command |
 | Deploy reports success and the served revision is unverified | `/deploy-proof` | expected SHA + the live endpoint to probe |
 | A rollback was executed | `/autopsy` | the failure signal, the rollback SHA, and the timeline |
-| Release lands and the session ends | `/handoff` | the ledger, the live SHA, and the open follow-ups |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /release-conductor --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
+| Release lands and the session ends | `/session-continuity` | the ledger, the live SHA, and the open follow-ups |

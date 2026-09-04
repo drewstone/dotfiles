@@ -95,7 +95,13 @@ Emit exactly this. Omit a section only when its own rule says so.
 
 `references/full-reference.md` holds worked examples only. This file is the normative contract; where they differ, this file wins.
 
-## Dispatch
+## Log the run
+
+```bash
+skill-run-log /deep-clean --target "<scope>: <N> files" --verdict <VERDICT> --next /<skill-or-stop>
+```
+
+## Then consider
 
 | Condition (threshold) | Next skill | What to pass it |
 |---|---|---|
@@ -103,11 +109,5 @@ Emit exactly this. Omit a section only when its own rule says so.
 | ≥1 failing test or build error after Phase 4 | `/converge` | the failing command + its output + the phase that introduced it |
 | jscpd duplication ≥3% of lines after Phase 3, or ≥2 competing entrypoints left for 1 capability | `/simplify` | the jscpd JSON + both entrypoint paths |
 | ≥5 kept paths have 0 covering test (Phase 2c gap list) | `/polish` | the uncovered `path:line` list + the gate that would prove each |
-| Deferred table ≥3 rows totalling ≥500 est. LOC | `/reflect` | the Deferred table verbatim, scope=project |
+| Deferred table ≥3 rows totalling ≥500 estimated LOC | `/reflect` | the Deferred table verbatim, scope=project |
 | Δ LOC = 0 and Δ type errors = 0 after Phase 4 | stop | log the run; there was nothing to clean |
-
-## Log the run
-
-```bash
-skill-run-log /deep-clean --target "<scope>: <N> files" --verdict <VERDICT> --next /<skill-or-stop>
-```

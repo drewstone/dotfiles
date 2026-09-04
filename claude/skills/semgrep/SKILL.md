@@ -38,6 +38,14 @@ Run the real scanner; do not substitute grep-only guesses for Semgrep findings.
 Report command, rulesets, files scanned, result counts, real findings, false positives, and artifact paths.
 Use `references/full-reference.md` and `workflows/scan-workflow.md` for the full command workflow and ruleset matrix.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /semgrep --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -46,11 +54,3 @@ Use `references/full-reference.md` and `workflows/scan-workflow.md` for the full
 | Fixes land and CI goes red | `/converge` | the failing job + the rule the fix satisfies |
 | ≥10 findings trace to one obsolete module | `/deep-clean` | the module + the finding list scoped to it |
 | 0 HIGH/CRITICAL findings across the scanned paths | stop | the SARIF path + the rule set and paths scanned |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /semgrep --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

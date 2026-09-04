@@ -32,6 +32,14 @@ The goal is genuinely green, not hidden failures.
 
 Use `references/full-reference.md` for the full resume protocol and GitHub command sequence.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -41,11 +49,3 @@ Use `references/full-reference.md` for the full resume protocol and GitHub comma
 | Same job fails on an untouched base commit (binary: reproduced on base) | `/autopsy` | the job name + both run URLs |
 | CI green and the change must become a live release | `/ship` | the merge SHA + the deploy command |
 | Release path is opaque or multi-artifact | `/release-conductor` | the artifact list + the rollback path |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

@@ -25,6 +25,14 @@ The failure mode isn't doing bad work. It's doing **safe** work — the easy tas
 
 Innovation is the experiment that could embarrass you, run honestly — not the one that confirms what you hoped. Default to the version that could fail. If you're about to ship a soft win, a proxy metric, or an easy task, name it out loud as the timid choice and take the harder one instead.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /push-past-easy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -33,11 +41,3 @@ Innovation is the experiment that could embarrass you, run honestly — not the 
 | Result is promising but n < 24 or a confound is unresolved | `/evolve` | the underpowered result, the confound, and the powered design |
 | The hard version needs a different architecture, not more n | `/pursue` | the named cap + the design that removes it |
 | The hard version fails and the reason is unclear | `/autopsy` | the raw rows + the artifact-vs-real-effect checks |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /push-past-easy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

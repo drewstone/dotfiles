@@ -23,6 +23,14 @@ Treat UI labels, docs, and architecture diagrams as claims until traces or tool 
 Report claim, evidence, verdict, impact, and required fix for each behavior gap.
 Use `references/full-reference.md` for the full question list and red flags.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /agent-behavior-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -32,11 +40,3 @@ Use `references/full-reference.md` for the full question list and red flags.
 | ≥3 behavior defects and no case scores this behavior | `/eval-agent` | the defect list as candidate rubric items + 2 pass and 2 fail transcripts |
 | A behavior score exists and sits below target for ≥2 runs | `/evolve` | the score as baseline metric, its noise floor, and the failing transcripts |
 | 0 P1 findings and score ≥ 8/10 | `/reflect` | the audit artifact path + this run's `.agent/skill-runs.jsonl` row |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /agent-behavior-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

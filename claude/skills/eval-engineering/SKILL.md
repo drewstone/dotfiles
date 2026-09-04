@@ -104,6 +104,14 @@ Report:
 An eval is not complete because its files exist.
 It is complete when the intended capability ran, the expected evidence was observed, a realistic failure was rejected, and the result can be reproduced.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /eval-engineering --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -113,11 +121,3 @@ It is complete when the intended capability ran, the expected evidence was obser
 | ≥2 architectures must be compared at equal compute | `/arena-experiment` | the case set + the compute budget per arm |
 | The case executes and a trivial baseline fails it | `/calibrate-before-measure` | the case ID, the baseline score, and the metric |
 | Eval is valid and the score sits below target | `/evolve` | the case set, the baseline number, and its noise floor |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /eval-engineering --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

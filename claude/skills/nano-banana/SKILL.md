@@ -61,6 +61,14 @@ Higher quality: `export NANOBANANA_MODEL=gemini-3-pro-image-preview`
 2. Show to user, offer variations if needed
 3. For changes: re-run with adjusted prompt or use `/edit`
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /nano-banana --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -68,11 +76,3 @@ Higher quality: `export NANOBANANA_MODEL=gemini-3-pro-image-preview`
 | The image is for product UI | `/product-design` | the generated file path + the surface it fills |
 | The image supports a post or brief | `/signal-distill` | the image path + the brief it illustrates |
 | Image generated and accepted | stop | the output path under `./nanobanana-output/` |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /nano-banana --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

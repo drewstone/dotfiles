@@ -53,7 +53,7 @@ Picks the single next skill. It does not do the work. Every pick names the row i
 | 17 | Last 2 experiments KEEP with Δ ≥ 3% and CV < 15% | `/evolve` | metric, baseline, next lever |
 | 18 | Branch carries ≥2 mixed-scope shippable changes and 0 open PRs | `/finalize` | file groups → PR split |
 | 19 | Work reads done, 0 test runs this session, `git status` dirty | `/verify` | the artifact + the check to run |
-| 20 | Context ≥80% used or session ending, with ≥1 task in flight | `/handoff` | in-flight list + next action |
+| 20 | Context replacement is imminent with ≥1 task in flight | `/session-continuity` | in-flight list + next action |
 | 21 | All scorecard flows ≥ target, or budget in `current.json` exhausted | `stop` | closing numbers |
 | 22 | 0 rows above match | `stop` | the signals table + 1 question |
 

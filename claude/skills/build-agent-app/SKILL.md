@@ -166,6 +166,14 @@ first browser sends -> second browser opens the same deep link mid-turn
 Record the public deep link, runtime session id, first and last sequence, event count, reconnect result, and token expiry.
 Do not use Storybook or a mocked stream as product proof.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /build-agent-app --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -175,11 +183,3 @@ Do not use Storybook or a mocked stream as product proof.
 | Diff touches auth, billing, tenant isolation, or secret storage | `/harden` | the changed file:line list + the tenant boundary it crosses |
 | Shell lands and ≥1 flow runs end-to-end against real infra | `/verify` | the flow name + the non-mocked run output |
 | App-shell diff > 200 lines before review | `/critical-audit` | the diff scope (`--diff-only`) + the contracts it changes |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /build-agent-app --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

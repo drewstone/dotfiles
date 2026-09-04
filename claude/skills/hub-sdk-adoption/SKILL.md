@@ -64,6 +64,14 @@ Test denied auth, required approval, malformed response, retry, and duplicate-wr
 
 Report the installed version, exact imports, removed files and dependencies, retained product adapters, real request result, failure cases, and commands run.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /hub-sdk-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -72,11 +80,3 @@ Report the installed version, exact imports, removed files and dependencies, ret
 | Diff touches credentials, capability tokens, webhooks, or destructive tools | `/harden` | the changed file:line list + the policy each call must satisfy |
 | ≥1 primitive was re-implemented instead of imported | `/simplify` | the duplicate implementation + the SDK export that replaces it |
 | Adoption lands and ≥1 real OAuth round-trip succeeds | `/verify` | the provider + the non-mocked call output |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /hub-sdk-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

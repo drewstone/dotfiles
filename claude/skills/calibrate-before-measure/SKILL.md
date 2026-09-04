@@ -30,6 +30,14 @@ Strengthen the case before comparing systems.
 Report the strong score, weak score, separation, simple-baseline score, sample count, exact command, and artifact paths.
 No broader run starts until both checks pass.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /calibrate-before-measure --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -39,11 +47,3 @@ No broader run starts until both checks pass.
 | A trivial baseline (no tools, no search, empty diff) scores ≥ 80% of the real run | `/eval-engineering` | the baseline score + the case that is too easy |
 | Judge disagrees with human labels on > 10% of ≥20 labeled examples | `/eval-agent` | the disagreement rows + the current rubric |
 | Calibration passes and a measured target already exists | `/evolve` | the calibrated metric, its noise floor, and the baseline number |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /calibrate-before-measure --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

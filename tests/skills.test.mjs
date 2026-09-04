@@ -57,7 +57,7 @@ test('discovers system skills and deduplicates the same source across roots', ()
   })
 })
 
-test('passes a compact catalog and rejects one that would emit the Codex warning', () => {
+test('passes catalogs and labels the historical size advisory as a warning', () => {
   withHome((home) => {
     const root = join(home, '.claude', 'skills')
     for (let index = 0; index < 20; index += 1) {
@@ -76,8 +76,19 @@ test('passes a compact catalog and rejects one that would emit the Codex warning
     }
 
     const oversized = runSkills(home, ['--check'])
-    assert.equal(oversized.status, 2)
-    assert.match(oversized.stderr, /emit the 2% warning/)
+    assert.equal(oversized.status, 0, oversized.stderr)
+    assert.match(oversized.stderr, /historical advisory, not a current documented product limit/)
+  })
+})
+
+test('deduplicates byte-identical skill folders installed for different harnesses', () => {
+  withHome((home) => {
+    writeSkill(join(home, '.claude', 'skills'), 'shared-copy', 'Same skill')
+    writeSkill(join(home, '.agents', 'skills'), 'shared-copy', 'Same skill')
+
+    const result = runSkills(home, ['--check'])
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /OK: 1 skills/)
   })
 })
 
@@ -116,6 +127,19 @@ test('every skill directory in the repo resolves', () => {
   assert.deepEqual(broken, [], `dangling skill symlinks: ${broken.join(', ')}`)
 })
 
+test('every conversation profile skill exists in the source catalog', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const installer = readFileSync(join(repoRoot, 'claude', 'install.sh'), 'utf8')
+  const match = installer.match(/^PI_SKILLS=\(([^)]*)\)$/m)
+  assert.ok(match, 'install.sh must declare PI_SKILLS')
+  const missing = match[1]
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((name) => !existsSync(join(skillsDir, name, 'SKILL.md')))
+  assert.deepEqual(missing, [], `PI_SKILLS cites missing skills: ${missing.join(', ')}`)
+})
+
 // _ladder.md is the only place the flat skill names are given a structure. It is
 // hand-maintained, so it drifts silently unless something checks it.
 test('_ladder.md names every skill in the repo, and no skill it names is gone', () => {
@@ -138,12 +162,53 @@ test('_ladder.md names every skill in the repo, and no skill it names is gone', 
 // zero skills wrote a line for months, leaving /reflect nothing to grade.
 test('every live skill tells the model to log its run', () => {
   const skillsDir = join(repoRoot, 'claude', 'skills')
-  // Shims only redirect to another skill; the skill they name does the logging.
-  const shims = new Set(['code-review', 'research', 'site-clone'])
+  // The remaining shim redirects to another skill, which owns the run log.
+  const shims = new Set(['site-clone'])
   const missing = readdirSync(skillsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !shims.has(e.name))
     .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
     .filter((e) => !readFileSync(join(skillsDir, e.name, 'SKILL.md'), 'utf8').includes('## Log the run'))
     .map((e) => e.name)
   assert.deepEqual(missing, [], `skills with no '## Log the run' section: ${missing.join(', ')}`)
+})
+
+test('skill chaining uses one final footer after the completed-work log', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const misplaced = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(skillsDir, entry.name, 'SKILL.md'))
+    .filter(existsSync)
+    .filter((path) => {
+      const source = readFileSync(path, 'utf8')
+      const footers = [...source.matchAll(/\n## Then consider\n/g)]
+      if (footers.length === 0) return false
+      if (footers.length > 1) return true
+      const thenIndex = footers[0].index
+      const logIndex = source.indexOf('\n## Log the run\n')
+      if (logIndex !== -1 && thenIndex < logIndex) return true
+      const laterHeading = source.slice(thenIndex + 1).match(/\n## (?!Then consider\b)/)
+      return laterHeading !== null
+    })
+    .map((path) => path.slice(skillsDir.length + 1))
+
+  assert.deepEqual(
+    misplaced,
+    [],
+    `'## Then consider' must be the final section: ${misplaced.join(', ')}`,
+  )
+})
+
+test('no skill keeps the obsolete Dispatch section', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const markdownFiles = (directory) =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) return markdownFiles(path)
+      return entry.isFile() && entry.name.endsWith('.md') ? [path] : []
+    })
+  const obsolete = markdownFiles(skillsDir)
+    .filter((path) => readFileSync(path, 'utf8').includes('\n## Dispatch\n'))
+    .map((path) => path.slice(skillsDir.length + 1))
+
+  assert.deepEqual(obsolete, [], `replace Dispatch with the final Then consider footer: ${obsolete.join(', ')}`)
 })

@@ -9,7 +9,8 @@ This file is documentation for **skill authors** (me, future me, anyone editing 
 
 ## Why this file exists
 
-Three independent reviews of the skill system flagged the same problem: every skill copy-pastes the same rules ("read state first", "decision capture & reflection", "save to .agent/", "5 rounds max", "every claim needs evidence", "no AI attribution"). When the rule needed to evolve, it evolved in 8 places, drifted, and the weakest version won.
+Three independent reviews found the same problem: skills copied shared rules until those copies drifted.
+Keep each rule here and put only the necessary instruction in a live skill.
 
 Going forward: the rule lives here, with rationale. Skills cite it (`see _common.md`) for context, but inline only the one or two lines they actually need at runtime.
 
@@ -60,19 +61,22 @@ If `.agent/` exists in the repo, read in this order before acting:
 
 If `.agent/` doesn't exist, skip — don't bootstrap unless the skill's purpose is to bootstrap. Use the repo's existing conventions where they exist (`.bench/`, `docs/decisions/`, Linear, GitHub Project) — `.agent/governor-config.json` records adopted paths if `/governor` ran.
 
-### Persist always
+### Persist at durable boundaries
 
-After every round, write:
+After a measured round, before context replacement, and at completion, write:
 - `.agent/current.json` — updated mode, status, round, timestamp
 - `.agent/progress.md` — appended round summary
 - `.agent/experiments.jsonl` — one JSON line per experiment (schema: `evolve/schema.md`)
 - `.agent/skill-runs.jsonl` — one line per skill invocation (schema below)
 
-State must survive interruption. A skill that completes work but doesn't persist it loses ground next session.
+State must survive interruption.
+Context is temporary working memory, not the record.
 
-### Dispatch-at-end
+### Chain only after completion
 
-Every skill ends with one explicit line naming the next skill to run, or an explicit "stop" verdict. This is the chain — there is no orchestrator.
+Put `## Then consider` at the actual end of each `SKILL.md`.
+Name a next skill only after the current skill's intent is complete.
+The condition must state what evidence triggers the transition.
 
 ```
 Next: /evolve targeting <X> against baseline <Y>
@@ -80,7 +84,9 @@ Next: /reflect — three rounds passed, learnings unindexed
 Stop: scorecard converged, no pending work
 ```
 
-The dispatch is not a suggestion. The user re-invokes from the dispatch line. Vague dispatches break the chain ("you might want to consider /pursue" → don't).
+Continue an already-authorized active goal automatically when the environment supports continuation.
+Do not make the user repeat the goal only because a context window or process ended.
+Ask the user only when the next action needs new authority or a decision only the user can make.
 
 ### Verify before reporting
 
@@ -90,9 +96,11 @@ Never report "X didn't work, maybe A or B." Determine which. Confirm changes are
 
 `1.00 = perfect`. `9 = senior staff would approve with zero comments`. `8 = solid but I have notes`. `Most code starts at 5–7`. No inflation. A skill that auto-9s every run is broken.
 
-### 5 rounds max per invocation
+### Bound work by risk
 
-Persist and stop after 5 rounds. The user re-invokes to continue. Skills that loop indefinitely lose context, lose oversight, and accumulate silent regressions.
+Use explicit resource limits, cancellation, terminal success, and demonstrated dead ends as stopping conditions.
+Replace context before it degrades, persist the state, and continue the active goal.
+An arbitrary round count is not a research stopping rule.
 
 ### Be specific
 
@@ -222,7 +230,7 @@ Before merging a new or edited skill:
 - [ ] No defensive fit-check routing
 - [ ] No ASCII boxes, no shouted banners, no phase numbering theatre
 - [ ] Cites `_common.md` for shared rules instead of inlining them
-- [ ] Has a clear dispatch-at-end pattern (or explicit stop verdict)
+- [ ] Places `## Then consider` at the actual end, after the skill's work and run log
 - [ ] If long-form reference content exists, it's in a companion `.md`, not the SKILL.md
 - [ ] Logs to `.agent/skill-runs.jsonl` (or notes it's a leaf-level skill that doesn't)
 

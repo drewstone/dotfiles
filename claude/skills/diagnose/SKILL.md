@@ -100,21 +100,21 @@ Emit exactly this. Omit a section only where its rule allows.
 - **10/10** — `{"name":"test harness bypassed production SQLite retry/WAL wrapper","failures":"44 cases across @products/platform-api full run","fix":"share createDatabaseFromClient across production and test DB helpers"}`, verified `platformApi 2833/2833`, `dbRetry 14/14`.
 - Filled artifacts + parse commands per format: `references/full-reference.md` — examples only; this file is the contract.
 
-## Dispatch
-
-| Condition (numeric) | Next skill | Pass it |
-|---|---|---|
-| Verdict `ROOT_CAUSE_CONFIRMED` and ≥1 named check is red | `/converge` | cluster #1 row + failing check name + repro command |
-| Total failures =1, or the result is null/surprising rather than many failures | `/autopsy` | run id + the raw rows read |
-| ≥2 clusters land `hypothesis` because a stage emits no timing/log | `/ground-truth` | the dark hops + the instrument each needs |
-| Top cluster code ∈ {`race`,`resource`,`config`,`stale-state`} and cost ≥30 min/run | `/harden` | cluster row + the invariant it violates |
-| Same cluster name appears in ≥3 prior `.agent/skill-runs.jsonl` rows | `/reflect` | cluster name + its occurrence count across runs |
-| Pass rate dropped ≥10 points with 0 product-code commits in the range | `/eval-harness-diagnose` | git range + the 2 run ids being compared |
-| Fix #1 verification passes `<k>/<n>` and it targeted a release | `/deploy-proof` | the commit + the live check that must pass |
-
 ## Log the run
 
 ```bash
 skill-run-log /diagnose --target "<source> f=<F>/n=<N> clusters=<k>" \
   --verdict <ROOT_CAUSE_CONFIRMED|PARTIAL|INSUFFICIENT_DATA> --next /<skill-or-stop>
 ```
+
+## Then consider
+
+| Condition (numeric) | Next skill | Pass it |
+|---|---|---|
+| Verdict `ROOT_CAUSE_CONFIRMED` and ≥1 named check is red | `/converge` | cluster #1 row, failing check name, and reproduction command |
+| Total failures = 1, or the result is null or surprising | `/autopsy` | run id and the raw rows read |
+| ≥2 clusters remain hypotheses because a stage emits no timing or log | `/ground-truth` | the unmeasured stages and the instrument each needs |
+| Top cluster code is `race`, `resource`, `config`, or `stale-state`; cost ≥30 min/run | `/harden` | cluster row and the invariant it violates |
+| Same cluster name appears in ≥3 prior `.agent/skill-runs.jsonl` rows | `/reflect` | cluster name and its occurrence count |
+| Pass rate dropped ≥10 points with 0 product-code commits in the range | `/eval-harness-diagnose` | git range and the 2 run ids |
+| Fix #1 verification passes `<k>/<n>` and it targeted a release | `/deploy-proof` | the commit and the live check that must pass |

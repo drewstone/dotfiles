@@ -33,6 +33,14 @@ It is automated `/pursue`: multiple isolated proposers change code, then the rep
 
 Use `references/full-reference.md` for the full setup, state files, and integration details.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /meta-harness --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -41,11 +49,3 @@ Use `references/full-reference.md` for the full setup, state files, and integrat
 | Best-of-generation gain stays inside 2× noise for ≥3 generations | `/breakout` | the plateau evidence + the target that is acting as the cage |
 | A generation's result is surprising, null, or unusually clean | `/autopsy` | the raw generation rows + the scoring command |
 | Search produced ≥2 viable architectures within noise of each other | `/arena-experiment` | the candidates + an equal-compute budget |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /meta-harness --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

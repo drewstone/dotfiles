@@ -1,6 +1,6 @@
 ---
 name: refresh-reasoning-capabilities
-description: Re-measure what reasoning efforts each agent CLI and model actually accepts, and update the committed capability table when the tools have moved. Use when a harness or model is added, a CLI is upgraded, a reasoning level silently fails or gets ignored, or the capability drift gate reds.
+description: Re-measure supported reasoning levels after a model, CLI, or execution backend changes, then update the committed capability table.
 ---
 
 # Refresh the reasoning-capability table

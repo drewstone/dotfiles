@@ -83,6 +83,14 @@ Report calibration cases, label source, every measured error rate, known blind s
 
 The judge is ready only when known good and bad examples separate, order and injection checks pass, missing evidence cannot pass, and the result changes the intended decision.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /eval-agent --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -91,11 +99,3 @@ The judge is ready only when known good and bad examples separate, order and inj
 | A deployed judge's pass rate moved > 20pp with no agent change | `/eval-harness-diagnose` | the run record IDs + the judge version on each side |
 | The change is to shared judge types or execution inside the package | `/agent-eval` | the type/API surface being changed + its consumers |
 | Judge agreement ≥ 0.9 on ≥20 labeled examples | `/evolve` | the calibrated judge + the current score as baseline |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /eval-agent --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

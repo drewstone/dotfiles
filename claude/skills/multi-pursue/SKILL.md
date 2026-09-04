@@ -25,6 +25,14 @@ Do not use it for chores, parameter tweaks, or one coherent design that should s
 
 Use `references/full-reference.md` for full dispatch format and synthesis template.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /multi-pursue --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -35,11 +43,3 @@ Use `references/full-reference.md` for full dispatch format and synthesis templa
 | Tracks land as mixed changes on one branch | `/finalize` | the branch + the per-track change map |
 | All N tracks land inside 2× the noise floor of the incumbent | `/meta-harness` | the N designs as a search space + the benchmark to search against |
 | Synthesis complete and ≥3 tracks logged | `/reflect` | the per-track results + the cost of each |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /multi-pursue --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

@@ -1,6 +1,6 @@
 ---
 name: install-anti-slop
-description: Install and configure the anti-slop Oxlint plugin in a local TypeScript or JavaScript repository. Use whenever a user asks to add anti-slop lint rules, copy the anti-slop plugin, configure opinionated Oxlint rules, or migrate an existing local anti-slop setup.
+description: Install or migrate the anti-slop Oxlint plugin in a local JavaScript or TypeScript repository.
 ---
 
 # Install anti-slop

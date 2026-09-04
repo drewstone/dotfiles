@@ -28,6 +28,14 @@ A fix is not proven until the original failing user path passes in the rendered 
 
 Use `references/adversarial-patterns.md` for adversarial cases.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /ui-test --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -35,11 +43,3 @@ Use `references/adversarial-patterns.md` for adversarial cases.
 | ≥3 failures point to information architecture or workflow, not bugs | `/product-design-audit` | the failing flows + the screenshots |
 | ≥1 failure is a code defect inside the PR diff | `/critical-audit` | the reproduction + the suspect file:line |
 | All flows pass across the tested breakpoints | `/verify` | the flow list, breakpoints, and screenshot paths |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /ui-test --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

@@ -39,6 +39,14 @@ Current source, types, exports, and package docs define the API.
 Report source files read, exact public exports changed, integrity rules preserved, tests run, and artifact paths for any measured result.
 Run package typecheck, build, package verification, and the full suite for shared contracts, statistics, capture, or public exports.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /agent-eval --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -48,11 +56,3 @@ Run package typecheck, build, package verification, and the full suite for share
 | Judge agreement with human labels < 0.9 over ≥20 labeled examples | `/eval-agent` | the labeled set + the current disagreement rows |
 | A deployed result looks contaminated (pass rate moved > 20pp with no agent change) | `/eval-harness-diagnose` | the run record IDs on both sides of the jump |
 | Package builds and ≥1 case runs green | `/verify` | the case IDs run + the exact command and its output |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /agent-eval --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

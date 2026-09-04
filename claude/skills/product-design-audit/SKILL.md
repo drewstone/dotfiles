@@ -30,6 +30,14 @@ The output is implemented improvement, not a vibes report.
 Return before/after screenshots or artifact paths, changed files, remaining known issues, and the exact verification command or browser path.
 Use `references/audit-matrix.md` for the scoring matrix and `references/full-reference.md` for the old full playbook.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /product-design-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -38,11 +46,3 @@ Use `references/audit-matrix.md` for the scoring matrix and `references/full-ref
 | The problem is product strategy, not UI execution | `/product-innovation-audit` | the workflow that has no user + the evidence |
 | ≥5 findings and all are small rubric gaps | `/polish` | the finding list + the rubric they fail |
 | Fixing requires a new visual direction, not adjustments | `/product-design` | the references to work from + the surfaces to redo |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /product-design-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

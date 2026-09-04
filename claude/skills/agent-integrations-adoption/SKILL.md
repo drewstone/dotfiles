@@ -54,6 +54,14 @@ Use a real provider test account for the primary product path; mocks cover adapt
 
 Report the installed version and subpaths, connector and backend selected, product-owned stores, capability and approval policy, audit records, real provider result, and failure tests.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /agent-integrations-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -62,11 +70,3 @@ Report the installed version and subpaths, connector and backend selected, produ
 | Diff touches credential storage, webhook signature checks, approval gates, or destructive actions | `/harden` | the changed file:line list + the destructive tool names |
 | ≥1 hand-rolled path duplicates a package primitive | `/simplify` | the duplicate call sites + the primitive that replaces them |
 | Runtime lands and ≥1 connector executes end-to-end | `/verify` | the connector name + the real (non-mocked) call output |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /agent-integrations-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

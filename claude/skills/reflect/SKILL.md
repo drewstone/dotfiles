@@ -93,6 +93,14 @@ k-of-n · cost both sides · status label · repeat check · Verdict names one n
 - **0/10** — `skills/.evolve/reflections/2026-06-01-093016-tangle-skills-trace-mining.md`: 5,174 words, 0 tables, 1 ratio, 0 percentages, 74% digit-free sentences, self-scored 8.6/10.
 - **10/10** — `starter-foundry-canary/.evolve/reflections/2026-04-02.md`: 394 words, `Metric|Value` table, ranked `Priority|Action|Why` table, 9 ratios, 5 percentages.
 
+## Log the run
+
+```bash
+skill-run-log /reflect --target "<scope> n=<N>" --verdict <VERDICT> --next /<skill-or-stop>
+```
+
+The row is provenance, not evidence: a finding is supported only by the artifact it cites.
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -103,12 +111,4 @@ k-of-n · cost both sides · status label · repeat check · Verdict names one n
 | ≥5 findings share one root cause | `/diagnose` | the finding list + the shared symptom |
 | The top action needs ≥3 heterogeneous skills wired into one plan | `/orchestrate` | the action, its stages, and the verification barrier between them |
 | ≥1 finding is an unproven claim | `/verify` | the claim + the command that would prove it |
-| Findings are recorded and the session ends | `/handoff` | the reflection path + the open loops with next actions |
-
-## Log the run
-
-```bash
-skill-run-log /reflect --target "<scope> n=<N>" --verdict <VERDICT> --next /<skill-or-stop>
-```
-
-The row is provenance, not evidence: a finding is supported only by the artifact it cites.
+| Findings are recorded and context replacement is imminent | `/session-continuity` | the reflection path + the open loops with next actions |
