@@ -134,9 +134,9 @@ done
 # on the dev box, so whichever path is committed dangles on the other and the skill
 # silently disappears.
 for candidate in \
+  "${AGENT_RUNTIME_DIR:+$AGENT_RUNTIME_DIR/skills}" \
   "$HOME/webb/agent-runtime/skills" \
-  "$HOME/code/agent-runtime/skills" \
-  "${AGENT_RUNTIME_DIR:-}/skills"; do
+  "$HOME/code/agent-runtime/skills"; do
   [ -d "$candidate" ] || continue
   for ext in "$candidate"/*/; do
     [ -f "$ext/SKILL.md" ] || continue

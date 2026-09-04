@@ -140,6 +140,14 @@ test('every conversation profile skill exists in the source catalog', () => {
   assert.deepEqual(missing, [], `PI_SKILLS cites missing skills: ${missing.join(', ')}`)
 })
 
+test('an explicit Runtime skill source wins over guessed checkout paths', () => {
+  const installer = readFileSync(join(repoRoot, 'claude', 'install.sh'), 'utf8')
+  const explicit = installer.indexOf('${AGENT_RUNTIME_DIR:+$AGENT_RUNTIME_DIR/skills}')
+  const guessed = installer.indexOf('$HOME/webb/agent-runtime/skills')
+  assert.ok(explicit >= 0, 'install.sh must honor AGENT_RUNTIME_DIR')
+  assert.ok(explicit < guessed, 'AGENT_RUNTIME_DIR must precede guessed checkout paths')
+})
+
 // _ladder.md is the only place the flat skill names are given a structure. It is
 // hand-maintained, so it drifts silently unless something checks it.
 test('_ladder.md names every skill in the repo, and no skill it names is gone', () => {
