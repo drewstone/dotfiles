@@ -57,7 +57,7 @@ test('discovers system skills and deduplicates the same source across roots', ()
   })
 })
 
-test('passes catalogs and labels the historical size advisory as a warning', () => {
+test('reports the documented unknown-context catalog fallback', () => {
   withHome((home) => {
     const root = join(home, '.claude', 'skills')
     for (let index = 0; index < 20; index += 1) {
@@ -71,13 +71,26 @@ test('passes catalogs and labels the historical size advisory as a warning', () 
 
   withHome((home) => {
     const root = join(home, '.claude', 'skills')
-    for (let index = 0; index < 100; index += 1) {
-      writeSkill(root, `oversized-${index}`, 'x'.repeat(600))
+    for (let index = 0; index < 10; index += 1) {
+      writeSkill(root, `oversized-${index}`, 'x'.repeat(1_000))
     }
 
     const oversized = runSkills(home, ['--check'])
     assert.equal(oversized.status, 0, oversized.stderr)
-    assert.match(oversized.stderr, /historical advisory, not a current documented product limit/)
+    assert.match(oversized.stderr, /8,000-character unknown-context fallback/)
+    assert.match(oversized.stderr, /Codex may shorten descriptions/)
+  })
+
+  withHome((home) => {
+    const root = join(home, '.claude', 'skills')
+    for (let index = 0; index < 200; index += 1) {
+      writeSkill(root, `minimum-metadata-${index}`, '')
+    }
+
+    const omitted = runSkills(home, ['--check'])
+    assert.equal(omitted.status, 0, omitted.stderr)
+    assert.match(omitted.stderr, /8,000-character unknown-context fallback/)
+    assert.match(omitted.stderr, /some skills may be omitted/)
   })
 })
 

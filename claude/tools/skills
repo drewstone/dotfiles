@@ -16,8 +16,10 @@ ROOTS = [
     os.path.expanduser("~/.agents/skills"),
 ]
 MAX_DESCRIPTION_CHARS = 160
-HISTORICAL_CATALOG_TOKENS = 4_000
-APPROX_BYTES_PER_TOKEN = 4
+# https://learn.chatgpt.com/docs/build-skills
+# Codex uses at most 2% of a known model context for the initial skill list.
+# It uses this character fallback only when the context window is unknown.
+UNKNOWN_CONTEXT_CATALOG_CHARS = 8_000
 
 
 def frontmatter(path):
@@ -109,10 +111,6 @@ def rendered_line(name, desc, path):
     return f"- {name}: (file: {path})\n"
 
 
-def approximate_tokens(text):
-    return (len(text.encode("utf-8")) + APPROX_BYTES_PER_TOKEN - 1) // APPROX_BYTES_PER_TOKEN
-
-
 def skill_digest(skill_path):
     """Digest a complete skill folder so byte-identical multi-harness installs count once."""
     root = os.path.dirname(skill_path)
@@ -186,10 +184,8 @@ def main():
             if len(desc) > MAX_DESCRIPTION_CHARS
         ]
         description_chars = sum(len(desc) for _, desc, _ in rows)
-        full_tokens = sum(
-            approximate_tokens(rendered_line(name, desc, path))
-            for name, desc, path in rows
-        )
+        minimum_chars = sum(len(rendered_line(name, "", path)) for name, _, path in rows)
+        full_chars = sum(len(rendered_line(name, desc, path)) for name, desc, path in rows)
         for name, chars, path in oversized:
             print(
                 f"WARN {name}: {chars} description chars > {MAX_DESCRIPTION_CHARS} ({path})",
@@ -222,18 +218,27 @@ def main():
                     file=sys.stderr,
                 )
             catalog_failed = catalog_failed or bool(duplicates)
-        if not needle and full_tokens > HISTORICAL_CATALOG_TOKENS:
+        if not needle and full_chars > UNKNOWN_CONTEXT_CATALOG_CHARS:
+            if minimum_chars > UNKNOWN_CONTEXT_CATALOG_CHARS:
+                detail = (
+                    f"names and paths use {minimum_chars} characters, so some skills "
+                    "may be omitted"
+                )
+            else:
+                detail = (
+                    f"full metadata uses {full_chars} characters, so Codex may shorten "
+                    "descriptions"
+                )
             print(
-                f"WARN catalog estimate is ~{full_tokens} metadata tokens; "
-                f"{HISTORICAL_CATALOG_TOKENS} was a local historical advisory, "
-                "not a current documented product limit",
+                f"WARN catalog exceeds Codex's {UNKNOWN_CONTEXT_CATALOG_CHARS:,}-character "
+                f"unknown-context fallback: {detail}",
                 file=sys.stderr,
             )
         if catalog_failed:
             raise SystemExit(2)
         print(
             f"OK: {len(rows)} skills, {description_chars} description chars, "
-            f"~{full_tokens} estimated metadata tokens"
+            f"{full_chars} rendered metadata chars"
         )
         return
     width = max(len(name) for name, _, _ in rows)
