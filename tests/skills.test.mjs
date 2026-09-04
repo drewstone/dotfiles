@@ -148,6 +148,39 @@ test('an explicit Runtime skill source wins over guessed checkout paths', () => 
   assert.ok(explicit < guessed, 'AGENT_RUNTIME_DIR must precede guessed checkout paths')
 })
 
+test('installer skips and prunes directories without SKILL.md', () => {
+  withHome((home) => {
+    const installer = join(repoRoot, 'claude', 'install.sh')
+    const invalidSource = join(home, 'invalid-source')
+    writeSkill(join(home, 'external'), 'valid-source', 'External skill')
+    mkdirSync(invalidSource)
+
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      mkdirSync(root, { recursive: true })
+      symlinkSync(invalidSource, join(root, 'invalid-source'))
+      symlinkSync('../../external/valid-source', join(root, 'valid-source'))
+    }
+
+    const result = spawnSync('bash', [installer], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: '/usr/local/bin:/usr/bin:/bin',
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /invalid skill symlink/)
+
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      assert.throws(() => readlinkSync(join(root, 'invalid-source')), { code: 'ENOENT' })
+      assert.equal(readlinkSync(join(root, 'valid-source')), '../../external/valid-source')
+    }
+  })
+})
+
 // _ladder.md is the only place the flat skill names are given a structure. It is
 // hand-maintained, so it drifts silently unless something checks it.
 test('_ladder.md names every skill in the repo, and no skill it names is gone', () => {

@@ -120,8 +120,12 @@ link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   skill="$(basename "$skill_dir")"
-  if [ ! -d "$skill_dir" ]; then
-    [ -L "${skill_dir%/}" ] && echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
+  if [ ! -f "$skill_dir/SKILL.md" ]; then
+    if [ -L "${skill_dir%/}" ]; then
+      echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
+    elif [ -d "$skill_dir" ]; then
+      echo "  WARN skill '$skill' skipped: SKILL.md missing"
+    fi
     continue
   fi
   link "$skill_dir" "$CLAUDE_DIR/skills/$skill"
@@ -238,7 +242,7 @@ if [ -d "$HOME/.codex" ]; then
 
   mkdir -p "$HOME/.codex/skills"
   for skill_dir in "$SCRIPT_DIR/skills"/*/; do
-    [ -d "$skill_dir" ] || continue
+    [ -f "$skill_dir/SKILL.md" ] || continue
     skill="$(basename "$skill_dir")"
     link "$skill_dir" "$HOME/.codex/skills/$skill"
   done
@@ -289,8 +293,19 @@ python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" \
   --skills "$(IFS=,; echo "${PI_SKILLS[*]}")"
 echo "  Agent profiles exported to $PROFILE_DIR"
 
-# Clean up stale symlinks in skills, commands, hooks
-for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
+# A directory without SKILL.md is not a skill, even when its symlink target exists.
+for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"; do
+  [ -d "$dir" ] || continue
+  find "$dir" -maxdepth 1 -type l -print | while read -r stale; do
+    if [ ! -f "$stale/SKILL.md" ]; then
+      echo "  PRUNE $stale (invalid skill symlink)"
+      rm "$stale"
+    fi
+  done
+done
+
+# Clean up stale symlinks in commands and hooks.
+for dir in "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
   [ -d "$dir" ] || continue
   find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print | while read -r stale; do
     echo "  PRUNE $stale (dead symlink)"
