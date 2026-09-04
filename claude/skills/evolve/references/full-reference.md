@@ -4,7 +4,8 @@
 
 Given a measurable goal, figure out how to measure it, what's blocking it, how to fix it, whether the fix actually worked, and don't stop until converged.
 
-Shared conventions (state-first reads, persist-to-`.agent/`, dispatch-at-end, no AI attribution, 5-rounds-max) live in `_common.md`. This skill inlines only what's evolve-specific.
+Shared conventions live in `_common.md`.
+They cover state-first reads, durable checkpoints, completion-time chaining, and attribution.
 
 ## When evolve vs other skills
 
@@ -180,11 +181,13 @@ For ITERATE verdicts:
 1. Verify deployment (failure mode #1).
 2. Try a different approach to the same hypothesis.
 3. Check the scorer — maybe the metric doesn't capture what you changed.
-4. After 2–3 variations with verified deployment, mark ABANDON.
+4. Mark ABANDON only after recorded tests reject every eligible implementation, or the remaining implementations need unavailable authority or resources.
 
 For the overall goal: re-diagnose from current state (not original baseline — you've improved), generate new hypotheses for remaining gaps, execute next round.
 
-**Plateau detection**: score doesn't move >0.02 for 2 consecutive rounds → report what's structural vs fixable. Ask the operator whether to accept or push further.
+**Plateau detection**: score doesn't move >0.02 for 2 consecutive rounds → report what's structural vs fixable.
+Continue with the highest-information eligible hypothesis while the target remains unmet and resources remain.
+Ask the operator only when the next action needs new authority or a material choice that cannot be inferred.
 
 **Escalation to /pursue**: evolve plateaued 3+ rounds AND the remaining gap is architectural (not tunable) → dispatch `/pursue`. Don't loop evolve indefinitely when the approach itself needs rethinking.
 
@@ -243,5 +246,7 @@ Evolve owns the back half — judging whether a winning bet is durable enough to
 - Read state first (`.agent/current.json`, `.agent/progress.md`).
 - Verify, then report. Determine which, not "maybe A or B."
 - Score honestly. 1.00 means perfect.
-- 5 rounds max per invocation. Persist and stop. Re-invoke to continue.
+- Continue while the target is unmet, resources remain, and a testable hypothesis exists.
+- Persist before context replacement, then resume the same active goal.
+- Stop only at the target, an explicit resource limit, cancellation, or a demonstrated dead end.
 - Every cycle ends with one explicit dispatch line: `Next: /evolve targeting <X>` or `Next: /pursue — plateaued on <metric>` or `Stop: <reason>`.

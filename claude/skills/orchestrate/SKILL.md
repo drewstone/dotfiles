@@ -61,6 +61,14 @@ A real workflow is one structure × several policies. The worked example in the 
 
 Use `references/full-reference.md` for the structure×policy tables, the Workflow compile mapping, the barrier justified-vs-not rule, a worked composition, and the rate-limit / wall-clock math.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /orchestrate --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -73,11 +81,3 @@ Use `references/full-reference.md` for the structure×policy tables, the Workflo
 | A stage is an adversarial verification barrier | `/critical-audit` | the artifact under review + the severity bar |
 | A composed run returns null or contradictory results | `/autopsy` | the stage outputs + which stage first disagreed |
 | Workflow completes with ≥3 stages logged | `/reflect` | the stage ledger + the per-stage cost |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /orchestrate --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

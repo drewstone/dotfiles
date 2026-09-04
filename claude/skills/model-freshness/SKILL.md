@@ -1,6 +1,6 @@
 ---
 name: model-freshness
-description: Check and update the model ids our products declare — are they real, served by the router as themselves rather than a substitute, and still the current generation. Use when a product picks a default or fallback model, when a model looks wrong or slow, when the daily freshness report flags something, or before shipping any change that names a model id.
+description: Verify declared model IDs against live routing and current releases before choosing, changing, or shipping a model.
 ---
 
 # Model freshness

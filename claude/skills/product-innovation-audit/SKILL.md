@@ -38,6 +38,14 @@ Return:
 
 Use `references/full-reference.md` for the full question stack, scoring rubric, and extended report template.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /product-innovation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -46,11 +54,3 @@ Use `references/full-reference.md` for the full question stack, scoring rubric, 
 | A measurable product metric exists and sits below target | `/evolve` | the metric, its baseline, and the lever |
 | Ship decision is NO because the whole category caps below the bar | `/breakout` | the ceiling evidence + the constraint to change |
 | The bet cannot be judged without data that is not measured | `/ground-truth` | the decision-relevant metric + the hops to instrument |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /product-innovation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

@@ -32,6 +32,14 @@ For each finding include evidence, impacted boundary, proof command/test, fix, a
 
 Use `references/full-reference.md` for the full legacy playbook and report template.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -41,11 +49,3 @@ Use `references/full-reference.md` for the full legacy playbook and report templ
 | Exploit paths covered and the diff exceeds 200 lines | `/critical-audit` | the diff scope + the invariants the fix relies on |
 | The fix only counts once it is live in production | `/deploy-proof` | the merge SHA + the probe that proves the hole is closed |
 | ≥5 findings share one missing invariant | `/diagnose` | the finding list + the invariant that would kill all of them |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

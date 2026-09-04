@@ -26,6 +26,14 @@ Never fabricate quotes, trends, sources, or community sentiment.
 
 Use `references/full-reference.md` for discovery commands, scoring schema, and output templates.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /signal-distill --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -34,11 +42,3 @@ Use `references/full-reference.md` for discovery commands, scoring schema, and o
 | The brief needs original imagery | `/nano-banana` | the visual concept + the target dimensions |
 | ≥3 signals name the same missing product capability | `/product-innovation-audit` | the signal quotes + their engagement counts |
 | Briefs are scored and the top one is ready to publish | stop | the brief path + its score and source links |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /signal-distill --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

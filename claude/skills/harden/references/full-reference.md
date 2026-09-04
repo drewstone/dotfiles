@@ -246,20 +246,6 @@ curl -H "Authorization: Bearer sk-tan-abc123" https://target/api/sandbox/list
 3. [Coverage gap] → /pursue
 ```
 
-## Dispatch
-
-End with explicit routing:
-
-- **Every CRITICAL with PoC** → fix in code now. Don't defer.
-- **Every HIGH without PoC** → iterate `/harden` until you have a PoC or prove the invariant.
-- **Every coverage gap** → `/pursue` to build missing infra ("no CI bench gate — needs generational addition").
-- **Every tunable metric uncovered** → `/evolve` with the new baseline.
-
-Write `.agent/current.json`:
-```json
-{"mode":"evolve|pursue|harden","status":"findings_pending|clean","activeHarden":"<date>-report.md","critical":N,"high":N}
-```
-
 ## Persist
 
 - Inventory → `.agent/harden/<date>-inventory.md`

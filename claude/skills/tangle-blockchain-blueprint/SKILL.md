@@ -71,6 +71,14 @@ For docs-only work:
 - Claiming hosted service behavior is enforced by onchain contracts.
 - Describing protocol state as proof of runtime health, trade safety, credit redemption, model quality, or endpoint honesty.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /tangle-blockchain-blueprint --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -80,11 +88,3 @@ For docs-only work:
 | The service spans more than one user or tenant boundary | `/harden` | the boundary + the auth path that enforces it |
 | Docs-only work with ≥1 product-specific claim | `/docs-slop-audit` | the pages + the source files behind each claim |
 | UI changed | `/ui-test` | the routes + one non-mocked happy path |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /tangle-blockchain-blueprint --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

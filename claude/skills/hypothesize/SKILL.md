@@ -40,6 +40,14 @@ Shared conventions in `_common.md`. This absorbs and strengthens what was evolve
 
 Use `references/full-reference.md` for the EV scoring worked example, the evidence classes, and information-value sequencing.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /hypothesize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -49,11 +57,3 @@ Use `references/full-reference.md` for the EV scoring worked example, the eviden
 | The whole ranked field's expected value caps below the target | `/breakout` | the ceiling estimate + the constraint that sets it |
 | ≥3 top bets are independent and budget allows parallel tracks | `/multi-pursue` | one brief per track + the shared metric |
 | No repeatable measurement exists for the target yet | `/ground-truth` | the target + the hops that would have to be instrumented |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /hypothesize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

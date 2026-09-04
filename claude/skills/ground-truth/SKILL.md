@@ -19,6 +19,14 @@ You're about to make a live system faster / more reliable, or debug why it's slo
 
 Don't shave the easiest-to-reach term — measure, then cut the dominant one. If a number surprises you (too good, too flat, a post-deploy regression), autopsy it against raw rows before reporting — a surprising number is a hypothesis about the harness until the data says otherwise.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /ground-truth --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -28,11 +36,3 @@ Don't shave the easiest-to-reach term — measure, then cut the dominant one. If
 | The dominant term is an irreducible floor (physics, security, network RTT) | `/breakout` | the floor's size + why the current regime cannot beat it |
 | First measurement is marginal (inside 2× noise) | `/dont-collapse-the-architecture` | the regime check + the lever that should have fired |
 | Breakdown complete and the question was analytical | `/report` | every stage's min/median/p90/max with n, env label, and warm/cold |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /ground-truth --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

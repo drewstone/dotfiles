@@ -38,6 +38,14 @@ Shared conventions in `_common.md`.
 
 Use `references/full-reference.md` for the deterministic grouping algorithm, the exact hunk-carve and union-verification commands, symbol-flow dependency detection, stacked-PR machinery, and edge cases.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /finalize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -46,12 +54,4 @@ Use `references/full-reference.md` for the deterministic grouping algorithm, the
 | A branch's CI comes back red | `/converge` | the branch name + the failing job |
 | Union hash does not match the original branch | `/autopsy` | the union diff, the missing hunk, and both hashes |
 | A branch is approved with 0 blockers | `/ship` | the branch SHA + the deploy command |
-| ≥4 branches split and the session ends | `/handoff` | the branch→PR map + which are still unreviewed |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /finalize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
+| ≥4 branches split and the session ends | `/session-continuity` | the branch→PR map + which are still unreviewed |

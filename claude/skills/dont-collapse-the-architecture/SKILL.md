@@ -1,42 +1,42 @@
 ---
 name: dont-collapse-the-architecture
-description: Test whether an ambitious architecture ran in the right regime before simplifying it.
+description: Decide whether a disappointing architecture result tested the claimed mechanism in the regime where it should help.
 ---
 
-# Don't collapse the architecture
+# Do not collapse the architecture
 
-The reductive instinct — *"it's unproven, an A/B was marginal, simplify it to the dumb/old pattern"* — deletes the exact thing that would have worked once the missing competency was built. **Marginal-early ≠ worthless.** It almost always means the constraint that makes the architecture pay off was not active in the test.
+Use this before simplifying an ambitious design because an early comparison tied or lost.
+It protects an untested mechanism, not an architecture forever.
 
-This is a one-way door: collapsing throws away the thing whose value was *latent*. Default to **holding the architecture and finding its regime**, not collapsing it.
+## Audit the test
 
-## The worked case: agents are a context-management problem
+A negative result can reject the design only when all four conditions hold:
 
-Agent capability is, at bottom, a **context-management and knowledge problem**. The finite context window is the binding constraint; quality rots as it fills. The value of a multi-agent topology is **latent** — unlocked by one competency: **expert management of the context lifecycle** (close a chapter → checkpoint to external tracking state; open a chapter → respawn a fresh agent against that state; recurse).
+1. The task entered the regime where the design claims an advantage.
+2. The claimed mechanism fired and was recorded.
+3. The assessment could detect the smallest useful effect.
+4. The compared arms received equal actual resources and enough paired cases for the stopping rule.
 
-A naive "does 2 agents beat 1" A/B on a task that fits in one context window **will tie** — because the context constraint never bit. That tie says nothing about the topology; it says you measured in the wrong regime. (See `docs/research/smart-loops-context-lifecycle.md` in agent-runtime, and the Autodata null that was an extractive task + a memorized doc, not "the loop doesn't work.")
+If a condition is missing, state that the architecture remains untested.
+Repair the test or activate the mechanism before drawing a quality conclusion.
 
-## The rule — when you catch yourself about to simplify on marginal evidence
+For recursive agents, a long task alone is insufficient.
+The record must show context replacement, descendant work, ancestor use of descendant artifacts, and evidence-driven revision.
 
-1. **Name the regime where the architecture is supposed to pay off.** Was the test in that regime? (For context-lifecycle work: long-horizon tasks where context exhaustion is the binding constraint.) If not, the result is uninformative — do not act on it.
-2. **Name the competency that's missing.** Marginal-*without*-the-competency ≠ marginal-*with* it. (Here: the chapter close/open policy.)
-3. **Build the competency and test in the right regime** before reducing. Only a result *in the regime, with the competency built* can justify collapsing.
-4. If you still feel the pull to simplify, say out loud: *"I'm about to delete something whose value is latent."* Then don't — find the regime instead.
+If all four conditions hold and the effect remains below the registered useful threshold, simplify or reject the design.
+Do not protect it with a new unmeasured explanation.
 
-Hold the thesis. Find where it bites. Build the policy. Then — and only then — judge.
+## Log the run
+
+```bash
+skill-run-log /dont-collapse-the-architecture --target "<architecture and result>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| About to A/B the architecture | `/calibrate-before-measure` | the metric, the regime where the constraint is active, and the trivial baseline |
-| Result marginal (inside 2× noise) and instrumentation shows the mechanism fired 0 times | `/ground-truth` | the uninstrumented or inactive hop + the activation counter |
-| Result marginal and the regime was never active | `/push-past-easy` | the regime definition + the experiment that activates it |
-| Regime provably active and the architectures still tie at n ≥ 24 | `/pursue` | the tie evidence + the mechanism that failed to pay |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /dont-collapse-the-architecture --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
+| The assessment or task has not been calibrated | `/calibrate-before-measure` | the metric, good/bad cases, and trivial baseline |
+| The mechanism cannot be observed | `/ground-truth` | the missing event and real execution path |
+| The target regime was absent | `/push-past-easy` | the regime definition and a task that enters it |
+| All conditions held and the useful effect was absent | `/pursue` | the paired result and failed mechanism |

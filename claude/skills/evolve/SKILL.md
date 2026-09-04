@@ -15,11 +15,13 @@ Use when a metric exists (or can be built) and iterated changes can move it. Do 
 2. **Write the product-value claim** — one sentence per metric: "if this number moves, which user-visible outcome moves with it?" Cannot write it → the metric is wrong, stop. Store at `metricClaims[<metric>]`.
 3. **Audit the measurement before trusting it** (10–15 min): read the eval/test runner, call the endpoints, check response shapes, confirm it is not emitting defaults or cached numbers.
 4. **Baseline on the real path** — median of ≥3 reps (5 if CV > 20%), before any change, plus the run-to-run noise floor (population stddev of those reps).
-5. **Diagnose → exactly 1 hypothesis**, ranked bug-fix > architectural > efficiency > parameter-tuning. >1 plausible lever, or no survey of how others beat this ceiling → run `/hypothesize` first and pop its top-ranked bet.
+5. **Diagnose → exactly 1 hypothesis**, ranked bug-fix > architectural > efficiency > parameter-tuning. If several levers remain, rank them by evidence and information value before selecting one.
 6. **Smallest change → prove it is live → measure → compare.** All 3 deployment checks must pass before a score is read (`references/full-reference.md:159-165`); an unverified deploy is the documented failure mode #1.
 7. **Decide by rule, not by eye** — Cohen's d verdict per experiment, bootstrap-CI gate per shipped winner.
 8. **Persist** the row to `.agent/experiments.jsonl` (`schema.md:9-24`), update `current.json` + `progress.md` + `scorecard.json`.
-9. **Self-gate (9 checks), then emit.** State which checks failed.
+9. **Continue while the target remains unmet and a testable hypothesis remains.** Change the approach after a rejection; never replay an unchanged failure.
+10. **Checkpoint before context replacement**, then resume the same active goal from the persisted state.
+11. **Self-gate (9 checks), then emit.** State which checks failed.
 
 ## Hard rules
 
@@ -36,14 +38,14 @@ Use when a metric exists (or can be built) and iterated changes can move it. Do 
 | **≤500 words outside tables.** No paragraph >3 lines — if it is longer, it is a table. Delete any ≥24-word sentence containing zero digits. | — |
 | **No metric gaming.** If the number moves and the experience feels worse, the metric is wrong — fix the metric, log it as the experiment. Never tune to specific test cases; validate on held-out cases when they exist. | `references/full-reference.md:142-146` |
 | **No ceremony.** No self-grade, no "None this round" placeholder sections, no restating the task. Omit an empty section entirely. | — |
-| **5 rounds max per invocation.** Persist and stop; re-invoke to continue. | `references/full-reference.md:249` |
+| **No fixed round or wall-clock limit.** Stop only at the target, an explicit resource limit, cancellation, or a demonstrated dead end. Silence and context replacement are not stop conditions. | A research loop should stop from evidence or authority, not elapsed time. |
 
 ## Output template
 
 Emit exactly this. Omit a section only where its rule says so.
 
 ```markdown
-# Evolve: <target> — round <r>/5 — <YYYY-MM-DD>
+# Evolve: <target> — round <r> — <YYYY-MM-DD>
 
 **Verdict:** <metric> <before> → <after> (Δ <x>, n=<reps>) — <k> promoted, <j> reverted. measured|inferred
 **Decided by:** <the exact rule, e.g. "bootstrap ciLow=+0.04 > 0 → promote">
@@ -97,20 +99,6 @@ Emit exactly this. Omit a section only where its rule says so.
 | `references/deterministic-loop.md` | `measure.sh` / `decide.sh` / `playbook.md` harness for unattended runs of 100s of candidates |
 | `schema.md` · `stats.md` · `eval-stats.ts` | `experiments.jsonl` fields · verdict tree + BH-FDR · `describe()`/`compare()`/`histogram()` |
 
-## Dispatch
-
-| Condition (numeric) | Next skill | What to pass it |
-|---|---|---|
-| Primary metric moved < 0.02 (2%) for 2 consecutive rounds AND remaining gap is architectural | `/pursue` | baseline, the 2 flat rounds' Δ, levers already tried |
-| `ideas.md` empty, or ≥3 consecutive hypotheses scored `d < 0.2` | `/hypothesize` | metric + baseline + the k rejected hypotheses with reasons |
-| A result exceeds 3× the noise floor, or a null where Δ ≥ 5pp was predicted | `/autopsy` | raw per-rep values, measure command, run id |
-| ≥5 failure clusters, or >20 failing cases needing ROI ranking before the next fix | `/diagnose` | per-cluster failure counts, current baseline |
-| CV > 20% at n=5 reps, or the judge separates <2 known-good/known-bad pairs | `/calibrate-before-measure` | metric definition, the 5 rep values, computed CV |
-| 0 scored dimensions exist for a subjective target | `/eval-agent` | target, reference material, the ≥5 dimensions wanted |
-| ≥3 plateaued rounds AND ≥2 candidate architectures worth running at equal compute | `/meta-harness` | plateau baseline, the 2 architectures, compute budget |
-| ≥1 experiment promoted (`ciLow > 0`) and gap to threshold ≤ 0 | `/finalize` then `/ship` | promoted commits, before/after numbers, deploy proof |
-| Round counter = 5 in this invocation | stop | persisted `.agent/current.json` + the next queued hypothesis |
-
 ## Log the run
 
 ```bash
@@ -118,3 +106,16 @@ skill-run-log /evolve --target "<metric> <before>→<after> n=<reps>" --verdict 
 ```
 
 The row is provenance, not evidence: an experiment is supported only by the artifact and commit it cites.
+
+## Then consider
+
+| Condition (numeric) | Next skill | What to pass it |
+|---|---|---|
+| Primary metric moved < 0.02 (2%) for 2 consecutive rounds and the remaining gap is architectural | `/pursue` | baseline, the 2 flat rounds' Δ, levers already tried |
+| `ideas.md` is empty, or ≥3 consecutive hypotheses scored `d < 0.2` | `/hypothesize` | metric, baseline, and the rejected hypotheses with reasons |
+| A result exceeds 3× the noise floor, or a null follows a predicted Δ ≥ 5pp | `/autopsy` | raw per-rep values, measure command, run id |
+| ≥5 failure clusters, or >20 failing cases need impact ranking | `/diagnose` | per-cluster failure counts and current baseline |
+| CV > 20% at n=5 reps, or the judge separates <2 known-good/known-bad pairs | `/calibrate-before-measure` | metric definition, the 5 rep values, computed CV |
+| 0 scored dimensions exist for a subjective target | `/eval-agent` | target, reference material, and ≥5 candidate dimensions |
+| ≥3 plateaued rounds and ≥2 candidate architectures merit equal-compute comparison | `/meta-harness` | plateau baseline, the architectures, compute budget |
+| ≥1 experiment promoted (`ciLow > 0`) and gap to threshold ≤ 0 | `/finalize`, then `/ship` | promoted commits, before/after numbers, deploy proof |

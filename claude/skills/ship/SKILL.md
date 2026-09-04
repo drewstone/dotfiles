@@ -31,6 +31,14 @@ If they only want confidence before deploy, use `verify`.
 
 Use `references/full-reference.md` for the full phase checklist.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -40,11 +48,3 @@ Use `references/full-reference.md` for the full phase checklist.
 | The release path is opaque, custom, or multi-artifact | `/release-conductor` | the artifact list + the rollback path |
 | Live smoke fails after a successful deploy | `/diagnose` | the smoke output + the served revision |
 | Release is live and proven | `/reflect` | the proof block + the loop this closed |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

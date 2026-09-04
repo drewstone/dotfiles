@@ -43,6 +43,14 @@ Do **not** use it to dodge honest hill-climbing. If the metric is still moving o
 
 Use `references/full-reference.md` for regime-change patterns, the ceiling-analysis worksheet, and the floor-separation examples.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /breakout --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -52,11 +60,3 @@ Use `references/full-reference.md` for regime-change patterns, the ceiling-analy
 | First measurement in the new regime lands inside 2× the noise floor | `/dont-collapse-the-architecture` | the regime-active check + the mechanism that should have fired |
 | The new regime stands and the metric moves again | `/evolve` | the new baseline number + the dominant remaining lever |
 | Target still unreached after n ≥ 12 in the new regime | `/autopsy` | the raw rows + whether the regime or the proof was wrong |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /breakout --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

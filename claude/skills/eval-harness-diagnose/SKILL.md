@@ -73,6 +73,14 @@ Report the run identity, cases analyzed, count in every class, root causes with 
 Include zeros and unknowns.
 Do not stop at “rate limited” or “unavailable”; include the failed probe, status or error class, affected cases, and retry command.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /eval-harness-diagnose --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -82,11 +90,3 @@ Do not stop at “rate limited” or “unavailable”; include the failed probe
 | Measurement is valid and ≥30% of cases still fail | `/evolve` | the validated harness + the per-case failure list |
 | The failure is outside evaluation (build, CI, product) | `/diagnose` | the failure set + the evidence it is not the ruler |
 | Harness proven clean and results unchanged | `/report` | the full per-case table + the contamination checks that passed |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /eval-harness-diagnose --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

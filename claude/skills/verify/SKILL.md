@@ -56,6 +56,14 @@ Overall: SHIP IT / HOLD (reasons)
 
 If any check fails, explain what needs fixing before shipping. Be specific.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -66,11 +74,3 @@ If any check fails, explain what needs fixing before shipping. Be specific.
 | HOLD because CI or the local gate is red | `/converge` | the failing job + its log excerpt |
 | Real-infra coverage shows ≥1 new code path covered only by mocks | `/harden` | the path + the real-infra test that must replace the mock |
 | SHIP IT and ≥3 skill runs logged this session | `/reflect` | the `.agent/skill-runs.jsonl` tail + the proof table |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

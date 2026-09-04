@@ -61,6 +61,14 @@ highest-leverage build is a generic interaction MCP server
 unlock, paired with native hooks (codex/opencode/acp permission) and an extension
 shim for the MCP-refusers (pi, openclaw).
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /harness-escalation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -69,11 +77,3 @@ shim for the MCP-refusers (pi, openclaw).
 | ≥1 open live-test is now closeable | `/verify` | the harness + the exact e2e command to run |
 | ≥3 harnesses fail the same escalation surface | `/diagnose` | the surface + the per-harness evidence |
 | Matrix updated with 0 tier changes | `/reflect` | the matrix diff (empty) + the cells still unproven |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /harness-escalation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

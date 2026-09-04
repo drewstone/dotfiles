@@ -82,9 +82,3 @@ A pursuit carrying only row 1 is `/evolve` in costume — the losing rows are wh
 ```
 
 Reporting the 2 failures is the pass condition; a silent 10/10 is the defect.
-
-## Dispatch
-
-```
-/evolve — triggered by Δ −69% ≥ +5% threshold and metric still moving — passing baseline TTFT p90 2.9s + the 2 remaining knobs (pool size, prefetch depth)
-```

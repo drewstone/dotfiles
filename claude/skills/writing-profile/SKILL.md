@@ -25,6 +25,14 @@ The result should emphasize constraints: what not to do, not only favorite phras
 
 Use `references/full-reference.md` for source-specific commands and profile templates.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /writing-profile --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -32,11 +40,3 @@ Use `references/full-reference.md` for source-specific commands and profile temp
 | The draft needs current source material | `/signal-distill` | the topic + the platforms to sweep |
 | The profile will be applied to technical docs | `/docs-slop-audit` | the pages + the claims to check against source |
 | Fewer than 5 real samples were available | stop | the samples found + what else must be collected first |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /writing-profile --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

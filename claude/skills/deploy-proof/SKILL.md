@@ -77,6 +77,14 @@ Follow-ups:
 
 If the verdict is not `LIVE`, create or update the ops-board task with the exact retry command.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /deploy-proof --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -86,11 +94,3 @@ If the verdict is not `LIVE`, create or update the ops-board task with the exact
 | Served SHA matches but a behavior probe fails | `/diagnose` | the probe command, its output, and the expected result |
 | p50 latency regressed > 20% vs the pre-deploy baseline | `/evolve` | both p50/p90 numbers, n, and the dominant hop |
 | Verdict LIVE with cache/perf proof captured | `/reflect` | the proof block + the ops-board task ID it closes |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /deploy-proof --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

@@ -24,6 +24,14 @@ Every claim needs a file, row, log line, or command result.
 
 Use `references/full-reference.md` for the full classification table and report format.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /autopsy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -34,11 +42,3 @@ Use `references/full-reference.md` for the full classification table and report 
 | The number was never measured on the real path (local stand-in, warm cache, wrong env) | `/ground-truth` | the hop that was dark + the real-path command that would measure it |
 | Root cause is the agent ignoring state, skipping tools, or reporting unearned success | `/agent-behavior-audit` | the transcript span + the state it failed to read |
 | The run succeeded and produced well-formed output that discovered nothing — its acceptance criterion could not fail | `/operate` | the task text + the command that should have decided it |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /autopsy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

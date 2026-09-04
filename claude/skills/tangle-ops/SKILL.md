@@ -1,6 +1,6 @@
 ---
 name: tangle-ops
-description: Reconcile the real state of blueprint-agent and its sandbox platform in one pass — production health, provisioning, deploy failures, credential drift, warm-container performance — before changing anything. Use when a deploy is red, the product is slow or hanging, a check is failing, or someone asks "is it working".
+description: Diagnose blueprint-agent and Sandbox production health, deploy failures, credentials, provisioning, and warm-container performance before changing the system.
 ---
 
 # tangle-ops

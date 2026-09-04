@@ -1,6 +1,6 @@
 ---
 name: reconcile
-description: "Someone sent a paper, post, repo, or technique — decide whether we benefit. Extract the real claim, check we don't already have it, name the cheapest falsification, adopt or reject on record."
+description: Decide whether a paper, post, repository, or technique adds value by testing its claim against current capability.
 ---
 
 # Reconcile an external idea
@@ -85,6 +85,12 @@ node -e "import('./tools/kb.mjs').then(kb => kb.ingest({
 An adopted idea that changes no file is a rejection with extra steps.
 The smallest landing is usually: one rule in the skill or doc that governs the decision it improves, citing the source. Not a new module.
 
+## Log the run
+
+```bash
+skill-run-log /reconcile --target "<the external thing>" --verdict <ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -93,9 +99,3 @@ The smallest landing is usually: one rule in the skill or doc that governs the d
 | Verdict is defer and the deciding experiment is worth designing properly | `/hypothesize` | the claim, its mechanism, and the falsification you could not cheaply run |
 | The idea claims a capability our stack may already own | `/build-with-agent-runtime` | the capability in plain words, never the author's name for it |
 | Adoption would change how agents are instructed | `/evolve` on the skill text | the failing cases the new rule should fix |
-
-## Log the run
-
-```bash
-skill-run-log /reconcile --target "<the external thing>" --verdict <ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
-```

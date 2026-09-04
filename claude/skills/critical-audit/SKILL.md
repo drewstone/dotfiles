@@ -6,7 +6,7 @@ description: Review code, docs, APIs, SDKs, or products for correctness and risk
 # Critical Audit
 
 Emit a **ranked findings table**, not a review essay. A finding without `file:line` + a concrete failure scenario + a fix + a verification is a vibe: drop it and count it as dropped.
-Serves `/code-review` too — severity maps CRITICAL/HIGH = **P1** (blocking), MEDIUM = **P2**, LOW = **P3**.
+Severity maps CRITICAL/HIGH = **P1** (blocking), MEDIUM = **P2**, and LOW = **P3**.
 
 ## Flow
 
@@ -98,7 +98,15 @@ Resolution ∈ resolved · still-present · moved(`file:line`) · unverifiable. 
 - **0/10** — "Overall the error handling is weak in several places and tests are thin; 7/10." 0 `file:line`, 0 scenarios, 0 costs, 1 unanchored score, 3 banned adjectives.
 - **10/10** — `| 1 | CRITICAL | src/auth.ts:88 | session id compared with == after JSON parse | attacker sends id `0` → matches stored `"0"`, session takeover | measured (`vitest run auth → repro test fails at :88`) | PR#4110 line 88 | use timing-safe strict compare | add `auth.spoof.test.ts` asserting reject | ~2.4k req/day exposed | 2.4k (full) |`
 
-## Dispatch
+## Log the run
+
+```bash
+skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <APPROVE|REQUEST_CHANGES> --next /<skill-or-stop>
+```
+
+The log line is provenance, not evidence: a finding is supported only by the pointer it cites.
+
+## Then consider
 
 | Condition (threshold) | Next skill | Pass it |
 |---|---|---|
@@ -109,11 +117,3 @@ Resolution ∈ resolved · still-present · moved(`file:line`) · unverifiable. 
 | ≥3 findings are docs/README accuracy | `/docs-slop-audit` | the doc paths + the wrong claims |
 | ≥1 fix landed since a prior `.agent/critical-audit/<ts>/` run | `/critical-audit --reaudit <ts>` | prior run path |
 | 0 CRITICAL/HIGH and caller was `/pursue` diff-audit | stop | APPROVE line + head sha |
-
-## Log the run
-
-```bash
-skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <APPROVE|REQUEST_CHANGES> --next /<skill-or-stop>
-```
-
-The log line is provenance, not evidence: a finding is supported only by the pointer it cites.

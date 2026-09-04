@@ -37,6 +37,14 @@ A PR has a review (a bot's multi-shot, a human's, or both). This loop drives it 
 - Pushing on targeted `tsc`+`vitest` only, then letting CI catch the lint/invariant/cross-package failure (run the whole local gate first).
 - Calling a stalled or environment-blocked run "done" (name the terminal state).
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /review-to-green --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -46,11 +54,3 @@ A PR has a review (a bot's multi-shot, a human's, or both). This loop drives it 
 | Terminal state Blocked on a contract change beyond scope | `/pursue` | the contract, the blocking finding, and the scope boundary |
 | CI goes red after a fix push | `/converge` | the PR number + the failing job |
 | ≥3 findings land in one subsystem | `/critical-audit` | that subsystem's files + the finding cluster |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /review-to-green --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

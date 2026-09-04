@@ -9,9 +9,9 @@ Companion to `_common.md`.
 Same status: this is documentation for **skill authors**, not a skill the harness ever loads or invokes.
 `_common.md` holds the shared *rules*; this file holds the shared *shape* — how the flat skill names compose into one system.
 
-`skills/` holds 62 local skill folders, each with a `SKILL.md`. Skills owned by a sibling repo (the agent-runtime family) are not committed here — `claude/install.sh` finds that checkout at install time and links them in, because an absolute symlink in the repo dangles on any machine that clones elsewhere.
-Of those, 59 are live skills and 2 are merge-shims that only redirect: `code-review` → `critical-audit`, `research` → `evolve`.
-The flat directory hides how those ~50 live skills fit together. This map restores that structure.
+`skills/` holds the local skills, while sibling repositories and installed collections supply others.
+Run `skills` for the current inventory; do not copy a count into this file.
+This map explains how the local skills fit together.
 
 The inventory here can lag; **`ls skills/` and each `SKILL.md` frontmatter are always authoritative, this file never is.**
 What frontmatter does *not* encode is each skill's place in the system — which loop phase it serves, which rung it sits on, what it gates, which cluster it belongs to. That relational structure is the only thing this map adds.
@@ -87,6 +87,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | `/reconcile` | THINK | Test an external idea against current capability, then adopt, adapt, reject, or defer it on record. |
 | `/diagnose` | LEARN | Cluster many failures by root cause; rank by impact × fix effort. |
 | `/autopsy` | LEARN | Root-cause ONE null / surprising result — real effect vs artifact / no-op / measurement bug. |
+| `/director-autopsy` | LEARN | Audit each research director's recursion, outputs, cost, and early-return losses. |
 | `/reflect` | LEARN | Learn across sessions; grade skills; name the systemic pattern. Fills `operatorOverride` post-hoc. |
 | `/report` | readout | Answer an analytical "did X work" as a quantified artifact, not prose. |
 
@@ -106,6 +107,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 |---|---|
 | `/pursue` | BUILD one coherent new generation. |
 | `/discovery-lead` | Build the measuring instrument, v1 system, spend contract, and supervisor boundary before a discovery run. |
+| `/operate` | Run a discovery system from instrument facts while its agents produce the domain work. |
 | `/multi-pursue` | BUILD — N parallel `/pursue` tracks + central synthesis. |
 | `/meta-harness` | BUILD — automated architecture evolution after a plateau. |
 | `/breakout` | BUILD — raise the target / change the regime. |
@@ -118,7 +120,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | `/deploy-proof` | Prove the merged change is actually live in production. |
 | `/release-conductor` | Run opaque / custom releases with a ledger, rollback path, and handoff. |
 | `/verify` | Build / test / git completion check before any "done" (the loop's close-out step). |
-| `/handoff` | Session-to-session brief so a fresh agent resumes with zero loss. |
+| `/session-continuity` | Checked state for continuing an active task after context or process replacement. |
 
 ### Quality — fixed-bar review and cleanup
 
@@ -126,7 +128,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 |---|---|
 | `/polish` | Fixed rubric; close every gap in work that's basically right. |
 | `/harden` | Adversarial security validation — invariants, fuzz targets, races. |
-| `/critical-audit` | Staff-engineer review; severity-ranked, file:line findings (absorbed `/code-review`). |
+| `/critical-audit` | Staff-engineer review with severity-ranked, file-and-line findings. |
 | `/simplify` | Capability-preserving simplification — kill duplication and god objects without losing behavior. |
 | `/deep-clean` | Measured dead-code / debt cleanup with before/after proof. |
 | `/install-anti-slop` | Install the shared strict Oxlint rules without weakening project types or existing checks. |
@@ -147,7 +149,8 @@ Audit siblings — the same fixed-bar review shape aimed at other surfaces: `/pr
 ### Outside the loop
 
 Domain / craft skills that aren't loop phases: `/product-design`, `/site-clone`, `/signal-distill`, `/writing-profile`, `/tangle-blockchain-blueprint`, `/nano-banana`, `/model-freshness`, `/tangle-ops`.
-Merge-shims (redirect, don't invoke): `/code-review` → `/critical-audit`, `/research` → `/evolve`.
+Installed collections can add peers.
+Keep every installed skill name unique so routing has one meaning.
 
 ## D. When the loop applies at all — the three-precondition test
 
@@ -165,14 +168,14 @@ When in doubt, the honest default is plan / build / ship, not a loop wrapped aro
 
 ## E. The self-improvement meta-loop
 
-The family is itself an action space — 49 live local skills, each a markdown file you can edit.
-So the same four-phase loop can point at its *own* skills, with skill quality as the metric and `SKILL.md` as the artifact being changed.
+The same measured loop can improve skills and `AgentProfile` values.
+Treat each proposed instruction change as a candidate, not as its own grade.
 
 | Phase | What it does here | Files that make it real |
 |---|---|---|
 | **MEASURE** | Read where skills waste effort or get overridden. | `.agent/skill-runs.jsonl` (`operatorOverride` vs `dispatchedTo`), `~/.claude/halo/profiles.jsonl` (one loop-waste profile per session), `.agent/reflections/<ts>.md` |
 | **THINK** | Hypothesize which skill edit lowers override / loop-waste. | `/hypothesize` over the three sources above |
-| **BUILD** | Edit the skill's markdown. | `~/dotfiles/claude/skills/<name>/SKILL.md`, then rerun `~/dotfiles/claude/install.sh` |
+| **BUILD** | Let an authorized agent write a candidate skill or profile. | isolated candidate artifact with exact parent identity |
 | **MEASURE again** | Did the override rate actually fall over the next runs? | re-read `.agent/skill-runs.jsonl` |
 
 The metric, computed today in one command — per-skill operator-override rate over the log, the single best evidence a skill's routing is wrong:
@@ -184,18 +187,15 @@ jq -rs 'group_by(.skill)[]
   | "\(.skill): \(.overrides)/\(.n) overridden"' .agent/skill-runs.jsonl
 ```
 
-The tooling that makes capture real — deterministic, fail-silent, roughly constant memory:
+The tooling that makes capture real:
 
 - **Capture** — `hooks/halo-profile.sh` runs on Claude Code SessionEnd, pipes the transcript to `tools/halo-extract.mjs`, and appends one loop-profile per session to `~/.claude/halo/profiles.jsonl`.
 - **Triage** — `tools/halo-report.mjs --flagged` scores each profile for loop-waste (e.g. ≥100 hand CI-polls, high tool-error rate, deploy/CI churn) and forwards only the worst sessions to the expensive trace-analyst. Profile everything; analyze the tail.
 - **Per-run log** — `tools/skill-run-log` (symlinked to `~/bin/skill-run-log`) appends one row to `.agent/skill-runs.jsonl` on skill completion.
 - **Self-analysis** — `/reflect` (skill) and `reflect-last` (a *command*, `commands/reflect-last.md`, not a `skills/` folder) run the published `@tangle-network/traces` CLI: `traces analyze --harness claude-code --last 1` on the session's own transcript.
 
-What is wired vs what is not — stated plainly, because this is the leapfrog capability and it still has one hand-operated step:
-
-- **Wired and automatic: capture.** Every session ends → `halo-profile.sh` writes a profile; every skill run → `skill-run-log` writes a row. No human in that path.
-- **Not wired: the THINK→BUILD trigger.** Today a human reads `halo-report --flagged`, decides which skill to edit, and edits it. Nothing dispatches a skill-edit from a measurement on its own.
-- **The next rung** that would close it: a periodic `/reflect` portfolio pass that reads `skill-runs.jsonl`, computes the per-skill override rate above, and auto-dispatches `/governor` on any skill over a threshold T.
-
-The recursion, stated honestly: the improvement loop's own action space is a directory of markdown, so the loop *can* rewrite the loop — capture is automatic, the edit is still a human call.
-Override rate and loop-waste are the number; `SKILL.md` is the change; the same keep/promote honesty from Section A applies before any skill edit is called an improvement.
+Capture is automatic where the hooks are installed.
+Candidate authoring may be performed by the persistent root or its descendants when their exact profiles grant file access.
+Independent checks compare the candidate with the current version.
+Only the operator or an authorized activation path can install the winner.
+Override rate and wasted work are measurements; they are not sufficient alone to promote a skill.

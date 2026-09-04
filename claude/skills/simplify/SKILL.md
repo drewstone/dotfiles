@@ -45,6 +45,14 @@ Saying "do not simplify further in this PR" is correct when backed by measuremen
 
 Use `references/full-reference.md` for the full repeatable loop, measurement commands, candidate scoring, PR checklist, and report template.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /simplify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -54,11 +62,3 @@ Use `references/full-reference.md` for the full repeatable loop, measurement com
 | The change touches auth, credentials, billing, sandbox lifecycle, networking, or external execution | `/harden` | the changed file:line list + the invariant each path relies on |
 | Checks go red after the simplification | `/converge` | the failing job + the behavior that must be preserved |
 | 0 tests cover the simplified path | `/verify` | the changed path + the tests that would prove behavior preservation |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /simplify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

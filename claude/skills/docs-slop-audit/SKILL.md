@@ -26,6 +26,14 @@ If editing, make the changes and run the repo's doc/check commands.
 Use `references/patterns.md` and `references/full-reference.md` for scanner details.
 Use `docs/anti-patterns/` for durable anti-slop doctrine.
 
+## Log the run
+
+On completion, append one line so later analysis can grade this skill:
+
+```bash
+skill-run-log /docs-slop-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -34,11 +42,3 @@ Use `docs/anti-patterns/` for durable anti-slop doctrine.
 | ≥5 stale claims trace to one removed code path | `/deep-clean` | the removed path + every doc reference to it |
 | Facts are correct and cadence still reads generic | `/writing-profile` | the draft + the target voice samples |
 | 0 unsupported claims across the audited pages | `/reflect` | the page list + the claims verified against source |
-
-## Log the run
-
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
-```bash
-skill-run-log /docs-slop-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```

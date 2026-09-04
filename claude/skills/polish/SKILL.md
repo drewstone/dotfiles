@@ -7,14 +7,15 @@ description: Apply a fixed quality rubric and fix gaps in behavior, design, test
 
 Fixed-rubric hardening pass on work that already exists and already runs. The output is a rubric table with `PASS`/`FAIL` per criterion and the exact check that decided it, plus gaps ranked by user-visible impact. A criterion with no command run is `FAIL — unchecked`, never `PASS`.
 
-Not this skill: a number to move → `/evolve`. Red suite → `/converge`. Behavior not built yet → `/pursue`.
+Use this only for implemented work that runs and needs a fixed quality rubric.
+An objective metric, a red suite, or missing behavior belongs to a different task.
 
 ## Flow
 
-1. **Gate entry.** Run the suite. ≥1 failing test → stop, dispatch `/converge`. <100% of the described behavior implemented → `/pursue`.
+1. **Check entry.** Run the suite and compare the implemented behavior with the request. Record any failure or missing behavior as a blocker, persist the rubric, and finish this pass.
 2. **Run ≥1 check per criterion** across the 5 below (check catalog + prose mappings: `references/RUBRIC.md`). Record the literal command and its output.
 3. **List gaps ranked by user-visible impact** = callers/users hit (`n=`) × severity. Never ranked by fix effort.
-4. **Fix in rank order**, ≤5 rounds. Parallel subagents for independent gaps; the operator re-runs every check itself.
+4. **Fix in rank order** while a failed criterion has an actionable gap. Parallelize independent gaps; the operator re-runs every check.
 5. **Re-run all 5 checks.** A regression you introduced outranks every open gap.
 6. **Self-gate (8 items), then emit**, naming which items failed.
 
@@ -32,14 +33,14 @@ The 5 criteria: **Correctness** (breaks on which input?) · **Design** (which ab
 | **Evidence is a pointer:** `path:line`, PR#, run id, or command + its output. A prose summary of evidence is a defect. | — |
 | **≤450 words outside tables.** No paragraph >3 lines — if it is longer, it is a table. | Round reports grow into essays; the decision is 5 cells wide. |
 | **No fluff fix:** comments restating code, docstrings on private helpers, cosmetic renames. Every fix names the behavior it changes or the reader-cost it removes. | — |
-| **≤5 rounds.** Round 6 does not exist: emit `HOLD` naming the blocking criterion. **Broken test stops everything** until fixed. | — |
+| **Finish by evidence, not a round count.** `SHIP` needs 5/5 PASS. `HOLD` needs a named blocker, explicit resource limit, cancellation, or no actionable gap. A broken test dispatches repair immediately. | A fixed pass count can stop one change before the rubric is satisfied. |
 
 ## Output template
 
 Emit exactly this. Omit a section only where its rule says so.
 
 ```markdown
-# Polish: <target> — round <r>/5 — <k>/5 PASS
+# Polish: <target> — round <r> — <k>/5 PASS
 
 **Verdict:** SHIP | HOLD — <k>/5 criteria PASS, <g> open gaps, top gap costs <number + unit>.
 **Blocking:** <criterion> — <gap in one line> (<path:line>)
@@ -80,19 +81,6 @@ Omit if green; instead one line: `<cmd> → <p>/<t> pass, 0 new failures`.
 - **0/10** — `Round 2 — Score: 8/10 · Correctness: 8/10 — solid, edge cases mostly handled.` 5 scores, 0 commands, 0 pointers, 0 denominators; nothing here can be wrong.
 - **10/10** — `Tests | FAIL | vitest run sdk/tests/retry.test.ts → 12/12 pass | 0 of 12 assert the timeout path; deleting the timeout branch keeps 12/12 green | measured`. One row, one command, one falsifiable claim, one named regression it fails to catch.
 
-## Dispatch
-
-| Condition (threshold) | Next skill | Pass it |
-|---|---|---|
-| 5/5 PASS, 0 open gaps above the bar | `/ship` | rubric table + the green suite command |
-| ≥1 FAIL after round 5 | `/pursue` | blocking criterion + ranked gap rows |
-| ≥1 failing test at entry or after any round | `/converge` | failing test names + the exact command |
-| Gap needs a number moved, baseline + target stated | `/evolve` | metric, baseline value, target value |
-| ≥2 gaps in one file are duplication or dead code | `/deep-clean` | file list + the duplicate pairs (`path:line`) |
-| ≥1 gap on an auth, crypto, or input-parsing path | `/harden` | `path:line` + the untrusted input it accepts |
-| ≥1 gap is on visible UI | `/product-design-audit` | route + screenshot path |
-| The 5 criteria caught 0 of the domain's known failure modes | `/eval-agent` | 3 reference artifacts + the missed failure mode |
-
 ## Log the run
 
 ```bash
@@ -100,3 +88,16 @@ skill-run-log /polish --target "<target> <k>/5 PASS" --verdict <VERDICT> --next 
 ```
 
 The log line is provenance, not evidence: a `PASS` is supported only by the command it cites.
+
+## Then consider
+
+| Condition (threshold) | Next skill | Pass it |
+|---|---|---|
+| 5/5 PASS and 0 open gaps above the bar | `/ship` | rubric table and the green suite command |
+| ≥1 FAIL and no actionable gap remains | `/pursue` | blocking criterion and ranked gap rows |
+| ≥1 failing test at entry or after any round | `/converge` | failing test names and the exact command |
+| A gap needs a number moved, with baseline and target stated | `/evolve` | metric, baseline value, target value |
+| ≥2 gaps in one file are duplication or dead code | `/deep-clean` | file list and duplicate pairs (`path:line`) |
+| ≥1 gap is on an auth, crypto, or input-parsing path | `/harden` | `path:line` and the untrusted input it accepts |
+| ≥1 gap is on visible UI | `/product-design-audit` | route and screenshot path |
+| The 5 criteria caught 0 of the domain's known failure modes | `/eval-agent` | 3 reference artifacts and the missed failure mode |

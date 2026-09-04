@@ -8,6 +8,7 @@ peer, run `skills` (optionally `skills <substr>`) to see the full menu.
 import os
 import re
 import sys
+from hashlib import sha256
 
 ROOTS = [
     os.path.expanduser("~/.claude/skills"),
@@ -15,14 +16,10 @@ ROOTS = [
     os.path.expanduser("~/.agents/skills"),
 ]
 MAX_DESCRIPTION_CHARS = 160
-MAX_CATALOG_TOKENS = 4_000
-APPROX_BYTES_PER_TOKEN = 4
-# Any truncation at all is a failure. A shortened description is a menu entry
-# with its end cut off, and the end is usually the "use this when ..." clause the
-# model routes on — so the skill stops being reachable for the case it was
-# written for. This was 100, which let a catalog sitting 52% over budget and
-# losing 79 chars from every description report OK for weeks.
-TRUNCATION_WARNING_CHARS_PER_SKILL = 0
+# https://learn.chatgpt.com/docs/build-skills
+# Codex uses at most 2% of a known model context for the initial skill list.
+# It uses this character fallback only when the context window is unknown.
+UNKNOWN_CONTEXT_CATALOG_CHARS = 8_000
 
 
 def frontmatter(path):
@@ -114,73 +111,31 @@ def rendered_line(name, desc, path):
     return f"- {name}: (file: {path})\n"
 
 
-def approximate_tokens(text):
-    return (len(text.encode("utf-8")) + APPROX_BYTES_PER_TOKEN - 1) // APPROX_BYTES_PER_TOKEN
-
-
-def catalog_allocation(rows):
-    minimum_costs = [
-        approximate_tokens(rendered_line(name, "", path))
-        for name, _, path in rows
-    ]
-    minimum_tokens = sum(minimum_costs)
-    if minimum_tokens > MAX_CATALOG_TOKENS:
-        return {
-            "minimum_tokens": minimum_tokens,
-            "full_tokens": sum(
-                approximate_tokens(rendered_line(name, desc, path))
-                for name, desc, path in rows
-            ),
-            "truncated_chars": sum(len(desc) for _, desc, _ in rows),
-            "truncated_count": len(rows),
-            "average_truncated_chars": 0,
-            "minimum_exceeds_budget": True,
-        }
-
-    extra_costs = []
-    for (name, desc, path), minimum in zip(rows, minimum_costs, strict=True):
-        costs = [0]
-        for chars in range(1, len(desc) + 1):
-            costs.append(
-                approximate_tokens(rendered_line(name, desc[:chars], path)) - minimum
-            )
-        extra_costs.append(costs)
-
-    allocations = [0] * len(rows)
-    current_extra_costs = [0] * len(rows)
-    remaining = MAX_CATALOG_TOKENS - minimum_tokens
-    while True:
-        changed = False
-        for index, (_, desc, _) in enumerate(rows):
-            if allocations[index] >= len(desc):
+def skill_digest(skill_path):
+    """Digest a complete skill folder so byte-identical multi-harness installs count once."""
+    root = os.path.dirname(skill_path)
+    digest = sha256()
+    for directory, directories, files in os.walk(root):
+        directories.sort()
+        files.sort()
+        for name in files:
+            path = os.path.join(directory, name)
+            relative = os.path.relpath(path, root).encode("utf-8")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            if os.path.islink(path):
+                value = os.readlink(path).encode("utf-8")
+                digest.update(b"L")
+                digest.update(value)
                 continue
-            next_chars = allocations[index] + 1
-            next_cost = extra_costs[index][next_chars]
-            delta = next_cost - current_extra_costs[index]
-            if delta <= remaining:
-                allocations[index] = next_chars
-                current_extra_costs[index] = next_cost
-                remaining -= delta
-                changed = True
-        if not changed:
-            break
-
-    truncated = [
-        len(desc) - allocations[index]
-        for index, (_, desc, _) in enumerate(rows)
-    ]
-    truncated_chars = sum(truncated)
-    total = len(rows)
-    average = (truncated_chars + total - 1) // total if total else 0
-    return {
-        "minimum_tokens": minimum_tokens,
-        "full_tokens": minimum_tokens
-        + sum(costs[-1] for costs in extra_costs),
-        "truncated_chars": truncated_chars,
-        "truncated_count": sum(chars > 0 for chars in truncated),
-        "average_truncated_chars": average,
-        "minimum_exceeds_budget": False,
-    }
+            digest.update(b"F")
+            try:
+                with open(path, "rb") as source:
+                    for chunk in iter(lambda: source.read(64 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"UNREADABLE")
+    return digest.digest()
 
 
 def main():
@@ -192,6 +147,7 @@ def main():
         raise SystemExit(2)
     needle = filters[0].lower() if filters else None
     seen = {}
+    logical_sources = set()
     for root in ROOTS:
         if not os.path.isdir(root):
             continue
@@ -201,7 +157,12 @@ def main():
                 continue
             name, desc = frontmatter(sk)
             fallback_name = os.path.basename(os.path.dirname(sk))
-            seen[canonical] = (name or fallback_name, desc or "", canonical)
+            logical_name = name or fallback_name
+            logical_source = (logical_name, skill_digest(canonical))
+            if logical_source in logical_sources:
+                continue
+            logical_sources.add(logical_source)
+            seen[canonical] = (logical_name, desc or "", canonical)
     rows = sorted(seen.values(), key=lambda row: (row[0], row[2]))
     if needle:
         rows = [r for r in rows if needle in r[0].lower() or needle in r[1].lower()]
@@ -223,7 +184,8 @@ def main():
             if len(desc) > MAX_DESCRIPTION_CHARS
         ]
         description_chars = sum(len(desc) for _, desc, _ in rows)
-        allocation = catalog_allocation(rows)
+        minimum_chars = sum(len(rendered_line(name, "", path)) for name, _, path in rows)
+        full_chars = sum(len(rendered_line(name, desc, path)) for name, desc, path in rows)
         for name, chars, path in oversized:
             print(
                 f"WARN {name}: {chars} description chars > {MAX_DESCRIPTION_CHARS} ({path})",
@@ -256,33 +218,27 @@ def main():
                     file=sys.stderr,
                 )
             catalog_failed = catalog_failed or bool(duplicates)
-        if not needle and allocation["minimum_exceeds_budget"]:
+        if not needle and full_chars > UNKNOWN_CONTEXT_CATALOG_CHARS:
+            if minimum_chars > UNKNOWN_CONTEXT_CATALOG_CHARS:
+                detail = (
+                    f"names and paths use {minimum_chars} characters, so some skills "
+                    "may be omitted"
+                )
+            else:
+                detail = (
+                    f"full metadata uses {full_chars} characters, so Codex may shorten "
+                    "descriptions"
+                )
             print(
-                f"FAIL catalog: names and paths alone need ~{allocation['minimum_tokens']} "
-                f"tokens > {MAX_CATALOG_TOKENS}; Codex must omit skills",
+                f"WARN catalog exceeds Codex's {UNKNOWN_CONTEXT_CATALOG_CHARS:,}-character "
+                f"unknown-context fallback: {detail}",
                 file=sys.stderr,
             )
-            catalog_failed = True
-        elif (
-            not needle
-            and allocation["average_truncated_chars"]
-            > TRUNCATION_WARNING_CHARS_PER_SKILL
-        ):
-            print(
-                "FAIL catalog: Codex would shorten "
-                f"{allocation['truncated_count']} descriptions by "
-                f"{allocation['average_truncated_chars']} chars/skill on average "
-                f"and emit the 2% warning ({allocation['full_tokens']}/"
-                f"{MAX_CATALOG_TOKENS} full metadata tokens)",
-                file=sys.stderr,
-            )
-            catalog_failed = True
         if catalog_failed:
             raise SystemExit(2)
         print(
             f"OK: {len(rows)} skills, {description_chars} description chars, "
-            f"~{allocation['full_tokens']}/{MAX_CATALOG_TOKENS} full metadata tokens, "
-            f"{allocation['average_truncated_chars']} chars/skill shortened"
+            f"{full_chars} rendered metadata chars"
         )
         return
     width = max(len(name) for name, _, _ in rows)
