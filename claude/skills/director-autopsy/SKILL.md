@@ -13,7 +13,7 @@ Evaluate the system's work; do not perform the research or launch another campai
 1. Read the current public CLI help and repository index.
 2. Run `node tools/director-census.mjs --json` from the lab checkout for the complete comparable record.
 3. Run `disco inspect` for the fleet.
-   Define outliers from the census, then run `disco inspect <runId>` for each one.
+   Define outliers from the census, then run `disco report <runId>` for each one.
    From a checkout, use `node tools/disco.mjs` when the installed command is unavailable.
 4. Preserve a row for every director, including zero, null, missing, failed, and unmatched values.
 5. Divide the director rows into disjoint batches that fit the available parallel capacity.
