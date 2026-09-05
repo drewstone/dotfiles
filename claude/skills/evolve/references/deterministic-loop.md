@@ -13,12 +13,12 @@ Shared conventions in `_common.md` (append-only `.agent/`, no AI attribution, re
 
 | Situation | Reach for |
 |---|---|
-| One-off "did this fix move the number", read by hand | `/evolve`'s `compare()` (`../stats.md`), no harness |
+| One-off "did this fix move the number", read by hand | Tested project statistics using `STATS.md` |
 | Unattended run of dozens–hundreds of candidates, one at a time, in place | **this harness** — `measure.sh` + `decide.sh` |
 | Parallel isolated proposers, then select-and-merge the winners | `/meta-harness` — different shape; can reuse this `measure.sh`/`checks.sh` contract per variant |
 | "Is this single kept run real, or noise?" | **the 2x-noise-floor guard** (below) — cheap, per-run |
 | "Should this winner ship into the baseline/default?" | bootstrap-CI promotion gate (`STATS.md`, sibling) — heavier, per-winner |
-| Rank one experiment's effect size | Cohen's d verdict (`../stats.md`) |
+| Rank one experiment's effect size | Registered comparison method in `STATS.md` |
 
 Two axes separate this from its neighbors.
 Against `/meta-harness`: this is **serial and single-agent** — one candidate edited in place, decided, kept or reverted, before the next — where meta-harness runs many isolated proposers in parallel and merges the survivors; a meta-harness variant can call this `measure.sh`/`checks.sh` as its own per-variant judge.
@@ -53,7 +53,8 @@ Before believing any keep: **is the delta ≥ 2x the run-to-run noise floor?**
 If not, re-run `measure.sh` once and recompute before trusting it — a delta inside the noise is a coin flip, and an unattended loop that banks coin flips walks uphill on luck and downhill on the truth.
 `measure.sh` hands you the floor every run (the `_noise` companion), so this costs one comparison, not a bootstrap.
 
-Why 2x and not 3x: 2x the stddev is roughly a 2-sigma move, believable-but-cheap for a single approximately-normal metric, with the re-run as the backstop against a false positive; 3-sigma rigor is the job of the heavier bootstrap gate in `STATS.md` when a winner ships, not of a per-candidate loop that must stay near-instant.
+The 2x threshold screens candidates; it does not establish statistical significance after testing many candidates.
+Use the registered comparison in `STATS.md` before promoting a winner.
 Small-K caveat: when per-rep CV exceeds ~20% the K=5 stddev is unreliable, so either raise `K`, or require the win to survive **two** consecutive re-runs rather than trusting one stddev.
 
 ### 4. `checks.sh` — optional correctness backpressure

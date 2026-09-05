@@ -28,14 +28,10 @@ The single most common failure. The author's name for a thing is never the name 
 
 Do not grep for the idea's name. List the surfaces that would contain it:
 
-```bash
-# the knowledge base, by topic not by name
-ls kb/pages/ 2>/dev/null
-# the capability census of the shared stack
-for r in agent-runtime agent-eval agent-knowledge; do echo "=== $r"; ls ~/code/$r/src; done
-# the harness capability cards, by FIELD not by keyword
-python3 -c "import json;print(list(json.load(open('<card>.json'))['card'].keys()))"
-```
+Inspect the relevant knowledge pages, package exports, implementation modules, and capability records by topic and behavior.
+Resolve source locations from the current workspace and installed package metadata.
+If multiple checkouts exist, compare their versions before treating a missing symbol as an absent capability.
+Record missing sources and command failures instead of suppressing them.
 
 Then say one of these out loud, with what you ran:
 

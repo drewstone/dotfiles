@@ -88,9 +88,8 @@ If the goal is **subjective** (writing quality, conversation fit, design match) 
 
 If the goal is **objective** (compiles, test passes, HTTP 200, string match) → write a test. LLM-as-judge on objective criteria adds variance.
 
-Audit existing eval infrastructure: ≥5 scoring dimensions with explicit weights, per-turn metrics if multi-turn, prompt versioning (`.agent/prompts/`), trace storage (JSONL + per-run files), statistical library (`evolve/eval-stats.ts` is a copy-in reference), cost tracking, multi-rep support (3-rep median minimum).
-
-The eval infrastructure IS the product for improvement. A project with 3 dimensions and no traces can't improve systematically — fix that before running experiments.
+Audit existing eval infrastructure: scoring dimensions, per-turn metrics if multi-turn, prompt versions, traces, tested statistical tools, cost tracking, and repeated measurements.
+Use the project's existing statistics implementation; see `references/STATS.md` for comparison requirements.
 
 ## Baseline
 
@@ -125,7 +124,8 @@ Don't run all targets × all reps. Design the minimal experiment:
 
 1. **Skip ceiling targets** (98% with CV=3% won't move).
 2. **Focus movable targets** (60–80% AND CV > 10% — room to move AND measurable).
-3. **Compute required reps** via `requiredReps(cv, expectedDelta)` from `eval-stats.ts`.
+3. **Estimate required reps** using the project's tested power calculation, observed variance, and smallest useful effect.
+   Record the test, assumptions, and sample size before execution.
 4. **Estimate cost** (reps × targets × avg per-run). Worth it?
 5. **Define success criteria BEFORE running** ("median improves ≥5pp on ≥3 targets with d>0.5 and 0 regressions → KEEP").
 
@@ -142,7 +142,7 @@ Don't run all targets × all reps. Design the minimal experiment:
 - Validate on held-out cases when a larger set exists.
 - Prefer architectural over parameter changes (more durable).
 - Watch Goodhart's Law: if metric improves but experience feels worse, the metric is wrong — fix the metric.
-- 3+ reps minimum, 5 for noisy targets. Use Cohen's d, not raw delta.
+- Use repeated measurements and report the raw difference with an appropriate effect size and uncertainty interval.
 
 ## Execute
 
@@ -164,14 +164,13 @@ Verification fails → fix the deployment. Don't report unverified results. **Th
 
 ## Compare + decide
 
-Use `compare()` from `eval-stats.ts`, not eyeballing. Every comparison includes median + 95% CI, Cohen's d, p-value, verdict.
+Compute comparisons with the project's tested statistical tools.
+Report the sample size, observed difference, uncertainty interval, effect size, and decision rule.
+Include a p-value when the selected test provides one; label unavailable results with their reason.
 
-Quick reference (full verdict tree, BH-FDR correction, paired vs unpaired tests in `stats.md`):
-
-- d < 0.2 → **NOISE** regardless of raw delta
-- d ≥ 0.5, p < 0.05, no regressions → **KEEP**
-- d ≥ 0.5, p > 0.05 → **ITERATE** (need more reps)
-- Any regression with d > 0.3 → **REVERT** immediately
+Apply the registered useful-effect threshold and regression limits.
+Use `references/STATS.md` for comparison design and promotion requirements.
+Retain inconclusive results with their uncertainty and the measurement needed to resolve them.
 
 After deciding: document what worked, what didn't, regressions with root cause, next hypotheses.
 
@@ -209,16 +208,18 @@ Reminders:
 
 ## Statistical rigor
 
-Full reference in `stats.md`. The minimum bar:
+Use `references/STATS.md` for the comparison procedure.
+The minimum bar:
 
 - Report **median**, not mean. Means are dragged by outliers.
 - Always include **N**.
-- Use **Cohen's d** for comparisons (d < 0.2 is negligible regardless of raw delta).
+- Report an effect size appropriate to the selected comparison method.
 - 3 reps minimum, 5 for noisy targets.
 - Include **95% CI** ("median 85% [79%, 91%]" tells the reader how trustworthy the estimate is).
 - Flag instability (CV > 20% means too noisy — fix variance source before optimizing the score).
 
-A reference `eval-stats.ts` library lives in this directory. Copy it into any project's `tests/eval/lib/` for `describe()`, `compare()`, `histogram()`, `summaryReport()` functions.
+Use maintained, tested statistics from the project instead of copying a separate implementation from this skill.
+If the project already uses `agent-eval`, inspect its current reporting exports and tests before adding another dependency.
 
 ## Domain specs
 
@@ -234,10 +235,8 @@ measure → diagnose → experiment → verify loop, with the anti-overfitting r
 
 Evolve owns the back half — judging whether a winning bet is durable enough to ship:
 
-1. **Bootstrap-CI promotion gate (instead of eyeballing).** A winning experiment graduates to a baseline
-   only via the deterministic promote/reject/candidate/inconclusive gate in `references/STATS.md`
-   (bootstrap CI on the control→treatment delta; `ciLow > 0` → promote, `ciHigh < 0` → reject,
-   positive point estimate but `ciLow ≤ 0` → candidate). Compute it, don't guess.
+1. **Compute the promotion decision.** Use the procedure in `references/STATS.md` with tested project tools.
+   Require evidence of improvement, the registered useful effect, and passing regression limits before promotion.
 2. **Promotion scope.** A `promote` still picks a target: safe for all users → global defaults; safe only
    in controlled environments → benchmark/test profiles; needs more validation → follow-up, defaults unchanged.
 

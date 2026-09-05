@@ -237,37 +237,17 @@ if [ -d "$HOME/.pi/agent" ]; then
   echo "  Pi: ${pi_skill_count} skills synced"
 fi
 
-# Codex integration: mirror shared AGENTS.md, commands → prompts, and Claude
-# skills → Codex skills. Codex has no hook analog here.
-if [ -d "$HOME/.codex" ]; then
-  link "$AGENTS_SRC" "$HOME/.codex/AGENTS.md"
-
-  mkdir -p "$HOME/.codex/skills"
-  for skill_dir in "$SCRIPT_DIR/skills"/*/; do
-    [ -f "$skill_dir/SKILL.md" ] || continue
-    skill="$(basename "$skill_dir")"
-    link "$skill_dir" "$HOME/.codex/skills/$skill"
+# Codex prompts share the Claude command sources.
+if [ -d "$SCRIPT_DIR/commands" ]; then
+  mkdir -p "$CODEX_DIR/prompts"
+  for cmd in "$SCRIPT_DIR/commands"/*.md; do
+    [ -f "$cmd" ] || continue
+    link "$cmd" "$CODEX_DIR/prompts/$(basename "$cmd")"
   done
-  find "$HOME/.codex/skills" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | while read -r stale; do
-    echo "  PRUNE $stale (dead Codex skill symlink)"
+  find "$CODEX_DIR/prompts" -maxdepth 1 -type l ! -exec test -e {} \; -print | while read -r stale; do
+    echo "  PRUNE $stale (dead Codex prompt symlink)"
     rm "$stale"
   done
-  codex_skill_count=$(find "$HOME/.codex/skills" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
-  echo "  Codex: ${codex_skill_count} skills synced"
-
-  if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/null)" ]; then
-    mkdir -p "$HOME/.codex/prompts"
-    for cmd in "$SCRIPT_DIR/commands"/*.md; do
-      [ -f "$cmd" ] || continue
-      link "$cmd" "$HOME/.codex/prompts/$(basename "$cmd")"
-    done
-    find "$HOME/.codex/prompts" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | while read -r stale; do
-      echo "  PRUNE $stale (dead Codex prompt symlink)"
-      rm "$stale"
-    done
-    codex_prompt_count=$(find "$HOME/.codex/prompts" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
-    echo "  Codex: ${codex_prompt_count} prompts synced"
-  fi
 fi
 
 # Generic AgentProfile exports for cli-bridge/autopilot and any other

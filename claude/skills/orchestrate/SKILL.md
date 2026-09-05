@@ -5,65 +5,53 @@ description: Decompose and run a multi-agent workflow when no single skill cover
 
 # Orchestrate
 
-Every other skill is a recipe. This one is the grammar that writes a new recipe for a goal that has none — when the honest move isn't running a skill but composing several into a workflow built for this goal alone. Skills are the primitives; orchestrate is the grammar.
+Complete a goal through bounded tasks with explicit dependencies, checked results, and one integrated outcome.
+Use this when the user requests orchestration or delegation and one skill cannot cover the work.
+If one skill covers the goal, use it directly.
 
-`/governor` reads state and picks the single next skill, then exits. `/multi-pursue` runs one fixed shape — N independent `/pursue` tracks, always. `/orchestrate` **chooses** the shape and **composes** the primitives, then compiles the result to a `Workflow` script and runs it end to end: it can wire `/hypothesize` → parallel `/pursue` tracks → `/critical-audit` skeptics → synthesize, or any graph the goal demands.
+Shared conventions are in `_common.md`.
 
-Shared conventions in `_common.md`.
+## Resolve execution tools
 
-**This is not free and does not self-trigger.** A workflow fans out many agents and spends real tokens; the operator opts in by name or an explicit "compose / fan-out this" ask. If one obvious skill covers the task, or the work is trivially sequential with no fan-out and no independent check, orchestration is pure ceremony — run the skill.
+Inspect the delegation tools available in this session before choosing an execution method.
+Use native agent creation, messaging, waiting, and interruption tools when they provide the required behavior.
+For example, a session may expose `spawn_agent`, `send_message`, `followup_task`, and `wait_agent`.
+Read their current contracts, including concurrency limits and whether agents share files.
 
-## When to use
-
-| Signal | Skill |
-|---|---|
-| One skill clearly covers it | that skill directly — orchestration is ceremony |
-| Pick the single next skill and stop | `/governor` |
-| Always the same N `/pursue` tracks | `/multi-pursue` |
-| Deep web research: sweep → verify → cited report | `/deep-research` — the pre-composed research instance |
-| Equal-compute "which agent architecture wins?" | `/arena-experiment` — the pre-composed tournament instance |
-| Goal fans out into independent stages, or is too novel for one skill | **`/orchestrate`** |
-| "Find every X, then dedup and rank" (a stage needs all prior results) | **`/orchestrate`** — barrier |
-| "Try it N ways and take the best" | **`/orchestrate`** — selection policy |
-
-## The grammar: one structure, N policies
-
-A workflow is not one pattern picked off a menu — it is one **dependency structure** with any number of **coordination policies** layered on top. Getting this right is what makes "orchestration is the grammar" true instead of a slogan.
-
-**Structure — pick exactly one, read off the dependency graph:**
-
-- **pipeline** (default) — per-item stages; each item's chain depends only on that item, so chains run concurrently and wall-clock ≈ the slowest single chain.
-- **barrier** — one stage needs every prior result (dedup, global merge, cross-item rank, first-hit race, consensus vote). Costs a wait-for-the-tail; pay it only when you can name the reduce.
-
-**Policies — layer any, orthogonal to structure:**
-
-- **diversity** — multi-modal sweep: each agent searches a different way, blind to the others, so misses decorrelate.
-- **termination** — loop-until-dry: keep spawning finders until K≈2-3 consecutive empty rounds.
-- **verification** — adversarial-verify: N≥3 independent skeptics per finding, majority-refute kills it.
-- **selection** — judge-panel / tournament: N attempts scored by parallel judges, synthesize from the winner and graft the runners-up. Use only when quality varies run-to-run and scoring is more reliable than generating (else the panel is noise).
-
-A real workflow is one structure × several policies. The worked example in the reference rides a diversity sweep + termination + a verification barrier on a pipeline+barrier spine — four policies, one graph.
+If the project already has a workflow runtime, inspect its installed exports, examples, and isolation behavior before using it.
+Prove a small task can complete and return its result before launching the full workflow.
+A tool named `Workflow` and functions named `agent()`, `parallel()`, or `phase()` are not universal session capabilities.
+Do not add an execution framework for an ordinary delegated task.
+If delegation is unavailable, execute the work locally and report that limitation.
 
 ## Procedure
 
-1. **Decompose — independent vs barrier edges.** Split the goal into units and label each edge: does stage B read only its own input (independent → pipeline) or every result from stage A (a reduce → barrier)? The dependency graph picks the structure. Most "sequential-looking" work is per-item independent — check before you serialize.
-2. **Pick the structure, then layer policies.** One structure (pipeline unless you can name the reduce), plus whichever of diversity / termination / verification / selection the goal needs. Name each so the plan is auditable.
-3. **Author the graph, compile it to a `Workflow`, and run it.** Nodes are existing skills (a bare subagent only when `skills` lists nothing that fits); edges are the step-1 dependencies. Compile the graph down — the structure becomes a `pipeline()` or a `parallel()` batch closed by a `phase()` boundary, and each policy its own construct (per-policy mapping in the reference) — then run it; do not hand stages back to the operator to run by hand. For file-mutating parallel stages set `isolation: 'worktree'` and reserve the shared index/registry for the synthesis step.
-4. **Tolerate partial failure.** One throw in a `parallel()` batch cancels all its siblings, so wrap every fanned-out `agent()` to return `{status:'failed', reason}` instead of throwing. loop-until-dry and adversarial-verify must treat a missing return as a datum (a skipped vote), not a crash.
-5. **Synthesize.** The synthesis chooses, combines, or rejects — never dumps parallel summaries. State the expected agent count in the plan before dispatch so the operator can veto.
+1. **Decompose the goal.** Define each task's input, output, evidence, dependencies, and files it may change.
+   Start an independent task only when useful work can continue alongside it.
+2. **State the plan.** Record the expected agent count, resource limits, and how the results will be combined.
+   Use the authority already granted for this session.
+3. **Assign ownership.** Give parallel writers disjoint files or separate worktrees when their edits would conflict.
+   Reserve shared registries and final integration for one owner.
+4. **Dispatch through available tools.** Give each worker its bounded task and the relevant installed skill instructions.
+   Start a dependent task when its required inputs pass their checks.
+   Wait for every result only when the next operation needs the complete set.
+5. **Inspect every outcome.** Record failures, missing evidence, costs, and unfinished tasks.
+   Retry only when new evidence or a corrected input makes completion plausible.
+   Confirm tool cancellation behavior before assuming other tasks continue after one fails.
+6. **Check consequential findings.** Reproduce them against the actual artifact or request an independent review when risk justifies it.
+   Resolve disagreements with evidence; a majority vote does not establish correctness.
+7. **Integrate and verify.** Combine compatible results, resolve conflicts, and run the checks required for the resulting artifact.
+   Finish authorized delivery and report the complete outcome, including any remaining evidence gaps.
 
-## Rules
+## Durable state
 
-- **Compose primitives; don't hand-roll — including the execution layer.** A stage that re-implements what `/pursue` or `/critical-audit` already does is drift; hand-rolling batching, queuing, or isolation instead of compiling to the `Workflow` primitive is the same mistake one level down. Reach for a bare subagent only when `skills` lists nothing that fits.
-- **Pipeline by default; a barrier only when you can name the reduce.** A barrier idles the whole batch on its slowest agent — pay that only for a true dedup / merge / global-rank / race / vote. If stage B reads only its own item, delete the barrier.
-- **Adversarially verify before you believe.** Every load-bearing finding gets N≥3 independent skeptics; majority-refute kills it. A finding one agent produced and no one attacked is a hypothesis, not a result.
-- **If one skill covers it, orchestration is ceremony.** The cost of a fan-out plus a synthesis pass must buy something one skill can't: real parallel work or independent verification. Name the fan-out and the reduce, or run the single skill and stop — a straight line of one skill never needed this.
+For work that needs to resume, update `.agent/pursuits/<date>-orchestrate-<slug>.md` with task ownership and dependencies.
+Record agent identifiers, artifact paths, completed checks, failures, remaining work, and resources spent.
+Use existing project state when it already records those facts.
 
-Use `references/full-reference.md` for the structure×policy tables, the Workflow compile mapping, the barrier justified-vs-not rule, a worked composition, and the rate-limit / wall-clock math.
+Use `references/full-reference.md` for dependency choices, stopping conditions, and a worked composition.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /orchestrate --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -73,11 +61,6 @@ skill-run-log /orchestrate --target "<what this run targeted>" --verdict <VERDIC
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| After decomposition the whole goal reduces to 1 skill | `/governor` | the decomposition + the single candidate skill |
-| The plan is exactly N independent `/pursue` tracks plus a synthesis | `/multi-pursue` | the N track briefs + the shared metric |
-| The goal is an equal-compute comparison of ≥2 architectures | `/arena-experiment` | the arms + the compute budget per arm |
-| Any stage is a judge panel or scored gate | `/calibrate-before-measure` | the stage's metric + the trivial baseline it must reject |
-| "What should the stages even be" is itself unknown | `/hypothesize` | the goal + the constraints on the solution space |
-| A stage is an adversarial verification barrier | `/critical-audit` | the artifact under review + the severity bar |
-| A composed run returns null or contradictory results | `/autopsy` | the stage outputs + which stage first disagreed |
-| Workflow completes with ≥3 stages logged | `/reflect` | the stage ledger + the per-stage cost |
+| A completed run returns null or contradictory results | `/autopsy` | the raw stage outputs and first disagreement |
+| Integration exposes a CI failure | `/converge` | the integrated revision and failing job |
+| Completed stages provide enough evidence to improve future coordination | `/reflect` | the task ledger, outcomes, costs, and corrections |

@@ -1,12 +1,13 @@
 ---
 name: simplify
-description: Reduce duplication and complexity while preserving behavior, public APIs, tests, and capability.
+description: Remove unnecessary work and reduce complexity while preserving required behavior and public contracts.
 ---
 
 # Simplify
 
-Use this to turn vague cleanup pressure into one or more shipped, verified simplifications.
-The goal is less code, fewer paths, clearer ownership, and better developer experience without removing capability.
+Remove unnecessary work, then simplify what must remain.
+Preserve required behavior and public contracts unless their removal is within the user's scope.
+A checked no-change result is a successful outcome.
 
 ## Start
 
@@ -17,12 +18,16 @@ The goal is less code, fewer paths, clearer ownership, and better developer expe
 
 ## Choose
 
-Pick the smallest change batch that meaningfully reduces complexity.
+First identify the outcome the code or instructions must support.
+Challenge each candidate's purpose, assumptions, consumers, and maintenance cost before choosing an edit.
+Prefer deleting unnecessary behavior, then simplifying retained behavior, then optimizing it, then automating it.
+Pick the smallest justified change batch; leave already-good work unchanged.
 Prefer candidates that:
 
-- Collapse duplicated intent into one canonical helper or module.
-- Move focused behavior out of god files without changing public routes or SDK shape.
 - Delete obsolete code and tests together.
+- Remove unnecessary workflows or requirements after checking their consumers and the capability that must remain.
+- Collapse duplicated intent into one canonical implementation.
+- Reduce what callers must understand without adding indirection only to shorten a file.
 - Improve local validation or error messages.
 - Have targeted tests already available.
 
@@ -34,13 +39,14 @@ Do not pick candidates that require broad product redesign, public API churn, da
 2. Edit only the chosen files.
 3. Keep names boring and domain-specific; avoid `new`, `unified`, `manager`, or `helper` unless that is already the local pattern.
 4. Extract only shared intent, not coincidental shape.
-5. Preserve behavior unless the simplification explicitly fixes a bug; add or update tests for that changed behavior.
+5. Verify the required behavior survives and each removal stays within scope; test any changed behavior that needs regression coverage.
 6. Run targeted checks first, then the repo's required local check.
 7. If the branch has a PR, prove mergeability, push, and read current comments/reviews/checks before reporting.
 
 ## Stop Rules
 
-Stop when the next cleanup would be a separate architecture PR, would enlarge the current review more than it reduces risk, or cannot be proven by tests available in this branch.
+Stop when no candidate has evidence that justifies a change.
+Also stop when the next cleanup needs separate architecture work, exceeds scope, or cannot be verified with available checks.
 Saying "do not simplify further in this PR" is correct when backed by measurements and a concrete follow-up boundary.
 
 Use `references/full-reference.md` for the full repeatable loop, measurement commands, candidate scoring, PR checklist, and report template.

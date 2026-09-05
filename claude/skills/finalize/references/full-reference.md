@@ -218,7 +218,9 @@ sum(per-branch deltas) vs union delta  →  residual = interaction (report it; n
 **Report** (one block): branches created; for each, its unit-set, net `--stat` diff, Conventional-Commit subject, metric delta (recorded or measured+residual), and any `depends-on` flag; the base-mergeability result; and the cleanup commands.
 
 **Open the PRs as a stack** — the `depends-on` order you computed is exactly what a stack needs, so don't drop it on the floor at the last step.
-Gate this outward action behind one confirmation (Cost gate), then create each PR based on its prerequisite so its diff shows only its own change:
+Use the PR authority already granted for this session.
+If it is absent, present the prepared branches and PR descriptions for approval.
+Create each PR against its prerequisite so its diff shows only its own change:
 
 ```bash
 # independent branch -> base = main; dependent branch -> base = its prerequisite branch
@@ -230,10 +232,9 @@ Tangle repos: `gh-drew api user --jq .login` must print `drewstone` first; never
 
 **Cleanup**, after the PRs land:
 
-```bash
-git branch -D $(git branch --format='%(refname:short)' --list 'atomic/*')   # the atomic branches
-git branch -D <messy-experiment-branch>                                     # only once every KEEP change shipped
-```
+Use this run's branch-to-PR map to identify cleanup candidates.
+Confirm each branch is merged or abandoned before deleting it by name.
+Delete the original experiment branch only after every KEEP change has shipped.
 
 ## Edge cases
 

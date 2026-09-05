@@ -2,13 +2,6 @@
 
 @AGENTS.md
 
-## One committing identity — never set it
-
-Run `git commit`. Never `git -c user.name=… -c user.email=…`, never `git config user.email`.
-The global config is already `Drew Stone <drewstone329@gmail.com>`, the identity GitHub squashes as.
-Any other address — including `drew@tangle.tools` from the session context — makes GitHub read one person as two and permanently insert `Co-authored-by:` into the squash commit.
-No co-authorship trailers, human or AI, ever.
-
 ## Dotfiles
 
 All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked into `~/.claude/` by `~/dotfiles/claude/install.sh`.
@@ -46,17 +39,5 @@ When using Claude-specific ops tracking, use the shared board in `~/company/tool
 - `ops-board block --id N --reason "..." --retry-cmd "..."`
 
 Use measurable done criteria and artifact links. Owner is `drew` only for work that genuinely requires Drew.
-
-## Project References
-
-See `PROJECTS.md` for active projects, paths, stacks, and model config.
-
-## Credential Separation
-
-Do not mix credentials between Tangle/company projects and Webb/personal projects.
-
-- Tangle Cloudflare account: `0c928041f7d1c2caadd7df75cc69c5ef`
-- Webb/personal credentials must not be used for Tangle projects.
-- Before using a credential from another project's `.env` or secrets directory, verify which organization it belongs to.
 
 @RTK.md

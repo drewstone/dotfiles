@@ -37,7 +37,7 @@ skill-run-log /push-past-easy --target "<what this run targeted>" --verdict <VER
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The hard version involves an eval, A/B, or benchmark | `/calibrate-before-measure` | the metric, the trivial baseline, and the regime |
+| A harder case or scoring path changed and has not been calibrated | `/calibrate-before-measure` | the changed case, metric, and trivial baseline |
 | Result is promising but n < 24 or a confound is unresolved | `/evolve` | the underpowered result, the confound, and the powered design |
 | The hard version needs a different architecture, not more n | `/pursue` | the named cap + the design that removes it |
 | The hard version fails and the reason is unclear | `/autopsy` | the raw rows + the artifact-vs-real-effect checks |

@@ -2,7 +2,8 @@
 
 ## Mode: Run All
 
-Full scan with all rulesets and severity levels. Current default behavior. No filtering applied — all findings are reported and triaged.
+Scan with the selected rulesets and all severity levels.
+Apply no result filter; report and triage all findings.
 
 ## Mode: Important Only
 
@@ -102,7 +103,7 @@ done
 In important-only mode, add `[SEVERITY_FLAGS]` to the scanner template:
 
 ```bash
-semgrep [--pro if available] --metrics=off [SEVERITY_FLAGS] --config [RULESET] --json -o [OUTPUT_DIR]/raw/[lang]-[ruleset].json --sarif-output=[OUTPUT_DIR]/raw/[lang]-[ruleset].sarif [TARGET] &
+semgrep [--pro if available] --metrics=off [SEVERITY_FLAGS] --config [RULESET] --json -o [OUTPUT_DIR]/raw/[lang]-[ruleset].json --sarif-output=[OUTPUT_DIR]/raw/[lang]-[ruleset].sarif [TARGET]
 ```
 
 Where `[SEVERITY_FLAGS]` is:

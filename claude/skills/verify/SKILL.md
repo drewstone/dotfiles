@@ -11,22 +11,15 @@ Perform a thorough verification that work is complete and ready to ship. Do NOT 
 
 1. **Repo shape**: verify works on any git repo. No bootstrap required.
 2. **Build present**: if the repo has no build step and no test command, verify's scope is reduced to diff review + secrets + debug-artifact scan. Surface this explicitly in the report so the operator doesn't infer false coverage.
-3. **Git state**: if HEAD has no changes relative to origin, there's nothing to verify — tell the operator and stop.
+3. **Target**: identify the artifact, revision, and comparison base requested by the user.
+   A clean or fully pushed branch still needs the requested verification.
 4. **Resume check**: if `.agent/current.json` shows a `/pursue` or `/converge` session in flight, verify's report is the INPUT to their evaluate/stop steps, not a standalone deliverable. Include the active skill's session ID in the report so the caller can correlate.
 
-## Pre-loaded Context
+## Read Current State
 
-### Git Status
-!`git status --short 2>/dev/null`
-
-### Staged Changes
-!`git diff --cached --stat 2>/dev/null`
-
-### Unstaged Changes
-!`git diff --stat 2>/dev/null`
-
-### Changed Files (full diff for review)
-!`git diff HEAD 2>/dev/null | head -200`
+Read `git status --short`, staged and unstaged diffs, and the branch diff against the requested base.
+Inspect the complete relevant diff.
+Report command failures and any files excluded from review.
 
 ## Additional Checks (run in parallel)
 

@@ -129,7 +129,7 @@ The one class allowed to interrupt at the *front* of a flow (see `_common.md` "g
 | `/polish` | Fixed rubric; close every gap in work that's basically right. |
 | `/harden` | Adversarial security validation — invariants, fuzz targets, races. |
 | `/critical-audit` | Staff-engineer review with severity-ranked, file-and-line findings. |
-| `/simplify` | Capability-preserving simplification — kill duplication and god objects without losing behavior. |
+| `/simplify` | Delete unnecessary work, then simplify retained behavior; leave already-good work unchanged. |
 | `/deep-clean` | Measured dead-code / debt cleanup with before/after proof. |
 | `/install-anti-slop` | Install the shared strict Oxlint rules without weakening project types or existing checks. |
 

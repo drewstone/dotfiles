@@ -36,7 +36,7 @@ Run the real scanner; do not substitute grep-only guesses for Semgrep findings.
 ## Output
 
 Report command, rulesets, files scanned, result counts, real findings, false positives, and artifact paths.
-Use `references/full-reference.md` and `workflows/scan-workflow.md` for the full command workflow and ruleset matrix.
+Use [the scan workflow](workflows/scan-workflow.md) for commands, rule selection, filtering, and result checks.
 
 ## Log the run
 

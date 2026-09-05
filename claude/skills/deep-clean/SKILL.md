@@ -40,7 +40,7 @@ Then read, don't scan: `tsconfig.json` strict flags that are off, `knip.json` ig
 | **Capability proof per deletion**: the gate exercising the surviving path, as `path::test → k/n passed`. "tests pass" is a defect. | A deletion that silently drops the only coverage of a path reads green and ships a regression. |
 | **`k of n` or `n=` on every quantity.** Banned as claims: several, many, most, significant, substantial, strong, often, repeated, a lot, much cleaner, simpler. | "removed a lot of dead code" is unfalsifiable; `1,204 LOC across 17 files` is checkable. |
 | **`measured \| inferred \| hypothesis` on every row.** `measured` requires command+output, `path:line`, or run id. `hypothesis` rows are banned from the Verdict and from any deletion actually performed. | Deleting on a hypothesis is how load-bearing code disappears. |
-| **Cost both sides, unit = LOC.** Carrying cost = LOC × sync sites the duplicate forced (40 LOC at 3 call sites = 120). Saving realized = LOC removed + Δ typecheck seconds. Unmeasurable → `unmeasured (<reason>)`; dropping the column is banned. | Without carrying cost, a 4-LOC delete and a 400-LOC delete rank equally. |
+| **Report removed lines and bytes, measured time separately.** Describe current maintenance work and the work each deletion avoids, with affected paths. Unknown costs remain `unmeasured (<reason>)`. | File size does not measure maintenance cost; multiplying it by call sites invents that cost. |
 | **≤500 words outside tables and fenced blocks.** No paragraph >3 lines — if longer, it is a table. | |
 | **Canonicalize at N=2 when both instances name the same concept** (`PLATFORM_URL` vs `PLATFORM_API_URL`, 2 session-getters). Extract coincidental shape only at N=3 with ≥80% token overlap. | Named drift is the bug; premature abstraction of matching shape is a different bug. |
 | **Never delete what you can't explain.** Unexplained try/catch, opaque module → leave it, note it in Kept-on-purpose, move on. | |
@@ -58,16 +58,16 @@ Emit exactly this. Omit a section only when its own rule says so.
 # Deep Clean: <scope> — <YYYY-MM-DD> — <N> files, <L> LOC / <B> bytes removed
 
 **Verdict:** <L LOC removed across N files; gates green|red> — measured
-**Biggest single win:** <item> at <LOC> LOC (<carrying cost> LOC of sync surface).
+**Biggest single win:** <item> — <maintenance work avoided>, <LOC> lines removed.
 **Next:** /<skill> targeting <surface> with baseline <metric=value>
 
 ## Baseline vs after
 | Metric | Before | After | Δ | Command | Status |
 |---|---:|---:|---:|---|---|
 
-## Deletions — top <k> of <total>, ranked by carrying cost
-| # | path:line | What | LOC | Bytes | Dead-proof (command → count) | Capability proof (gate → k/n) | Carrying cost (LOC) | Saving realized (LOC) | Status |
-|---:|---|---|---:|---:|---|---|---:|---:|---|
+## Deletions — top <k> of <total>, ranked by verified maintenance impact
+| # | path:line | What | LOC | Bytes | Dead-proof (command → count) | Capability proof (gate → k/n) | Current maintenance work | Work avoided | Status |
+|---:|---|---|---:|---:|---|---|---|---|---|
 
 <total−k> deletions under <T> LOC are folded into the Δ row above.
 
@@ -85,13 +85,13 @@ Emit exactly this. Omit a section only when its own rule says so.
 
 ## Self-gate
 <k>/8 passed — failed: <list, or "none">.
-1 dead-proof command+count on every deletion · 2 capability proof on every deletion · 3 k-of-n on every quantity · 4 status label on every row · 5 cost both sides in LOC · 6 evidence is path:line / command+output / run id, never prose · 7 Verdict names 1 number + 1 dispatch · 8 words ≤500.
+1 dead-proof command+count on every deletion · 2 capability proof on every deletion · 3 k-of-n on every quantity · 4 status label on every row · 5 maintenance work before/after, units separate · 6 evidence is path:line / command+output / run id, never prose · 7 Verdict names 1 number + 1 dispatch · 8 words ≤500.
 ```
 
 ## Calibration
 
 - **0/10** — "Cleaned up the codebase, removed a bunch of dead code and simplified several modules. Tests pass." 0 numbers, 0 pointers, 0 dead-proofs, 3 banned adjectives.
-- **10/10** — `1,204 LOC / 41,880 bytes removed across 17 files`; every row carries `grep -rn "legacySseParse" src tests → 0`, `apps/sidecar/tests/sse.test.ts → 12/12`, carrying cost `120 LOC`, status `measured`; `tsc` errors 34→0, cycles 3→0, jscpd 6.1%→1.8%.
+- **10/10** — `1,204 LOC / 41,880 bytes removed across 17 files`; every row carries `grep -rn "legacySseParse" src tests → 0`, `apps/sidecar/tests/sse.test.ts → 12/12`, maintenance work `2 parsers → 1`, status `measured`; `tsc` errors 34→0, cycles 3→0, jscpd 6.1%→1.8%.
 
 `references/full-reference.md` holds worked examples only. This file is the normative contract; where they differ, this file wins.
 

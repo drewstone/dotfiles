@@ -7,7 +7,8 @@ description: Find the constraint behind a plateau and design a step-change appro
 
 Every other skill optimizes *toward* a target. This one operates *on the target*. Use it when the honest next move isn't a better point under the ceiling — it's a higher ceiling.
 
-`/evolve` tunes parameters. `/pursue` redesigns the architecture to hit a given target. `/breakout` questions the target and changes the **regime** so a different, higher target becomes reachable. It does not build the new system — it sets the raised target and dispatches `/pursue` or `/meta-harness` to build it.
+This skill questions the target and changes the conditions that limit it.
+Complete the constraint analysis and record the proposal before selecting a build task from the final footer.
 
 Shared conventions in `_common.md`.
 
@@ -15,22 +16,24 @@ Shared conventions in `_common.md`.
 
 | Signal | Skill |
 |---|---|
-| "Make this metric go up" | `/evolve` |
-| "This architecture is wrong" | `/pursue` |
 | "We're near the target and it feels small" | **`/breakout`** |
 | "3 pursue/meta-harness cycles, <2% each" | **`/breakout`** — the ceiling is the target, not the code |
 | "Why can't this be 10x?" | **`/breakout`** |
 
-Do **not** use it to dodge honest hill-climbing. If the metric is still moving on real changes, keep `/evolve`-ing. Breakout is for when the ceiling is real, not when the climb is merely hard.
+Use this when a measured constraint limits progress, rather than when a difficult change remains untested.
 
 ## Procedure
 
-1. **Name the binding constraint — as a mechanism, not a number.** Not "we're at 0.87." *"We cap at ~0.87 because retrieval re-embeds per request instead of amortizing, so recall is bounded by latency budget."* If you can't name the mechanism, you're not ready to break out — go measure (`/evolve`, the ground-truth harness).
+1. **Establish the constraint.** Inspect the real path and run available measurements before naming the cause of the limit.
+   If available checks cannot establish it, record the missing evidence and the command needed, then finish with that limitation.
+   A new target needs a demonstrated constraint.
 2. **Separate the physics floor from the assumed floor.** Physics floor = irreducible (security, information theory, speed of light, a real SLA). Assumed floor = how it's always been done, the metric we happened to pick, a constraint no one has retested. **Attack only the assumed floor.** Naming which is which is the core analytical work.
 3. **Design the regime change.** The lever is usually *not* the artifact. Change the **metric** (the current one may be the cage), the **problem** (eliminate the work instead of speeding it), the **constraint** (retest the "can't"), or the **substrate** (different foundation). One regime change, stated as a thesis with a falsifiable payoff.
 4. **Set the raised target + the smallest proof the regime is reachable.** A number that would be *absurd* under the current regime and *natural* under the new one, plus the cheapest experiment that shows the new regime is real (not that it's finished).
-5. **Commit through the valley.** A regime change usually regresses the old metric before it clears it. Authorize that explicitly, pair with `/dont-collapse-the-architecture` so early marginal evidence doesn't kill the bet, and set the bootstrap-CI gate (`_common.md`) for when the bet is finally judged.
-6. **Externalize the bet, then dispatch.** Write the thesis, raised target, valley budget, and kill-condition to `.agent/pursuits/<date>-breakout-<slug>.md`. Hand the build to `/pursue` (single track) or `/multi-pursue` (independent tracks); `/evolve` tunes once inside the new regime.
+5. **Define the comparison.** Record the permitted regression, resource limits, smallest useful effect, and stopping rule before a build starts.
+   Read [the bootstrap guidance](../evolve/references/STATS.md) when defining the confidence interval.
+6. **Record the proposal.** Write the thesis, raised target, regression allowance, and rejection condition to `.agent/pursuits/<date>-breakout-<slug>.md`.
+   Select subsequent work only after this analysis is complete.
 
 ## Rules
 
@@ -55,6 +58,7 @@ skill-run-log /breakout --target "<what this run targeted>" --verdict <VERDICT> 
 
 | Condition | Next skill | What to pass |
 |---|---|---|
+| The constraint cannot be established from current measurements | `/ground-truth` | the missing measurement and its real execution path |
 | The new regime is one coherent build | `/pursue` | the regime definition + the constraint it removes |
 | ≥2 independent regimes are worth building and budget allows | `/multi-pursue` | one track brief per regime + the shared metric |
 | First measurement in the new regime lands inside 2× the noise floor | `/dont-collapse-the-architecture` | the regime-active check + the mechanism that should have fired |

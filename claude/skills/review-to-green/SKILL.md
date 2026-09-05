@@ -26,7 +26,8 @@ A PR has a review (a bot's multi-shot, a human's, or both). This loop drives it 
 
 ## Boundaries
 
-- **Never merge** as part of this loop. Drive to green, report merge-ready, and let the human merge unless they explicitly authorize the merge in the same ask. Releases to a protected/production branch always need explicit human direction.
+- Use merge and release authority already granted for the target in this session.
+  Once review passes, merge when authorized; otherwise present the concrete result for approval.
 - Preserve unrelated work; keep changes scoped to the findings.
 - Re-read current PR + branch state each pass; never act on a stale review or a base that has moved (rebase/merge + re-gate if it has).
 
@@ -49,7 +50,7 @@ skill-run-log /review-to-green --target "<what this run targeted>" --verdict <VE
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Terminal state Done: APPROVED or 0 blocking findings | `/ship` | the PR number, the merge SHA, and the deploy command |
+| Review passes and an authorized release remains | `/ship` | the PR number, verified revision, target, and deploy command |
 | Terminal state No-progress: 2 consecutive passes with 0 new real findings | `/reflect` | the remaining findings + why each was rejected |
 | Terminal state Blocked on a contract change beyond scope | `/pursue` | the contract, the blocking finding, and the scope boundary |
 | CI goes red after a fix push | `/converge` | the PR number + the failing job |
