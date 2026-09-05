@@ -17,7 +17,7 @@ Use when a metric exists (or can be built) and iterated changes can move it. Do 
 4. **Baseline on the real path** — median of ≥3 reps (5 if CV > 20%), before any change, plus the run-to-run noise floor (population stddev of those reps).
 5. **Diagnose → exactly 1 hypothesis**, ranked bug-fix > architectural > efficiency > parameter-tuning. If several levers remain, rank them by evidence and information value before selecting one.
 6. **Smallest change → prove it is live → measure → compare.** All 3 deployment checks must pass before a score is read (`references/full-reference.md:159-165`); an unverified deploy is the documented failure mode #1.
-7. **Decide by rule, not by eye** — Cohen's d verdict per experiment, bootstrap-CI gate per shipped winner.
+7. **Decide by the registered comparison rule** — use tested project statistics and the procedure in `references/STATS.md`.
 8. **Persist** the row to `.agent/experiments.jsonl` (`schema.md:9-24`), update `current.json` + `progress.md` + `scorecard.json`.
 9. **Continue while the target remains unmet and a testable hypothesis remains.** Change the approach after a rejection; never replay an unchanged failure.
 10. **Checkpoint before context replacement**, then resume the same active goal from the persisted state.
@@ -30,8 +30,8 @@ Use when a metric exists (or can be built) and iterated changes can move it. Do 
 | **`n=` or `k of n` on every quantity.** Banned as claims: several, many, most, often, repeated, significant, substantial, strong, meaningful, better. | A delta with no `n` cannot be separated from run-to-run noise. |
 | **Median of ≥3 reps, 5 if CV > 20%.** Report median + 95% CI, never a bare mean. A target scoring 51/84/84 has median 84, not mean 73. | `references/full-reference.md:212-219` |
 | **Keep guard: Δ ≥ 2× the noise floor.** Inside the floor → re-measure once and recompute before believing it. | `references/deterministic-loop.md:55-62` |
-| **Per-experiment verdict is computed:** `d < 0.2` → NOISE (regardless of raw Δ) · `d ≥ 0.5, p < 0.05, 0 regressions` → KEEP · `d ≥ 0.5, p > 0.05` → ITERATE · any regression with `d > 0.3` → REVERT. | `references/full-reference.md:173-176` |
-| **Shipping a winner needs the bootstrap gate**, B=10000 resamples on the control→treatment delta: `ciLow > 0` → promote · `ciHigh < 0` → reject · `δ > 0` but `ciLow ≤ 0` → candidate · else inconclusive. Efficiency win with flat pass rate promotes only at `ciLow ≥ −2pp`. | `references/STATS.md:32-37` |
+| **Compute the experiment decision** using the registered test, useful-effect threshold, and regression limits. Report uncertainty; label unavailable statistics with their reason. | [Comparison procedure](references/STATS.md) |
+| **Shipping a winner needs evidence of improvement**, a useful effect, and passing regression limits. Register any allowed quality loss for an efficiency gain in explicit metric units before measuring. | [Promotion decision](references/STATS.md) |
 | **`measured \| inferred \| hypothesis` on every row**, with the exact check (command, `path:line`, run id, commit sha) for anything measured. `hypothesis` rows are banned from the Verdict and from any promote decision. | An unverified deploy makes a measured-looking number fiction. |
 | **Cost both sides, mandatory:** cost incurred (reps × $ or wall-minutes) + saving if kept (same unit, or the metric's user-facing unit), assumption stated. Unmeasurable → `unmeasured (<reason>)`, never a dropped column. | Reps × targets × per-run cost is knowable before the run (`references/full-reference.md:128-132`). |
 | **Evidence is a pointer:** `path:line`, commit sha, run id, or the literal command + its output. "Scores improved" is a defect; `pnpm eval:run → 0.63→0.78 median n=5` is a claim. | — |
@@ -61,7 +61,7 @@ Emit exactly this. Omit a section only where its rule says so.
 | Measurement command | `<exact command>` → `<path>` |
 
 ## Experiments — <k> of <queued> run, ranked by Δ; <queued−k> not run: <reason>
-| # | Hypothesis → lever | Before | After | Δ | n | d / 95% CI | Decision | Rule that decided | Status | Evidence |
+| # | Hypothesis → lever | Before | After | Δ | n | Effect / 95% CI | Decision | Rule that decided | Status | Evidence |
 |---:|---|---:|---:|---:|---:|---|---|---|---|---|
 
 ## Cost ledger
@@ -82,7 +82,7 @@ Emit exactly this. Omit a section only where its rule says so.
 
 ## Self-gate
 <k>/9 passed — failed: <list, or "none">.
-1 n= on every quantity · 2 median-of-≥3 · 3 Δ ≥ 2× noise floor on every keep · 4 d-verdict computed not eyeballed · 5 bootstrap gate on every promote · 6 status label per row · 7 cost both sides · 8 evidence is a pointer · 9 words <N> ≤ 500.
+1 n= on every quantity · 2 median-of-≥3 · 3 Δ ≥ 2× noise floor on every keep · 4 registered decision rule computed · 5 promotion criteria met · 6 status label per row · 7 cost both sides · 8 evidence is a pointer · 9 words <N> ≤ 500.
 ```
 
 ## Calibration
@@ -95,9 +95,9 @@ Emit exactly this. Omit a section only where its rule says so.
 | File | What it gives you |
 |---|---|
 | `references/full-reference.md` | Decompose, audit, diagnose, experiment-design and anti-overfitting long form |
-| `references/STATS.md` | Bootstrap promotion gate: procedure + reference `promotionGate()` implementation |
+| `references/STATS.md` | Statistical comparison and promotion procedure using tested project tools |
 | `references/deterministic-loop.md` | `measure.sh` / `decide.sh` / `playbook.md` harness for unattended runs of 100s of candidates |
-| `schema.md` · `stats.md` · `eval-stats.ts` | `experiments.jsonl` fields · verdict tree + BH-FDR · `describe()`/`compare()`/`histogram()` |
+| `schema.md` | `experiments.jsonl` fields and examples |
 
 ## Log the run
 
@@ -112,7 +112,7 @@ The row is provenance, not evidence: an experiment is supported only by the arti
 | Condition (numeric) | Next skill | What to pass it |
 |---|---|---|
 | Primary metric moved < 0.02 (2%) for 2 consecutive rounds and the remaining gap is architectural | `/pursue` | baseline, the 2 flat rounds' Δ, levers already tried |
-| `ideas.md` is empty, or ≥3 consecutive hypotheses scored `d < 0.2` | `/hypothesize` | metric, baseline, and the rejected hypotheses with reasons |
+| `ideas.md` is empty, or ≥3 consecutive hypotheses fall below the registered useful-effect threshold | `/hypothesize` | metric, baseline, and the rejected hypotheses with reasons |
 | A result exceeds 3× the noise floor, or a null follows a predicted Δ ≥ 5pp | `/autopsy` | raw per-rep values, measure command, run id |
 | ≥5 failure clusters, or >20 failing cases need impact ranking | `/diagnose` | per-cluster failure counts and current baseline |
 | CV > 20% at n=5 reps, or the judge separates <2 known-good/known-bad pairs | `/calibrate-before-measure` | metric definition, the 5 rep values, computed CV |

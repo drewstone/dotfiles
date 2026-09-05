@@ -12,10 +12,10 @@ Use this skill for docs, READMEs, whitepapers, launch notes, product pages, and 
 ## Audit Order
 
 1. Read the source docs in scope, plus nearby nav/meta files so you understand what page belongs where.
-2. Run the scanner:
+2. Resolve `SKILL_DIR` to this installed skill's directory, then run [the scanner](../scripts/scan-docs-slop.mjs):
 
 ```bash
-node /home/drew/code/dotfiles/claude/skills/docs-slop-audit/scripts/scan-docs-slop.mjs <file-or-dir>...
+node "$SKILL_DIR/scripts/scan-docs-slop.mjs" <file-or-dir>...
 ```
 
 Use `--json` when you need a machine-readable artifact.

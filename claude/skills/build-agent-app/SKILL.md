@@ -18,13 +18,16 @@ Run these checks before writing product infrastructure:
 3. Search the package sources and maintained products for the capability before adding a wrapper.
 4. Read the current scaffold output when the product started from that scaffold.
 
-Use these source maps when the local repositories are available:
+Resolve source paths from the installed package metadata and current workspace before consulting a local checkout.
+Compare the checkout revision with the installed version; directory location does not establish which copy is current.
+Use `rg --files` in the resolved repository to find these references:
 
-- [agent-app architecture](/home/drew/code/agent-app/ARCHITECTURE.md)
-- [agent-app live viewing and history](/home/drew/code/agent-app/AGENTS.md#live-viewing-vs-history-the-measured-model)
-- [resumable turn example](/home/drew/code/agent-app/examples/resumable-turns.md)
-- [Sandbox session gateway exports](/home/drew/webb/agent-dev-container/products/sandbox/sdk/src/session-gateway/index.ts)
-- [Sandbox scoped-token contract](/home/drew/webb/agent-dev-container/products/sandbox/sdk/src/scoped-token-types.ts)
+| Repository | References within that repository |
+|---|---|
+| `agent-app` | `ARCHITECTURE.md`, `AGENTS.md`, `examples/resumable-turns.md` |
+| `agent-dev-container` | `products/sandbox/sdk/src/session-gateway/index.ts`, `products/sandbox/sdk/src/scoped-token-types.ts` |
+
+If a checkout or document is absent, use the installed exports, types, and version-matched upstream documentation.
 
 Source and installed types are authoritative.
 Correct a stale document in the same change.

@@ -5,11 +5,8 @@ description: "Fan out N independent architectural tracks at once, each a real /p
 
 # multi-pursue
 
-`/pursue` makes ONE coherent generational leap. `multi-pursue` makes SEVERAL
-at once. It is `pursue`'s design discipline × the `Workflow` tool's deterministic
-fan-out × an adversarial verification gate. Use it when a single ask decomposes
-into multiple **independent** architectural tracks that each deserve a real
-build — not parameter tweaks, not a checklist of chores.
+Build independent architecture tracks concurrently, then check and integrate the results.
+Use the delegation tools available in the session or an existing project workflow runtime.
 
 ## When to use vs not
 
@@ -20,8 +17,7 @@ USE when:
 - You want them done concurrently, not serialized over days.
 
 DO NOT use when:
-- The tracks are sequentially dependent (B needs A's output) — use `/pursue` per
-  track in order, or a single `Workflow` pipeline.
+- The tracks are sequentially dependent; complete each prerequisite before starting its dependent track.
 - It's a metric-convergence loop — use `/evolve`.
 - It's one coherent change — use `/pursue`.
 - The work is mechanical/chore-shaped — just do it.
@@ -51,14 +47,12 @@ A fanned-out agent must NEVER re-derive the design. Each brief carries:
 - **Isolation rules** — which files it may write, which it must NOT touch
   (especially shared registries/indexes — reserve those for the synthesis step).
 
-Use `Workflow` with `schema:` on each `agent()` so tracks return structured
-wiring info (file paths, export names, import lines, test status), not prose.
+Require each worker to return file paths, export names, integration requirements, and check results.
 
-### 3. Fan out via Workflow
-Author a `Workflow` script: one `phase()` per logical group, `parallel()` or
-`pipeline()` of `agent()` calls — one per track. For tracks that mutate files in
-parallel and could conflict, use `isolation: 'worktree'`. Otherwise keep them in
-separate files and integrate centrally.
+### 3. Start independent tracks
+Inspect the available delegation tool contracts before dispatch.
+Use separate worktrees when parallel edits would conflict; otherwise assign disjoint files and integrate centrally.
+Respect the available concurrency and resource limits.
 
 Scale to the ask: "do all of these" → one agent per track. "be exhaustive" →
 add an adversarial-verify phase per deliverable.
@@ -79,9 +73,7 @@ surfaces (agents introduce schema drift, missing awaits, naming collisions —
 expect it). Commit only when the WHOLE thing is green, not when the agents said so.
 
 ## Hard-won failure modes (encode these)
-- **One error in a `parallel()` batch cancels all siblings.** When you, the
-  orchestrator, run dependent shell/read calls to integrate, do them
-  SEQUENTIALLY — a single throw (a missing file, a bad parse) aborts the batch.
+- **Failure behavior depends on the execution tool.** Inspect every task's final state and preserve successful results before retrying incomplete work.
 - **Agents write tests with the wrong idiom.** Pin the project's test convention
   in the brief (e.g. "tsx assertion script, NOT vitest") or you'll delete and
   rewrite their tests during synthesis.

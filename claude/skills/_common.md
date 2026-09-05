@@ -24,25 +24,12 @@ Every skill that persists anything writes under `.agent/` at the repo root. One 
 
 It used to be `.evolve/`, which read like it belonged to the `evolve` skill even though `governor`, `handoff`, `reflect`, `pursue`, `verify`, and a dozen others shared it. That name is why some skills quietly invented their own destinations instead of joining the convention.
 
-**Migrating a repo that still has `.evolve/`:** check whether git tracks it first, because most repos commit these artifacts on purpose — a survey of 84 local repos found 51 tracking `.evolve/`. Copy-then-delete on a tracked directory shows up as 100+ deletions and drops the history out of the repo.
-
-```sh
-if [ -d .evolve ]; then
-  if git ls-files --error-unmatch .evolve >/dev/null 2>&1; then
-    git mv .evolve .agent          # tracked: one rename, history follows
-  else
-    mkdir -p .agent
-    # -n never overwrites, so anything already in .agent/ wins.
-    if cp -Rn .evolve/. .agent/; then
-      rm -rf .evolve
-    else
-      echo ".evolve kept: some paths already exist under .agent/. Merge those by hand." >&2
-    fi
-  fi
-fi
-```
-
-Both halves refuse to overwrite. `git mv` fails outright if `.agent/` exists; `cp -n` skips colliding paths and exits non-zero, which is why the `rm -rf` is guarded rather than chained — an unguarded `&&` leaves `.evolve/` behind silently and reads as success. Some repos (the blueprint-agent family) keep a checked-in `.agent/workflows/` that predates this convention, so a collision is a real case, not a hypothetical. Merge those by hand: `git mv .evolve/<item> .agent/` per item.
+**Migration is optional.** Read existing `.evolve/` state before choosing a destination.
+If migration is in scope, check which files git tracks and whether `.agent/` already exists.
+Rename the directory only when the destination is absent; use `git mv` for tracked files.
+When both directories exist, compare files and resolve each collision explicitly.
+Verify that every source record survives before removing its original.
+`git mv .evolve .agent` nests the old directory when `.agent/` already exists; it does not reject that collision.
 
 Until you migrate, tooling keeps reading `.evolve/` so an in-flight run never loses its history: `skill-run-log` prefers `.agent/` and falls back to `.evolve/` when only the old directory exists. Nothing breaks if you migrate late, and nothing breaks if you never had `.evolve/` at all. Once no repo has `.evolve/` left, the fallback can be deleted from `skill-run-log` and `harden/inventory.sh`.
 

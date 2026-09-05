@@ -29,6 +29,8 @@ Strengthen the case before comparing systems.
 
 Report the strong score, weak score, separation, simple-baseline score, sample count, exact command, and artifact paths.
 No broader run starts until both checks pass.
+Once both pass, return to the original evaluation with this evidence.
+Repeat calibration only when the case, scoring path, or relevant conditions change.
 
 ## Log the run
 
@@ -42,8 +44,7 @@ skill-run-log /calibrate-before-measure --target "<what this run targeted>" --ve
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Calibration passes: the metric separates good from bad and the trivial baseline fails | `/push-past-easy` | the calibrated metric + the harder variant that could reverse the result |
+| Calibration passes, but the checked task omits a difficulty required by the original claim | `/push-past-easy` | the missing difficulty, original claim, and calibration evidence |
 | Metric separation between the known-good and known-bad case is inside 2× the noise floor | `/eval-engineering` | the separation number + the case/scoring design that failed |
 | A trivial baseline (no tools, no search, empty diff) scores ≥ 80% of the real run | `/eval-engineering` | the baseline score + the case that is too easy |
 | Judge disagrees with human labels on > 10% of ≥20 labeled examples | `/eval-agent` | the disagreement rows + the current rubric |
-| Calibration passes and a measured target already exists | `/evolve` | the calibrated metric, its noise floor, and the baseline number |

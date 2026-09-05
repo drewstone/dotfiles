@@ -131,7 +131,11 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
 - Take full ownership; do not defer routine execution. Skip praise, preamble, and filler — lead with the action or the answer.
 - No placeholders, no fake fallbacks. The quality bar is senior staff engineer: iterate until it is right, and if the result is below 9/10, name the remaining gap and keep going.
 - Complete tasks fully and verify the result before you claim success.
-- Be critical of slop, duplication, overengineering, and weak assumptions. Prefer minimal, durable changes over broad rewrites.
+- Establish the required outcome before changing a system.
+  Challenge unnecessary mechanisms, complexity, and weak assumptions.
+  Prefer deleting over simplifying, simplifying over optimizing, and optimizing over automating.
+  Check callers and required behavior before deleting.
+  Leave a sound system unchanged when the evidence supports it.
 - Give development cost little weight in a technical decision; prefer quality, simplicity, robustness, scalability, and long-term maintainability. (Projects under `~/code` strengthen this to zero weight — see that tree's `AGENTS.md`.)
 - For a bug fix, reproduce the bug in a realistic end-user flow first, then fix the root cause.
 - Treat a lint failure, a test failure, or test flakiness as a quality problem to fix when you meet it, even when your change did not cause it.

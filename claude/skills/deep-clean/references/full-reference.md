@@ -13,11 +13,11 @@ node -e "console.log(require('./package.json').exports)" | grep -c legacy → 0 
 npx vitest run apps/sidecar/tests/sse.test.ts → 12/12 passed
 ```
 
-| # | path:line | What | LOC | Bytes | Dead-proof (command → count) | Capability proof (gate → k/n) | Carrying cost (LOC) | Saving realized (LOC) | Status |
-|---:|---|---|---:|---:|---|---|---:|---:|---|
-| 1 | `src/sse/legacy-sse.ts:1-186` | 2nd SSE parser | 186 | 6,402 | `grep -rn "legacySseParse" src tests scripts → 0` | `tests/sse.test.ts → 12/12` | 558 (186×3 sync sites) | 186 + 1.4s tsc | measured |
+| # | path:line | What | LOC | Bytes | Dead-proof (command → count) | Capability proof (gate → k/n) | Current maintenance work | Work avoided | Status |
+|---:|---|---|---:|---:|---|---|---|---|---|
+| 1 | `src/sse/legacy-sse.ts:1-186` | 2nd SSE parser | 186 | 6,402 | `grep -rn "legacySseParse" src tests scripts → 0` | `tests/sse.test.ts → 12/12` | Apply framing fixes to 2 parsers and their shared fixture | The second parser no longer needs each framing fix | measured |
 
-The carrying cost is 3 sync sites because every framing fix had to be applied to both parsers plus the shared fixture.
+The typecheck time change appears separately in the baseline table below.
 
 ## Worked example 2 — a Kept-on-purpose row
 
@@ -68,5 +68,6 @@ Error handling, 22 `try/catch` reviewed:
 
 ## Worked example 6 — what a failed self-gate looks like
 
-`6/8 passed — failed: 2 (capability proof), 5 (cost both sides).`
-Two deletions in `src/util/` cite `grep → 0` but name no covering test; carrying cost is `unmeasured (no per-file typecheck timing available)` on 4 rows. Both are reported, not hidden — an unreported gate failure is worse than a failed gate.
+`7/8 passed — failed: 2 (capability proof).`
+Two deletions in `src/util/` cite `grep → 0` but name no covering test.
+Maintenance cost is `unmeasured (no maintenance history available)` on 4 rows; file size is still reported without converting it into a cost.

@@ -11,14 +11,10 @@ Do not use this skill for agent apps, sandbox containers, agent gateways, or gen
 
 ## Required Reading
 
-Read these first from `/home/drew/code/docs`:
-
-1. `pages/blueprints/protocol-model.mdx`
-2. `pages/blueprints/index.mdx`
-3. `pages/blueprints/operator-matrix.mdx`
-4. `pages/blueprints/dapp-integration.mdx`
-
-Then read the product-specific docs under `pages/blueprints/<product>/`.
+Resolve the maintained Tangle documentation repository from the current project or its upstream links.
+Use `rg --files` to locate the current Blueprint overview, protocol model, operator requirements, service lifecycle, and application integration pages.
+Read the relevant product documentation and compare its revision with the product source.
+If a page has moved or is absent, use the current documentation index and source instead of assuming an old path still exists.
 
 Before making a product-specific claim, inspect the actual blueprint repo. Do not claim a blueprint ships an indexer, verifier, router, sidecar, TEE path, settlement service, hosted app, or operator API unless the repo contains that artifact and the docs can name the source file.
 

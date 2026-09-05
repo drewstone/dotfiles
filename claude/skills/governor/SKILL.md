@@ -45,8 +45,8 @@ Picks the single next skill. It does not do the work. Every pick names the row i
 | 9 | ≥5 skill-run rows since newest `.agent/reflections/` entry | `/reflect` | run range + n |
 | 10 | ≥6 failures in the last suite run with 0 cluster ranking | `/diagnose` | failing test list + run id |
 | 11 | Merge/migration in `git log -20` touching ≥10 files, 0 cleanup commits after | `/deep-clean` | merge SHA + file count |
-| 12 | Last 3 experiments on one metric, each \|Δ\| < 1% | `/pursue` | metric, the 3 Δs, exhausted approach |
-| 13 | Row 12 fires AND ≥2 independent buildable tracks are named | `/multi-pursue` | the tracks, 1 owner each |
+| 12 | Last 3 experiments on one metric, each \|Δ\| < 1%, and <2 independent buildable tracks are named | `/pursue` | metric, the 3 Δs, exhausted approach |
+| 13 | Last 3 experiments on one metric, each \|Δ\| < 1%, and ≥2 independent buildable tracks are named | `/multi-pursue` | the tracks, 1 owner each |
 | 14 | `/pursue` ran ≥3 rounds with cumulative Δ < 2% | `/meta-harness` | the 3 pursuit files + cumulative Δ |
 | 15 | `/meta-harness` already ran and Δ < 2%, or within 3pp of target | `/breakout` | current target + the suspected cap |
 | 16 | ≥2 plausible levers unranked, or last 3 experiments were variants of 1 idea | `/hypothesize` | metric + levers already tried |
@@ -107,7 +107,5 @@ skill-run-log /governor --target "<row N: measured vs threshold>" --duration <mi
 Also append one line to `.agent/governor.jsonl` (append-only; never rewrite a prior decision, that erases override evidence):
 
 ```json
-{"ts":"2026-07-27T20:00:00Z","repoShape":"optimization","signals":{"row12_plateau":{"measured":0.008,"threshold":0.01,"status":"measured"}},"decision":"/pursue","reason":"3 Δs 0.008/0.012/0.004 < 1% on accuracy","priorChain":["/evolve","/evolve","/evolve"],"operatorOverride":null}
+{"ts":"2026-07-27T20:00:00Z","repoShape":"optimization","signals":{"row12_plateau":{"measured":0.008,"threshold":0.01,"status":"measured"}},"decision":"/pursue","reason":"3 Δs 0.008/0.006/0.004 < 1% on accuracy; 1 named track","priorChain":["/evolve","/evolve","/evolve"],"operatorOverride":null}
 ```
-
-Worked examples (non-normative): `references/full-reference.md`.

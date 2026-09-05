@@ -48,7 +48,9 @@ A regime change that improves the old metric immediately is suspicious — it pr
 1. Record the pre-breakout baseline (the ceiling) in `.agent/pursuits/<date>-breakout-<slug>.md`.
 2. Build the regime via `/pursue` or `/multi-pursue`. During the build, the old metric may regress — that is inside the valley budget from the worksheet.
 3. Do **not** judge on interim numbers. Pair with `/dont-collapse-the-architecture`: marginal early evidence is not a kill signal; the kill condition from the worksheet is.
-4. At the gate (valley budget exhausted, or the smallest-proof experiment resolves), apply the bootstrap-CI promotion gate (`_common.md`): promote if the new regime clears the *raised* target with `ciLow > 0`; reject if the kill condition fired; extend the valley once if it's a `candidate` with real signal and unspent ambition.
+4. At the registered stopping point, apply the registered comparison; [bootstrap guidance](../../evolve/references/STATS.md) covers repeated independent measurements.
+   Promote only when the registered useful effect and raised target are met; reject when the rejection condition holds.
+   Record inconclusive results and any further authorized comparison explicitly.
 5. On promote: the raised target becomes the new `/evolve` / `/pursue` target and the old ceiling is retired. On reject: `/autopsy` whether the regime was wrong or the proof was underpowered — a wrong proof of a right regime is a re-run, not an abandonment.
 
 ## Persist

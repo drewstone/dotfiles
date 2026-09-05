@@ -11,12 +11,8 @@ Collect signals from configured sources, score relevance to the user's work, ext
 
 Before scraping, discover what signal sources are available in this workspace:
 
-**Check for tools in the workspace:**
-```bash
-# Look for signal-gathering tools in common locations
-find . -maxdepth 3 -name "cli.py" -o -name "cli.ts" 2>/dev/null | head -10
-ls tools/ 2>/dev/null | grep -iE "intel|scraper|community|social|pulse"
-```
+Use `rg --files` to find CLI entrypoints and signal collection tools in the workspace.
+Inspect candidate tools and record discovery failures before concluding that no source exists.
 
 **Check for databases:**
 - SQLite DBs in tool directories (often contain scraped data)

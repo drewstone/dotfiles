@@ -5,7 +5,8 @@ The process is designed for repeated use on any repo, especially active PRs wher
 
 ## Mission
 
-Ship capability-preserving simplification.
+Delete unnecessary work before simplifying what must remain.
+Preserve required behavior and public contracts within the user's scope.
 The output is a real diff with checks, or a clear "stop here" report with measurements.
 Do not stop at advice if the next cleanup is safe and scoped.
 Do not widen the current branch just because a larger cleanup exists.
@@ -19,7 +20,7 @@ When no repo instructions exist, use:
 git status --short --branch
 git log --oneline -10
 git reflog | head -20
-gh pr list --state open 2>/dev/null || true
+gh pr list --state open
 ```
 
 Find the active PR and base branch when possible.
@@ -68,11 +69,11 @@ Write a short candidate table before editing:
 
 Score candidates by these questions:
 
-1. Does it remove a second implementation of the same concept?
-2. Does it make a god file smaller without changing routes, public types, or storage?
-3. Does it improve an error path or local validation?
-4. Can targeted tests catch behavior drift?
-5. Can it be reviewed as one obvious change?
+1. Does this behavior or requirement support the user's intended outcome?
+2. Can it be removed within scope after checking consumers and required capability?
+3. Can the retained behavior be expressed with fewer concepts or implementations?
+4. Can available checks catch behavior drift?
+5. Does the expected benefit justify changing already-working code?
 
 Do the highest-value low/medium-risk candidate first.
 Do not batch unrelated cleanups unless they share the same root cause and tests.
@@ -94,10 +95,11 @@ Then implement unless there is a genuine product fork only the user can choose.
 
 Good moves:
 
-- Move a focused behavior from a large route/command/class into a small module.
+- Delete an unnecessary behavior or workflow after checking its consumers and required outcome.
+- Delete obsolete code together with its tests and exports.
 - Replace repeated switch/provider/flag lists with one registry or typed constant.
 - Replace two ad hoc parsers with one parser used by both call sites.
-- Delete obsolete code together with its tests and exports.
+- Move focused behavior only when it reduces what callers must understand.
 - Move schemas near the behavior they validate when the large file only consumes them.
 - Add a regression test for behavior that the cleanup now centralizes.
 
@@ -158,6 +160,7 @@ Do not wait on remote CI when repo instructions say local proof is the merge sig
 
 Stop and report rather than editing when:
 
+- No candidate has evidence that justifies a change.
 - The next cleanup is a separate architecture PR.
 - The current PR is already large and further cleanup would obscure the feature.
 - The only remaining simplification changes public API or data shape.
@@ -187,6 +190,5 @@ If no change should be made:
 ```text
 No more changes in this PR.
 Measured reason: <numbers>.
-Best follow-up: <separate cleanup>.
 Proof: <commands/read state>.
 ```

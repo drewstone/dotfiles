@@ -121,9 +121,10 @@ For each detected language, add the primary ruleset. If a framework is detected,
 
 ### Step 4: Add Third-Party Rulesets
 
-These are **NOT optional**. Include automatically when language matches:
+Consider these when they cover requested risks beyond the selected project or registry rules.
+Validate each selected ruleset and record its revision.
 
-| Languages | Source | Why Required |
+| Languages | Source | Coverage |
 |-----------|--------|--------------|
 | Python, Go, Ruby, JS/TS, Terraform, HCL | [Trail of Bits](https://github.com/trailofbits/semgrep-rules) | Security audit patterns from real engagements (AGPLv3) |
 | C, C++ | [0xdea](https://github.com/0xdea/semgrep-rules) | Memory safety, low-level vulnerabilities |
