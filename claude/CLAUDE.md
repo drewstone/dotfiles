@@ -4,7 +4,8 @@
 
 ## Dotfiles
 
-All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked into `~/.claude/` by `~/dotfiles/claude/install.sh`.
+The dotfiles repository owns Claude configuration; `claude/install.sh` links it into `~/.claude/`.
+Resolve the installed links to find the active source checkout before editing or reinstalling.
 
 - Shared behavior lives in `AGENTS.md`. If a rule should apply to Claude, Codex, and OpenCode, edit `AGENTS.md`, not this file.
 - Claude-specific config lives here: install behavior, settings, hooks, commands, and Claude-only operational notes.
@@ -14,7 +15,8 @@ All Claude Code configuration lives in `~/dotfiles/claude/` and is symlinked int
 - Commands live in `~/dotfiles/claude/commands/`.
 - Tools in `~/dotfiles/claude/tools/` are symlinked into `~/bin/`.
 - Portable settings live in `~/dotfiles/claude/settings.json`; machine-specific settings live in `~/.claude/settings.local.json`.
-- Never edit generated symlink targets directly. Edit the dotfiles source and rerun `~/dotfiles/claude/install.sh`.
+- Edit tracked source in the owning repository and install the reviewed result.
+  Preserve unrelated settings and external skills when their installed links point into another working tree.
 
 ## Install Contract
 

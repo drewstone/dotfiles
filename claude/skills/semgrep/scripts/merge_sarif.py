@@ -2,201 +2,82 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Merge SARIF files into a single consolidated output.
+"""Combine Semgrep SARIF files while preserving each complete run.
 
-Usage:
-    uv run merge_sarif.py RAW_DIR OUTPUT_FILE
-
-Reads *.sarif files from RAW_DIR (e.g., $OUTPUT_DIR/raw), produces
-OUTPUT_FILE (e.g., $OUTPUT_DIR/results/results.sarif) containing all
-findings merged and deduplicated.
-
-Attempts to use SARIF Multitool for merging if available, falls back to
-pure Python implementation.
+Usage: python3 merge_sarif.py RAW_DIR OUTPUT_FILE
+Duplicate findings remain in their original runs for later triage.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 
-def has_sarif_multitool() -> bool:
-    """Check if SARIF Multitool is pre-installed via npx."""
-    if not shutil.which("npx"):
-        return False
-    try:
-        result = subprocess.run(
-            ["npx", "--no-install", "@microsoft/sarif-multitool", "--version"],
-            capture_output=True,
-            timeout=30,
-        )
-        return result.returncode == 0
-    except subprocess.TimeoutExpired:
-        print("Warning: SARIF Multitool version check timed out", file=sys.stderr)
-        return False
-    except FileNotFoundError:
-        return False
-    except OSError as e:
-        print(f"Warning: Failed to check SARIF Multitool: {e}", file=sys.stderr)
-        return False
+def reject_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
 
 
-def merge_with_multitool(sarif_files: list[Path]) -> dict | None:
-    """Use SARIF Multitool to merge SARIF files. Returns merged SARIF or None."""
-    if not sarif_files:
-        return None
-
-    with tempfile.NamedTemporaryFile(suffix=".sarif", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-
-    try:
-        cmd = [
-            "npx",
-            "--no-install",
-            "@microsoft/sarif-multitool",
-            "merge",
-            *[str(f) for f in sarif_files],
-            "--output-file",
-            str(tmp_path),
-            "--force",
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=120)
-        if result.returncode != 0:
-            print(f"SARIF Multitool merge failed: {result.stderr.decode()}", file=sys.stderr)
-            return None
-
-        return json.loads(tmp_path.read_text())
-    except subprocess.TimeoutExpired as e:
-        print(f"SARIF Multitool timed out: {e}", file=sys.stderr)
-        return None
-    except json.JSONDecodeError as e:
-        print(f"SARIF Multitool produced invalid JSON: {e}", file=sys.stderr)
-        return None
-    except FileNotFoundError as e:
-        print(f"SARIF Multitool not found: {e}", file=sys.stderr)
-        return None
-    except OSError as e:
-        print(f"SARIF Multitool OS error ({type(e).__name__}): {e}", file=sys.stderr)
-        return None
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-
-def merge_sarif_pure_python(sarif_files: list[Path]) -> dict:
-    """Pure Python SARIF merge (fallback)."""
-    merged = {
-        "version": "2.1.0",
-        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-        "runs": [],
-    }
-
-    seen_rules: dict[str, dict] = {}
-    all_results: list[dict] = []
-    seen_results: set[tuple[str, str, int]] = set()
-    tool_info: dict | None = None
-    skipped_files: list[str] = []
-
-    for sarif_file in sorted(sarif_files):
-        try:
-            data = json.loads(sarif_file.read_text())
-        except json.JSONDecodeError as e:
-            print(f"Warning: Failed to parse {sarif_file}: {e}", file=sys.stderr)
-            skipped_files.append(str(sarif_file))
-            continue
-
-        for run in data.get("runs", []):
-            if tool_info is None and run.get("tool"):
-                tool_info = run["tool"]
-
-            driver = run.get("tool", {}).get("driver", {})
-            for rule in driver.get("rules", []):
-                rule_id = rule.get("id", "")
-                if rule_id and rule_id not in seen_rules:
-                    seen_rules[rule_id] = rule
-
-            for result in run.get("results", []):
-                rule_id = result.get("ruleId", "")
-                uri = ""
-                start_line = 0
-                locations = result.get("locations", [])
-                if locations:
-                    phys = locations[0].get("physicalLocation", {})
-                    uri = phys.get("artifactLocation", {}).get("uri", "")
-                    start_line = phys.get("region", {}).get("startLine", 0)
-                dedup_key = (rule_id, uri, start_line)
-                if dedup_key in seen_results:
-                    continue
-                seen_results.add(dedup_key)
-                all_results.append(result)
-
-    if all_results:
-        merged_run = {
-            "tool": tool_info or {"driver": {"name": "semgrep", "rules": []}},
-            "results": all_results,
-        }
-        merged_run["tool"]["driver"]["rules"] = list(seen_rules.values())
-        merged["runs"].append(merged_run)
-
-    if skipped_files:
-        print(
-            f"WARNING: {len(skipped_files)} of {len(sarif_files)} SARIF files "
-            f"could not be parsed. Results may be incomplete.",
-            file=sys.stderr,
-        )
-        for sf in skipped_files:
-            print(f"  Skipped: {sf}", file=sys.stderr)
-
-    return merged
+def read_runs(path: Path) -> list[dict]:
+    document = json.loads(path.read_text(), parse_constant=reject_constant)
+    if not isinstance(document, dict) or document.get("version") != "2.1.0":
+        raise ValueError(f"{path}: expected SARIF version 2.1.0")
+    unsupported = document.keys() - {"version", "$schema", "runs"}
+    if unsupported:
+        raise ValueError(f"{path}: unsupported top-level fields: {sorted(unsupported)}")
+    runs = document.get("runs")
+    if not isinstance(runs, list) or not runs:
+        raise ValueError(f"{path}: expected a nonempty runs array")
+    for run in runs:
+        if not isinstance(run, dict) or not isinstance(run.get("tool"), dict):
+            raise ValueError(f"{path}: each run needs a tool object")
+        if not isinstance(run["tool"].get("driver"), dict):
+            raise ValueError(f"{path}: each tool needs a driver object")
+        results = run.get("results", [])
+        if not isinstance(results, list) or any(not isinstance(result, dict) for result in results):
+            raise ValueError(f"{path}: results must be an array of objects")
+    return runs
 
 
 def main() -> int:
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} RAW_DIR OUTPUT_FILE", file=sys.stderr)
         return 1
-
-    raw_dir = Path(sys.argv[1])
-    output_file = Path(sys.argv[2])
-
-    if not raw_dir.is_dir():
-        print(f"Error: {raw_dir} is not a directory", file=sys.stderr)
+    raw_dir, output_file = map(Path, sys.argv[1:])
+    temporary_path: Path | None = None
+    try:
+        if not raw_dir.is_dir():
+            raise ValueError(f"{raw_dir}: not a directory")
+        if output_file.parent.resolve() == raw_dir.resolve():
+            raise ValueError("keep combined output outside the raw input directory")
+        inputs = sorted(raw_dir.glob("*.sarif"))
+        if not inputs:
+            raise ValueError(f"{raw_dir}: no SARIF files found")
+        runs = [run for path in inputs for run in read_runs(path)]
+        merged = {
+            "version": "2.1.0",
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "runs": runs,
+        }
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output_file.parent, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(merged, temporary, indent=2, allow_nan=False)
+            temporary.write("\n")
+        os.replace(temporary_path, output_file)
+        count = sum(len(run.get("results", [])) for run in runs)
+        print(f"Combined {len(runs)} runs from {len(inputs)} files: {count} findings; duplicates retained")
+        print(f"Written to {output_file}")
+        return 0
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
         return 1
-
-    # Collect SARIF files from raw directory only
-    sarif_files = sorted(raw_dir.glob("*.sarif"))
-    print(f"Found {len(sarif_files)} SARIF files to merge in {raw_dir}")
-
-    if not sarif_files:
-        print("No SARIF files found, nothing to merge", file=sys.stderr)
-        return 1
-
-    # Ensure output directory exists
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Try SARIF Multitool first, fall back to pure Python
-    merged: dict | None = None
-    if has_sarif_multitool():
-        print("Using SARIF Multitool for merge...")
-        merged = merge_with_multitool(sarif_files)
-        if merged:
-            print("SARIF Multitool merge successful")
-
-    if merged is None:
-        print("Using pure Python merge (SARIF Multitool not available or failed)")
-        merged = merge_sarif_pure_python(sarif_files)
-
-    result_count = sum(len(run.get("results", [])) for run in merged.get("runs", []))
-    print(f"Merged SARIF contains {result_count} findings")
-
-    # Write output
-    output_file.write_text(json.dumps(merged, indent=2))
-    print(f"Written to {output_file}")
-
-    return 0
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

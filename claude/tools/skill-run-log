@@ -15,8 +15,8 @@
 # Schema (see ~/dotfiles/claude/skills/_common.md):
 #   { skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride }
 #
-# `operatorOverride` is left null by this script; /reflect fills it later when it
-# notices the operator's actual next invocation differed from `dispatchedTo`.
+# `operatorOverride` is left null by this script. Later findings can link an
+# observed correction to this row without rewriting the original record.
 
 set -euo pipefail
 

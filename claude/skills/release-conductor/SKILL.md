@@ -5,35 +5,34 @@ description: Run a custom release with artifact tracking, live checks, rollback,
 
 # Release Conductor
 
-Use this when release is not a simple trusted deploy script or when prior sessions keep losing state.
-The goal is the right artifact live with proof.
+Coordinate a custom or multi-artifact release until the intended version is live with evidence.
+Use this when the release requires more state and recovery work than a trusted deploy script provides.
 
-## Start
+## Establish release state
 
-1. Identify artifact, environment, owner, current live version, expected version, and rollback path.
-2. Read project release docs, scripts, CI, prior deploy logs, and current service state.
-3. Create or update a release ledger with command, result, timestamp, and next action.
-4. Run the smallest smoke before a long or external deploy.
+1. Identify the authorized environment, expected artifacts, currently served versions, dependencies, and rollback constraints.
+2. Read current release documentation, build scripts, CI, deployment records, and service state.
+3. Update the existing release record or `.agent/release-progress.md` with artifact identities, commands, timestamps, results, and remaining actions.
+   Store credential locations only when needed; never copy secret values into the record.
+4. Run the smallest useful smoke before an expensive build or deployment.
 
-## Loop
+## Release and recover
 
-1. Build or select the artifact.
-2. Deploy using the least opaque path available.
-3. Watch logs or status until success/failure is known.
-4. Verify live behavior with curl, UI check, version endpoint, or product smoke.
-5. Record proof and residual risk.
+Choose a build and deployment path that produces a compatible, identifiable artifact and exposes its status.
+Respect required repository and release checks.
+If a provider hides progress or logs, use an observable path within the existing authority; do not treat a hook response as deployment success.
+For custom binary or service replacement, read [service release checks](references/service-release.md) before changing the running service.
 
-## Rules
+Build or select the artifact, deploy in dependency order, and wait for terminal status.
+Prove both the served artifact identity and the changed user behavior.
+On a failed live check, follow the applicable recovery procedure and verify recovery before trying another release.
+Recovery may require a compatible roll-forward when data or protocol changes make rollback unsafe.
 
-- A build-hook 200 only proves the hook accepted the request.
-- Do not claim live until the live endpoint or product path proves it.
-- If third-party deploy logs are opaque, pivot to infrastructure you can observe.
-
-Use `references/full-reference.md` for the full ledger format and release decision matrix.
+Keep the record current while work is active so another session can resume from observed state.
+Report the live target, artifact identities, deployment and behavior evidence, recovery path, and unresolved risks.
+Update existing release tasks when the project uses them.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /release-conductor --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -43,8 +42,7 @@ skill-run-log /release-conductor --target "<what this run targeted>" --verdict <
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| CI is the blocking release input | `/converge` | the failing job + the release deadline |
-| The project has a reliable one-command deploy path | `/ship` | the artifact list + the deploy command |
-| Deploy reports success and the served revision is unverified | `/deploy-proof` | expected SHA + the live endpoint to probe |
-| A rollback was executed | `/autopsy` | the failure signal, the rollback SHA, and the timeline |
-| Release lands and the session ends | `/session-continuity` | the ledger, the live SHA, and the open follow-ups |
+| CI blocks an authorized release | `/converge` | the required checks and failed jobs |
+| Artifact identity or live behavior remains unverified | `/deploy-proof` | the expected artifacts and live targets |
+| A release failure required recovery | `/autopsy` | failure evidence, recovery results, and timeline |
+| Release work remains during session replacement | `/session-continuity` | the release record and pending operations |

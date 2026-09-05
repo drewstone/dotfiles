@@ -5,81 +5,37 @@ description: Prove a merged change is live and correct in production, including 
 
 # Deploy Proof
 
-Close the gap between "merged" and "serving traffic." This skill is for release closeout when the repo uses asynchronous deploy infrastructure, especially Cloudflare Pages or Workers.
+Prove that the intended artifact serves the requested environment and that its changed behavior works there.
+This skill checks deployment state; it does not grant authority to deploy or change infrastructure.
 
-## Fit Check
+## Establish the target
 
-Use this when the user asks whether work is live, shipped, deployed, validated, or ready to announce. Also use it after merge when the change affects production behavior, performance, caching, auth, billing, discovery, chat, or benchmarks.
+Identify the expected revision or artifact digest and target URL from the request, release configuration, and current deployment records.
+A branch name alone does not establish the environment.
+Read repository release instructions and known rollout or cache behavior before selecting probes.
 
-Do not use this for local-only verification before a PR is merged. Use `/verify` or `/ship` there.
+## Verify the release
 
-## Evidence Order
+1. Read the deployment system's status and logs for the intended artifact.
+   A successful build-hook response proves only that the request was accepted.
+2. Match the served version, digest, build metadata, or release-specific behavior to the expected artifact.
+   A health response proves availability but may not identify the revision.
+3. Exercise the changed user path through the live URL with authorized test data.
+   Record the environment, command or browser actions, response facts, timestamp, and result.
+4. Wait for an active rollout to finish and recheck the live artifact.
+   If access or an external failure prevents verification, state the missing evidence and the exact check needed.
 
-1. Current git state: `git status --short`, current branch, local `HEAD`, upstream tracking branch, and latest merge commit if on `main`/`develop`.
-2. Deploy system: GitHub Actions deploy workflow, Cloudflare Pages/Workers deployment list, or the repo-specific deploy command documented in AGENTS/README.
-3. Served artifact: curl a production or staging endpoint that proves the deployed revision, build hash, or behavior is the expected one.
-4. Behavior probe: exercise the changed route or user-visible behavior through the public URL.
-5. Metrics/prod-only claims: if claiming caching or performance, measure against the deployed dependency from outside local dev.
+When claiming caching, inspect the deployed cache mechanism and its observable behavior.
+Use repeated equivalent requests and cache or origin evidence to distinguish a hit from a fresh response.
+A cache-control header alone does not prove a hit, and provider-specific response headers depend on the cache path in use.
+When claiming performance, compare equivalent requests against the deployed runtime and dependencies.
+Record vantage, warm or cold state, sample count, distribution, and baseline differences.
 
-## Repo Memory
-
-Before proving a deploy in any repo, read local memory or agent instructions for deploy-specific pitfalls if present. Look especially for entries about asynchronous deploy queues, production validation, cache semantics, and provider-specific rollout behavior.
-
-For Cloudflare Worker caching claims, a `Cache-Control` header is not evidence. The Worker must use `caches.default`, and the proof must include two public curls where the second response shows `cf-cache-status: HIT`.
-
-For perf claims, local numbers are synthetic unless they hit the same deployed runtime and dependencies users hit. Label local measurements as local only.
-
-## Procedure
-
-1. Identify the target environment and expected revision.
-   - If the user did not name one, infer from branch: `main` means production; `develop` means staging/develop if the repo uses that split.
-   - Get the expected short SHA with `git rev-parse --short HEAD`.
-2. Check deploy status.
-   - Prefer `gh run list --branch <branch> --limit 10` and `gh run view <run-id> --log-failed` for GitHub Actions.
-   - For Workers, use the repo's documented `wrangler deployments list` or deployment script when available.
-   - For Pages, use workflow status, deployment logs, or a curlable sentinel. A successful build-hook POST is not deploy proof.
-3. Prove the served artifact.
-   - Curl a sentinel header, `/version`, inline build metadata, sourcemap comment, or behavior that uniquely identifies the target commit.
-   - If no sentinel exists, state that limitation and use the strongest available behavior probe. Add a follow-up task to create a sentinel.
-4. Probe the changed behavior through the public URL.
-   - Use real auth/session data only when needed and available.
-   - Capture HTTP status, response headers, and one exact response/body fact that would fail on the previous build.
-5. Report honestly.
-   - Say "merged, deploy pending" when queues are behind.
-   - Say "passes locally, prod proof pending" when production cannot be probed.
-   - Reserve "live", "deployed", "validated", and "confirmed" for served-artifact proof.
-
-## Output
-
-```markdown
-## Deploy Proof
-
-Target: <environment URL>
-Expected revision: <sha>
-Served revision: <sha or unknown>
-
-| Check | Result |
-|---|---|
-| Deploy workflow | PASS/FAIL/PENDING |
-| Served artifact | PASS/FAIL/UNKNOWN |
-| Behavior probe | PASS/FAIL |
-| Cache/perf proof | PASS/FAIL/N/A |
-
-Verdict: LIVE / MERGED BUT NOT LIVE / BLOCKED
-
-Evidence:
-- <command or URL> -> <key result>
-- <command or URL> -> <key result>
-
-Follow-ups:
-- <only concrete gaps, such as adding a revision sentinel>
-```
-
-If the verdict is not `LIVE`, create or update the ops-board task with the exact retry command.
+Report expected and observed revisions, deployment status, behavior results, and any cache or performance evidence relevant to the claim.
+Use `live`, `pending`, `failed`, or `unverified` according to what the checks establish.
+Update an existing release record or task when the project uses one; include evidence without exposing credentials.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /deploy-proof --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -89,8 +45,7 @@ skill-run-log /deploy-proof --target "<what this run targeted>" --verdict <VERDI
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Served revision ≠ expected SHA | `/release-conductor` | expected SHA, served SHA, and the deploy workflow run URL |
-| Deploy workflow is red | `/converge` | the failing job name + its log excerpt |
-| Served SHA matches but a behavior probe fails | `/diagnose` | the probe command, its output, and the expected result |
-| p50 latency regressed > 20% vs the pre-deploy baseline | `/evolve` | both p50/p90 numbers, n, and the dominant hop |
-| Verdict LIVE with cache/perf proof captured | `/reflect` | the proof block + the ops-board task ID it closes |
+| The rollout serves the wrong artifact and an authorized release remains | `/release-conductor` | expected and served artifacts, target, and deployment logs |
+| The deployment workflow fails | `/converge` | the failing job and logs |
+| The artifact matches but its behavior fails | `/diagnose` | the live reproduction and expected outcome |
+| Measured performance misses the product requirement | `/evolve` | comparable measurements and the dominant cost |

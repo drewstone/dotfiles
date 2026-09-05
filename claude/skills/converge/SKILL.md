@@ -5,36 +5,33 @@ description: Drive failing CI to green by reproducing failures, fixing root caus
 
 # Converge
 
-Use this only for red CI, failing checks, or a branch that must become mergeable.
-The goal is genuinely green, not hidden failures.
+Resolve failing CI and prove the required checks pass for the current branch revision.
 
-## Start
+## Diagnose and repair
 
-1. Fetch the branch and base.
-2. Read current CI status, newest logs, and any review comments tied to checks.
-3. Group failures by root cause, not workflow name.
-4. Reproduce locally when practical before editing.
-5. Record progress in `.agent/converge-progress.md` if the loop spans turns.
+1. Read the branch, target base, required checks, current run revisions, failing job logs, and relevant review comments.
+2. Find the first causal failure in each job and group failures that share a cause.
+   Compare with the base when needed to distinguish a regression from an existing failure.
+3. Reproduce the failure through the affected path when practical, then fix the cause.
+   For dependency findings, verify the advisory, affected dependency path, and compatible fixed release.
+4. Run the affected local checks and the repository's required preflight before committing and pushing.
+5. Confirm CI started for the pushed revision and wait for its terminal results.
+   Read new failures and repeat until the required checks pass or a proven external dependency prevents progress.
 
-## Loop
+Preserve the checks' intended coverage.
+Never bypass hooks, suppress failures, or weaken thresholds to obtain a passing result.
+Diagnose flaky tests; quarantine only when repository policy permits it and replacement coverage preserves the affected requirement.
+Recheck mergeability against the current base before reporting readiness.
+Report which revision passed, the checks and run URLs, fixes, and any unverified coverage.
 
-1. Fix the highest-impact root cause.
-2. Run the affected local check and the repo's broader preflight when available.
-3. Commit intentionally; never use `--no-verify`.
-4. Push, wait for CI, and read the new result.
-5. Repeat until all required checks pass or the blocker is external and proven.
+## Resume
 
-## Rules
-
-- Do not use `continue-on-error`, skip tests, or weaken checks to get green.
-- Treat flaky tests as defects to diagnose or quarantine with evidence.
-- If the base moved, prove mergeability again before claiming done.
-
-Use `references/full-reference.md` for the full resume protocol and GitHub command sequence.
+For work spanning turns, update the existing progress record or `.agent/converge-progress.md`.
+Keep the branch, base, last pushed revision, run IDs, completed fixes, remaining causes, and next check.
+On resume, compare that record with git and live CI before acting.
+A green historical run or a recorded completion does not establish that the current revision passes.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -44,8 +41,6 @@ skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> 
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| CI green and review still blocks merge | `/review-to-green` | the PR number + the outstanding review verdict |
-| ≥5 failing tests spanning ≥2 subsystems | `/diagnose` | the failure list grouped by suite + the last green SHA |
-| Same job fails on an untouched base commit (binary: reproduced on base) | `/autopsy` | the job name + both run URLs |
-| CI green and the change must become a live release | `/ship` | the merge SHA + the deploy command |
-| Release path is opaque or multi-artifact | `/release-conductor` | the artifact list + the rollback path |
+| CI passes but review still blocks an authorized merge | `/review-to-green` | the PR and unresolved review findings |
+| Failure causes remain unclear across subsystems | `/diagnose` | logs, reproductions, and the comparison with the base |
+| The verified change still needs an authorized release | `/ship` | the revision, target, and release path |

@@ -5,45 +5,43 @@ description: Split a mixed experiment branch into clean branches and reviewable 
 
 # Finalize
 
-`/evolve`, `/meta-harness`, and `/pursue` leave one branch carrying 20 mixed commits: three real improvements, some debug prints, a reverted dead-end.
-This is the bridge from that mess to N clean branches — one per logical change, each built from the merge-base, each an isolated PR a reviewer approves in one sitting.
-It **decomposes** a branch; it does not deploy one.
+Separate a mixed branch into reviewable changes without losing intended work.
+Produce one branch when there is only one logical change; this task does not itself authorize deployment.
 
-Shared conventions in `_common.md`.
+## Reconstruct the intended work
 
-## When to use
+1. Record the source revision, target base, merge-base, and working-tree state.
+   Preserve the source branch and unrelated edits; do reconstruction in isolated worktrees.
+2. Inspect commits and the net diff to identify intended changes and confirmed noise.
+   Commit labels are clues, not proof that work belongs together or should be removed.
+3. Define the target tree containing all intended work.
+   If excluding changes, reconstruct and inspect that tree independently before splitting it.
+4. Group changes by behavior and reviewability.
+   Split shared files by hunk when the changes can be understood and tested separately.
+   Keep coupled changes together or record a dependency between them.
+5. Build each branch on the target base or its prerequisite branch.
+   Validate every branch against its actual PR base so a dependency flag never disguises a broken branch.
+6. Reconstruct all groups in dependency order in a scratch worktree and compare its tree hash with the target tree.
+   Accept the comparison only after every application or merge succeeds.
+   Resolve any missing, extra, or conflicting change before publishing.
+7. Fetch the current target base and prove each proposed PR merges cleanly against its intended base.
+   Revalidate affected branches if the base changes.
 
-| Signal | Skill |
-|---|---|
-| "Deploy this one change to prod" | `/ship` |
-| "CI is red, get it green" | `/converge` |
-| "Design a new architecture" | `/pursue` |
-| "20 mixed commits — turn them into clean PRs" | **`/finalize`** |
+For hunk carving, dependency analysis, or reconstruction checks, read [branch reconstruction](references/branch-reconstruction.md) before creating the branches.
 
-## Procedure
+## Deliver
 
-1. **Triage — separate KEEP from noise.** Walk the commits with per-file diffs (`git log --reverse --stat "$(git merge-base origin/main HEAD)"..HEAD`). Mark each KEEP (real change) or SKIP (debug print, WIP later reverted, dead-end, stray bump, main-sync merge). The tree you reconstruct — the **target tree `T`** — is KEEP-only; nothing else survives into a branch.
-2. **Group KEEP changes into disjoint change-sets — deterministically, not by vibes.** Seed one group per distinct Conventional-Commit `type(scope)` on the kept commits. The change unit is a whole file when only one seed touches it (fast path); when two seeds touch one file, the unit drops to the `@@` hunk. Force a merge only where two seeds own the **same or adjacent line-range** — a true line conflict, not a mere shared file. Emit the partition plus the edges that forced each merge, so the grouping is inspectable, not a judgment call.
-3. **Flag cross-group dependencies; preserve application order.** Disjoint lines still hide logical order: if group B references a symbol group A adds, they never git-conflict but a reviewer who merges B first hits a red build — tag `depends-on: A`. Number branches in original commit order (a valid apply sequence) so the chain stays satisfiable.
-4. **Build one branch per group from the merge-base.** From `M=$(git merge-base origin/main HEAD)`: `git restore --source=$T` whole files the group solely owns; for a shared file, `git apply --index` only that group's carved hunks. Commit with a Conventional-Commit message and no AI co-author trailer.
-5. **Prove the union equals the target tree — or you have lost work.** Octopus-merge all atomic branches onto a throwaway branch from `M` and compare its tree hash to `T`. Equal → nothing lost, nothing added. Gate the comparison on the merge exit code: a conflicted octopus means two branches share a line-range (a step-2 violation), not a mergeable union.
-6. **Prove base-mergeability, attribute the metric, then report.** `git fetch origin main`; every branch must pass `git merge-tree --write-tree origin/main <branch>` clean. Carry each branch's recorded metric delta (`.agent/experiments.jsonl`) into its PR body; re-run a grader only with an additivity check. Report branches, file/hunk-sets, diffstats, deltas, `depends-on` flags, base-mergeability, and cleanup commands.
-   Open the PRs in application order when that action is already authorized for this session.
-   Otherwise, present the prepared branches and PR descriptions for approval.
-   Use `gh-drew` for Tangle PRs; never `--no-verify`.
+Preserve a branch-to-PR map, source and target revisions, grouping decisions, dependencies, checks, and reconstruction result in `.agent/finalize/<date>-<slug>.md`.
+Use existing experiment records when explaining a change, but identify the revision and conditions those measurements describe.
+A combined experiment result does not establish the isolated effect of a split branch.
 
-## Rules
-
-- **Split at the hunk, not the file.** Two changes may share a file as long as they don't share a *line* — give each its own hunks and they still make independent PRs. Only genuinely entangled lines collapse into one PR; forcing a merge for *any* shared file turns this into a branch-organizer, not a decomposer.
-- **Prove the union equals the target tree, or you have silently lost work.** The tree-hash match is the proof; "the construction felt right" is not. A mismatch means a hunk vanished or an extra one rode along — find it with `git diff $T $U` before you push a single branch.
-- **Don't force splits — one kept change is one clean branch.** Splitting falls out of the partition, never a quota; if triage leaves one logical change, finalize outputs one tidy branch from the merge-base.
-- **Conventional Commits, real base-mergeability, no shortcuts.** Every branch `feat|fix|chore(scope): …`, proven against a freshly fetched `origin/main` (git ≥ 2.38 for the `--write-tree` exit-code contract), `gh-drew` on Tangle repos, never `--no-verify`.
-
-Use `references/full-reference.md` for the deterministic grouping algorithm, the exact hunk-carve and union-verification commands, symbol-flow dependency detection, stacked-PR machinery, and edge cases.
+Prepare accurate PR descriptions and complete the authorized PR workflow in dependency order.
+Use the required repository identity and hooks.
+Use merge or release authority already granted; request only authority still missing after the concrete result is ready.
+Delete a branch only after confirming it is merged or deliberately abandoned.
+Preserve the source branch until all retained work is accounted for.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /finalize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -53,8 +51,7 @@ skill-run-log /finalize --target "<what this run targeted>" --verdict <VERDICT> 
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Each atomic branch, before it becomes a PR | `/critical-audit` | the branch name + `--diff-only` scope |
-| A branch's CI comes back red | `/converge` | the branch name + the failing job |
-| Union hash does not match the original branch | `/autopsy` | the union diff, the missing hunk, and both hashes |
-| A branch is approved with 0 blockers | `/ship` | the branch SHA + the deploy command |
-| ≥4 branches split and the session ends | `/session-continuity` | the branch→PR map + which are still unreviewed |
+| A reconstructed change needs a correctness review | `/critical-audit` | the branch, intended base, and scoped diff |
+| A branch has failing CI | `/converge` | the branch and failing checks |
+| Reconstruction differs from the intended target and the cause is unclear | `/autopsy` | the successful operations, tree hashes, and exact diff |
+| Unfinished branch or PR work must survive a session replacement | `/session-continuity` | the branch-to-PR map and current state |

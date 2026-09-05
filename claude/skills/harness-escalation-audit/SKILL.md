@@ -3,67 +3,44 @@ name: harness-escalation-audit
 description: Audit how coding backends surface permissions, questions, plans, hooks, and MCP.
 ---
 
-# harness-escalation-audit
+# Harness escalation audit
 
-Refresh the per-harness user-interaction-escalation capability map. Source of truth
-is `docs/processes/harness-user-escalation.md` (the dated two-mode matrix); this
-skill re-runs the research that fills it and updates the dates so staleness is
-visible. Evidence-required — the codex 0.142.x drift shipped because a capability
-was *assumed*, so every cell needs a source.
+Check how coding backends surface permission requests, questions, and plans to a user.
+Keep documented capability distinct from behavior wired into the current product.
 
-## When to run
+Use this after a relevant CLI or adapter change, or when an integration decision depends on the current capability map.
 
-- A new harness/adapter lands under `packages/sdk-provider-*`.
-- A harness bumps a major version (its CLI flags / MCP / hook surface may change).
-- Any matrix row's **Audited** date is > 90 days old.
-- The user wants to know what's wired / wireable / blocked, or whether a user can
-  bring their own harness or extension.
+## Check the real paths
 
-## Process
+1. Locate the repository's escalation record and adapter sources.
+   In agent-dev-container, start with `docs/processes/harness-user-escalation.md`, `packages/sdk-provider-*`, and the interactive session implementation.
+   Resolve current paths from the repository before assuming that an older layout still applies.
+2. Enumerate the supported backends from their registered adapters and interactive launch configuration.
+3. For each relevant backend, record its installed version and actual invocation in both modes:
+   headless execution with remote responses, and interactive terminal execution with human responses.
+4. Inspect the adapter, installed CLI help, and current official documentation for permission, question, and plan handling.
+   Verify whether hooks, MCP tools, or extensions are called and whether their answers reach the running task.
+5. Run an authorized minimal interaction when documentation or wiring alone cannot establish support.
+   Check the request, user-visible delivery, response, continuation, cancellation, and timeout behavior that the product needs.
+6. Update the existing record with sources, audited versions, dates, results, and missing evidence.
+   Reconcile declared interaction kinds with the product's coverage record and run its current documentation checks.
 
-1. **Enumerate harnesses** — every `packages/sdk-provider-<name>/` plus the
-   `INTERACTIVE_BINARY` map in
-   `apps/sidecar/src/interactive/interactive-session-manager.ts`.
+Independent backend research can run in parallel when delegation is available and authorized.
+Choose the work split from the backends under review; no particular orchestration API is required.
 
-2. **Fan out one research agent per harness** (a `Workflow` with `agentType: 'Explore'`,
-   one parallel agent per harness, structured output). Each agent MUST, for its
-   harness, produce evidence — no claim without a source:
-   - read our adapter under `packages/sdk-provider-<harness>/src/`;
-   - run the real CLI: `<bin> --help`, `<bin> mcp --help`, `<bin> --version`
-     (binaries resolve on `PATH` or `/nix/profile/bin`);
-   - WebSearch/WebFetch the harness's **official** docs for: MCP support
-     (does the agent *call* tools, not just register them), tool-approval /
-     permission callbacks, hooks, plugins/extensions, plan mode, and the
-     headless-vs-interactive invocations.
-   Return per kind (permission / question / plan) **× mode** (headless /
-   interactive): `native-hook(<method>)` | `mcp` | `extension` | `none` | `unknown`,
-   each with a citation + a confidence (`low` ⇒ say "unverified", never guess).
+## Report
 
-3. **Synthesize** — rebuild the matrix; re-derive the tiers (1 wired · 2 capable-via
-   MCP/hook · 2-ext capable-via-extension-no-MCP · 3 structurally blocked); re-test
-   the "generic interaction MCP server" enabler against the data (which harnesses it
-   reaches vs needs a native hook vs an extension shim vs is impossible).
+For each backend, interaction kind, and execution mode, record:
 
-4. **Update the doc** — refresh each row + its **Audited** date, the tiers, the
-   enabler section, the BYO answer, and the open live-tests. Reconcile against
-   `interaction-coverage.md` (declared kinds) and fix any divergence.
+- the native hook, MCP tool, extension, or other supported mechanism;
+- whether the adapter wires that mechanism into the product;
+- the source or live check supporting the claim;
+- unsupported or unknown behavior and the check that would resolve it.
 
-5. **Verify** — run `node scripts/check-processes.mjs`; commit on a branch; open a
-   PR via `gh-drew`.
-
-## The shape of the answer
-
-Two run modes per harness: **headless** (structured broker, remote app answers — the
-hard surface) and **interactive** (native TUI in a PTY, human answers — works for
-free where a TUI exists). The matrix's value is the headless column. The single
-highest-leverage build is a generic interaction MCP server
-(`request_permission`/`ask_user`/`request_plan` → the broker); it is a *majority*
-unlock, paired with native hooks (codex/opencode/acp permission) and an extension
-shim for the MCP-refusers (pi, openclaw).
+Do not infer headless support from an interactive terminal demonstration.
+Recommend a shared integration mechanism only after the current evidence shows which backends it can reach.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /harness-escalation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -73,7 +50,6 @@ skill-run-log /harness-escalation-audit --target "<what this run targeted>" --ve
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| ≥1 harness moved into Tier 2 (capable, unwired) | `/pursue` | the harness name, the capability, and the wiring gap |
-| ≥1 open live-test is now closeable | `/verify` | the harness + the exact e2e command to run |
-| ≥3 harnesses fail the same escalation surface | `/diagnose` | the surface + the per-harness evidence |
-| Matrix updated with 0 tier changes | `/reflect` | the matrix diff (empty) + the cells still unproven |
+| A required capability is supported but unwired | `/pursue` | the adapter, mechanism, and demonstrated gap |
+| A documented capability still needs a live interaction check | `/verify` | the invocation and expected request-response behavior |
+| Multiple failures appear to share one integration cause | `/diagnose` | the affected paths and per-backend evidence |

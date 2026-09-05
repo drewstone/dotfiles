@@ -1,50 +1,53 @@
 ---
 name: calibrate-before-measure
-description: Before an eval, prove the metric separates good and bad cases and rejects a trivial baseline.
+description: Before an evaluation, check that scoring distinguishes required behavior and establish what a simple baseline can do.
 ---
 
-# Calibrate Before Measure
+# Calibrate before measure
 
-This is a guard skill.
-Complete it before spending on an eval, benchmark, A/B test, or optimization run.
+This guard checks whether an evaluation can answer its intended question before broader spending.
+Reuse existing calibration while its cases, scoring path, and relevant conditions remain applicable.
 
-## Prove The Metric Separates Quality
+## Check the scoring path
 
-1. Build one clearly capable fixture and one realistic bad fixture for the behavior being measured.
-2. Score both through the exact production scoring path.
-3. Require a wide separation around the decision boundary.
-4. Inspect every scoring input and intermediate result for leakage, constant outputs, missing evidence, and proxy metrics.
-5. Repair the metric and repeat if the bad fixture passes or the capable fixture fails.
+1. State the required behavior and the decision the result controls.
+2. Select independently justified acceptable and realistic unacceptable fixtures.
+   Include borderline cases when the decision depends on a boundary.
+3. Score them through the exact path the evaluation will use.
+4. Check the inputs and intermediate results for leakage, missing evidence, constant output, and unrelated proxy measures.
+5. Confirm that acceptable behavior passes and the relevant failure fails with adequate separation for the observed scoring variation.
+   Use the domain's decision boundary and error costs; do not invent a universal score cutoff.
+6. Repair and repeat when the scoring path cannot support the intended decision.
 
-Do not choose universal score cutoffs when the domain already has a meaningful pass boundary.
-Record the two fixtures, scores, and margin.
+## Establish the simple baseline
 
-## Prove The Task Needs The Capability
+Run the simplest plausible solution under the same conditions.
+Examples include a constant answer, a direct lookup, or one unguided attempt.
+If it ties the intended system, determine what the comparison was meant to establish.
 
-Run the simplest plausible baseline, such as a constant answer, one search, or one unguided attempt.
-If it ties the intended system, the case is too easy, saturated, or measuring the wrong behavior.
-Strengthen the case before comparing systems.
+- If the user task is solved adequately, retain the result as evidence that the simpler solution may suffice.
+- If the claim concerns a capability or difficult condition absent from the case, add a case that exercises that claim.
+- If leaked answers or scoring defects explain the tie, repair them before comparing systems.
+
+Do not make a task harder solely to ensure that the intended system wins.
 
 ## Completion
 
-Report the strong score, weak score, separation, simple-baseline score, sample count, exact command, and artifact paths.
-No broader run starts until both checks pass.
-Once both pass, return to the original evaluation with this evidence.
-Repeat calibration only when the case, scoring path, or relevant conditions change.
+Record the fixtures and label sources, scores, sample counts, scoring variation, baseline result, exact command, and artifact paths.
+Resume the original evaluation once these checks support its stated question.
+If they do not, identify the failed condition and the correction required before broader spending.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /calibrate-before-measure --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /calibrate-before-measure --target "<evaluation and decision>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Calibration passes, but the checked task omits a difficulty required by the original claim | `/push-past-easy` | the missing difficulty, original claim, and calibration evidence |
-| Metric separation between the known-good and known-bad case is inside 2× the noise floor | `/eval-engineering` | the separation number + the case/scoring design that failed |
-| A trivial baseline (no tools, no search, empty diff) scores ≥ 80% of the real run | `/eval-engineering` | the baseline score + the case that is too easy |
-| Judge disagrees with human labels on > 10% of ≥20 labeled examples | `/eval-agent` | the disagreement rows + the current rubric |
+| The task omits a difficulty required by the original claim | `/push-past-easy` | The missing difficulty and calibration evidence |
+| The case or scoring path cannot distinguish required behavior | `/eval-engineering` | The failed fixtures and scoring evidence |
+| Semantic judgments disagree with independent labels beyond the decision's tolerance | `/eval-agent` | The disagreement rows, labels, and rubric |
+| The simple solution meets the actual requirement | `/simplify` | The requirement, comparison, and implementation scope |

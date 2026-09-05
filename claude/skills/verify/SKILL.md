@@ -3,55 +3,42 @@ name: verify
 description: Run relevant tests, builds, checks, and git inspection; report proof and unchecked work.
 ---
 
-# Verify Before Ship
+# Verify
 
-Perform a thorough verification that work is complete and ready to ship. Do NOT ask questions — run checks and report.
+Verify the requested artifact and revision, then report the evidence and unchecked work.
+A clean or fully pushed branch still needs the requested verification.
 
-## Fit Check — before verifying
+## Establish coverage
 
-1. **Repo shape**: verify works on any git repo. No bootstrap required.
-2. **Build present**: if the repo has no build step and no test command, verify's scope is reduced to diff review + secrets + debug-artifact scan. Surface this explicitly in the report so the operator doesn't infer false coverage.
-3. **Target**: identify the artifact, revision, and comparison base requested by the user.
-   A clean or fully pushed branch still needs the requested verification.
-4. **Resume check**: if `.agent/current.json` shows a `/pursue` or `/converge` session in flight, verify's report is the INPUT to their evaluate/stop steps, not a standalone deliverable. Include the active skill's session ID in the report so the caller can correlate.
+1. Identify the target, revision, comparison base, and user's completion requirements.
+2. Read current git state, staged and unstaged changes, and the complete relevant branch diff.
+3. Read repository checks and the tests that cover the changed behavior.
+   Choose unit, integration, build, or browser checks according to the boundary being changed.
+4. Check changed files for exposed credentials and debug artifacts that would affect the delivered result.
+   Inspect candidates in context; legitimate logging or a remaining TODO is not automatically a defect.
 
-## Read Current State
+## Run and assess
 
-Read `git status --short`, staged and unstaged diffs, and the branch diff against the requested base.
-Inspect the complete relevant diff.
-Report command failures and any files excluded from review.
+Run the affected checks and the repository's required validation.
+Respect dependencies between commands and collect each exit status when checks run concurrently.
+Confirm that regression coverage can catch the behavior it claims to protect.
+A test double can isolate a dependency, but cannot stand in for the integration behavior the test claims to verify.
 
-## Additional Checks (run in parallel)
+If no build or test command exists, inspect the actual artifact with suitable structural, link, syntax, or behavioral checks.
+State the resulting coverage rather than implying a test suite ran.
+Diagnose failures and repair them when fixes are part of the request.
+Keep report-only verification read-only.
 
-1. **Tests pass** — run the full test suite. Report pass/fail counts. For any test file ADDED in this diff, confirm it exercises real infra: real DB, real HTTP call, real sidecar — not `vi.fn()` / `mockFetch` / in-memory stubs standing in for the system under test. Mocks are fine at process boundaries; they are NOT fine as primary coverage of the new code. A mocked test passes while the production bug stays.
-2. **No debug artifacts** — grep changed files for `console.log`, `print(`, `debugger`, `TODO`, `FIXME` that shouldn't ship.
-3. **Build succeeds** — if the project has a build step, run it.
-4. **No secrets** — scan changed files for patterns that look like API keys, passwords, or credentials.
-5. **Changed behavior has a named regression** — every test added or modified in the diff should have a one-line comment or test name that describes the bug it would catch if the code regressed. Tests without a named regression are hope, not coverage.
+## Result
 
-## Report format
+For each relevant check, report `PASS`, `FAIL`, `UNCHECKED`, or `N/A`, with the command or inspection evidence and its result.
+Include counts where the tool reports them, exclusions, environment limits, and unresolved concerns.
+Name the verified revision and any changes made after it was checked.
 
-```
-## Verification
-
-| Check | Result |
-|-------|--------|
-| Tests | PASS (N passed, M failed) |
-| Real-infra coverage | OK / N mocked tests covering new code |
-| Git status | CLEAN / N uncommitted files |
-| Debug artifacts | CLEAN / N found |
-| Build | PASS / FAIL / N/A |
-| Secrets scan | CLEAN / WARNING |
-| Diff review | OK / N concerns |
-
-Overall: SHIP IT / HOLD (reasons)
-```
-
-If any check fails, explain what needs fixing before shipping. Be specific.
+A ready-for-release verdict means the requested verification passed; it does not grant deployment authority.
+If this is part of an active task, pass the results back to that task and continue its already-authorized work.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -61,9 +48,7 @@ skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Overall SHIP IT | `/ship` | the verified SHA + the deploy command |
-| HOLD with ≥1 FAIL and a non-trivial fix | `/pursue` | the failing check + the design the fix needs |
-| HOLD only from fixed-rubric gaps (no FAIL rows) | `/polish` | the rubric gaps + the files they sit in |
-| HOLD because CI or the local gate is red | `/converge` | the failing job + its log excerpt |
-| Real-infra coverage shows ≥1 new code path covered only by mocks | `/harden` | the path + the real-infra test that must replace the mock |
-| SHIP IT and ≥3 skill runs logged this session | `/reflect` | the `.agent/skill-runs.jsonl` tail + the proof table |
+| Verification passes and an authorized release remains | `/ship` | the verified revision, target, and release path |
+| Required local or remote checks fail | `/converge` | the failure evidence and preserved requirements |
+| Unresolved quality gaps need an implementation review | `/polish` | the gaps and checks that exposed them |
+| A security boundary remains untested | `/harden` | the boundary, risk, and missing behavior check |

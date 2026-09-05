@@ -1,47 +1,47 @@
 ---
 name: director-autopsy
-description: Audit recursive research directors from run records, including depth, profile changes, artifact use, corrections, costs, and research outcomes.
+description: Audit recursive research directors from run records, including profile changes, artifact use, recovery, costs, and research outcomes.
 ---
 
 # Director autopsy
 
-Use this to explain how research directors behaved and what the next run should change.
-Evaluate the system's work; do not perform the research or launch another campaign.
+Explain how research directors behaved and what the evidence implies for the next run.
+This audit does not perform their research or launch a new campaign.
 
-## Measure every director
+## Collect the complete record
 
-1. Read the current public CLI help and repository index.
-2. Run `node tools/director-census.mjs --json` from the lab checkout for the complete comparable record.
-3. Run `disco inspect` for the fleet.
-   Define outliers from the census, then run `disco report <runId>` for each one.
-   From a checkout, use `node tools/disco.mjs` when the installed command is unavailable.
-4. Preserve a row for every director, including zero, null, missing, failed, and unmatched values.
-5. Divide the director rows into disjoint batches that fit the available parallel capacity.
-   Give each row to one independent reader, then give the complete table to a separate critic.
+In a lab with the director census, run `node tools/director-census.mjs --json` and `disco inspect`.
+Inspect raw details with `disco report <runId>` for unexplained results and exceptions in the census.
+Use `node tools/disco.mjs` from the checkout when the installed CLI is unavailable.
+If the project uses a different record interface, locate its census and run-detail commands in the current project source.
+Report failed commands and unavailable records.
 
-Measure at least:
+Preserve a row for every director in scope, including failed, inactive, unmatched, and missing results.
+Collect every available measured field, including:
 
 - questions proposed, selected, dispatched, and settled;
-- direct children, descendants, maximum depth, and parallel occupancy;
-- exact root and descendant profile identities;
-- profile or strategy revisions and the evidence that caused each change;
-- feedback rounds, context replacements, restarts, and resumed assignments;
-- checked child artifacts and proof that an ancestor used them;
+- children, descendants, depth, and parallel occupancy;
+- root and descendant profile identities;
+- profile or strategy revisions and their triggering evidence;
+- feedback, context replacements, restarts, and resumed assignments;
+- checked descendant artifacts and ancestor use;
 - seeded false claims accepted or rejected;
-- terminal state, failures, retries, tokens, cost, and wall time;
-- independently verified claims and independently judged research movement;
+- terminal state, failures, retries, tokens, cost, and elapsed time;
+- independently checked claims and research progress;
 - candidate/control attempts and matched pairs.
 
-## Decide
+Reconcile the census totals with raw records.
+When parallel readers would help, give them disjoint run sets and reconcile their findings against the complete record.
+Do not infer coverage from the number of readers.
 
-Separate three conclusions:
+## Interpret
 
-1. Did the intended recursive mechanism run?
-2. Did the resulting work pass its independent checks?
-3. Did it improve research outcomes at equal actual resources?
+Separate whether the mechanism ran, whether its output passed independent checks, and whether it improved research outcomes under the registered resource comparison.
+Report resource and sampling differences before a comparative verdict.
+An inactive mechanism leaves its quality claim untested, while its execution failure remains an observed outcome.
+File presence, citations, and self-reported success cannot establish novelty or useful research progress.
 
-Do not use file presence, citation count, or self-reported success as a novelty result.
-An inactive mechanism makes the architecture question untested, not failed.
+Give the run IDs and evidence for each conclusion, the unresolved checks, and changes supported by the audit.
 
 ## Log the run
 
@@ -53,7 +53,7 @@ skill-run-log /director-autopsy --target "<runs or all>" --verdict <VERDICT> --n
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| One outlier needs a causal explanation | `/autopsy` | the run ID and raw artifacts |
-| Several directors share a confirmed failure | `/diagnose` | the complete rows and confirmed example |
-| The mechanism never activated | `/discovery-lead` | the missing event and smallest live proof |
-| The mechanism activated and the comparison is calibrated | `/arena-experiment` | the full matched rows and resource accounting |
+| An outlier needs a causal explanation | `/autopsy` | The run ID and raw artifacts |
+| Directors may share a failure cause | `/diagnose` | The complete rows and confirmed example |
+| The claimed mechanism did not execute | `/discovery-lead` | The missing event and smallest live proof |
+| Valid records support an architecture comparison | `/arena-experiment` | The cases, matched rows, and resource accounting |

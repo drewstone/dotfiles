@@ -1,42 +1,45 @@
 ---
 name: agent-behavior-audit
-description: Audit whether an autonomous agent observes state, uses tools, learns, and follows user intent.
+description: Audit whether an autonomous agent observes state, uses tools, and follows its promised behavior and user intent.
 ---
 
-# Agent Behavior Audit
+# Agent behavior audit
 
-Use this when product claims about autonomy need proof.
-Treat UI labels, docs, and architecture diagrams as claims until traces or tool records prove them.
+Use this when a product claim about autonomy needs proof.
+Treat labels, documentation, and the agent's account of its work as claims until execution records support them.
 
-## Flow
+## Audit the promised behavior
 
-1. Identify the promised agent behavior and the real user task.
-2. Collect traces, logs, tool calls, state changes, prompts, outputs, and run artifacts.
-3. Check whether the agent observed real state before acting.
-4. Check whether it used real tools or only narrated actions.
-5. Check whether it reflected on outcomes and changed behavior across turns/runs.
-6. Compare actual behavior to user intent and product claims.
-7. Classify gaps as fake action, blind action, no learning, bad incentives, or missing observability.
+1. Identify the user task, granted authority, and behavior the product promises.
+   Require learning across runs only when the product claims that capability.
+2. Collect the relevant prompts, traces, tool results, outputs, and state changes under their actual run identities.
+3. Check whether the agent observed the state needed for its decision, performed the action, and checked the resulting effect.
+4. Compare its decisions with the user mandate, including permissions, completion conditions, and handling of failures.
+5. For a learning claim, trace feedback to a later changed decision and its outcome.
+   A reflection file alone does not show learning.
+6. Distinguish observed defects from missing evidence.
+   For each defect, identify the earliest decision or component that explains it.
 
-## Output
+Read [the evidence guide](references/evidence.md) when records disagree, side effects need attribution, or the scope includes several agents.
 
-Report claim, evidence, verdict, impact, and required fix for each behavior gap.
-Use `references/full-reference.md` for the full question list and red flags.
+## Report
+
+For each behavior claim, give the evidence, verdict, user impact, and correction or missing check.
+Keep legitimate deterministic behavior separate from unsupported claims of autonomous behavior.
+Run available checks within the task's authority before leaving a claim unresolved.
+An audit request alone does not authorize changes to the audited product.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /agent-behavior-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /agent-behavior-audit --target "<behavior and runs>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Observed fake success, silent fallback, or credential exposure (≥1 finding) | `/harden` | the finding's file:line + the exact prompt/input that reproduces it |
-| The gap is the coding backend not surfacing permissions, questions, plans, hooks, or MCP | `/harness-escalation-audit` | the harness name + the surface it failed to expose |
-| ≥3 behavior defects and no case scores this behavior | `/eval-agent` | the defect list as candidate rubric items + 2 pass and 2 fail transcripts |
-| A behavior score exists and sits below target for ≥2 runs | `/evolve` | the score as baseline metric, its noise floor, and the failing transcripts |
-| 0 P1 findings and score ≥ 8/10 | `/reflect` | the audit artifact path + this run's `.agent/skill-runs.jsonl` row |
+| A confirmed defect crosses a security or data boundary | `/harden` | The reproduction and affected boundary |
+| The coding backend failed to expose permissions, questions, plans, hooks, or MCP | `/harness-escalation-audit` | The backend and missing surface |
+| A recurring behavior needs an executable regression case | `/eval-engineering` | The claim and passing/failing traces |
+| A valid behavior measure has a known improvement to test | `/evolve` | The baseline, failing traces, and proposed change |

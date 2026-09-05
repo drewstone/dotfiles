@@ -1,58 +1,51 @@
 ---
 name: agent-eval
-description: Maintain agent-eval cases, judges, run records, traces, campaigns, comparisons, and releases.
+description: Maintain agent-eval contracts, scoring, comparisons, traces, and release evidence.
 ---
 
 # Agent Eval
 
-Use this only when changing `@tangle-network/agent-eval` itself.
-Product integrations belong in the adoption flow.
-Current source, types, exports, and package docs define the API.
+Change `@tangle-network/agent-eval` itself while preserving trustworthy measurements and public contracts.
 
-## Procedure
+## Read the owning source
 
-1. Read the package README, concepts doc, target subpath barrel, and implementation.
-2. Search for an existing primitive, adapter, and regression test before adding one.
-3. Keep cases, scores, run records, comparisons, statistics, and trace analysis in eval.
-4. Keep execution, worker control, and product storage transactions out of eval.
-5. Add focused behavior and error tests, then public-import tests for exported changes.
-6. Update the nearest user document and changelog when consumers must act.
+Start with the current [package concepts](https://github.com/tangle-network/agent-eval/blob/main/docs/concepts.md) and [public exports](https://github.com/tangle-network/agent-eval/blob/main/package.json).
+Read the implementation and existing tests for the affected export before adding a primitive.
+Use the current maintained checkout; confirm the target package's actual imports when changing an existing consumer.
 
-## Integrity Rules
+Eval owns cases, scores, run records, comparisons, statistics, and trace analysis.
+Execution and worker control belong to Runtime; product storage transactions and release authority belong to the consumer.
 
-- Missing backend use, output, trace evidence, usage, or identity fails loudly.
-- Record pinned model versions, complete errors, cost, and latency.
+## Preserve measurement integrity
+
+- Keep agent failure, measurement failure, and unavailable evidence distinct.
+- Capture the requested and observed execution identity, errors, usage, cost, and latency; mark missing values explicitly.
 - Preserve unknown provider fields and redact secrets at ingestion.
-- Use code for objective facts and model judges only for semantic facts.
-- Deterministic failures cannot be overridden by a model score.
-- Keep service and measurement failures distinct from agent failure.
-- Pair baseline and candidate on equivalent cases and conditions.
-- Compare authored text against a length-matched neutralized control.
-- Reject a lift that survives removal of the candidate's content.
-- Test the delivery carrier; an unread file is not equivalent to a tool description.
-- Keep candidate-generation cases separate from final decision cases.
-- Search returns detached candidates; it does not mutate live product state.
-- Do not add silent fallbacks, duplicate run formats, or product-specific policy.
+- Use code for objective facts and calibrated model judges for semantic facts.
+  A model score cannot override a deterministic failure.
+- Pair comparisons on equivalent cases and conditions; keep candidate development separate from final decision cases.
+- When evaluating authored instructions, compare against a length-matched neutral control and confirm the delivery method reaches the agent.
+- Search returns candidates without changing live product state.
 
-## Output
+## Change and prove
 
-Report source files read, exact public exports changed, integrity rules preserved, tests run, and artifact paths for any measured result.
-Run package typecheck, build, package verification, and the full suite for shared contracts, statistics, capture, or public exports.
+Reuse the existing implementation or adapter before adding another.
+Add behavior and failure tests that distinguish the changed contract, including public imports when exports change.
+Update the nearest consumer document when consumers must act.
+Run the package's relevant checks; shared contracts, statistics, capture, and export changes also require the full suite and package verification.
+
+Report changed contracts, source locations, checks, and result artifacts.
+Do not call an unchecked measurement valid.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /agent-eval --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /agent-eval --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| Diff touches redaction, credentials, wire input, or release authority (binary: those files appear in `git diff --name-only`) | `/harden` | the changed file list + the trust boundary each one crosses |
-| 0 existing cases cover the changed production path | `/eval-engineering` | the production trace or code path to convert into one pinned case |
-| Judge agreement with human labels < 0.9 over ≥20 labeled examples | `/eval-agent` | the labeled set + the current disagreement rows |
-| A deployed result looks contaminated (pass rate moved > 20pp with no agent change) | `/eval-harness-diagnose` | the run record IDs on both sides of the jump |
-| Package builds and ≥1 case runs green | `/verify` | the case IDs run + the exact command and its output |
+- `eval-engineering` when the changed production path has no representative evaluation.
+- `eval-agent` when semantic judgments disagree with labeled examples.
+- `eval-harness-diagnose` when measured results conflict with execution evidence.
+- `harden` when changed ingestion or release authority crosses a trust boundary.

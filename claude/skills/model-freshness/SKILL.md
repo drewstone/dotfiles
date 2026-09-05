@@ -1,86 +1,55 @@
 ---
 name: model-freshness
-description: Verify declared model IDs against live routing and current releases before choosing, changing, or shipping a model.
+description: Check current model availability and actual served identity before choosing or changing models.
 ---
 
-# Model freshness
+# Model Freshness
 
-A model id in product config is a claim about the world that rots silently. Three
-different things go wrong and they look identical from inside the product:
+A catalog entry proves discoverability; a successful response does not prove which model served it.
+Check both current availability and the identity that actually answered on the product's route.
 
-| what happened | what the product sees |
-|---|---|
-| the id is a generation behind | nothing — it works, on an old model |
-| the id no longer exists upstream | an error, eventually, in production |
-| the upstream account is capped or its key is dead | **a 200 from a different model** |
+## Inspect current declarations and routing
 
-The third is the dangerous one. The router fails over, so a request for
-`gpt-5.5` can answer 200 with `body.model = gemini-2.5-flash`. Status codes and
-catalog listings both say "fine". Only comparing the id that ANSWERED against
-the id you ASKED for catches it.
-
-## Run it
+Read the maintained [model-freshness tool](../../tools/model-freshness) before running it, including its product registry and supported options.
+Use its JSON output when comparing declaration sites and live outcomes:
 
 ```bash
-model-freshness            # full report
-model-freshness --quiet    # only problems (what the cron runs)
-model-freshness --json     # machine-readable
+model-freshness --json
 ```
 
-Exit code is non-zero when something needs a human. The daily local cron writes
-`/tmp/model-freshness.log`; there is no CI gate for this by design.
+The tool sends real requests and can incur usage.
+Use its configured sources only when they cover the requested product; inspect missing or unreadable source reports before treating coverage as complete.
+For model families or providers outside that registry, consult current official releases and probe the product's actual route.
 
-Verdicts:
+## Interpret the result
 
-- `ok` — the id served itself.
-- `SUB` — **served, by a different model.** Read the `failover` field: it names
-  the trigger (`provider_quota_exhausted`, `provider_key_invalid`, …). The
-  product is silently running on something else.
-- `DEAD` — the router refused. The `cause` is the router's own
-  `X-Tangle-Failure-Category`, so a spend cap, a revoked credential and a
-  genuinely unmapped model are three different lines, not one message.
-- `GONE` — the id is not in the catalog at all.
-- `newer available` — the id serves, and a later generation of the same family
-  is in the catalog.
+Compare the requested identity with the returned model and routing metadata.
+Distinguish a substituted response, unavailable route, missing catalog entry, unreadable source, and a newer available option.
+A newer catalog entry is a candidate to check, not proof that its route works or that it meets the product's needs.
 
-## Changing a model id
+When choosing a model, use current supported options that satisfy the required quality, capability, cost, and latency.
+Keep an intentional product choice when its evidence still supports it.
+Do not change model families merely to make a freshness report quiet.
 
-1. **Probe before you write it down.** A real chat completion, and check that
-   the answer came back under the id you asked for. Catalog presence is not
-   liveness; a 200 is not proof it was your model.
-2. **Fallback chains leave the family.** A same-family fallback shares the
-   outage it exists to escape. `claude-* → gemini-*`, not `gpt-5.5 → gpt-5`.
-3. **Update every declaration site.** Products name models in more than one
-   place: the profile catalog, the chat resolver, `wrangler.toml`, and the tests
-   that pin them. `model-freshness` prints the file for every id it found.
-4. **Tests that pin a literal id must move with it.** Where the literal is
-   really a product constant, assert the constant instead — it cannot rot.
-5. **Re-run the tool.** The id you just wrote should read `ok` with no
-   `newer available`.
+## Correct the cause
 
-## When a model is DEAD or SUB
+For quota or credential failures, inspect the route's actual error and the credential owner's runbook.
+For a retired or unavailable model, select and probe a supported replacement.
+Inspect the router's current configuration before assuming a route is absent or adding a mapping.
+Preserve fallback behavior required by product policy; make substitutions visible and test the intended failure behavior.
 
-The cause decides who fixes it, and they are not the same person:
-
-- `provider_quota_exhausted` — the upstream account hit a spend limit. Nothing
-  in our code fixes it; raise the cap or fund the account.
-- `provider_key_invalid` — rotate the credential in
-  `~/company/devops/secrets/tangle-router.env` and redeploy the router.
-- `model_not_found` — the upstream retired the id. Pick the successor.
-- `no_provider_configured` — genuinely unmapped: add the prefix to the router's
-  `prefixMap` (`lib/ai.ts`).
-
-Do not "fix" a SUB by deleting the failover. Failover is why the product stayed
-up. Fix the cause, then re-probe.
-
-## Adding a product
-
-`PRODUCTS` at the top of `claude/tools/model-freshness` lists each repo and the
-files it declares model ids in. Explicit paths, not a glob: a scan that wanders
-starts reporting prose and file names as models.
+Update every affected declaration and test through the product's existing constants.
+Re-run the live request and affected product checks after a change.
+Report requested and served identities, source coverage, remaining substitutions, and the tested product outcome.
 
 ## Log the run
 
 ```bash
-skill-run-log /model-freshness --target "<product-or-repository>" --verdict <FRESH|DRIFT|BLOCKED> --next /<next-skill-or-stop>
+skill-run-log /model-freshness --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
+
+## Then consider
+
+- `refresh-reasoning-capabilities` when the chosen model or backend changes supported reasoning controls.
+- `eval-engineering` when a replacement needs a representative quality comparison.
+- `deploy-proof` when the updated model configuration has shipped and live adoption remains to prove.

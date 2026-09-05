@@ -5,34 +5,38 @@ description: Audit and fix product UI workflows, information structure, states, 
 
 # Product Design Audit
 
-Use this to turn broad UI dissatisfaction into concrete product changes.
-The output is implemented improvement, not a vibes report.
+Turn observed UI problems into concrete improvements within the requested scope.
+For a report-only request, deliver findings without changing the product.
 
-## Flow
+## Audit and improve
 
-1. Inspect the live product or runnable app in browser at desktop and mobile sizes.
-2. Identify the user, job, domain expectations, primary workflow, and competing references.
-3. Score navigation, hierarchy, density, controls, states, visual polish, copy, trust, and responsiveness.
-4. Remove fake readiness states, decorative panels, repeated action words, and controls that do not match the task.
-5. Implement the highest-leverage changes in the app's existing design system.
-6. Verify with screenshots or a browser walkthrough; fix visible regressions before reporting.
+1. Read existing product decisions and unresolved user complaints before changing a surface.
+2. Establish the user, task, domain expectations, and primary workflow from the product and current evidence.
+   Reuse an existing brief; create a durable record only when the work needs one.
+3. Inspect the live or runnable product in a browser at relevant sizes, states, and supported themes.
+   Trace consequential displayed values to their data source.
+4. Compare the workflow with the existing design system and relevant real product references.
+   Evaluate purpose, navigation, hierarchy, density, controls, data, accessibility, and failure handling.
+5. Remove redundant or misleading surfaces and implement the highest-impact justified corrections when edits are in scope.
+   Compare alternatives where a real design tradeoff remains; do not manufacture alternatives for obvious fixes.
+6. Reopen the original failing paths, inspect screenshots, and run the repository's applicable checks.
+   Mark a complaint fixed only when the evidence shows the intended result.
 
-## Standards
+For audits spanning routes or interacting states, read [the audit matrix](references/audit-matrix.md) to track coverage and complaints.
+For public pages or marketing copy, read the relevant repository `docs/anti-patterns/` guidance before editing.
 
-- Operational tools should be dense, calm, and scannable.
-- Marketing/product pages must show the real product, person, place, or outcome in the first viewport.
-- Controls should use familiar icons, menus, tabs, toggles, sliders, and inputs where appropriate.
-- Text must fit its container at mobile and desktop sizes.
-- Do not claim design quality from a build alone; inspect the rendered UI.
+## Evidence and completion
 
-## Output
+Verify real interactions and rendered states, not just source or build output.
+Keep controls and labels that help users act, understand risk, or navigate accessibly.
+Marketing product views must be real, faithful representations or clearly conceptual diagrams.
+Sparse data does not justify fabricated activity or readiness.
 
-Return before/after screenshots or artifact paths, changed files, remaining known issues, and the exact verification command or browser path.
-Use `references/audit-matrix.md` for the scoring matrix and `references/full-reference.md` for the old full playbook.
+Report the observed problems, decisions, changed files, before/after screenshots or browser artifacts, checks, and remaining issues.
+Complete the requested improvements; a numerical design score is not a completion criterion.
+If deployment is part of the request, also verify the served revision and live user path.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /product-design-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -42,7 +46,6 @@ skill-run-log /product-design-audit --target "<what this run targeted>" --verdic
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Redesign applied and needs adversarial browser QA | `/ui-test` | the changed routes + the flows to re-run |
-| The problem is product strategy, not UI execution | `/product-innovation-audit` | the workflow that has no user + the evidence |
-| ≥5 findings and all are small rubric gaps | `/polish` | the finding list + the rubric they fail |
-| Fixing requires a new visual direction, not adjustments | `/product-design` | the references to work from + the surfaces to redo |
+| Changed workflows need additional adversarial browser testing | `/ui-test` | the routes, states, and observed risks |
+| Evidence questions the product value rather than UI execution | `/product-innovation-audit` | the workflow and unresolved user value |
+| The requested correction needs a new visual direction | `/product-design` | the design constraints and real references |

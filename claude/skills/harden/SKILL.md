@@ -5,36 +5,35 @@ description: Test security boundaries, credentials, races, malformed input, and 
 
 # Harden
 
-Use this for security and abuse resistance, not ordinary CI cleanup or code polish.
-The job is to prove what breaks, fix real weaknesses, and leave tests that catch regressions.
+Test security and abuse resistance through the boundaries that enforce the product's requirements.
+Prove weaknesses, fix their causes within scope, and preserve tests that catch recurrence.
 
-## Flow
+## Investigate
 
-1. Inventory trust boundaries, auth/permission checks, parsers, file/network inputs, secrets, storage, concurrency, and external calls.
-2. Derive invariants the system must never violate.
-3. Try to break those invariants with realistic attacks, malformed inputs, race attempts, and credential misuse.
-4. Reproduce each real issue with the smallest executable proof.
-5. Fix the root cause, then add or extend the existing test path so the proof fails before the fix and passes after it.
-6. Rank remaining risk by exploitability and impact.
+1. Establish the authorized targets, test environment, sensitive data, and effects the tests may create.
+   Use isolated test resources for destructive payloads, concurrent mutations, and recovery experiments.
+2. Read the code and existing tests to map trust boundaries, authorization, parsers, secrets, storage, and external calls.
+3. State the invariant for each selected boundary and choose an attack that could violate it.
+   Rank work by consequence, reachability, and uncertainty.
+4. Run the real implementation at the relevant boundary and capture a minimal reproduction.
+   Test doubles may isolate unrelated dependencies; they must not replace the security behavior being tested.
+5. Fix confirmed issues within scope and extend the existing regression tests.
+   If no suitable test path exists, build the smallest one needed to demonstrate the failure and correction.
 
-## Attack Checklist
+Read [adversarial cases](references/adversarial-cases.md) when selecting payloads for parsers, access control, outbound requests, credentials, or concurrent state changes.
+Choose cases for boundaries present in the target, not for a fixed checklist quota.
 
-- Broken auth, tenant isolation, IDOR, confused deputy, privilege escalation.
-- Injection, unsafe deserialization, path traversal, SSRF, file upload abuse.
-- Credential leaks in source, env, logs, artifacts, traces, and screenshots.
-- Race conditions, replay, stale authorization, time-of-check/time-of-use bugs.
-- Missing coverage around security-critical state transitions.
+## Evidence
 
-## Output
+Demonstrate impact with test identities and synthetic data rather than exposing credentials or unrelated user data.
+Keep requests, relevant responses, code locations, test commands, state changes, and cleanup results.
+A passing finite test supports the tested inputs and conditions; it does not prove that an invariant holds universally.
+Keep untested attack paths and unverified hypotheses explicit.
 
-Report only verified findings and explicitly label unverified hypotheses.
-For each finding include evidence, impacted boundary, proof command/test, fix, and residual risk.
-
-Use `references/full-reference.md` for the full legacy playbook and report template.
+For each finding, report the affected boundary, triggering input or state, evidence, impact, fix, regression result, and residual risk.
+For continuing work, update the repository's existing security record or `.agent/harden/<date>-report.md`.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -44,8 +43,7 @@ skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Fix lands and CI goes red | `/converge` | the failing job + the security test that must stay green |
-| ≥1 exploit class is pattern-detectable across the repo | `/semgrep` | the vulnerable pattern + the rule that would catch it |
-| Exploit paths covered and the diff exceeds 200 lines | `/critical-audit` | the diff scope + the invariants the fix relies on |
-| The fix only counts once it is live in production | `/deploy-proof` | the merge SHA + the probe that proves the hole is closed |
-| ≥5 findings share one missing invariant | `/diagnose` | the finding list + the invariant that would kill all of them |
+| Security fixes have failing CI | `/converge` | the failing checks and regression that must remain covered |
+| A confirmed vulnerability has a useful static detection pattern | `/semgrep` | the vulnerable pattern and expected matches |
+| A security change needs an independent code review | `/critical-audit` | the diff and preserved invariants |
+| An authorized production fix needs live confirmation | `/deploy-proof` | the released artifact and safe behavior probe |

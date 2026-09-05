@@ -1,30 +1,32 @@
 ---
 name: dont-collapse-the-architecture
-description: Decide whether a disappointing architecture result tested the claimed mechanism in the regime where it should help.
+description: Check whether a disappointing architecture result tested the claimed mechanism under the conditions where it should help.
 ---
 
-# Do not collapse the architecture
+# Check the architecture claim
 
-Use this before simplifying an ambitious design because an early comparison tied or lost.
-It protects an untested mechanism, not an architecture forever.
+Use this when a disappointing comparison may not have tested the proposed mechanism.
+Preserve the original claim and its limits; do not invent conditions after seeing the result.
 
-## Audit the test
+## Audit the comparison
 
-A negative result can reject the design only when all four conditions hold:
+Check whether:
 
-1. The task entered the regime where the design claims an advantage.
-2. The claimed mechanism fired and was recorded.
-3. The assessment could detect the smallest useful effect.
-4. The compared arms received equal actual resources and enough paired cases for the stopping rule.
+1. The task entered the conditions where the design claims an advantage.
+2. The claimed mechanism ran and its required events were recorded.
+3. The assessment could distinguish the smallest useful effect.
+4. The comparison met its registered resource, sampling, and stopping rules.
 
-If a condition is missing, state that the architecture remains untested.
-Repair the test or activate the mechanism before drawing a quality conclusion.
+If a condition is missing, state which conclusion remains untested.
+Repair the relevant test within the existing scope and resource limits.
+A mechanism that cannot execute or costs too much may still fail a feasibility or efficiency requirement.
+Missing evidence of quality is not an exemption from those requirements.
 
-For recursive agents, a long task alone is insufficient.
-The record must show context replacement, descendant work, ancestor use of descendant artifacts, and evidence-driven revision.
+For a recursive claim, use [the recursive proof requirements](../discovery-lead/references/recursive-proof.md) to identify the events that the claim needs.
 
-If all four conditions hold and the effect remains below the registered useful threshold, simplify or reject the design.
-Do not protect it with a new unmeasured explanation.
+If a valid comparison excludes the registered useful effect or violates required limits, reject or simplify the design.
+If the evidence cannot decide, retain the uncertainty and name the test that would resolve it.
+Do not continue defending the design with new, unmeasured explanations.
 
 ## Log the run
 
@@ -36,7 +38,7 @@ skill-run-log /dont-collapse-the-architecture --target "<architecture and result
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The assessment or task has not been calibrated | `/calibrate-before-measure` | the metric, good/bad cases, and trivial baseline |
-| The mechanism cannot be observed | `/ground-truth` | the missing event and real execution path |
-| The target regime was absent | `/push-past-easy` | the regime definition and a task that enters it |
-| All conditions held and the useful effect was absent | `/pursue` | the paired result and failed mechanism |
+| The assessment has not been calibrated | `/calibrate-before-measure` | The decision, fixtures, and baseline |
+| A required execution event cannot be observed | `/ground-truth` | The missing event and actual execution path |
+| The original claim requires an untested difficulty | `/push-past-easy` | The claim and relevant task condition |
+| The useful-effect claim was rejected and complexity can be removed | `/simplify` | The comparison and required behavior |

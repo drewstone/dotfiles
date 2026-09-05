@@ -1,46 +1,51 @@
 ---
 name: sandbox-sdk-integration
-description: Adopt Tangle Sandbox for durable agent streams, replay, browser reconnects, and retry-safe turns without rebuilding platform state.
+description: Use the Sandbox SDK for durable execution, browser viewing, reconnect, and retry-safe turns.
 ---
 
-# Sandbox SDK integration
+# Sandbox SDK Integration
 
-Use the public Sandbox SDK instead of copying its session, stream, replay, or browser state.
+Use the maintained Sandbox SDK for sessions, dispatch, replay, and browser state instead of rebuilding platform behavior.
 
-## Choose the failure boundary
+## Choose the path from its lifetime
 
-1. Use `streamPrompt` for one attached process that may reconnect during the call.
-2. Use `dispatchPrompt` plus `box.session(id)` when execution must outlive the caller.
-3. Use `executionId` with `lastEventId` to replay one existing execution.
-4. Use a stable `turnId` with `sessionId` when the same logical turn may be retried after completion or eviction.
-5. Use `SessionGatewayClient` for browser or mobile reconnect and replay.
+Read the current [SDK integration guide](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/INTEGRATION.md) and [exports](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/package.json).
+Confirm required methods against the consuming project's actual package.
 
-`sessionId` prevents a concurrent duplicate while that session is in flight.
-It is not a durable retry key after the turn finishes.
+| Required behavior | Path to inspect |
+|---|---|
+| Server consumes one attached execution | Attached prompt stream and execution replay |
+| Execution survives caller loss | Durable dispatch or the SDK turn driver |
+| Browser watches an interactive session | Session message API and session gateway |
+| Same logical turn may be retried | Stable turn identity plus conversation identity |
 
-## Integrate
+Before implementing reconnect or retry recovery, read [durability and identities](references/durability.md).
+Before attaching a browser, read [browser viewing](references/browser-viewing.md).
+Load only the path the product needs.
 
-1. Check the latest published package and the current SDK source.
-2. Read the example that matches the caller: attached stream, Worker, durable batch, cross-process reconnect, or browser.
-3. Persist identifiers before dispatch when the caller itself may die.
-4. Read the dispatch result to learn whether work started.
-5. Accept completion only from a terminal result.
-6. Interrupt the real stream or process and prove reattachment on the deployed path.
-7. Remove duplicate buffering or replay state after the SDK path passes.
+## Integrate and prove
 
-Read [the source map and decision table](references/full-reference.md) when durability or retries are part of the task.
+Persist recovery identities before dispatch if the caller may die.
+Read the dispatch receipt to distinguish new work from existing work.
+Use SDK outcome handling to distinguish completed work, failure, and waiting for human input.
+Transport closure or an accepted request cannot establish task completion.
+
+Interrupt the actual caller or connection and prove recovery against the intended deployment.
+Check that retries produce one logical result and do not repeat side effects or charges.
+Remove duplicate state only after the SDK path proves it owns that responsibility.
+Preserve required product authorization, durable history, and billing state.
+
+Report the tested caller failure, execution identities, terminal outcome, retained product state, and unresolved limits.
 
 ## Log the run
 
 ```bash
-skill-run-log /sandbox-sdk-integration --target "<integration>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /sandbox-sdk-integration --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| Auth, tenant isolation, or scoped tokens are involved | `/harden` | the boundary and token scopes |
-| The integration has browser-visible streaming UI | `/ui-test` | the route and reconnect flow |
-| Hand-built buffering, replay, or dispatch code remains | `/simplify` | those call sites and the SDK replacements |
-| A real interrupted session resumed to a terminal result | `/verify` | the session, turn, execution IDs, and captured result |
+- `harden` when changed authorization, tenant isolation, or scoped tokens need adversarial proof.
+- `ui-test` when browser-visible streaming needs interaction checks.
+- `simplify` when duplicate buffering or dispatch remains after the SDK path is proven.
+- `verify` when interruption recovery works and delivery checks remain.

@@ -1,51 +1,59 @@
 ---
 name: meta-harness
-description: Evolve a plateaued improvement system by changing architecture and comparing implementations.
+description: Compare independently proposed architectural changes against an existing measured baseline and retain the supported improvements.
 ---
 
-# Meta-Harness
+# Meta-harness
 
-Use this when a measurable improvement loop has plateaued and the likely fix is architectural, not parameter tuning.
-It is automated `/pursue`: multiple isolated proposers change code, then the repo's real checks select winners.
+Use this when structural alternatives could improve a constrained system and independent proposals are worth testing.
+The goal is a useful architectural result, not a quota of variants or generations.
 
-## Start
+## Establish the comparison
 
-1. Read `.agent/meta-harness/` if it exists: config, frontier, variants, and latest run notes.
-2. Discover the current evaluator, benchmark, or product check; create the smallest missing check before proposing code.
-3. Prove the metric connects to user value and can move.
-4. Seed a baseline from at least three runs when the check is noisy.
+1. Read existing `.agent/meta-harness/` records and active project state.
+   Resume eligible work and inspect prior results before proposing another variant.
+2. Locate the existing execution and assessment path.
+   Create only the missing check needed to assess the required behavior.
+3. Define the user outcome, relevant metrics, mechanism observations, regression limits, and resource limits.
+4. Read [comparison design](../evolve/references/STATS.md) when sampling, noise, or selection affects the decision.
+   Establish an applicable baseline and run a complete small candidate before broad spending.
+5. Read [variant state and coordination](references/variant-state.md) when creating or updating the variant store or dispatching independent proposers.
 
-## Loop
+## Propose and compare
 
-1. Launch independent proposers with pinned briefs and separate workspaces.
-2. Require structural mechanism changes; reject pure parameter tweaks.
-3. Run the same smoke, benchmark, and repo checks for every variant.
-4. Keep only variants that beat baseline and pass the checks.
-5. Record lineage, hypothesis, result, and rejected ideas under `.agent/meta-harness/`.
-6. Merge only after the winning mechanism is clear and reproducible.
+Give each proposer the goal, relevant traces, baseline, constraints, prior rejected mechanisms, and a clear edit scope.
+Use isolated workspaces for independent implementations, including alternatives that edit the same files.
+Require a causal architectural change; parameter tuning alone does not answer this task.
 
-## Rules
+Run each candidate through the same smoke checks, assessment, and required repository checks.
+Compare actual resources under the registered protocol, including proposer and coordination work.
+Preserve all attempts and raw outcomes, including compilation failures and invalid runs.
 
-- Read raw traces or run artifacts before proposing changes.
-- Equalize compute across compared variants.
-- Prefer small source patches with clear causal mechanisms.
-- Compact merged variants to metadata; keep unmerged frontier source only when it teaches something.
+Inspect the claimed mechanism and regressions before retaining a variant.
+Keep alternatives that offer supported tradeoffs across required outcomes; do not force incomparable measures into one score.
+Test any combination as a new candidate because individually useful changes can interact.
+Promote only through one owner after the complete change passes the recorded criteria.
 
-Use `references/full-reference.md` for the full setup, state files, and integration details.
+## Settle or continue
+
+Persist lineage, hypotheses, raw results, decisions, and the next eligible action.
+Continue under the active goal and limits while evidence supports further work.
+Stop at the required outcome, an explicit limit, cancellation, or an evidenced dead end.
+A fixed number of unchanged generations does not establish convergence.
+
+Report the accepted change or retained baseline, every measured outcome and cost, rejected mechanisms, and unresolved limits.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /meta-harness --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /meta-harness --target "<system and architectural outcome>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Architecture is stable and the metric still moves on tuning | `/evolve` | the winning architecture + its measured baseline |
-| Best-of-generation gain stays inside 2× noise for ≥3 generations | `/breakout` | the plateau evidence + the target that is acting as the cage |
-| A generation's result is surprising, null, or unusually clean | `/autopsy` | the raw generation rows + the scoring command |
-| Search produced ≥2 viable architectures within noise of each other | `/arena-experiment` | the candidates + an equal-compute budget |
+| The selected architecture has a measured tuning opportunity | `/evolve` | The accepted baseline and next lever |
+| Evidence shows the assumed constraint needs reconsideration | `/breakout` | The constraint and tested alternatives |
+| A candidate result is null, surprising, or suspect | `/autopsy` | The raw rows and scoring command |
+| Surviving architectures need a controlled task comparison | `/arena-experiment` | The candidates, cases, and resource contract |

@@ -1,42 +1,52 @@
 ---
 name: writing-profile
-description: Build a writing profile from real samples without generic AI cadence.
+description: Build or update a writing profile from representative samples and test it against held-back writing.
 ---
 
 # Writing Profile
 
-Use this to learn how someone writes from real samples.
-The result should emphasize constraints: what not to do, not only favorite phrases.
+Capture the choices that distinguish a person's writing, using their actual work and stated preferences.
+Find and update an existing profile before creating another.
 
-## Flow
+## Establish the source
 
-1. Gather at least 10 representative samples or ask for them.
-2. Separate by format if the writer changes voice across email, X, blogs, docs, or Reddit.
-3. Measure sentence length, structure, rhythm, claims, transitions, humor, specificity, and taboo patterns.
-4. Extract positive patterns and negative constraints.
-5. Build a reusable profile with examples and anti-examples.
-6. Test the profile by rewriting a short sample and checking whether it violates constraints.
+Collect representative originals through available sources or user-provided text.
+Record authorship, date, format, and audience; remove quoted third-party material and site boilerplate from the analysis.
+Separate formats when the writer changes voice across email, social posts, articles, or technical documents.
+Use enough varied samples to support the intended format and state coverage gaps.
+A single polished page cannot establish a person's general voice.
 
-## Rules
+## Derive useful guidance
 
-- Do not infer a voice from one polished marketing page.
-- Preserve what the writer avoids as strongly as what they do.
-- Call out AI cadence, filler, fake warmth, and unnatural transitions.
+Examine structure, sentence rhythm, vocabulary, specificity, claims, humor, transitions, and recurring openings or endings.
+Distinguish observed tendencies, explicit preferences, and uncertain inferences.
+Absence from a small sample is not a universal ban.
+Personal taste about AI writing does not establish what this writer avoids.
 
-Use `references/full-reference.md` for source-specific commands and profile templates.
+Keep rules that alter a drafting decision and support them with examples.
+Include positive patterns and demonstrated constraints without forcing one section to be larger.
+For multiple audiences or formats, keep shared guidance together and disclose substantial format-specific guidance only when it applies.
+
+## Test and update
+
+Reserve representative samples from profile construction when enough material is available.
+Compare the profile against those samples for contradictory or overbroad rules.
+Draft a short passage on supported subject matter and assess the specific choices the profile predicts.
+A self-score alone does not establish that the writer accepts the result; record actual user feedback when available.
+
+When refreshing a profile, correct or remove unsupported old rules as well as adding new evidence.
+Keep representative excerpts attributable and distinguish generated examples from the person's original writing.
+Save in the workspace's existing style-guide location.
+
+Report source coverage, distinctive supported patterns, test results, and limits on generalizing to other formats.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /writing-profile --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /writing-profile --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| The draft needs current source material | `/signal-distill` | the topic + the platforms to sweep |
-| The profile will be applied to technical docs | `/docs-slop-audit` | the pages + the claims to check against source |
-| Fewer than 5 real samples were available | stop | the samples found + what else must be collected first |
+- `signal-distill` when a draft needs current factual source material.
+- `docs-slop-audit` when the profile is applied to technical documentation whose claims need source review.

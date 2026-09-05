@@ -5,35 +5,31 @@ description: Run typecheck, tests, build, deploy, and live checks for a release;
 
 # Ship
 
-Use this only when the user wants an actual deploy or production/staging release.
-If they only want confidence before deploy, use `verify`.
+Release the intended artifact to the authorized target and prove its live behavior.
 
-## Start
+## Prepare
 
-1. Confirm target environment, release artifact, rollback path, and whether production approval is explicit.
-2. Check git state and make sure uncommitted changes are intentional.
-3. Read project release docs and scripts.
-4. Run the cheapest smoke before long or external deploy work.
+1. Establish the target, artifact, release path, rollback procedure, and authorization already granted in this session.
+   Ask only for missing authority or a target that cannot be inferred reliably.
+2. Inspect git and release state to identify exactly what will ship and preserve unrelated work.
+3. Read the repository's current release scripts, required checks, and deployment instructions.
+4. Run the smallest meaningful smoke before expensive release work.
 
-## Flow
+## Release
 
-1. Run typecheck, tests, lint, and build as appropriate for the repo.
-2. Fix any red signal instead of skipping it.
-3. Deploy with the repo's release path.
-4. Smoke the live artifact with a real endpoint, UI path, or version check.
-5. Report commit, target, commands, results, URL/version, and residual risk.
+1. Run required checks and build the artifact according to their dependencies.
+   Run independent commands concurrently only when they do not share mutable outputs; collect every exit status.
+2. Fix failed checks without bypassing hooks, suppressing tests, or weakening requirements.
+3. Deploy through the repository's authorized release path.
+4. Wait for the deployment to reach a terminal state.
+5. Match the served revision or artifact to the intended release and exercise the changed live user path.
+   If live checks fail, follow the documented recovery procedure and verify recovery before further release attempts.
 
-## Rules
-
-- Never use `--no-verify` or weaken checks to ship.
-- A successful deploy command is not proof; live behavior is proof.
-- Production release needs explicit approval for that target.
-
-Use `references/full-reference.md` for the full phase checklist.
+An accepted command or a successful upload is not proof of a working release.
+A release need not print a URL: obtain its target from authoritative deployment records and verify the artifact actually served.
+Report the revision, target, checks, deployment result, live evidence, and remaining uncertainty.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -43,8 +39,7 @@ skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --ne
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Deploy command exits 0 | `/deploy-proof` | expected SHA + the live endpoint and behavior probe |
-| CI blocks the release | `/converge` | the failing job + the release target |
-| The release path is opaque, custom, or multi-artifact | `/release-conductor` | the artifact list + the rollback path |
-| Live smoke fails after a successful deploy | `/diagnose` | the smoke output + the served revision |
-| Release is live and proven | `/reflect` | the proof block + the loop this closed |
+| The served artifact or behavior remains unverified | `/deploy-proof` | the expected revision, target, and missing check |
+| CI blocks the release | `/converge` | the failing job and target |
+| The authorized release requires custom artifact coordination | `/release-conductor` | artifacts, current deployment state, and rollback procedure |
+| Live behavior fails after recovery | `/diagnose` | the failed probe, served revision, and recovery evidence |

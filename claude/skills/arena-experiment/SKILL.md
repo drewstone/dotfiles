@@ -76,7 +76,7 @@ skill-run-log /arena-experiment --target "<architectures and task family>" --ver
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Calibration did not separate good, bad, and trivial cases | `/eval-engineering` | the cases, scores, and scoring path |
+| Calibration could not distinguish the required behavior | `/eval-engineering` | the cases, scores, and scoring path |
 | A result is null, suspect, or unexpectedly large | `/autopsy` | every paired row and the pilot variance |
 | A claimed mechanism or regime was absent | `/dont-collapse-the-architecture` | the activation record and regime axis |
 | The registered stopping rule is satisfied | `/report` | all rows, every measured field, and resource accounting |
