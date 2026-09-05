@@ -1,78 +1,41 @@
 ---
 name: nano-banana
-description: Generate or edit images with Nano Banana through Gemini CLI.
-allowed-tools:
-  - Bash
+description: Generate or edit images with the maintained Nano Banana extension for Gemini CLI.
 ---
 
 # Nano Banana
 
-Image generation via Gemini CLI's nanobanana extension.
+Use the Gemini CLI Nano Banana extension when the user requests that image workflow and the session permits it.
 
-## Commands
+## Resolve the current extension
 
-```bash
-# Generate
-gemini --yolo "/generate 'prompt' --preview"
+Read the [maintained extension guide](https://github.com/gemini-cli-extensions/nanobanana/blob/main/README.md) for commands, authentication, current model defaults, and output handling.
+Inspect the installed Gemini CLI help and extension listing before using an example.
+Use the current supported default unless the task requires another supported model.
+Do not carry model IDs, prices, or CLI flags forward from this skill.
 
-# Edit existing
-gemini --yolo "/edit file.png 'instruction'"
+If the extension is missing, identify the missing component and use the session's permitted image capability when it meets the request.
+Installing an extension and expanding execution permissions are separate actions from writing an image prompt.
+Use existing session authorization and normal tool approval controls; image generation does not require disabling them globally.
 
-# Specialized
-gemini --yolo "/icon 'description'"
-gemini --yolo "/diagram 'description'"
-gemini --yolo "/pattern 'description'"
-gemini --yolo "/restore old_photo.jpg 'fix scratches'"
-```
+## Generate or edit
 
-`--yolo` is always required. Output lands in `./nanobanana-output/`.
+Describe the subject, composition, style, dimensions, intended use, and required text.
+For edits, inspect the source image and identify what must change and what must remain.
+Use the installed extension's generate or edit command with the supported options for that task.
+Keep outputs in the project or session scratch directory.
 
-## Options
-
-| Flag | Effect |
-|------|--------|
-| `--count=N` | N variations (1-8) |
-| `--styles="style1,style2"` | Artistic styles |
-| `--aspect=16:9` | Aspect ratio |
-
-## Model
-
-Default: `gemini-2.5-flash-image` (~$0.04/image)
-Higher quality: `export NANOBANANA_MODEL=gemini-3-pro-image-preview`
-
-## Common Sizes
-
-| Use Case | Dimensions |
-|----------|------------|
-| Blog / social preview | 1200x630 |
-| YouTube thumbnail | 1280x720 |
-| Square social | 1080x1080 |
-| Twitter header | 1500x500 |
-
-## Prompt Tips
-
-- Always add `no text` unless you want text in the image
-- Name style explicitly: "flat illustration", "editorial photo", "3D render", "dark crypto aesthetic"
-- For abstract/tech: describe mood and color, not specific structure
-
-## After Generation
-
-1. List `./nanobanana-output/` for the file
-2. Show to user, offer variations if needed
-3. For changes: re-run with adjusted prompt or use `/edit`
+Inspect the resulting bitmap for the requested content, dimensions, legibility, and edit preservation.
+Correct defects using the same source and explicit changes.
+Return the actual image artifact and its path; successful CLI exit alone does not establish image quality.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /nano-banana --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /nano-banana --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| The image is for product UI | `/product-design` | the generated file path + the surface it fills |
-| The image supports a post or brief | `/signal-distill` | the image path + the brief it illustrates |
-| Image generated and accepted | stop | the output path under `./nanobanana-output/` |
+- `product-design` when the image must be integrated into a visible product flow.
+- `signal-distill` when the image needs an evidence-backed editorial brief.

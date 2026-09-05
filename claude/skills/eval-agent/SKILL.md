@@ -1,101 +1,65 @@
 ---
 name: eval-agent
-description: Build and calibrate model judges for semantic quality with real examples and auditable evidence.
+description: Build and calibrate model judges for semantic quality using independent examples and auditable evidence.
 ---
 
-# Eval Agent
+# Eval agent
 
-Use this when code cannot decide whether an output is useful, faithful, clear, or otherwise semantically correct.
-Keep objective facts in deterministic checks.
-A model judge supplements those checks; it never overrides them.
+Use a model judge when code cannot decide a required semantic property, such as usefulness or faithfulness.
+Keep objective facts in deterministic checks; a semantic score cannot override their failures.
 
-## Define The Decision
+## Define the decision
 
-Write down:
-
-- the artifact being judged;
-- the decision the result controls;
-- the evidence available to the judge;
-- the cost of a false pass and a false fail;
-- the objective checks that run separately.
-
-Choose the smallest judgment that answers the decision:
+State what artifact is judged, what decision the result controls, which evidence is allowed, and the consequences of false passes and false failures.
+Choose the judgment that answers that decision:
 
 | Need | Judgment |
 |---|---|
-| Does one output meet named requirements? | Criteria-based classification |
-| Which of two outputs is better? | Pairwise comparison with randomized order |
-| Is a claim supported by supplied sources? | Claim-level support classification |
-| Why did a multi-turn run fail? | Turn or outcome classification from the trace |
+| Requirements met | Classification by named criteria |
+| Preference between outputs | Pairwise comparison with randomized order |
+| Source support | Claim-level support classification |
+| Explanation of a multi-turn failure | Turn or outcome classification from recorded evidence |
 
-Avoid a single unanchored 1-to-10 score.
-Use separate dimensions only when each changes a real decision.
+Use separate dimensions only when they affect a decision.
+Avoid an unanchored quality score.
 
-## Build From Evidence
+## Build from evidence
 
-Collect real good, bad, and borderline examples from production feedback, incidents, domain references, and prior runs.
+Collect real acceptable, unacceptable, and borderline examples from feedback, incidents, domain references, and prior runs.
 Label them independently of the judge being built.
-For consequential decisions, record human labels and disagreements.
+Use qualified human labels and retain disagreements for consequential judgments.
 
-The judge input must include only evidence it is allowed to use.
-Do not ask it to infer hidden tool effects, file changes, citations, or execution success from the target's prose.
+Provide the evidence needed for each criterion.
+Do not infer file changes, tool effects, citation support, or execution success from the target's assertions.
+Require a structured decision, criterion results, evidence references, a short reason, and an explicit cannot-judge outcome.
 
-Require structured output with:
+When building or changing the judge, read [the calibration procedure](references/calibration.md) and run it through the actual scoring path.
+Reuse applicable calibration when the decision, judge, and evidence conditions have not changed.
 
-- a categorical decision or pairwise winner;
-- a result for each named criterion;
-- evidence references into the supplied artifact;
-- a short reason;
-- an explicit cannot-judge outcome for missing evidence.
+## Protect execution and evidence
 
-## Calibrate Before Use
+- Delimit untrusted target content as data and test attempts to influence the judge.
+- Limit input and reference sizes without silently dropping required evidence.
+- Keep scoring instructions, hidden labels, and judge credentials unavailable to the target.
+- Remove secrets before model calls and persistence.
+- Validate structured output; malformed or missing results cannot pass.
+- Record the actual model/provider identity, prompt, input digest, evidence, raw and parsed results, errors, latency, tokens, and cost.
+- Reuse cached judgments only when the input, evidence, and judging configuration match.
 
-Run the exact production judge path on:
-
-1. clearly acceptable examples;
-2. realistic failures that sound fluent;
-3. borderline examples;
-4. reordered pairwise inputs;
-5. irrelevant or missing evidence;
-6. target text that tries to instruct or flatter the judge.
-
-Measure the error that matters for the decision.
-Use class accuracy and false-pass rate for classifications, rank agreement and order bias for pairwise judgments, and repeated-run disagreement for stochastic judges.
-Choose repeats or multiple judges only after measured variance justifies the cost.
-
-Repair the prompt, evidence, labels, or task when plausible failures pass.
-Do not tune on the final decision set.
-
-## Run Safely
-
-- Delimit untrusted target content and state that it is data, not instruction.
-- Cap artifact and reference size before the model call.
-- Use a pinned judge model and record its provider snapshot.
-- Validate structured output and fail explicitly on malformed or missing results.
-- Keep scoring instructions and hidden labels away from the target agent.
-- Redact secrets before persistence or model calls.
-- Cache and replay saved artifacts when possible.
-
-## Persist And Report
-
-Store the judge prompt and version, model identity, artifact digest, evidence, raw result, parsed result, errors, latency, tokens, and cost.
-Report calibration cases, label source, every measured error rate, known blind spots, and the exact command used.
-
-The judge is ready only when known good and bad examples separate, order and injection checks pass, missing evidence cannot pass, and the result changes the intended decision.
+Report the calibration evidence, all measured error rates, known blind spots, exact command, and supported decision scope.
+Readiness depends on the decision's recorded error tolerance and required integrity checks, not a universal agreement percentage.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /eval-agent --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /eval-agent --target "<judgment and decision>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The judge belongs inside a new executable case | `/eval-engineering` | the rubric + the production path the case should pin |
-| A deployed judge's pass rate moved > 20pp with no agent change | `/eval-harness-diagnose` | the run record IDs + the judge version on each side |
-| The change is to shared judge types or execution inside the package | `/agent-eval` | the type/API surface being changed + its consumers |
-| Judge agreement ≥ 0.9 on ≥20 labeled examples | `/evolve` | the calibrated judge + the current score as baseline |
+| The judge needs an executable agent case | `/eval-engineering` | The calibrated judge and production entrypoint |
+| Results changed without an explained target change | `/eval-harness-diagnose` | The run records and judging configuration |
+| Shared judge types or package execution must change | `/agent-eval` | The affected API and consumers |
+| The calibrated decision supports an active improvement experiment | `/evolve` | The judge, baseline, and proposed change |

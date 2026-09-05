@@ -1,44 +1,51 @@
 ---
 name: signal-distill
-description: Turn real community, feed, API, or database signals into scored content briefs.
+description: Turn current, attributable source signals into content briefs tied to the user’s actual work.
 ---
 
 # Signal Distill
 
-Use this to convert external signals into content strategy.
-Never fabricate quotes, trends, sources, or community sentiment.
+Produce useful content angles from real community, feed, API, or database evidence.
+Keep observed conversations separate from inferred positioning and the user's own experience.
 
-## Flow
+## Collect relevant evidence
 
-1. Discover available sources and tools in the workspace.
-2. Pull a bounded sample with source, author, URL, timestamp, and raw text.
-3. Score each signal for relevance, novelty, credibility, urgency, and fit to the user's products or experience.
-4. Extract quotable moments without over-quoting or changing meaning.
-5. Cluster signals into themes and map each theme to a concrete content angle.
-6. Produce a brief with source links, confidence, suggested format, and why it matters now.
+Read the workspace's current audience, product, and content instructions.
+Discover available source tools and recent collected records before fetching again.
+Use their current help and connection state; inspect no credential values merely to discover a source.
+If configured sources are absent, use available search within the task instead of creating a collection system.
 
-## Rules
+Choose a source sample and time window suited to the topic.
+Retain source, author, URL, timestamp, raw passage, and available engagement data.
+Mark missing fields and unavailable sources rather than inventing completeness.
+Deduplicate repeated stories and distinguish firsthand reports from reposts.
 
-- Prefer fewer high-signal items over broad scraped noise.
-- Separate observed signal from inferred positioning.
-- If the source is stale, thin, or biased, say so.
-- Do not publish-send anything; output the brief.
+## Turn signals into a brief
 
-Use `references/full-reference.md` for discovery commands, scoring schema, and output templates.
+Assess relevance, novelty, credibility, urgency, and fit to the intended audience.
+Use explicit scores only when a shared rubric or ranking decision needs them; explain the evidence behind the ranking.
+Cluster signals by the claim or need they reveal.
+For each proposed angle, name the user's relevant product, work, or experience and verify that connection.
+
+- Ready to draft: the user's experience and supporting facts are established.
+- Needs an answer: identify the specific missing experience or opinion without inventing it.
+- Exclude: the source is unsupported or has no useful connection to the audience and work.
+
+Quote accurately and attribute other people's words.
+A selected sample cannot establish overall community sentiment or a trend without comparable observations over time.
+
+Deliver source links, the proposed angle and format, evidence of relevance, and material limits.
+Save the brief in the workspace's existing content workflow when persistence is useful.
+This skill prepares the brief; publication requires authorization for that action.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /signal-distill --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /signal-distill --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| The brief must be written in a specific voice | `/writing-profile` | the brief + ≥5 real samples of the target voice |
-| The brief needs original imagery | `/nano-banana` | the visual concept + the target dimensions |
-| ≥3 signals name the same missing product capability | `/product-innovation-audit` | the signal quotes + their engagement counts |
-| Briefs are scored and the top one is ready to publish | stop | the brief path + its score and source links |
+- `writing-profile` when drafting requires a voice that has no adequate existing profile.
+- `product-design` when the selected brief requires an original visual treatment.
+- `product-innovation-audit` when supported signals reveal a product opportunity the user wants evaluated.

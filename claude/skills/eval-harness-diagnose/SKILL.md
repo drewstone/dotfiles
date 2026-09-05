@@ -1,92 +1,64 @@
 ---
 name: eval-harness-diagnose
-description: Trace suspect eval results through execution, evidence, scoring, comparison, and reporting.
+description: Trace suspect evaluation results through execution, evidence capture, scoring, comparison, and reporting.
 ---
 
-# Eval Result Diagnosis
+# Diagnose evaluation results
 
-Use this when an existing eval result may reflect broken measurement, service failure, drift, or invalid comparison rather than agent quality.
-Start from raw case artifacts, not a summary.
+Use this when an evaluation result may reflect broken measurement, service failure, or an invalid comparison.
 
-## Reconstruct The Run
+## Reconstruct the run
 
-Record the exact command, commit, package versions, model snapshot, profile, cases, repetitions, seeds, split labels, environment, run ID, and artifact locations.
-If any value is unknown, mark it unknown rather than inferring it.
+Identify the actual command, code/configuration, model/provider, profile, cases, seeds or repetitions, split, environment, run ID, and artifacts.
+Record unavailable identity fields as unknown.
+Collect case status, score and reasons, objective and semantic check results, final deliverable, trace coverage, usage, timing, retries, and errors.
+Reconcile case and call records with attempted totals.
 
-For each case, collect:
+## Follow the result
 
-- status, score, pass reason, and failure reason;
-- deterministic check results and model-judge result;
-- trace and raw provider-call coverage;
-- final user-visible artifact;
-- tokens, cost, latency, retries, and timeout state;
-- service, credential, quota, routing, and parsing errors.
-
-## Check Integrity In Order
-
-1. **Execution:** the intended backend, pinned model, profile, entrypoint, and dependencies actually ran.
-2. **Capture:** every scored model call and required tool or state change has evidence; every run has an outcome.
-3. **Artifact:** scoring reads the final deliverable users receive, not a prompt, partial file, or intermediate JSON.
-4. **Scoring:** objective facts use code; semantic scoring has the required evidence and distinguishes known good and bad fixtures.
-5. **Comparison:** baseline and candidate use paired cases, compatible seeds, matching split labels, and equivalent runtime conditions.
-6. **Decision:** deterministic failures cannot be overridden by a semantic score; missing evidence cannot become a passing zero or default.
-
-For `@tangle-network/agent-eval`, read the installed source and exports before naming checks.
-Do not trust remembered API names or a copied primitive catalog.
-
-## Classify Every Case
-
-Use exactly one primary class per case:
-
-| Class | Meaning |
+| Stage | Check |
 |---|---|
-| Product failure | The final product behavior failed the user requirement. |
-| Agent failure | The agent chose a bad strategy in a valid run. |
-| Measurement failure | Execution, capture, scoring, comparison, or reporting was wrong. |
-| Service failure | Credentials, quota, transport, capacity, or an external dependency prevented a valid run. |
-| Inconclusive | Evidence is missing or the case cannot distinguish the claimed behavior. |
+| Execution | The intended entrypoint, backend, profile, model, and dependencies actually ran |
+| Capture | Required calls, actions, state changes, and terminal outcomes have evidence |
+| Artifact | Scoring reads the final deliverable the user receives |
+| Scoring | Each check has its required evidence and distinguishes acceptable from unacceptable behavior |
+| Comparison | Cases, splits, resources, and runtime conditions support the stated comparison |
+| Decision | Objective failures and missing evidence cannot become passes through semantic scores or defaults |
+| Reporting | Raw outcomes reconcile with the reported classes, denominators, and aggregates |
 
-Do not count measurement, service, or inconclusive cases as agent regressions.
+Use raw rows to locate the first discrepancy.
+Read source to explain that stage or determine which missing evidence must be captured.
+When package behavior is implicated, inspect its actual implementation and affected callers before changing it.
 
-## Find The Root Cause
+## Classify and correct
 
-Cluster cases by the first failing stage:
+Distinguish product failure, agent decision failure, measurement failure, service failure, and inconclusive evidence.
+Assign a primary explanation where the evidence supports one and retain contributing causes.
+Do not count service, measurement, or missing-evidence cases as demonstrated agent regressions.
 
-```text
-setup -> agent execution -> tool or dependency -> artifact capture
--> objective checks -> semantic scoring -> comparison -> release decision -> report
-```
+State the expected change and an observation that would refute the diagnosis.
+When fixes are authorized, correct the earliest shared cause and rerun the smallest affected case set.
+Recompute or rerun every comparison whose conclusion the correction could change.
+Keep cases and decision thresholds fixed for that verification; identify any intentional redesign as a different comparison.
 
-Read source only after the rows identify the failing stage.
-Fix the earliest shared cause that restores the largest number of honest outcomes.
-Only optimize the agent after execution, capture, scoring, and comparison are valid.
+## Report
 
-## Rerun
-
-Start with the smallest affected case set.
-State the expected artifact change and the exact result that would disprove the diagnosis.
-After the focused rerun passes, rerun the full comparison without changing cases, seeds, or thresholds.
-
-## Output
-
-Report the run identity, cases analyzed, count in every class, root causes with case IDs and artifact paths, exact focused rerun command, and full-rerun condition.
-Include zeros and unknowns.
-Do not stop at “rate limited” or “unavailable”; include the failed probe, status or error class, affected cases, and retry command.
+Give the inspected coverage, count in every outcome class, cause and affected case IDs, evidence, exact rerun commands, and verified conclusions.
+Retain zeros and unknowns.
+For a service failure, include the actual failed probe, error/status, affected scope, and recovery action taken or required.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /eval-harness-diagnose --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /eval-harness-diagnose --target "<evaluation and runs>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Root cause is inside the eval package | `/agent-eval` | the module + the failing execution path |
-| Case design or the scoring contract must be rebuilt | `/eval-engineering` | the contaminated case IDs + what made them invalid |
-| Measurement is valid and ≥30% of cases still fail | `/evolve` | the validated harness + the per-case failure list |
-| The failure is outside evaluation (build, CI, product) | `/diagnose` | the failure set + the evidence it is not the ruler |
-| Harness proven clean and results unchanged | `/report` | the full per-case table + the contamination checks that passed |
+| The correction belongs in the shared evaluation package | `/agent-eval` | The module, consumers, and failing path |
+| Case design or scoring requirements must change | `/eval-engineering` | The affected cases and invalid assumptions |
+| Valid measurement exposes a product or agent improvement | `/evolve` | The corrected baseline and proposed change |
+| The failure spans work outside evaluation | `/diagnose` | The failure set and confirmed causes |
+| Valid results need a comparative explanation | `/report` | The complete rows and integrity checks |

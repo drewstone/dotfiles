@@ -1,43 +1,44 @@
 ---
 name: push-past-easy
-description: Push an experiment beyond the easy case when a harder test could reverse its conclusion.
+description: Test a relevant harder condition when the current case cannot support the breadth of the claimed result.
 ---
 
-# Push past the easy version
+# Test the missing difficulty
 
-The failure mode isn't doing bad work. It's doing **safe** work — the easy task, the proxy metric, the flattering claim, the experiment that confirms something trivial — and calling it progress. The operator should never have to be the one supplying the ambition. That's your job.
+Use this when a harder condition could reverse the conclusion being claimed.
+Do not increase difficulty merely to make a result fail or justify a complex system.
 
-## The check — run it on every plan, result, and experiment design
+## Match the test to the claim
 
-- Is this the **easy version that confirms something trivial**, or the **hard version that could actually fail** and tests the real claim?
-- Am I picking it because it's *right*, or because it's safer to run, cheaper, less likely to embarrass me?
-- Would a sharp skeptic say *"that's not the real question"*? If you can already hear "what are we even doing" — you're doing the easy version. Switch now, before you build on it.
+1. State the original claim and the conditions the current case actually tested.
+2. Identify the omitted condition that matters to that claim.
+   Examples include scale, ambiguity, dependency depth, recovery, concurrency, or unseen inputs.
+3. Check whether the user requirement includes that condition.
+   If the simple case covers the actual need, retain its result and limit the claim accordingly.
+4. Design a realistic case that exercises the missing condition while preserving the relevant environment and resources.
+5. State the observation that would establish the mechanism and the outcome that would refute the useful-effect claim.
+6. Calibrate changed cases or scoring before broader spending, then run the authorized deciding comparison.
 
-## What it looks like in practice
+Preserve the original result and show how the added condition changes the conclusion.
+Separate a genuine difficulty effect from different resources, broken setup, leakage, or missing evidence.
+Use observed variation and the required precision to choose samples; no universal sample count settles every claim.
 
-- Don't pick the trivial domain because it's easy to run (find-the-arXiv-paper) — pick the one where the capability is actually required (buried 10-K facts a single search won't surface).
-- Don't build the regex that *approximates* the check — build the real held-out execution.
-- Don't measure the proxy (sources collected) — measure the thing (questions answered, facts surfaced).
-- Don't report the flattering number — try to **kill it first** (re-run for variance, hunt the confound, check the metric isn't a proxy), then report what survives. Distrust the result you hoped for most.
-- When a result is "promising but underpowered," the next move is the experiment that turns it **proven or killed** — not a victory lap.
+## Completion
 
-## The standard
-
-Innovation is the experiment that could embarrass you, run honestly — not the one that confirms what you hoped. Default to the version that could fail. If you're about to ship a soft win, a proxy metric, or an easy task, name it out loud as the timid choice and take the harder one instead.
+Report the claim, missing condition, case, calibration evidence, raw results, and supported scope.
+If no relevant difficulty is missing, state why the existing test is sufficient and leave it unchanged.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /push-past-easy --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /push-past-easy --target "<claim and added condition>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| A harder case or scoring path changed and has not been calibrated | `/calibrate-before-measure` | the changed case, metric, and trivial baseline |
-| Result is promising but n < 24 or a confound is unresolved | `/evolve` | the underpowered result, the confound, and the powered design |
-| The hard version needs a different architecture, not more n | `/pursue` | the named cap + the design that removes it |
-| The hard version fails and the reason is unclear | `/autopsy` | the raw rows + the artifact-vs-real-effect checks |
+| Changed cases or scoring still need calibration | `/calibrate-before-measure` | The changed path, fixtures, and baseline |
+| A valid harder case supports a further experiment | `/evolve` | The baseline, hypothesis, and deciding test |
+| The demonstrated gap requires another architecture | `/pursue` | The failed requirement and limiting mechanism |
+| The result is null, surprising, or suspect | `/autopsy` | The raw rows and competing explanations |

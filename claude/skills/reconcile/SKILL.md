@@ -1,97 +1,65 @@
 ---
 name: reconcile
-description: Decide whether a paper, post, repository, or technique adds value by testing its claim against current capability.
+description: Decide whether an external claim or technique adds value by checking its evidence, existing capability, and transfer to the current system.
 ---
 
 # Reconcile an external idea
 
-Most useful knowledge arrives from outside: a paper, a tweet, a repo, someone's benchmark.
-The failure is not ignoring it — it is adopting it because it sounded good, or rebuilding something we already own because the author called it a different name.
-This skill turns "here, look at this" into a decision with evidence behind it, recorded whether the answer is yes or no.
+Turn a paper, post, repository, or technique into an evidence-backed decision.
+Do not adopt an idea because its terminology sounds new or reject it solely because our implementation has a different name.
 
-The output is always a written decision. A rejection recorded is worth as much as an adoption, because it stops the same idea being re-litigated in three weeks by someone who forgot.
+## Read the claim and local capability
 
-## Extract the claim, not the pitch
+Read the relevant primary source, including the method or implementation supporting its conclusion.
+Record the claim, actual evidence, mechanism, assumptions, and limitations.
+A summary or abstract alone may not establish the part being considered.
+Distinguish causal evidence from a plausible mechanism and an observed correlation.
 
-Read the primary source. Not the abstract alone, not the thread summarizing it, not a fetch tool's paraphrase — those mis-summarize formal work routinely, and a wrong definition here poisons every step after it.
+Inspect the current system by behavior across relevant knowledge records, exports, implementations, and callers.
+Record the searched surfaces and what is already present.
+If source locations disagree, resolve the implementation used by the current project before claiming a capability is absent.
+Report unavailable sources and command failures.
 
-State, in your own words:
+## Test whether the idea changes a decision
 
-- **The claim** — one sentence, falsifiable. If you cannot make it falsifiable, that is the finding.
-- **The evidence** — what was actually measured: n, the comparison arm, the effect size. "Improves performance" with no denominator is a marketing claim, and you should say so.
-- **The assumption** — what must be true for it to hold. Nearly every result has one that quietly does not apply to us.
-- **The mechanism** — *why* it would work. A result with a mechanism transfers; a result without one is a correlation someone got lucky with.
+Compare the external approach with what the system does now.
+Check relevant scale, data, resources, operating conditions, and required behavior.
+A difference in conditions may require adaptation or further evidence rather than automatic rejection.
 
-## Check we don't already have it — mechanically
+State the proposed benefit and the smallest check that could refute it.
+Use existing observations or an isolated reproduction when they can answer the question.
+Run the available check within the task's authority before deciding.
+When evidence is insufficient, name the missing test and why its outcome would matter.
 
-The single most common failure. The author's name for a thing is never the name we would have chosen, so a name search returns nothing and you conclude it is absent.
+## Decide and record
 
-Do not grep for the idea's name. List the surfaces that would contain it:
+| Verdict | Meaning |
+|---|---|
+| `ADOPT` | The technique is supported for the intended use; state the evidence and scope |
+| `ADAPT` | A supported mechanism transfers with specific changes; state what differs and how it was checked |
+| `REJECT` | Evidence or required behavior rules out adoption, the existing system is adequate, or no relevant decision changes |
+| `DEFER` | A material uncertainty remains; identify the deciding test and the condition for running it |
 
-Inspect the relevant knowledge pages, package exports, implementation modules, and capability records by topic and behavior.
-Resolve source locations from the current workspace and installed package metadata.
-If multiple checkouts exist, compare their versions before treating a missing symbol as an absent capability.
-Record missing sources and command failures instead of suppressing them.
+Use the project's existing knowledge or decision record.
+When its knowledge base uses `prior` pages, record the external claim as `external-unverified` until local reproduction supports promotion to `measured`.
+Keep the external source and local result separately attributable, including actual run IDs and commands.
+Use the project's current ingestion interface instead of assuming a copied API still applies.
 
-Then say one of these out loud, with what you ran:
-
-- "Found it at `<path>` — this is the same thing under a different name; the question becomes whether their version is better."
-- "Checked `<surfaces>`, none exists — this would be new."
-
-A proposal without this check is rejected on sight. Twice in one session I proposed adding a capability that was already a populated field in our own knowledge base.
-
-## Decide whether it applies to us
-
-| question | reject if |
-| --- | --- |
-| Does the stated assumption hold here? | the assumption is the thing we violate — say which and stop |
-| Is the regime the same? | measured on a toy scale, and our problem is orders of magnitude larger |
-| Is it better than what we do *now*? | "better than nothing" when we already do something adequate |
-| Would it change a decision? | nothing we do differs under it — interesting is not the same as useful |
-
-Name the measure on which it would be better *before* deciding. An improvement with no metric is a preference.
-
-## Name the cheapest falsification
-
-The test that would tell us it is wrong, runnable in under a day, ideally under an hour. Offline beats live; retrospective beats prospective — we usually have data that already contains the answer.
-
-If nothing cheap can falsify it, say so plainly and record it as **defer**, not adopt. An unfalsifiable idea adopted becomes doctrine nobody can remove.
-
-## Decide, and record all four outcomes
-
-| verdict | means | what to write |
-| --- | --- | --- |
-| **adopt** | reproduced here, or the mechanism is sound and the cost of being wrong is low | the smallest change that lands it, plus the falsification you ran |
-| **adapt** | the mechanism transfers, the specifics do not | what carries, what does not, and why |
-| **reject** | the assumption fails, we already have it, or it changes no decision | the reason — so it is not re-litigated |
-| **defer** | plausible, nothing cheap decides it | the experiment that would, and what would trigger running it |
-
-Record it in the knowledge base as a `prior` page with evidence level **`external-unverified`** — always, even for adopt. Promoting it to `measured` requires reproducing the result here, and that is a separate act that should look like one:
-
-```bash
-node -e "import('./tools/kb.mjs').then(kb => kb.ingest({
-  uri:'<source url>', title:'<the claim in a few words>', topic:'<domain keywords>',
-  text:'<claim, evidence with n, assumption, mechanism>',
-  note:'VERDICT: adopt|adapt|reject|defer — <one line why> — falsification: <what you ran or would run>',
-}))"
-```
-
-## Then land it, or it did not happen
-
-An adopted idea that changes no file is a rejection with extra steps.
-The smallest landing is usually: one rule in the skill or doc that governs the decision it improves, citing the source. Not a new module.
+For authorized adoption or adaptation, make the smallest change that implements the decision in the owning code or guidance and verify it.
+Do not add a new rule, module, or duplicate implementation when the existing system already supplies the benefit.
+A no-change decision is complete when its evidence is recorded; it does not require editing a file merely to demonstrate action.
 
 ## Log the run
 
 ```bash
-skill-run-log /reconcile --target "<the external thing>" --verdict <ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
+skill-run-log /reconcile --target "<external claim or technique>" --verdict <ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Verdict is adopt and it needs a measured comparison before it governs anything | `/evolve` | the metric, the current baseline, and the change |
-| Verdict is defer and the deciding experiment is worth designing properly | `/hypothesize` | the claim, its mechanism, and the falsification you could not cheaply run |
-| The idea claims a capability our stack may already own | `/build-with-agent-runtime` | the capability in plain words, never the author's name for it |
-| Adoption would change how agents are instructed | `/evolve` on the skill text | the failing cases the new rule should fix |
+| The decision supports a measured implementation experiment | `/evolve` | The source, baseline, and proposed change |
+| Several unresolved mechanisms need research and experiment selection | `/hypothesize` | The claim, alternatives, and missing evidence |
+| A runtime capability needs adoption in the active project | `/build-with-agent-runtime` | The required behavior and current implementation |
+| The supported benefit is removal of unnecessary work | `/simplify` | The requirement, evidence, and affected callers |

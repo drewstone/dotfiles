@@ -5,99 +5,47 @@ description: Apply a fixed quality rubric and fix gaps in behavior, design, test
 
 # Polish
 
-Fixed-rubric hardening pass on work that already exists and already runs. The output is a rubric table with `PASS`/`FAIL` per criterion and the exact check that decided it, plus gaps ranked by user-visible impact. A criterion with no command run is `FAIL — unchecked`, never `PASS`.
+Improve implemented work against explicit quality criteria.
+Use evidence to decide which gaps matter, and leave sound work unchanged.
 
-Use this only for implemented work that runs and needs a fixed quality rubric.
-An objective metric, a red suite, or missing behavior belongs to a different task.
+## Assess and improve
 
-## Flow
+1. Compare the artifact with the user's request and the repository's requirements.
+2. Assess correctness, design, robustness, tests, and public interfaces where they apply.
+   State what each criterion means for this artifact before judging it.
+3. Inspect or run the check that can expose a failure of that criterion.
+   For docs, skills, or unfamiliar artifact types, read [check examples](references/RUBRIC.md) when selecting suitable evidence.
+4. Rank confirmed gaps by the consequence for users and callers.
+   Fix actionable gaps within scope, then repeat the affected checks and required repository validation.
+5. Finish when the applicable criteria pass, or report a specific unresolved requirement and what prevents its completion.
 
-1. **Check entry.** Run the suite and compare the implemented behavior with the request. Record any failure or missing behavior as a blocker, persist the rubric, and finish this pass.
-2. **Run ≥1 check per criterion** across the 5 below (check catalog + prose mappings: `references/RUBRIC.md`). Record the literal command and its output.
-3. **List gaps ranked by user-visible impact** = callers/users hit (`n=`) × severity. Never ranked by fix effort.
-4. **Fix in rank order** while a failed criterion has an actionable gap. Parallelize independent gaps; the operator re-runs every check.
-5. **Re-run all 5 checks.** A regression you introduced outranks every open gap.
-6. **Self-gate (8 items), then emit**, naming which items failed.
+A failing test or missing requested behavior is work to resolve within scope, not a reason to end an authorized implementation task.
+An introduced regression takes priority over further polish.
+Avoid changes that only restate code, rename working concepts, or impose a preferred architecture without a demonstrated benefit.
 
-The 5 criteria: **Correctness** (breaks on which input?) · **Design** (which abstraction is unjustified?) · **Robustness** (which failure is silent?) · **Tests** (which regression would slip through?) · **API surface** (what must a caller know that they shouldn't?).
+## Evidence and result
 
-## Hard rules
+Use `PASS`, `FAIL`, `UNCHECKED`, or `N/A` for each criterion.
+A pass needs a cited check and its result; inspection is valid evidence when it directly tests the requirement.
+Keep unchecked work distinct from a proven failure.
+State why a criterion does not apply.
 
-| Rule | Why |
-|---|---|
-| **`PASS`/`FAIL` only — no 1–10 score, no target score.** | The prior round template emitted 5 scores and 0 commands (`git log -p -- skills/polish/`); a 7-vs-8 carries ~0 bits and cannot be wrong. |
-| **Every `PASS` names the command + its output.** No command → `FAIL — unchecked`. | "Tests pass" is unfalsifiable; `vitest run pkg → 41/41, 0 skipped` is a claim. |
-| **`k of n` or `n=` on every quantity.** Banned as claims: several, many, most, often, repeated, significant, substantial, strong, meaningful, all cases. | The prior file made 3 quantity claims ("all cases", "every issue", "most code starts at 5-7") with 0 denominators. |
-| **`measured \| inferred \| hypothesis` on every gap row**, with the exact check for `measured`. `hypothesis` rows are banned from the Verdict and from the top-3 fix queue. | An unlabeled gap gets fixed at the same priority as a guess. |
-| **Cost both sides, same unit:** cost incurred now (failures/week, caller-minutes, reruns, $) + saving if fixed, assumption stated. `unmeasured (<reason>)` is allowed; dropping the column is not. | Without it "ranked by impact" is ranked by taste. |
-| **Evidence is a pointer:** `path:line`, PR#, run id, or command + its output. A prose summary of evidence is a defect. | — |
-| **≤450 words outside tables.** No paragraph >3 lines — if it is longer, it is a table. | Round reports grow into essays; the decision is 5 cells wide. |
-| **No fluff fix:** comments restating code, docstrings on private helpers, cosmetic renames. Every fix names the behavior it changes or the reader-cost it removes. | — |
-| **Finish by evidence, not a round count.** `SHIP` needs 5/5 PASS. `HOLD` needs a named blocker, explicit resource limit, cancellation, or no actionable gap. A broken test dispatches repair immediately. | A fixed pass count can stop one change before the rubric is satisfied. |
-
-## Output template
-
-Emit exactly this. Omit a section only where its rule says so.
-
-```markdown
-# Polish: <target> — round <r> — <k>/5 PASS
-
-**Verdict:** SHIP | HOLD — <k>/5 criteria PASS, <g> open gaps, top gap costs <number + unit>.
-**Blocking:** <criterion> — <gap in one line> (<path:line>)
-**Next:** /<skill> targeting <X>
-
-## Rubric
-| # | Criterion | Verdict | Check run (command or path:line) | Result | Status |
-|---:|---|---|---|---|---|
-| 1 | Correctness | | | | measured |
-| 2 | Design | | | | |
-| 3 | Robustness | | | | |
-| 4 | Tests | | | | |
-| 5 | API surface | | | | |
-
-## Gaps — top <k> of <total>, ranked by user-visible impact
-| # | Gap | Criterion | Who it hits | Cost incurred | Saving if fixed | Status | Evidence | Fix | Round |
-|---:|---|---|---:|---:|---:|---|---|---|---:|
-
-<total−k> gaps below the impact bar: <name them in one line>.
-
-## Fixed this round
-| Gap # | Change (path:line) | Check proving it | Before → After |
-|---:|---|---|---|
-
-## Regressions
-| Test | Was | Now | Fixed in |
-|---|---|---|---|
-
-Omit if green; instead one line: `<cmd> → <p>/<t> pass, 0 new failures`.
-
-## Self-gate
-<k>/8 passed — failed: <list, or "none">.
-1 PASS/FAIL only, no scores · 2 every PASS carries command+output · 3 k-of-n on every quantity · 4 status label on every gap row · 5 cost both sides · 6 evidence is a pointer · 7 ranked by user-visible impact not effort · 8 words <N> ≤ 450.
-```
-
-## Calibration
-
-- **0/10** — `Round 2 — Score: 8/10 · Correctness: 8/10 — solid, edge cases mostly handled.` 5 scores, 0 commands, 0 pointers, 0 denominators; nothing here can be wrong.
-- **10/10** — `Tests | FAIL | vitest run sdk/tests/retry.test.ts → 12/12 pass | 0 of 12 assert the timeout path; deleting the timeout branch keeps 12/12 green | measured`. One row, one command, one falsifiable claim, one named regression it fails to catch.
+Report the applicable criteria, evidence, fixed gaps, remaining user impact, and uncertainty.
+Use measured quantities when available and label estimates.
+A quality verdict does not authorize a release.
 
 ## Log the run
 
 ```bash
-skill-run-log /polish --target "<target> <k>/5 PASS" --verdict <VERDICT> --next /<skill-or-stop>
+skill-run-log /polish --target "<target>" --verdict <VERDICT> --next /<skill-or-stop>
 ```
-
-The log line is provenance, not evidence: a `PASS` is supported only by the command it cites.
 
 ## Then consider
 
-| Condition (threshold) | Next skill | Pass it |
+| Condition | Next skill | What to pass |
 |---|---|---|
-| 5/5 PASS and 0 open gaps above the bar | `/ship` | rubric table and the green suite command |
-| ≥1 FAIL and no actionable gap remains | `/pursue` | blocking criterion and ranked gap rows |
-| ≥1 failing test at entry or after any round | `/converge` | failing test names and the exact command |
-| A gap needs a number moved, with baseline and target stated | `/evolve` | metric, baseline value, target value |
-| ≥2 gaps in one file are duplication or dead code | `/deep-clean` | file list and duplicate pairs (`path:line`) |
-| ≥1 gap is on an auth, crypto, or input-parsing path | `/harden` | `path:line` and the untrusted input it accepts |
-| ≥1 gap is on visible UI | `/product-design-audit` | route and screenshot path |
-| The 5 criteria caught 0 of the domain's known failure modes | `/eval-agent` | 3 reference artifacts and the missed failure mode |
+| The criteria pass and an authorized release remains | `/ship` | the verified revision, target, and checks |
+| A gap requires an authorized architectural change | `/pursue` | the failed requirement and evidence |
+| Required checks remain red | `/converge` | the failing checks |
+| A measured product outcome remains below its target | `/evolve` | the metric, baseline, and target |
+| A visible workflow needs broader design work | `/product-design-audit` | the route, user task, and screenshots |

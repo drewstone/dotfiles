@@ -1,59 +1,57 @@
 ---
 name: hypothesize
-description: Research prior art, generate mechanisms, rank them, and hand off an experiment portfolio.
+description: Research relevant mechanisms, assess their evidence, and choose the experiments most likely to resolve an improvement decision.
 ---
 
 # Hypothesize
 
-The improvement loop without this phase is greedy: try a thing, measure, keep or revert. This is the phase that makes it *science* — survey the field, bet a ranked portfolio, spend on the highest-value bet first. Use it before `/evolve` or `/pursue` whenever the honest answer to "what should we try?" is more than one obvious thing.
+Use this when the next useful approach is unclear or current attempts keep varying the same unsupported idea.
+Finish with supported candidates and deciding experiments, not an obligatory number of bets.
 
-It does not run experiments (that's `/evolve`), diagnose *our* failures (that's `/diagnose` — inward), or question the target (that's `/breakout`). It looks *outward and forward*: what's known, what's possible, what's worth betting.
+## Investigate before proposing
 
-Shared conventions in `_common.md`. This absorbs and strengthens what was evolve's optional "structured-hypothesis mode."
+Read the goal, measured constraints, existing capability, and prior rejected approaches.
+Research relevant primary sources and implementations by mechanism, not just by the project's terminology.
+Record what each source actually establishes and whether its assumptions match the current system.
+Distinguish reproduced local evidence, external evidence, causal reasoning, and an unsupported guess.
 
-## When to use
+Do not treat missing accessible research as proof that no prior art exists.
+Use the research tools available within scope; this skill does not implicitly request a special research mode or new spending authority.
 
-| Signal | Skill |
-|---|---|
-| "Make this number go up" and the next change is obvious | `/evolve` directly |
-| "What should we even try?" / more than one plausible lever | **`/hypothesize`** |
-| "Someone has surely solved this — what do they do?" | **`/hypothesize`** (dispatches `/deep-research` for web depth) |
-| "We keep trying variations of one idea" | **`/hypothesize`** — the field is too narrow |
-| Our own runs are failing, need ROI order | `/diagnose` (inward) then `/hypothesize` |
+## Form and compare candidates
 
-## Procedure
+For each viable candidate, record:
 
-1. **Research the space — outward, before generating anything.** What's the real ceiling on this metric, who has hit it, what techniques exist that you haven't tried, where do competitors/prior art/other codebases beat you. Be honest about where they win. Dispatch `/deep-research` when the survey needs real web depth; read in-repo prior art and specs directly. Output: a landscape of *named techniques with their evidence*, not a vibe.
-2. **Generate the field — a diverse set, never one.** Each hypothesis is a row: **mechanism** (one causal sentence), **predicted effect** (number + direction), **cost** (compute/time/risk), **killer** (the result that falsifies it), **evidence class** (prior-art-backed / first-principles / hunch). If all your rows are the same family, you haven't thought — force a structurally different branch.
-3. **Rank by expected value, not by confidence.** `EV ≈ P(true) × effect ÷ cost`. Prior-art-backed raises `P(true)`; a hunch lowers it but a hunch with named upside still earns a slot. The top of the ranked list is what you spend on first.
-4. **Sequence by information gain.** Among high-EV bets, run the one that most reduces uncertainty about the *rest* of the portfolio first — a cheap test that would kill or confirm three downstream bets beats a marginally-higher-EV bet that teaches nothing. Information compounds; a single win doesn't.
-5. **Hand off the portfolio.** Write `.agent/hypotheses/<date>-<slug>.md` (the ranked field, evidence, sequence). Dispatch `/evolve` to run the top bet, `/pursue` if the top bet is architectural, or `/breakout` if the *whole field* caps below the target — that means the target is the cage, not your ideas.
+- the mechanism and required user outcome;
+- supporting and contrary evidence with source locations;
+- assumptions that remain untested;
+- the expected effect in real units when estimable, otherwise the uncertainty;
+- experiment and operating costs, dependencies, and risk;
+- the smallest observation that would refute the useful-effect claim.
 
-## Rules
+Include deleting work or using an existing simpler solution when it meets the requirement.
+Seek a different mechanism when the current family cannot address the demonstrated cause.
+Do not invent alternatives, probabilities, or improvement multipliers to fill a table.
+Read [candidate comparison](references/candidate-comparison.md) when tradeoffs or dependent experiments make the order unclear.
 
-- **One hypothesis is a guess; a ranked field is a strategy.** Never leave this skill with a single bet.
-- **Research the world before betting on your own idea.** Someone has probably already hit this ceiling, and *how they did it* is the highest-value prior you have. Skipping the survey is how you spend a week re-deriving a known technique.
-- **Rank by expected value, not confidence.** A 20%-likely 10x bet beats a 90%-likely 3% bet. Rigor that only ever funds the safe bet has killed the portfolio.
-- **Run the experiment that teaches the most, not the one most likely to win.** The goal of a round is to collapse uncertainty, not to bank a point.
-- **Every hypothesis names its killer.** A bet you can't lose is a bet you can't learn from — and usually a bet whose mechanism you don't actually understand.
-- **Prior-art-backed > first-principles > hunch on `P(true)` — but always leave one slot for the named-upside hunch.** Don't let rigor strangle the moonshot.
+## Record the choice
 
-Use `references/full-reference.md` for the EV scoring worked example, the evidence classes, and information-value sequencing.
+Write `.agent/hypotheses/<date>-<slug>.md` with sources, candidates, rejected alternatives, deciding tests, and the recommended sequence.
+A single supported candidate, or no justified change, is a valid result.
+Record why further research or measurement would change that decision when it remains open.
+This skill selects experiments; subsequent execution follows the completed analysis and the task's existing authority.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /hypothesize --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /hypothesize --target "<outcome and unresolved mechanism>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Top-ranked bet is a parameter, prompt, or config change | `/evolve` | the ranked field + the baseline number to beat |
-| Top-ranked bet is architectural, not a parameter | `/pursue` | the ranked field as competing designs + the cap on the current one |
-| The whole ranked field's expected value caps below the target | `/breakout` | the ceiling estimate + the constraint that sets it |
-| ≥3 top bets are independent and budget allows parallel tracks | `/multi-pursue` | one brief per track + the shared metric |
-| No repeatable measurement exists for the target yet | `/ground-truth` | the target + the hops that would have to be instrumented |
+| A scoped change has a deciding experiment | `/evolve` | The hypothesis, baseline, and test |
+| The chosen mechanism requires an architectural build | `/pursue` | The candidate, alternatives, and required behavior |
+| A measured constraint or target assumption needs reconsideration | `/breakout` | The constraint and evidence limiting the candidates |
+| An external technique needs a concrete adopt/adapt/reject decision | `/reconcile` | The source, local capability, and transfer assumptions |

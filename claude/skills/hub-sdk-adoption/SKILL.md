@@ -1,82 +1,53 @@
 ---
 name: hub-sdk-adoption
-description: Adopt hub-sdk for OAuth connections, tool calls, capability tokens, and policy enforcement.
+description: Adopt the Hub SDK for hosted connections, tool calls, approvals, and delegated access.
 ---
 
 # Hub SDK Adoption
 
-Use this when a product needs to call the hosted Tangle Hub for connections, tools, approvals, policies, tokens, audits, or workflows.
-Use `agent-integrations` instead when implementing connector contracts or an execution provider.
+Use `@tangle-network/hub-sdk` when the product consumes the hosted Tangle Hub.
+The product retains users, permissions, stored connection references, and business policy.
+The SDK owns Hub transport, wire types, typed errors, and redaction helpers.
 
-## Read Current Truth
+## Read the current contract
 
-1. Inspect the product lockfile and installed `@tangle-network/hub-sdk` version.
-2. Read its package exports, generated types, README, and nearest example.
-3. Inventory current hub calls, local hub types, transport wrappers, auth handling, and direct HTTP requests.
-4. Find current package usage in adjacent maintained products before designing a new wrapper.
+Start with the maintained [SDK guide](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/hub-sdk/README.md) and [public exports](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/hub-sdk/src/index.ts).
+Find the current client method and test for the required connection, tool, approval, subscription, or workflow action.
+Confirm imports against the target project's installed package.
 
-Do not copy method signatures or endpoint tables from this skill.
+## Replace the competing path
 
-## Integration Boundary
+1. Locate existing direct Hub requests, duplicate wire types, transport wrappers, and auth handling.
+2. Configure the SDK at the authorized server boundary, with explicit endpoint and request identity.
+3. Route callers through the corresponding typed method.
+4. Retain adapters that add product policy, persistence, or identity mapping; delete adapters that only rename SDK behavior.
+5. Confirm old callers are gone before removing their code or dependencies.
 
-The product owns users, sessions, permissions, stored connection references, UI, and business policy.
-The SDK owns Hub request and response types, transport, envelopes, redaction helpers, and typed errors.
+Generated apps, browsers, and sandboxes receive only the credentials permitted by their delegated role.
+Keep account keys, provider refresh tokens, and signing secrets server-side.
+Bind delegated capabilities to permitted actions and expiry; enforce user authorization or stored product policy for writes.
+Preserve error codes and retry meaning, and deduplicate state-changing calls through the supported contract.
+Missing auth or transport failure must not become empty data.
 
-Generated apps, browsers, and sandboxes must not receive Hub API keys, provider refresh tokens, signing secrets, or unrestricted capability tokens.
+## Prove adoption
 
-## Replace Competing Paths
+Run typecheck and focused integration tests against the actual package.
+Exercise one real primary request through the product's auth and persistence path.
+Test changed failure boundaries, including denied auth, required approval, malformed responses, and duplicate writes when relevant.
+Search for old transports, duplicate types, and importers of removed wrappers.
 
-1. Add the current package version using the repository's dependency policy.
-2. Create the SDK client at the server boundary with explicit base URL and request auth.
-3. Replace direct Hub HTTP calls with the matching typed SDK client.
-4. Replace local copies of Hub request, response, error, connection, tool, policy, token, and workflow types.
-5. Remove transport wrappers that only rename SDK methods or unwrap the same envelope.
-6. Keep product adapters only when they add product policy, persistence, or identity mapping.
-7. Remove obsolete dependencies only after confirming they are not still used for connector specs or runtime execution.
-
-A migration is incomplete when both old and new transports remain reachable.
-
-## Security And Failure Rules
-
-- Resolve credentials on the server and fail when required configuration is absent.
-- Bind user-scoped calls to the authenticated product principal.
-- Use short-lived, action-scoped capabilities for delegated execution.
-- Require product approval for write or destructive actions unless stored policy authorizes them.
-- Preserve SDK error codes, status, details, and retry meaning.
-- Do not turn missing auth, denied approval, or transport failure into empty data.
-- Use stable idempotency keys for state-changing calls and webhook processing.
-- Redact credentials before logs, traces, or error persistence.
-
-## Prove Adoption
-
-Run repository searches that show:
-
-- the target product imports the SDK;
-- no direct Hub transport remains outside approved SDK or server adapter code;
-- no local duplicate Hub wire types remain;
-- deleted wrappers have no importers;
-- the old dependency is absent or has a documented remaining role.
-
-Then run typecheck, focused tests, and one real request for connection listing, tool discovery, or the product's primary Hub action.
-Test denied auth, required approval, malformed response, retry, and duplicate-write behavior.
-
-## Completion
-
-Report the installed version, exact imports, removed files and dependencies, retained product adapters, real request result, failure cases, and commands run.
+Report the adopted imports, retained adapters, deleted paths, real result, and checks.
+A migration is complete only when the former transport no longer receives product traffic.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /hub-sdk-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /hub-sdk-adoption --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| Connector or provider execution must be implemented behind the Hub | `/agent-integrations-adoption` | the connector contract + the auth mode |
-| Diff touches credentials, capability tokens, webhooks, or destructive tools | `/harden` | the changed file:line list + the policy each call must satisfy |
-| ≥1 primitive was re-implemented instead of imported | `/simplify` | the duplicate implementation + the SDK export that replaces it |
-| Adoption lands and ≥1 real OAuth round-trip succeeds | `/verify` | the provider + the non-mocked call output |
+- `agent-integrations-adoption` when a connector implementation is needed behind the Hub.
+- `harden` when changed credential, webhook, or approval boundaries need adversarial checks.
+- `simplify` when local code still duplicates an adopted SDK capability.
+- `verify` when adoption works and delivery checks remain.

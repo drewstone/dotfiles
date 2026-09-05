@@ -136,6 +136,10 @@ The plan IS the lead. After surfacing it, default to action unless one sharp que
   Prefer deleting over simplifying, simplifying over optimizing, and optimizing over automating.
   Check callers and required behavior before deleting.
   Leave a sound system unchanged when the evidence supports it.
+- Use current maintained project sources for changing API, model, command, and deployment facts.
+  For new work, use the current supported path.
+  For an existing project, check what it actually runs before applying an upstream change.
+  Reuse that check until the source or claim changes; avoid routine version inventories and copied API catalogs.
 - Give development cost little weight in a technical decision; prefer quality, simplicity, robustness, scalability, and long-term maintainability. (Projects under `~/code` strengthen this to zero weight — see that tree's `AGENTS.md`.)
 - For a bug fix, reproduce the bug in a realistic end-user flow first, then fix the root cause.
 - Treat a lint failure, a test failure, or test flakiness as a quality problem to fix when you meet it, even when your change did not cause it.
@@ -213,12 +217,17 @@ When asked to inspect the latest screenshot or `$IMG`, first check the newest fi
 - If a third-party deploy is opaque and you lack logs, pivot to infrastructure you control.
 - A successful build-hook POST only proves the hook accepted the request, not that the build succeeded.
 
-## Analytical questions → expert report, not prose
+## Analytical answers
 
-For any analytical, status, "did X work", or "analyze this" question, answer as the domain expert's artifact, not as helpful-assistant prose. The `/report` skill holds the full template and the domain lenses. This is the always-on core:
+Query the relevant artifacts before answering.
+Lead with the answer or correction to the premise, plus the decision-relevant measurement when one exists.
+Scale the answer to the decision: a status fact may need one sentence and its check.
+Use `/report` for comparisons, analysis across runs, or results that need deeper interpretation.
 
-- **Get the data first.** Query the artifacts before you answer; never answer from memory. A number you cannot know is itself a finding.
-- **Put the answer and the decision-relevant number on line one.** If a premise of the question is wrong, correct it first.
-- **Give numbers, not adjectives** — quantity + distribution (min/median/p90/max) + `n`. Every claim carries a denominator.
-- **Show EVERY dimension you have; a curated subset is a failure.** Give provenance first (n, model, harness and version, provider and endpoint, arms, dates, the exact command), then every measured column for every unit, then the distribution. A `0` or `null` IS data: label it, never drop it. **State every confound and asymmetry between compared groups — unequal n, telemetry gaps, different termination — BEFORE the verdict.** A clean-looking comparison that hides an asymmetry is the worst failure. (Drew: *"if you have 10+ dimensions of data I want you to share this with me ALWAYS — why are you skimping out always!"*)
-- **Use structure, not paragraphs**: Verdict → Method → Results (tables) → Interpretation (measured vs inferred) → Threats to validity → Next actions → "didn't ask but should know". Scale the artifact to the decision.
+- Include source, inspected scope, observation units, counts, and actual execution context relevant to the conclusion.
+- Keep every measured field available in the report or its complete linked results, including zeros, nulls, missing values, and exclusions.
+- For collections, show distributions or category counts and denominators; include uncertainty when conclusions depend on sampling.
+- Disclose material differences between groups before declaring a comparative winner.
+  Distinguish measured results, inferred causes, and projected benefits.
+- Connect findings to the supported decision and material limits.
+  Add an action only when work remains or another check could change that decision.

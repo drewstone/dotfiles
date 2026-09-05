@@ -5,95 +5,41 @@ description: Remove dead code, cycles, weak types, duplication, obsolete paths, 
 
 # Deep Clean
 
-Delete weight; prove nothing broke. Every deletion ships with the grep that proved it dead (command + `0` count) and the gate that proved the capability survived (`file::test → k/n`). A deletion missing either is a defect, not a cleanup. Output is the table below, not a narrative.
+Remove unnecessary code and simplify retained code while preserving the behavior the user still needs.
+A checked no-change result is valid.
 
-## Flow — 5 phases, strictly serial
+## Find justified changes
 
-| # | Phase | Work | Gate before the next phase |
-|---:|---|---|---|
-| 0 | Measure | run the command table, write `.agent/deep-clean-baseline.json` | every metric has a number; 0 metrics estimated |
-| 1 | Structure | cycles, one canonical module per capability, import direction | `madge --circular` → 0; tests + `tsc --noEmit` → 0 errors |
-| 2 | Strengthen | weak types, dead code, test integrity, error paths | tests + types + build |
-| 3 | Polish | AI slop, deprecated paths, the project's own formatter | tests + types + build + lint |
-| 4 | Re-measure | re-run all Phase-0 commands, emit the template | pass rate ≥ Phase-0 pass rate; build green |
+1. Establish the requested scope, public contracts, existing work, and repository checks.
+2. Inspect dead-code candidates, import cycles, duplicate implementations, weak types, error handling, and obsolete configuration.
+   Use the repository's existing tools for relevant measurements; tool warnings are candidates for investigation.
+3. Check consumers before deleting: source, tests, configuration, scripts, exports, generated entrypoints, string registries, and dynamic imports.
+   A search with no matches does not prove that a published API has no external consumers.
+4. Explain which required capability survives each removal and how to verify it.
+   Preserve unclear code until its purpose and consumers are understood.
+5. Choose changes that reduce concepts or maintenance work.
+   Share an implementation when callers express the same requirement; matching syntax alone does not justify an abstraction.
 
-Parallel subagents inside 1 phase (non-conflicting files) are fine. Across phases never: Phase 1 rewrites the import graph Phase 2 reads; Phase 2 removes code Phase 3 reads.
+## Implement and verify
 
-## Phase 0 commands — record exact output, never a summary
+Order changes by their actual dependencies.
+For example, changing imports can invalidate earlier dead-code results, so rerun those checks after the import change.
+Use small reviewable changes and the repository's formatter.
+When a check fails, diagnose and fix the regression before building further changes on it.
+Preserve unrelated work when restoring a failed edit.
 
-| Metric | TypeScript | Python | Rust |
-|---|---|---|---|
-| type errors | `npx tsc --noEmit` | `mypy .` | `cargo check` |
-| dead exports/files/deps | `npx knip --reporter json` | `vulture .` | `cargo +nightly udeps` |
-| cycles | `npx madge --circular src/` | `pydeps --show-cycles` | — |
-| duplication | `npx jscpd --min-lines 6 --min-tokens 50 src/` | `jscpd` | `jscpd` |
-| escape hatches | `grep -rEn "as any\|: any\|@ts-(ignore\|expect-error)" src/ \| wc -l` | `# type: ignore` | `unsafe\|unwrap()` |
-| debt markers | `grep -rEn "TODO\|FIXME\|HACK\|XXX" src/ \| wc -l` | same | same |
+Keep `unknown` plus validation at untrusted boundaries when that is the correct contract.
+Trace internal values before strengthening their types.
+Remove an error handler only after checking its recovery, cleanup, cancellation, and public error behavior.
+Remove obsolete tests with obsolete behavior; preserve or replace coverage for retained behavior.
+Published API removal needs a consumer check and the release policy required for that change.
 
-Then read, don't scan: `tsconfig.json` strict flags that are off, `knip.json` ignores whose stated reason expired, and the top-10 churn files (`git log --format= --name-only | sort | uniq -c | sort -rn | head -10`). Tools find mechanical rot; only reading finds a 600-line function, 1 capability implemented 3 ways, or a test with 0 real assertions.
+Run checks appropriate to the surviving paths and the repository's required validation.
+Reconcile deletions against the full diff and repeat relevant baseline measurements.
+For work spanning turns, retain evidence in the repository's existing task state; use `.agent/deep-clean-baseline.json` when no baseline record exists.
 
-## Hard rules
-
-| Rule | Why |
-|---|---|
-| **Dead-proof per deletion**: the literal grep over src + tests + configs + dynamic-import strings, with its `0` count. A knip JSON row alone is not proof. | knip misses `import()` by variable, `bin` entries, string-keyed registries, and test-only utilities. |
-| **Capability proof per deletion**: the gate exercising the surviving path, as `path::test → k/n passed`. "tests pass" is a defect. | A deletion that silently drops the only coverage of a path reads green and ships a regression. |
-| **`k of n` or `n=` on every quantity.** Banned as claims: several, many, most, significant, substantial, strong, often, repeated, a lot, much cleaner, simpler. | "removed a lot of dead code" is unfalsifiable; `1,204 LOC across 17 files` is checkable. |
-| **`measured \| inferred \| hypothesis` on every row.** `measured` requires command+output, `path:line`, or run id. `hypothesis` rows are banned from the Verdict and from any deletion actually performed. | Deleting on a hypothesis is how load-bearing code disappears. |
-| **Report removed lines and bytes, measured time separately.** Describe current maintenance work and the work each deletion avoids, with affected paths. Unknown costs remain `unmeasured (<reason>)`. | File size does not measure maintenance cost; multiplying it by call sites invents that cost. |
-| **≤500 words outside tables and fenced blocks.** No paragraph >3 lines — if longer, it is a table. | |
-| **Canonicalize at N=2 when both instances name the same concept** (`PLATFORM_URL` vs `PLATFORM_API_URL`, 2 session-getters). Extract coincidental shape only at N=3 with ≥80% token overlap. | Named drift is the bug; premature abstraction of matching shape is a different bug. |
-| **Never delete what you can't explain.** Unexplained try/catch, opaque module → leave it, note it in Kept-on-purpose, move on. | |
-| **Cleanup only removes.** A new `Manager` class, or a working callback rewritten to async/await, is risk — not cleanup. `var`→`const` is. | |
-| **Published-package public API: flag, never delete.** Needs a version bump and a consumer check. | 0 external consumers is a claim requiring a registry/grep check, not an assumption. |
-| **Phase gate red → revert that phase.** Never carry a failing gate into the next phase. | |
-
-Weak-type triage: external boundary → real type + runtime validation (`unknown` + narrowing is correct, keep it); internal laziness → trace the value, write the type; genuinely un-typeable → keep + 1 comment saying why. Error triage: external error → keep and type it; "shouldn't happen" → remove the catch, fix the root cause; `catch {}` → a bug; silent fallback hiding failure → remove.
-
-## Output template
-
-Emit exactly this. Omit a section only when its own rule says so.
-
-```markdown
-# Deep Clean: <scope> — <YYYY-MM-DD> — <N> files, <L> LOC / <B> bytes removed
-
-**Verdict:** <L LOC removed across N files; gates green|red> — measured
-**Biggest single win:** <item> — <maintenance work avoided>, <LOC> lines removed.
-**Next:** /<skill> targeting <surface> with baseline <metric=value>
-
-## Baseline vs after
-| Metric | Before | After | Δ | Command | Status |
-|---|---:|---:|---:|---|---|
-
-## Deletions — top <k> of <total>, ranked by verified maintenance impact
-| # | path:line | What | LOC | Bytes | Dead-proof (command → count) | Capability proof (gate → k/n) | Current maintenance work | Work avoided | Status |
-|---:|---|---|---:|---:|---|---|---|---|---|
-
-<total−k> deletions under <T> LOC are folded into the Δ row above.
-
-## Kept on purpose
-| path:line | Looked dead because | Kept because (caller / dynamic ref / public API) | Status |
-|---|---|---|---|
-
-## Deferred
-| Item | Est. LOC | Why deferred | Owner | Trigger to revisit |
-|---|---:|---|---|---|
-
-## Gates
-| Gate | Command | Before | After |
-|---|---|---|---|
-
-## Self-gate
-<k>/8 passed — failed: <list, or "none">.
-1 dead-proof command+count on every deletion · 2 capability proof on every deletion · 3 k-of-n on every quantity · 4 status label on every row · 5 maintenance work before/after, units separate · 6 evidence is path:line / command+output / run id, never prose · 7 Verdict names 1 number + 1 dispatch · 8 words ≤500.
-```
-
-## Calibration
-
-- **0/10** — "Cleaned up the codebase, removed a bunch of dead code and simplified several modules. Tests pass." 0 numbers, 0 pointers, 0 dead-proofs, 3 banned adjectives.
-- **10/10** — `1,204 LOC / 41,880 bytes removed across 17 files`; every row carries `grep -rn "legacySseParse" src tests → 0`, `apps/sidecar/tests/sse.test.ts → 12/12`, maintenance work `2 parsers → 1`, status `measured`; `tsc` errors 34→0, cycles 3→0, jscpd 6.1%→1.8%.
-
-`references/full-reference.md` holds worked examples only. This file is the normative contract; where they differ, this file wins.
+Report what was removed or simplified, why it was safe, the checks and results, and what was kept deliberately.
+Report lines, bytes, timing, and maintenance effects in their own units; file size alone does not establish a performance or cost improvement.
 
 ## Log the run
 
@@ -103,11 +49,8 @@ skill-run-log /deep-clean --target "<scope>: <N> files" --verdict <VERDICT> --ne
 
 ## Then consider
 
-| Condition (threshold) | Next skill | What to pass it |
+| Condition | Next skill | What to pass |
 |---|---|---|
-| ≥1 touched file sits on auth, secrets, input parsing, subprocess, or FS-path code | `/harden` | the deletion rows for those files + the gate names that covered them |
-| ≥1 failing test or build error after Phase 4 | `/converge` | the failing command + its output + the phase that introduced it |
-| jscpd duplication ≥3% of lines after Phase 3, or ≥2 competing entrypoints left for 1 capability | `/simplify` | the jscpd JSON + both entrypoint paths |
-| ≥5 kept paths have 0 covering test (Phase 2c gap list) | `/polish` | the uncovered `path:line` list + the gate that would prove each |
-| Deferred table ≥3 rows totalling ≥500 estimated LOC | `/reflect` | the Deferred table verbatim, scope=project |
-| Δ LOC = 0 and Δ type errors = 0 after Phase 4 | stop | log the run; there was nothing to clean |
+| Changed security boundaries need additional attack coverage | `/harden` | the changed paths and preserved invariants |
+| Required tests or builds remain red | `/converge` | the failing command and causal change |
+| Retained duplication needs a separate simplification decision | `/simplify` | the competing implementations and callers |

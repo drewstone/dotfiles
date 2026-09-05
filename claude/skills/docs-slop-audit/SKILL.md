@@ -5,30 +5,35 @@ description: Audit technical docs for weak claims, AI slop, unclear boundaries, 
 
 # Docs Slop Audit
 
-Use this for technical docs, READMEs, whitepapers, launch notes, product pages, and generated MDX.
-The goal is truth and reader utility, not prettier prose.
-For public writing, blog, research, marketing, or product pages, also read the relevant `docs/anti-patterns/` file before editing.
+Review technical documents for factual accuracy, clear product boundaries, and usefulness to the intended reader.
+Preserve technical repetition and passive voice when they improve clarity.
 
-## Flow
+## Review and edit
 
-1. Read the docs in scope plus nearby nav/meta files.
-2. Run `scan-docs-slop.mjs` when available.
-3. Verify factual claims against code, config, package API, deployment state, or source material.
-4. Separate facts, promises, opinions, and roadmap.
-5. Fix or flag weak claims, boundary confusion, generic filler, unsupported superlatives, and procedural noise.
-6. Preserve technical repetition and passive voice when they improve clarity.
+1. Read the documents in scope and nearby navigation or metadata to establish the reader's task.
+   For public writing, read the relevant repository `docs/anti-patterns/` guidance before editing.
+2. Verify claims against current source, configuration, public APIs, deployment state, or cited material.
+   Distinguish implemented behavior, hosted operations, protocol guarantees, plans, and opinions.
+3. Remove unsupported claims, generic filler, and procedural copy that does not help the reader act.
+   Keep qualifiers that express a real limitation or uncertainty.
+4. Report findings for a review-only request; make edits when the task includes revision.
+   Run the repository's documentation and link checks after editing.
 
-## Output
+For a broad document set, use [the scanner](scripts/scan-docs-slop.mjs) to find candidate passages:
 
-Return findings with file:line, risk, evidence, and suggested edit.
-If editing, make the changes and run the repo's doc/check commands.
+```bash
+node <skill-directory>/scripts/scan-docs-slop.mjs --json <file-or-directory>...
+```
 
-Use `references/patterns.md` and `references/full-reference.md` for scanner details.
-Use `docs/anti-patterns/` for durable anti-slop doctrine.
+Check `scannedFiles`, `findingCount`, and `emittedCount` before relying on its output.
+The scanner skips some directories and file types, limits emitted findings, and does not establish factual correctness.
+Read [pattern guidance](references/patterns.md) when triaging recurring wording or product-boundary findings.
+Follow current product documentation for exact product names and responsibilities; a generic skill cannot own that inventory.
+
+Report file:line, the reader consequence, evidence checked, and the correction for each substantive finding.
+Separate the material scanned from the material actually reviewed, and name unverified claims.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /docs-slop-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -38,7 +43,6 @@ skill-run-log /docs-slop-audit --target "<what this run targeted>" --verdict <VE
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| ≥1 claim describes API or SDK behavior the code does not implement | `/critical-audit` | the claim, its doc line, and the source file:line that contradicts it |
-| ≥5 stale claims trace to one removed code path | `/deep-clean` | the removed path + every doc reference to it |
-| Facts are correct and cadence still reads generic | `/writing-profile` | the draft + the target voice samples |
-| 0 unsupported claims across the audited pages | `/reflect` | the page list + the claims verified against source |
+| An API claim conflicts with its implementation | `/critical-audit` | the claim and contradictory source |
+| Obsolete code and documentation share a removable capability | `/deep-clean` | the consumer evidence and affected paths |
+| Accurate writing still needs the requested author voice | `/writing-profile` | the draft and real writing samples |

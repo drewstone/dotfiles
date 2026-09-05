@@ -7,34 +7,36 @@ metadata:
 
 # Product Design
 
-Use this before creating or revising visible UI.
-The interface should do the job, not explain the job.
-For public pages, blog/research surfaces, marketing pages, or broad design-system work, read the relevant `docs/anti-patterns/` file before implementing.
+Design the interface around the user's task and verify it in the rendered product.
 
-## Flow
+## Design and implement
 
-1. Identify the product type, user, primary workflow, and domain expectations.
-2. Inspect relevant references or existing design system before inventing a direction.
-3. Choose controls that match the task: icons, tabs, toggles, menus, sliders, upload/record, chat/intake, or direct commands.
-4. Remove obvious labels, raw inventory counts, procedural step cards, dead panels, repeated action words, fake readiness states, and decorative clutter.
-5. Implement in the app's existing component/style patterns.
-6. Verify rendered desktop and mobile screenshots; fix text overflow and visible polish issues.
+1. Identify the user, primary workflow, domain expectations, and existing design system.
+2. Inspect relevant real products and prior versions the user liked before choosing a visual direction.
+   Extract useful interaction, density, typography, spacing, and media patterns from the evidence.
+3. Choose controls that perform the task directly.
+   When a mode changes the input or output type, change the actual controls and behavior accordingly.
+4. Remove duplicate navigation, decorative panels, repeated action copy, and states that imply readiness the product has not achieved.
+   Keep labels that identify controls or clarify status, risk, units, permissions, or accessibility.
+5. Implement with the application's existing components and tokens.
+6. Click through the changed flow and inspect desktop and mobile screenshots, supported themes, focus states, and text fit as relevant.
+   Fix observed regressions before reporting quality.
 
-## Rules
+For public pages, editorial surfaces, or broad design-system work, read the relevant repository `docs/anti-patterns/` guidance before implementation.
+For a blog or research index, read [editorial surfaces](references/editorial-surfaces.md) when choosing navigation and evidence presentation.
 
-- Mode changes must change the actual component, not just the label.
-- Operational tools should be dense, calm, and scannable.
-- Product/venue/person pages need real visual assets in the first viewport.
-- Blog indexes should organize by reader path: series, topic, date, or argument.
-- Research indexes should organize by claim and evidence standard, not by SEO category or product taxonomy.
-- Do not market raw inventory counts unless the count is the reader's decision.
-- Do not claim UI quality from a build alone.
+## Design decisions
 
-Use `references/full-reference.md` for execution rules and `docs/anti-patterns/` for durable writing/design doctrine.
+Match density and media to the task.
+Operational tools need scannable state and actions; product identity may need a real screenshot, person, place, or artifact.
+Marketing representations must be faithful to the product or clearly understandable as conceptual diagrams.
+Counts belong where they help the reader choose or compare.
+
+Prefer familiar, accessible controls over custom decoration.
+A successful build does not establish usable interactions or visual quality.
+Report the changed experience and browser evidence, with any remaining limitations.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /product-design --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -44,7 +46,6 @@ skill-run-log /product-design --target "<what this run targeted>" --verdict <VER
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| UI is implemented and needs adversarial browser QA | `/ui-test` | the routes + the auth state to exercise |
-| ≥3 screens changed or the information architecture moved | `/product-design-audit` | the before/after screenshots + the IA change |
-| Screenshots are needed | `/ui-test` | the target URLs + the viewport sizes |
-| Design lands in a diff > 200 lines | `/critical-audit` | the diff scope + the components it changes |
+| Implemented UI needs additional adversarial workflow testing | `/ui-test` | the changed routes and relevant auth states |
+| Navigation or workflow problems extend beyond the changed surface | `/product-design-audit` | the user tasks and observed failures |
+| The implementation needs an independent correctness review | `/critical-audit` | the diff and behavior to preserve |

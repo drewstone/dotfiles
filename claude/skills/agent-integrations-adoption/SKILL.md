@@ -1,72 +1,53 @@
 ---
 name: agent-integrations-adoption
-description: Build connector contracts and runtimes with agent-integrations, including auth and approvals.
+description: Build connector execution, grants, approvals, and webhooks with agent-integrations.
 ---
 
 # Agent Integrations Adoption
 
-Use this when building connector definitions, provider adapters, local or hosted execution, webhook intake, grants, or approval policy with `@tangle-network/agent-integrations`.
-Use `hub-sdk` when a product only needs to consume the hosted Tangle Hub.
+Use `@tangle-network/agent-integrations` to implement connector contracts or provider execution.
+Consuming hosted Hub connections and tools alone needs the Hub SDK instead.
 
-## Read Current Truth
+## Choose the required layer
 
-Inspect the installed package version, exports, types, README, connector registry, and relevant runtime implementation.
-Search the product for existing connection, grant, approval, secret, audit, webhook, and idempotency stores before adding any.
+Read the current [adoption and architecture guide](https://github.com/tangle-network/agent-integrations/blob/main/README.md) and [package exports](https://github.com/tangle-network/agent-integrations/blob/main/package.json).
+Locate the relevant implementation and test for the chosen capability: catalog, credentials, direct execution, runtime, policy, delegation, or webhook intake.
+Confirm imports against the target project's dependency before coding.
 
-The package owns vendor-neutral connector and execution contracts.
-The product owns users, tenant policy, durable storage, secret infrastructure, UI, and external-action authority.
+The package owns portable connector and execution contracts.
+The product owns users, tenant policy, durable storage, secret infrastructure, UI, and authority for external actions.
+Search those existing stores before creating another.
+Implement only the layer the product flow requires.
 
-## Implement The Required Layer
+## Integrate safely
 
-Choose only the layer the product needs:
+- Keep provider credentials in the product's secret store; public connection records contain references.
+- Scope delegated capabilities to the subject, connection, actions, and expiry.
+- Enforce the user's authorization or stored product policy at execution, including approval and destructive-action rules.
+- Deduplicate state-changing requests and provider events using the existing idempotency contract.
+- Verify webhook signatures before trusting payload fields.
+- Preserve denied, unavailable, and failed outcomes and record their audit evidence.
+- Advertise execution support only when the action's backend is configured and tested.
 
-| Need | Package surface |
-|---|---|
-| Connector metadata and action schemas | Catalog, specs, or registry |
-| OAuth or API-key lifecycle | Connect and credential contracts |
-| Direct provider execution | Connector adapter |
-| Long-tail package execution | Catalog runtime |
-| Product request enforcement | Guard or middleware |
-| Generated app access | Consumer bridge with scoped capability |
-| Provider events | Webhook normalization and deduplication |
+## Prove the product path
 
-Confirm current subpaths and symbols from installed types.
-Do not copy an old registry recipe or package-wide checklist into product code.
+Exercise the primary flow through a provider test account and the product's actual stores.
+For each changed boundary, test its relevant failure: denied action, expired or revoked credentials, duplicate delivery, malformed output, or secret disclosure.
+If the flow includes writes, prove one authorized write occurs once and one unauthorized write is denied.
+When adopting the catalog runtime, run its maintained execution audit.
 
-## Security Rules
-
-- Store provider credentials in a vault or KMS and expose only references.
-- Give generated apps and agents short-lived capabilities bound to subject, connection, scopes, and actions.
-- Require approval for writes by default and explicit policy for destructive actions.
-- Use idempotency keys for every state-changing action and provider event.
-- Verify webhook signatures before parsing trusted fields.
-- Record connect, grant, invoke, approve, revoke, rotate, and webhook outcomes.
-- Keep denied, unavailable, and failed execution distinct.
-- Do not advertise a connector action until an audited execution backend is configured.
-
-## Prove The Integration
-
-Test one read, one approved write, one denied action, expired or revoked credentials, duplicate delivery, malformed provider output, and secret redaction.
-Run the package's execution audit when adopting its catalog runtime.
-Use a real provider test account for the primary product path; mocks cover adapters only.
-
-## Completion
-
-Report the installed version and subpaths, connector and backend selected, product-owned stores, capability and approval policy, audit records, real provider result, and failure tests.
+Report selected exports, retained product policy and stores, real provider results, and failure checks.
+Remove replaced local code only after its callers use the checked package path.
 
 ## Log the run
 
-On completion, append one line so later analysis can grade this skill:
-
 ```bash
-skill-run-log /agent-integrations-adoption --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /agent-integrations-adoption --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| The connector will be exposed through the hosted Hub (binary: it needs OAuth or a capability token) | `/hub-sdk-adoption` | the connector contract + the scopes it requires |
-| Diff touches credential storage, webhook signature checks, approval gates, or destructive actions | `/harden` | the changed file:line list + the destructive tool names |
-| ≥1 hand-rolled path duplicates a package primitive | `/simplify` | the duplicate call sites + the primitive that replaces them |
-| Runtime lands and ≥1 connector executes end-to-end | `/verify` | the connector name + the real (non-mocked) call output |
+- `hub-sdk-adoption` when the product must consume the hosted Hub.
+- `harden` when new credential, webhook, or approval boundaries need adversarial checks.
+- `simplify` when local code still duplicates an adopted package capability.
+- `verify` when integration checks pass and delivery remains.

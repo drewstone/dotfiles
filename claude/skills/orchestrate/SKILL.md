@@ -1,66 +1,48 @@
 ---
 name: orchestrate
-description: Decompose and run a multi-agent workflow when no single skill covers the goal.
+description: Coordinate dependent agent tasks through available tools and deliver one integrated result.
 ---
 
 # Orchestrate
 
-Complete a goal through bounded tasks with explicit dependencies, checked results, and one integrated outcome.
-Use this when the user requests orchestration or delegation and one skill cannot cover the work.
-If one skill covers the goal, use it directly.
+Complete a goal through bounded tasks, checked dependencies, and one integrated outcome.
+Use delegation only when useful work can proceed concurrently or an independent approach can expose a different error.
 
-Shared conventions are in `_common.md`.
+## Resolve execution
 
-## Resolve execution tools
+Inspect the session's actual creation, messaging, waiting, cancellation, concurrency, and file-sharing contracts.
+Prefer those tools for ordinary delegation.
+When the project already requires a workflow runtime, inspect its current exports and nearest runnable example.
+Prove one task can return its artifact before a large dispatch through an unfamiliar runtime.
+If delegation is unavailable, execute locally and report that constraint.
 
-Inspect the delegation tools available in this session before choosing an execution method.
-Use native agent creation, messaging, waiting, and interruption tools when they provide the required behavior.
-For example, a session may expose `spawn_agent`, `send_message`, `followup_task`, and `wait_agent`.
-Read their current contracts, including concurrency limits and whether agents share files.
+## Coordinate the work
 
-If the project already has a workflow runtime, inspect its installed exports, examples, and isolation behavior before using it.
-Prove a small task can complete and return its result before launching the full workflow.
-A tool named `Workflow` and functions named `agent()`, `parallel()`, or `phase()` are not universal session capabilities.
-Do not add an execution framework for an ordinary delegated task.
-If delegation is unavailable, execute the work locally and report that limitation.
+1. Define each task's input, output, dependencies, allowed files, and completion checks.
+2. Assign disjoint files or isolated worktrees to parallel writers; reserve shared integration for one owner.
+3. Dispatch independent work within available resources and existing authorization.
+4. Check each dependency before starting work that consumes it.
+   Collect the complete set only when ranking, deduplication, or integration requires it.
+5. Inspect every terminal state, including failed and missing returns.
+   Preserve successful artifacts and retry unfinished work only with a supported correction.
+6. Resolve consequential disagreements through source evidence or reproduction.
+7. Integrate, run the resulting artifact's checks, and complete authorized delivery.
 
-## Procedure
+For workflows with partial dependencies, cancellation, or recovery, read [coordination cases](references/coordination.md).
+For resumable work, use existing project state to retain task identities, owners, dependencies, artifacts, checks, failures, and resource use.
+Add a task record only when no existing record carries the needed state.
 
-1. **Decompose the goal.** Define each task's input, output, evidence, dependencies, and files it may change.
-   Start an independent task only when useful work can continue alongside it.
-2. **State the plan.** Record the expected agent count, resource limits, and how the results will be combined.
-   Use the authority already granted for this session.
-3. **Assign ownership.** Give parallel writers disjoint files or separate worktrees when their edits would conflict.
-   Reserve shared registries and final integration for one owner.
-4. **Dispatch through available tools.** Give each worker its bounded task and the relevant installed skill instructions.
-   Start a dependent task when its required inputs pass their checks.
-   Wait for every result only when the next operation needs the complete set.
-5. **Inspect every outcome.** Record failures, missing evidence, costs, and unfinished tasks.
-   Retry only when new evidence or a corrected input makes completion plausible.
-   Confirm tool cancellation behavior before assuming other tasks continue after one fails.
-6. **Check consequential findings.** Reproduce them against the actual artifact or request an independent review when risk justifies it.
-   Resolve disagreements with evidence; a majority vote does not establish correctness.
-7. **Integrate and verify.** Combine compatible results, resolve conflicts, and run the checks required for the resulting artifact.
-   Finish authorized delivery and report the complete outcome, including any remaining evidence gaps.
-
-## Durable state
-
-For work that needs to resume, update `.agent/pursuits/<date>-orchestrate-<slug>.md` with task ownership and dependencies.
-Record agent identifiers, artifact paths, completed checks, failures, remaining work, and resources spent.
-Use existing project state when it already records those facts.
-
-Use `references/full-reference.md` for dependency choices, stopping conditions, and a worked composition.
+Report the integrated outcome and required work still unresolved.
+An agent's summary or a majority vote cannot establish that its artifact works.
 
 ## Log the run
 
 ```bash
-skill-run-log /orchestrate --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /orchestrate --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| A completed run returns null or contradictory results | `/autopsy` | the raw stage outputs and first disagreement |
-| Integration exposes a CI failure | `/converge` | the integrated revision and failing job |
-| Completed stages provide enough evidence to improve future coordination | `/reflect` | the task ledger, outcomes, costs, and corrections |
+- `autopsy` when a completed run returns null or contradictory results.
+- `converge` when integration exposes a CI failure.
+- `reflect` when checked outcomes reveal reusable coordination improvements.

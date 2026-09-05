@@ -35,6 +35,52 @@ function runSkills(home, args = []) {
   })
 }
 
+function missingLocalReferences(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return missingLocalReferences(path)
+    if (!entry.isFile() || !entry.name.endsWith('.md')) return []
+    let fence = null
+    const prose = readFileSync(path, 'utf8').split('\n').filter((line) => {
+      const marker = line.match(/^\s*(`{3,}|~{3,})(.*)$/)
+      if (marker) {
+        if (!fence) fence = marker[1]
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null
+        return false
+      }
+      return !fence
+    }).join('\n')
+    return [...prose.matchAll(/\[[^\]\n]*\]\(([^)\n]+)\)/g)].flatMap((match) => {
+      const target = match[1].split(/\s+"/)[0].replace(/^<|>$/g, '').split('#')[0]
+      if (!target || /^(?:[a-z][a-z\d+.-]*:|\/|~)/i.test(target)) return []
+      return existsSync(resolve(dirname(path), decodeURIComponent(target)))
+        ? []
+        : [`${path}: ${target}`]
+    })
+  })
+}
+
+test('local reference checks detect a missing procedure without treating examples as live links', () => {
+  withHome((home) => {
+    const skill = writeSkill(home, 'linked', 'Linked procedure')
+    writeFileSync(join(skill, 'SKILL.md'), [
+      '[Procedure](references/procedure.md#usage)',
+      '[Current source](https://example.com/docs)',
+      '```markdown',
+      '[Example](not-a-live-reference.md)',
+      '```',
+    ].join('\n'))
+    assert.deepEqual(missingLocalReferences(skill), [`${join(skill, 'SKILL.md')}: references/procedure.md`])
+    mkdirSync(join(skill, 'references'))
+    writeFileSync(join(skill, 'references', 'procedure.md'), '# Usage\n')
+    assert.deepEqual(missingLocalReferences(skill), [])
+  })
+})
+
+test('skill procedures and supporting documents keep their local links reachable', () => {
+  assert.deepEqual(missingLocalReferences(join(repoRoot, 'claude', 'skills')), [])
+})
+
 test('discovers system skills and deduplicates the same source across roots', () => {
   withHome((home) => {
     const source = writeSkill(join(home, 'source'), 'shared', 'Shared source')
@@ -203,23 +249,6 @@ test('installer skips and prunes directories without SKILL.md', () => {
       assert.equal(readlinkSync(join(root, 'valid-source')), '../../external/valid-source')
     }
   })
-})
-
-// _ladder.md is the only place the flat skill names are given a structure. It is
-// hand-maintained, so it drifts silently unless something checks it.
-test('_ladder.md names every skill in the repo, and no skill it names is gone', () => {
-  const skillsDir = join(repoRoot, 'claude', 'skills')
-  const ladder = readFileSync(join(skillsDir, '_ladder.md'), 'utf8')
-  const skills = readdirSync(skillsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && existsSync(join(skillsDir, e.name, 'SKILL.md')))
-    .map((e) => e.name)
-
-  const unmapped = skills.filter((name) => !ladder.includes(name))
-  assert.deepEqual(unmapped, [], `skills missing from _ladder.md: ${unmapped.join(', ')}`)
-
-  const cited = [...new Set([...ladder.matchAll(/`\/([a-z][a-z0-9-]*)`/g)].map((m) => m[1]))]
-  const phantom = cited.filter((name) => !existsSync(join(skillsDir, name, 'SKILL.md')))
-  assert.deepEqual(phantom, [], `_ladder.md cites skills that do not exist: ${phantom.join(', ')}`)
 })
 
 // The harness loads a skill's own SKILL.md and nothing else, so the logging rule

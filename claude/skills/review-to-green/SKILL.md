@@ -5,42 +5,40 @@ description: Drive a pull request to approval by fixing findings, proving fixes,
 
 # Review-to-green
 
-A PR has a review (a bot's multi-shot, a human's, or both). This loop drives it to **approved / no-blockers** without trusting the verdict blindly — reviewers, especially bots, mislabel severity and flag the bug you just fixed. The win condition is observable (the review state), so it is a loop, not open-ended autonomy.
+Resolve a pull request's review findings and check the current review state after each relevant change.
+Infer the PR from the branch when the request does not supply its number or URL.
 
-`review-to-green <PR# | URL>` — or infer the PR from the current branch.
+## Review and repair
 
-## The cycle (repeat until a terminal state)
+1. Read current formal reviews, inline threads, summary comments, PR revision, base, and required checks.
+   Use the repository's required API identity.
+   An earlier approval does not override a newer blocking review.
+2. Check each finding against the current code, contract, and evidence.
+   Separate confirmed defects, already-fixed findings, unsupported claims, and questions needing further investigation.
+3. Fix confirmed defects within scope and prove each correction at the affected boundary.
+   For a regression test, show it detects the original defect, using the pre-fix revision or an isolated mutation when needed.
+   Preserve unrelated edits while doing this check.
+4. Prepare evidence for findings that are incorrect or already resolved.
+   Post replies or request review using communication authority already granted for the PR.
+5. Run the repository's required local validation and affected tests before pushing.
+   Diagnose environment failures instead of dismissing them or weakening the checks.
+6. Confirm checks and any configured review automation ran for the pushed revision.
+   Wait for their results, then read the newest findings before claiming review is complete.
 
-1. **Pull the live review directly** — not a cached summary. Read the formal reviews (the **newest** `CHANGES_REQUESTED`/`COMMENTED` is the live verdict, not an earlier `APPROVED`), the inline line-level threads, and the latest summary comment. On Tangle repos use the Drew PR identity (`gh-drew`); elsewhere `gh`.
-2. **Triage every finding against ground truth before touching code.** For each: open the cited file/line, re-run the named test/command, or check the diff. Sort into **real** (reproduced) vs **false positive** (the finding is wrong, describes already-fixed code, or contradicts the actual contract). A bot's `CRITICAL`/`HIGH` is a claim, not a fact.
-3. **Fix the real ones — and prove each fix.** Make the smallest correct change. For a fix guarded by a test, **mutation-verify it**: revert the fix, confirm the test goes red, restore. A green test that never failed proves nothing.
-4. **Answer false positives with evidence, don't edit code to appease them.** Reply on the PR naming the file:line/test that refutes the finding.
-5. **Gate locally before pushing.** Run the repo's local gate (e.g. `pnpm preflight` / the project's check command), typecheck, and the affected tests. Fix what it reds. Distinguish a real failure from an environment artifact (missing native binding, unbuilt dist) by proving it — never push on an unproven red, never dismiss one unproven.
-6. **Push, then re-request review** (the bot re-runs ~1–3 min after a push; a fix can draw a new finding). Read the new verdict before claiming progress.
+Keep required fixes moving while other review results are pending.
+If the base changes, resolve mergeability and rerun the affected checks.
+Do not repeat an unchanged push or review request without new evidence.
 
-## Stop (name the terminal state — never report a stall as success)
+## Completion
 
-- **Done:** the review is `APPROVED` / no blockers, or only findings you rejected-as-false (with posted evidence) remain.
-- **No-progress:** two consecutive passes surface no new *real* findings — stop and report what's left.
-- **Blocked:** a finding needs a human decision, a credential, or a contract change beyond scope — escalate with the specifics.
+Report approval only when current review evidence supports it and required blockers are resolved.
+A refuted finding may leave a formal review or branch-protection requirement pending; report that distinction.
+When progress needs new authority, access, or a decision outside scope, identify the concrete remaining action and evidence.
 
-## Boundaries
-
-- Use merge and release authority already granted for the target in this session.
-  Once review passes, merge when authorized; otherwise present the concrete result for approval.
-- Preserve unrelated work; keep changes scoped to the findings.
-- Re-read current PR + branch state each pass; never act on a stale review or a base that has moved (rebase/merge + re-gate if it has).
-
-## Anti-patterns this loop exists to kill
-
-- Fixing a "CRITICAL" that, on inspection, describes the fix already in the diff (triage first).
-- Shipping a regression test that was green before the change (mutation-prove it).
-- Pushing on targeted `tsc`+`vitest` only, then letting CI catch the lint/invariant/cross-package failure (run the whole local gate first).
-- Calling a stalled or environment-blocked run "done" (name the terminal state).
+Use merge and release authority already granted for the target.
+Once the PR satisfies its requirements, complete an authorized merge; otherwise present the reviewable result for the remaining approval.
 
 ## Log the run
-
-On completion, append one line so later analysis can grade this skill:
 
 ```bash
 skill-run-log /review-to-green --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
@@ -50,8 +48,7 @@ skill-run-log /review-to-green --target "<what this run targeted>" --verdict <VE
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Review passes and an authorized release remains | `/ship` | the PR number, verified revision, target, and deploy command |
-| Terminal state No-progress: 2 consecutive passes with 0 new real findings | `/reflect` | the remaining findings + why each was rejected |
-| Terminal state Blocked on a contract change beyond scope | `/pursue` | the contract, the blocking finding, and the scope boundary |
-| CI goes red after a fix push | `/converge` | the PR number + the failing job |
-| ≥3 findings land in one subsystem | `/critical-audit` | that subsystem's files + the finding cluster |
+| The approved change still needs an authorized release | `/ship` | the revision, target, and release path |
+| A review finding requires an authorized architectural change | `/pursue` | the contract and reproduced failure |
+| A pushed fix has failing CI | `/converge` | the revision and failed checks |
+| Findings suggest a shared defect beyond the reviewed diff | `/critical-audit` | the affected subsystem and evidence |
