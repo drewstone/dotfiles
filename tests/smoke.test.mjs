@@ -57,8 +57,7 @@ assert.match(config, /merge-conflict-markers/);
 assert.match(config, /mergeable-with-base/);
 assert.match(config, /codex-review/);
 assert.match(config, /required:\s*true/);
-assert.match(config, /model:\s*"gpt-5\.4"/);
-assert.match(config, /reasoningEffort:\s*"high"/);
+assert.doesNotMatch(config, /model:|reasoningEffort:/);
 assert.match(config, /failOnSeverities:\s*\["high", "critical"\]/);
 
 writeFileSync(
@@ -129,7 +128,7 @@ writeFileSync(
           timeoutSec: 30,
           audit: {
             runner: "codex-review",
-            model: "gpt-5.4",
+            model: "test-review-model",
             reasoningEffort: "high",
             failOnSeverities: ["high", "critical"],
             prompt: "audit prompt",
@@ -199,10 +198,30 @@ assert.match(promptOutput, /Changed files:\n- README\.txt/);
 assert.match(promptOutput, /Unified diff:\n```diff/);
 assert.match(promptOutput, /hello again/);
 assert.match(codexArgs, /exec/);
-assert.match(codexArgs, /model="gpt-5\.4"/);
+assert.match(codexArgs, /model="test-review-model"/);
 assert.match(codexArgs, /model_reasoning_effort="high"/);
 assert.match(codexArgs, /--output-schema/);
 assert.match(modelOutput, /"status": "pass"/);
+
+// Isolate the generated audit from the deliberately conflicting merge fixture.
+writeFileSync(configPath, config, "utf8");
+const generatedConfig = (await import(configPath)).default;
+generatedConfig.hooks["pre-push"].checks = generatedConfig.hooks["pre-push"].checks.filter(check => check.audit);
+writeFileSync(configPath, `export default ${JSON.stringify(generatedConfig)};\n`, "utf8");
+result = run("node", [scriptPath, "run", "pre-push"], repoRoot, {
+  ...process.env,
+  PATH: `${fakeBinDir}:${process.env.PATH}`,
+});
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok codex-review/);
+const inheritedArgs = readFileSync(codexArgsPath, "utf8");
+assert.doesNotMatch(inheritedArgs, /model=|model_reasoning_effort=/);
+assert.match(inheritedArgs, /--output-schema/);
+
+const template = await import(resolve("templates/ai-agent-hooks.mjs"));
+const templateAudit = template.default.hooks["pre-push"].checks.find(check => check.audit).audit;
+assert.equal(templateAudit.model, undefined);
+assert.equal(templateAudit.reasoningEffort, undefined);
 
 writeFileSync(
   fakeCodexPath,
