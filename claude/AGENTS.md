@@ -36,6 +36,7 @@ Emit progress during polling so an interrupted command retains useful evidence.
 At session start, inspect `git status`, recent commits, reflog, and open PRs using the repository's authorized account.
 Unexpected branches, commits, or PRs can belong to other agents.
 Investigate before changing them; preserve unrelated edits and active work.
+Before opening a PR, check for a live peer agent session on the same repository (Claude: `ListAgents`) and agree on one owner per surface with it; never open a second PR against a test or gate a peer already owns.
 Stop mutations that would interfere with an active merge, rebase, or detached checkout containing uncommitted work.
 When an edit leaves a clean status, inspect `git log -1 --stat` for an automatic commit before committing again.
 If changes share a PR with unrelated work, finish and report the scope mix.
