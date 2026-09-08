@@ -13,8 +13,10 @@ Locate the active project through its remote and current instructions.
 For the discovery workspace, the maintained [problem-sourcing rubric](https://github.com/tangle-network/discovery/blob/master/meta/problem-sourcing/README.md) owns selection and promotion criteria.
 Find its configured store before updating the source registry or candidate list.
 
-When operating discovery-lab, read its [instructions](https://github.com/tangle-network/discovery-lab/blob/master/CLAUDE.md) and [sourcing entrypoint](https://github.com/tangle-network/discovery-lab/blob/master/tools/sourcing/run-sourcing.mjs).
-Use the project's sourcing program and existing executor policy; inspect current arguments before dispatch.
+When operating discovery-lab, read its [instructions](https://github.com/tangle-network/discovery-lab/blob/master/AGENTS.md) and [executable methods](https://github.com/tangle-network/discovery-lab/blob/master/README.md#executable-methods).
+For literature sourcing, follow the maintained [method guide](https://github.com/tangle-network/discovery-lab/blob/master/experiments/literature-sourcing-v1/README.md).
+Freeze the prepared input with its selected executable method, profiles, and source seeds before using the existing `disco run` path.
+Preserve executable sourcing when requested; prompt-only guidance does not replace that method.
 Do not substitute manual research for a project whose purpose is to run the research system.
 
 For an independent research request, read [source coverage and evidence](references/source-evidence.md) before collecting papers and proposing experiments.
