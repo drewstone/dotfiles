@@ -12,8 +12,8 @@ Include each behavior the claim relies on; explain exclusions before seeing the 
 | Continuation through context or process replacement | Durable assignment identity, resumed work, and evidence that completed work was not duplicated |
 | Independent claim checking | A deliberately false claim rejected by checks the measured system cannot alter |
 
-Keep the root, descendant, operator, and assessment contributions attributable in the trace.
-An operator-authored child does not prove that the root can author children.
+Keep the root, descendant, observer, and assessment contributions attributable in the trace.
+An observer-authored child does not prove that the root can author children.
 A stored artifact does not prove that an ancestor used it.
 A profile edit does not prove that the edited profile ran.
 
