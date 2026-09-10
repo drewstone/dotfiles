@@ -6,14 +6,15 @@ description: Audit recursive research directors from run records, including prof
 # Director autopsy
 
 Explain how research directors behaved and what the evidence implies for the next run.
-This audit does not perform their research or launch a new campaign.
+The audit is an observer step: the outermost observer reads a fleet's records, and a director reads the fleet it spawned.
+This audit does not perform their research or start a new run.
 
 ## Collect the complete record
 
-In a lab with the director census, run `node tools/director-census.mjs --json` and `disco inspect`.
-Inspect raw details with `disco report <runId>` for unexplained results and exceptions in the census.
-Use `node tools/disco.mjs` from the checkout when the installed CLI is unavailable.
-If the project uses a different record interface, locate its census and run-detail commands in the current project source.
+Read the record through the project's actual command surface, checked in its current source before use.
+In discovery-lab that surface is `disco run|resume|cancel|report`; use `disco report <runId>` for raw run detail.
+The `director-census` and `disco inspect` commands earlier revisions named do not exist there.
+If the project offers a different record interface, locate its census and run-detail commands in the current project source.
 Report failed commands and unavailable records.
 
 Preserve a row for every director in scope, including failed, inactive, unmatched, and missing results.
@@ -31,6 +32,10 @@ Collect every available measured field, including:
 - candidate/control attempts and matched pairs.
 
 Reconcile the census totals with raw records.
+Verify any model-backed analyst output against the raw records before you publish or act on it.
+Where no per-child trace source exists, say so rather than infer the behavior from its absence.
+Autopsy inputs expire, so collect native session data, rotated spans, and suspended sandbox rollouts before they are gone.
+An autopsy that cannot cite retained bytes states that limit.
 When parallel readers would help, give them disjoint run sets and reconcile their findings against the complete record.
 Do not infer coverage from the number of readers.
 
@@ -41,7 +46,8 @@ Report resource and sampling differences before a comparative verdict.
 An inactive mechanism leaves its quality claim untested, while its execution failure remains an observed outcome.
 File presence, citations, and self-reported success cannot establish novelty or useful research progress.
 
-Give the run IDs and evidence for each conclusion, the unresolved checks, and changes supported by the audit.
+Give the run IDs and evidence for each conclusion, the unresolved checks, and the changes the audit supports.
+A supported change is a candidate for the next run, never an activation on its own.
 
 ## Log the run
 
@@ -55,5 +61,5 @@ skill-run-log /director-autopsy --target "<runs or all>" --verdict <VERDICT> --n
 |---|---|---|
 | An outlier needs a causal explanation | `/autopsy` | The run ID and raw artifacts |
 | Directors may share a failure cause | `/diagnose` | The complete rows and confirmed example |
-| The claimed mechanism did not execute | `/discovery-lead` | The missing event and smallest live proof |
+| The claimed mechanism did not execute | `/discovery-lead` | The missing event and the real research that would exercise it |
 | Valid records support an architecture comparison | `/arena-experiment` | The cases, matched rows, and resource accounting |
