@@ -57,6 +57,30 @@ Answer from the record, and drop any question the evidence cannot support:
 Authorship may not be recorded by the store that holds the shared knowledge.
 Establish where authorship actually lives before promising any fact that depends on it.
 
+## Read the exchange, not only the record
+
+The run records say what happened; the agents' own writing says how they reasoned.
+Read what they wrote to each other and to themselves: their logs, their decision files, their journals, their checks of each other's work.
+A settled result and a span table cannot show an agent changing its mind, conceding a point, or refusing one.
+
+## Report what no question anticipated
+
+Every question above finds only what someone already knew to ask.
+The most valuable behavior in a play is usually the one no checklist named, so read for it deliberately and give it room in the report.
+
+Behaviors worth looking for, none of which a status field records:
+
+- One agent disputed another's claim about the run itself, and the dispute was settled from records rather than by deference.
+- An agent graded evidence as weak rather than passing or failing it, and said what would make it strong.
+- An agent replaced a measurement with a proof, or showed that part of the planned work was unnecessary.
+- Two agents reached the same conclusion by different routes, and one supplied the mechanism the other had only observed.
+- An agent rejected the inherited plan with an argument, and kept the part of it that survived.
+- An agent checked a peer with its own code and environment rather than the peer's, or added a check nobody asked for.
+- An agent bound itself before seeing an outcome, by pre-registering a rule that could retire its own direction.
+
+Quote the agent's own words for each one, with the file it came from.
+A paraphrase of a surprising behavior is a claim; the quotation is the evidence.
+
 ## Say what survived
 
 A failed run is not an empty run.
