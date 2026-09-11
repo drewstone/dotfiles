@@ -20,6 +20,31 @@
 # now swept here so the nightly run reaches it.
 set -uo pipefail
 
+# Report the version actually running, and say so when it is behind its own remote.
+#
+# Installed tools are symlinks into a dotfiles worktree, and a worktree has no mechanism to
+# advance itself. On 2026-09-11 that bit twice in one day: `~/.claude/skills` resolved into a
+# worktree LOCKED at a commit predating a skill, so the skill did not exist as far as the
+# session was concerned; and the replacement worktree was a merge behind by the same evening,
+# so cron would have run the previous day's sweep logic.
+#
+# A nightly job silently running stale code is the failure that hides longest, so the run
+# announces its commit. This only reports: a sweep that deletes must not also mutate the
+# checkout it is running from, and `git -C` on a detached worktree mid-run is exactly the kind
+# of surprise this tool exists to avoid.
+self_dir=$(CDPATH= cd -- "$(dirname -- "$(readlink "$0" || echo "$0")")" && pwd)
+if git -C "$self_dir" rev-parse --git-dir >/dev/null 2>&1; then
+  self_sha=$(git -C "$self_dir" rev-parse --short HEAD 2>/dev/null)
+  self_remote=$(git -C "$self_dir" rev-parse --short origin/main 2>/dev/null)
+  if [ -n "$self_sha" ] && [ -n "$self_remote" ] && [ "$self_sha" != "$self_remote" ]; then
+    behind=$(git -C "$self_dir" rev-list --count "HEAD..origin/main" 2>/dev/null)
+    self_root=$(git -C "$self_dir" rev-parse --show-toplevel 2>/dev/null || echo "$self_dir")
+    echo "wt-sweep: running $self_sha, ${behind:-?} commit(s) behind origin/main ($self_remote) — refresh with: git -C $self_root checkout --detach origin/main"
+  else
+    echo "wt-sweep: running $self_sha (current)"
+  fi
+fi
+
 pools=(
   "$HOME/webb/_wt"
   "$HOME/webb/agent-dev-container/.worktrees"
