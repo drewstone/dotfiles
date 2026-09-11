@@ -5,74 +5,158 @@
 # 2026-08-13 on a 1.8T box that had reached 100% full with 12G free:
 #   /home/drew/code/.worktrees   473G across 392 worktrees
 #   127 stale clones under ~/code  98G of node_modules alone
-#   two Rust target/ dirs          21G
-#   regenerable caches             18G
 # Nothing reaps any of it, so the disk fills on a schedule set by agent churn.
 #
 # Staleness is read from `.git` mtime, not from node_modules: a directory's
 # mtime does not change when its files are READ, so an actively-built tree can
 # look untouched. Git activity is the honest signal for "someone works here".
 #
-# Deletes only regenerable artefacts — dependencies, build outputs, caches. It
-# never removes a worktree, a clone, or anything git tracks, so a reaped tree is
-# one `pnpm install` away from working.
+# SUBCOMMANDS
+#   report            classify every worktree and say what is safe, and why
+#   targets [--reap]  remove regenerable build output only (never a worktree)
+#   reap [--yes]      remove worktrees that are provably safe
 #
-# usage:
-#   adc-reap [--days N] [--apply]      default 14 days, dry-run unless --apply
+# `report` exists because every wrong answer in this system came from acting on
+# a number that had not been checked. Measured 2026-09-10 on the Mac: a count of
+# 4,001 cold /private/tmp entries was worth 0.0G, while the size sat in 259 git
+# worktrees the sweep could not see; and 49 of those held uncommitted work that
+# exists on no remote. Count is not size, and age is not safety.
 set -uo pipefail
 
 DAYS=14
 APPLY=0
+YES=0
+CMD="${1:-report}"
+[ $# -gt 0 ] && shift
 while [ $# -gt 0 ]; do
   case "$1" in
     --days) DAYS="$2"; shift 2 ;;
-    --apply) APPLY=1; shift ;;
-    *) echo "usage: adc-reap [--days N] [--apply]" >&2; exit 2 ;;
+    --apply|--reap) APPLY=1; shift ;;
+    --yes) YES=1; APPLY=1; shift ;;
+    *) echo "usage: adc-reap [report|targets|reap] [--days N] [--apply|--reap|--yes]" >&2; exit 2 ;;
   esac
 done
 
-ROOTS=("$HOME/code" "$HOME/code/.worktrees")
+# Roots differ per host and the omission is silent: the Linux box keeps trees under
+# ~/code/.worktrees, while on this Mac the pool is /private/tmp (259 worktrees across
+# ~20 repos, measured 2026-09-10) plus ~/webb. A root that is not listed is simply
+# invisible, which is how 235G stayed outside every sweep.
+ROOTS=("$HOME/code" "$HOME/code/.worktrees" "$HOME/webb" "$HOME/company" "/private/tmp")
+[ -n "${ADC_REAP_ROOTS:-}" ] && read -r -a ROOTS <<< "$ADC_REAP_ROOTS"
 ARTEFACTS=(node_modules target .turbo .next dist coverage)
 NOW=$(date +%s)
 CUT=$((NOW - DAYS * 86400))
 
-avail() { df --output=avail / | tail -1; }
-before=$(avail)
-stale=0
-kept=0
+avail() { df -k / | tail -1 | awk '{print $4}'; }
+mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+size_kb() { du -sxk "$1" 2>/dev/null | cut -f1; }
 
-for root in "${ROOTS[@]}"; do
-  [ -d "$root" ] || continue
-  for dir in "$root"/*/; do
-    tree="${dir%/}"
-    [ -e "$tree/.git" ] || continue
-    # A worktree's own .worktrees dir is a separate root, already in ROOTS.
-    case "$tree" in "$HOME/code/.worktrees") continue ;; esac
-    mtime=$(stat -c %Y "$tree/.git" 2>/dev/null || echo 0)
-    if [ "$mtime" -ge "$CUT" ]; then
-      kept=$((kept + 1))
-      continue
-    fi
-    stale=$((stale + 1))
-    age=$(((NOW - mtime) / 86400))
-    for name in "${ARTEFACTS[@]}"; do
-      while IFS= read -r -d '' victim; do
-        if [ "$APPLY" -eq 1 ]; then
-          rm -rf "$victim"
-        else
-          echo "would remove (${age}d): $victim"
-        fi
-      done < <(find "$tree" -type d -name "$name" -prune -print0 2>/dev/null)
+# One process-table walk for the whole run. Per-entry lsof is not viable: measured
+# 2026-09-10 at 5,368 candidates it is ~90 minutes of process spawn alone.
+OPEN_PATHS=$(mktemp -t adcreap-open)
+trap 'rm -f "$OPEN_PATHS"' EXIT
+lsof -n -P -Fn 2>/dev/null | sed -n 's/^n//p' | sort -u > "$OPEN_PATHS" || true
+
+# Every question that has to be answered before a worktree can be removed.
+# Returns: verdict<TAB>reason
+classify() {
+  local tree=$1 parent branch dirty unpushed age_d
+  [ -e "$tree/.git" ] || { printf 'SKIP\tnot a git tree\n'; return; }
+
+  if grep -qF "$tree" "$OPEN_PATHS" 2>/dev/null; then
+    printf 'KEEP\tlive process holds a file open here\n'; return
+  fi
+
+  parent=$(git -C "$tree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  parent=${parent%/.git}
+  if [ -z "$parent" ] || [ ! -d "$parent" ]; then
+    printf 'ORPHAN\tno reachable parent repo; git cannot remove it\n'; return
+  fi
+
+  dirty=$(git -C "$tree" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${dirty:-0}" -gt 0 ]; then
+    printf 'KEEP\t%s uncommitted file(s), on no remote\n' "$dirty"; return
+  fi
+
+  # A commit that exists only here dies with the directory. /tmp is cleared on reboot,
+  # so "unpushed in /tmp" is already living on borrowed time.
+  unpushed=$(git -C "$tree" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0)
+  if [ "${unpushed:-0}" -gt 0 ]; then
+    printf 'KEEP\t%s commit(s) not on any remote\n' "$unpushed"; return
+  fi
+
+  age_d=$(( (NOW - $(mtime_of "$tree/.git")) / 86400 ))
+  if [ "$age_d" -lt "$DAYS" ]; then
+    printf 'KEEP\tgit activity %sd ago, under the %sd threshold\n' "$age_d" "$DAYS"; return
+  fi
+
+  branch=$(git -C "$tree" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  printf 'REAP\tclean, pushed, idle %sd (%s)\n' "$age_d" "${branch:-detached}"
+}
+
+each_tree() {
+  local root dir tree
+  for root in "${ROOTS[@]}"; do
+    [ -d "$root" ] || continue
+    for dir in "$root"/*/; do
+      tree="${dir%/}"
+      [ -e "$tree/.git" ] || continue
+      case "$tree" in "$HOME/code/.worktrees") continue ;; esac
+      printf '%s\n' "$tree"
     done
   done
-done
+}
 
-after=$(avail)
-echo
-echo "stale trees (>${DAYS}d): $stale    active (kept): $kept"
-if [ "$APPLY" -eq 1 ]; then
-  echo "freed: $(numfmt --to=iec $(((after - before) * 1024)) 2>/dev/null)"
-  df -h / | tail -1
-else
-  echo "dry run — pass --apply to reclaim"
-fi
+case "$CMD" in
+report)
+  printf '%-8s %8s  %-46s %s\n' VERDICT SIZE PATH REASON
+  reap_kb=0; keep_kb=0
+  while IFS= read -r tree; do
+    IFS=$'\t' read -r verdict reason < <(classify "$tree")
+    kb=$(size_kb "$tree"); kb=${kb:-0}
+    case "$verdict" in
+      REAP) reap_kb=$((reap_kb+kb)) ;;
+      *)    keep_kb=$((keep_kb+kb)) ;;
+    esac
+    printf '%-8s %7.1fG  %-46s %s\n' "$verdict" "$(awk -v k=$kb 'BEGIN{print k/1048576}')" "${tree#$HOME/}" "$reason"
+  done < <(each_tree)
+  echo
+  awk -v r=$reap_kb -v k=$keep_kb 'BEGIN{printf "reapable: %.1fG    held: %.1fG\n", r/1048576, k/1048576}'
+  ;;
+targets)
+  # Build output only. A wrong delete here costs a rebuild; it can never cost work.
+  freed=0
+  while IFS= read -r tree; do
+    [ "$(mtime_of "$tree/.git")" -ge "$CUT" ] && continue
+    for name in "${ARTEFACTS[@]}"; do
+      while IFS= read -r -d '' victim; do
+        kb=$(size_kb "$victim"); freed=$((freed+${kb:-0}))
+        if [ "$APPLY" -eq 1 ]; then rm -rf "$victim"; else echo "would remove: $victim"; fi
+      done < <(find "$tree" -type d -name "$name" -prune -print0 2>/dev/null)
+    done
+  done < <(each_tree)
+  awk -v f=$freed -v a=$APPLY 'BEGIN{printf "%s build output: %.1fG\n", (a?"removed":"would remove"), f/1048576}'
+  ;;
+reap)
+  # Only ever `git worktree remove`, which refuses a dirty tree on its own. rm -rf on a
+  # registered worktree leaves the parent repo's .git/worktrees metadata dangling.
+  n=0; freed=0
+  while IFS= read -r tree; do
+    IFS=$'\t' read -r verdict reason < <(classify "$tree")
+    [ "$verdict" = REAP ] || continue
+    kb=$(size_kb "$tree")
+    if [ "$APPLY" -eq 1 ]; then
+      parent=$(git -C "$tree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); parent=${parent%/.git}
+      if git -C "$parent" worktree remove "$tree" >/dev/null 2>&1; then
+        n=$((n+1)); freed=$((freed+${kb:-0})); echo "removed: $tree"
+      else
+        echo "refused by git (left intact): $tree"
+      fi
+    else
+      echo "would reap: $tree  ($reason)"
+    fi
+  done < <(each_tree)
+  awk -v n=$n -v f=$freed -v a=$APPLY 'BEGIN{printf "%s %d worktree(s), %.1fG\n", (a?"removed":"would remove"), n, f/1048576}'
+  ;;
+*) echo "unknown subcommand: $CMD" >&2; exit 2 ;;
+esac
