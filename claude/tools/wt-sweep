@@ -72,6 +72,17 @@ sweep_tree() {
     kept=$((kept + 1)); return 0
   fi
   # Empty output means the count could not be taken; treat that as "might have work".
+  #
+  # This check OVER-reports, on purpose. Many agent checkouts carry a narrow fetch refspec
+  # (+refs/heads/master:refs/remotes/origin/master), so a branch that is genuinely pushed has
+  # no refs/remotes/* ref locally and every commit on it counts as unpushed. Measured on
+  # lab-collab-decoder-r3, whose branch was on the remote and whose content was already merged:
+  # this reports 6 unpushed. The tree is kept and a little space is left behind.
+  #
+  # Do not "fix" this by asking the remote (`git ls-remote`) per tree. That is a network call
+  # for every candidate, it fails closed in the wrong direction when the network is down, and
+  # it turns a local decision into a remote one. For a nightly job that DELETES, leaving space
+  # on the table is the correct error to make.
   local unpushed
   unpushed=$(git -C "$d" rev-list --count HEAD --not --remotes 2>/dev/null)
   if [ -z "$unpushed" ] || [ "$unpushed" != "0" ]; then
