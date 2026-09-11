@@ -72,6 +72,7 @@ skill-run-log /operate --target "<pursuit/campaign>" --verdict <VERDICT> --next 
 
 | Condition | Next skill | What to pass |
 |---|---|---|
+| A play with several agents settled, for any reason | `/play-report` | The run records, the harness log, and what the operator did |
 | A run is null, surprising, or suspect | `/autopsy` | The run ID and raw artifacts |
 | Several runs may share a failure cause | `/diagnose` | The full failure set and confirmed examples |
 | A claimed execution event cannot be observed | `/ground-truth` | The missing event and actual execution path |
