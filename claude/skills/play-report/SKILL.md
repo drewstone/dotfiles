@@ -63,6 +63,20 @@ The run records say what happened; the agents' own writing says how they reasone
 Read what they wrote to each other and to themselves: their logs, their decision files, their journals, their checks of each other's work.
 A settled result and a span table cannot show an agent changing its mind, conceding a point, or refusing one.
 
+## Where the reasoning lives, and the tool that renders it
+
+Every agent's full stream is retained: its reasoning text, its prose, and every tool call with input, output and status.
+Do not report on a play from counts and settle records while this exists.
+
+- A child's `settled` record in `spawn-journal.jsonl` names an `outRef`; `blobs/sha256-<ref>.json` holds `events`, a stream of `message.part.updated` whose parts are `reasoning`, `text`, and `tool`. Parts arrive incrementally; the last update per part id is the final state.
+- A settled root's stream is `result.json` (`out.events` or `outRef`).
+- A root still running on a local bridge has no Runtime record yet; its live session is in opencode's store at `~/.local/share/opencode/opencode.db`, matched on the pursuit's workspace directory.
+- A root that died before settlement has nothing in Runtime's records (agent-runtime#1233); say so rather than inferring its reasoning from its children.
+
+Render them with discovery-lab `tools/transcript.py <pursuit-dir> [--live] [--agent sN]`, which writes one Markdown transcript per agent under `<pursuit>/transcripts/` with tokens and spend.
+Quote the agent's own reasoning when the report makes a claim about what it thought, decided, or refused; a paraphrase of a settle record is not evidence of a decision.
+Measured 2026-09-15: a director mid-turn held 94,193 characters of reasoning and 97 tool calls that no report had ever read.
+
 ## Report what no question anticipated
 
 Every question above finds only what someone already knew to ask.
