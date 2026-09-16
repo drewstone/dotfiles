@@ -3,7 +3,7 @@
   "permissions": {
     "defaultMode": "auto"
   },
-  "model": "opus[1m]",
+  "model": "claude-fable-5-1[1m]",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -123,9 +123,15 @@
   },
   "outputStyle": "Attention-kind",
   "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    }
+  },
   "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "dark",
+  "skipWorkflowUsageWarning": true,
+  "theme": "auto",
   "autoCompactEnabled": true,
   "switchModelsOnFlag": true,
   "inputNeededNotifEnabled": true,
