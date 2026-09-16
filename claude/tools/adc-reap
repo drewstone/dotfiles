@@ -113,15 +113,20 @@ report)
   reap_kb=0; keep_kb=0
   while IFS= read -r tree; do
     IFS=$'\t' read -r verdict reason < <(classify "$tree")
-    kb=$(size_kb "$tree"); kb=${kb:-0}
-    case "$verdict" in
-      REAP) reap_kb=$((reap_kb+kb)) ;;
-      *)    keep_kb=$((keep_kb+kb)) ;;
-    esac
-    printf '%-8s %7.1fG  %-46s %s\n' "$verdict" "$(awk -v k=$kb 'BEGIN{print k/1048576}')" "${tree#$HOME/}" "$reason"
+    # Size only what could actually be removed. `du` over a 6G tree is seconds and
+    # classification is milliseconds, so sizing every tree made the report time out
+    # before it reached its last root: measured 2026-09-11, it died partway through
+    # and silently reported a verdict over three of five roots. A held tree's size
+    # changes no decision, so it is not worth the walk.
+    if [ "$verdict" = REAP ]; then
+      kb=$(size_kb "$tree"); kb=${kb:-0}; reap_kb=$((reap_kb+kb))
+      printf '%-8s %7.1fG  %-46s %s\n' "$verdict" "$(awk -v k=$kb 'BEGIN{print k/1048576}')" "${tree#$HOME/}" "$reason"
+    else
+      printf '%-8s %8s  %-46s %s\n' "$verdict" "-" "${tree#$HOME/}" "$reason"
+    fi
   done < <(each_tree)
   echo
-  awk -v r=$reap_kb -v k=$keep_kb 'BEGIN{printf "reapable: %.1fG    held: %.1fG\n", r/1048576, k/1048576}'
+  awk -v r=$reap_kb 'BEGIN{printf "reapable: %.1fG (held trees not sized; size changes no decision there)\n", r/1048576}'
   ;;
 targets)
   # Build output only. A wrong delete here costs a rebuild; it can never cost work.
