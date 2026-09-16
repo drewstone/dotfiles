@@ -102,6 +102,8 @@ If deployment logs are unavailable, use infrastructure you can inspect when feas
 For UI claims, test the actual interaction.
 Label unchecked explanations as hypotheses.
 Keep measurement errors and exit status visible, and reconcile aggregate parts against the whole.
+A failed instrument is not an answer: when a tool cannot read the target, switch instruments and report the number.
+Name the tool's limit only beside a number obtained another way; never improve the instrument in place of delivering the measurement.
 
 Investigate null, surprising, or unusually good results before interpreting them.
 Distinguish a real change from missing execution, measurement errors, or an ineffective test.
