@@ -18,7 +18,6 @@
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
 set -uo pipefail
-exec 2>&1
 
 payload="$(cat 2>/dev/null || true)"
 [ -z "$payload" ] && exit 0
@@ -46,13 +45,18 @@ if not cmd:
 if re.search(r"(^|[\s;&|(])hostlab\s+(run|shell|build|ssh)\b", cmd):
     sys.exit(0)
 
-# A bypass belongs to a human at a real terminal, never to an agent.
-if "HOST_BLAST_GUARD=off" in cmd:
-    print("host-blast-guard: HOST_BLAST_GUARD=off is a human-only bypass. Run the experiment in a throwaway VM (hostlab run -- '<command>') or ask Drew to run this himself (prefix it with ! in the prompt).")
+# A bypass belongs to a human at a real terminal, never to an agent. Only the
+# assignment form in command position counts; the name inside prose, a heredoc
+# sentence, or backticks passes.
+if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
+    print("host-blast-guard: HOST_BLAST_GUARD=off is a human-only bypass. Run the experiment in a throwaway VM (hostlab run -- '<command>') or ask Drew to run this himself (prefix it with ! in the prompt).", file=sys.stderr)
     sys.exit(2)
 
 # Command position: start, after a separator, or after sudo/exec/timeout.
-LEAD = r"(?:^|[\n;&|(`{]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*|exec\s+|nohup\s+|env\s+|timeout\s+\S+\s+|nice\s+(?:-n\s*\S+\s+)?|(?:do|then|else)\s+)*"
+# A backtick is not a separator here: inline code in a heredoc or commit
+# message mentions these verbs far more often than backtick substitution runs
+# them, and the root wrappers still catch the substitution case.
+LEAD = r"(?:^|[\n;&|({]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*|exec\s+|nohup\s+|env\s+|timeout\s+\S+\s+|nice\s+(?:-n\s*\S+\s+)?|(?:do|then|else)\s+)*"
 KERNEL_DIR = r"/(?:proc|sys|dev|run|boot(?:/efi)?)/?(?=\s|$|['\"])"
 ROOT_DISK = r"/dev/(?:nvme\d+n\d+(?:p\d+)?|sd[a-z]+\d*|vd[a-z]+\d*|hd[a-z]+\d*|mmcblk\d+(?:p\d+)?)\b"
 
@@ -105,10 +109,11 @@ for pat, why in RULES:
         segment = re.split(r"[;&|\n]", cmd[m.start(1):], 1)[0]
         if is_listing(segment):
             continue
-        print("host-blast-guard: blocked `%s`: %s." % (verb_text.strip().splitlines()[0][:80], why))
-        print("This class of command took this host down on 2026-08-20 (5 days) and 2026-09-02 (16 days).")
-        print("Run the experiment in a throwaway VM:  hostlab run -- '<command>'   (hostlab --help: lvm2, dm-thin, xfs, root, the cwd at /work).")
-        print("If it truly must run on the host, ask Drew to run it himself (he can prefix it with ! in the prompt). Do not wrap it in sh -c, env, python, or an absolute path.")
+        err = sys.stderr
+        print("host-blast-guard: blocked `%s`: %s." % (verb_text.strip().splitlines()[0][:80], why), file=err)
+        print("This class of command took this host down on 2026-08-20 (5 days) and 2026-09-02 (16 days).", file=err)
+        print("Run the experiment in a throwaway VM:  hostlab run -- '<command>'   (hostlab --help: lvm2, dm-thin, xfs, root, the cwd at /work).", file=err)
+        print("If it truly must run on the host, ask Drew to run it himself (he can prefix it with ! in the prompt). Do not wrap it in sh -c, env, python, or an absolute path.", file=err)
         sys.exit(2)
 sys.exit(0)
 PY

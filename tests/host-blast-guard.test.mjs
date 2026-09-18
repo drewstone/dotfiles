@@ -12,7 +12,7 @@ const hook = resolve("claude/hooks/host-blast-guard.sh");
 function run(command) {
   const payload = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
   const r = spawnSync(hook, [], { input: payload, encoding: "utf8" });
-  return { status: r.status, out: r.stdout + r.stderr };
+  return { status: r.status, out: r.stdout + r.stderr, err: r.stderr };
 }
 
 const blocked = [
@@ -42,6 +42,7 @@ const blocked = [
   "sudo systemctl poweroff",
   "sudo shutdown -h now",
   "HOST_BLAST_GUARD=off sudo fsfreeze -f /tmp",
+  "sudo HOST_BLAST_GUARD=off unshare -m true",
   'S=/tmp/s; sudo umount -l "$S/mnt/parent"; bash "$S/proof.sh" 2>&1 | tail -120; sudo fsfreeze -f $S/mnt/parent',
   "cd /x && sudo timeout 30 fsfreeze -f /x/mnt",
   "for i in 1 2; do sudo fsfreeze -f /mnt/$i; done",
@@ -77,6 +78,10 @@ const allowed = [
   "systemctl restart watchdog",
   "sudo systemctl status docker",
   "npm run build && git push",
+  "cat > notes.md <<'EOF'\nA human may bypass one call with `HOST_BLAST_GUARD=off`. An agent must not.\nRun `sudo fsfreeze -u /mnt/x` to thaw.\nEOF",
+  "printf '%s\\n' 'Bypass for a human only: HOST_BLAST_GUARD=off.' >> notes.md",
+  "cat >> memory.md <<'EOF'\nThe hook also fires on `sudo fsfreeze -f` and `sudo unshare -m` written in command position.\nEOF",
+  "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
 ];
 
 test("blocks the host-level verbs in command position", () => {
@@ -84,6 +89,9 @@ test("blocks the host-level verbs in command position", () => {
     const r = run(c);
     assert.equal(r.status, 2, `expected block for: ${c}\n${r.out}`);
     assert.match(r.out, /hostlab run/, `block message must name the VM lane: ${c}`);
+    // Claude Code shows Claude the stderr of an exit-2 hook, so the reason
+    // must land there, not on stdout.
+    assert.match(r.err, /host-blast-guard/, `block reason must be on stderr: ${c}`);
   }
 });
 
