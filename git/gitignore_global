@@ -13,3 +13,5 @@
 # treat these as scratch already carry their own .gitignore entry.
 
 .DS_Store
+
+**/.claude/settings.local.json
