@@ -4,7 +4,15 @@ set -euo pipefail
 self="$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")"
 # HOME may be redirected — a bridge fs-jail exports the run's agent-home as HOME — but the
 # toolchain lives under the account's home. Resolve nvm from the passwd entry, HOME as the fallback.
-acct_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+# `getent` exists on Linux only; macOS answers through Directory Services. Under
+# `set -euo pipefail` a missing command inside the substitution would end the
+# script silently, so each lookup is guarded and an unknown home stays empty.
+acct_home=""
+if command -v getent >/dev/null 2>&1; then
+  acct_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+elif command -v dscl >/dev/null 2>&1; then
+  acct_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)"
+fi
 nvm_dir="${NVM_DIR:-${acct_home:-$HOME}/.nvm}"
 
 # Inside an fs-jail (cli-bridge WORKER_FS_JAIL=1) $HOME is rebased to the run's
@@ -48,6 +56,28 @@ run_codex() {
 
   PATH="$(dirname "$candidate"):$PATH" exec "$candidate" "$@"
 }
+
+# Fast path: exec a codex we can name without loading nvm. Sourcing nvm.sh, running
+# `nvm use --silent default` and then `npm prefix -g` (which starts a second Node) measured
+# 9.6-38.8 s wall on this host at load 95-150, against 0.32 s for the same binary named
+# directly. Every health probe and every spawned turn pays it, so a bridge whose CODEX_BIN is
+# this wrapper reads as unavailable and its runs settle driver-failed. Order: an explicit
+# override, the native Homebrew build, then the nvm version the default alias names. The native
+# build wins because it answers --version in 0.32 s against 1.0 s for the npm package under nvm,
+# which is a Node script and pays Node startup; both are the same codex-cli and were 0.154.0 when
+# this order was chosen. Set CODEX_REAL_BIN to pin one if they ever drift.
+default_alias_version=""
+if [ -r "$nvm_dir/alias/default" ]; then
+  default_alias_version="$(cat "$nvm_dir/alias/default" 2>/dev/null || true)"
+fi
+for candidate in \
+  ${CODEX_REAL_BIN:-} \
+  /opt/homebrew/bin/codex \
+  ${default_alias_version:+"$nvm_dir/versions/node/v${default_alias_version#v}/bin/codex"}
+do
+  [ -n "$candidate" ] || continue
+  run_codex "$candidate" "$@" || true
+done
 
 if [ -s "$nvm_dir/nvm.sh" ]; then
   . "$nvm_dir/nvm.sh"

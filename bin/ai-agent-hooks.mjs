@@ -1021,8 +1021,6 @@ function defaultConfig() {
             timeoutSec: 900,
             audit: {
               runner: "codex-review",
-              model: "gpt-5.4",
-              reasoningEffort: "high",
               failOnSeverities: ["high", "critical"],
               prompt: DEFAULT_AUDIT_PROMPT,
             },

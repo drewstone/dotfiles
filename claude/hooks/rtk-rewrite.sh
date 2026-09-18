@@ -591,7 +591,13 @@ rtk_guard_shape_of_invocation() {
       saw_dashdash=1
     else
       case "$tok" in
-        -*) flags+=("$tok") ;;
+        -*)
+          # Git advertises either spelling of this show-ref alias.
+          case "$RTK_GUARD_SUBCOMMAND:$tok" in
+            show-ref:--branches|show-ref:--no-branches) tok="${tok%branches}heads" ;;
+          esac
+          flags+=("$tok")
+          ;;
         *) saw_operand=1 ;;
       esac
     fi

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tangle Blockchain Blueprint"
+  short_description: "Ground on-chain Blueprint systems in protocol and repository evidence"
+  default_prompt: "Use $tangle-blockchain-blueprint to review an on-chain Tangle Blueprint with correct protocol, operator, and service-instance boundaries."

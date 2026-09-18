@@ -1,45 +1,51 @@
 ---
 name: sandbox-sdk-integration
-description: Adopt sandbox without rebuilding streaming, replay, browser clients, or idempotent dispatch.
+description: Use the Sandbox SDK for durable execution, browser viewing, reconnect, and retry-safe turns.
 ---
 
 # Sandbox SDK Integration
 
-Use this when consuming the public sandbox SDK from Workers, edge functions, browsers, mobile clients, batch jobs, or chat surfaces.
-The common failure is rebuilding session durability that the SDK already provides.
+Use the maintained Sandbox SDK for sessions, dispatch, replay, and browser state instead of rebuilding platform behavior.
 
-## Hard Stop
+## Choose the path from its lifetime
 
-Before adding Durable Objects, KV event buffers, in-memory SSE rings, custom replay queues, or hand-rolled `Last-Event-ID` handling, read the current SDK docs/source.
-If the SDK already owns the behavior, delete the duplicate layer.
+Read the current [SDK integration guide](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/INTEGRATION.md) and [exports](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/package.json).
+Confirm required methods against the consuming project's actual package.
 
-## Flow
+| Required behavior | Path to inspect |
+|---|---|
+| Server consumes one attached execution | Attached prompt stream and execution replay |
+| Execution survives caller loss | Durable dispatch or the SDK turn driver |
+| Browser watches an interactive session | Session message API and session gateway |
+| Same logical turn may be retried | Stable turn identity plus conversation identity |
 
-1. Identify the runtime: Worker, browser, server, batch, or mobile.
-2. Read the live SDK entrypoints and examples for that runtime.
-3. Use the browser-safe client where the code runs in a browser.
-4. Preserve session IDs, idempotent dispatch, stream replay, and reconnect semantics provided by the SDK.
-5. Verify with a real stream interruption or resume path when durability is the point.
-6. Remove duplicated state and prove the app still resumes.
+Before implementing reconnect or retry recovery, read [durability and identities](references/durability.md).
+Before attaching a browser, read [browser viewing](references/browser-viewing.md).
+Load only the path the product needs.
 
-## Output
+## Integrate and prove
 
-Report the SDK primitive used, duplicate code removed or avoided, resume proof, and remaining integration risk.
-Use `references/full-reference.md` for the full durability table and migration warnings.
+Persist recovery identities before dispatch if the caller may die.
+Read the dispatch receipt to distinguish new work from existing work.
+Use SDK outcome handling to distinguish completed work, failure, and waiting for human input.
+Transport closure or an accepted request cannot establish task completion.
 
-## Then consider
+Interrupt the actual caller or connection and prove recovery against the intended deployment.
+Check that retries produce one logical result and do not repeat side effects or charges.
+Remove duplicate state only after the SDK path proves it owns that responsibility.
+Preserve required product authorization, durable history, and billing state.
 
-| Condition | Next skill | What to pass |
-|---|---|---|
-| Auth, tenant isolation, or capability tokens are involved | `/harden` | the boundary crossed + the token scopes |
-| The integration includes browser-visible chat or stream UI | `/ui-test` | the route + the streaming flow to exercise |
-| ≥1 hand-rolled SSE, replay, or dispatch path exists | `/simplify` | the hand-rolled call sites + the SDK primitive that replaces them |
-| Integration lands and ≥1 real session streams end-to-end | `/verify` | the session ID + the non-mocked stream output |
+Report the tested caller failure, execution identities, terminal outcome, retained product state, and unresolved limits.
 
 ## Log the run
 
-On completion, append one line so `/reflect` and `/governor` can grade this skill later:
-
 ```bash
-skill-run-log /sandbox-sdk-integration --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /sandbox-sdk-integration --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
+
+## Then consider
+
+- `harden` when changed authorization, tenant isolation, or scoped tokens need adversarial proof.
+- `ui-test` when browser-visible streaming needs interaction checks.
+- `simplify` when duplicate buffering or dispatch remains after the SDK path is proven.
+- `verify` when interruption recovery works and delivery checks remain.

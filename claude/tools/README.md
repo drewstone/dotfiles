@@ -26,8 +26,11 @@ skills --check
 ```
 
 The check scans Claude, Codex, shared Agent Skills, and Codex system roots.
-It flags descriptions over 160 characters and reproduces Codex's fair-share description allocation against the 4,000-token metadata budget, including names and resolved source paths.
-It fails on duplicate skill names, omitted skills, or the visible 2% warning; smaller silent shortening is reported.
+It flags descriptions over 160 characters and measures the rendered names, descriptions, and resolved source paths.
+It fails on duplicate names and broken links.
+It warns when the list exceeds Codex's documented 8,000-character fallback for an unknown model context.
+With a known model context, Codex instead limits the initial list to 2% of that context.
+See [OpenAI's skill documentation](https://learn.chatgpt.com/docs/build-skills).
 
 ## claude-profile
 

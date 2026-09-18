@@ -1,35 +1,40 @@
 # dotfiles
 
-Personal developer tooling: AI-assisted git hooks and Claude Code configuration.
+Personal developer tooling: shared agent guidance and Git hooks.
 
-## Claude Code Config
+## Agent setup
 
-Portable Claude Code setup — global instructions, settings, skills, hooks, commands, and local CLI tools.
+Run `./claude/install.sh` from the durable checkout that will own installed symlinks.
+Use `--force` only when replacing existing configuration is intended.
+The installer shares instructions, skills, commands, and tools across supported agent homes.
+It also installs Claude settings, hooks, and plugins.
+See [skills](claude/skills/README.md) and [tools](claude/tools/README.md) for their maintained guidance.
 
-```bash
-# Install on any machine
-./claude/install.sh
+For Codex, add this top-level setting to `~/.codex/config.toml`:
 
-# Overwrite existing config
-./claude/install.sh --force
+```toml
+project_doc_fallback_filenames = ["CLAUDE.md"]
 ```
 
-Includes:
-- `CLAUDE.md` — global defaults (quality bar, work style, succinctness)
-- `AGENTS.md` — shared agent instructions synced to Claude, Codex, and OpenCode homes
-- `settings.json` — hooks, plugins, trusted directories
-- portable skills (`/polish`, `/verify`, `/critical-audit`, `/docs-slop-audit`, `/tangle-blueprint-expert`, etc.)
-- `claude-profile` in `~/bin` — switch Claude credentials by named profile
-- `gh-drew` in `~/bin` — run GitHub CLI commands only after validating the API account is `drewstone`
-- Langfuse observability hook
+This lets Codex discover repositories that use only `CLAUDE.md`.
+If fallback names already exist, append this name to that list.
+Codex prefers `AGENTS.override.md`, then `AGENTS.md`, then configured fallback names within each directory.
+Keep shared repository guidance in `AGENTS.md` when both agents use it; a Claude entry can import `@AGENTS.md`.
+See the [current Codex discovery rules](https://developers.openai.com/codex/guides/agents-md) for scope and limits.
 
-Blueprint documentation and copy-audit skills that enforce global agent behavior live here. Blueprint implementation skills that only apply inside one product repo stay with that repo.
+## Tmux recovery
 
-Skill inventory and maintenance notes live in `claude/skills/README.md`. Tool docs live in `claude/tools/README.md`.
+Install the tmux watcher and make its user manager a last-resort memory-pressure target:
 
-## Git Hooks
+```bash
+./tmux/install-heal.sh
+```
 
-AI-assisted review gates via `ai-agent-hooks`.
+The watcher saves a workspace index every minute.
+It also asks tmux-resurrect to save its standard snapshot every 15 minutes when installed.
+After server loss, it recreates session and window names with shells in their prior directories.
+It cannot revive processes, pane splits, scrollback, or unsaved work.
+The installer keeps normal pane processes eligible for memory-pressure cleanup.
 
 ## Global Git Etiquette Guard
 
@@ -39,10 +44,8 @@ Install the universal fast guards once:
 ./git/install.sh
 ```
 
-This sets:
-
-- `core.hooksPath=/home/drew/code/dotfiles/git/hooks`
-- `init.templateDir=/home/drew/code/dotfiles/git/templates`
+The installer points `core.hooksPath` and `init.templateDir` into this checkout.
+It also installs the shared ignore file unless another one is already configured.
 
 Global baseline behavior:
 
@@ -62,7 +65,7 @@ Default behavior:
   - blocks suspicious hard-coded secrets
 - `pre-push`
   - repeats the static guards
-  - runs a required Codex review gate using `gpt-5.4` with `model_reasoning_effort="high"`
+  - runs a required Codex review gate using the installed Codex model and reasoning settings
   - requires structured JSON output
   - fails closed on invalid output, runner failure, or blocking findings
 
@@ -71,8 +74,11 @@ Default behavior:
 From a target repository:
 
 ```bash
-pnpm dlx --package /home/drew/code/dotfiles ai-agent-hooks install --init-config
+node "$HOME/code/dotfiles/bin/ai-agent-hooks.mjs" install --init-config
 ```
+
+Use the path to your durable dotfiles checkout if it differs.
+An explicit `audit.model` or `audit.reasoningEffort` in repository configuration overrides the inherited choice.
 
 That writes:
 
@@ -122,13 +128,3 @@ Expected files for review checks:
 - `<check>.result.json`
 - `<check>.runner-meta.json`
 - `<check>.log`
-
-## Quality Bar
-
-This repo is meant to be opinionated, not decorative:
-
-- one enforced default reviewer
-- structured output instead of prose-only success
-- explicit gating policy
-- stable artifacts for auditability
-- local tests aligned with the default execution path

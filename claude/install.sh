@@ -120,8 +120,12 @@ link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   skill="$(basename "$skill_dir")"
-  if [ ! -d "$skill_dir" ]; then
-    [ -L "${skill_dir%/}" ] && echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
+  if [ ! -f "$skill_dir/SKILL.md" ]; then
+    if [ -L "${skill_dir%/}" ]; then
+      echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
+    elif [ -d "$skill_dir" ]; then
+      echo "  WARN skill '$skill' skipped: SKILL.md missing"
+    fi
     continue
   fi
   link "$skill_dir" "$CLAUDE_DIR/skills/$skill"
@@ -133,11 +137,13 @@ done
 # agent-runtime sits at ~/webb/agent-runtime on the laptop and ~/code/agent-runtime
 # on the dev box, so whichever path is committed dangles on the other and the skill
 # silently disappears.
+RUNTIME_SKILLS_DIR=""
 for candidate in \
+  "${AGENT_RUNTIME_DIR:+$AGENT_RUNTIME_DIR/skills}" \
   "$HOME/webb/agent-runtime/skills" \
-  "$HOME/code/agent-runtime/skills" \
-  "${AGENT_RUNTIME_DIR:-}/skills"; do
+  "$HOME/code/agent-runtime/skills"; do
   [ -d "$candidate" ] || continue
+  RUNTIME_SKILLS_DIR="$candidate"
   for ext in "$candidate"/*/; do
     [ -f "$ext/SKILL.md" ] || continue
     name="$(basename "$ext")"
@@ -213,7 +219,7 @@ fi
 
 # Pi skills (subset — only skills that work in conversation, not coding)
 PI_SKILLS_DIR="$HOME/.pi/agent/skills"
-PI_SKILLS=(reflect capture-decisions research)
+PI_SKILLS=(reflect hypothesize evolve)
 if [ -d "$HOME/.pi/agent" ]; then
   mkdir -p "$PI_SKILLS_DIR"
   for skill in "${PI_SKILLS[@]}"; do
@@ -231,37 +237,17 @@ if [ -d "$HOME/.pi/agent" ]; then
   echo "  Pi: ${pi_skill_count} skills synced"
 fi
 
-# Codex integration: mirror shared AGENTS.md, commands → prompts, and Claude
-# skills → Codex skills. Codex has no hook analog here.
-if [ -d "$HOME/.codex" ]; then
-  link "$AGENTS_SRC" "$HOME/.codex/AGENTS.md"
-
-  mkdir -p "$HOME/.codex/skills"
-  for skill_dir in "$SCRIPT_DIR/skills"/*/; do
-    [ -d "$skill_dir" ] || continue
-    skill="$(basename "$skill_dir")"
-    link "$skill_dir" "$HOME/.codex/skills/$skill"
+# Codex prompts share the Claude command sources.
+if [ -d "$SCRIPT_DIR/commands" ]; then
+  mkdir -p "$CODEX_DIR/prompts"
+  for cmd in "$SCRIPT_DIR/commands"/*.md; do
+    [ -f "$cmd" ] || continue
+    link "$cmd" "$CODEX_DIR/prompts/$(basename "$cmd")"
   done
-  find "$HOME/.codex/skills" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | while read -r stale; do
-    echo "  PRUNE $stale (dead Codex skill symlink)"
+  find "$CODEX_DIR/prompts" -maxdepth 1 -type l ! -exec test -e {} \; -print | while read -r stale; do
+    echo "  PRUNE $stale (dead Codex prompt symlink)"
     rm "$stale"
   done
-  codex_skill_count=$(find "$HOME/.codex/skills" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
-  echo "  Codex: ${codex_skill_count} skills synced"
-
-  if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/null)" ]; then
-    mkdir -p "$HOME/.codex/prompts"
-    for cmd in "$SCRIPT_DIR/commands"/*.md; do
-      [ -f "$cmd" ] || continue
-      link "$cmd" "$HOME/.codex/prompts/$(basename "$cmd")"
-    done
-    find "$HOME/.codex/prompts" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | while read -r stale; do
-      echo "  PRUNE $stale (dead Codex prompt symlink)"
-      rm "$stale"
-    done
-    codex_prompt_count=$(find "$HOME/.codex/prompts" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
-    echo "  Codex: ${codex_prompt_count} prompts synced"
-  fi
 fi
 
 # Generic AgentProfile exports for cli-bridge/autopilot and any other
@@ -289,8 +275,66 @@ python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" \
   --skills "$(IFS=,; echo "${PI_SKILLS[*]}")"
 echo "  Agent profiles exported to $PROFILE_DIR"
 
-# Clean up stale symlinks in skills, commands, hooks
-for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills" "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
+# Return a Git common directory for a path inside a checkout.
+repository_common_dir() {
+  local path="$1"
+  command -v git >/dev/null 2>&1 || return 1
+  git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
+}
+
+# Return the origin that identifies separate clones of one source repository.
+repository_origin() {
+  local path="$1"
+  command -v git >/dev/null 2>&1 || return 1
+  git -C "$path" remote get-url origin 2>/dev/null
+}
+
+DOTFILES_COMMON_DIR=$(repository_common_dir "$SCRIPT_DIR" || true)
+DOTFILES_ORIGIN=$(repository_origin "$SCRIPT_DIR" || true)
+RUNTIME_COMMON_DIR=""
+RUNTIME_ORIGIN=""
+if [ -n "$RUNTIME_SKILLS_DIR" ]; then
+  RUNTIME_COMMON_DIR=$(repository_common_dir "$RUNTIME_SKILLS_DIR" || true)
+  RUNTIME_ORIGIN=$(repository_origin "$RUNTIME_SKILLS_DIR" || true)
+fi
+
+skill_is_current() {
+  local name="$1"
+  [ -f "$SCRIPT_DIR/skills/$name/SKILL.md" ] || \
+    { [ -n "$RUNTIME_SKILLS_DIR" ] && [ -f "$RUNTIME_SKILLS_DIR/$name/SKILL.md" ]; }
+}
+
+skill_link_is_managed() {
+  local link_path="$1"
+  local common_dir origin
+  common_dir=$(repository_common_dir "$link_path" || true)
+  origin=$(repository_origin "$link_path" || true)
+  { [ -n "$common_dir" ] && [ "$common_dir" = "$DOTFILES_COMMON_DIR" ]; } || \
+    { [ -n "$origin" ] && [ "$origin" = "$DOTFILES_ORIGIN" ]; } || \
+    { [ -n "$common_dir" ] && [ "$common_dir" = "$RUNTIME_COMMON_DIR" ]; } || \
+    { [ -n "$origin" ] && [ "$origin" = "$RUNTIME_ORIGIN" ]; }
+}
+
+# A missing SKILL.md is invalid. A managed link absent from the current source
+# is retired, even when an older checkout still makes its target look valid.
+for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"; do
+  [ -d "$dir" ] || continue
+  find "$dir" -maxdepth 1 -type l -print | while read -r stale; do
+    if [ ! -f "$stale/SKILL.md" ]; then
+      echo "  PRUNE $stale (invalid skill symlink)"
+      rm "$stale"
+      continue
+    fi
+    name=$(basename "$stale")
+    if ! skill_is_current "$name" && skill_link_is_managed "$stale"; then
+      echo "  PRUNE $stale (retired managed skill)"
+      rm "$stale"
+    fi
+  done
+done
+
+# Clean up stale symlinks in commands and hooks.
+for dir in "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks"; do
   [ -d "$dir" ] || continue
   find "$dir" -maxdepth 1 -type l ! -exec test -e {} \; -print | while read -r stale; do
     echo "  PRUNE $stale (dead symlink)"

@@ -1,88 +1,53 @@
-# Bootstrap-CI Promotion Gate (structured-hypothesis mode)
+# Compare measurements and decide promotion
 
-The deterministic gate for the structured-hypothesis mode in `SKILL.md`. Computes a
-promote/reject/candidate/inconclusive decision from a bootstrap confidence interval on
-the control→treatment delta, so the gate is computed, not eyeballed.
+Use this procedure for noisy outcomes, sampled comparisons, or selection among candidates.
+Use the project's maintained statistical implementation; do not copy a new statistics library into the experiment.
+An exact deterministic check may not need a statistical test.
 
-This is distinct from `stats.md`'s Cohen's-d KEEP/ITERATE/REVERT verdict: that ranks
-effect size for a single experiment; this decides whether a winning experiment is durable
-enough to **promote** into a baseline or default. Use this gate when an experiment graduates
-from "did it move" to "should it ship."
+## Define the comparison before measurement
 
-## Inputs
+- Record the metric, units, improving direction, summary statistic, and smallest useful effect.
+- Identify the independent sampling unit and whether observations are paired.
+  Repeated measurements of one case do not create additional independent cases.
+- Specify the population or execution conditions the conclusion should cover.
+- Choose sampling and precision from the decision's error costs, observed variation, and useful effect.
+  A fixed repetition count does not establish adequate evidence.
+- Record the analysis, stopping rule, uncertainty method, and treatment of multiple comparisons.
+- Define invalid-run handling and regression limits, including permitted efficiency tradeoffs, before seeing results.
+  Express each limit in the metric's units.
 
-- `control[]`, `treatment[]` — per-rep scores for the metric under test (pass rate, score, etc.).
-  3 reps minimum, 5 for noisy targets (CV > 20%).
-- `B` — bootstrap resamples. Default **10000**.
-- Direction — whether higher or lower is better for the metric (pass rate: higher; cost/latency: lower).
-  Normalize so the delta is `treatment − control` in the improving direction.
+## Compute without changing the question
 
-## Procedure
+1. Validate raw observations and reconcile all attempts, including missing, invalid, and failed runs.
+   Report exclusions and reasons; do not hide treatment-dependent failures by dropping them.
+2. Report each group's sample size, summary, spread, and the observed difference.
+   Choose summaries that match the outcome; a mean, median, tail, or rate answers a different question.
+3. Use a method matching the sampling design and distribution.
+   Preserve pairs and shared-source groups instead of treating dependent rows as independent.
+4. Report uncertainty supported by the selected method and sample.
+   For bootstrap methods, record the interval method, seed, and resample count; choose them for the required precision.
+5. Report effect sizes or p-values when they serve the registered analysis, with their assumptions.
+   Apply the planned treatment of multiple comparisons and optional stopping.
+6. Check that the test can detect or exclude the useful effect before interpreting a negative result.
 
-1. Compute the observed delta `δ = median(treatment) − median(control)` (improving direction).
-2. Bootstrap: for `b` in `1..B`, resample `control` and `treatment` with replacement (same N each),
-   recompute `δ_b`. Collect the `δ_b` distribution.
-3. Take the 95% CI as the 2.5th and 97.5th percentiles of `{δ_b}`: `[ciLow, ciHigh]`.
-4. Apply the decision rule below.
+## Decide against the recorded criteria
 
-## Decision rule
-
-The same thresholds research used (`research/SKILL.md` Phase 4, pre-merge):
-
-| Decision | Condition |
+| Decision | Evidence required |
 |---|---|
-| **promote** | `ciLow > 0` (improvement excludes zero) — OR neutral pass rate with a meaningful efficiency gain and `ciLow ≥ −2pp` (the regression floor) |
-| **reject** | `ciHigh < 0` (CI entirely below zero) — OR neutral pass rate with an efficiency regression |
-| **candidate** | positive point estimate (`δ > 0`) but `ciLow ≤ 0` — real signal, insufficient power. Needs more reps. |
-| **inconclusive** | CI spans zero widely AND no efficiency signal either way |
+| Promote | The registered analysis supports a useful improvement or allowed tradeoff, and required regression checks pass |
+| Reject | The evidence rejects the useful-effect claim, demonstrates unacceptable harm, or violates a required limit |
+| Retain as a candidate | Further authorized measurement could decide the claim, but promotion is not yet supported |
+| Inconclusive | The available evidence cannot decide the relevant improvement or harm |
 
-"pp" = percentage points. The `−2pp` floor lets a cost/latency win promote even when pass rate is
-flat, provided the CI shows pass rate didn't drop more than 2pp.
+A favorable point estimate alone is insufficient when sampling variation could change the decision.
+An interval containing zero does not prove no useful effect; use its precision and the registered threshold.
+Do not silently replace an inconclusive test with an easier success rule.
 
-## Promotion scope (where a promoted winner lands)
+## Limit the conclusion
 
-A `promote` decision still has to choose a target:
+Inspect held-back cases when selection on development cases could overfit.
+Include resource use and quality regressions in the same decision as the improvement.
+Do not aggregate incompatible units or treat unequal actual resources as a controlled comparison.
 
-- Safe for all users → promote to **global defaults**.
-- Only safe in controlled environments → promote to **benchmark/test profiles** only.
-- Needs more validation → flag for **follow-up**, do not change defaults yet.
-
-## Reference implementation
-
-```ts
-// delta in improving direction; control/treatment are per-rep scores
-function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b)
-  const m = Math.floor(s.length / 2)
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
-}
-
-function resample(xs: number[]): number[] {
-  return xs.map(() => xs[Math.floor(Math.random() * xs.length)])
-}
-
-function promotionGate(
-  control: number[],
-  treatment: number[],
-  opts: { B?: number; efficiencyGain?: boolean; efficiencyRegression?: boolean } = {},
-): { decision: 'promote' | 'reject' | 'candidate' | 'inconclusive'; delta: number; ciLow: number; ciHigh: number } {
-  const B = opts.B ?? 10000
-  const delta = median(treatment) - median(control)
-  const deltas: number[] = []
-  for (let b = 0; b < B; b++) deltas.push(median(resample(treatment)) - median(resample(control)))
-  deltas.sort((a, b) => a - b)
-  const ciLow = deltas[Math.floor(0.025 * B)]
-  const ciHigh = deltas[Math.floor(0.975 * B)]
-
-  let decision: 'promote' | 'reject' | 'candidate' | 'inconclusive'
-  if (ciLow > 0) decision = 'promote'
-  else if (opts.efficiencyGain && ciLow >= -2) decision = 'promote'
-  else if (ciHigh < 0 || opts.efficiencyRegression) decision = 'reject'
-  else if (delta > 0) decision = 'candidate'
-  else decision = 'inconclusive'
-
-  return { decision, delta, ciLow, ciHigh }
-}
-```
-
-Record the decision, `delta`, and `[ciLow, ciHigh]` on the experiment line in `.agent/experiments.jsonl`.
+Promote only to the population and operating conditions the evidence supports, within authority already granted.
+Persist the analysis, decision rule, actual run identities, raw evidence, and unresolved limitations with the experiment record.

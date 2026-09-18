@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -68,7 +68,8 @@ test("repairs worktree metadata before checking out a claimed branch", () => {
 
     result = run("git", ["worktree", "list", "--porcelain"], { cwd: repo });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, new RegExp(`worktree ${claimed.replaceAll("/", "\\/")}`));
+    const canonicalClaimed = realpathSync(claimed);
+    assert.match(result.stdout, new RegExp(`worktree ${canonicalClaimed.replaceAll("/", "\\/")}`));
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }

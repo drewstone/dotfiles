@@ -1,0 +1,15 @@
+[Unit]
+Description=Keep the default tmux server and workspace sessions available
+After=default.target
+
+[Service]
+Environment=PATH=%h/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Type=simple
+ExecStart=%h/.local/bin/tmux-heal --watch
+Restart=always
+RestartSec=2
+KillMode=process
+OOMPolicy=continue
+
+[Install]
+WantedBy=default.target

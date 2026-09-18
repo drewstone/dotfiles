@@ -1,73 +1,65 @@
-# `.agent/experiments.jsonl` schema
+# Experiment and progress records
 
-One JSON object per line. This is the canonical structured log of every evolve experiment — cross-project pattern analysis and meta-learning read from here.
+Read this before writing `.agent/experiments.jsonl` or updating the associated result snapshot.
+Use an adopted project record format when one already owns this state.
+Preserve existing field meanings and actual evidence identities.
 
-## Required fields
+## `.agent/experiments.jsonl`
 
-| Field | Type | Purpose |
+Append one JSON object per completed comparison.
+
+| Required field | Type | Meaning |
 |---|---|---|
-| `id` | string | Unique experiment ID |
-| `project` | string | Repo/project name |
-| `goal` | string | The evolve goal |
-| `round` | number | Which cycle |
-| `hypothesis` | string | What was tested |
-| `category` | enum | `prompt` \| `config` \| `code` \| `infra` \| `model` \| `criteria` |
-| `lever` | string | What was changed (systemPrompt, temperature, judge criteria, etc.) |
-| `targets` | string[] | What was targeted (agent IDs, file paths, service names) |
-| `baseline` | object | Metric values before (median of ≥3 runs) |
-| `result` | object | Metric values after (median of ≥3 runs) |
-| `delta` | number | Primary metric change |
-| `verdict` | enum | `KEEP` \| `ITERATE` \| `ABANDON` \| `REGRESSION` |
-| `durationMs` | number | How long the experiment took |
-| `timestamp` | string | ISO 8601 |
-| `reasoning` | string | Why this hypothesis was chosen |
-| `learnings` | string[] | What was discovered (reusable insights) |
+| `id` | string | Unique experiment identity |
+| `project` | string | Project name |
+| `goal` | string | Active improvement goal |
+| `round` | number | Experiment cycle |
+| `hypothesis` | string | Tested causal claim |
+| `category` | enum | `prompt`, `config`, `code`, `infra`, `model`, or `criteria` |
+| `lever` | string | What changed |
+| `targets` | string[] | Affected agents, files, services, or other targets |
+| `baseline` | object | Before values with the chosen measurement summary |
+| `result` | object | After values with the same measurement summary |
+| `delta` | number | Primary metric change, with units and direction stated in the analysis |
+| `verdict` | enum | `KEEP`, `ITERATE`, `ABANDON`, or `REGRESSION` |
+| `durationMs` | number | Observed experiment duration |
+| `timestamp` | string | ISO 8601 timestamp |
+| `reasoning` | string | Evidence and decision rule supporting the experiment |
+| `learnings` | string[] | Findings supported by this experiment |
 
-## Optional fields
-
-| Field | Type | Purpose |
+| Optional field | Type | Meaning |
 |---|---|---|
-| `variation` | number | Which attempt (1, 2, 3 for iterations) |
-| `parentId` | string | Previous experiment this iterates on |
-| `deploymentVerified` | boolean | Was deployment confirmed before measuring? |
-| `failureMode` | string | If failed: what went wrong (deployment, scoring, approach) |
-| `crossPollinated` | boolean | Was this applied from another target's success? |
-| `promptVersionId` | string | Which prompt version was tested (from `.agent/prompts/registry.json`) |
-| `costUsd` | number | Estimated cost of this experiment |
-| `reps` | number | How many repetitions were run (1 = single run, 3 = median-of-3, 5 = noisy target) |
-| `productValueClaim` | string | The one-sentence claim — included so downstream readers can judge whether the metric movement tracks user-visible value |
-| `transcriptPath` | string | Pointer to the Claude session JSONL that produced this experiment (e.g. `~/.claude/projects/<slug>/<sessionId>.jsonl`). Lets `/reflect` and AxGEPA-style optimizers replay the run. |
-| `traceDir` | string | Pointer to a run-scoped subdir holding eval output, agent traces, custom artifacts (e.g. `.agent/runs/evolve-<ts>/`). Pointer not copy. |
-| `rejected` | array | `[{hypothesis, reason}]` — alternatives considered and rejected. Negative-knowledge for future runs. |
+| `variation` | number | Attempt within the hypothesis |
+| `parentId` | string | Prior experiment identity |
+| `deploymentVerified` | boolean | Whether the deployed change was confirmed before measuring |
+| `failureMode` | string | Observed execution, scoring, or approach failure |
+| `crossPollinated` | boolean | Whether the change came from another target's result |
+| `promptVersionId` | string | Tested prompt identity; use the project registry when present |
+| `costUsd` | number | Experiment cost; distinguish estimates in the supporting analysis |
+| `reps` | number | Actual repetitions; record unequal group counts in the evidence |
+| `productValueClaim` | string | Relationship between the metric and user outcome |
+| `transcriptPath` | string | Path to the producing session transcript |
+| `traceDir` | string | Path to run-scoped evidence |
+| `rejected` | array | Objects with `hypothesis` and `reason` for rejected alternatives |
 
-## Example
+Store raw observations, sample counts, analysis, and errors in the referenced evidence.
+Do not invent a numeric `delta` or duration to satisfy this schema.
+Record incomplete or failed attempts in the run artifacts and `.agent/progress.md` when a valid comparison row cannot yet be written.
+Include those attempts in total coverage and resource accounting.
 
-```jsonl
-{"id":"exp_001","project":"your-product","goal":"all agents above 0.80","round":1,"hypothesis":"safety disclaimers","category":"prompt","lever":"systemPrompt","targets":["agent-a","agent-b","agent-c"],"baseline":{"safety":0.50},"result":{"safety":1.00},"delta":0.50,"verdict":"KEEP","durationMs":35000,"timestamp":"2026-03-20T00:00:00Z","reasoning":"Domain agents need disclaimers. Judge flagged advice without caveats.","learnings":["Safety disclaimers lift all agents in the vertical universally","A single-line disclaimer is insufficient — need 5-6 specific guidelines"],"reps":3,"productValueClaim":"safety score >= 0.70 means fewer compliance issues from regulated-vertical customers"}
-```
+## `.agent/current.json`
 
-## Product Quality Scorecard
+Preserve `mode`, `goal`, `status`, `round`, `generation`, `activePursuit`, `updatedAt`, and `metricClaims`.
+Update the active state without replacing unrelated fields.
+A checkpoint must identify the ongoing work and how to resume it.
 
-`.agent/scorecard.json` — snapshot of all user flows and their quality, written after each cycle:
+## `.agent/scorecard.json`
 
-```json
-{
-  "product": "your-product",
-  "timestamp": "2026-03-20T04:00:00Z",
-  "flows": [
-    {"name": "synthetic_conversation", "score": 0.80, "target": 0.85, "status": "pass"},
-    {"name": "selfplay", "score": null, "target": 0.75, "status": "unmeasured"},
-    {"name": "tool_calling", "score": null, "target": 0.80, "status": "unmeasured"}
-  ],
-  "aggregate": 0.80,
-  "coverage": "1/3 flows measured",
-  "evolveHistory": "4 cycles, +0.11 improvement"
-}
-```
+Preserve the existing `product`, `timestamp`, `flows`, `aggregate`, `coverage`, and `evolveHistory` fields.
+Each flow retains `name`, `score`, `target`, and `status`.
+Use `null` scores and `unmeasured` status when a flow has not been measured.
+A score below a required minimum cannot have `pass` status.
+Apply the metric's actual direction and decision rule rather than assuming all scores improve upward.
 
-## Why structured data matters
-
-1. **Cross-project patterns**: "Safety disclaimers worked on the voice agents. Do they work on the meeting-notes bots?" — queryable from the JSONL.
-2. **Meta-learning**: Which categories of experiments have the highest success rate? Prompt? Config? Code?
-3. **Failure analysis**: What's the most common failure mode? Deployment verification? Scoring artifacts?
-4. **Research potential**: Aggregate data across projects → methodology papers on autonomous improvement.
+Compute an aggregate only over compatible measurements and report the measured coverage.
+Do not convert unmeasured flows to zero, silently remove them, or claim complete product coverage from a partial aggregate.

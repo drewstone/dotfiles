@@ -375,7 +375,9 @@ export const shapeKeyOf = (sub, args) => {
       dashDash = true;
       continue;
     }
-    if (arg.startsWith("-")) flags.push(arg);
+    if (arg.startsWith("-")) {
+      flags.push(sub === "show-ref" ? arg.replace(/^--(no-)?branches$/, "--$1heads") : arg);
+    }
     else operand = true;
   }
   const parts = [sub, ...[...flags].sort()];
@@ -418,6 +420,10 @@ export const flagSurfaceOf = (sub, repo) => {
   // `--stat-width=` in the completion list means "takes a value"; measuring the
   // bare spelling is what proves git rejects it without one.
   add(((helper.stdout || "") + (helper.stderr || "")).replace(/=/g, " "));
+  // Git help can hide one spelling. Measure both before sharing their shape.
+  if (sub === "show-ref") {
+    for (const flag of ["--heads", "--no-heads", "--branches", "--no-branches"]) found.add(flag);
+  }
   return [...found].sort();
 };
 

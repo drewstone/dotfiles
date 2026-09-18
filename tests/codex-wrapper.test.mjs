@@ -31,6 +31,11 @@ printf '%s\\n' "$@" > "$CODEX_ARGS_FILE"
         ...process.env,
         CODEX_ARGS_FILE: argsPath,
         NVM_DIR: nvmDir,
+        // The wrapper's fast path execs the first codex it can name, and on a host with the
+        // Homebrew build that is the real binary, not the fake under NVM_DIR: this test then
+        // ran real codex with `run` and read its usage error. Pin the fake through the same
+        // override an operator would use.
+        CODEX_REAL_BIN: fakeCodexPath,
       },
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);

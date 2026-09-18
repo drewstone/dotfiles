@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -72,6 +72,28 @@ const routesToRtk = (finalString, sub) =>
   ).test(finalString);
 
 const has = (bin) => spawnSync("sh", ["-c", `command -v ${bin}`]).status === 0;
+
+let shapeKeyEnvironmentMemo;
+const shapeKeyEnvironments = () => {
+  if (shapeKeyEnvironmentMemo) return shapeKeyEnvironmentMemo;
+  const localeList = spawnSync("locale", ["-a"], { encoding: "utf8" });
+  assert.equal(localeList.status, 0, localeList.stderr);
+  const wanted = new Set(["c", "posix", "en_us.utf8", "c.utf8", "en_ag.utf8"]);
+  const locales = localeList.stdout.split("\n").filter((name) => wanted.has(name.toLowerCase().replaceAll("-", "")));
+  const shellList = spawnSync("bash", ["-c", "type -a -p bash"], { encoding: "utf8" });
+  assert.equal(shellList.status, 0, shellList.stderr);
+  const shells = [...new Set(shellList.stdout.trim().split("\n").filter(Boolean).map((path) => realpathSync(path)))];
+  assert.ok(locales.length > 0 && shells.length > 0, "no Bash/locale combination available to test");
+  shapeKeyEnvironmentMemo = shells.flatMap((shell) => locales.map((locale) => {
+    const comparison = spawnSync(shell, ["-c", '[[ "-b" < "-B" ]]'], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: locale },
+    });
+    assert.ok(comparison.status === 0 || comparison.status === 1, comparison.stderr);
+    return { shell, locale, localeSensitive: comparison.status === 0 };
+  }));
+  return shapeKeyEnvironmentMemo;
+};
 
 // ---------------------------------------------------------------------------
 // The measurement, taken once per suite run and shared with the mutant children
@@ -241,6 +263,7 @@ test("the hook computes the same shape key the measurement does", (t) => {
       ["git diff a.txt b.txt", "diff <path>"],
       ["git diff --stat --stat", "diff --stat --stat"],
       ["git show-ref --heads --tags", "show-ref --heads --tags"],
+      ["git show-ref --branches --tags", "show-ref --heads --tags"],
     ];
     for (const [command, expected] of extra) {
       const actual = shapeOfCommand(command, fixture.repo);
@@ -255,33 +278,27 @@ test("the hook computes the same shape key the measurement does", (t) => {
       if (fromKey !== expected) mismatches.push(`${command}: shapeKeyOf ${fromKey}, expected ${expected}`);
     }
 
-    // The key is a SORTED flag list, and bash's `[[ a < b ]]` follows
-    // LC_COLLATE while the table was sorted in byte order. Under en_US.UTF-8 an
-    // unpinned sort puts `git diff -b -B` at "diff -b -B" and the table has
-    // "diff -B -b", so the guard's answer would depend on the caller's locale.
+    // Modern Bash follows locale collation; Bash 3.2 always uses byte order.
+    // Exercise installed interpreters with locale names reported by this host.
     const localeCase = "git diff -b -B -w -W";
     const localeExpected = shapeKeyOf("diff", ["-b", "-B", "-w", "-W"]);
-    const locales = spawnSync("locale", ["-a"], { encoding: "utf8" }).stdout || "";
-    const available = ["C", "POSIX", "en_US.UTF-8", "C.UTF-8", "en_AG.utf8"].filter(
-      (l) => locales.split("\n").some((x) => x.toLowerCase() === l.toLowerCase().replace("-", "")),
-    );
-    assert.ok(available.length > 1, `only ${available.length} locale(s) available to compare`);
-    for (const locale of available) {
-      const result = spawnSync(hookPath, ["--shape-of", localeCase], {
+    for (const { shell, locale } of shapeKeyEnvironments()) {
+      const result = spawnSync(shell, [hookPath, "--shape-of", localeCase], {
         cwd: fixture.repo,
         encoding: "utf8",
         input: "",
         env: { ...process.env, LC_ALL: locale },
       });
+      assert.equal(result.status, 0, result.stderr);
       if (result.stdout.trim() !== localeExpected) {
-        mismatches.push(`${localeCase} under LC_ALL=${locale}: hook ${result.stdout.trim()}, matrix ${localeExpected}`);
+        mismatches.push(`${localeCase} under ${shell} LC_ALL=${locale}: hook ${result.stdout.trim()}, matrix ${localeExpected}`);
       }
     }
   } finally {
     fixture.cleanup();
   }
   assert.deepEqual(mismatches, [], "the hook and the matrix disagree about what invocation this is");
-  t.diagnostic(`${MATRIX.length} matrix cases + 10 hand-written forms agree on the shape key`);
+  t.diagnostic(`${MATRIX.length} matrix cases + 11 hand-written forms agree on the shape key`);
 });
 
 // ---------------------------------------------------------------------------
@@ -779,44 +796,41 @@ test("every mutant of the guard is caught by this file", async (t) => {
   await measure(); // so the children read the cache instead of re-measuring rtk
 
   const dir = mkdtempSync(join(tmpdir(), "rtk-guard-mutants-"));
-  const survivors = [];
+  const localeSensitive = shapeKeyEnvironments().some((entry) => entry.localeSensitive);
+  let injected = 0;
   try {
     for (const mutant of MUTANTS) {
-      const path = writeMutant(mutant.name, join(dir, `${mutant.name}.sh`));
-      // NODE_TEST_CONTEXT tells node it is already a test worker; inheriting it
-      // makes the grandchild report through the parent and exit 0 whatever it
-      // found, which would make this whole test vacuous.
-      const env = {
-        ...process.env,
-        RTK_GUARD_HOOK_PATH: path,
-        RTK_GUARD_MUTATION_CHILD: "1",
-        RTK_GUARD_MEASUREMENT_CACHE: cachePath,
-      };
-      delete env.NODE_TEST_CONTEXT;
-      const child = spawnSync(
-        process.execPath,
-        ["--test", "--test-name-pattern", mutant.caughtBy, import.meta.filename],
-        { encoding: "utf8", cwd: resolve(import.meta.dirname, ".."), env },
-      );
-      const ran = /^# tests \d+$|ℹ tests \d+|# pass \d+/m.test(child.stdout || "");
-      if (!ran) {
-        survivors.push(
-          `${mutant.name}: child runner produced no test count, so nothing was measured ` +
-            `(status ${child.status}) ${(child.stderr || "").slice(0, 200)}`,
+      await t.test(mutant.name, {
+        skip: mutant.name === "sort-follows-locale" && !localeSensitive
+          ? "no installed Bash/locale combination uses locale-sensitive comparison"
+          : false,
+      }, () => {
+        injected++;
+        const path = writeMutant(mutant.name, join(dir, `${mutant.name}.sh`));
+        // NODE_TEST_CONTEXT tells node it is already a test worker; inheriting it
+        // makes the grandchild report through the parent and exit 0 whatever it
+        // found, which would make this whole test vacuous.
+        const env = {
+          ...process.env,
+          RTK_GUARD_HOOK_PATH: path,
+          RTK_GUARD_MUTATION_CHILD: "1",
+          RTK_GUARD_MEASUREMENT_CACHE: cachePath,
+        };
+        delete env.NODE_TEST_CONTEXT;
+        const child = spawnSync(
+          process.execPath,
+          ["--test", "--test-name-pattern", mutant.caughtBy, import.meta.filename],
+          { encoding: "utf8", cwd: resolve(import.meta.dirname, ".."), env },
         );
-        continue;
-      }
-      if (/tests 0\b/.test(child.stdout)) {
-        survivors.push(`${mutant.name}: pattern "${mutant.caughtBy}" matched no test`);
-        continue;
-      }
-      if (child.status === 0) {
-        survivors.push(`${mutant.name} (${mutant.why}) survived "${mutant.caughtBy}"`);
-      }
+        const ran = /^# tests \d+$|ℹ tests \d+|# pass \d+/m.test(child.stdout || "");
+        assert.ok(ran, `${mutant.name}: child runner produced no test count: ${child.stderr}`);
+        assert.doesNotMatch(child.stdout, /tests 0\b/, `${mutant.name}: no test matched "${mutant.caughtBy}"`);
+        assert.notEqual(child.status, null, `${mutant.name}: child terminated with ${child.signal}`);
+        assert.notEqual(child.status, 0, `${mutant.name} (${mutant.why}) survived "${mutant.caughtBy}"`);
+      });
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  assert.deepEqual(survivors, [], "these mutations of the guard are not caught by any assertion");
-  t.diagnostic(`${MUTANTS.length} mutants injected into ${HOOK_SOURCE}, all caught`);
+  t.diagnostic(`${injected}/${MUTANTS.length} mutants injected into ${HOOK_SOURCE}; ${MUTANTS.length - injected} inapplicable`);
 });
