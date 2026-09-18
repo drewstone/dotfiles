@@ -21,6 +21,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "$HOME/.claude/hooks/host-blast-guard.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "$HOME/.claude/hooks/kill-guard.sh"
           },
           {

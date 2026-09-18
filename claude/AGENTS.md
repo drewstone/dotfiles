@@ -176,3 +176,15 @@ For the latest screenshot or `$IMG`, check `~/.claude/image-cache/`, then `~/.tm
 Keep generated artifacts in the project, session scratch directory, or `/tmp`, never at the top level of `~`.
 Use a container or VM for destructive filesystem, mount, or namespace experiments.
 A mount namespace isolates the mount table, not underlying file operations; host files can still be changed.
+
+Root-level storage, mount, namespace, and freeze work never runs on the host root.
+That covers `fsfreeze`, `dmsetup`, LVM on a real disk, `mount --move`, `unshare --mount`, `mkfs` or `wipefs` on a real disk, and any reboot or shutdown.
+Run it in a throwaway VM: `hostlab run -- '<command>'` (`hostlab --help`).
+The VM has root, lvm2, dm-thin, xfs, a blank scratch disk at /dev/vdb, and the calling directory at /work.
+Two guards enforce this: the Claude hook `host-blast-guard.sh` blocks the verbs before they run, and the root wrappers in `/usr/local/sbin` (from `~/dotfiles/host/`) refuse them on the root disk.
+A refusal from either is policy, not an obstacle.
+Do not wrap the command in `sh -c`, `env`, `python`, or an absolute path, and never set `HOST_BLAST_GUARD=off` yourself.
+Why: `unshare --mount` isolates the mount table only, so `rmdir` inside it still changes the real disk; `fsfreeze -f <dir>` freezes the filesystem that holds the directory, which is / when the mount under it failed.
+On 2026-08-20 an audit ran `rmdir /proc` inside a mount namespace and the machine could not boot for 5 days.
+On 2026-09-02 a benchmark ran `fsfreeze -f` on a directory whose mount had failed, froze the root filesystem, and the machine was unreachable for 16 days.
+A frozen root now resets the box in about four minutes (measured 247 s in a VM): the watchdog daemon runs a root-write probe from `~/dotfiles/host/` and a kernel softdog fires when the probe blocks.

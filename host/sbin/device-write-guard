@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Wrapper for tools that write a block device: mkfs*, mke2fs, mkswap, wipefs,
+# blkdiscard, sgdisk, sfdisk, fdisk, parted, dd. A /dev argument (or dd of=)
+# on the root disk refuses. Listing forms of fdisk, sfdisk, parted, and wipefs
+# pass.
+set -uo pipefail
+. /usr/local/lib/host-blast-guard.sh
+verb="$(basename "$0")"
+real="$(hbg_real "$verb")" || exit 127
+hbg_off && exec "$real" "$@"
+listing=0
+case "$verb" in
+  fdisk|sfdisk) for a in "$@"; do case "$a" in -l|--list|-d|--dump|-J|--json) listing=1 ;; esac; done ;;
+  parted) for a in "$@"; do case "$a" in -l|--list|print|p) listing=1 ;; esac; done ;;
+  wipefs) listing=1; for a in "$@"; do case "$a" in -a|--all|-o|--offset|-o*) listing=0 ;; esac; done ;;
+esac
+[ "$listing" = 1 ] && exec "$real" "$@"
+for a in "$@"; do
+  case "$a" in
+    of=/dev/*) hbg_check_dev_arg "$verb" "${a#of=}" ;;
+    /dev/*) hbg_check_dev_arg "$verb" "$a" ;;
+  esac
+done
+exec "$real" "$@"

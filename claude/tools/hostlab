@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+# hostlab: a throwaway Ubuntu 24.04 VM for root-level experiments.
+#
+# Storage, mount, namespace, and freeze work never runs on the host root.
+# Two outages came from that: 2026-08-20 (`unshare --mount` then `rmdir /proc`,
+# 5 days down) and 2026-09-02 (`fsfreeze -f` on a directory whose mount had
+# failed froze the root filesystem, 16 days down). The host wrappers in
+# /usr/local/sbin and the Claude hook refuse those verbs and point here.
+#
+# The VM has root over ssh, lvm2, dm-thin, xfs, btrfs, a 16G blank scratch disk
+# at /dev/vdb, the calling directory shared at /work, and the same softdog
+# watchdog policy as the host. Each run boots a fresh copy-on-write overlay of
+# one prepared base image and deletes it on exit.
+#
+#   hostlab build                 prepare the base image once (~5 min, network)
+#   hostlab run [opts] -- CMD...  boot, run CMD in /work as root, tear down
+#   hostlab shell [opts]          boot and open an interactive root shell
+#   hostlab ssh ID [-- CMD...]    reach a kept VM
+#   hostlab status                list kept VMs
+#   hostlab clean                 stop and delete every kept VM
+#
+# Options for run/shell: --keep (leave the VM running, print its ID),
+#   --mem 4G, --cpus 4, --scratch 16G, --work DIR (default: cwd)
+# Env: HOSTLAB_HOME (default ~/.cache/hostlab)
+set -euo pipefail
+
+CACHE="${HOSTLAB_HOME:-$HOME/.cache/hostlab}"
+CLOUD_IMG="$CACHE/noble-server-cloudimg-amd64.img"
+CLOUD_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+BASE_IMG="$CACHE/base.qcow2"
+KEY="$CACHE/id_ed25519"
+RUNS="$CACHE/runs"
+MEM="${HOSTLAB_MEM:-4G}"
+CPUS="${HOSTLAB_CPUS:-4}"
+SCRATCH="${HOSTLAB_SCRATCH:-16G}"
+DISK="${HOSTLAB_DISK:-20G}"
+KEEP=0
+WORK="$PWD"
+
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+
+die() { printf 'hostlab: %s\n' "$*" >&2; exit 1; }
+
+need() {
+  local b
+  for b in qemu-system-x86_64 qemu-img cloud-localds ssh ssh-keygen python3; do
+    command -v "$b" >/dev/null 2>&1 || die "missing $b (sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client)"
+  done
+  [ -r /dev/kvm ] && [ -w /dev/kvm ] || die "/dev/kvm is not accessible (add yourself to the kvm group)"
+  mkdir -p "$CACHE" "$RUNS"
+  if [ ! -f "$KEY" ]; then
+    ssh-keygen -q -t ed25519 -N '' -C hostlab -f "$KEY"
+  fi
+}
+
+ssh_opts() {
+  printf '%s\n' -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR -o ConnectTimeout=3 -o IdentitiesOnly=yes -o ServerAliveInterval=5
+}
+
+free_port() {
+  python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
+}
+
+# The watchdog policy inside the VM mirrors dotfiles/host: a root-write probe
+# that blocks on a frozen root, and a softdog that resets the VM when the
+# daemon stops the keepalive.
+watchdog_files() {
+  cat <<'YAML'
+write_files:
+  - path: /etc/watchdog.d/root-write
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      case "${1:-}" in
+        test)
+          d=/var/lib/watchdog-probe
+          mkdir -p "$d" || exit 1
+          printf '%s\n' "$(date +%s)" > "$d/root-write" || exit 1
+          sync -f "$d/root-write" || exit 1
+          exit 0 ;;
+        repair) exit 1 ;;
+        *) exit 0 ;;
+      esac
+  - path: /etc/watchdog.conf
+    content: |
+      watchdog-device = /dev/watchdog0
+      watchdog-timeout = 60
+      interval = 10
+      realtime = yes
+      priority = 1
+      test-directory = /etc/watchdog.d
+      test-timeout = 60
+      repair-timeout = 10
+      retry-timeout = 60
+  - path: /etc/modules-load.d/softdog.conf
+    content: "softdog\n"
+  - path: /etc/modprobe.d/softdog.conf
+    content: "options softdog soft_margin=60\n"
+  - path: /etc/default/watchdog
+    content: |
+      run_watchdog=1
+      run_wd_keepalive=1
+      watchdog_module="softdog"
+      watchdog_options=""
+YAML
+}
+
+qemu_start() {
+  # qemu_start DIR PORT WORKDIR
+  local dir="$1" port="$2" workdir="$3"
+  qemu-system-x86_64 \
+    -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
+    -display none -serial "file:$dir/console.log" -monitor none \
+    -drive if=virtio,format=qcow2,file="$dir/disk.qcow2" \
+    -drive if=virtio,format=qcow2,file="$dir/scratch.qcow2" \
+    -drive if=virtio,format=raw,file="$dir/seed.img",readonly=on \
+    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$port"-:22 -device virtio-net-pci,netdev=n0 \
+    -virtfs local,path="$workdir",mount_tag=work,security_model=none,id=work \
+    -pidfile "$dir/qemu.pid" -daemonize
+}
+
+wait_ssh() {
+  # wait_ssh PORT SECONDS -> prints a dot every 2 s so a capped wait keeps its progress
+  local port="$1" budget="$2" t=0
+  while [ "$t" -lt "$budget" ]; do
+    if ssh $(ssh_opts) -p "$port" root@127.0.0.1 true 2>/dev/null; then
+      printf '\n'
+      return 0
+    fi
+    printf '.'
+    sleep 2
+    t=$((t + 2))
+  done
+  printf '\n'
+  return 1
+}
+
+vm_stop() {
+  local dir="$1" pid
+  if [ -f "$dir/port" ]; then
+    timeout 8 ssh $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 'poweroff' >/dev/null 2>&1 || true
+  fi
+  if [ -f "$dir/qemu.pid" ]; then
+    pid="$(cat "$dir/qemu.pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      local t=0
+      while kill -0 "$pid" 2>/dev/null && [ "$t" -lt 10 ]; do sleep 1; t=$((t + 1)); done
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+}
+
+cmd_build() {
+  need
+  if [ ! -f "$CLOUD_IMG" ]; then
+    echo "hostlab: downloading $CLOUD_URL"
+    curl -fL --progress-bar -o "$CLOUD_IMG.part" "$CLOUD_URL"
+    mv "$CLOUD_IMG.part" "$CLOUD_IMG"
+  fi
+  local dir="$CACHE/build"
+  rm -rf "$dir"; mkdir -p "$dir"
+  qemu-img create -q -f qcow2 -F qcow2 -b "$CLOUD_IMG" "$dir/disk.qcow2"
+  qemu-img resize -q "$dir/disk.qcow2" "$DISK"
+  qemu-img create -q -f qcow2 "$dir/scratch.qcow2" 1G
+  {
+    echo "#cloud-config"
+    echo "hostname: hostlab-base"
+    echo "disable_root: false"
+    echo "ssh_pwauth: false"
+    echo "users:"
+    echo "  - name: root"
+    echo "    ssh_authorized_keys:"
+    echo "      - $(cat "$KEY.pub")"
+    echo "package_update: true"
+    echo "packages: [lvm2, thin-provisioning-tools, xfsprogs, e2fsprogs, btrfs-progs, watchdog, kmod, util-linux]"
+    watchdog_files
+    echo "runcmd:"
+    echo "  - apt-get install -y linux-modules-extra-\$(uname -r)"
+    echo "  - systemctl enable watchdog"
+    echo "  - mkdir -p /work"
+    echo "  - touch /etc/hostlab-base-ready"
+    echo "power_state: {mode: poweroff, timeout: 30, condition: true}"
+  } > "$dir/user-data"
+  printf 'instance-id: hostlab-base\nlocal-hostname: hostlab-base\n' > "$dir/meta-data"
+  cloud-localds "$dir/seed.img" "$dir/user-data" "$dir/meta-data"
+  local port; port="$(free_port)"; echo "$port" > "$dir/port"
+  echo "hostlab: provisioning the base image (cloud-init, apt); console in $dir/console.log"
+  qemu_start "$dir" "$port" "$dir"
+  local pid t=0; pid="$(cat "$dir/qemu.pid")"
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$t" -ge 900 ]; then vm_stop "$dir"; die "base build did not finish in 15 min; see $dir/console.log"; fi
+    [ $((t % 20)) -eq 0 ] && printf 'hostlab: %3ds  %s\n' "$t" "$(grep -aoE 'cloud-init\[[0-9]+\]: .*' "$dir/console.log" 2>/dev/null | tail -1 | cut -c1-100)"
+    sleep 5; t=$((t + 5))
+  done
+  if ! grep -aq 'hostlab-base-ready\|finished at' "$dir/console.log"; then
+    grep -a 'cloud-init' "$dir/console.log" | tail -5 >&2
+  fi
+  mv "$dir/disk.qcow2" "$BASE_IMG"
+  date -u +%FT%TZ > "$BASE_IMG.built"
+  rm -rf "$dir"
+  echo "hostlab: base image ready at $BASE_IMG"
+}
+
+vm_boot() {
+  # vm_boot -> prints RUN DIR; boots an overlay of the base with WORK at /work
+  need
+  [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
+  [ -d "$WORK" ] || die "work dir $WORK does not exist"
+  local id dir port
+  id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
+  dir="$RUNS/$id"; mkdir -p "$dir"
+  qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMG" "$dir/disk.qcow2"
+  qemu-img create -q -f qcow2 "$dir/scratch.qcow2" "$SCRATCH"
+  {
+    echo "#cloud-config"
+    echo "hostname: hostlab-${id##*-}"
+    echo "mounts:"
+    echo "  - [work, /work, 9p, 'trans=virtio,version=9p2000.L,msize=512000,_netdev', '0', '0']"
+    echo "mount_default_fields: [None, None, 'auto', 'defaults,nofail', '0', '2']"
+    echo "runcmd:"
+    echo "  - mountpoint -q /work || mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 work /work"
+  } > "$dir/user-data"
+  printf 'instance-id: hostlab-%s\nlocal-hostname: hostlab-%s\n' "$id" "${id##*-}" > "$dir/meta-data"
+  cloud-localds "$dir/seed.img" "$dir/user-data" "$dir/meta-data" 2>/dev/null
+  port="$(free_port)"; echo "$port" > "$dir/port"; echo "$WORK" > "$dir/work"
+  qemu_start "$dir" "$port" "$WORK"
+  printf 'hostlab: booting %s (ssh port %s, /work = %s) ' "$id" "$port" "$WORK" >&2
+  if ! wait_ssh "$port" 120 >&2; then
+    vm_stop "$dir"; rm -rf "$dir"; die "VM did not come up in 120 s; see console.log"
+  fi
+  # /work is mounted by cloud-init; wait for it so the command sees the tree.
+  local t=0
+  until ssh $(ssh_opts) -p "$port" root@127.0.0.1 'mountpoint -q /work' 2>/dev/null; do
+    [ "$t" -ge 30 ] && { vm_stop "$dir"; rm -rf "$dir"; die "/work did not mount; see $dir/console.log"; }
+    sleep 1; t=$((t + 1))
+  done
+  echo "$dir"
+}
+
+parse_opts() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep) KEEP=1; shift ;;
+      --mem) MEM="$2"; shift 2 ;;
+      --cpus) CPUS="$2"; shift 2 ;;
+      --scratch) SCRATCH="$2"; shift 2 ;;
+      --work) WORK="$(cd "$2" && pwd)"; shift 2 ;;
+      --) shift; break ;;
+      -h|--help) usage; exit 0 ;;
+      -*) die "unknown option $1" ;;
+      *) break ;;
+    esac
+  done
+  REST=("$@")
+}
+
+cmd_run() {
+  parse_opts "$@"
+  [ "${#REST[@]}" -gt 0 ] || die "run needs a command after --"
+  local dir port rc=0
+  dir="$(vm_boot)"; port="$(cat "$dir/port")"
+  ssh $(ssh_opts) -p "$port" root@127.0.0.1 "cd /work && ${REST[*]}" || rc=$?
+  if [ "$KEEP" = 1 ]; then
+    echo "hostlab: kept $(basename "$dir") (hostlab ssh $(basename "$dir") -- CMD; hostlab clean)" >&2
+  else
+    vm_stop "$dir"; rm -rf "$dir"
+  fi
+  exit "$rc"
+}
+
+cmd_shell() {
+  parse_opts "$@"
+  local dir port rc=0
+  dir="$(vm_boot)"; port="$(cat "$dir/port")"
+  ssh -t $(ssh_opts) -p "$port" root@127.0.0.1 'cd /work && exec bash -l' || rc=$?
+  if [ "$KEEP" = 1 ]; then
+    echo "hostlab: kept $(basename "$dir")" >&2
+  else
+    vm_stop "$dir"; rm -rf "$dir"
+  fi
+  exit "$rc"
+}
+
+cmd_ssh() {
+  local id="${1:-}"; [ -n "$id" ] || die "ssh needs a VM ID (hostlab status)"
+  shift; [ "${1:-}" = "--" ] && shift
+  local dir="$RUNS/$id"; [ -f "$dir/port" ] || die "no VM $id"
+  if [ $# -gt 0 ]; then
+    exec ssh $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 "cd /work && $*"
+  fi
+  exec ssh -t $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 'cd /work && exec bash -l'
+}
+
+cmd_status() {
+  need
+  local d pid state
+  for d in "$RUNS"/*/; do
+    [ -d "$d" ] || continue
+    pid="$(cat "$d/qemu.pid" 2>/dev/null || echo -)"
+    state=dead; [ "$pid" != - ] && kill -0 "$pid" 2>/dev/null && state=running
+    printf '%s  %s  port=%s  work=%s\n' "$(basename "$d")" "$state" "$(cat "$d/port" 2>/dev/null)" "$(cat "$d/work" 2>/dev/null)"
+  done
+  [ -f "$BASE_IMG" ] && echo "base: $BASE_IMG (built $(cat "$BASE_IMG.built" 2>/dev/null))" || echo "base: not built (hostlab build)"
+}
+
+cmd_clean() {
+  need
+  local d
+  for d in "$RUNS"/*/; do
+    [ -d "$d" ] || continue
+    vm_stop "$d"; rm -rf "$d"
+    echo "hostlab: removed $(basename "$d")"
+  done
+}
+
+case "${1:-}" in
+  build) shift; cmd_build "$@" ;;
+  run) shift; cmd_run "$@" ;;
+  shell) shift; cmd_shell "$@" ;;
+  ssh) shift; cmd_ssh "$@" ;;
+  status) shift; cmd_status ;;
+  clean) shift; cmd_clean ;;
+  -h|--help|help|"") usage; exit 0 ;;
+  *) die "unknown command $1 (hostlab --help)" ;;
+esac
