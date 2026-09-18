@@ -22,6 +22,17 @@ Codex prefers `AGENTS.override.md`, then `AGENTS.md`, then configured fallback n
 Keep shared repository guidance in `AGENTS.md` when both agents use it; a Claude entry can import `@AGENTS.md`.
 See the [current Codex discovery rules](https://developers.openai.com/codex/guides/agents-md) for scope and limits.
 
+## Host guards
+
+`host/` keeps a Linux box alive under agents that hold passwordless sudo.
+Install with `./host/install.sh` (sudo).
+
+- Root wrappers in `/usr/local/sbin` refuse `fsfreeze`, `dmsetup`, LVM, `mkfs`, `mount`, and `unshare` forms that touch the root disk or a kernel filesystem; loop-backed work passes.
+- `/etc/sudoers.d/zz-agent-blast-guard` closes the absolute-path route to the real binaries.
+- The watchdog daemon runs `/etc/watchdog.d/root-write`; a frozen root blocks it and a kernel softdog resets the box in about four minutes (measured 247 s in a VM).
+- `claude/hooks/host-blast-guard.sh` blocks the same verbs inside Claude Code before sudo sees them.
+- `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
+
 ## Tmux recovery
 
 Install the tmux watcher and make its user manager a last-resort memory-pressure target:

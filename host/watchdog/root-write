@@ -1,0 +1,23 @@
+#!/bin/sh
+# watchdog(8) v1 test script.
+# test:   write and fsync a probe file on the root filesystem. A frozen root
+#         (fsfreeze, 2026-09-02) blocks the write past the daemon's
+#         test-timeout; the daemon then stops the keepalive and the kernel
+#         watchdog resets the box instead of leaving it unreachable for days.
+# repair: nothing can thaw a root frozen by a dead process. Exit non-zero so
+#         the daemon proceeds to the reset.
+case "${1:-}" in
+  test)
+    d=/var/lib/watchdog-probe
+    mkdir -p "$d" || exit 1
+    printf '%s\n' "$(date +%s)" > "$d/root-write" || exit 1
+    sync -f "$d/root-write" || exit 1
+    exit 0
+    ;;
+  repair)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac

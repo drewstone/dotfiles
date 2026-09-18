@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# fsfreeze wrapper. A freeze must name a real mountpoint that is not backed by
+# the root disk. `fsfreeze -f <plain directory>` freezes the filesystem that
+# holds the directory, which on 2026-09-02 was / itself. Thaw is always allowed.
+set -uo pipefail
+. /usr/local/lib/host-blast-guard.sh
+real="$(hbg_real fsfreeze)" || exit 127
+hbg_off && exec "$real" "$@"
+freeze=0
+target=""
+for a in "$@"; do
+  case "$a" in
+    -f|--freeze) freeze=1 ;;
+    -*) ;;
+    *) target="$a" ;;
+  esac
+done
+if [ "$freeze" = 1 ]; then
+  [ -n "$target" ] || hbg_refuse fsfreeze "no mountpoint given"
+  if ! mountpoint -q "$target"; then
+    hbg_refuse fsfreeze "$target is not a mountpoint; freezing it freezes the filesystem that holds it ($(findmnt -no SOURCE --target "$target" 2>/dev/null))"
+  fi
+  hbg_path_on_root_disk "$target" && hbg_refuse fsfreeze "$target is backed by the root disk"
+fi
+exec "$real" "$@"

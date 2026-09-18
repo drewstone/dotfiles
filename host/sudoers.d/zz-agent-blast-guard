@@ -1,0 +1,23 @@
+# Installed by ~/dotfiles/host/install.sh. Pairs with the wrappers in
+# /usr/local/sbin, which sit first in secure_path: `sudo fsfreeze` runs the
+# guard. This file closes the absolute-path route to the real binaries and lets
+# a human pass HOST_BLAST_GUARD=off through sudo for one call.
+# Sorted last on purpose: sudoers takes the last matching entry.
+Defaults env_keep += "HOST_BLAST_GUARD"
+Cmnd_Alias HOST_BLAST_REAL = /usr/sbin/fsfreeze, /sbin/fsfreeze, \
+  /usr/bin/unshare, /bin/unshare, \
+  /usr/sbin/dmsetup, /sbin/dmsetup, \
+  /usr/bin/mount, /bin/mount, /usr/bin/umount, /bin/umount, \
+  /usr/sbin/lvm, /sbin/lvm, \
+  /usr/sbin/pvcreate, /usr/sbin/vgcreate, /usr/sbin/lvcreate, /usr/sbin/lvremove, \
+  /usr/sbin/vgremove, /usr/sbin/pvremove, /usr/sbin/lvchange, /usr/sbin/vgchange, \
+  /usr/sbin/lvconvert, /usr/sbin/lvresize, /usr/sbin/lvextend, /usr/sbin/lvreduce, \
+  /usr/sbin/vgextend, /usr/sbin/vgreduce, /usr/sbin/pvresize, /usr/sbin/vgrename, \
+  /usr/sbin/lvrename, /usr/sbin/pvmove, \
+  /usr/sbin/mkfs, /usr/sbin/mkfs.*, /sbin/mkfs, /sbin/mkfs.*, \
+  /usr/sbin/mke2fs, /sbin/mke2fs, /usr/sbin/mkswap, /sbin/mkswap, \
+  /usr/sbin/wipefs, /sbin/wipefs, /usr/sbin/blkdiscard, /sbin/blkdiscard, \
+  /usr/sbin/sgdisk, /sbin/sgdisk, /usr/sbin/sfdisk, /sbin/sfdisk, \
+  /usr/sbin/fdisk, /sbin/fdisk, /usr/sbin/parted, /sbin/parted, \
+  /usr/bin/dd, /bin/dd
+drew ALL=(root) NOPASSWD: ALL, !HOST_BLAST_REAL
