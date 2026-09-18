@@ -11,6 +11,11 @@ set -uo pipefail
 pools=(
   "$HOME/webb/_wt"
   "$HOME/webb/agent-dev-container/.worktrees"
+  # `adc-wt` and scripts/bootstrap-worktree.sh place trees here, and nothing
+  # else reclaims them. On 2026-09-18 this pool alone held 60 trees at roughly
+  # 6 GiB each while the other two were being swept, which is most of how the
+  # disk reached 97% full.
+  "/private/tmp"
 )
 
 removed=0 kept=0 broken=0
