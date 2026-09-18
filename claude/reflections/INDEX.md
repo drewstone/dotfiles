@@ -2,6 +2,8 @@
 
 - [2026-09-08] discovery operator — native audit found repeated research delays behind mechanism proofs, workflow substitution, and director-choice drift. Traces omitted 138/202 selected calls; reject its no-verification score. Disk and quota risks recurred. [Canonical reflection](/Users/drew/webb/discovery/.agent/reflections/2026-09-08-194500.md)
 
+- [2026-08-31] agent-runtime — 0.184.0 published; workflow 33349241836 `2/2`, registry consumer `1/1`, 148 exports imported; optional-peer and propagation costs recorded [2026-08-31-agent-runtime-release-0.184.0.md]
+- [2026-08-29] agent-app — source verification 3→1 executions per release; tag verification 412s→18s; release elapsed 872s→515s; 0.46.21 tarballs match npm byte-for-byte [2026-08-29-agent-app-single-artifact-release.md]
 - [2026-08-13] autoresearch-competitions — Frontier UI merged and live at `f759b747`; 18/18 responsive states and 12/12 critical production checks passed [2026-08-13-autoresearch-competitions-ui-release.md]
 - [2026-04-04] gtm-agent — 7.5/10, 20 generations in 3 days, full redesign + security audit + architecture refactor [.evolve/reflections/2026-04-04-022500.md]
 - [2026-04-06] blueprint — 8/10, 17 GPU providers (PR #1364 merged), tangle-inference-core extracted (33 tests), 7 inference blueprints migrated, vllm→llm rename, 13 audit findings fixed (CRITICAL nonce TOCTOU, HIGH credential exposure) [.evolve/reflections/2026-04-06-gpu-providers-session.md]
