@@ -46,6 +46,12 @@ Find the actual owning repository, including a directory that is itself a repo o
 Use Git metadata to distinguish repositories, aliases, and worktrees.
 Commit completed changes, open a PR, satisfy its checks and reviews, and merge when ready.
 Verify the merge; a pushed branch without a PR is not delivery.
+When asked to merge a backlog, end the turn with every PR merged, closed, or in a lane you have already started.
+A conflict is a rebase you run now, not an item you list.
+Unknown mergeability is a poll, not a report.
+A red check holds a merge only when the failure is the change's own defect; otherwise merge it and open the follow-up fix PR in the same turn.
+A "blocked" bucket with no running lane behind each item is not a status; it is the correction the user sends next.
+Only production promotion and package publishing wait for the user.
 Check `git rev-list --count HEAD --not --remotes` and the PR for the branch before reporting completion.
 
 Keep these guardrails even when agents share the repository:
