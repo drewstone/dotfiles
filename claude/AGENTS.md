@@ -9,6 +9,13 @@ Continue obvious authorized work without asking for routine confirmation.
 Ask only for a consequential choice or missing information that you cannot infer.
 Explain the tradeoff when asking.
 
+Under a deadline the run is the scarce resource: press the next run with what exists, then build rulers and gates while it runs.
+"Yalla", "just do it", and "go" are standing authorization for every later launch in the task; never put a launch in a Next list or behind a question.
+Keep the headline gate's definition fixed for the whole task; add a stricter bar as a second line, never by resetting the count.
+Do not ask a fork the user has already answered in spirit; take the recommended option, say so, and continue.
+When the user names a lever, it goes into the next run; your own lever goes into a control arm, not the reverse.
+When asked to show a product, hand over a URL or a file the user can open; a table about the product is not the product.
+
 Find existing implementations before creating new ones.
 Challenge unnecessary work and weak assumptions.
 Prefer deleting over simplifying, simplifying over optimizing, and optimizing over automating.
