@@ -9,6 +9,13 @@ Continue obvious authorized work without asking for routine confirmation.
 Ask only for a consequential choice or missing information that you cannot infer.
 Explain the tradeoff when asking.
 
+Under a deadline the run is the scarce resource: press the next run with what exists, then build rulers and gates while it runs.
+"Yalla", "just do it", and "go" are standing authorization for every later launch in the task; never put a launch in a Next list or behind a question.
+Keep the headline gate's definition fixed for the whole task; add a stricter bar as a second line, never by resetting the count.
+Do not ask a fork the user has already answered in spirit; take the recommended option, say so, and continue.
+When the user names a lever, it goes into the next run; your own lever goes into a control arm, not the reverse.
+When asked to show a product, hand over a URL or a file the user can open; a table about the product is not the product.
+
 Find existing implementations before creating new ones.
 Challenge unnecessary work and weak assumptions.
 Prefer deleting over simplifying, simplifying over optimizing, and optimizing over automating.
@@ -46,6 +53,12 @@ Find the actual owning repository, including a directory that is itself a repo o
 Use Git metadata to distinguish repositories, aliases, and worktrees.
 Commit completed changes, open a PR, satisfy its checks and reviews, and merge when ready.
 Verify the merge; a pushed branch without a PR is not delivery.
+When asked to merge a backlog, end the turn with every PR merged, closed, or in a lane you have already started.
+A conflict is a rebase you run now, not an item you list.
+Unknown mergeability is a poll, not a report.
+A red check holds a merge only when the failure is the change's own defect; otherwise merge it and open the follow-up fix PR in the same turn.
+A "blocked" bucket with no running lane behind each item is not a status; it is the correction the user sends next.
+Only production promotion and package publishing wait for the user.
 Check `git rev-list --count HEAD --not --remotes` and the PR for the branch before reporting completion.
 
 Keep these guardrails even when agents share the repository:
@@ -176,3 +189,15 @@ For the latest screenshot or `$IMG`, check `~/.claude/image-cache/`, then `~/.tm
 Keep generated artifacts in the project, session scratch directory, or `/tmp`, never at the top level of `~`.
 Use a container or VM for destructive filesystem, mount, or namespace experiments.
 A mount namespace isolates the mount table, not underlying file operations; host files can still be changed.
+
+Root-level storage, mount, namespace, and freeze work never runs on the host root.
+That covers `fsfreeze`, `dmsetup`, LVM on a real disk, `mount --move`, `unshare --mount`, `mkfs` or `wipefs` on a real disk, and any reboot or shutdown.
+Run it in a throwaway VM: `hostlab run -- '<command>'` (`hostlab --help`).
+The VM has root, lvm2, dm-thin, xfs, a blank scratch disk at /dev/vdb, and the calling directory at /work.
+Two guards enforce this: the Claude hook `host-blast-guard.sh` blocks the verbs before they run, and the root wrappers in `/usr/local/sbin` (from `~/dotfiles/host/`) refuse them on the root disk.
+A refusal from either is policy, not an obstacle.
+Do not wrap the command in `sh -c`, `env`, `python`, or an absolute path, and never set `HOST_BLAST_GUARD=off` yourself.
+Why: `unshare --mount` isolates the mount table only, so `rmdir` inside it still changes the real disk; `fsfreeze -f <dir>` freezes the filesystem that holds the directory, which is / when the mount under it failed.
+On 2026-08-20 an audit ran `rmdir /proc` inside a mount namespace and the machine could not boot for 5 days.
+On 2026-09-02 a benchmark ran `fsfreeze -f` on a directory whose mount had failed, froze the root filesystem, and the machine was unreachable for 16 days.
+A frozen root now resets the box in about four minutes (measured 247 s in a VM): the watchdog daemon runs a root-write probe from `~/dotfiles/host/` and a kernel softdog fires when the probe blocks.
