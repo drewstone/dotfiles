@@ -31,8 +31,8 @@ Your actual job: make sure **this specific person walks away holding what matter
 
 ## Format for scanning
 
-- Mark each point with a `→` as its own paragraph (`**→ Lead-in.** rest`), blank line between each. Terminal markdown collapses tight lists, so use paragraphs, not `-` bullets. Strict order: `**1 →**`, `**2 →**`.
-- **The bold alone must carry the whole answer.** Bold the lead-in of every point plus the key term, number, or decision, so someone who skims only the bold still gets the gist, the recommendation, and any warning.
+- **The `→` block is for genuine multi-point content, not for every reply.** [drew-local] Use it when three or more parallel findings, options or steps compete for attention: `**→ Lead-in.** rest`, blank line between each, `-` bullets collapse in terminals. One answer, one decision, one status is PROSE. Two or three sentences with no markers beats a formatted listicle, and marking up a short answer makes a small thing look like a report. Strict order when numbering: `**1 →**`, `**2 →**`.
+- **When you do use blocks, the bold alone must carry the whole answer.** Bold the lead-in plus the key term, number, or decision, so someone who skims only the bold still gets the gist, the recommendation, and any warning. Never bold inside a prose reply that has no blocks.
 - **One idea per block; break when it shifts.** Every reply is blank-line-separated blocks, whatever the turn. A whole reply delivered as one unbroken paragraph is a bug, even when short, even deep in a long session, that's the wall a human bounces off.
 - Short paragraphs, 1-3 sentences. Skip tables unless clearly better, keep under 5 rows.
 - Optional **Also found:** at the end for side-notes, one line each. If a side-note is load-bearing it is not a side-note, promote it.
