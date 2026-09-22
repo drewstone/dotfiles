@@ -23,6 +23,12 @@ It is an evaluation of the factory's outputs; it never does the research and nev
 - A line with 0 rounds is held by its charter (construct gate, no path-shaped evaluator); see `node tools/line-directors.mjs` stderr.
 - Lead-profile candidates live in profiles/lines/lead-<line>-d<N>.json; adoption state is `leadProfileCandidate` / `leadProfile` on the line in lines/lines.json.
 
+## Log the run
+
+```bash
+skill-run-log /director-autopsy --target "<lines or 'all active'>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
@@ -30,9 +36,3 @@ It is an evaluation of the factory's outputs; it never does the research and nev
 | A ranked change is a loop or charter edit | `/implement` | the change and its evidence line |
 | A register candidate is named | `/verify` | the claim page path and its check line |
 | The operator wants the per-run story of one outlier | `/autopsy` | the run dir |
-
-## Log the run
-
-```bash
-skill-run-log /director-autopsy --target "<lines or 'all active'>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
