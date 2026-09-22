@@ -8,3 +8,4 @@ __pycache__/
 
 # Claude Code writes machine-local project settings here; never shared.
 .claude/settings.local.json
+.worktrees/
