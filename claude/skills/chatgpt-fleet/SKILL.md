@@ -1,6 +1,6 @@
 ---
 name: chatgpt-fleet
-description: Drive ChatGPT Pro reasoning sessions as a work fleet through headless Chrome, using a short-prompt, large-scope, multi-round loop that ends in applied patches and merged PRs.
+description: Drive ChatGPT Pro reasoning sessions as a work fleet through persistent Chrome profiles, using a short-prompt, large-scope, multi-round loop in which the sessions open their own pull requests.
 ---
 
 # ChatGPT Fleet
@@ -9,9 +9,16 @@ Run large engineering and research work through parallel ChatGPT Pro sessions.
 Each session is a reasoning model with a turn that costs about an hour, so a wasted turn is expensive.
 The `chatgpt-fleet` command drives signed-in Chrome profiles over CDP; resolve the installed binary before use.
 
-A session cannot write to GitHub.
-It reads repositories with its GitHub tools and returns code as sandbox files.
-You apply the patch, verify it, and open the pull request.
+A session can write to GitHub. Make it do so.
+
+Measured 2026-09-22: the GitHub connector exposes 89 functions, 48 read and **41 write**, including
+`create_branch`, `create_commit`, `create_file`, `update_file`, `create_pull_request`,
+`request_pull_request_reviewers`, `enable_auto_merge` and `merge_pull_request`.
+A probe asked for a branch, a commit and a pull request and produced a real open PR.
+
+Always require the pull request itself as the deliverable, by number and URL.
+A patch file makes you the courier, and a zip makes you the courier of something you must first unpack.
+Ask for files only when there is no repository to write to.
 
 ## The loop
 
@@ -22,9 +29,13 @@ Let the session decompose the work.
 A plan the session wrote is a plan it will finish; a plan you wrote is a specification it will argue with.
 Forbid questions and require it to decide.
 
-**Round 2 — build.** Tell it to build every item in the plan it just wrote, to completion, in this turn.
-Name the artifact exactly: one unified diff plus the commands that verify it.
+**Round 2 — build and open the PRs.** Tell it to build every item in the plan it just wrote, to completion, in this turn.
+Name the artifact as a pull request per item: a branch off the default branch, the commits, and an opened PR.
+Require the PR number and URL for each one in the reply, so the claim is checkable.
 This is the `continue` default.
+
+Never accept a zip. A zip is a delivery you have to unpack, diff and re-author before it is reviewable.
+A pull request is already reviewable, already has CI, and already has a number you can verify.
 
 **Round 3 and later — close named gaps.** Name what is missing and what finished means.
 Never send encouragement.
@@ -67,7 +78,8 @@ Re-dispatching an unexplained failure repeats it; one packet in that run was dis
 Sessions of this class fabricate specifics under pressure.
 One research report in five invented job identifiers and file paths that never existed.
 
-Apply the patch against the real base commit and run the tests before opening a pull request.
+Open every claimed pull request by number before believing it exists, and read its diff.
+Run the repository's own tests against the branch.
 Check that the tests it added actually execute in the repository's own test command.
 A packet that ships a suite no runner collects has delivered nothing, and that defect shipped in this run until it was caught by hand.
 
@@ -81,8 +93,15 @@ This works: a probe given that instruction volunteered that its installation dat
 
 ## Run it headless
 
-`chatgpt-fleet up --headless` needs a profile that is already signed in on that machine.
-Sign in once with a window, then run headless from then on.
+Run with a window. `send` is broken under `--headless` as of 2026-09-22 and the fault is open.
+
+Headless `up` and `status` work: the profile signs in and reports its account and plan.
+`send` then fails, because the composer either does not render or does not accept inserted text,
+and the turn ends with `the composer never held exactly the prompt without attachments`
+plus a screenshot under `logs/`. The same send succeeds with a window every time.
+
+A profile must be signed in once with a window on each machine regardless, so on a new host
+sign in, then keep using windows until the headless send fault is closed.
 Check `status` for the account and plan per slot before dispatching.
 
 Default slots are `a`, `b` and `c` on ports 9301 to 9303.
