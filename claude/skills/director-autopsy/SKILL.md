@@ -1,65 +1,38 @@
 ---
 name: director-autopsy
-description: Audit recursive research directors from run records, including profile changes, artifact use, recovery, costs, and research outcomes.
+description: Operator-level autopsy of every research director in discovery-lab — rounds, question portfolios, team topology, lead outcomes, cost per verified claim, the root-returned-early loss class, and what round 2 should change.
 ---
 
 # Director autopsy
 
-Explain how research directors behaved and what the evidence implies for the next run.
-The audit is an observer step: the outermost observer reads a fleet's records, and a director reads the fleet it spawned.
-This audit does not perform their research or start a new run.
+Use this when the operator asks how the research directors are doing, how their topologies are evolving, how many leads each spawns, or what to change before the next round.
+It is an evaluation of the factory's outputs; it never does the research and never dispatches a run.
 
-## Collect the complete record
+## Flow
 
-Read the record through the project's actual command surface, checked in its current source before use.
-In discovery-lab that surface is `disco run|resume|cancel|report`; use `disco report <runId>` for raw run detail.
-The `director-census` and `disco inspect` commands earlier revisions named do not exist there.
-If the project offers a different record interface, locate its census and run-detail commands in the current project source.
-Report failed commands and unavailable records.
+1. Refresh the record on the host: `bash tools/kb-sync.sh` runs inside the container; pursuits/ lives only in the container (`disco-fleet`, `/lab2`).
+2. Measure first, deterministically: `docker cp tools/director-census.mjs disco-fleet:/tmp/dc.mjs && docker exec disco-fleet node /tmp/dc.mjs --lab /lab2` prints one row per active line; add `--json` for the record the workflow takes.
+3. Read the table before any agent runs: which lines got leads and which starved, the `rootEarly` column (leads whose root ended its turn with the contract unmet), `usd` per verified claim.
+4. Run the qualitative reading as a workflow: `Workflow({ name: 'director-autopsy', args: { census: <the --json output> } })` from the discovery-lab checkout. One reader per line with a director round (Sonnet), one synthesis, one adversarial critique. Expect 10 to 20 minutes.
+5. Report as the operator's artifact: verdict first, the census table, per-line outliers with question ids and file paths, ranked changes each with its evidence, register candidates, confounds (unequal leads per line, one round each, host interruptions).
 
-Preserve a row for every director in scope, including failed, inactive, unmatched, and missing results.
-Collect every available measured field, including:
+## Read the numbers right
 
-- questions proposed, selected, dispatched, and settled;
-- children, descendants, depth, and parallel occupancy;
-- root and descendant profile identities;
-- profile or strategy revisions and their triggering evidence;
-- feedback, context replacements, restarts, and resumed assignments;
-- checked descendant artifacts and ancestor use;
-- seeded false claims accepted or rejected;
-- terminal state, failures, retries, tokens, cost, and elapsed time;
-- independently checked claims and research progress;
-- candidate/control attempts and matched pairs.
-
-Reconcile the census totals with raw records.
-Verify any model-backed analyst output against the raw records before you publish or act on it.
-Where no per-child trace source exists, say so rather than infer the behavior from its absence.
-Autopsy inputs expire, so collect native session data, rotated spans, and suspended sandbox rollouts before they are gone.
-An autopsy that cannot cite retained bytes states that limit.
-When parallel readers would help, give them disjoint run sets and reconcile their findings against the complete record.
-Do not infer coverage from the number of readers.
-
-## Interpret
-
-Separate whether the mechanism ran, whether its output passed independent checks, and whether it improved research outcomes under the registered resource comparison.
-Report resource and sampling differences before a comparative verdict.
-An inactive mechanism leaves its quality claim untested, while its execution failure remains an observed outcome.
-File presence, citations, and self-reported success cannot establish novelty or useful research progress.
-
-Give the run IDs and evidence for each conclusion, the unresolved checks, and the changes the audit supports.
-A supported change is a candidate for the next run, never an activation on its own.
-
-## Log the run
-
-```bash
-skill-run-log /director-autopsy --target "<runs or all>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
+- `verified` counts oracle re-runs of the lead's own checks. It is not a novelty judgment; the judge column in grades/summary.txt says `not_evaluated` until the novelty sweep runs.
+- `rootEarly` is the agent's act, not an outage (tools/failure-classes.mjs `root-returned-early`). Before agent-runtime 0.192.3 every child of such a run died at zero tokens.
+- A line with 0 rounds is held by its charter (construct gate, no path-shaped evaluator); see `node tools/line-directors.mjs` stderr.
+- Lead-profile candidates live in profiles/lines/lead-<line>-d<N>.json; adoption state is `leadProfileCandidate` / `leadProfile` on the line in lines/lines.json.
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| An outlier needs a causal explanation | `/autopsy` | The run ID and raw artifacts |
-| Directors may share a failure cause | `/diagnose` | The complete rows and confirmed example |
-| The claimed mechanism did not execute | `/discovery-lead` | The missing event and the real research that would exercise it |
-| Valid records support an architecture comparison | `/arena-experiment` | The cases, matched rows, and resource accounting |
+| A ranked change is a loop or charter edit | `/implement` | the change and its evidence line |
+| A register candidate is named | `/verify` | the claim page path and its check line |
+| The operator wants the per-run story of one outlier | `/autopsy` | the run dir |
+
+## Log the run
+
+```bash
+skill-run-log /director-autopsy --target "<lines or 'all active'>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
