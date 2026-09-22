@@ -9,6 +9,30 @@
 #   - no file outside .git/ and node_modules/ changed in the last 2 days
 # A tree with a broken .git pointer is reported, never removed.
 #
+# TWO WAYS THIS GOES SILENTLY INERT. Both have already cost days.
+#
+# 1. A dangling symlink. `~/bin/wt-sweep` is linked by claude/install.sh. If the
+#    install ran from a git worktree (`dotfiles/.worktrees/<name>/`) and that
+#    worktree was later removed, the link dangles, cron prints
+#    "No such file or directory" to stderr, and the cron job still reports
+#    success. Found 2026-09-18 after weeks dead: free disk had fallen 71 -> 12
+#    GiB with the warning printed every night and the cause never surfaced.
+#    Always link from the durable checkout, never from a worktree path.
+#    Audit with: for f in ~/bin/*; do [ -L "$f" ] && [ ! -e "$f" ] && echo "$f"; done
+#
+# 2. Removing files is not reclaiming space. macOS Time Machine LOCAL SNAPSHOTS
+#    pin deleted blocks, so a sweep can remove 50 trees and free zero bytes,
+#    which reads as "the sweep is broken" when it worked perfectly. Check and
+#    clear them as the second half of any reclamation pass:
+#      tmutil listlocalsnapshots /
+#      tmutil deletelocalsnapshots <YYYY-MM-DD-HHMMSS>
+#    On 2026-09-18 that step alone took free space from 30 GiB to 57 GiB.
+#
+# Blast radius when this is dead: another session hit 133 MiB free with 680
+# abandoned worktrees, which hung every Chrome debug tab of a browser fleet at
+# once and cost hours to diagnose (ops-board #1387). The cron is the root cause
+# of that class, not the fleet.
+#
 # For a worktree, commits, branches and stashes live in the shared repository, so
 # removal loses nothing; the unpushed check still runs because a pool also holds
 # standalone clones, where a local commit exists nowhere else.

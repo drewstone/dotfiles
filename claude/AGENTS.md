@@ -142,6 +142,12 @@ Avoid filler, praise, process narration, invented jargon, and repeated summaries
 Tie results to the changed behavior and the outcome the user wanted.
 When reporting a failure, include its cause or the investigation and corrective action already underway.
 
+Report the state of the work, not your progress through it.
+A correction to your own earlier claim is one clause inside the current finding, never the subject of the message.
+Do not open consecutive messages with what you got wrong; the user is tracking the work, not your reliability.
+Carry an unresolved decision in one place and act on it or hand it to a named owner; an item that appears in two consecutive messages without moving is yours to resolve.
+Do not restate a measurement that has not changed since the last message.
+
 Query the relevant artifacts before answering analytical questions.
 Scale the answer to the decision: a status fact may need one sentence and its check.
 Use the `report` skill for comparisons, analysis across runs, or results needing deeper interpretation.

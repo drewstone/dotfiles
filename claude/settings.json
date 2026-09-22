@@ -3,7 +3,7 @@
   "permissions": {
     "defaultMode": "auto"
   },
-  "model": "claude-fable-5-1[1m]",
+  "model": "opus[1m]",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -19,11 +19,6 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/host-blast-guard.sh",
-            "timeout": 10
-          },
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/kill-guard.sh"
