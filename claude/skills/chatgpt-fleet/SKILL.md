@@ -178,6 +178,12 @@ A scratch directory does not survive a long run.
 Five hours of evidence was lost that way, including the probes that would have settled a later question.
 The full conversations are in `~/traces/chatgpt/<account>/<conversation>/` after every finished turn.
 
+## Log the run
+
+```bash
+skill-run-log /chatgpt-fleet --target "<repo and work item>" --verdict <VERDICT> --next /<next-skill-or-stop>
+```
+
 ## Then consider
 
 | Condition | Next skill | What to pass |
