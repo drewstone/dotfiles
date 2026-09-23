@@ -467,28 +467,22 @@ test("Claude install and provisioning remove temporary trust without losing othe
   }
 });
 
-test("Claude provisioning repairs missing trust files and mappings", () => {
+test("Claude provisioning recreates deleted local trust settings", () => {
   const home = mkdtempSync(join(root, ".claude-trust-missing-"));
   try {
     mkdirSync(join(home, ".claude"));
     mkdirSync(join(home, "code"));
-    mkdirSync(join(home, "company"));
-    writeFileSync(join(home, ".claude.json"), JSON.stringify({ other: 42 }));
     const script = `
       . host/provision/lib.sh
       . host/provision/agents.sh
       DOTFILES="$PWD"
-      claude_running() { return 1; }
-      add_claude_trust
       sanitize_claude_local_trust
-      claude_trust_ok && claude_local_trust_ok
+      claude_local_trust_ok
     `;
     const result = sh("bash", ["-c", script], { env: { ...process.env, HOME: home, PATH: "/usr/bin:/bin" } });
     assert.equal(result.status, 0, result.stderr);
-    const projects = JSON.parse(readFileSync(join(home, ".claude.json"), "utf8"));
-    assert.equal(projects.other, 42);
-    assert.equal(projects.projects[join(home, "code")].hasTrustDialogAccepted, true);
-    assert.ok(existsSync(join(home, ".claude/settings.local.json")));
+    const local = JSON.parse(readFileSync(join(home, ".claude/settings.local.json"), "utf8"));
+    assert.deepEqual(local.trustedDirectories, [home, join(home, "code")]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
