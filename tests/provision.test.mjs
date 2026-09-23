@@ -467,6 +467,27 @@ test("Claude install and provisioning remove temporary trust without losing othe
   }
 });
 
+test("Claude provisioning recreates deleted local trust settings", () => {
+  const home = mkdtempSync(join(root, ".claude-trust-missing-"));
+  try {
+    mkdirSync(join(home, ".claude"));
+    mkdirSync(join(home, "code"));
+    const script = `
+      . host/provision/lib.sh
+      . host/provision/agents.sh
+      DOTFILES="$PWD"
+      sanitize_claude_local_trust
+      claude_local_trust_ok
+    `;
+    const result = sh("bash", ["-c", script], { env: { ...process.env, HOME: home, PATH: "/usr/bin:/bin" } });
+    assert.equal(result.status, 0, result.stderr);
+    const local = JSON.parse(readFileSync(join(home, ".claude/settings.local.json"), "utf8"));
+    assert.deepEqual(local.trustedDirectories, [home, join(home, "code")]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {
   const script = `
     . host/provision/lib.sh
