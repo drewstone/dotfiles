@@ -277,6 +277,44 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(int(s['scanned']), int(s['removed']) + int(s['skipped']))
 
 
+def load_reaper():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader('wt_reaper', REAPER)
+    spec = importlib.util.spec_from_loader('wt_reaper', loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
+class RecheckTest(unittest.TestCase):
+    """A file written after the first pass must stop the removal."""
+
+    def test_write_between_passes_skips(self):
+        f = Fixture()
+        self.addCleanup(f.cleanup)
+        late = f.add('late')
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        mod = load_reaper()
+        real_scan = mod.scan_processes
+        calls = []
+
+        def scan_then_write(*a, **k):
+            calls.append(1)
+            if len(calls) == 1:  # the first-pass scan; the recheck scans again
+                Fixture.write(late, '.env', 'TOKEN=1\n')
+            return real_scan(*a, **k)
+
+        mod.scan_processes = scan_then_write
+        old_env = dict(os.environ)
+        os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old_env)))
+        mod.main(['--root', f.root, '--no-log-file', '--idle-hours', str(IDLE_HOURS)])
+        self.assertTrue(os.path.isfile(os.path.join(late, '.env')))
+        self.assertGreaterEqual(len(calls), 1)
+
+
 class RootRefusalTest(unittest.TestCase):
     @unittest.skipUnless(os.geteuid() == 0, 'needs root')
     def test_refuses_root(self):
@@ -288,12 +326,7 @@ class RootRefusalTest(unittest.TestCase):
 
 class IgnoredClassifierTest(unittest.TestCase):
     def test_build_output_classifier(self):
-        import importlib.machinery
-        import importlib.util
-        loader = importlib.machinery.SourceFileLoader('wt_reaper', REAPER)
-        spec = importlib.util.spec_from_loader('wt_reaper', loader)
-        mod = importlib.util.module_from_spec(spec)
-        loader.exec_module(mod)
+        mod = load_reaper()
         for rel in ('node_modules/', 'packages/a/dist/', 'x/__pycache__/', 'tsconfig.tsbuildinfo', 'target/'):
             self.assertTrue(mod.is_build_output(rel), rel)
         for rel in ('.env', '.env.local', 'notes/', 'secrets.json', '.claude/settings.local.json'):

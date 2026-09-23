@@ -30,6 +30,7 @@ case "$(uname -s)" in
   Darwin)
     label=com.drew.wt-reaper
     plist="$HOME/Library/LaunchAgents/$label.plist"
+    install -d "$HOME/Library/LaunchAgents"
     tmp="$(mktemp)"
     sed "s#@HOME@#$HOME#g" "$SCRIPT_DIR/launchd/$label.plist.in" > "$tmp"
     plutil -lint "$tmp" >/dev/null

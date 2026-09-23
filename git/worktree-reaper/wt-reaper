@@ -608,6 +608,14 @@ def run(args):
             counts['would_remove'] += 1
             log.write(decision='would-remove', path=rpath, branch=branch or '(detached)')
             continue
+        # The first pass can be minutes old. Repeat every check, with a fresh
+        # process scan, immediately before the destructive step.
+        try:
+            recheck(rpath, main_path, common_dir, args, log)
+        except Exception as exc:
+            counts['skipped'] += 1
+            log.write(decision='skip', path=rpath, reason='recheck: %s' % exc)
+            continue
         try:
             git(['-C', main_path, 'worktree', 'remove', rpath], '/')
         except Exception as exc:
@@ -628,6 +636,19 @@ def run(args):
     log.write(event='summary', mode=mode, host=socket.gethostname(),
               **counts)
     return 0
+
+
+def recheck(rpath, main_path, common_dir, args, log):
+    entry = [e for e in list_worktrees(common_dir)[1:] if real(e.get('worktree', '')) == rpath]
+    if len(entry) != 1:
+        raise Skip('no longer registered')
+    evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
+    held = scan_processes(not args.no_sudo, log)
+    if IS_MAC:
+        held = {real(p) for p in held} | held
+    users = sorted(p for p in held if inside(p, rpath))
+    if users:
+        raise Skip('in use by a process: %s' % users[0])
 
 
 def delete_branch(ref, main_path, common_dir, log):
