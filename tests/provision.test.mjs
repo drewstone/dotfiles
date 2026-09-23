@@ -85,6 +85,19 @@ test("ensure: check never fixes, apply fixes and re-tests", () => {
   assert.match(r.stdout, /counts 1 1 1 2/);
 });
 
+test("steps that wait on a sign-in come after the other steps for a person", () => {
+  const script = `
+    . host/provision/lib.sh
+    manual_after_signin "later" "run it again"
+    manual "first" "cmd"
+    manual "second" "cmd"
+    printf '%s|' "\${MANUAL_STEPS[@]%%$'\\n'*}" "--" "\${MANUAL_AFTER_SIGNIN[@]%%$'\\n'*}"
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /first\|second\|--\|later\|$/);
+});
+
 test("the watchdog daemon and PID 1 use the udev names, never a probe-order number", () => {
   const rules = readFileSync("host/watchdog/60-host-guard-watchdog.rules", "utf8");
   const conf = readFileSync("host/watchdog/watchdog.conf", "utf8");

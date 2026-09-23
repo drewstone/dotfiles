@@ -111,10 +111,11 @@ done
 
 # ── summary ─────────────────────────────────────────────────────────────────
 printf '\n== summary: %d ok, %d changed, %d drift, %d failed\n' "$N_OK" "$N_CHANGED" "$N_DRIFT" "$N_FAILED"
-if [ ${#MANUAL_STEPS[@]} -gt 0 ]; then
-  printf '\n== steps for a person (%d)\n' "${#MANUAL_STEPS[@]}"
+ALL_MANUAL=(${MANUAL_STEPS[@]+"${MANUAL_STEPS[@]}"} ${MANUAL_AFTER_SIGNIN[@]+"${MANUAL_AFTER_SIGNIN[@]}"})
+if [ ${#ALL_MANUAL[@]} -gt 0 ]; then
+  printf '\n== steps for a person, in this order (%d)\n' "${#ALL_MANUAL[@]}"
   i=0
-  for step in "${MANUAL_STEPS[@]}"; do
+  for step in "${ALL_MANUAL[@]}"; do
     i=$((i + 1))
     printf '%d. %s\n' "$i" "$step"
   done
