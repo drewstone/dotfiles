@@ -45,6 +45,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    concurrency:
+      group: merge-gate-ci-${{ matrix.head }}
+      cancel-in-progress: true
     runs-on: [self-hosted, Linux, gtr]
     timeout-minutes: 20
     steps:
@@ -55,12 +58,6 @@ jobs:
           ref: main
           path: gate
           persist-credentials: false
-      - name: Mark CI pending
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ matrix.head }}
-          BASE_SHA: ${{ matrix.base }}
-        run: python3 gate/.github/scripts/merge_gate.py status --sha "$HEAD_SHA" --context merge-gate/ci --state pending --description "Running base $BASE_SHA"
       - name: Check out the same-repository PR head
         uses: actions/checkout@v7
         with:
@@ -96,13 +93,14 @@ jobs:
         if: always() && steps.gate-checkout.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ matrix.number }}
           HEAD_SHA: ${{ matrix.head }}
           BASE_SHA: ${{ matrix.base }}
         run: |
           if [ '${{ steps.verify.outcome }}' = success ]; then
-            python3 gate/.github/scripts/merge_gate.py status --sha "$HEAD_SHA" --context merge-gate/ci --state success --description "Passed base $BASE_SHA"
+            python3 gate/.github/scripts/merge_gate.py ci-result --number "$PR_NUMBER" --sha "$HEAD_SHA" --base "$BASE_SHA" --state success
           else
-            python3 gate/.github/scripts/merge_gate.py status --sha "$HEAD_SHA" --context merge-gate/ci --state failure --description "Failed base $BASE_SHA"
+            python3 gate/.github/scripts/merge_gate.py ci-result --number "$PR_NUMBER" --sha "$HEAD_SHA" --base "$BASE_SHA" --state failure
           fi
 
   codex-p1:

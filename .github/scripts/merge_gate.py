@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -13,7 +14,9 @@ from urllib.request import Request, urlopen
 REPO = os.environ['GITHUB_REPOSITORY']
 TOKEN = os.environ['GH_TOKEN']
 API = os.environ.get('GITHUB_API_URL', 'https://api.github.com')
-P1 = re.compile(r'\[P1\]')
+P1 = re.compile(r'!\[P1 Badge\]\([^)]+\)|\[P1\]')
+CODEX_AUTHOR = 'chatgpt-codex-connector'
+PENDING_RETRY = timedelta(minutes=25)
 
 
 def request(path, data=None):
@@ -32,13 +35,23 @@ def request(path, data=None):
         raise RuntimeError(f'GitHub API returned HTTP {error.code} for {path}') from error
 
 
+def run_url():
+    return (f"{os.environ['GITHUB_SERVER_URL']}/{REPO}/actions/runs/"
+            f"{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}")
+
+
+def latest_status(sha, context):
+    checks = request(f'/repos/{REPO}/commits/{sha}/status')['statuses']
+    return max((check for check in checks if check['context'] == context),
+               key=lambda check: check['id'], default=None)
+
+
 def status(sha, context, state, description):
-    run_url = f"{os.environ['GITHUB_SERVER_URL']}/{REPO}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     request(f'/repos/{REPO}/statuses/{sha}', {
         'context': context,
         'state': state,
         'description': description[:140],
-        'target_url': run_url,
+        'target_url': run_url(),
     })
     print(f'{context}: {state} on {sha[:12]} ({description})')
 
@@ -97,7 +110,11 @@ def scan_threads(number, head):
                 pageInfo { hasNextPage endCursor }
                 nodes {
                   isResolved
-                  comments(first: 100) { totalCount nodes { body } }
+                  isOutdated
+                  comments(first: 100) {
+                    totalCount
+                    nodes { body author { login } commit { oid } }
+                  }
                 }
               }
             }
@@ -114,12 +131,15 @@ def scan_threads(number, head):
             raise RuntimeError(f'PR #{number} changed heads during review scan')
         threads = pr['reviewThreads']
         for thread in threads['nodes']:
-            if thread['isResolved']:
+            if thread['isResolved'] or thread['isOutdated']:
                 continue
             comments = thread['comments']
             if comments['totalCount'] > len(comments['nodes']):
                 raise RuntimeError(f'PR #{number} has a review thread too long to scan')
-            if any(P1.search(comment['body']) for comment in comments['nodes']):
+            if any(P1.search(comment['body']) and
+                   (comment['author'] or {}).get('login') == CODEX_AUTHOR and
+                   (comment['commit'] or {}).get('oid') == head
+                   for comment in comments['nodes']):
                 count += 1
         if not threads['pageInfo']['hasNextPage']:
             return count
@@ -136,6 +156,10 @@ def scan_group(head, prs):
         found = scan_threads(pr['number'], head)
         count += found
         print(f"PR #{pr['number']}: {found} unresolved [P1] review threads")
+    latest = latest_status(head, 'merge-gate/codex-p1')
+    if not latest or latest['target_url'] != run_url():
+        print(f'{head[:12]} has a newer P1 scan; ignoring stale result')
+        return count > 0
     if count:
         status(head, 'merge-gate/codex-p1', 'failure', f'{count} unresolved [P1] review thread(s)')
     else:
@@ -164,13 +188,15 @@ def select_ci():
         if pr['state'] != 'open' or pr['head']['sha'] != head:
             raise RuntimeError(f"PR #{prs[0]['number']} changed during CI selection")
         if scheduled:
-            checks = request(f'/repos/{REPO}/commits/{head}/status')['statuses']
-            latest = next((check for check in checks
-                           if check['context'] == 'merge-gate/ci'), None)
-            if latest and latest['state'] in ('success', 'failure') and \
-                    latest['description'].endswith(pr['base']['sha']):
-                continue
+            latest = latest_status(head, 'merge-gate/ci')
+            if latest and latest['description'].endswith(pr['base']['sha']):
+                if latest['state'] in ('success', 'failure'):
+                    continue
+                updated = datetime.fromisoformat(latest['created_at'].replace('Z', '+00:00'))
+                if latest['state'] == 'pending' and datetime.now(timezone.utc) - updated < PENDING_RETRY:
+                    continue
         items.append({'number': pr['number'], 'head': head, 'base': pr['base']['sha']})
+        status(head, 'merge-gate/ci', 'pending', f"Queued base {pr['base']['sha']}")
     matrix = json.dumps({'include': items}, separators=(',', ':'))
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
         print(f'matrix={matrix}', file=output)
@@ -178,19 +204,32 @@ def select_ci():
     print(f'Selected {len(items)} same-repository PR head(s) for synthetic-merge CI')
 
 
+def ci_result(number, head, base, state):
+    pr = current_pr(number)
+    if pr['state'] != 'open' or pr['head']['sha'] != head or pr['base']['sha'] != base:
+        print(f'PR #{number} changed head or base; ignoring stale CI result')
+        return
+    latest = latest_status(head, 'merge-gate/ci')
+    if not latest or latest['target_url'] != run_url():
+        print(f'PR #{number} has a newer CI run; ignoring stale result')
+        return
+    verb = 'Passed' if state == 'success' else 'Failed'
+    status(head, 'merge-gate/ci', state, f'{verb} base {base}')
+
+
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='command', required=True)
-    update = sub.add_parser('status')
-    update.add_argument('--context', required=True)
-    update.add_argument('--state', required=True, choices=['pending', 'success', 'failure'])
-    update.add_argument('--description', required=True)
-    update.add_argument('--sha')
+    result = sub.add_parser('ci-result')
+    result.add_argument('--number', required=True, type=int)
+    result.add_argument('--sha', required=True)
+    result.add_argument('--base', required=True)
+    result.add_argument('--state', required=True, choices=['success', 'failure'])
     sub.add_parser('p1')
     sub.add_parser('select-ci')
     args = parser.parse_args()
-    if args.command == 'status':
-        status(args.sha or os.environ['GITHUB_SHA'], args.context, args.state, args.description)
+    if args.command == 'ci-result':
+        ci_result(args.number, args.sha, args.base, args.state)
         return 0
     if args.command == 'p1':
         return p1_gate()

@@ -12,6 +12,34 @@ import merge_gate
 
 
 class MergeGateTest(unittest.TestCase):
+    def test_live_codex_badge_on_current_head_blocks(self):
+        # PR #5156 had this badge on a current-head, unresolved Codex thread.
+        head = 'b853006846d9e4755b2ccc238a1ead521e8bc7c7'
+        comment = {
+            'body': '<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>',
+            'author': {'login': 'chatgpt-codex-connector'},
+            'commit': {'oid': head},
+        }
+        thread = {
+            'isResolved': False,
+            'isOutdated': False,
+            'comments': {'totalCount': 1, 'nodes': [comment]},
+        }
+        response = {'data': {'repository': {'pullRequest': {
+            'headRefOid': head,
+            'reviewThreads': {'nodes': [thread], 'pageInfo': {'hasNextPage': False}},
+        }}}}
+        with patch.object(merge_gate, 'request', return_value=response):
+            self.assertEqual(merge_gate.scan_threads(5156, head), 1)
+            thread['isOutdated'] = True
+            self.assertEqual(merge_gate.scan_threads(5156, head), 0)
+            thread['isOutdated'] = False
+            comment['commit']['oid'] = 'c' * 40
+            self.assertEqual(merge_gate.scan_threads(5156, head), 0)
+            comment['commit']['oid'] = head
+            comment['author']['login'] = 'someone-else'
+            self.assertEqual(merge_gate.scan_threads(5156, head), 0)
+
     def test_one_p1_blocks_every_pr_on_the_shared_head(self):
         head = 'a' * 40
         repo = merge_gate.REPO
@@ -27,6 +55,8 @@ class MergeGateTest(unittest.TestCase):
                 patch.object(merge_gate, 'pages', return_value=iter(prs)), \
                 patch.object(merge_gate, 'current_pr', side_effect=lambda number: prs[number - 1]), \
                 patch.object(merge_gate, 'scan_threads', side_effect=lambda number, _: int(number == 1)), \
+                patch.object(merge_gate, 'latest_status', return_value={'target_url': 'current-run'}), \
+                patch.object(merge_gate, 'run_url', return_value='current-run'), \
                 patch.object(merge_gate, 'status', side_effect=lambda *args: statuses.append(args)):
             self.assertEqual(merge_gate.p1_gate(), 0)
         self.assertEqual([(sha, state) for sha, _, state, _ in statuses], [
