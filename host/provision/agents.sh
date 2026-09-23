@@ -70,6 +70,10 @@ claude_local_trust_ok() {
 }
 
 sanitize_claude_local_trust() {
+  if [ ! -f "$HOME/.claude/settings.local.json" ]; then
+    run_claude_install
+    return
+  fi
   python3 "$DOTFILES/claude/tools/claude-trust.py" sanitize-local "$HOME/.claude/settings.local.json"
 }
 
