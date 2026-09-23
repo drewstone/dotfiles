@@ -31,9 +31,9 @@ while [ $# -gt 0 ]; do
     *) printf 'unknown argument: %s\n' "$1" >&2; usage ;;
   esac
 done
-[ -n "$WANT_MODEL" ] && [ -n "$WANT_SERIAL" ] || usage
+if [ -z "$WANT_MODEL" ] || [ -z "$WANT_SERIAL" ]; then usage; fi
 [ "$(id -u)" = 0 ] || die "run with sudo"
-[ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] || die "run with sudo from the account that will own /mnt/traces"
+if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = root ]; then die "run with sudo from the account that will own /mnt/traces"; fi
 
 trim() { sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
 field() { lsblk -dno "$1" "$2" 2>/dev/null | trim; }

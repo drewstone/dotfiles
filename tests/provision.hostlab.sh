@@ -40,7 +40,7 @@ cleanup() {
   vm 'systemctl poweroff' >/dev/null 2>&1 || true
   sleep 5
   pid="$(cat "$HOME/.cache/hostlab/runs/$ID/qemu.pid" 2>/dev/null || true)"
-  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || true; fi
   rm -rf "${HOME:?}/.cache/hostlab/runs/$ID"
   say "removed VM $ID; logs in $LOGS"
 }

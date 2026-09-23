@@ -109,7 +109,8 @@ Do these steps in this order:
 5. Do each step in the "steps for a person" list at the end of the run, in order.
    The list has the GitHub, Tailscale, Claude and Codex sign-ins, the Git identity, and the agent-bus name.
 6. Run the provisioning again.
-   It installs the tangle-tools commands and the Claude plugins, which need the sign-ins, and prints the account and fleet steps from the tangle-tools READMEs.
+   It installs the tangle-tools commands and the Claude plugins, which need the sign-ins.
+   It also prints the account and fleet steps from the tangle-tools READMEs.
 7. Check the box. The command must exit 0:
 
    ```bash

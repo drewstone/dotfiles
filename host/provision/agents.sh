@@ -52,7 +52,7 @@ claude_links_current() {
     link_is "$f" "$HOME/.claude/hooks/$(basename "$f")" || return 1
   done
   for f in "$c"/tools/*; do
-    [ -f "$f" ] && [ "$(basename "$f")" != README.md ] || continue
+    if [ ! -f "$f" ] || [ "$(basename "$f")" = README.md ]; then continue; fi
     link_is "$f" "$HOME/bin/$(basename "$f")" || return 1
   done
 }
@@ -84,7 +84,7 @@ claude_plugins() {
     ensure "Claude plugins in settings.json" claude_plugins_complete -- run_claude_install
     return 0
   fi
-  manual "Claude plugins wait for the GitHub and Claude sign-ins ($(claude_plugins_missing | tr '\n' ' ')). After them, run:" \
+  manual_after_signin "Claude plugins wait for the GitHub and Claude sign-ins ($(claude_plugins_missing | paste -sd ' ' -)). After them, run:" \
     "$DOTFILES/claude/install.sh"
 }
 
