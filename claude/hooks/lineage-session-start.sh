@@ -6,4 +6,5 @@
 # failure exits 0.
 LINEAGE="${LINEAGE_BIN:-$HOME/.local/bin/lineage}"
 [ -x "$LINEAGE" ] || exit 0
-exec "$LINEAGE" hook claude-session-start
+"$LINEAGE" hook claude-session-start || true
+exit 0
