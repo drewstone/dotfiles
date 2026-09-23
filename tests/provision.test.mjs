@@ -297,17 +297,28 @@ test("check mode never adds a host key to known_hosts", () => {
 test("desktop turns GDM automatic login on by default and off with --no-autologin", () => {
   const dir = mkdtempSync(join(tmpdir(), "gdm-custom-"));
   const conf = join(dir, "custom.conf");
-  writeFileSync(conf, "# GDM configuration\n[daemon]\n#  AutomaticLoginEnable = true\n AutomaticLoginEnable=false\nTimedLoginEnable=true\nTimedLogin=guest\nTimedLoginDelay=10\nWaylandEnable=true\n\n[security]\n");
+  const accounts = join(dir, "accounts-user");
+  const session = join(dir, "gtr-kiosk.desktop");
+  const launcher = join(dir, "gtr-kiosk");
+  writeFileSync(conf, "# GDM configuration\n[daemon]\nDefaultSession=ubuntu.desktop\n#  AutomaticLoginEnable = true\n AutomaticLoginEnable=false\nTimedLoginEnable=true\nTimedLogin=guest\nTimedLoginDelay=10\nWaylandEnable=true\n\n[security]\n");
+  writeFileSync(accounts, "[User]\nSession=ubuntu\nXSession=ubuntu\nSystemAccount=false\n\n[InputSource0]\nName=us\n");
+  writeFileSync(session, "[Desktop Entry]\nName=GTR shared desktop\n");
+  writeFileSync(launcher, "#!/bin/sh\nexit 0\n");
+  chmodSync(launcher, 0o755);
   const script = `
     . host/provision/lib.sh
     . host/provision/desktop.sh
     as_root() { "$@"; }
     root_install() { cp "$2" "$3"; }
-    USER=drew WORK="${dir}" GDM_CUSTOM="${conf}"
+    USER=drew WORK="${dir}" GDM_CUSTOM="${conf}" ACCOUNTS_USER="${accounts}"
+    KIOSK_SESSION_FILE="${session}" KIOSK_LAUNCHER="${launcher}"
     echo "default=$AUTOLOGIN"
     autologin_on && echo ON0
     autologin_off && echo OFF0
     write_gdm_custom 1
+    gdm_session_on && echo KIOSK
+    set_accounts_session
+    accounts_session_on && echo ACCOUNT
     autologin_on && echo ON1
     autologin_off && echo OFF1
     write_gdm_custom 0
@@ -318,12 +329,20 @@ test("desktop turns GDM automatic login on by default and off with --no-autologi
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
   // A timed login is not "off" either, so OFF0 never prints.
-  assert.deepEqual(r.stdout.trim().split("\n"), ["default=1", "ON1", "OFF2"]);
+  assert.deepEqual(r.stdout.trim().split("\n"), ["default=1", "KIOSK", "ACCOUNT", "ON1", "OFF2"]);
   const after = readFileSync(conf, "utf8");
+  assert.match(after, /^DefaultSession=gtr-kiosk\.desktop$/m);
+  assert.equal((after.match(/^DefaultSession=/gm) || []).length, 1);
   assert.match(after, /#  AutomaticLoginEnable = true/);
   assert.match(after, /WaylandEnable=true/);
   assert.doesNotMatch(after, /^\s*(Automatic|Timed)Login/m);
+  const user = readFileSync(accounts, "utf8");
+  assert.match(user, /^Session=gtr-kiosk$/m);
+  assert.match(user, /^XSession=$/m);
+  assert.match(user, /^SystemAccount=false$/m);
+  assert.match(user, /^\[InputSource0\]$/m);
   assert.ok(readdirSync(dir).some((f) => f.startsWith("custom.conf.pre-dotfiles.")));
+  assert.ok(readdirSync(dir).some((f) => f.startsWith("accounts-user.pre-dotfiles.")));
 });
 
 test("the keyring step shows only for a login keyring with a password", () => {
@@ -474,8 +493,13 @@ test("desktop drops the old Ghostty autostart after the deployed kiosk unit is e
   const desktopUnit = join(home, ".local/share/tangle-tools/fleet/systemd/gtr-desktop.service");
   mkdirSync(join(home, ".local/share/tangle-tools/fleet/systemd"), { recursive: true });
   mkdirSync(join(home, ".config/systemd/user"), { recursive: true });
+  mkdirSync(join(home, ".config/systemd/user/vnc-desktop.service.wants"), { recursive: true });
+  writeFileSync(unit, "[Unit]\n");
+  writeFileSync(desktopUnit, "[Unit]\n");
   symlinkSync(unit, join(home, ".config/systemd/user/fleet-wall.service"));
   symlinkSync(desktopUnit, join(home, ".config/systemd/user/gtr-desktop.service"));
+  symlinkSync(unit, join(home, ".config/systemd/user/vnc-desktop.service.wants/fleet-wall.service"));
+  symlinkSync(desktopUnit, join(home, ".config/systemd/user/vnc-desktop.service.wants/gtr-desktop.service"));
   // A person's own entry, as a file or as a link elsewhere, is not drift and stays.
   const own = join(home, "own.desktop");
   writeFileSync(own, "[Desktop Entry]\nExec=ghostty\n");
@@ -503,6 +527,8 @@ test("one provision pass removes the old autostart after kiosk unit repair", () 
     boots_graphical() { return 0; }
     networkd_wait_off() { return 0; }
     font_present() { return 0; }
+    gdm_session_on() { return 0; }
+    accounts_session_on() { return 0; }
     autologin_on() { return 0; }
     login_keyring_has_password() { return 1; }
     tt_installed() { return 0; }
@@ -563,7 +589,10 @@ test("kiosk repair re-enables an installed VNC unit", () => {
         "--user is-enabled --quiet vnc-desktop.service") [ -e "$HOME/vnc-enabled" ] ;;
         "--user enable --quiet vnc-desktop.service") touch "$HOME/vnc-enabled" ;;
         "--user is-enabled --quiet gtr-desktop.service") [ -e "$HOME/desktop-enabled" ] ;;
-        "--user enable --quiet gtr-desktop.service") touch "$HOME/desktop-enabled" ;;
+        "--user reenable --quiet gtr-desktop.service")
+          mkdir -p "$HOME/.config/systemd/user/vnc-desktop.service.wants"
+          ln -s "$DESKTOP_UNIT_SRC" "$HOME/.config/systemd/user/vnc-desktop.service.wants/gtr-desktop.service"
+          touch "$HOME/desktop-enabled" ;;
         "--user daemon-reload") return 0 ;;
         *) return 1 ;;
       esac
@@ -573,6 +602,38 @@ test("kiosk repair re-enables an installed VNC unit", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.ok(existsSync(join(home, "vnc-enabled")));
   assert.equal(readlinkSync(join(home, ".config/systemd/user/gtr-desktop.service")), unit);
+});
+
+test("fleet wall enablement moves from the old graphical target to VNC", () => {
+  const home = mkdtempSync(join(tmpdir(), "prov-wall-target-"));
+  const source = join(home, ".local/share/tangle-tools/fleet/systemd/fleet-wall.service");
+  const installed = join(home, ".config/systemd/user/fleet-wall.service");
+  const old = join(home, ".config/systemd/user/graphical-session.target.wants/fleet-wall.service");
+  const next = join(home, ".config/systemd/user/vnc-desktop.service.wants/fleet-wall.service");
+  mkdirSync(join(home, ".local/share/tangle-tools/fleet/systemd"), { recursive: true });
+  mkdirSync(join(home, ".config/systemd/user/graphical-session.target.wants"), { recursive: true });
+  writeFileSync(source, "[Unit]\n");
+  symlinkSync(source, installed);
+  symlinkSync(source, old);
+  const r = sh("bash", ["-c", `
+    HOME="${home}"
+    . host/provision/lib.sh; . host/provision/tangle-tools.sh
+    user_bus() { return 0; }
+    systemctl() {
+      case "$*" in
+        "--user is-enabled --quiet fleet-wall.service") [ -L "${old}" ] || [ -L "${next}" ] ;;
+        "--user daemon-reload") return 0 ;;
+        "--user reenable --quiet fleet-wall.service")
+          rm "${old}"; mkdir -p "$HOME/.config/systemd/user/vnc-desktop.service.wants"; ln -s "${source}" "${next}" ;;
+        *) return 1 ;;
+      esac
+    }
+    wall_unit_on && exit 9
+    install_wall_unit && wall_unit_on
+  `]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(!existsSync(old));
+  assert.equal(readlinkSync(next), source);
 });
 
 test("a commented-out authorized key does not hide the ssh-copy-id step", () => {

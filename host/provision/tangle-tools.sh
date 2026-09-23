@@ -46,21 +46,29 @@ WALL_UNIT="$HOME/.config/systemd/user/fleet-wall.service"
 DESKTOP_UNIT_SRC="$TT_DIR/fleet/systemd/gtr-desktop.service"
 DESKTOP_UNIT="$HOME/.config/systemd/user/gtr-desktop.service"
 
+vnc_wants_unit() {
+  local link="$HOME/.config/systemd/user/vnc-desktop.service.wants/$1"
+  [ -L "$link" ] && [ "$(readlink -f "$link")" = "$2" ]
+}
+
 wall_unit_on() {
   user_bus || true
-  link_is "$WALL_UNIT_SRC" "$WALL_UNIT" && systemctl --user is-enabled --quiet fleet-wall.service 2>/dev/null
+  link_is "$WALL_UNIT_SRC" "$WALL_UNIT" &&
+    vnc_wants_unit fleet-wall.service "$WALL_UNIT_SRC" &&
+    systemctl --user is-enabled --quiet fleet-wall.service 2>/dev/null
 }
 
 install_wall_unit() {
   [ -f "$WALL_UNIT_SRC" ] || { printf '%s is missing; update the deploy clone first\n' "$WALL_UNIT_SRC" >&2; return 1; }
   link_into "$WALL_UNIT_SRC" "$WALL_UNIT" || return 1
   user_bus || { printf 'no session bus for %s: enable linger or log in once\n' "$USER" >&2; return 1; }
-  systemctl --user daemon-reload && systemctl --user enable --quiet fleet-wall.service
+  systemctl --user daemon-reload && systemctl --user reenable --quiet fleet-wall.service
 }
 
 desktop_unit_on() {
   user_bus || true
   link_is "$DESKTOP_UNIT_SRC" "$DESKTOP_UNIT" &&
+    vnc_wants_unit gtr-desktop.service "$DESKTOP_UNIT_SRC" &&
     systemctl --user is-enabled --quiet gtr-desktop.service 2>/dev/null &&
     systemctl --user is-enabled --quiet vnc-desktop.service 2>/dev/null
 }
@@ -75,7 +83,7 @@ install_desktop_unit() {
     }
   fi
   link_into "$DESKTOP_UNIT_SRC" "$DESKTOP_UNIT" || return 1
-  systemctl --user daemon-reload && systemctl --user enable --quiet gtr-desktop.service
+  systemctl --user daemon-reload && systemctl --user reenable --quiet gtr-desktop.service
 }
 
 module_tangle_tools() {

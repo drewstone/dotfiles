@@ -8,6 +8,9 @@ AUTOLOGIN="${AUTOLOGIN:-1}"
 NERD_FONTS_VERSION=v3.5.1
 FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNF"
 GDM_CUSTOM=/etc/gdm3/custom.conf
+KIOSK_SESSION_FILE=/usr/share/wayland-sessions/gtr-kiosk.desktop
+KIOSK_LAUNCHER=/usr/local/bin/gtr-kiosk
+ACCOUNTS_USER="/var/lib/AccountsService/users/$USER"
 LOGIN_KEYRING="$HOME/.local/share/keyrings/login.keyring"
 
 # The Wi-Fi module needs nmcli even on a fresh Server install. The old desktop
@@ -75,24 +78,75 @@ autologin_off() {
   ! grep -Ei '^[[:space:]]*(Automatic|Timed)LoginEnable[[:space:]]*=[[:space:]]*(true|1)[[:space:]]*$' "$GDM_CUSTOM" >/dev/null 2>&1
 }
 
-# write_gdm_custom ON: with ON=1, drop every uncommented AutomaticLogin line
-# and put the two keys at the top of [daemon]; with ON=0, drop the automatic
-# and the timed login lines. GDM reads the file when it starts. The old file
-# stays beside it.
+kiosk_available() { [ -f "$KIOSK_SESSION_FILE" ] && [ -x "$KIOSK_LAUNCHER" ]; }
+
+gdm_session_on() {
+  kiosk_available && awk '
+    /^\[daemon\]$/ { daemon = 1; next }
+    /^\[/ { daemon = 0 }
+    daemon && /^[ \t]*DefaultSession[ \t]*=/ {
+      count++
+      if ($0 ~ /^[ \t]*DefaultSession[ \t]*=[ \t]*gtr-kiosk\.desktop[ \t]*$/) right++
+    }
+    END { exit !(count == 1 && right == 1) }
+  ' "$GDM_CUSTOM" 2>/dev/null
+}
+
+accounts_session_on() {
+  kiosk_available && as_root awk '
+    /^\[User\]$/ { user = 1; next }
+    /^\[/ { user = 0 }
+    user && /^Session=gtr-kiosk$/ { session++ }
+    user && /^XSession=$/ { xsession++ }
+    END { exit !(session == 1 && xsession == 1) }
+  ' "$ACCOUNTS_USER" 2>/dev/null
+}
+
+# GDM reads both the daemon default and the user's last session. Keep both on
+# gtr-kiosk so an unattended login cannot return to the previous GNOME session.
+set_accounts_session() {
+  kiosk_available || { printf 'gtr-kiosk session and launcher must be installed first\n' >&2; return 1; }
+  local current="$WORK/accounts-user.source" new="$WORK/accounts-user.new"
+  install -m 0600 /dev/null "$current"
+  install -m 0600 /dev/null "$new"
+  if as_root test -f "$ACCOUNTS_USER"; then
+    as_root cat "$ACCOUNTS_USER" >"$current" || return 1
+    as_root cp -p "$ACCOUNTS_USER" "$ACCOUNTS_USER.pre-dotfiles.$(date +%Y%m%d%H%M%S%N)" || return 1
+  fi
+  awk '
+    /^\[User\]$/ { print; print "Session=gtr-kiosk\nXSession="; user = 1; found = 1; next }
+    /^\[/ { user = 0 }
+    user && /^[ \t]*(Session|XSession)[ \t]*=/ { next }
+    { print }
+    END { if (!found) print "[User]\nSession=gtr-kiosk\nXSession=" }
+  ' "$current" >"$new" || return 1
+  root_install 0600 "$new" "$ACCOUNTS_USER"
+}
+
+# write_gdm_custom ON: select gtr-kiosk and set automatic login. With ON=0,
+# remove automatic and timed login. GDM reads this file when it next starts.
 write_gdm_custom() {
   local on="$1" new="$WORK/custom.conf.new"
+  kiosk_available || { printf 'gtr-kiosk session and launcher must be installed first\n' >&2; return 1; }
   : >"$new"
   if [ -f "$GDM_CUSTOM" ]; then
     awk -v user="$USER" -v on="$on" '
+      /^[ \t]*DefaultSession[ \t]*=/ { next }
       /^[ \t]*AutomaticLogin(Enable)?[ \t]*=/ { next }
       on == 0 && /^[ \t]*TimedLogin(Enable|Delay)?[ \t]*=/ { next }
       { print }
-      on == 1 && $0 == "[daemon]" { print "AutomaticLoginEnable=true"; print "AutomaticLogin=" user }
+      $0 == "[daemon]" {
+        print "DefaultSession=gtr-kiosk.desktop"
+        if (on == 1) { print "AutomaticLoginEnable=true"; print "AutomaticLogin=" user }
+      }
     ' "$GDM_CUSTOM" >"$new" || return 1
-    as_root cp -p "$GDM_CUSTOM" "$GDM_CUSTOM.pre-dotfiles.$(date +%Y%m%d%H%M%S)" || return 1
+    as_root cp -p "$GDM_CUSTOM" "$GDM_CUSTOM.pre-dotfiles.$(date +%Y%m%d%H%M%S%N)" || return 1
   fi
-  if [ "$on" = 1 ] && ! grep -qx '\[daemon\]' "$new"; then
-    printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$USER" >>"$new"
+  if ! grep -qx '\[daemon\]' "$new"; then
+    printf '[daemon]\nDefaultSession=gtr-kiosk.desktop\n' >>"$new"
+    if [ "$on" = 1 ]; then
+      printf 'AutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$USER" >>"$new"
+    fi
   fi
   root_install 0644 "$new" "$GDM_CUSTOM"
 }
@@ -118,6 +172,8 @@ module_desktop() {
       "sudo systemctl reboot"
   fi
   ensure "JetBrainsMono Nerd Font $NERD_FONTS_VERSION in $FONT_DIR" font_present -- install_font
+  ensure "GDM selects gtr-kiosk on the monitor" gdm_session_on -- write_gdm_custom "$AUTOLOGIN"
+  ensure "$USER's last session is gtr-kiosk" accounts_session_on -- set_accounts_session
   if [ "$AUTOLOGIN" = 1 ]; then
     ensure "GDM logs $USER in at boot (from the next GDM start)" autologin_on -- write_gdm_custom 1
     if login_keyring_has_password; then

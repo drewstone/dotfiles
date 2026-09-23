@@ -129,7 +129,7 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
-| `desktop` | Starts GDM for the existing `gtr-kiosk` session at boot and installs NetworkManager and the font. It never restarts GDM during the run. |
+| `desktop` | Selects the existing `gtr-kiosk` session in GDM and AccountsService, starts GDM at boot, and installs NetworkManager and the font. It never restarts GDM during the run. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
