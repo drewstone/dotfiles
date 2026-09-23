@@ -40,7 +40,14 @@ no_old_autostart() { ! ours_old_autostart; }
 
 # drop_old_autostart: remove the link, or move a copy of the old entry aside.
 # Any other ghostty.desktop (file or link) is a person's own; it stays.
+# Runs only once the wall unit is enabled.
 drop_old_autostart() {
+  # Never leave the desktop with no terminal: the wall must start at login first.
+  user_bus || true
+  if ! systemctl --user is-enabled --quiet fleet-wall.service 2>/dev/null; then
+    printf 'fleet-wall.service is not enabled yet; the tangle-tools module enables it, then run desktop again\n' >&2
+    return 1
+  fi
   if old_autostart_link; then
     rm -f "$OLD_AUTOSTART"
   else

@@ -178,7 +178,7 @@ test("tmux.conf loads without errors and keeps the resurrect safety list", { ski
 
 // The fleet wall is the only Ghostty window at login: check mode reports the old
 // autostart entry and a missing wall unit as drift and changes nothing; apply
-// removes the entry dotfiles installed; a linked, enabled unit is clean.
+// removes the entry dotfiles installed, only once the wall unit is enabled; a linked, enabled unit is clean.
 test("desktop drops the old Ghostty autostart and tangle-tools enables the wall unit", () => {
   const home = mkdtempSync(join(tmpdir(), "prov-wall-"));
   const entry = join(home, ".config/autostart/ghostty.desktop");
@@ -195,13 +195,15 @@ test("desktop drops the old Ghostty autostart and tangle-tools enables the wall 
   assert.match(check.stdout, /drift +old autostart/);
   assert.match(check.stdout, /drift +wall unit/);
   assert.ok(existsSync(entry), "check mode must not remove the entry");
+  assert.match(run("apply").stdout, /FAILED +old autostart/);
+  assert.ok(existsSync(entry), "the entry stays while the wall unit is not enabled");
+  writeFileSync(join(home, "enabled"), "");
   assert.match(run("apply").stdout, /changed +old autostart/);
   assert.ok(!existsSync(entry), "apply removes the entry dotfiles installed");
   const unit = join(home, ".local/share/tangle-tools/fleet/systemd/fleet-wall.service");
   mkdirSync(join(home, ".local/share/tangle-tools/fleet/systemd"), { recursive: true });
   mkdirSync(join(home, ".config/systemd/user"), { recursive: true });
   symlinkSync(unit, join(home, ".config/systemd/user/fleet-wall.service"));
-  writeFileSync(join(home, "enabled"), "");
   // A person's own entry, as a file or as a link elsewhere, is not drift and stays.
   const own = join(home, "own.desktop");
   writeFileSync(own, "[Desktop Entry]\nExec=ghostty\n");
