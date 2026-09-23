@@ -3,7 +3,10 @@
 # claude/install.sh with ~/.local/bin on PATH so its plugin sync finds claude.
 
 RTK_VERSION=0.30.1
-CLAUDE_TRUST_DIRS="${CLAUDE_TRUST_DIRS:-$HOME/code $HOME/company /tmp}"
+# Trust covers every folder below these. Only folders this user owns: in a
+# world-writable one such as /tmp, another account could plant hooks or an
+# .mcp.json that would then run without the trust prompt.
+CLAUDE_TRUST_DIRS="${CLAUDE_TRUST_DIRS:-$HOME/code $HOME/company}"
 
 claude_ok() { [ -x "$HOME/.local/bin/claude" ]; }
 codex_ok() { [ -x "$HOME/.local/bin/codex" ]; }
@@ -84,7 +87,7 @@ claude_plugins() {
     ensure "Claude plugins in settings.json" claude_plugins_complete -- run_claude_install
     return 0
   fi
-  manual_after_signin "Claude plugins wait for the GitHub and Claude sign-ins ($(claude_plugins_missing | paste -sd ' ' -)). After them, run:" \
+  manual_after_signin "Claude plugins still missing ($(claude_plugins_missing | paste -sd ' ' -)); the private marketplaces need the GitHub and Claude sign-ins. After them, run:" \
     "$DOTFILES/claude/install.sh"
 }
 

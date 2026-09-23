@@ -6,9 +6,9 @@
 #
 # Modules, in the order a full run takes them:
 #   guards        root wrappers, sudoers, frozen-root watchdog (host/install.sh)
-#   tools         base packages, Google Chrome, Tailscale, GitHub CLI, uv
-#   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
+#   tools         base packages, OpenSSH (keys only), Google Chrome, Tailscale, GitHub CLI, uv
 #   desktop       GNOME at boot, Ghostty config, JetBrainsMono Nerd Font
+#   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
 #   nosleep       masked sleep targets, logind, login screen, GNOME session
 #   shell         starship prompt; the Linux console keeps the plain prompt
 #   git           global Git hooks (git/install.sh)
@@ -24,7 +24,9 @@
 #   --wifi-ssid SSID       store this Wi-Fi network system-wide (wifi)
 #   --wifi-psk-file FILE   read its passphrase from FILE (/dev/stdin works);
 #                          without it the wifi module asks on the terminal
-#   --autologin            GDM logs this user in at boot (desktop)
+#   --replace-psk          replace a different passphrase the profile stores
+#   --no-autologin         GDM waits for a person to log in (desktop); by
+#                          default it logs this user in at boot
 #   --list                 print the module names and exit
 #
 # Exit status: 0 when every step holds or was fixed, 1 when a step failed or
@@ -35,8 +37,9 @@ set -uo pipefail
 
 DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_DIR="$DOTFILES/host"
-# desktop comes before nosleep: nosleep configures the GNOME that desktop installs.
-ALL_MODULES=(guards tools wifi desktop nosleep shell git tmux agents traces tangle-tools handoff)
+# desktop comes before wifi and nosleep: on a Server install the desktop brings
+# NetworkManager, and nosleep configures the GNOME that desktop installs.
+ALL_MODULES=(guards tools desktop wifi nosleep shell git tmux agents traces tangle-tools handoff)
 
 # shellcheck source=provision/lib.sh
 . "$HOST_DIR/provision/lib.sh"
@@ -45,7 +48,7 @@ for m in "${ALL_MODULES[@]}"; do
   . "$HOST_DIR/provision/$m.sh"
 done
 
-usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SELECTED=()
 SKIPPED=()
@@ -60,7 +63,8 @@ while [ $# -gt 0 ]; do
       ;;
     --wifi-ssid) WIFI_SSID="${2:?--wifi-ssid needs an SSID}"; shift ;;
     --wifi-psk-file) WIFI_PSK_FILE="${2:?--wifi-psk-file needs a file}"; shift ;;
-    --autologin) AUTOLOGIN=1 ;;
+    --replace-psk) REPLACE_PSK=1 ;;
+    --no-autologin) AUTOLOGIN=0 ;;
     --list) printf '%s\n' "${ALL_MODULES[@]}"; exit 0 ;;
     -h | --help) usage; exit 0 ;;
     -*) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;

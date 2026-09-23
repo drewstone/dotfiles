@@ -14,7 +14,12 @@
 # Scope: the verb must appear in command position (start of a command, after
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
-#
+# One exception, which fails closed: any command that names format-traces-drive
+# is refused, wherever the name appears. That includes read-only commands, git,
+# ssh and hostlab. Each narrower rule had a bypass: line continuations, option
+# variables, ssh -o and ~/.ssh/config, sed -e, and git helpers. Over ssh the
+# remote session has no claude ancestor for the script's own check to find.
+
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
 set -uo pipefail
@@ -41,7 +46,18 @@ cmd = inp.get("command") or ""
 if not cmd:
     sys.exit(0)
 
-# The VM lane is the allowed venue; a command handed to it passes whole.
+# Erasing the trace drive belongs to Drew at a terminal outside Claude. The
+# hook sees only Bash commands, so the Read and Grep tools still read the
+# script, and a commit can name it through -F FILE.
+if "format-traces-drive" in cmd:
+    err = sys.stderr
+    print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
+    print("No Bash command may name it. Give Drew the command to run himself. Read the script with the Read or Grep tool, and commit with -F FILE.", file=err)
+    print("To test it, run tests/provision.hostlab.sh: it erases a scratch disk in a throwaway VM (hostlab run).", file=err)
+    sys.exit(2)
+
+# The VM lane is the allowed venue; a command handed to it passes whole. The
+# eraser rule above comes first, so a hostlab command that names it is refused.
 if re.search(r"(^|[\s;&|(])hostlab\s+(run|shell|build|ssh)\b", cmd):
     sys.exit(0)
 
@@ -56,7 +72,8 @@ if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
 # A backtick is not a separator here: inline code in a heredoc or commit
 # message mentions these verbs far more often than backtick substitution runs
 # them, and the root wrappers still catch the substitution case.
-LEAD = r"(?:^|[\n;&|({]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*|exec\s+|nohup\s+|env\s+|timeout\s+\S+\s+|nice\s+(?:-n\s*\S+\s+)?|(?:do|then|else)\s+)*"
+SUDO_OPT = r"(?:-[ugCDhpRrTU]\s+\S+|--(?:user|group|chdir|host|prompt|chroot|close-from|command-timeout|other-user)(?:=|\s+)\S+|-\S+)\s+"
+LEAD = r"(?:^|[\n;&|({]|\$\()\s*(?:sudo\s+(?:" + SUDO_OPT + r")*|exec\s+|nohup\s+|env\s+|timeout\s+\S+\s+|nice\s+(?:-n\s*\S+\s+)?|(?:do|then|else)\s+)*"
 KERNEL_DIR = r"/(?:proc|sys|dev|run|boot(?:/efi)?)/?(?=\s|$|['\"])"
 ROOT_DISK = r"/dev/(?:nvme\d+n\d+(?:p\d+)?|sd[a-z]+\d*|vd[a-z]+\d*|hd[a-z]+\d*|mmcblk\d+(?:p\d+)?)\b"
 
@@ -74,7 +91,6 @@ RULES = [
     (r"lvm\s+(?:pvcreate|vgcreate|lvcreate|lvremove|vgremove|pvremove|lvchange|vgchange|lvconvert|pvmove)\s+(?:\S+\s+)*" + ROOT_DISK, "LVM on a real disk"),
     (r"(?:mkfs(?:\.\w+)?|mke2fs|mkswap|wipefs|blkdiscard|sgdisk|sfdisk|fdisk|parted)\s+(?:\S+\s+)*" + ROOT_DISK, "writing a real disk"),
     (r"dd\s+(?:\S+\s+)*of=" + ROOT_DISK, "dd onto a real disk"),
-    (r"(?:(?:ba)?sh\s+)?(?:\S*/)?format-traces-drive\b", "format-traces-drive erases a whole disk; only Drew runs it"),
     (r"(?:echo|printf)\s+\S+\s*>\s*/proc/sysrq-trigger", "sysrq reboots or crashes the host"),
     (r"(?:systemctl\s+(?:reboot|poweroff|halt|kexec)|reboot|poweroff|halt|shutdown|init\s+[06])\b", "rebooting or powering off the host"),
 ]

@@ -27,13 +27,24 @@ fix_fstab() {
       printf '/etc/fstab has another %s line; change it by hand:\n%s\n' "$TRACES_MNT" "$line" >&2
       return 1
     fi
-    as_root cp -p /etc/fstab "/etc/fstab.pre-dotfiles.$(date +%Y%m%d%H%M%S)" || return 1
     awk -v m="$TRACES_MNT" '!($1 !~ /^#/ && $2 == m)' /etc/fstab >"$WORK/fstab.new" || return 1
   else
     cp /etc/fstab "$WORK/fstab.new" || return 1
   fi
   printf '%s\n' "$(traces_line)" >>"$WORK/fstab.new"
-  as_root install -m 0644 -o root -g root "$WORK/fstab.new" /etc/fstab && as_root systemctl daemon-reload
+  write_fstab "$WORK/fstab.new" && as_root systemctl daemon-reload
+}
+
+# write_fstab NEW: a headless box with a truncated /etc/fstab boots to
+# emergency mode. So check NEW, keep the old file, write NEW beside it, and
+# rename it over /etc/fstab in one step.
+write_fstab() {
+  local out
+  out="$(findmnt --verify --tab-file "$1" 2>&1)" || { printf '%s\n' "$out" >&2; return 1; }
+  as_root cp -p /etc/fstab "/etc/fstab.pre-dotfiles.$(date +%Y%m%d%H%M%S)" &&
+    as_root install -m 0644 -o root -g root "$1" /etc/fstab.dotfiles-new &&
+    as_root sync /etc/fstab.dotfiles-new &&
+    as_root mv -f /etc/fstab.dotfiles-new /etc/fstab
 }
 
 traces_mounted() { [ "$(findmnt -rno SOURCE "$TRACES_MNT" 2>/dev/null)" = "$(traces_dev)" ]; }

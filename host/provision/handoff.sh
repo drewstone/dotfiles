@@ -26,6 +26,20 @@ print_tt_section() {
 
 mode_600() { [ "$(stat -c %a "$1")" = 600 ]; }
 
+agent_accounts_added() {
+  local dir="$HOME/.config/agent-accounts"
+  [ -s "$dir/claude.tokens" ] && [ -n "$(find "$dir/codex" -mindepth 1 -maxdepth 1 2>/dev/null)" ]
+}
+
+user_unit_enabled() {
+  user_bus || true
+  systemctl --user is-enabled --quiet "$1" 2>/dev/null
+}
+
+chatgpt_profiles_present() {
+  [ -n "$(find "$HOME/.local/state/chatgpt-fleet/profiles" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)" ]
+}
+
 module_handoff() {
   section "handoff: sign-ins and other steps for a person"
 
@@ -73,11 +87,24 @@ module_handoff() {
       "echo CLI_BRIDGE_SCOPE_MEMORY_MAX=8G >> ~/code/cli-bridge/.env"
   fi
 
-  if [ -d "$TT_DIR" ]; then
-    manual "Sign in the agent accounts and set up the fleet with the tangle-tools steps printed below, from:" \
-      "$TT_DIR/agent-accounts/README.md" "$TT_DIR/fleet/README.md" "$TT_DIR/chatgpt-fleet/README.md"
+  # Each tangle-tools step shows until the artifact its README names exists:
+  # an account in ~/.config/agent-accounts, the fleet-wall user unit, and a
+  # chatgpt-fleet profile. None of their commands run here: acct status and
+  # chatgpt-fleet status reach the network and can refresh tokens.
+  [ -d "$TT_DIR" ] || return 0
+  if ! agent_accounts_added; then
+    manual "Sign in the agent accounts: do the \"Provision a machine\" steps (printed in the handoff section) in:" \
+      "$TT_DIR/agent-accounts/README.md"
     print_tt_section agent-accounts/README.md "Provision a machine"
+  fi
+  if ! user_unit_enabled fleet-wall.service; then
+    manual "Set up the fleet: do the \"Install on a machine\" steps (printed in the handoff section) in:" \
+      "$TT_DIR/fleet/README.md"
     print_tt_section fleet/README.md "Install on a machine"
+  fi
+  if ! chatgpt_profiles_present; then
+    manual "Set up the ChatGPT slots: do the \"Set up a machine\" steps (printed in the handoff section) in:" \
+      "$TT_DIR/chatgpt-fleet/README.md"
     print_tt_section chatgpt-fleet/README.md "Set up a machine"
   fi
 }

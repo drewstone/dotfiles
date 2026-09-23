@@ -46,10 +46,57 @@ const blocked = [
   'S=/tmp/s; sudo umount -l "$S/mnt/parent"; bash "$S/proof.sh" 2>&1 | tail -120; sudo fsfreeze -f $S/mnt/parent',
   "cd /x && sudo timeout 30 fsfreeze -f /x/mnt",
   "for i in 1 2; do sudo fsfreeze -f /mnt/$i; done",
-  "sudo ~/code/dotfiles/host/bin/format-traces-drive --model ST8000DM004-2U9188 --serial ZR16L1DM",
+  "sudo -u root fsfreeze -f /mnt/x",
+  "sudo --user=root unshare -m true",
+  "sudo ~/code/dotfiles/host/bin/format-traces-drive --model EXAMPLE-MODEL --serial EXAMPLE123",
   "sudo host/bin/format-traces-drive --model X --serial Y",
   "cd ~/code/dotfiles && sudo bash host/bin/format-traces-drive --model X --serial Y",
   "echo ERASE | format-traces-drive --model X --serial Y",
+  // The forms that passed the first version of the hook.
+  "sudo -u root host/bin/format-traces-drive --model X --serial Y",
+  "script -qec 'sudo host/bin/format-traces-drive --model X --serial Y' /dev/null <<<ERASE",
+  "bash -c 'sudo host/bin/format-traces-drive --model X --serial Y'",
+  "echo ERASE | ssh -tt drew@box 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y'",
+  "ssh box sudo /home/drew/code/dotfiles/host/bin/format-traces-drive --serial Y --model X",
+  "tmux send-keys -t work 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y' Enter",
+  'sudo "$(git rev-parse --show-toplevel)"/host/bin/format-traces-drive --model X --serial Y',
+  "F=host/bin/format-traces-drive; sudo $F --model X --serial Y",
+  "echo ERASE | ssh -tt box 'sudo ~/code/dotfiles/host/bin/format-traces-drive \\\n  --model X --serial Y'",
+  "ssh box 'F=~/code/dotfiles/host/bin/format-traces-drive\nsudo $F --model X --serial Y'",
+  // Options held in variables, and forms with no option spelled out at all.
+  "echo ERASE | ssh -tt box 'M=--model; S=--serial; sudo ~/code/dotfiles/host/bin/format-traces-drive $M X $S Y'",
+  "ssh -tt box 'M=--model; S=--serial; sudo ~/code/dotfiles/host/bin/format-traces-drive $M X $S Y'",
+  "sudo host/bin/format-traces-drive \"$@\"",
+  "cp host/bin/format-traces-drive /tmp/x && sudo /tmp/x",
+  "git -c alias.x='!sudo host/bin/format-traces-drive' x",
+  "sed -n '1e sudo host/bin/format-traces-drive' README.md",
+  "git show HEAD:host/bin/format-traces-drive > /tmp/x",
+  // ssh options that run a command locally.
+  `ssh -oProxyCommand="echo ERASE | ssh -tt box 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y'" unused cat host/bin/format-traces-drive`,
+  "ssh -o LocalCommand='sudo host/bin/format-traces-drive' -o PermitLocalCommand=yes box cat host/bin/format-traces-drive",
+  "ssh -F /tmp/evil.conf box cat host/bin/format-traces-drive",
+  "ssh -J jump box cat host/bin/format-traces-drive",
+  "git grep -O'sudo host/bin/format-traces-drive' pattern",
+  "sed -n 1,20p host/bin/format-traces-drive",
+  `sed -n 1p -e '1e ssh -tt box "sudo ~/code/dotfiles/host/bin/format-traces-drive"' README.md`,
+  // git can start an editor, a hook, a pager, a filter or core.fsmonitor.
+  "git commit --edit -m 'format-traces-drive'",
+  "git commit -m 'fix(host): format-traces-drive checks the disk again; see --model'",
+  "git add host/bin/format-traces-drive host/provision.sh",
+  "git log --oneline -S format-traces-drive",
+  "git -c core.fsmonitor='sudo host/bin/format-traces-drive' status",
+  // ~/.ssh/config can give the host a ProxyCommand, so no ssh form passes.
+  "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
+  "ssh -p 22 drew@box cat /home/drew/code/dotfiles/host/bin/format-traces-drive",
+  "echo hostlab run; sudo host/bin/format-traces-drive --model X --serial Y",
+  "hostlab run -- true && sudo host/bin/format-traces-drive --model X --serial Y",
+  // No command that names the eraser passes: read-only and hostlab forms too.
+  "shellcheck host/bin/format-traces-drive",
+  "head -20 host/bin/format-traces-drive",
+  "grep -n 'format-traces-drive' README.md host/provision/traces.sh",
+  "cat host/bin/format-traces-drive",
+  "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
+  "hostlab ssh 20260923-1 -- sudo /work/host/bin/format-traces-drive --model X --serial Y",
 ];
 
 const allowed = [
@@ -86,10 +133,7 @@ const allowed = [
   "printf '%s\\n' 'Bypass for a human only: HOST_BLAST_GUARD=off.' >> notes.md",
   "cat >> memory.md <<'EOF'\nThe hook also fires on `sudo fsfreeze -f` and `sudo unshare -m` written in command position.\nEOF",
   "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
-  "shellcheck host/bin/format-traces-drive",
-  "git add host/bin/format-traces-drive host/provision.sh",
-  "sed -n 1,20p host/bin/format-traces-drive",
-  "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
+  "bash tests/provision.hostlab.sh",
 ];
 
 test("blocks the host-level verbs in command position", () => {

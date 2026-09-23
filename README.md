@@ -96,21 +96,26 @@ Do these steps in this order:
    git clone https://github.com/drewstone/dotfiles.git ~/code/dotfiles
    ```
 
-4. Run the provisioning from a terminal on the box or over ssh.
-   Give the Wi-Fi name; the run asks for the passphrase.
+4. Run the provisioning from a terminal on the box.
+   Ubuntu Desktop has no SSH server; the run installs one that accepts keys only.
+   Give the Wi-Fi name.
+   When the box stores no passphrase for that network, the run asks for it.
    The run asks for the sudo password once; the `guards` module then makes sudo passwordless.
 
    ```bash
    ~/code/dotfiles/host/provision.sh --wifi-ssid '<SSID>'
    ```
 
-   To log in to the desktop at boot without a password, add `--autologin`.
-   Without it, the fleet wall and chatgpt-fleet start only after a person logs in.
+   GDM logs `drew` in at boot, so the fleet wall and chatgpt-fleet come back after an unattended reboot.
+   Anyone at the keyboard then has `drew`'s session, and `drew` has passwordless sudo.
+   Keep the box where only trusted people can reach it, or add `--no-autologin` to wait for a person to log in.
 5. Do each step in the "steps for a person" list at the end of the run, in order.
    The list has the GitHub, Tailscale, Claude and Codex sign-ins, the Git identity, and the agent-bus name.
-6. Run the provisioning again.
-   It installs the tangle-tools commands and the Claude plugins, which need the sign-ins.
-   It also prints the account and fleet steps from the tangle-tools READMEs.
+   It also has the `ssh-copy-id` step that authorizes the Mac's key for ssh.
+   While the login keyring has a password, it has the keyring step: automatic login cannot unlock that keyring, and chatgpt-fleet's Chrome waits for it.
+6. Run the provisioning again, from the box or over ssh.
+   It installs the tangle-tools commands and the Claude plugins from the private marketplaces, which need the sign-ins.
+   It also prints the account, fleet and ChatGPT steps from the tangle-tools READMEs until each one is done.
 7. Check the box. The command must exit 0:
 
    ```bash
@@ -123,10 +128,10 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | Module | What it does |
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
-| `tools` | Installs base packages, Google Chrome, Tailscale, the GitHub CLI, the hostlab packages, and uv. |
+| `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
+| `desktop` | Boots to GNOME, logs the user in, links the Ghostty config, and removes the old Ghostty autostart entry, so the fleet wall is the only window at login. It never starts GDM itself; a restart of the box does. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
-| `desktop` | Boots to GNOME, links the Ghostty config, and removes the old Ghostty autostart entry, so the fleet wall is the only window at login. |
-| `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. |
+| `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
 | `git` | Runs `git/install.sh`. |
 | `tmux` | Links `tmux/tmux.conf`, clones its plugins, and runs `tmux/install-heal.sh`. It never reloads a running server. |
@@ -136,9 +141,12 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | `handoff` | Prints the sign-ins and the other steps for a person. |
 
 The Wi-Fi name and passphrase come from the command line or a prompt, never from this repository.
+The passphrase reaches NetworkManager on standard input, so it never appears in a command line or in the sudo log.
 For a run without a prompt, put the passphrase in a file and pass `--wifi-psk-file <file>`.
+The run never replaces a different passphrase that the box already stores, because a wrong one strands the box at its next reconnect.
+To replace it on purpose, add `--replace-psk`; the old profile settings go to `/var/backups/NetworkManager` first.
 
-To make a new drive the trace drive, find its model and serial, then run the eraser yourself:
+To make a new drive the trace drive, find its model and serial, then run the eraser yourself, in a terminal outside Claude and Codex:
 
 ```bash
 lsblk -dno NAME,MODEL,SERIAL,TRAN,SIZE
@@ -147,6 +155,11 @@ sudo ~/code/dotfiles/host/bin/format-traces-drive --model '<MODEL>' --serial '<S
 
 It refuses unless exactly one disk has that serial and model.
 It also refuses the system disk and a disk that is in use, and it asks you to type ERASE.
+After ERASE it checks the disk again and writes only through the `/dev/disk/by-id` name that carries the serial.
+It refuses to run under a `claude` or `codex` process.
+The Claude hook refuses every Bash command that names it, including `cat`, `grep`, git, ssh and `hostlab` forms.
+Agents read it with the Read and Grep tools.
+These checks stop a mistake, not an agent that means to erase a disk: an agent with sudo can erase one without the script.
 When it is done, it runs the `traces` module.
 
 Other repositories install their own services: cli-bridge, pr-reviewer, and the trace units.
