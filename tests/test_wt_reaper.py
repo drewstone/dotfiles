@@ -478,6 +478,36 @@ class UnixSocketTest(unittest.TestCase):
         self.assertIn(sock, found or [])
 
 
+class DefaultBranchNameTest(unittest.TestCase):
+    """A default branch with a slash is still recognized."""
+
+    def test_slash_default(self):
+        mod = load_reaper()
+        self.assertTrue(mod.is_default_name('refs/remotes/origin/release/v1', 'release/v1'))
+        self.assertTrue(mod.is_default_name('refs/remotes/origin/main', 'main'))
+        self.assertFalse(mod.is_default_name('refs/remotes/origin/main', 'feat/x'))
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
+class DeletedSuffixTest(unittest.TestCase):
+    """A directory literally named '... (deleted)' still counts as held."""
+
+    def test_literal_deleted_name_is_held(self):
+        mod = load_reaper()
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-del-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        tree = os.path.join(tmp, 'tree (deleted)')
+        os.makedirs(tree)
+        child = subprocess.Popen([sys.executable, '-c', 'import time; print("ok", flush=True); time.sleep(60)'],
+                                 cwd=tree, stdout=subprocess.PIPE)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        child.stdout.readline()
+        found = mod._proc_one(child.pid, mod._readlink('/proc/self/ns/mnt'), mod._mountinfo('self') or {}, {}, {})
+        self.assertIn(tree, found or [])
+
+
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
 class RelativeSocketTest(unittest.TestCase):
     """A socket bound by relative path has no known directory: the process is unreadable."""

@@ -476,9 +476,23 @@ def _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets=None):
             return None
         translated = []
         for p in found:
-            translated.extend(_translate(p.replace(' (deleted)', ''), ns_mounts[ns], host_mounts))
+            for q in _with_undeleted(p):
+                translated.extend(_translate(q, ns_mounts[ns], host_mounts))
         found = translated
-    return [p.replace(' (deleted)', '') for p in found]
+    return [q for p in found for q in _with_undeleted(p)]
+
+
+DELETED = ' (deleted)'
+
+
+def _with_undeleted(path):
+    """The path as read, plus the form without the kernel's ' (deleted)' suffix.
+
+    A real directory may be named '... (deleted)', so both forms count as held.
+    """
+    if path.endswith(DELETED):
+        return [path, path[:-len(DELETED)]]
+    return [path]
 
 
 def proc_dump():
@@ -790,6 +804,22 @@ def recheck(rpath, main_path, common_dir, args, log):
         raise Skip('in use by a process: %s' % users[0])
 
 
+def is_default_name(default, name):
+    """True when name matches the remote default branch, slashes included."""
+    prefix = 'refs/remotes/origin/'
+    short = default[len(prefix):] if default.startswith(prefix) else default
+    return name in (short, default.rsplit('/', 1)[-1])
+
+
+def local_head(common_dir):
+    """The branch the repository's own HEAD names (a bare repo's default), or None."""
+    try:
+        ref = git(['--git-dir', common_dir, 'symbolic-ref', '-q', 'HEAD'], '/').strip()
+    except Skip:
+        return None
+    return ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else None
+
+
 def delete_branch(ref, main_path, common_dir, log):
     name = ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else None
     if not name:
@@ -798,7 +828,7 @@ def delete_branch(ref, main_path, common_dir, log):
     if not default:
         log.write(event='branch-kept', branch=name, reason='remote default branch unknown')
         return False
-    if default.rsplit('/', 1)[-1] == name:
+    if is_default_name(default, name) or name == local_head(common_dir):
         log.write(event='branch-kept', branch=name, reason='is the default branch name')
         return False
     try:
