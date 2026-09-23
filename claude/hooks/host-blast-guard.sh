@@ -14,12 +14,13 @@
 # Scope: the verb must appear in command position (start of a command, after
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
-# One exception: format-traces-drive is refused anywhere in the command when
-# erase arguments follow its name anywhere after it, also after ssh, across a
-# line continuation or a variable, inside bash -c, script -c or tmux
-# send-keys. It exists only on the Linux boxes, so a remote call is the case
-# that matters.
-#
+# One exception, which fails closed: a command that names format-traces-drive
+# is refused unless it is one read-only command (cat, grep, git log, sed -n
+# 1,20p, shellcheck and the like), also when that command runs over ssh. So
+# variables, line continuations, bash -c, script -c, tmux send-keys and
+# remote runs are all refused. It exists only on the Linux boxes, where an
+# ssh session has no claude ancestor for the script's own check to find.
+
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
 set -uo pipefail
@@ -34,6 +35,7 @@ command -v python3 >/dev/null || exit 0
 read -r -d '' GUARD_PY <<'PY'
 import json
 import re
+import shlex
 import sys
 
 try:
@@ -57,14 +59,49 @@ if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
     print("host-blast-guard: HOST_BLAST_GUARD=off is a human-only bypass. Run the experiment in a throwaway VM (hostlab run -- '<command>') or ask Drew to run this himself (prefix it with ! in the prompt).", file=sys.stderr)
     sys.exit(2)
 
-# Erasing the trace drive belongs to Drew at a terminal outside Claude. Its
-# name alone (sed, git add, shellcheck) passes. Erase arguments anywhere after
-# it do not: a remote run over ssh never has a claude ancestor on the box, so
-# this hook is the only check there.
-if re.search(r"format-traces-drive\b.*?--(?:model|serial|transport)\b", cmd, re.S):
+# Erasing the trace drive belongs to Drew at a terminal outside Claude. Only
+# a single read-only command may name the script; anything else that names it
+# is refused, however its options are spelled.
+READ_ONLY = {"cat", "grep", "head", "tail", "wc", "ls", "stat", "file", "diff", "shellcheck", "readlink", "realpath"}
+GIT_READ = {"add", "diff", "log", "show", "status", "blame", "grep", "ls-files", "rm", "mv", "restore", "commit"}
+SSH_ARG_OPTS = set("bcDEeFIiJLlmOoPpQRSWw")
+
+def read_only(c, depth=0):
+    if depth > 2 or re.search(r"[\n`]|\$\(|<\(|>\(", c):
+        return False
+    try:
+        lex = shlex.shlex(c, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return False
+    # An operator or a redirection outside quotes makes it more than one
+    # read-only command.
+    if not tokens or any(t and set(t) <= set(";&|()<>") for t in tokens):
+        return False
+    verb = tokens[0]
+    if verb in READ_ONLY:
+        return True
+    if verb == "git":
+        return len(tokens) > 1 and tokens[1] in GIT_READ
+    if verb == "sed":
+        return len(tokens) >= 3 and tokens[1] == "-n" and re.fullmatch(r"[0-9]+(?:,(?:[0-9]+|\$))?p", tokens[2]) is not None
+    if verb == "ssh":
+        i = 1
+        while i < len(tokens) and tokens[i].startswith("-"):
+            flag = tokens[i]
+            i += 1
+            if len(flag) == 2 and flag[1] in SSH_ARG_OPTS:
+                i += 1
+        remote = tokens[i + 1:]
+        return bool(remote) and read_only(" ".join(remote), depth + 1)
+    return False
+
+if "format-traces-drive" in cmd and not read_only(cmd):
     err = sys.stderr
     print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
-    print("Give Drew the command to run himself. To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
+    print("Give Drew the command to run himself. Reading the script (cat, grep, git, sed -n) is allowed as one command.", file=err)
+    print("To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
     sys.exit(2)
 
 # Command position: start, after a separator, or after sudo/exec/timeout.

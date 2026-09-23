@@ -6,10 +6,10 @@
 #
 # Drew runs this himself, in a terminal outside Claude and Codex. Two checks
 # stop an agent that runs it by mistake: the Claude host-blast-guard hook
-# refuses the command, also after ssh or inside a quoted command, and this
-# script refuses when a claude or codex process is one of its ancestors. They
-# do not stop an agent that means to erase a disk, because an agent with sudo
-# can erase one without this script.
+# refuses any command that names this script, except one read-only command
+# such as cat or grep, also over ssh; and this script refuses when a claude or
+# codex process is one of its ancestors. They do not stop an agent that means
+# to erase a disk, because an agent with sudo can erase one without it.
 #
 # It refuses unless exactly one whole disk has SERIAL and that disk also has
 # MODEL (and TRAN, when given). It also refuses the disk that holds / or /boot,

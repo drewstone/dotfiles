@@ -63,6 +63,14 @@ const blocked = [
   "F=host/bin/format-traces-drive; sudo $F --model X --serial Y",
   "echo ERASE | ssh -tt box 'sudo ~/code/dotfiles/host/bin/format-traces-drive \\\n  --model X --serial Y'",
   "ssh box 'F=~/code/dotfiles/host/bin/format-traces-drive\nsudo $F --model X --serial Y'",
+  // Options held in variables, and forms with no option spelled out at all.
+  "echo ERASE | ssh -tt box 'M=--model; S=--serial; sudo ~/code/dotfiles/host/bin/format-traces-drive $M X $S Y'",
+  "ssh -tt box 'M=--model; S=--serial; sudo ~/code/dotfiles/host/bin/format-traces-drive $M X $S Y'",
+  "sudo host/bin/format-traces-drive \"$@\"",
+  "cp host/bin/format-traces-drive /tmp/x && sudo /tmp/x",
+  "git -c alias.x='!sudo host/bin/format-traces-drive' x",
+  "sed -n '1e sudo host/bin/format-traces-drive' README.md",
+  "git show HEAD:host/bin/format-traces-drive > /tmp/x",
 ];
 
 const allowed = [
@@ -103,7 +111,11 @@ const allowed = [
   "git add host/bin/format-traces-drive host/provision.sh",
   "sed -n 1,20p host/bin/format-traces-drive",
   "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
+  "ssh -p 22 drew@box cat /home/drew/code/dotfiles/host/bin/format-traces-drive",
   "grep -n 'format-traces-drive' README.md host/provision/traces.sh",
+  "git log --oneline -S format-traces-drive",
+  "git commit -m 'fix(host): format-traces-drive checks the disk again; see --model'",
+  "cat host/bin/format-traces-drive",
   "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
 ];
 
