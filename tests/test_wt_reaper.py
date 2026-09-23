@@ -96,6 +96,7 @@ class Fixture:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
+@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
 class ReaperTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -274,6 +275,15 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(s['mode'], 'live')
         self.assertEqual(int(s['removed']), 5)
         self.assertEqual(int(s['scanned']), int(s['removed']) + int(s['skipped']))
+
+
+class RootRefusalTest(unittest.TestCase):
+    @unittest.skipUnless(os.geteuid() == 0, 'needs root')
+    def test_refuses_root(self):
+        proc = subprocess.run([sys.executable, REAPER, '--dry-run', '--no-log-file'],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn(b'not root', proc.stderr)
 
 
 class IgnoredClassifierTest(unittest.TestCase):

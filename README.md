@@ -40,7 +40,8 @@ Run `./host/install-cli-bridge-slice.sh` alone to install only the slice; it nee
 ## Worktree reaper
 
 `git/install.sh` installs `wt-reaper`: a systemd user timer on Linux and a launchd agent on macOS, both at 04:15 daily.
-It removes a linked worktree under `~/code` or `~/company` only when every check passes:
+It covers every linked worktree registered with a repository under `~/code` or `~/company`, wherever that worktree lives (for example `~/code/_wt/*`, `~/worktrees/*`, or `/tmp`).
+It removes one only when every check passes:
 
 - The worktree is not locked and has no merge, rebase, bisect, cherry-pick, or revert in progress.
 - Nothing in it, its index, HEAD, or reflogs changed in the last 24 hours.
@@ -53,7 +54,7 @@ Any error or doubt skips the tree, and every decision is logged to `~/.local/sta
 Removal uses `git worktree remove` without `--force`.
 The local branch is deleted only when it is merged into the remote default branch.
 Run `wt-reaper --dry-run` to see the decisions without removing anything.
-Main checkouts are never candidates.
+Main checkouts are never candidates, and the reaper refuses to run as root.
 
 ## Tmux recovery
 

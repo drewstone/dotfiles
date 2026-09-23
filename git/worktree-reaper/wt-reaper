@@ -5,6 +5,9 @@ A worktree is removed only when every check below passes. Any error, any
 unreadable state, or any doubt skips it, and every decision is logged.
 
   - It is a linked worktree, never a main checkout or a bare repository.
+    Scope: every linked worktree registered with a repository found under
+    the roots (default ~/code and ~/company), wherever the worktree lives;
+    a lane worktree in ~/code/_wt and one in /tmp are both in scope.
   - It is not locked, and has no merge, rebase, bisect, cherry-pick or revert
     in progress.
   - Nothing in it (files, directories, its index, HEAD and reflogs) changed
@@ -671,6 +674,10 @@ def main(argv=None):
         paths, unreadable = proc_dump()
         json.dump({'paths': sorted(paths), 'unreadable': unreadable}, sys.stdout)
         return 0
+    if os.geteuid() == 0:
+        # Root would see and remove other accounts' worktrees and would
+        # create root-owned state in a user's repositories.
+        parser.error('run as the owning user, not root')
     if args.root is None:
         args.root = [os.path.expanduser('~/code'), os.path.expanduser('~/company')]
     if args.idle_hours <= 0:

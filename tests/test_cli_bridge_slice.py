@@ -45,6 +45,7 @@ class SliceInstallerTest(unittest.TestCase):
         self.assertIn('CPUQuota=2400%', text)
         self.assertIn('CPUWeight=50', text)
 
+    @unittest.skipIf(os.geteuid() == 0, 'the installer skips itself for root')
     def test_installs_once_then_is_a_no_op(self):
         first = self.run_installer()
         self.assertEqual(first.returncode, 0, first.stdout)
@@ -58,6 +59,7 @@ class SliceInstallerTest(unittest.TestCase):
         self.assertNotIn('installed', second.stdout)
         self.assertEqual(self.calls().count('daemon-reload'), 1)
 
+    @unittest.skipIf(os.geteuid() == 0, 'the installer skips itself for root')
     def test_fails_when_systemd_reports_another_quota(self):
         result = self.run_installer(STUB_QUOTA='16s')
         self.assertNotEqual(result.returncode, 0)
