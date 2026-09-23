@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 const HOOK = resolve("claude/hooks/kill-guard.sh");
 const HOME = mkdtempSync(join(tmpdir(), "kill-guard-"));
+const JQ_AVAILABLE = spawnSync("/bin/sh", ["-c", "command -v jq"]).status === 0;
 
 function decide(command, env = {}) {
-  const r = spawnSync("bash", [HOOK], {
+  const r = spawnSync("/bin/bash", [HOOK], {
     input: JSON.stringify({ tool_name: "Bash", tool_input: { command } }),
     env: { ...process.env, HOME, ...env },
     encoding: "utf8",
@@ -18,6 +19,14 @@ function decide(command, env = {}) {
   if (!r.stdout.trim()) return "allow";
   return JSON.parse(r.stdout).hookSpecificOutput.permissionDecision;
 }
+
+test("missing jq denies Bash commands instead of allowing broad kills", () => {
+  const bin = mkdtempSync(join(tmpdir(), "kill-guard-no-jq-"));
+  symlinkSync("/bin/mkdir", join(bin, "mkdir"));
+  symlinkSync("/bin/date", join(bin, "date"));
+  assert.equal(decide("pkill -f foo", { PATH: bin }), "deny");
+  assert.equal(decide("echo safe", { PATH: bin }), "deny");
+});
 
 const DENY = [
   // The command that caused the incident, verbatim.
@@ -54,17 +63,17 @@ const ALLOW = [
 ];
 
 for (const command of DENY) {
-  test(`denies: ${command}`, () => assert.equal(decide(command), "deny"));
+  test(`denies: ${command}`, { skip: !JQ_AVAILABLE && "jq not installed" }, () => assert.equal(decide(command), "deny"));
 }
 for (const command of ALLOW) {
-  test(`allows: ${command}`, () => assert.equal(decide(command), "allow"));
+  test(`allows: ${command}`, { skip: !JQ_AVAILABLE && "jq not installed" }, () => assert.equal(decide(command), "allow"));
 }
 
-test("the user override lets a denied command through and records it", () => {
+test("the user override lets a denied command through and records it", { skip: !JQ_AVAILABLE && "jq not installed" }, () => {
   assert.equal(decide("pkill -f foo", { CC_ALLOW_BROADCAST_KILL: "1" }), "allow");
 });
 
-test("non-Bash tools pass through", () => {
+test("non-Bash tools pass through", { skip: !JQ_AVAILABLE && "jq not installed" }, () => {
   const r = spawnSync("bash", [HOOK], {
     input: JSON.stringify({ tool_name: "Write", tool_input: { file_path: "/tmp/pkill.txt" } }),
     env: { ...process.env, HOME },

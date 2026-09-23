@@ -212,6 +212,9 @@ test('a replacement server restores saved windows once', (context) => {
 
   const environment = {
     ...process.env,
+    LANG: '',
+    LC_ALL: '',
+    LC_CTYPE: '',
     HOME: testHome,
     PATH: `${testBin}:${process.env.PATH}`,
     TMUX_BIN: '/usr/bin/tmux',
@@ -248,6 +251,7 @@ test('a replacement server restores saved windows once', (context) => {
   )
   const generatedSnapshot = readFileSync(snapshot, 'utf8')
   assert.match(generatedSnapshot, /^session\twindow\tname\tcwd$/m)
+  assert.match(generatedSnapshot, /^alpha\t0\teditor\t\/tmp$/m)
   assert.doesNotMatch(generatedSnapshot, /\\t/)
   assert.equal(statSync(snapshot).mode & 0o777, 0o600)
 

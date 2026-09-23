@@ -211,7 +211,7 @@ write_live_state() {
 
   mkdir -p "$RESURRECT_DIR" || return 1
   printf 'session\twindow\tname\tcwd\n' > "$tmp" || return 1
-  if ! tmux_cmd list-windows -a -F $'#{session_name}\t#{window_index}\t#{window_name}\t#{pane_current_path}' 2>/dev/null |
+  if ! LC_ALL=C.UTF-8 tmux_cmd list-windows -a -F $'#{session_name}\t#{window_index}\t#{window_name}\t#{pane_current_path}' 2>/dev/null |
     sort -t "$(printf '\t')" -k1,1 -k2,2n >> "$tmp"; then
     rm -f "$tmp"
     log "tmux changed while saving the workspace index; keeping the prior index"

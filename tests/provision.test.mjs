@@ -485,6 +485,7 @@ test("a commented-out authorized key does not hide the ssh-copy-id step", () => 
   const script = `
     . host/provision/lib.sh
     . host/provision/tools.sh
+    USER="$(id -un)"
     HOME="${home}"
     ssh_key_authorized && echo active
     true
