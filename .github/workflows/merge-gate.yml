@@ -77,6 +77,8 @@ jobs:
           echo "$RUNNER_TEMP/rtk-bin" >> "$GITHUB_PATH"
       - name: Run repository checks
         id: verify
+        env:
+          SHELL: /bin/bash
         run: |
           python3 -m unittest discover -s gate/.github/scripts -p 'test_*.py' -q
           cd candidate

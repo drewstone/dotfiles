@@ -70,6 +70,10 @@ def current_pr(number):
     return request(f'/repos/{REPO}/pulls/{number}')
 
 
+def main_sha():
+    return request(f'/repos/{REPO}/branches/main')['commit']['sha']
+
+
 def open_groups():
     groups = {}
     for pr in pages(f'/repos/{REPO}/pulls?state=open'):
@@ -170,23 +174,24 @@ def select_ci():
     groups = selected_groups(open_groups())
     items = []
     scheduled = os.environ['GITHUB_EVENT_NAME'] == 'schedule'
+    base = main_sha()
     for head, prs in groups.items():
         if len(prs) != 1:
             status(head, 'merge-gate/ci', 'failure', 'Multiple open PRs share this head')
             continue
         pr = current_pr(prs[0]['number'])
-        if pr['state'] != 'open' or pr['head']['sha'] != head:
+        if pr['state'] != 'open' or pr['head']['sha'] != head or pr['base']['ref'] != 'main':
             raise RuntimeError(f"PR #{prs[0]['number']} changed during CI selection")
         if scheduled:
             latest = latest_status(head, 'merge-gate/ci')
-            if latest and latest['description'].endswith(pr['base']['sha']):
+            if latest and latest['description'].endswith(base):
                 if latest['state'] in ('success', 'failure'):
                     continue
                 updated = datetime.fromisoformat(latest['created_at'].replace('Z', '+00:00'))
                 if latest['state'] == 'pending' and datetime.now(timezone.utc) - updated < PENDING_RETRY:
                     continue
-        items.append({'number': pr['number'], 'head': head, 'base': pr['base']['sha']})
-        status(head, 'merge-gate/ci', 'pending', f"Queued base {pr['base']['sha']}")
+        items.append({'number': pr['number'], 'head': head, 'base': base})
+        status(head, 'merge-gate/ci', 'pending', f'Queued base {base}')
     matrix = json.dumps({'include': items}, separators=(',', ':'))
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
         print(f'matrix={matrix}', file=output)
@@ -196,7 +201,8 @@ def select_ci():
 
 def ci_result(number, head, base, state):
     pr = current_pr(number)
-    if pr['state'] != 'open' or pr['head']['sha'] != head or pr['base']['sha'] != base:
+    if (pr['state'] != 'open' or pr['head']['sha'] != head or
+            pr['base']['ref'] != 'main' or main_sha() != base):
         print(f'PR #{number} changed head or base; ignoring stale CI result')
         return
     latest = latest_status(head, 'merge-gate/ci')
