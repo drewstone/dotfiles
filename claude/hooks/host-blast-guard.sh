@@ -15,10 +15,10 @@
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
 # One exception, which fails closed: a command that names format-traces-drive
-# is refused unless it is one read-only command (cat, grep, git log, sed -n
-# 1,20p, shellcheck and the like), also when that command runs over ssh. So
-# variables, line continuations, bash -c, script -c, tmux send-keys and
-# remote runs are all refused. It exists only on the Linux boxes, where an
+# is refused unless it is one read-only command (cat, head, grep, git log and
+# the like), also when that command runs over ssh. So variables, line
+# continuations, bash -c, script -c, tmux send-keys and remote runs are all
+# refused. It exists only on the Linux boxes, where an
 # ssh session has no claude ancestor for the script's own check to find.
 
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
@@ -61,7 +61,8 @@ if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
 
 # Erasing the trace drive belongs to Drew at a terminal outside Claude. Only
 # a single read-only command may name the script; anything else that names it
-# is refused, however its options are spelled.
+# is refused, however its options are spelled. Each listed command runs no
+# other command whatever its options; sed (e, -e) and awk (system) can.
 READ_ONLY = {"cat", "grep", "head", "tail", "wc", "ls", "stat", "file", "diff", "shellcheck", "readlink", "realpath"}
 # git grep is left out: its -O option runs a command.
 GIT_READ = {"add", "diff", "log", "show", "status", "blame", "ls-files", "rm", "mv", "restore", "commit"}
@@ -88,8 +89,6 @@ def read_only(c, depth=0):
         return True
     if verb == "git":
         return len(tokens) > 1 and tokens[1] in GIT_READ
-    if verb == "sed":
-        return len(tokens) >= 3 and tokens[1] == "-n" and re.fullmatch(r"[0-9]+(?:,(?:[0-9]+|\$))?p", tokens[2]) is not None
     if verb == "ssh":
         i = 1
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -106,7 +105,7 @@ def read_only(c, depth=0):
 if "format-traces-drive" in cmd and not read_only(cmd):
     err = sys.stderr
     print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
-    print("Give Drew the command to run himself. Reading the script (cat, grep, git, sed -n) is allowed as one command.", file=err)
+    print("Give Drew the command to run himself. Reading the script (cat, head, grep, git log) is allowed as one command.", file=err)
     print("To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
     sys.exit(2)
 

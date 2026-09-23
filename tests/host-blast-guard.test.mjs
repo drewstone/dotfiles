@@ -77,6 +77,8 @@ const blocked = [
   "ssh -F /tmp/evil.conf box cat host/bin/format-traces-drive",
   "ssh -J jump box cat host/bin/format-traces-drive",
   "git grep -O'sudo host/bin/format-traces-drive' pattern",
+  "sed -n 1,20p host/bin/format-traces-drive",
+  `sed -n 1p -e '1e ssh -tt box "sudo ~/code/dotfiles/host/bin/format-traces-drive"' README.md`,
 ];
 
 const allowed = [
@@ -115,7 +117,7 @@ const allowed = [
   "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
   "shellcheck host/bin/format-traces-drive",
   "git add host/bin/format-traces-drive host/provision.sh",
-  "sed -n 1,20p host/bin/format-traces-drive",
+  "head -20 host/bin/format-traces-drive",
   "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
   "ssh -p 22 drew@box cat /home/drew/code/dotfiles/host/bin/format-traces-drive",
   "grep -n 'format-traces-drive' README.md host/provision/traces.sh",
