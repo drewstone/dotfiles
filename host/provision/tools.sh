@@ -74,19 +74,22 @@ install_sshd_keys_only() {
   as_root systemctl try-reload-or-restart ssh.service || return 1
   if ! sshd_keys_only_effective; then
     printf 'sshd keeps the first value it reads, and an earlier setting still allows passwords; change it by hand:\n' >&2
-    grep -HiE '^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)[[:space:]]+yes' \
-      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf >&2
+    # shellcheck disable=SC2016 # the root shell expands the glob
+    as_root sh -c 'grep -HiE "^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)[[:space:]]+yes" \
+      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf' >&2
     return 1
   fi
 }
 
 # sshd_keys_only_effective: sshd's effective settings, not only the drop-in:
 # an earlier drop-in can still allow passwords. sshd -G prints the effective
-# configuration without root, host keys or /run/sshd. It does not apply Match
-# blocks, which the check therefore does not cover.
+# configuration without host keys or /run/sshd. It runs as root because a
+# drop-in can be root-only (cloud-init writes 50-cloud-init.conf with mode
+# 600). It does not apply Match blocks, which the check therefore does not
+# cover.
 sshd_keys_only_effective() {
   local t
-  t="$("$SSHD_BIN" -G 2>/dev/null)" || return 1
+  t="$(as_root "$SSHD_BIN" -G 2>/dev/null)" || return 1
   grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t"
 }
 

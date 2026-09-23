@@ -381,6 +381,7 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
     . host/provision/lib.sh
     . host/provision/tools.sh
     SSHD_BIN="${stub}" HOST_DIR=host
+    as_root() { [ "$1" = "${stub}" ] && echo "AS ROOT" >>"${dir}/calls"; "$@"; }
     root_file_is() { true; }
     printf 'usepam yes\\npasswordauthentication yes\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
     sshd_keys_only && echo "PASSWORDS COUNTED AS KEYS ONLY"
@@ -392,6 +393,8 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, "keys only\nno drop-in\n");
+  // A drop-in can be root-only, so sshd -G runs as root.
+  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\nAS ROOT\n");
 });
 
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {
