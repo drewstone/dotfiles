@@ -392,14 +392,18 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
     printf 'Match User drew\\n  PasswordAuthentication=yes\\n' >"$SSHD_CONFIG_D/20-match.conf"
     sshd_keys_only || echo "a Match block allows passwords"
     rm "$SSHD_CONFIG_D/20-match.conf"
+    printf 'Include /etc/ssh/local/*.cfg\\n' >"$SSHD_CONFIG_D/30-include.conf"
+    sshd_keys_only || echo "an Include the run does not read"
+    rm "$SSHD_CONFIG_D/30-include.conf"
+    sshd_keys_only && echo "the drop-in Include is fine"
     root_file_is() { false; }
     sshd_keys_only || echo "no drop-in"
   `;
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "keys only\na Match block allows passwords\nno drop-in\n");
+  assert.equal(r.stdout, "keys only\na Match block allows passwords\nan Include the run does not read\nthe drop-in Include is fine\nno drop-in\n");
   // A drop-in can be root-only, so sshd -G runs as root.
-  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\nAS ROOT\nAS ROOT\n");
+  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(5));
 });
 
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {

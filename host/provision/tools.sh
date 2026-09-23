@@ -75,25 +75,28 @@ install_sshd_keys_only() {
   fi
   as_root systemctl try-reload-or-restart ssh.service || return 1
   if ! sshd_keys_only_effective; then
-    printf 'An earlier setting or a Match block still allows passwords (sshd keeps the first value it reads); change it by hand:\n' >&2
-    # shellcheck disable=SC2016 # the root shell expands $1 and $2
-    as_root sh -c 'grep -HiE "^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)[[:space:]=]+yes" "$1" "$2"/*.conf' \
-      sh "$SSHD_CONFIG" "$SSHD_CONFIG_D" >&2
+    printf 'sshd still allows passwords, or the run cannot tell. sshd keeps the first value it reads; change these by hand:\n' >&2
+    as_root "$SSHD_BIN" -G 2>&1 | grep -E '^(passwordauthentication|kbdinteractiveauthentication) ' >&2
+    sshd_unverified_lines >&2
     return 1
   fi
 }
 
-# sshd_match_lines: the lines inside Match blocks that turn password or
-# keyboard-interactive login back on, for any user or address. It fails when
-# a file cannot be read, so an unread file never counts as clean.
-sshd_match_lines() {
+# sshd_unverified_lines: the lines that can turn password login back on where
+# sshd -G does not look. sshd -G applies no Match block unless given one
+# connection, so a Match block that sets either key to yes counts, for any
+# user or address. An Include other than the drop-in directory can reach any
+# file, so it counts too: the run vouches only for files it reads. It fails
+# when a file cannot be read, so an unread file never counts as clean.
+sshd_unverified_lines() {
   local f
   local -a files=("$SSHD_CONFIG")
   for f in "$SSHD_CONFIG_D"/*.conf; do [ -e "$f" ] && files+=("$f"); done
   # shellcheck disable=SC2016 # $1, $2 and $0 are awk fields
-  as_root awk -F '[ \t=]+' '
+  as_root awk -F '[ \t=]+' -v dropins="$SSHD_CONFIG_D/*.conf" '
     FNR == 1 { match_block = 0 }
     { sub(/^[ \t]+/, "") }
+    tolower($1) == "include" && !(NF == 2 && $2 == dropins) { print FILENAME ": " $0; next }
     tolower($1) == "match" { match_block = 1; next }
     match_block && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication)$/ && tolower($2) == "yes" { print FILENAME ": " $0 }
   ' "${files[@]}"
@@ -103,14 +106,13 @@ sshd_match_lines() {
 # an earlier drop-in can still allow passwords. sshd -G prints the global
 # configuration without host keys or /run/sshd, and it runs as root because a
 # drop-in can be root-only (cloud-init writes 50-cloud-init.conf with mode
-# 600). sshd -G applies Match blocks only for one given connection, so every
-# Match block is read as well.
+# 600).
 sshd_keys_only_effective() {
-  local t m
+  local t u
   t="$(as_root "$SSHD_BIN" -G 2>/dev/null)" || return 1
   grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t" || return 1
-  m="$(sshd_match_lines 2>/dev/null)" || return 1
-  [ -z "$m" ]
+  u="$(sshd_unverified_lines 2>/dev/null)" || return 1
+  [ -z "$u" ]
 }
 
 sshd_keys_only() {
