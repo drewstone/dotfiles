@@ -371,3 +371,47 @@ test("the trace-drive eraser reads every mount stacked on /, /boot and /boot/efi
   assert.match(body, /done < <\(findmnt -nro SOURCE --mountpoint "\$m"/);
   assert.match(body, /lsblk -snlpo NAME/);
 });
+
+test("ssh counts as keys only when sshd's effective settings say so, not when the drop-in exists", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sshd-"));
+  const stub = join(dir, "sshd");
+  writeFileSync(stub, '#!/bin/sh\n[ "$1" = -G ] || exit 2\ncat "$(dirname "$0")/effective"\n');
+  chmodSync(stub, 0o755);
+  const script = `
+    . host/provision/lib.sh
+    . host/provision/tools.sh
+    SSHD_BIN="${stub}" HOST_DIR=host
+    root_file_is() { true; }
+    printf 'usepam yes\\npasswordauthentication yes\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
+    sshd_keys_only && echo "PASSWORDS COUNTED AS KEYS ONLY"
+    printf 'passwordauthentication no\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
+    sshd_keys_only && echo "keys only"
+    root_file_is() { false; }
+    sshd_keys_only || echo "no drop-in"
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "keys only\nno drop-in\n");
+});
+
+test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {
+  const script = `
+    . host/provision/lib.sh
+    . host/provision/wifi.sh
+    nmcli() { :; }
+    root_file_is() { true; }
+    wifi_timer_on() { true; }
+    wifi_uuids() { :; }
+    wifi_profile_exists() { true; }
+    wifi_psk_is_stored() { true; }
+    wifi_psk_matches() { echo "COMPARED"; }
+    WIFI_SSID=home WIFI_PSK_FILE="" REPLACE_PSK=1
+    PROVISION_MODE=apply; module_wifi
+    PROVISION_MODE=check; module_wifi | grep -c COMPARED
+    true
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /COMPARED\n\s+ok\s+'home' holds the passphrase given on the terminal/);
+  assert.match(r.stdout, /\n0\n$/);
+});

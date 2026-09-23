@@ -149,8 +149,12 @@ module_wifi() {
     ensure "Wi-Fi profile for '$WIFI_SSID'" wifi_profile_exists -- wifi_add_profile
     if wifi_profile_exists; then
       ensure "'$WIFI_SSID' stores its passphrase system-wide" wifi_psk_is_stored -- wifi_store_psk
-      if [ -n "$WIFI_PSK_FILE" ] && wifi_psk_is_stored; then
-        ensure "'$WIFI_SSID' holds the passphrase in $WIFI_PSK_FILE" wifi_psk_matches -- wifi_replace_psk
+      # Compare with a given passphrase: one from a file, or, for
+      # --replace-psk, one from the prompt. Check mode never prompts.
+      local from="in $WIFI_PSK_FILE"
+      [ -n "$WIFI_PSK_FILE" ] || from="given on the terminal"
+      if wifi_psk_is_stored && { [ -n "$WIFI_PSK_FILE" ] || { [ "$REPLACE_PSK" = 1 ] && ! checking; }; }; then
+        ensure "'$WIFI_SSID' holds the passphrase $from" wifi_psk_matches -- wifi_replace_psk
       fi
     fi
   fi

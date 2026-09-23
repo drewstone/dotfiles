@@ -8,6 +8,7 @@
 # Ubuntu Desktop has no SSH server; agents reach the box over LAN ssh.
 BASE_PACKAGES="curl ca-certificates git jq unzip xz-utils fontconfig tmux psmisc dconf-cli wl-clipboard iw python3-venv qemu-system-x86 qemu-utils cloud-image-utils openssh-server"
 SSHD_KEYS_ONLY=/etc/ssh/sshd_config.d/10-dotfiles-keys-only.conf
+SSHD_BIN="${SSHD_BIN:-/usr/sbin/sshd}"
 
 linger_on() { [ -e "/var/lib/systemd/linger/$USER" ]; }
 in_group() { id -nG "$USER" | tr ' ' '\n' | grep -x "$1" >/dev/null; }
@@ -70,7 +71,27 @@ install_sshd_keys_only() {
     as_root rm -f "$SSHD_KEYS_ONLY"
     return 1
   fi
-  as_root systemctl try-reload-or-restart ssh.service
+  as_root systemctl try-reload-or-restart ssh.service || return 1
+  if ! sshd_keys_only_effective; then
+    printf 'sshd keeps the first value it reads, and an earlier setting still allows passwords; change it by hand:\n' >&2
+    grep -HiE '^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)[[:space:]]+yes' \
+      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf >&2
+    return 1
+  fi
+}
+
+# sshd_keys_only_effective: sshd's effective settings, not only the drop-in:
+# an earlier drop-in can still allow passwords. sshd -G prints the effective
+# configuration without root, host keys or /run/sshd. It does not apply Match
+# blocks, which the check therefore does not cover.
+sshd_keys_only_effective() {
+  local t
+  t="$("$SSHD_BIN" -G 2>/dev/null)" || return 1
+  grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t"
+}
+
+sshd_keys_only() {
+  root_file_is 0644 "$HOST_DIR/ssh/10-dotfiles-keys-only.conf" "$SSHD_KEYS_ONLY" && sshd_keys_only_effective
 }
 
 ssh_key_authorized() {
@@ -88,8 +109,7 @@ module_tools() {
   section "tools: base packages, OpenSSH (keys only), Google Chrome, Tailscale, GitHub CLI, uv"
   # shellcheck disable=SC2086 # the list splits on purpose
   want_pkgs $BASE_PACKAGES
-  ensure "$SSHD_KEYS_ONLY (ssh accepts keys only)" \
-    root_file_is 0644 "$HOST_DIR/ssh/10-dotfiles-keys-only.conf" "$SSHD_KEYS_ONLY" -- install_sshd_keys_only
+  ensure "ssh accepts keys only ($SSHD_KEYS_ONLY, effective in sshd -G)" sshd_keys_only -- install_sshd_keys_only
   if ! ssh_key_authorized; then
     manual_after_signin "ssh accepts keys only, and no key is authorized for $USER yet. From the Mac, after the tailnet join (Tailscale SSH carries the copy):" \
       "ssh-copy-id $USER@$(hostname -s | tr '[:upper:]' '[:lower:]')"
