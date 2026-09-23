@@ -110,14 +110,29 @@ codex_fallback_ok() {
 
 # A top-level TOML key must come before the first [table], so prepend it.
 add_codex_fallback() {
-  local cfg="$HOME/.codex/config.toml"
+  local cfg="$HOME/.codex/config.toml" tmp
   if grep -Eq '^project_doc_fallback_filenames *=' "$cfg" 2>/dev/null; then
     printf 'project_doc_fallback_filenames in %s has no "CLAUDE.md"; add it to that list by hand\n' "$cfg" >&2
     return 1
   fi
-  mkdir -p "$HOME/.codex" && touch "$cfg" &&
-    { printf 'project_doc_fallback_filenames = ["CLAUDE.md"]\n'; cat "$cfg"; } >"$cfg.new" &&
-    mv "$cfg.new" "$cfg"
+  mkdir -p "$HOME/.codex" || return 1
+  tmp="$(mktemp "$HOME/.codex/.config.toml.XXXXXX")" || return 1
+  if ! printf 'project_doc_fallback_filenames = ["CLAUDE.md"]\n' >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if [ -f "$cfg" ] && ! cat "$cfg" >>"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if [ -e "$cfg" ] && ! chmod --reference="$cfg" "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! mv -- "$tmp" "$cfg"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 claude_running() { pgrep -u "$USER" -f '(^|/)claude( |$)' >/dev/null 2>&1; }

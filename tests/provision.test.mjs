@@ -56,6 +56,25 @@ test("an unknown module is a usage error", () => {
   assert.match(r.stderr, /unknown module/);
 });
 
+test("Codex fallback preserves a private config file", () => {
+  const home = mkdtempSync(join(tmpdir(), "codex-fallback-"));
+  try {
+    const dir = join(home, ".codex");
+    const cfg = join(dir, "config.toml");
+    mkdirSync(dir);
+    writeFileSync(cfg, 'model = "example"\n');
+    chmodSync(cfg, 0o600);
+    const result = sh("bash", ["-c", "umask 022; . host/provision/agents.sh; add_codex_fallback; codex_fallback_ok"], {
+      env: { ...process.env, HOME: home },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(lstatSync(cfg).mode & 0o777, 0o600);
+    assert.equal(readFileSync(cfg, "utf8"), 'project_doc_fallback_filenames = ["CLAUDE.md"]\nmodel = "example"\n');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // The core promise: check mode reports and never fixes; apply fixes, re-tests,
 // and reports; a step that already holds is only "ok".
 test("ensure: check never fixes, apply fixes and re-tests", () => {
