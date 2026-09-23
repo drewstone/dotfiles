@@ -64,6 +64,15 @@ run_claude_install() {
   quiet bash "$DOTFILES/claude/install.sh"
 }
 
+claude_local_trust_ok() {
+  [ -f "$HOME/.claude/settings.local.json" ] &&
+    python3 "$DOTFILES/claude/tools/claude-trust.py" check-local "$HOME/.claude/settings.local.json"
+}
+
+sanitize_claude_local_trust() {
+  python3 "$DOTFILES/claude/tools/claude-trust.py" sanitize-local "$HOME/.claude/settings.local.json"
+}
+
 # claude_plugins_missing: print each enabledPlugins key whose cache directory
 # (~/.claude/plugins/cache/<marketplace>/<name>) is absent.
 claude_plugins_missing() {
@@ -112,11 +121,7 @@ claude_running() { pgrep -u "$USER" -f '(^|/)claude( |$)' >/dev/null 2>&1; }
 claude_trust_ok() {
   [ -f "$HOME/.claude.json" ] || return 1
   # shellcheck disable=SC2086 # one argument per directory
-  python3 - "$HOME/.claude.json" $CLAUDE_TRUST_DIRS <<'PY'
-import json, sys
-projects = json.load(open(sys.argv[1])).get("projects", {})
-sys.exit(0 if all(projects.get(d, {}).get("hasTrustDialogAccepted") for d in sys.argv[2:]) else 1)
-PY
+  python3 "$DOTFILES/claude/tools/claude-trust.py" check-projects "$HOME/.claude.json" $CLAUDE_TRUST_DIRS
 }
 
 # Claude rewrites ~/.claude.json while it runs, so an edit races a live
@@ -127,20 +132,7 @@ add_claude_trust() {
     return 1
   fi
   # shellcheck disable=SC2086
-  python3 - "$HOME/.claude.json" $CLAUDE_TRUST_DIRS <<'PY'
-import json, os, sys
-path = sys.argv[1]
-data = json.load(open(path))
-projects = data.setdefault("projects", {})
-for d in sys.argv[2:]:
-    projects.setdefault(d, {})["hasTrustDialogAccepted"] = True
-tmp = path + ".provision-tmp"
-with open(tmp, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-os.chmod(tmp, os.stat(path).st_mode & 0o777)
-os.replace(tmp, path)
-PY
+  python3 "$DOTFILES/claude/tools/claude-trust.py" set-projects "$HOME/.claude.json" $CLAUDE_TRUST_DIRS
 }
 
 module_agents() {
@@ -149,6 +141,7 @@ module_agents() {
   ensure "Codex standalone install in ~/.local/bin" codex_ok -- install_codex
   ensure "rtk $RTK_VERSION in ~/.local/bin" rtk_ok -- install_rtk
   ensure "claude/install.sh links (instructions, settings, skills, hooks, tools)" claude_links_current -- run_claude_install
+  ensure "Claude local trust excludes temporary directories" claude_local_trust_ok -- sanitize_claude_local_trust
   claude_plugins
   ensure "Codex reads CLAUDE.md when a folder has no AGENTS.md" codex_fallback_ok -- add_codex_fallback
   if [ -f "$HOME/.claude.json" ]; then

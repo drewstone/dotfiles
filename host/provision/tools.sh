@@ -86,8 +86,10 @@ install_sshd_keys_only() {
 # key login off, where sshd -G does not look. sshd -G applies no Match block
 # unless given one connection, so a Match block counts, for any user or
 # address, when it sets either password key to anything but no, or
-# PubkeyAuthentication to anything but yes (after quotes and case). An Include other than the drop-in directory can reach any
-# file, so it counts too: the run vouches only for files it reads. It fails
+# PubkeyAuthentication to anything but yes (after quotes and case). An Include
+# inside Match keeps that context in included files, so it always counts as
+# unverified. Other Includes count unless they name the checked drop-in directory.
+# The run vouches only for files it reads. It fails
 # when a file cannot be read, so an unread file never counts as clean.
 sshd_unverified_lines() {
   local f
@@ -97,7 +99,7 @@ sshd_unverified_lines() {
   as_root awk -F '[ \t=]+' -v dropins="$SSHD_CONFIG_D/*.conf" '
     FNR == 1 { match_block = 0 }
     { sub(/^[ \t]+/, ""); value = tolower($2); gsub(/"/, "", value) }
-    tolower($1) == "include" && !(NF == 2 && value == tolower(dropins)) { print FILENAME ": " $0; next }
+    tolower($1) == "include" { if (match_block || !(NF == 2 && value == tolower(dropins))) print FILENAME ": " $0; next }
     tolower($1) == "match" { match_block = 1; next }
     match_block && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication)$/ && value != "no" { print FILENAME ": " $0 }
     match_block && tolower($1) == "pubkeyauthentication" && value != "yes" { print FILENAME ": " $0 }

@@ -98,6 +98,8 @@ Do these steps in this order:
 
 4. Run the provisioning from a terminal on the box.
    Ubuntu Desktop has no SSH server; the run installs one that accepts keys only.
+   The SSH check refuses an `Include` inside `Match` because included lines can reenable password login.
+   Claude trust excludes temporary directories and removes existing temporary trust during provisioning.
    Give the Wi-Fi name.
    When the box stores no passphrase for that network, the run asks for it.
    The run asks for the sudo password once; the `guards` module then makes sudo passwordless.

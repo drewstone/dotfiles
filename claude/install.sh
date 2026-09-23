@@ -207,8 +207,7 @@ if [ ! -e "$LOCAL_SETTINGS" ]; then
 {
   "trustedDirectories": [
     "$HOME",
-    "$HOME/code",
-    "/tmp"
+    "$HOME/code"
   ]
 }
 EOF
@@ -216,6 +215,7 @@ EOF
 else
   echo "  SKIP $LOCAL_SETTINGS (exists)"
 fi
+python3 "$SCRIPT_DIR/tools/claude-trust.py" sanitize-local "$LOCAL_SETTINGS"
 
 # Pi skills (subset — only skills that work in conversation, not coding)
 PI_SKILLS_DIR="$HOME/.pi/agent/skills"
