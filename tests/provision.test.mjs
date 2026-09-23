@@ -514,6 +514,32 @@ test("tangle-tools updates an existing deploy clone before running its installer
     join(home, ".local/share/tangle-tools/fleet/gtr-desktop"));
 });
 
+test("kiosk repair re-enables an installed VNC unit", () => {
+  const home = mkdtempSync(join(tmpdir(), "prov-vnc-repair-"));
+  const unit = join(home, ".local/share/tangle-tools/fleet/systemd/gtr-desktop.service");
+  mkdirSync(join(home, ".local/share/tangle-tools/fleet/systemd"), { recursive: true });
+  writeFileSync(unit, "[Unit]\n");
+  const r = sh("bash", ["-c", `
+    HOME="${home}"
+    . host/provision/lib.sh; . host/provision/tangle-tools.sh
+    user_bus() { return 0; }
+    systemctl() {
+      case "$*" in
+        "--user is-enabled --quiet vnc-desktop.service") [ -e "$HOME/vnc-enabled" ] ;;
+        "--user enable --quiet vnc-desktop.service") touch "$HOME/vnc-enabled" ;;
+        "--user is-enabled --quiet gtr-desktop.service") [ -e "$HOME/desktop-enabled" ] ;;
+        "--user enable --quiet gtr-desktop.service") touch "$HOME/desktop-enabled" ;;
+        "--user daemon-reload") return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    install_desktop_unit && desktop_unit_on
+  `]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(home, "vnc-enabled")));
+  assert.equal(readlinkSync(join(home, ".config/systemd/user/gtr-desktop.service")), unit);
+});
+
 test("a commented-out authorized key does not hide the ssh-copy-id step", () => {
   const home = mkdtempSync(join(tmpdir(), "authkeys-"));
   mkdirSync(join(home, ".ssh"));

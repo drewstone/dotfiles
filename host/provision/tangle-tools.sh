@@ -67,12 +67,14 @@ desktop_unit_on() {
 
 install_desktop_unit() {
   [ -f "$DESKTOP_UNIT_SRC" ] || { printf '%s is missing; update the deploy clone first\n' "$DESKTOP_UNIT_SRC" >&2; return 1; }
-  systemctl --user is-enabled --quiet vnc-desktop.service 2>/dev/null || {
-    printf 'vnc-desktop.service must be installed and enabled before the shared desktop\n' >&2
-    return 1
-  }
-  link_into "$DESKTOP_UNIT_SRC" "$DESKTOP_UNIT" || return 1
   user_bus || { printf 'no session bus for %s: enable linger or log in once\n' "$USER" >&2; return 1; }
+  if ! systemctl --user is-enabled --quiet vnc-desktop.service 2>/dev/null; then
+    systemctl --user enable --quiet vnc-desktop.service || {
+      printf 'vnc-desktop.service must be installed before the shared desktop\n' >&2
+      return 1
+    }
+  fi
+  link_into "$DESKTOP_UNIT_SRC" "$DESKTOP_UNIT" || return 1
   systemctl --user daemon-reload && systemctl --user enable --quiet gtr-desktop.service
 }
 
