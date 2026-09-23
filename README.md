@@ -19,7 +19,7 @@ project_doc_fallback_filenames = ["CLAUDE.md"]
 This lets Codex discover repositories that use only `CLAUDE.md`.
 If fallback names already exist, append this name to that list.
 On a Linux box, `host/provision.sh agents` adds the setting.
-It keeps the existing file permissions when it updates `config.toml`.
+It writes `config.toml` with mode 0600 to keep it private.
 Codex prefers `AGENTS.override.md`, then `AGENTS.md`, then configured fallback names within each directory.
 Keep shared repository guidance in `AGENTS.md` when both agents use it; a Claude entry can import `@AGENTS.md`.
 See the [current Codex discovery rules](https://developers.openai.com/codex/guides/agents-md) for scope and limits.

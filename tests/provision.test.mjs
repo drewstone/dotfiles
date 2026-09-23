@@ -75,6 +75,29 @@ test("Codex fallback preserves a private config file", () => {
   }
 });
 
+test("Codex fallback removes an inherited named ACL", { skip: !have("setfacl") || !have("getfacl") }, () => {
+  const home = mkdtempSync(join(tmpdir(), "codex-fallback-acl-"));
+  try {
+    const dir = join(home, ".codex");
+    const cfg = join(dir, "config.toml");
+    mkdirSync(dir);
+    writeFileSync(cfg, 'model = "example"\n');
+    chmodSync(cfg, 0o640);
+    const set = sh("setfacl", ["-m", "d:u:65534:r--", dir]);
+    assert.equal(set.status, 0, set.stderr);
+    const result = sh("bash", ["-c", "umask 022; . host/provision/agents.sh; add_codex_fallback"], {
+      env: { ...process.env, HOME: home },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(lstatSync(cfg).mode & 0o777, 0o600);
+    const acl = sh("getfacl", ["-cpn", cfg]);
+    assert.equal(acl.status, 0, acl.stderr);
+    assert.doesNotMatch(acl.stdout, /^user:65534:/m);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // The core promise: check mode reports and never fixes; apply fixes, re-tests,
 // and reports; a step that already holds is only "ok".
 test("ensure: check never fixes, apply fixes and re-tests", () => {

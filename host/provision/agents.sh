@@ -125,7 +125,11 @@ add_codex_fallback() {
     rm -f -- "$tmp"
     return 1
   fi
-  if [ -e "$cfg" ] && ! chmod --reference="$cfg" "$tmp"; then
+  if command -v setfacl >/dev/null 2>&1 && ! setfacl -b "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  if ! chmod 600 "$tmp"; then
     rm -f -- "$tmp"
     return 1
   fi
