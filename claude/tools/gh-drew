@@ -43,13 +43,25 @@ try_token() {
   if [[ -r "$cache" ]]; then
     stamp="$(head -1 "$cache" 2>/dev/null || true)"
     if [[ "$stamp" =~ ^[0-9]+$ ]] && (( now - stamp < verify_ttl )); then
-      tail -1 "$cache" 2>/dev/null
-      return 0
+      local cached
+      cached="$(tail -1 "$cache" 2>/dev/null || true)"
+      # A cache written before this check could hold an API error body; ignore it.
+      if [[ "$cached" =~ ^[A-Za-z0-9-]+$ ]]; then
+        printf '%s' "$cached"
+        return 0
+      fi
+      rm -f "$cache" 2>/dev/null || true
     fi
   fi
 
   local login
   login="$(GH_TOKEN="$token" gh api user --jq .login 2>/dev/null || true)"
+  # On a 403 (rate limit) gh prints the JSON error body to stdout; only a real
+  # GitHub login may be cached or returned, or one outage locks every caller out
+  # for the whole cache TTL.
+  if [[ ! "$login" =~ ^[A-Za-z0-9-]+$ ]]; then
+    return 1
+  fi
   if [[ -n "$login" ]]; then
     mkdir -p "$verify_cache_dir" 2>/dev/null || true
     printf '%s\n%s\n' "$now" "$login" > "$cache" 2>/dev/null || true
