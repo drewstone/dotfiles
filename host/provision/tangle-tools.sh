@@ -11,8 +11,13 @@ tt_installed() {
     [ -L "$HOME/.local/bin/tangle-tools-deploy" ]
 }
 
+# Apply mode records GitHub's host key on first contact; check mode writes
+# nothing, so there an unknown host key reads as "no access yet".
 github_ssh_ok() {
-  GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10' git ls-remote "$TT_REPO" HEAD >/dev/null 2>&1
+  local accept=no
+  checking || accept='accept-new'
+  GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=$accept" \
+    git ls-remote "$TT_REPO" HEAD >/dev/null 2>&1
 }
 
 install_tt() {

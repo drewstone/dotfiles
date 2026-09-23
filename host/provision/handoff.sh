@@ -45,11 +45,13 @@ module_handoff() {
     manual "Join the tailnet (a browser sign-in; the box then answers as \$(hostname -s) over MagicDNS):" \
       "sudo tailscale up --ssh --operator=$USER"
   fi
-  if [ -x "$HOME/.local/bin/claude" ] && ! "$HOME/.local/bin/claude" auth status >/dev/null 2>&1; then
+  # Credential files, not the CLIs: a status call can refresh a token, and
+  # --check must not change anything.
+  if [ -x "$HOME/.local/bin/claude" ] && [ ! -s "$HOME/.claude/.credentials.json" ]; then
     manual "Sign in Claude Code for interactive use (fleet agents use acct tokens instead):" \
       "claude auth login"
   fi
-  if [ -x "$HOME/.local/bin/codex" ] && ! "$HOME/.local/bin/codex" login status >/dev/null 2>&1; then
+  if [ -x "$HOME/.local/bin/codex" ] && [ ! -s "$HOME/.codex/auth.json" ]; then
     manual "Sign in Codex (device code; open the URL on any machine):" \
       "codex login --device-auth"
   fi

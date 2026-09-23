@@ -6,8 +6,8 @@
 #   /usr/local/sbin/<verb>                 root wrappers; secure_path puts them first
 #   /etc/sudoers.d/zz-agent-blast-guard    closes the absolute-path route
 #   /etc/watchdog.conf, /etc/watchdog.d/root-write, /etc/default/watchdog,
-#   /etc/modprobe.d, /etc/udev/rules.d, /etc/systemd/system.conf.d,
-#   watchdog.service drop-in               a frozen root resets the box in ~4 min (measured)
+#   /etc/modprobe.d, udev rule, system.conf.d, watchdog.service drop-in
+#                                          a frozen root resets the box in ~4 min (measured)
 #
 # Usage: host/install.sh [--check]
 #   --check   report drift and change nothing; exit 1 when anything differs.

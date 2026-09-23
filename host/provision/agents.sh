@@ -73,7 +73,7 @@ for key in json.load(open(sys.argv[1])).get("enabledPlugins", {}):
 PY
 }
 
-signed_in() { gh auth status >/dev/null 2>&1 && "$HOME/.local/bin/claude" auth status >/dev/null 2>&1; }
+signed_in() { gh auth status >/dev/null 2>&1 && [ -s "$HOME/.claude/.credentials.json" ]; }
 
 claude_plugins_complete() { [ -z "$(claude_plugins_missing)" ]; }
 

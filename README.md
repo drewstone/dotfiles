@@ -38,6 +38,20 @@ Run `./host/install.sh --check` to report drift without a change.
   It also blocks `host/bin/format-traces-drive`, which erases a disk.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
 
+## Tmux recovery
+
+Install the tmux watcher and make its user manager a last-resort memory-pressure target:
+
+```bash
+./tmux/install-heal.sh
+```
+
+The watcher saves a workspace index every minute.
+It also asks tmux-resurrect to save its standard snapshot every 15 minutes when installed.
+After server loss, it recreates session and window names with shells in their prior directories.
+It cannot revive processes, pane splits, scrollback, or unsaved work.
+The installer keeps normal pane processes eligible for memory-pressure cleanup.
+
 ## Provision a new Beelink
 
 `host/provision.sh` makes a fresh Ubuntu 24.04 Beelink into an agent box like drew-gtr-pro.
@@ -114,20 +128,6 @@ The provisioning does not install Docker, ROCm, Ollama, nvm, or Rust.
 
 `tests/provision.hostlab.sh` runs the whole provisioning twice in a hostlab VM on a KVM host.
 It also reboots the VM, formats a test disk, and freezes the root filesystem to prove the reset.
-
-## Tmux recovery
-
-Install the tmux watcher and make its user manager a last-resort memory-pressure target:
-
-```bash
-./tmux/install-heal.sh
-```
-
-The watcher saves a workspace index every minute.
-It also asks tmux-resurrect to save its standard snapshot every 15 minutes when installed.
-After server loss, it recreates session and window names with shells in their prior directories.
-It cannot revive processes, pane splits, scrollback, or unsaved work.
-The installer keeps normal pane processes eligible for memory-pressure cleanup.
 
 ## Global Git Etiquette Guard
 
