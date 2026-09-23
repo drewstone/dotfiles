@@ -42,9 +42,9 @@ case "$(uname -s)" in
     launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$plist"
     launchctl print "gui/$(id -u)/$label" | grep -E '^\s*(state|path) =' || true
     # The reaper removes nothing unless lsof can see every process, which needs root.
-    if ! sudo -n /usr/sbin/lsof -n -P -w -F pn >/dev/null 2>&1; then
+    if ! sudo -n /usr/sbin/lsof -n -P -w -F pn -p $$ >/dev/null 2>&1; then
       echo "wt-reaper: sudo -n lsof unavailable; the agent will skip every worktree until you run once:"
-      echo "  echo '$(id -un) ALL=(root) NOPASSWD: /usr/sbin/lsof -n -P -w -F pn' | sudo tee /etc/sudoers.d/wt-reaper && sudo chmod 0440 /etc/sudoers.d/wt-reaper && sudo visudo -c"
+      echo "  echo '$(id -un) ALL=(root) NOPASSWD: /usr/sbin/lsof' | sudo tee /etc/sudoers.d/wt-reaper && sudo chmod 0440 /etc/sudoers.d/wt-reaper && sudo visudo -c"
     fi
     ;;
   *)

@@ -390,6 +390,45 @@ class RecheckFetchTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(path))
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
+class ScanConvergenceTest(unittest.TestCase):
+    """A process that appears after the first /proc listing is still inspected."""
+
+    def test_late_process_is_scanned(self):
+        mod = load_reaper()
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-scan-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        child = subprocess.Popen(['sleep', '60'], cwd=tmp)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        real_listdir = mod.os.listdir
+        calls = []
+
+        def listdir(path):
+            entries = real_listdir(path)
+            if path == '/proc':
+                calls.append(1)
+                if len(calls) == 1:
+                    return [e for e in entries if e != str(child.pid)]
+            return entries
+
+        mod.os.listdir = listdir
+        try:
+            paths, _ = mod.proc_dump()
+        finally:
+            mod.os.listdir = real_listdir
+        self.assertIn(tmp, paths)
+        self.assertGreaterEqual(len(calls), 2)
+
+
+class ArgumentTest(unittest.TestCase):
+    def test_rejects_non_finite_idle_hours(self):
+        for value in ('nan', 'inf', '0', '-1'):
+            proc = subprocess.run([sys.executable, REAPER, '--dry-run', '--no-log-file', '--idle-hours', value],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(proc.returncode, 2, value)
+
+
 class RootRefusalTest(unittest.TestCase):
     @unittest.skipUnless(os.geteuid() == 0, 'needs root')
     def test_refuses_root(self):

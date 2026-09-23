@@ -50,7 +50,7 @@ It removes one only when every check passes:
 - After `git fetch --all --prune`, every commit on its HEAD is on a remote-tracking ref.
 - No process has its cwd, an open file, or a mapped file inside it (`/proc` on Linux, `lsof` on macOS).
   The scan must read every live process, so it uses `sudo -n`; if any live process stays unreadable, the run removes nothing.
-  On macOS this needs a sudoers rule for `/usr/sbin/lsof -n -P -w -F pn`; the installer prints it.
+  On macOS this needs a sudoers rule for `/usr/sbin/lsof`; the installer prints it.
 
 Any error or doubt skips the tree, and every decision is logged to `~/.local/state/wt-reaper/wt-reaper.log`.
 Removal uses `git worktree remove` without `--force`.
