@@ -62,7 +62,9 @@ jobs:
           BASE_SHA: ${{ matrix.base }}
         run: |
           git -C candidate fetch --no-tags origin "$BASE_SHA"
-          git -C candidate merge --no-commit --no-ff "$BASE_SHA"
+          # The isolated runner has no Git identity, so build the merge tree without a commit.
+          merged_tree=$(git -C candidate merge-tree --write-tree HEAD "$BASE_SHA")
+          git -C candidate read-tree --reset -u "$merged_tree"
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
