@@ -491,6 +491,29 @@ test("desktop drops the old Ghostty autostart after the deployed kiosk unit is e
   assert.match(clean.stdout, /ok +desktop unit/);
 });
 
+test("tangle-tools updates an existing deploy clone before running its installer", () => {
+  const home = mkdtempSync(join(tmpdir(), "prov-tt-upgrade-"));
+  const deploy = join(home, ".local/share/tangle-tools/deploy");
+  mkdirSync(join(home, ".local/share/tangle-tools/.git"), { recursive: true });
+  mkdirSync(deploy, { recursive: true });
+  const installer = join(deploy, "tangle-tools-deploy");
+  const next = join(home, "new-deploy");
+  writeFileSync(installer, '#!/bin/sh\n[ "$1" = update ] || exit 1\ncp "$TT_NEW" "$0.new" && chmod +x "$0.new" && mv "$0.new" "$0"\n');
+  writeFileSync(next, '#!/bin/sh\n[ "$1" = install ] || exit 1\nmkdir -p "$HOME/.local/bin"\nln -s "$HOME/.local/share/tangle-tools/fleet/gtr-desktop" "$HOME/.local/bin/gtr-desktop"\n');
+  chmodSync(installer, 0o755);
+  chmodSync(next, 0o755);
+  const r = sh("bash", ["-c", `
+    HOME="${home}" TT_NEW="${next}"; export TT_NEW
+    . host/provision/lib.sh; . host/provision/tangle-tools.sh
+    github_ssh_ok() { return 0; }
+    user_bus() { return 0; }
+    install_tt
+  `]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readlinkSync(join(home, ".local/bin/gtr-desktop")),
+    join(home, ".local/share/tangle-tools/fleet/gtr-desktop"));
+});
+
 test("a commented-out authorized key does not hide the ssh-copy-id step", () => {
   const home = mkdtempSync(join(tmpdir(), "authkeys-"));
   mkdirSync(join(home, ".ssh"));

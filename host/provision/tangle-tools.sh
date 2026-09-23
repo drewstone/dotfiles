@@ -30,6 +30,10 @@ install_tt() {
   fi
   if [ ! -d "$TT_DIR/.git" ]; then
     git clone -q "$TT_REPO" "$TT_DIR" || return 1
+  else
+    # The old installer can fetch new code but still runs its old in-memory LINKS list.
+    # Update first, then execute the installer from the new checkout.
+    indent "$TT_DIR/deploy/tangle-tools-deploy" update || return 1
   fi
   user_bus || true
   indent "$TT_DIR/deploy/tangle-tools-deploy" install
