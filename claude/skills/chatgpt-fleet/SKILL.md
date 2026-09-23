@@ -41,8 +41,10 @@ Know them so you work with them, not around them.
   Use it for a decision that needs an independent read.
 - When the session opens its PR, run `pr <item> <number>`.
   The chat becomes `repo · item · #N`.
-- Finish with `close <item> --merged` or `close <item> --abandoned '<reason>'`.
-  A merge needs GitHub to show it; only the owning session abandons.
+- Finish a PR item with `close <item> --merged`; GitHub must show the merge.
+  Finish a research item with `close <item> --answered '<summary>'`.
+  Stop an item with `close <item> --abandoned '<reason>'`.
+  Only the owning session answers or abandons an item.
   The tool exports the chat into `~/traces/chatgpt/` and archives it.
   Nothing deletes a chat.
 - A sweep timer closes items whose PR merged, restores titles, and exports every managed chat.
@@ -67,10 +69,11 @@ A plan the session wrote is a plan it will finish; a plan you wrote is a specifi
 Forbid questions and require it to decide.
 
 **Round 2 — build and open the PRs.** Open one item per planned PR.
-Put that plan entry, a few lines from the scope reply, in the item's prompt, and name the PR as the deliverable.
-The session builds it to completion: a branch off the default branch, the commits, and an opened PR.
-Require the PR number and URL in the reply, so the claim is checkable, then run `pr <item> <number>`.
-Close the scope item once every build item is open.
+Copy that plan entry from the scope reply into the item's prompt.
+Name the opened PR as the deliverable.
+Require the PR number and URL in the reply.
+Record the number with `pr <item> <number>`.
+Close the scope item with `--answered` once every build item is open.
 
 Never accept a zip.
 A zip is a delivery you have to unpack, diff and re-author before it is reviewable.
