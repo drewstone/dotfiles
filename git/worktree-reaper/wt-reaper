@@ -1,0 +1,682 @@
+#!/usr/bin/env python3
+"""Remove idle, clean, fully pushed git worktrees. Fail closed.
+
+A worktree is removed only when every check below passes. Any error, any
+unreadable state, or any doubt skips it, and every decision is logged.
+
+  - It is a linked worktree, never a main checkout or a bare repository.
+  - It is not locked, and has no merge, rebase, bisect, cherry-pick or revert
+    in progress.
+  - Nothing in it (files, directories, its index, HEAD and reflogs) changed
+    within --idle-hours. Both mtime and ctime count.
+  - `git status` shows no tracked change and no untracked file. Ignored
+    entries are allowed only when they look like build or dependency output
+    (node_modules/, dist/, target/, ...); an ignored .env or notes file skips.
+  - It contains no nested git repository or worktree.
+  - After `git fetch --all --prune`, every commit reachable from its HEAD is
+    reachable from a remote-tracking ref.
+  - No process has its cwd, root, an open file or a mapped file inside it
+    (/proc on Linux, lsof on macOS).
+
+Removal uses `git worktree remove` without --force, so git re-checks the tree,
+then `git worktree prune --expire=<idle>`. The local branch is deleted with
+`git branch -d` only when it is an ancestor of the remote default branch.
+
+Python 3.9 compatible: macOS runs it with /usr/bin/python3.
+"""
+
+import argparse
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+IS_LINUX = sys.platform.startswith('linux')
+IS_MAC = sys.platform == 'darwin'
+
+# Ignored paths that may be discarded with the worktree. Anything else that
+# is ignored (.env, scratch notes, local config) makes the worktree a skip.
+BUILD_DIRS = {
+    'node_modules', 'dist', 'build', 'out', 'target', 'coverage', '.next',
+    '.nuxt', '.turbo', '.cache', '.parcel-cache', '.vite', '.svelte-kit',
+    '.output', '.vercel', '__pycache__', '.pytest_cache', '.mypy_cache',
+    '.ruff_cache', '.tox', '.nox', '.venv', 'venv', '.gradle', '.eslintcache',
+    '.wrangler', '.nyc_output', 'storybook-static', '.docusaurus',
+    '.expo', '.angular', '.pnpm-store', '.yarn', 'foundry-out', 'cache',
+    'artifacts', 'typechain-types', 'test-results', 'playwright-report',
+}
+BUILD_FILE_RE = re.compile(
+    r'(\.pyc|\.pyo|\.tsbuildinfo|\.log|\.o|\.so|\.dylib|\.class|\.DS_Store'
+    r'|\.eslintcache|\.coverage)$'
+)
+IN_PROGRESS = {
+    'MERGE_HEAD': 'merge in progress',
+    'rebase-merge': 'rebase in progress',
+    'rebase-apply': 'rebase or am in progress',
+    'BISECT_LOG': 'bisect in progress',
+    'BISECT_START': 'bisect in progress',
+    'CHERRY_PICK_HEAD': 'cherry-pick in progress',
+    'REVERT_HEAD': 'revert in progress',
+    'sequencer': 'sequencer in progress',
+}
+
+
+class Skip(Exception):
+    """Raised by a check to skip the worktree with a reason."""
+
+
+def now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%S%z')
+
+
+class Log:
+    def __init__(self, path):
+        self.path = path
+        self.fh = None
+        if path:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            self._trim()
+            self.fh = open(path, 'a', encoding='utf-8')
+
+    def _trim(self, max_bytes=2 * 1024 * 1024, keep_lines=20000):
+        try:
+            if os.path.getsize(self.path) <= max_bytes:
+                return
+            with open(self.path, encoding='utf-8', errors='replace') as fh:
+                lines = fh.readlines()[-keep_lines:]
+            with open(self.path, 'w', encoding='utf-8') as fh:
+                fh.writelines(lines)
+        except OSError:
+            pass
+
+    def write(self, **fields):
+        parts = ['ts=' + now_iso()]
+        for key, value in fields.items():
+            text = str(value)
+            if not text or re.search(r'\s|"', text):
+                text = json.dumps(text)
+            parts.append('%s=%s' % (key, text))
+        line = ' '.join(parts)
+        print(line, flush=True)
+        if self.fh:
+            self.fh.write(line + '\n')
+            self.fh.flush()
+
+
+def git(args, cwd, check=True, timeout=300):
+    env = dict(os.environ)
+    # Never refresh or write the index while inspecting: that would change
+    # the index mtime the idle check reads, and race with live sessions.
+    env['GIT_OPTIONAL_LOCKS'] = '0'
+    env['GIT_TERMINAL_PROMPT'] = '0'
+    env.setdefault('GIT_SSH_COMMAND', 'ssh -o BatchMode=yes -o ConnectTimeout=20')
+    env['LC_ALL'] = 'C'
+    proc = subprocess.run(
+        ['git'] + args, cwd=cwd, env=env, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, timeout=timeout,
+    )
+    out = proc.stdout.decode('utf-8', 'surrogateescape')
+    if check and proc.returncode != 0:
+        err = proc.stderr.decode('utf-8', 'replace').strip().splitlines()
+        raise Skip('git %s failed: %s' % (args[0], (err[-1] if err else 'exit %d' % proc.returncode)))
+    return out
+
+
+def real(path):
+    return os.path.realpath(path)
+
+
+def inside(path, root):
+    return path == root or path.startswith(root.rstrip('/') + '/')
+
+
+# ---------------------------------------------------------------- discovery
+
+def find_repos(roots, max_depth):
+    """Return the common git dirs of repositories found under the roots."""
+    common_dirs = set()
+    for root in roots:
+        root = real(root)
+        if not os.path.isdir(root):
+            continue
+        stack = [(root, 0)]
+        while stack:
+            path, depth = stack.pop()
+            dotgit = os.path.join(path, '.git')
+            if os.path.lexists(dotgit):
+                try:
+                    common = git(['rev-parse', '--path-format=absolute', '--git-common-dir'], path).strip()
+                    common_dirs.add(real(common))
+                except (Skip, subprocess.TimeoutExpired, OSError):
+                    pass
+                continue
+            if depth >= max_depth:
+                continue
+            try:
+                entries = list(os.scandir(path))
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.name in ('node_modules', '.Trash') or not entry.is_dir(follow_symlinks=False):
+                    continue
+                stack.append((entry.path, depth + 1))
+    return sorted(common_dirs)
+
+
+def list_worktrees(common_dir):
+    """Parse `git worktree list --porcelain`. The first entry is the main one."""
+    out = git(['--git-dir', common_dir, 'worktree', 'list', '--porcelain'], cwd='/')
+    entries, cur = [], {}
+    for line in out.split('\n'):
+        if not line:
+            if cur:
+                entries.append(cur)
+                cur = {}
+            continue
+        key, _, value = line.partition(' ')
+        cur[key] = value if value else True
+    if cur:
+        entries.append(cur)
+    return entries
+
+
+# ---------------------------------------------------------------- checks
+
+def check_in_progress(gitdir):
+    for name, reason in IN_PROGRESS.items():
+        if os.path.lexists(os.path.join(gitdir, name)):
+            raise Skip(reason)
+
+
+def newest_git_activity(gitdir, common_dir, branch):
+    newest = 0.0
+    # Every file in the worktree's git dir (index, HEAD, ORIG_HEAD, locks, ...)
+    # but not the directory itself: read-only tools such as a status prompt
+    # create and delete index.lock there, which moves only the directory mtime.
+    try:
+        paths = [e.path for e in os.scandir(gitdir) if not e.is_dir(follow_symlinks=False)]
+    except OSError as exc:
+        raise Skip('cannot read %s: %s' % (gitdir, exc.strerror))
+    paths.append(os.path.join(gitdir, 'logs', 'HEAD'))
+    if branch:
+        paths.append(os.path.join(common_dir, 'logs', branch))
+        paths.append(os.path.join(common_dir, branch))
+    for path in paths:
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            continue
+        newest = max(newest, st.st_mtime, st.st_ctime)
+    # The newest reflog entry carries its own timestamp.
+    try:
+        with open(os.path.join(gitdir, 'logs', 'HEAD'), 'rb') as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - 4096))
+            tail = fh.read().decode('utf-8', 'replace').strip().splitlines()
+        if tail:
+            match = re.search(r'> (\d+) [+-]\d{4}\t', tail[-1])
+            if match:
+                newest = max(newest, float(match.group(1)))
+    except FileNotFoundError:
+        pass
+    return newest
+
+
+def walk_tree(path, cutoff):
+    """Return (newest_time, nested_git_path). Stops early on a recent entry."""
+    newest = 0.0
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            st = os.lstat(cur)
+            newest = max(newest, st.st_mtime, st.st_ctime)
+            if newest > cutoff:
+                return newest, None
+            it = os.scandir(cur)
+        except OSError as exc:
+            raise Skip('cannot read %s: %s' % (cur, exc.strerror))
+        with it:
+            for entry in it:
+                try:
+                    if entry.name == '.git' and cur != path:
+                        return newest, entry.path
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                        continue
+                    st = entry.stat(follow_symlinks=False)
+                    newest = max(newest, st.st_mtime, st.st_ctime)
+                    if newest > cutoff:
+                        return newest, None
+                except OSError as exc:
+                    raise Skip('cannot stat %s: %s' % (entry.path, exc.strerror))
+    return newest, None
+
+
+def is_build_output(rel):
+    parts = [p for p in rel.rstrip('/').split('/') if p]
+    if any(p in BUILD_DIRS for p in parts):
+        return True
+    return bool(parts) and bool(BUILD_FILE_RE.search(parts[-1]))
+
+
+def check_clean(path):
+    out = git(['status', '--porcelain=v1', '-z', '--ignored=traditional',
+               '--untracked-files=normal', '--ignore-submodules=none'], path)
+    dirty, keep = [], []
+    records = out.split('\0')
+    i = 0
+    while i < len(records):
+        rec = records[i]
+        i += 1
+        if not rec:
+            continue
+        code, rel = rec[:2], rec[3:]
+        if code[0] in 'RC':
+            i += 1  # rename/copy carries the source path as the next record
+        if code == '!!':
+            if not is_build_output(rel):
+                keep.append(rel)
+        else:
+            dirty.append(rel)
+    if dirty:
+        raise Skip('not clean: %d change(s), first %s' % (len(dirty), dirty[0]))
+    if keep:
+        raise Skip('ignored non-build files: %s' % ', '.join(keep[:5]))
+
+
+def check_pushed(path):
+    out = git(['rev-list', '--count', 'HEAD', '--not', '--remotes'], path).strip()
+    if out != '0':
+        raise Skip('%s commit(s) not on any remote ref' % out)
+
+
+# ---------------------------------------------------------------- processes
+
+def _readlink(path):
+    try:
+        return os.readlink(path)
+    except OSError:
+        return None
+
+
+def _mountinfo(pid):
+    """Map (major:minor) -> list of (fs_root, mount_point) for a process."""
+    mounts = {}
+    try:
+        with open('/proc/%s/mountinfo' % pid, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                f = line.split()
+                if len(f) < 5:
+                    continue
+                unesc = lambda s: re.sub(r'\\([0-7]{3})', lambda m: chr(int(m.group(1), 8)), s)
+                mounts.setdefault(f[2], []).append((unesc(f[3]), unesc(f[4])))
+    except OSError:
+        return None
+    return mounts
+
+
+def _translate(path, their_mounts, host_mounts):
+    """Map a path seen in another mount namespace to host paths."""
+    best = None
+    for dev, pairs in their_mounts.items():
+        for fs_root, point in pairs:
+            if inside(path, point) and (best is None or len(point) > len(best[2])):
+                best = (dev, fs_root, point)
+    if best is None:
+        return []
+    dev, fs_root, point = best
+    fs_path = os.path.normpath(fs_root + '/' + path[len(point):])
+    out = []
+    for host_root, host_point in host_mounts.get(dev, []):
+        if inside(fs_path, host_root):
+            out.append(os.path.normpath(host_point + '/' + fs_path[len(host_root):]))
+    return out
+
+
+def proc_dump():
+    """Every path a process holds on Linux: cwd, root, fds and mapped files.
+
+    Returns (paths, unreadable_pids). Paths of processes in another mount
+    namespace are translated to host paths through mountinfo.
+    """
+    self_ns = _readlink('/proc/self/ns/mnt')
+    host_mounts = _mountinfo('self') or {}
+    ns_mounts = {}
+    paths, unreadable = set(), []
+    me = os.getpid()
+    for pid in os.listdir('/proc'):
+        if not pid.isdigit() or int(pid) == me:
+            continue
+        base = '/proc/' + pid
+        found, ok = [], True
+        for link in ('cwd', 'root', 'exe'):
+            target = _readlink(base + '/' + link)
+            if target is None:
+                if os.path.exists(base) and link != 'exe':
+                    ok = False
+                continue
+            found.append(target)
+        try:
+            for fd in os.listdir(base + '/fd'):
+                target = _readlink(base + '/fd/' + fd)
+                if target and target.startswith('/'):
+                    found.append(target)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            ok = False
+        try:
+            with open(base + '/maps', encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    f = line.split(None, 5)
+                    if len(f) == 6 and f[5].startswith('/'):
+                        found.append(f[5].rstrip('\n').replace(' (deleted)', ''))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            ok = False
+        if not ok and os.path.exists(base):
+            unreadable.append(int(pid))
+            continue
+        ns = _readlink(base + '/ns/mnt')
+        if ns and ns != self_ns:
+            if ns not in ns_mounts:
+                ns_mounts[ns] = _mountinfo(pid)
+            if ns_mounts[ns] is None:
+                unreadable.append(int(pid))
+                continue
+            translated = []
+            for p in found:
+                translated.extend(_translate(p, ns_mounts[ns], host_mounts))
+            found = translated
+        paths.update(p.replace(' (deleted)', '') for p in found)
+    return paths, unreadable
+
+
+def process_table():
+    """pid -> (uid, ppid) for every process, via ps (works on both OSes)."""
+    out = subprocess.run(['ps', '-axo', 'pid=,uid=,ppid='], stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, check=True).stdout.decode()
+    table = {}
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) == 3 and all(x.isdigit() for x in f):
+            table[int(f[0])] = (int(f[1]), int(f[2]))
+    return table
+
+
+def alive(pid):
+    """True while pid exists. Filters short-lived helpers such as setuid ps itself."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def started_by_us(pid, table, uid):
+    """True when an ancestor of pid runs as uid (for example `sudo` from a session)."""
+    seen = set()
+    while pid in table and pid not in seen and pid > 1:
+        seen.add(pid)
+        pid = table[pid][1]
+        if pid in table and table[pid][0] == uid:
+            return True
+    return False
+
+
+def scan_processes(use_sudo, log, attempts=3, pause=3.0):
+    """Scan until complete. Short-lived sudo or setuid helpers make a scan
+    incomplete; they usually exit within seconds, so retry before giving up."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return _scan_processes(use_sudo, log)
+        except Skip as exc:
+            if attempt == attempts:
+                raise
+            log.write(event='proc-scan-retry', attempt=attempt, reason=str(exc))
+            time.sleep(pause)
+
+
+def _scan_processes(use_sudo, log):
+    """Return the set of held paths, or raise Skip when the scan is incomplete."""
+    uid = os.getuid()
+    if IS_LINUX:
+        paths, unreadable = proc_dump()
+        if unreadable and use_sudo:
+            proc = subprocess.run(
+                ['sudo', '-n', sys.executable, os.path.abspath(__file__), '--proc-dump'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+            if proc.returncode == 0:
+                data = json.loads(proc.stdout.decode('utf-8', 'surrogateescape'))
+                paths.update(data['paths'])
+                unreadable = data['unreadable']
+            else:
+                log.write(event='proc-scan', note='sudo -n unavailable; using own view')
+    elif IS_MAC:
+        proc = subprocess.run(['lsof', '-n', '-P', '-w', '-F', 'pn'], stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=600)
+        if proc.returncode not in (0, 1) or not proc.stdout:
+            raise Skip('lsof failed (exit %d)' % proc.returncode)
+        paths, seen_pids = set(), set()
+        for line in proc.stdout.decode('utf-8', 'surrogateescape').splitlines():
+            if line.startswith('p'):
+                seen_pids.add(int(line[1:]))
+            elif line.startswith('n/'):
+                paths.add(line[1:].split(' (')[0])
+        table = process_table()
+        unreadable = [p for p, (u, _) in table.items() if p not in seen_pids and u != uid]
+        # lsof also misses processes that exit mid-scan; they no longer matter.
+    else:
+        raise Skip('unsupported platform %s' % sys.platform)
+    if unreadable:
+        table = process_table()
+        ours = [p for p in unreadable if p in table and alive(p) and started_by_us(p, table, uid)]
+        if ours:
+            raise Skip('process scan incomplete: cannot inspect pid(s) %s started from this account'
+                       % ','.join(str(p) for p in ours[:10]))
+    return paths
+
+
+# ---------------------------------------------------------------- main loop
+
+def default_branch(common_dir):
+    try:
+        ref = git(['--git-dir', common_dir, 'symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], '/').strip()
+        return ref or None
+    except Skip:
+        return None
+
+
+def evaluate(wt, main_path, common_dir, args, cutoff, fetched):
+    path = wt['worktree']
+    rpath = real(path)
+    if wt.get('bare'):
+        raise Skip('bare repository entry')
+    if 'locked' in wt:
+        raise Skip('locked' + (': ' + wt['locked'] if isinstance(wt['locked'], str) else ''))
+    if 'prunable' in wt:
+        raise Skip('prunable (directory missing); left for git worktree prune')
+    if not os.path.isdir(rpath):
+        raise Skip('directory missing')
+    if not os.path.isfile(os.path.join(rpath, '.git')):
+        raise Skip('.git is not a file: not a linked worktree')
+    home = real(os.path.expanduser('~'))
+    for guard in [home, real(main_path)] + [real(r) for r in args.root]:
+        if inside(guard, rpath):
+            raise Skip('contains protected path %s' % guard)
+    top = git(['rev-parse', '--path-format=absolute', '--show-toplevel'], rpath).strip()
+    if real(top) != rpath:
+        raise Skip('toplevel mismatch: %s' % top)
+    gitdir = real(git(['rev-parse', '--path-format=absolute', '--git-dir'], rpath).strip())
+    wt_common = real(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], rpath).strip())
+    if wt_common != common_dir or gitdir == common_dir:
+        raise Skip('git dir does not belong to %s' % common_dir)
+    check_in_progress(gitdir)
+    branch = wt.get('branch') if isinstance(wt.get('branch'), str) else None
+    newest = newest_git_activity(gitdir, common_dir, branch)
+    if newest > cutoff:
+        raise Skip('git activity %s ago' % ago(newest))
+    newest, nested = walk_tree(rpath, cutoff)
+    if nested:
+        raise Skip('nested git repository at %s' % nested)
+    if newest > cutoff:
+        raise Skip('modified %s ago' % ago(newest))
+    check_clean(rpath)
+    if not fetched:
+        raise Skip('fetch failed for this repository')
+    check_pushed(rpath)
+    return rpath, branch
+
+
+def ago(ts):
+    delta = time.time() - ts
+    if delta < 0:
+        return 'in the future (%ds)' % -delta
+    return '%.1fh' % (delta / 3600)
+
+
+def run(args):
+    log = Log(None if args.no_log_file else args.log_file)
+    mode = 'dry-run' if args.dry_run else 'live'
+    cutoff = time.time() - args.idle_hours * 3600
+    counts = {'scanned': 0, 'removed': 0, 'would_remove': 0, 'skipped': 0,
+              'errors': 0, 'branches_deleted': 0}
+    log.write(event='start', mode=mode, host=socket.gethostname(), roots=','.join(args.root),
+              idle_hours=args.idle_hours)
+    candidates = []
+    for common_dir in find_repos(args.root, args.depth):
+        try:
+            entries = list_worktrees(common_dir)
+        except (Skip, subprocess.TimeoutExpired) as exc:
+            counts['errors'] += 1
+            log.write(event='repo-error', repo=common_dir, reason=str(exc))
+            continue
+        if len(entries) < 2:
+            continue
+        main_path = entries[0].get('worktree', common_dir)
+        fetched = True
+        try:
+            git(['--git-dir', common_dir, 'fetch', '--all', '--prune', '--quiet'], '/', timeout=300)
+        except (Skip, subprocess.TimeoutExpired) as exc:
+            fetched = False
+            log.write(event='fetch-failed', repo=common_dir, reason=str(exc))
+        for wt in entries[1:]:
+            counts['scanned'] += 1
+            path = wt.get('worktree', '?')
+            try:
+                rpath, branch = evaluate(wt, main_path, common_dir, args, cutoff, fetched)
+                candidates.append((rpath, branch, main_path, common_dir))
+            except Skip as exc:
+                counts['skipped'] += 1
+                log.write(decision='skip', path=path, reason=str(exc))
+            except Exception as exc:  # any surprise is a skip, never a removal
+                counts['skipped'] += 1
+                counts['errors'] += 1
+                log.write(decision='skip', path=path, reason='error: %r' % exc)
+
+    held = set()
+    if candidates:
+        try:
+            held = scan_processes(not args.no_sudo, log)
+            if IS_MAC:  # lsof may report a path through a symlink such as /tmp -> /private/tmp
+                held = {real(p) for p in held} | held
+        except Exception as exc:
+            for rpath, _, _, _ in candidates:
+                counts['skipped'] += 1
+                log.write(decision='skip', path=rpath, reason='process scan: %s' % exc)
+            candidates = []
+            counts['errors'] += 1
+
+    for rpath, branch, main_path, common_dir in candidates:
+        users = sorted(p for p in held if inside(p, rpath))
+        if users:
+            counts['skipped'] += 1
+            log.write(decision='skip', path=rpath, reason='in use by a process: %s' % users[0])
+            continue
+        if args.dry_run:
+            counts['would_remove'] += 1
+            log.write(decision='would-remove', path=rpath, branch=branch or '(detached)')
+            continue
+        try:
+            git(['-C', main_path, 'worktree', 'remove', rpath], '/')
+        except Exception as exc:
+            counts['skipped'] += 1
+            counts['errors'] += 1
+            log.write(decision='skip', path=rpath, reason='worktree remove refused: %s' % exc)
+            continue
+        counts['removed'] += 1
+        log.write(decision='remove', path=rpath, branch=branch or '(detached)')
+        try:
+            git(['-C', main_path, 'worktree', 'prune', '--expire=%d.seconds.ago' % int(args.idle_hours * 3600)], '/')
+        except Exception as exc:
+            log.write(event='prune-failed', repo=common_dir, reason=str(exc))
+        if branch:
+            if delete_branch(branch, main_path, common_dir, log):
+                counts['branches_deleted'] += 1
+
+    log.write(event='summary', mode=mode, host=socket.gethostname(),
+              **counts)
+    return 0
+
+
+def delete_branch(ref, main_path, common_dir, log):
+    name = ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else None
+    if not name:
+        return False
+    default = default_branch(common_dir)
+    if not default:
+        log.write(event='branch-kept', branch=name, reason='remote default branch unknown')
+        return False
+    if default.rsplit('/', 1)[-1] == name:
+        log.write(event='branch-kept', branch=name, reason='is the default branch name')
+        return False
+    try:
+        users = [e for e in list_worktrees(common_dir) if e.get('branch') == ref]
+        if users:
+            log.write(event='branch-kept', branch=name, reason='checked out in %s' % users[0].get('worktree'))
+            return False
+        proc = subprocess.run(['git', '-C', main_path, 'merge-base', '--is-ancestor', ref, default],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            log.write(event='branch-kept', branch=name, reason='not merged into %s' % default)
+            return False
+        git(['-C', main_path, 'branch', '-d', name], '/')
+    except Exception as exc:
+        log.write(event='branch-kept', branch=name, reason=str(exc))
+        return False
+    log.write(event='branch-deleted', branch=name, merged_into=default)
+    return True
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('--dry-run', action='store_true', help='decide and log, remove nothing')
+    parser.add_argument('--root', action='append', help='scan root (repeatable); default ~/code and ~/company')
+    parser.add_argument('--depth', type=int, default=3, help='directory depth searched for repositories')
+    parser.add_argument('--idle-hours', type=float, default=24.0)
+    parser.add_argument('--log-file', default=os.path.expanduser('~/.local/state/wt-reaper/wt-reaper.log'))
+    parser.add_argument('--no-log-file', action='store_true')
+    parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the Linux process scan')
+    parser.add_argument('--proc-dump', action='store_true', help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+    if args.proc_dump:
+        paths, unreadable = proc_dump()
+        json.dump({'paths': sorted(paths), 'unreadable': unreadable}, sys.stdout)
+        return 0
+    if args.root is None:
+        args.root = [os.path.expanduser('~/code'), os.path.expanduser('~/company')]
+    if args.idle_hours <= 0:
+        parser.error('--idle-hours must be positive')
+    return run(args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
