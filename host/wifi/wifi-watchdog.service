@@ -1,0 +1,8 @@
+# Installed by ~/dotfiles/host/provision.sh (wifi module).
+[Unit]
+Description=Bring Wi-Fi back up when NetworkManager stops trying
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog

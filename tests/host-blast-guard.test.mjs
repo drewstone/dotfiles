@@ -46,6 +46,10 @@ const blocked = [
   'S=/tmp/s; sudo umount -l "$S/mnt/parent"; bash "$S/proof.sh" 2>&1 | tail -120; sudo fsfreeze -f $S/mnt/parent',
   "cd /x && sudo timeout 30 fsfreeze -f /x/mnt",
   "for i in 1 2; do sudo fsfreeze -f /mnt/$i; done",
+  "sudo ~/code/dotfiles/host/bin/format-traces-drive --model ST8000DM004-2U9188 --serial ZR16L1DM",
+  "sudo host/bin/format-traces-drive --model X --serial Y",
+  "cd ~/code/dotfiles && sudo bash host/bin/format-traces-drive --model X --serial Y",
+  "echo ERASE | format-traces-drive --model X --serial Y",
 ];
 
 const allowed = [
@@ -82,6 +86,10 @@ const allowed = [
   "printf '%s\\n' 'Bypass for a human only: HOST_BLAST_GUARD=off.' >> notes.md",
   "cat >> memory.md <<'EOF'\nThe hook also fires on `sudo fsfreeze -f` and `sudo unshare -m` written in command position.\nEOF",
   "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
+  "shellcheck host/bin/format-traces-drive",
+  "git add host/bin/format-traces-drive host/provision.sh",
+  "sed -n 1,20p host/bin/format-traces-drive",
+  "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
 ];
 
 test("blocks the host-level verbs in command position", () => {

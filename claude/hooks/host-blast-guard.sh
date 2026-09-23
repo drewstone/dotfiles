@@ -23,7 +23,7 @@ payload="$(cat 2>/dev/null || true)"
 [ -z "$payload" ] && exit 0
 
 # Cheap pre-filter: skip the parser unless a guarded word is present at all.
-printf '%s' "$payload" | grep -qE 'fsfreeze|unshare|dmsetup|lvcreate|lvremove|lvchange|lvconvert|lvresize|lvextend|lvreduce|vgcreate|vgremove|vgchange|vgextend|vgreduce|pvcreate|pvremove|pvmove|mkfs|mke2fs|mkswap|wipefs|blkdiscard|sgdisk|sfdisk|fdisk|parted|umount|mount|rmdir|sysrq|reboot|poweroff|shutdown|halt|init 0|init 6|HOST_BLAST_GUARD|/proc|/sys|/dev|/run|/boot' || exit 0
+printf '%s' "$payload" | grep -qE 'format-traces-drive|fsfreeze|unshare|dmsetup|lvcreate|lvremove|lvchange|lvconvert|lvresize|lvextend|lvreduce|vgcreate|vgremove|vgchange|vgextend|vgreduce|pvcreate|pvremove|pvmove|mkfs|mke2fs|mkswap|wipefs|blkdiscard|sgdisk|sfdisk|fdisk|parted|umount|mount|rmdir|sysrq|reboot|poweroff|shutdown|halt|init 0|init 6|HOST_BLAST_GUARD|/proc|/sys|/dev|/run|/boot' || exit 0
 command -v python3 >/dev/null || exit 0
 
 read -r -d '' GUARD_PY <<'PY'
@@ -74,6 +74,7 @@ RULES = [
     (r"lvm\s+(?:pvcreate|vgcreate|lvcreate|lvremove|vgremove|pvremove|lvchange|vgchange|lvconvert|pvmove)\s+(?:\S+\s+)*" + ROOT_DISK, "LVM on a real disk"),
     (r"(?:mkfs(?:\.\w+)?|mke2fs|mkswap|wipefs|blkdiscard|sgdisk|sfdisk|fdisk|parted)\s+(?:\S+\s+)*" + ROOT_DISK, "writing a real disk"),
     (r"dd\s+(?:\S+\s+)*of=" + ROOT_DISK, "dd onto a real disk"),
+    (r"(?:(?:ba)?sh\s+)?(?:\S*/)?format-traces-drive\b", "format-traces-drive erases a whole disk; only Drew runs it"),
     (r"(?:echo|printf)\s+\S+\s*>\s*/proc/sysrq-trigger", "sysrq reboots or crashes the host"),
     (r"(?:systemctl\s+(?:reboot|poweroff|halt|kexec)|reboot|poweroff|halt|shutdown|init\s+[06])\b", "rebooting or powering off the host"),
 ]
