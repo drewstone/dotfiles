@@ -469,6 +469,25 @@ class RelativeSocketTest(unittest.TestCase):
         self.assertIn(child.pid, unreadable)
 
 
+class MountTest(unittest.TestCase):
+    """A mount point inside the worktree keeps it."""
+
+    def test_mount_point_inside_skips(self):
+        mod = load_reaper()
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-mnt-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        mod.mount_points = lambda: {'/', os.path.join(tmp, 'node_modules')}
+        with self.assertRaises(mod.Skip) as ctx:
+            mod.check_no_mounts(tmp)
+        self.assertIn('mount point inside', str(ctx.exception))
+        mod.mount_points = lambda: {'/', os.path.dirname(tmp)}
+        mod.check_no_mounts(tmp)
+
+    def test_real_mount_table_is_read(self):
+        mod = load_reaper()
+        self.assertIn('/', mod.mount_points())
+
+
 class ArgumentTest(unittest.TestCase):
     def test_rejects_non_finite_idle_hours(self):
         for value in ('nan', 'inf', '0', '-1'):

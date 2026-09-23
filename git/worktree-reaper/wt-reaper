@@ -252,14 +252,42 @@ def _looks_bare(path, entries):
         return True
 
 
+def mount_points():
+    """Every mount point on this host (a bind mount keeps the same st_dev)."""
+    points = set()
+    if IS_LINUX:
+        for pairs in (_mountinfo('self') or {}).values():
+            points.update(point for _, point in pairs)
+    else:
+        out = subprocess.run(['/sbin/mount'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             check=True).stdout.decode('utf-8', 'replace')
+        for line in out.splitlines():
+            match = re.match(r'.+? on (/.*?) \(', line)
+            if match:
+                points.add(match.group(1))
+    return points
+
+
+def check_no_mounts(rpath):
+    inner = sorted(p for p in mount_points() if inside(real(p), rpath))
+    if inner:
+        raise Skip('mount point inside: %s' % inner[0])
+
+
 def walk_tree(path, cutoff):
-    """Return (newest_time, nested_git_path). Stops early on a recent entry."""
+    """Return (newest_time, nested_git_path). Stops early on a recent entry.
+
+    Raises Skip when the walk crosses onto another filesystem.
+    """
     newest = 0.0
     stack = [path]
+    root_dev = os.lstat(path).st_dev
     while stack:
         cur = stack.pop()
         try:
             st = os.lstat(cur)
+            if st.st_dev != root_dev:
+                raise Skip('another filesystem is mounted at %s' % cur)
             newest = max(newest, st.st_mtime, st.st_ctime)
             if newest > cutoff:
                 return newest, None
@@ -627,6 +655,7 @@ def evaluate(wt, main_path, common_dir, args, cutoff, fetched):
     if wt_common != common_dir or gitdir == common_dir:
         raise Skip('git dir does not belong to %s' % common_dir)
     check_in_progress(gitdir)
+    check_no_mounts(rpath)
     branch = wt.get('branch') if isinstance(wt.get('branch'), str) else None
     newest = newest_git_activity(gitdir, common_dir, branch)
     if newest > cutoff:
