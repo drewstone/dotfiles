@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish merge statuses for trusted pushes and scan open PR review threads."""
+"""Publish exact-head merge statuses from trusted default-branch runs."""
 
 import argparse
 import json
@@ -81,19 +81,9 @@ def open_groups():
 
 def selected_groups(groups):
     event = os.environ['GITHUB_EVENT_NAME']
-    if event == 'schedule':
-        return groups
-    if event not in ('workflow_dispatch', 'pull_request_target'):
+    if event not in ('schedule', 'workflow_dispatch'):
         raise RuntimeError(f'Unsupported event: {event}')
-    with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as event_file:
-        payload = json.load(event_file)
-    number = int(payload['inputs']['pr'] if event == 'workflow_dispatch'
-                 else payload['pull_request']['number'])
-    selected = current_pr(number)
-    head = selected['head']['sha']
-    if head not in groups or not any(pr['number'] == number for pr in groups[head]):
-        raise RuntimeError(f'PR #{number} is not an open same-repository pull request')
-    return {head: groups[head]}
+    return groups
 
 
 def scan_threads(number, head):

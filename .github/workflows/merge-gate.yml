@@ -1,18 +1,11 @@
 name: Merge gate
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
-    branches: [main]
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
-    inputs:
-      pr:
-        description: Open pull request number to recheck
-        required: true
 
-# PR events use only the base branch workflow. Fork PRs skip every runner job.
+# Only default-branch events run; the scanner selects same-repository PR heads.
 permissions:
   contents: read
   pull-requests: read
@@ -20,7 +13,6 @@ permissions:
 
 jobs:
   discover:
-    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, gtr]
     timeout-minutes: 5
     outputs:
@@ -104,7 +96,6 @@ jobs:
           fi
 
   codex-p1:
-    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, gtr]
     timeout-minutes: 10
     steps:
