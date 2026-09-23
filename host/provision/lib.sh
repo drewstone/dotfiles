@@ -135,10 +135,19 @@ apt_get() {
     apt-get -q -o DPkg::Lock::Timeout=900 "$@"
 }
 
+# A mirror in the middle of a sync fails an index download ("File has
+# unexpected size ... Mirror sync in progress?"), so the update is retried.
 apt_update_once() {
+  local i
   [ "$APT_UPDATED" = 1 ] && return 0
-  apt_get update || return 1
-  APT_UPDATED=1
+  for i in 1 2 3; do
+    if apt_get update; then
+      APT_UPDATED=1
+      return 0
+    fi
+    [ "$i" = 3 ] || sleep 20
+  done
+  return 1
 }
 
 # apt_source_added: the next install refreshes the package lists first.

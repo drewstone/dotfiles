@@ -9,6 +9,8 @@
 BASE_PACKAGES="curl ca-certificates git jq unzip xz-utils fontconfig tmux psmisc dconf-cli wl-clipboard iw python3-venv qemu-system-x86 qemu-utils cloud-image-utils openssh-server"
 SSHD_KEYS_ONLY=/etc/ssh/sshd_config.d/10-dotfiles-keys-only.conf
 SSHD_BIN="${SSHD_BIN:-/usr/sbin/sshd}"
+SSHD_CONFIG="${SSHD_CONFIG:-/etc/ssh/sshd_config}"
+SSHD_CONFIG_D="${SSHD_CONFIG_D:-/etc/ssh/sshd_config.d}"
 
 linger_on() { [ -e "/var/lib/systemd/linger/$USER" ]; }
 in_group() { id -nG "$USER" | tr ' ' '\n' | grep -x "$1" >/dev/null; }
@@ -73,24 +75,42 @@ install_sshd_keys_only() {
   fi
   as_root systemctl try-reload-or-restart ssh.service || return 1
   if ! sshd_keys_only_effective; then
-    printf 'sshd keeps the first value it reads, and an earlier setting still allows passwords; change it by hand:\n' >&2
-    # shellcheck disable=SC2016 # the root shell expands the glob
-    as_root sh -c 'grep -HiE "^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)[[:space:]]+yes" \
-      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf' >&2
+    printf 'An earlier setting or a Match block still allows passwords (sshd keeps the first value it reads); change it by hand:\n' >&2
+    # shellcheck disable=SC2016 # the root shell expands $1 and $2
+    as_root sh -c 'grep -HiE "^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication)[[:space:]=]+yes" "$1" "$2"/*.conf' \
+      sh "$SSHD_CONFIG" "$SSHD_CONFIG_D" >&2
     return 1
   fi
 }
 
+# sshd_match_lines: the lines inside Match blocks that turn password or
+# keyboard-interactive login back on, for any user or address. It fails when
+# a file cannot be read, so an unread file never counts as clean.
+sshd_match_lines() {
+  local f
+  local -a files=("$SSHD_CONFIG")
+  for f in "$SSHD_CONFIG_D"/*.conf; do [ -e "$f" ] && files+=("$f"); done
+  # shellcheck disable=SC2016 # $1, $2 and $0 are awk fields
+  as_root awk -F '[ \t=]+' '
+    FNR == 1 { match_block = 0 }
+    { sub(/^[ \t]+/, "") }
+    tolower($1) == "match" { match_block = 1; next }
+    match_block && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication)$/ && tolower($2) == "yes" { print FILENAME ": " $0 }
+  ' "${files[@]}"
+}
+
 # sshd_keys_only_effective: sshd's effective settings, not only the drop-in:
-# an earlier drop-in can still allow passwords. sshd -G prints the effective
-# configuration without host keys or /run/sshd. It runs as root because a
+# an earlier drop-in can still allow passwords. sshd -G prints the global
+# configuration without host keys or /run/sshd, and it runs as root because a
 # drop-in can be root-only (cloud-init writes 50-cloud-init.conf with mode
-# 600). It does not apply Match blocks, which the check therefore does not
-# cover.
+# 600). sshd -G applies Match blocks only for one given connection, so every
+# Match block is read as well.
 sshd_keys_only_effective() {
-  local t
+  local t m
   t="$(as_root "$SSHD_BIN" -G 2>/dev/null)" || return 1
-  grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t"
+  grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t" || return 1
+  m="$(sshd_match_lines 2>/dev/null)" || return 1
+  [ -z "$m" ]
 }
 
 sshd_keys_only() {

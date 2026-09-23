@@ -380,21 +380,26 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
   const script = `
     . host/provision/lib.sh
     . host/provision/tools.sh
-    SSHD_BIN="${stub}" HOST_DIR=host
+    SSHD_BIN="${stub}" HOST_DIR=host SSHD_CONFIG="${dir}/sshd_config" SSHD_CONFIG_D="${dir}/sshd_config.d"
+    mkdir -p "$SSHD_CONFIG_D"
+    printf 'Include %s/*.conf\\nUsePAM yes\\n' "$SSHD_CONFIG_D" >"$SSHD_CONFIG"
     as_root() { [ "$1" = "${stub}" ] && echo "AS ROOT" >>"${dir}/calls"; "$@"; }
     root_file_is() { true; }
     printf 'usepam yes\\npasswordauthentication yes\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
     sshd_keys_only && echo "PASSWORDS COUNTED AS KEYS ONLY"
     printf 'passwordauthentication no\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
     sshd_keys_only && echo "keys only"
+    printf 'Match User drew\\n  PasswordAuthentication=yes\\n' >"$SSHD_CONFIG_D/20-match.conf"
+    sshd_keys_only || echo "a Match block allows passwords"
+    rm "$SSHD_CONFIG_D/20-match.conf"
     root_file_is() { false; }
     sshd_keys_only || echo "no drop-in"
   `;
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "keys only\nno drop-in\n");
+  assert.equal(r.stdout, "keys only\na Match block allows passwords\nno drop-in\n");
   // A drop-in can be root-only, so sshd -G runs as root.
-  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\nAS ROOT\n");
+  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\nAS ROOT\nAS ROOT\n");
 });
 
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {

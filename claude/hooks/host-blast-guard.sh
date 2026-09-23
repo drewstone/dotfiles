@@ -15,11 +15,11 @@
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
 # One exception, which fails closed: a command that names format-traces-drive
-# is refused unless it is one read-only command (cat, head, grep and the like,
-# never git), also when that command runs over ssh, or one hostlab command. So
-# variables, line continuations, bash -c, script -c, tmux send-keys and remote
-# runs are all refused. It exists only on the Linux boxes, where an
-# ssh session has no claude ancestor for the script's own check to find.
+# is refused unless it is one local read-only command (cat, head, grep and the
+# like, never git or ssh) or one hostlab command. So variables, line
+# continuations, bash -c, script -c, tmux send-keys and every ssh form are
+# refused. This matters most over ssh, where the remote session has no claude
+# ancestor for the script's own check to find.
 
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
@@ -56,10 +56,8 @@ READ_ONLY = {"cat", "grep", "head", "tail", "wc", "ls", "stat", "file", "diff", 
 # git is left out: every subcommand can start a configured helper (an editor,
 # a hook, a pager, a filter, an external diff or core.fsmonitor). Commit with
 # -F FILE, or stage the directory, to leave the name off the command line.
-# ssh options that run nothing: -o, -F and -J can start a ProxyCommand or a
-# LocalCommand, so any other option refuses the command.
-SSH_FLAGS = {"-t", "-tt", "-T", "-q", "-n", "-4", "-6"}
-SSH_ARG_FLAGS = {"-p", "-l", "-i"}
+# ssh is left out: ~/.ssh/config can give any host a ProxyCommand or a
+# LocalCommand, which runs here whatever the remote command is.
 HOSTLAB_RUNS = {"run", "shell", "build", "ssh"}
 
 def one_command(c):
@@ -83,25 +81,9 @@ def in_vm(c):
     tokens = one_command(c)
     return bool(tokens) and tokens[0] == "hostlab" and len(tokens) > 1 and tokens[1] in HOSTLAB_RUNS
 
-def read_only(c, depth=0):
-    tokens = one_command(c) if depth <= 2 else None
-    if not tokens:
-        return False
-    verb = tokens[0]
-    if verb in READ_ONLY:
-        return True
-    if verb == "ssh":
-        i = 1
-        while i < len(tokens) and tokens[i].startswith("-"):
-            if tokens[i] in SSH_FLAGS:
-                i += 1
-            elif tokens[i] in SSH_ARG_FLAGS and i + 1 < len(tokens):
-                i += 2
-            else:
-                return False
-        remote = tokens[i + 1:]
-        return bool(remote) and read_only(" ".join(remote), depth + 1)
-    return False
+def read_only(c):
+    tokens = one_command(c)
+    return bool(tokens) and tokens[0] in READ_ONLY
 
 if "format-traces-drive" in cmd and not (read_only(cmd) or in_vm(cmd)):
     err = sys.stderr

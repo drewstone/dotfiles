@@ -53,8 +53,10 @@ need() {
   fi
 }
 
+# -F /dev/null: the user's ssh config (a ProxyCommand or LocalCommand for
+# Host *) must not run on the host when a command goes to the VM.
 ssh_opts() {
-  printf '%s\n' -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+  printf '%s\n' -F /dev/null -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR -o ConnectTimeout=3 -o IdentitiesOnly=yes -o ServerAliveInterval=5
 }
 

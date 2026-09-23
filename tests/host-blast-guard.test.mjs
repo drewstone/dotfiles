@@ -85,6 +85,9 @@ const blocked = [
   "git add host/bin/format-traces-drive host/provision.sh",
   "git log --oneline -S format-traces-drive",
   "git -c core.fsmonitor='sudo host/bin/format-traces-drive' status",
+  // ~/.ssh/config can give the host a ProxyCommand, so no ssh form passes.
+  "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
+  "ssh -p 22 drew@box cat /home/drew/code/dotfiles/host/bin/format-traces-drive",
   // A hostlab command passes only on its own.
   "echo hostlab run; sudo host/bin/format-traces-drive --model X --serial Y",
   "hostlab run -- true && sudo host/bin/format-traces-drive --model X --serial Y",
@@ -126,8 +129,6 @@ const allowed = [
   "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
   "shellcheck host/bin/format-traces-drive",
   "head -20 host/bin/format-traces-drive",
-  "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
-  "ssh -p 22 drew@box cat /home/drew/code/dotfiles/host/bin/format-traces-drive",
   "grep -n 'format-traces-drive' README.md host/provision/traces.sh",
   "cat host/bin/format-traces-drive",
   "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
