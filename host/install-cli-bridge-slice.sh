@@ -7,7 +7,16 @@
 #
 # The cap (CPUQuota=2400%, CPUWeight=50) keeps every cli-bridge LLM scope,
 # including discovery-lab's kissat solver campaign, to 24 of 32 cores.
+#
+# Usage: host/install-cli-bridge-slice.sh [--check]
+#   --check   report drift and change nothing; exit 1 when anything differs.
 set -euo pipefail
+CHECK=0
+case "${1:-}" in
+  --check) CHECK=1 ;;
+  '') ;;
+  *) echo "usage: $0 [--check]" >&2; exit 2 ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$SCRIPT_DIR/cli-bridge"
@@ -21,6 +30,7 @@ changed=0
 put() {
   local rel="$1"
   if ! cmp -s "$SRC/$rel" "$DEST/$rel"; then
+    if [ "$CHECK" = 1 ]; then echo "  drift $DEST/$rel"; changed=1; return 0; fi
     install -D -m 0644 "$SRC/$rel" "$DEST/$rel"
     echo "  installed $DEST/$rel"
     changed=1
@@ -28,6 +38,7 @@ put() {
 }
 put cli-bridge-llm.slice
 put cli-bridge-llm.slice.d/10-cpu-cap.conf
+if [ "$CHECK" = 1 ] && [ "$changed" = 1 ]; then exit 1; fi
 if [ "$changed" = 1 ]; then systemctl --user daemon-reload; fi
 
 # Verify what systemd loaded from our files. A higher-numbered

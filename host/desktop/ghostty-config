@@ -1,0 +1,11 @@
+# Managed by ~/dotfiles (host/provision.sh desktop module); linked to ~/.config/ghostty/config.
+theme = Catppuccin Mocha
+font-family = JetBrainsMono Nerd Font
+font-size = 13
+window-padding-x = 10
+window-padding-y = 8
+background-opacity = 0.96
+cursor-style = bar
+copy-on-select = clipboard
+# Open straight into the agent session; fall back to a plain tmux session.
+command = /usr/bin/bash -lc "tmux attach -t work || tmux new -s main"

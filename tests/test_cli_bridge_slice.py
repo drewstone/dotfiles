@@ -60,6 +60,19 @@ class SliceInstallerTest(unittest.TestCase):
         self.assertEqual(self.calls().count('daemon-reload'), 1)
 
     @unittest.skipIf(os.geteuid() == 0, 'the installer skips itself for root')
+    def test_check_reports_drift_and_changes_nothing(self):
+        result = self.run_installer_args('--check')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('drift', result.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.home, '.config/systemd/user/cli-bridge-llm.slice')))
+        self.assertEqual(self.run_installer().returncode, 0)
+        self.assertEqual(self.run_installer_args('--check').returncode, 0)
+
+    def run_installer_args(self, *args):
+        return subprocess.run(['bash', INSTALLER] + list(args), env=self.env, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, universal_newlines=True)
+
+    @unittest.skipIf(os.geteuid() == 0, 'the installer skips itself for root')
     def test_fails_when_systemd_reports_another_quota(self):
         result = self.run_installer(STUB_QUOTA='16s')
         self.assertNotEqual(result.returncode, 0)
