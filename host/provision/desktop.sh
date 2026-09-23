@@ -47,19 +47,23 @@ autologin_on() {
   ' "$GDM_CUSTOM" 2>/dev/null
 }
 
+# autologin_off: GDM logs no one in unattended, neither at once (automatic
+# login) nor after a delay (timed login).
 autologin_off() {
-  ! grep -Ei '^[[:space:]]*AutomaticLoginEnable[[:space:]]*=[[:space:]]*(true|1)[[:space:]]*$' "$GDM_CUSTOM" >/dev/null 2>&1
+  ! grep -Ei '^[[:space:]]*(Automatic|Timed)LoginEnable[[:space:]]*=[[:space:]]*(true|1)[[:space:]]*$' "$GDM_CUSTOM" >/dev/null 2>&1
 }
 
-# write_gdm_custom ON: drop every uncommented AutomaticLogin line, and with
-# ON=1 put the two keys at the top of [daemon]. GDM reads the file when it
-# starts. The old file stays beside it.
+# write_gdm_custom ON: with ON=1, drop every uncommented AutomaticLogin line
+# and put the two keys at the top of [daemon]; with ON=0, drop the automatic
+# and the timed login lines. GDM reads the file when it starts. The old file
+# stays beside it.
 write_gdm_custom() {
   local on="$1" new="$WORK/custom.conf.new"
   : >"$new"
   if [ -f "$GDM_CUSTOM" ]; then
     awk -v user="$USER" -v on="$on" '
       /^[ \t]*AutomaticLogin(Enable)?[ \t]*=/ { next }
+      on == 0 && /^[ \t]*TimedLogin(Enable|Delay)?[ \t]*=/ { next }
       { print }
       on == 1 && $0 == "[daemon]" { print "AutomaticLoginEnable=true"; print "AutomaticLogin=" user }
     ' "$GDM_CUSTOM" >"$new" || return 1

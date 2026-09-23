@@ -15,10 +15,10 @@
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
 # One exception, which fails closed: a command that names format-traces-drive
-# is refused unless it is one read-only command (cat, head, grep, git log and
-# the like), also when that command runs over ssh. So variables, line
-# continuations, bash -c, script -c, tmux send-keys and remote runs are all
-# refused. It exists only on the Linux boxes, where an
+# is refused unless it is one read-only command (cat, head, grep and the like,
+# never git), also when that command runs over ssh, or one hostlab command. So
+# variables, line continuations, bash -c, script -c, tmux send-keys and remote
+# runs are all refused. It exists only on the Linux boxes, where an
 # ssh session has no claude ancestor for the script's own check to find.
 
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
@@ -48,47 +48,48 @@ cmd = inp.get("command") or ""
 if not cmd:
     sys.exit(0)
 
-# The VM lane is the allowed venue; a command handed to it passes whole.
-if re.search(r"(^|[\s;&|(])hostlab\s+(run|shell|build|ssh)\b", cmd):
-    sys.exit(0)
-
-# A bypass belongs to a human at a real terminal, never to an agent. Only the
-# assignment form in command position counts; the name inside prose, a heredoc
-# sentence, or backticks passes.
-if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
-    print("host-blast-guard: HOST_BLAST_GUARD=off is a human-only bypass. Run the experiment in a throwaway VM (hostlab run -- '<command>') or ask Drew to run this himself (prefix it with ! in the prompt).", file=sys.stderr)
-    sys.exit(2)
-
 # Erasing the trace drive belongs to Drew at a terminal outside Claude. Only
 # a single read-only command may name the script; anything else that names it
 # is refused, however its options are spelled. Each listed command runs no
 # other command whatever its options; sed (e, -e) and awk (system) can.
 READ_ONLY = {"cat", "grep", "head", "tail", "wc", "ls", "stat", "file", "diff", "shellcheck", "readlink", "realpath"}
-# git grep is left out: its -O option runs a command.
-GIT_READ = {"add", "diff", "log", "show", "status", "blame", "ls-files", "rm", "mv", "restore", "commit"}
+# git is left out: every subcommand can start a configured helper (an editor,
+# a hook, a pager, a filter, an external diff or core.fsmonitor). Commit with
+# -F FILE, or stage the directory, to leave the name off the command line.
 # ssh options that run nothing: -o, -F and -J can start a ProxyCommand or a
 # LocalCommand, so any other option refuses the command.
 SSH_FLAGS = {"-t", "-tt", "-T", "-q", "-n", "-4", "-6"}
 SSH_ARG_FLAGS = {"-p", "-l", "-i"}
+HOSTLAB_RUNS = {"run", "shell", "build", "ssh"}
 
-def read_only(c, depth=0):
-    if depth > 2 or re.search(r"[\n`]|\$\(|<\(|>\(", c):
-        return False
+def one_command(c):
+    """The tokens of C when it is one simple command, else None."""
+    if re.search(r"[\n`]|\$\(|<\(|>\(", c):
+        return None
     try:
         lex = shlex.shlex(c, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
         tokens = list(lex)
     except ValueError:
-        return False
+        return None
     # An operator or a redirection outside quotes makes it more than one
-    # read-only command.
+    # command.
     if not tokens or any(t and set(t) <= set(";&|()<>") for t in tokens):
+        return None
+    return tokens
+
+def in_vm(c):
+    """C is one hostlab command, which runs its argument inside the VM."""
+    tokens = one_command(c)
+    return bool(tokens) and tokens[0] == "hostlab" and len(tokens) > 1 and tokens[1] in HOSTLAB_RUNS
+
+def read_only(c, depth=0):
+    tokens = one_command(c) if depth <= 2 else None
+    if not tokens:
         return False
     verb = tokens[0]
     if verb in READ_ONLY:
         return True
-    if verb == "git":
-        return len(tokens) > 1 and tokens[1] in GIT_READ
     if verb == "ssh":
         i = 1
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -102,11 +103,23 @@ def read_only(c, depth=0):
         return bool(remote) and read_only(" ".join(remote), depth + 1)
     return False
 
-if "format-traces-drive" in cmd and not read_only(cmd):
+if "format-traces-drive" in cmd and not (read_only(cmd) or in_vm(cmd)):
     err = sys.stderr
     print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
-    print("Give Drew the command to run himself. Reading the script (cat, head, grep, git log) is allowed as one command.", file=err)
+    print("Give Drew the command to run himself. Reading the script (cat, head, grep) is allowed as one command; git is not, so commit with -F FILE.", file=err)
     print("To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
+    sys.exit(2)
+
+# The VM lane is the allowed venue; a command handed to it passes whole. The
+# eraser rule above comes first: there only one hostlab command counts.
+if re.search(r"(^|[\s;&|(])hostlab\s+(run|shell|build|ssh)\b", cmd):
+    sys.exit(0)
+
+# A bypass belongs to a human at a real terminal, never to an agent. Only the
+# assignment form in command position counts; the name inside prose, a heredoc
+# sentence, or backticks passes.
+if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
+    print("host-blast-guard: HOST_BLAST_GUARD=off is a human-only bypass. Run the experiment in a throwaway VM (hostlab run -- '<command>') or ask Drew to run this himself (prefix it with ! in the prompt).", file=sys.stderr)
     sys.exit(2)
 
 # Command position: start, after a separator, or after sudo/exec/timeout.

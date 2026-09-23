@@ -297,7 +297,7 @@ test("check mode never adds a host key to known_hosts", () => {
 test("desktop turns GDM automatic login on by default and off with --no-autologin", () => {
   const dir = mkdtempSync(join(tmpdir(), "gdm-custom-"));
   const conf = join(dir, "custom.conf");
-  writeFileSync(conf, "# GDM configuration\n[daemon]\n#  AutomaticLoginEnable = true\n AutomaticLoginEnable=false\nWaylandEnable=true\n\n[security]\n");
+  writeFileSync(conf, "# GDM configuration\n[daemon]\n#  AutomaticLoginEnable = true\n AutomaticLoginEnable=false\nTimedLoginEnable=true\nTimedLogin=guest\nTimedLoginDelay=10\nWaylandEnable=true\n\n[security]\n");
   const script = `
     . host/provision/lib.sh
     . host/provision/desktop.sh
@@ -317,11 +317,12 @@ test("desktop turns GDM automatic login on by default and off with --no-autologi
   `;
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(r.stdout.trim().split("\n"), ["default=1", "OFF0", "ON1", "OFF2"]);
+  // A timed login is not "off" either, so OFF0 never prints.
+  assert.deepEqual(r.stdout.trim().split("\n"), ["default=1", "ON1", "OFF2"]);
   const after = readFileSync(conf, "utf8");
   assert.match(after, /#  AutomaticLoginEnable = true/);
   assert.match(after, /WaylandEnable=true/);
-  assert.doesNotMatch(after, /^\s*AutomaticLogin/m);
+  assert.doesNotMatch(after, /^\s*(Automatic|Timed)Login/m);
   assert.ok(readdirSync(dir).some((f) => f.startsWith("custom.conf.pre-dotfiles.")));
 });
 

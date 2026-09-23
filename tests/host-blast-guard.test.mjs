@@ -79,6 +79,15 @@ const blocked = [
   "git grep -O'sudo host/bin/format-traces-drive' pattern",
   "sed -n 1,20p host/bin/format-traces-drive",
   `sed -n 1p -e '1e ssh -tt box "sudo ~/code/dotfiles/host/bin/format-traces-drive"' README.md`,
+  // git can start an editor, a hook, a pager, a filter or core.fsmonitor.
+  "git commit --edit -m 'format-traces-drive'",
+  "git commit -m 'fix(host): format-traces-drive checks the disk again; see --model'",
+  "git add host/bin/format-traces-drive host/provision.sh",
+  "git log --oneline -S format-traces-drive",
+  "git -c core.fsmonitor='sudo host/bin/format-traces-drive' status",
+  // A hostlab command passes only on its own.
+  "echo hostlab run; sudo host/bin/format-traces-drive --model X --serial Y",
+  "hostlab run -- true && sudo host/bin/format-traces-drive --model X --serial Y",
 ];
 
 const allowed = [
@@ -116,13 +125,10 @@ const allowed = [
   "cat >> memory.md <<'EOF'\nThe hook also fires on `sudo fsfreeze -f` and `sudo unshare -m` written in command position.\nEOF",
   "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
   "shellcheck host/bin/format-traces-drive",
-  "git add host/bin/format-traces-drive host/provision.sh",
   "head -20 host/bin/format-traces-drive",
   "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
   "ssh -p 22 drew@box cat /home/drew/code/dotfiles/host/bin/format-traces-drive",
   "grep -n 'format-traces-drive' README.md host/provision/traces.sh",
-  "git log --oneline -S format-traces-drive",
-  "git commit -m 'fix(host): format-traces-drive checks the disk again; see --model'",
   "cat host/bin/format-traces-drive",
   "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
 ];
