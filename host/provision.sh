@@ -7,7 +7,7 @@
 # Modules, in the order a full run takes them:
 #   guards        root wrappers, sudoers, frozen-root watchdog (host/install.sh)
 #   tools         base packages, OpenSSH (keys only), Google Chrome, Tailscale, GitHub CLI, uv
-#   desktop       GDM kiosk at boot, NetworkManager, JetBrainsMono Nerd Font
+#   desktop       GDM kiosk session at boot, cage, Remmina, NetworkManager, font
 #   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
 #   nosleep       masked sleep targets, logind, login screen, GNOME session
 #   shell         starship prompt; the Linux console keeps the plain prompt

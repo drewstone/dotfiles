@@ -10,7 +10,7 @@ FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNF"
 GDM_CUSTOM=/etc/gdm3/custom.conf
 KIOSK_SESSION_FILE=/usr/share/wayland-sessions/gtr-kiosk.desktop
 KIOSK_LAUNCHER=/usr/local/bin/gtr-kiosk
-ACCOUNTS_USER="/var/lib/AccountsService/users/$USER"
+ACCOUNTS_USER="/var/lib/AccountsService/users/${USER:-$(id -un)}"
 LOGIN_KEYRING="$HOME/.local/share/keyrings/login.keyring"
 
 # The Wi-Fi module needs nmcli even on a fresh Server install. The old desktop
@@ -79,6 +79,14 @@ autologin_off() {
 }
 
 kiosk_available() { [ -f "$KIOSK_SESSION_FILE" ] && [ -x "$KIOSK_LAUNCHER" ]; }
+
+install_kiosk_asset() {
+  local mode="$1" src="$2" dst="$3"
+  if as_root test -e "$dst"; then
+    as_root cp -p "$dst" "$dst.pre-dotfiles.$(date +%Y%m%d%H%M%S%N)" || return 1
+  fi
+  root_install "$mode" "$src" "$dst"
+}
 
 gdm_session_on() {
   kiosk_available && awk '
@@ -157,9 +165,11 @@ write_gdm_custom() {
 login_keyring_has_password() { [ "$(head -c 12 "$LOGIN_KEYRING" 2>/dev/null)" = GnomeKeyring ]; }
 
 module_desktop() {
+  local assets="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop"
   section "desktop: GDM kiosk, NetworkManager and JetBrainsMono Nerd Font"
   ensure "GDM installed" pkg_installed gdm3 -- apt_install gdm3
   ensure "NetworkManager installed for Wi-Fi" pkg_installed network-manager -- apt_install network-manager
+  ensure "cage and Remmina installed for the monitor" pkg_installed cage remmina -- apt_install cage remmina
   ensure "boots to graphical.target" boots_graphical -- as_root systemctl set-default graphical.target
   ensure "systemd-networkd-wait-online off (NetworkManager waits for the network)" networkd_wait_off -- \
     quiet as_root systemctl disable systemd-networkd-wait-online.service
@@ -172,6 +182,10 @@ module_desktop() {
       "sudo systemctl reboot"
   fi
   ensure "JetBrainsMono Nerd Font $NERD_FONTS_VERSION in $FONT_DIR" font_present -- install_font
+  ensure "gtr-kiosk launcher installed" root_file_is 0755 "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" -- \
+    install_kiosk_asset 0755 "$assets/gtr-kiosk" "$KIOSK_LAUNCHER"
+  ensure "gtr-kiosk GDM session installed" root_file_is 0644 "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE" -- \
+    install_kiosk_asset 0644 "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE"
   ensure "GDM selects gtr-kiosk on the monitor" gdm_session_on -- write_gdm_custom "$AUTOLOGIN"
   ensure "$USER's last session is gtr-kiosk" accounts_session_on -- set_accounts_session
   if [ "$AUTOLOGIN" = 1 ]; then

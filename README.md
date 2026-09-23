@@ -129,7 +129,7 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
-| `desktop` | Selects the existing `gtr-kiosk` session in GDM and AccountsService, starts GDM at boot, and installs NetworkManager and the font. It never restarts GDM during the run. |
+| `desktop` | Installs the `gtr-kiosk` session and its cage and Remmina launcher, selects it in GDM and AccountsService, and installs NetworkManager and the font. It never restarts GDM during the run. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
@@ -139,6 +139,8 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | `traces` | Mounts the ext4 drive labelled `traces` at `/mnt/traces` for the user. |
 | `tangle-tools` | Installs `acct`, `fleet`, and `chatgpt-fleet`, links and enables the fleet wall and shared :1 desktop units from the deploy clone, then removes the old managed Ghostty autostart. |
 | `handoff` | Prints the sign-ins and the other steps for a person. |
+
+The monitor launcher uses the existing `vnc-desktop.service` and `~/.local/share/remmina/gtr-shared.remmina` profile. Provisioning leaves their credentials in place.
 
 The Wi-Fi name and passphrase come from the command line or a prompt, never from this repository.
 The passphrase reaches NetworkManager on standard input, so it never appears in a command line or in the sudo log.

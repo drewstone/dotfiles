@@ -1,0 +1,8 @@
+#!/bin/sh
+# shellcheck disable=SC2016 # The inner shell expands HOME and date after cage starts it.
+# Physical monitor = a full-screen view of the shared :1 desktop (the one the Mac opens on port 5901).
+# GNOME on this box hangs in its X11 startup and X11 GDM stops vblank on DP-1, so the monitor runs only cage + Remmina.
+# The loop reconnects when :1 restarts or the viewer exits.
+log="$HOME/.local/state/gtr-kiosk.log"; mkdir -p "${log%/*}"
+echo "$(date -Is) start session=$XDG_SESSION_ID type=$XDG_SESSION_TYPE seat=$XDG_SEAT" >> "$log"
+exec cage -d -- sh -c 'while :; do remmina --no-tray-icon --enable-fullscreen -c "$HOME/.local/share/remmina/gtr-shared.remmina"; echo "$(date -Is) remmina exited $?"; sleep 3; done' >> "$log" 2>&1

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=GTR shared desktop
+Comment=Full-screen view of the :1 desktop that the Mac also sees
+Exec=/usr/local/bin/gtr-kiosk
+Type=Application
+DesktopNames=GTRKiosk

@@ -345,6 +345,43 @@ test("desktop turns GDM automatic login on by default and off with --no-autologi
   assert.ok(readdirSync(dir).some((f) => f.startsWith("accounts-user.pre-dotfiles.")));
 });
 
+test("one desktop apply installs kiosk assets before selecting the GDM session", () => {
+  const home = mkdtempSync(join(tmpdir(), "prov-gdm-kiosk-"));
+  const conf = join(home, "custom.conf");
+  const accounts = join(home, "user.conf");
+  const launcher = join(home, "gtr-kiosk");
+  const session = join(home, "gtr-kiosk.desktop");
+  writeFileSync(conf, "[daemon]\nDefaultSession=ubuntu.desktop\nAutomaticLoginEnable=false\n");
+  writeFileSync(accounts, "[User]\nSession=ubuntu\nXSession=ubuntu\n");
+  const r = sh("bash", ["-c", `
+    USER=drew WORK="${home}" HOST_DIR="$PWD/host"
+    . host/provision/lib.sh; . host/provision/desktop.sh
+    GDM_CUSTOM="${conf}" ACCOUNTS_USER="${accounts}"
+    KIOSK_LAUNCHER="${launcher}" KIOSK_SESSION_FILE="${session}"
+    as_root() { "$@"; }
+    root_install() { cp "$2" "$3"; chmod "$1" "$3"; }
+    root_file_is() { [ -f "$3" ] && cmp -s "$2" "$3"; }
+    pkg_installed() { return 0; }
+    boots_graphical() { return 0; }
+    networkd_wait_off() { return 0; }
+    font_present() { return 0; }
+    login_keyring_has_password() { return 1; }
+    systemctl() { [ "$*" = "is-active --quiet gdm" ]; }
+    module_desktop
+    [ "$N_FAILED" = 0 ] && gdm_session_on && accounts_session_on
+  `]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(readFileSync(launcher, "utf8"), readFileSync("host/desktop/gtr-kiosk", "utf8"));
+  assert.equal(readFileSync(session, "utf8"), readFileSync("host/desktop/gtr-kiosk.desktop", "utf8"));
+  assert.match(readFileSync(conf, "utf8"), /^DefaultSession=gtr-kiosk\.desktop$/m);
+  assert.match(readFileSync(accounts, "utf8"), /^Session=gtr-kiosk$/m);
+});
+
+test("desktop module can be sourced when USER is unset", () => {
+  const r = sh("bash", ["-u", "-c", "unset USER; . host/provision/desktop.sh; [ -n \"$ACCOUNTS_USER\" ]"]);
+  assert.equal(r.status, 0, r.stderr);
+});
+
 test("the keyring step shows only for a login keyring with a password", () => {
   const dir = mkdtempSync(join(tmpdir(), "keyring-"));
   writeFileSync(join(dir, "binary"), Buffer.from("GnomeKeyring\n\r\0\n\0\0\0\0", "binary"));
@@ -527,6 +564,7 @@ test("one provision pass removes the old autostart after kiosk unit repair", () 
     boots_graphical() { return 0; }
     networkd_wait_off() { return 0; }
     font_present() { return 0; }
+    root_file_is() { return 0; }
     gdm_session_on() { return 0; }
     accounts_session_on() { return 0; }
     autologin_on() { return 0; }
