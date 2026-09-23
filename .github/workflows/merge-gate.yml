@@ -1,0 +1,122 @@
+name: Merge gate
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Open pull request number to recheck
+        required: true
+
+# PR events use only the base branch workflow. Fork PRs skip every runner job.
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  discover:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, gtr]
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      count: ${{ steps.select.outputs.count }}
+    steps:
+      - name: Check out trusted gate code
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: gate
+          persist-credentials: false
+      - name: Select same-repository PRs
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 gate/.github/scripts/merge_gate.py select-ci
+
+  ci:
+    needs: discover
+    if: needs.discover.result == 'success' && needs.discover.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: [self-hosted, Linux, gtr]
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted gate code
+        id: gate-checkout
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: gate
+          persist-credentials: false
+      - name: Mark CI pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ matrix.head }}
+          BASE_SHA: ${{ matrix.base }}
+        run: python3 gate/.github/scripts/merge_gate.py status --sha "$HEAD_SHA" --context merge-gate/ci --state pending --description "Running base $BASE_SHA"
+      - name: Check out the same-repository PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.head }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Merge the current base into the candidate
+        env:
+          BASE_SHA: ${{ matrix.base }}
+        run: |
+          git -C candidate fetch --no-tags origin "$BASE_SHA"
+          git -C candidate merge --no-commit --no-ff "$BASE_SHA"
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install the measured RTK version
+        run: |
+          curl -fsSL https://github.com/rtk-ai/rtk/releases/download/v0.30.1/rtk-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/rtk.tar.gz"
+          echo '76aba547faf3c7210f2cdf145078e69e46fb5e5d9e29c2e04067c15c372bf4d7  '"$RUNNER_TEMP/rtk.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/rtk-bin"
+          tar -xzf "$RUNNER_TEMP/rtk.tar.gz" -C "$RUNNER_TEMP/rtk-bin" rtk
+          echo "$RUNNER_TEMP/rtk-bin" >> "$GITHUB_PATH"
+      - name: Run repository checks
+        id: verify
+        run: |
+          python3 -m unittest discover -s gate/.github/scripts -p 'test_*.py' -q
+          cd candidate
+          npm test
+      - name: Publish CI result
+        if: always() && steps.gate-checkout.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ matrix.head }}
+          BASE_SHA: ${{ matrix.base }}
+        run: |
+          if [ '${{ steps.verify.outcome }}' = success ]; then
+            python3 gate/.github/scripts/merge_gate.py status --sha "$HEAD_SHA" --context merge-gate/ci --state success --description "Passed base $BASE_SHA"
+          else
+            python3 gate/.github/scripts/merge_gate.py status --sha "$HEAD_SHA" --context merge-gate/ci --state failure --description "Failed base $BASE_SHA"
+          fi
+
+  codex-p1:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, gtr]
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted gate code
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: gate
+          persist-credentials: false
+      - name: Scan current PR heads and publish statuses
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 gate/.github/scripts/merge_gate.py p1
