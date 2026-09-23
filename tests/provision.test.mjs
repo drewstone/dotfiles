@@ -404,14 +404,67 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
     sshd_keys_only || echo "an Include the run does not read"
     rm "$SSHD_CONFIG_D/30-include.conf"
     sshd_keys_only && echo "the drop-in Include is fine"
+    printf 'Match User drew\\nInclude %s/*.conf\\n' "$SSHD_CONFIG_D" >"$SSHD_CONFIG"
+    printf 'PasswordAuthentication yes\\n' >"$SSHD_CONFIG_D/40-match-include.conf"
+    sshd_keys_only || echo "an allowed Include inside Match is unverified"
+    rm "$SSHD_CONFIG_D/40-match-include.conf"
     root_file_is() { false; }
     sshd_keys_only || echo "no drop-in"
   `;
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "keys only\na Match block allows passwords\na quoted value counts too\na Match block that says no is fine\na Match block that turns key login off counts\nan Include the run does not read\nthe drop-in Include is fine\nno drop-in\n");
+  assert.equal(r.stdout, "keys only\na Match block allows passwords\na quoted value counts too\na Match block that says no is fine\na Match block that turns key login off counts\nan Include the run does not read\nthe drop-in Include is fine\nan allowed Include inside Match is unverified\nno drop-in\n");
   // A drop-in can be root-only, so sshd -G runs as root.
-  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(9));
+  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(10));
+});
+
+test("Claude install and provisioning remove temporary trust without losing other settings", () => {
+  const home = mkdtempSync(join(root, ".claude-trust-test-"));
+  const claudeDir = join(home, ".claude");
+  mkdirSync(claudeDir);
+  mkdirSync(join(home, "code"));
+  mkdirSync(join(home, "company"));
+  const local = join(claudeDir, "settings.local.json");
+  const global = join(home, ".claude.json");
+  try {
+    writeFileSync(local, JSON.stringify({ trustedDirectories: [home, "/tmp", "/private/tmp", join(home, "code")], theme: "dark" }));
+    writeFileSync(global, JSON.stringify({ projects: { "/tmp": { hasTrustDialogAccepted: true, history: 1 }, [join(home, "code")]: { hasTrustDialogAccepted: true } }, other: 42 }));
+    const install = sh("bash", ["claude/install.sh"], { env: { ...process.env, HOME: home, PATH: "/usr/bin:/bin" } });
+    assert.equal(install.status, 0, install.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(local, "utf8")), { trustedDirectories: [home, join(home, "code")], theme: "dark" });
+    writeFileSync(local, JSON.stringify({ trustedDirectories: [home, "/tmp"], theme: "dark" }));
+    const script = `
+      . host/provision/agents.sh
+      DOTFILES="$PWD"
+      claude_running() { return 1; }
+      claude_local_trust_ok && echo "unsafe local trust passed"
+      sanitize_claude_local_trust
+      claude_local_trust_ok && echo "safe local trust passed"
+      claude_trust_ok && echo "unsafe trust passed"
+      add_claude_trust
+      claude_trust_ok && echo "safe trust passed"
+      CLAUDE_TRUST_DIRS=/tmp
+      add_claude_trust && echo "unsafe request passed"
+      true
+    `;
+    const provision = sh("bash", ["-c", script], { env: { ...process.env, HOME: home } });
+    assert.equal(provision.status, 0, provision.stderr);
+    assert.doesNotMatch(provision.stdout, /unsafe local trust passed|unsafe trust passed|unsafe request passed/);
+    assert.match(provision.stdout, /safe local trust passed/);
+    assert.match(provision.stdout, /safe trust passed/);
+    assert.deepEqual(JSON.parse(readFileSync(local, "utf8")), { trustedDirectories: [home], theme: "dark" });
+    const config = JSON.parse(readFileSync(global, "utf8"));
+    assert.equal(config.projects["/tmp"].hasTrustDialogAccepted, undefined);
+    assert.equal(config.projects["/tmp"].history, 1);
+    assert.equal(config.projects[join(home, "company")].hasTrustDialogAccepted, true);
+    assert.equal(config.other, 42);
+    writeFileSync(global, JSON.stringify({ other: 42 }));
+    const fresh = sh("bash", ["-c", '. host/provision/agents.sh; DOTFILES="$PWD"; claude_running() { return 1; }; add_claude_trust; claude_trust_ok'], { env: { ...process.env, HOME: home } });
+    assert.equal(fresh.status, 0, fresh.stderr);
+    assert.equal(JSON.parse(readFileSync(global, "utf8")).projects[join(home, "code")].hasTrustDialogAccepted, true);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {
