@@ -97,3 +97,24 @@ AI UI should show:
 - what it produced
 - what it is uncertain about
 - what the user can approve, reject, inspect, or retry
+
+## Wrapping and truncation
+
+- a headline that wraps its last word onto its own line at 1280
+- a pill, badge, tab or button label that wraps to a second row
+- a table cell that wraps a date, an id, a size or a status
+- code or a URL cut with an ellipsis in a marketing frame
+- ten tabs in a row that fold into two rows
+
+Nothing on a marketing page wraps or truncates at 1280, 1100 or 400 px.
+Fit the copy to the width or the width to the copy: shorten the line, widen the container, pin column widths, set `white-space: nowrap`, or move the control into a vertical list.
+Check the rendered page at each width before reporting; a build or a test proves nothing here.
+
+## Label and surface mismatch
+
+- a card whose title promises one product and whose preview shows another surface
+- a real component dropped into a marketing card because it exists, not because it shows the claim
+- a caption under a preview that explains what the eye should have seen
+
+When the claim and the surface disagree, do not keep either.
+Write three other ways to show the claim (another real surface, a real capture, a narrower claim that the surface does prove), pick the one a buyer recognises, and cut the caption.

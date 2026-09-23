@@ -165,3 +165,11 @@ Never put these in a public blog body:
 Use a named public source link instead.
 Explain the fact the source supports in the sentence before the link.
 The reader needs the conclusion and its evidence, not our investigation transcript.
+
+## Headlines that wrap
+
+- a headline whose length is decided before the container width
+- a last word alone on its own line
+
+Write the headline to the width it will render in and check it at 1280 and 400 px.
+A noun-first description of what the product is beats an imperative that needs a second line.
