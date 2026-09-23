@@ -421,6 +421,28 @@ class ScanConvergenceTest(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 2)
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
+class UnixSocketTest(unittest.TestCase):
+    """A bound Unix socket counts as a held path."""
+
+    def test_bound_socket_path_is_held(self):
+        mod = load_reaper()
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-sock-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        sock = os.path.join(tmp, '.cache', 'svc.sock')
+        os.makedirs(os.path.dirname(sock))
+        child = subprocess.Popen(
+            [sys.executable, '-c', 'import os,socket,sys,time; os.chdir("/"); s=socket.socket(socket.AF_UNIX); '
+             's.bind(sys.argv[1]); s.listen(); print("ok", flush=True); time.sleep(60)', sock],
+            stdout=subprocess.PIPE)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        child.stdout.readline()
+        paths, _ = mod.proc_dump()
+        self.assertIn(sock, paths)
+
+
 class ArgumentTest(unittest.TestCase):
     def test_rejects_non_finite_idle_hours(self):
         for value in ('nan', 'inf', '0', '-1'):

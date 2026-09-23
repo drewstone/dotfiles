@@ -356,8 +356,29 @@ def _translate(path, their_mounts, host_mounts):
 SCAN_ROUNDS = 6
 
 
-def _proc_one(pid, self_ns, host_mounts, ns_mounts):
+def _unix_sockets(pid, cache):
+    """inode -> bound path for pathname Unix sockets in pid's network namespace."""
+    ns = _readlink('/proc/%d/ns/net' % pid)
+    if ns in cache:
+        return cache[ns]
+    table = {}
+    try:
+        with open('/proc/%d/net/unix' % pid, encoding='utf-8', errors='replace') as fh:
+            next(fh, None)
+            for line in fh:
+                f = line.split(None, 7)
+                if len(f) == 8 and f[7].startswith('/'):
+                    table[f[6]] = f[7].rstrip('\n')
+    except OSError:
+        table = None
+    if ns:
+        cache[ns] = table
+    return table
+
+
+def _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets=None):
     """Paths one Linux process holds, or None when it cannot be read."""
+    sockets = {} if sockets is None else sockets
     base = '/proc/%d' % pid
     found, ok = [], True
     for link in ('cwd', 'root', 'exe'):
@@ -368,10 +389,21 @@ def _proc_one(pid, self_ns, host_mounts, ns_mounts):
             continue
         found.append(target)
     try:
+        inodes = []
         for fd in os.listdir(base + '/fd'):
             target = _readlink(base + '/fd/' + fd)
             if target and target.startswith('/'):
                 found.append(target)
+            elif target and target.startswith('socket:['):
+                inodes.append(target[8:-1])
+        if inodes:
+            # A pathname-bound Unix socket shows as socket:[inode]; map it to
+            # its bound path so a live service's socket file counts as held.
+            table = _unix_sockets(pid, sockets)
+            if table is None:
+                ok = False
+            else:
+                found.extend(table[i] for i in inodes if i in table)
     except FileNotFoundError:
         return []  # exited
     except OSError:
@@ -411,14 +443,14 @@ def proc_dump():
     """
     self_ns = _readlink('/proc/self/ns/mnt')
     host_mounts = _mountinfo('self') or {}
-    ns_mounts = {}
+    ns_mounts, sockets = {}, {}
     paths, unreadable, scanned = set(), [], {os.getpid()}
     for _ in range(SCAN_ROUNDS):
         pids = {int(p) for p in os.listdir('/proc') if p.isdigit()} - scanned
         if not pids:
             return paths, unreadable
         for pid in sorted(pids):
-            found = _proc_one(pid, self_ns, host_mounts, ns_mounts)
+            found = _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets)
             if found is None:
                 unreadable.append(pid)
             else:

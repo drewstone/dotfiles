@@ -179,8 +179,11 @@ echo "== cli-bridge slice"
 if [ "$(hostname | tr '[:upper:]' '[:lower:]')" = drew-gtr-pro ]; then
   slice_args=()
   [ "$CHECK" = 1 ] && slice_args=(--check)
-  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
-    slice=(sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/$(id -u "$SUDO_USER")" "$SCRIPT_DIR/install-cli-bridge-slice.sh")
+  if [ "$(id -u)" = 0 ]; then
+    # The slice is a user unit of the account that owns this checkout.
+    owner="${SUDO_USER:-$(stat -c %U "$SCRIPT_DIR")}"
+    if [ "$owner" = root ]; then echo "  FAIL: cannot tell which account owns the cli-bridge slice"; exit 1; fi
+    slice=(sudo -u "$owner" XDG_RUNTIME_DIR="/run/user/$(id -u "$owner")" "$SCRIPT_DIR/install-cli-bridge-slice.sh")
   else
     slice=("$SCRIPT_DIR/install-cli-bridge-slice.sh")
   fi
