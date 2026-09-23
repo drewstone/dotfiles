@@ -491,6 +491,41 @@ test("desktop drops the old Ghostty autostart after the deployed kiosk unit is e
   assert.match(clean.stdout, /ok +desktop unit/);
 });
 
+test("one provision pass removes the old autostart after kiosk unit repair", () => {
+  const home = mkdtempSync(join(tmpdir(), "prov-kiosk-order-"));
+  const entry = join(home, ".config/autostart/ghostty.desktop");
+  mkdirSync(join(home, ".config/autostart"), { recursive: true });
+  writeFileSync(entry, "[Desktop Entry]\nComment=Full-screen terminal on the agent tmux session (dotfiles host/provision.sh)\n");
+  const r = sh("bash", ["-c", `
+    HOME="${home}"; USER=drew; HOST_DIR="$PWD/host"; PROVISION_MODE=apply
+    . host/provision/lib.sh; . host/provision/desktop.sh; . host/provision/tangle-tools.sh
+    pkg_installed() { return 0; }
+    boots_graphical() { return 0; }
+    networkd_wait_off() { return 0; }
+    font_present() { return 0; }
+    autologin_on() { return 0; }
+    login_keyring_has_password() { return 1; }
+    tt_installed() { return 0; }
+    github_ssh_ok() { return 0; }
+    wall_unit_on() { [ -e "$HOME/wall-enabled" ]; }
+    desktop_unit_on() { [ -e "$HOME/desktop-enabled" ]; }
+    install_wall_unit() { touch "$HOME/wall-enabled"; }
+    install_desktop_unit() { touch "$HOME/desktop-enabled" "$HOME/vnc-enabled"; }
+    systemctl() {
+      case "$*" in
+        "is-active --quiet gdm") return 0 ;;
+        "--user is-enabled --quiet gtr-desktop.service") [ -e "$HOME/desktop-enabled" ] ;;
+        "--user is-enabled --quiet vnc-desktop.service") [ -e "$HOME/vnc-enabled" ] ;;
+        *) return 1 ;;
+      esac
+    }
+    module_desktop; module_tangle_tools
+    [ "$N_FAILED" = 0 ] && [ ! -e "$OLD_AUTOSTART" ]
+  `]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(!existsSync(entry));
+});
+
 test("tangle-tools updates an existing deploy clone before running its installer", () => {
   const home = mkdtempSync(join(tmpdir(), "prov-tt-upgrade-"));
   const deploy = join(home, ".local/share/tangle-tools/deploy");

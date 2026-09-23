@@ -86,6 +86,7 @@ module_tangle_tools() {
     ensure "tangle-tools deploy clone and command links" tt_installed -- install_tt
     ensure "fleet wall starts with :1 ($WALL_UNIT -> deploy clone)" wall_unit_on -- install_wall_unit
     ensure "shared desktop starts with :1 ($DESKTOP_UNIT -> deploy clone)" desktop_unit_on -- install_desktop_unit
+    ensure "no old Ghostty autostart" no_old_autostart -- drop_old_autostart
     return 0
   fi
   manual_after_signin "Install the tangle-tools commands after GitHub accepts this box's SSH key:" \

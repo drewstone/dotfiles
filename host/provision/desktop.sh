@@ -10,11 +10,9 @@ FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNF"
 GDM_CUSTOM=/etc/gdm3/custom.conf
 LOGIN_KEYRING="$HOME/.local/share/keyrings/login.keyring"
 
-# Ubuntu Desktop waits for the network through NetworkManager only. On a
-# Server install the desktop packages make NetworkManager netplan's renderer
-# from the next boot (/usr/lib/netplan/00-network-manager-all.yaml), but
-# systemd-networkd-wait-online stays enabled, then holds every boot for 120 s
-# and fails.
+# The Wi-Fi module needs nmcli even on a fresh Server install. The old desktop
+# metapackage supplied NetworkManager as a recommendation; the kiosk installs
+# it explicitly before Wi-Fi setup.
 networkd_wait_off() { ! systemctl is-enabled --quiet systemd-networkd-wait-online.service 2>/dev/null; }
 
 boots_graphical() { [ "$(systemctl get-default 2>/dev/null)" = graphical.target ]; }
@@ -105,8 +103,9 @@ write_gdm_custom() {
 login_keyring_has_password() { [ "$(head -c 12 "$LOGIN_KEYRING" 2>/dev/null)" = GnomeKeyring ]; }
 
 module_desktop() {
-  section "desktop: GDM kiosk and JetBrainsMono Nerd Font"
+  section "desktop: GDM kiosk, NetworkManager and JetBrainsMono Nerd Font"
   ensure "GDM installed" pkg_installed gdm3 -- apt_install gdm3
+  ensure "NetworkManager installed for Wi-Fi" pkg_installed network-manager -- apt_install network-manager
   ensure "boots to graphical.target" boots_graphical -- as_root systemctl set-default graphical.target
   ensure "systemd-networkd-wait-online off (NetworkManager waits for the network)" networkd_wait_off -- \
     quiet as_root systemctl disable systemd-networkd-wait-online.service
@@ -119,8 +118,6 @@ module_desktop() {
       "sudo systemctl reboot"
   fi
   ensure "JetBrainsMono Nerd Font $NERD_FONTS_VERSION in $FONT_DIR" font_present -- install_font
-  ensure "no old Ghostty autostart" no_old_autostart -- drop_old_autostart
-
   if [ "$AUTOLOGIN" = 1 ]; then
     ensure "GDM logs $USER in at boot (from the next GDM start)" autologin_on -- write_gdm_custom 1
     if login_keyring_has_password; then
