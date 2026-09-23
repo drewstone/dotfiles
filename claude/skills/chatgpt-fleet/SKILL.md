@@ -22,58 +22,88 @@ Ask for files only when there is no repository to write to.
 
 ## Chat rules
 
-The tool enforces these; know them so you work with them, not around them.
+The tool enforces these rules.
+Know them so you work with them, not around them.
 
-- Every chat lives in the account's one `Tangle Agent Managed` project. Never use or change any other project.
-  Slot d also holds Drew's personal projects, including `Tangle AI`. Read them only; never send into them.
-- One chat per work item (a PR or a research question). Continue that chat until the item merges or is abandoned.
+- Every chat lives in the account's one `Tangle Agent Managed` project.
+  Never use or change any other project.
+  Slot d also holds Drew's personal projects, including `Tangle AI`.
+  Read them only; never send into them.
+- One chat per work item.
+  An item is one PR or one research question.
+  Continue its chat until the item merges or is abandoned.
 - Open an item with `send --repo OWNER/NAME --item '<one line>' --file prompt.md`.
-  The tool writes the ledger entry first, picks the account with the most room, and names the chat `repo · item`.
-- Continue it with `send --ref <item>`, `continue <item>`, `wait <item>`. Never start a second chat for the same item.
-- `send --second-opinion` is the only way onto a second account, and it is labeled. Use it for a decision that needs an independent read.
-- When the session opens its PR, run `pr <item> <number>`. The chat becomes `repo · item · #N`.
-- Finish with `close <item> --merged` (GitHub must show the merge) or `close <item> --abandoned '<reason>'`.
-  The tool exports the chat into `~/traces/chatgpt/` and archives it. Nothing deletes a chat.
+  The tool writes the ledger entry first.
+  It picks the account with the most room that can read the repository, and names the chat `repo · item`.
+- Continue it with `send --ref <item>`, `continue <item>`, or `wait <item>`.
+  Never start a second chat for the same item.
+- `send --second-opinion` is the only way onto a second account, and the chat is labeled.
+  Use it for a decision that needs an independent read.
+- When the session opens its PR, run `pr <item> <number>`.
+  The chat becomes `repo · item · #N`.
+- Finish with `close <item> --merged` or `close <item> --abandoned '<reason>'`.
+  A merge needs GitHub to show it; only the owning session abandons.
+  The tool exports the chat into `~/traces/chatgpt/` and archives it.
+  Nothing deletes a chat.
 - A sweep timer closes items whose PR merged, restores titles, and exports every managed chat.
+
+## Repository access
+
+A slot's GitHub connector reaches only the repositories connected in that account.
+On 2026-09-22 slot a answered 404 for a private repository, and the session said so instead of inventing findings.
+Record each slot's reachable repositories in `fleet.json` as `"repos": ["owner/*"]`.
+An item then goes only to a slot that can read its repository.
+A slot without `repos` takes any repository, so check access before its first build item.
 
 ## The loop
 
-Use three rounds. Do not collapse them into one prompt.
+Use three rounds.
+Do not collapse them into one prompt.
 
-**Round 1 — scope.** Point the session at the system and ask it for the largest set of simple, high-leverage pursuits it can find.
+**Round 1 — scope.** Open a research item for the scope, for example `--item 'scope: <area>'`.
+Point the session at the system and ask it for the largest set of simple, high-leverage pursuits it can find.
 Let the session decompose the work.
 A plan the session wrote is a plan it will finish; a plan you wrote is a specification it will argue with.
 Forbid questions and require it to decide.
 
-**Round 2 — build and open the PRs.** Tell it to build every item in the plan it just wrote, to completion, in this turn.
-Name the artifact as a pull request per item: a branch off the default branch, the commits, and an opened PR.
-Require the PR number and URL for each one in the reply, so the claim is checkable.
-This is the `continue` default.
+**Round 2 — build and open the PRs.** Open one item per planned PR.
+Put that plan entry, a few lines from the scope reply, in the item's prompt, and name the PR as the deliverable.
+The session builds it to completion: a branch off the default branch, the commits, and an opened PR.
+Require the PR number and URL in the reply, so the claim is checkable, then run `pr <item> <number>`.
+Close the scope item once every build item is open.
 
-Never accept a zip. A zip is a delivery you have to unpack, diff and re-author before it is reviewable.
+Never accept a zip.
+A zip is a delivery you have to unpack, diff and re-author before it is reviewable.
 A pull request is already reviewable, already has CI, and already has a number you can verify.
 
-**Round 3 and later — close named gaps.** Name what is missing and what finished means.
+**Round 3 and later — close named gaps.** Continue the build item's own chat.
+Name what is missing and what finished means.
 Never send encouragement.
 A continue that names no deliverable spends an hour and returns prose.
+The `continue` default text asks for every planned item as a PR; pass `--message` with the named gap instead.
 
 ## Lessons from Drew's own prompting
 
 Read-only study of the 92 chats in slot d's `Tangle AI` project on 2026-09-22: 515 user messages, median 45 words.
 
 Keep what works:
+
 - Name the finished state: "non-draft PR, mergeable", "one PR per repo", "finish in one PR".
 - Push for reuse and simplicity: "evaluate if this already exists", "improve it at the source", "never duplicate".
 - Ask for the critique behind each decision: "why is this here, what does it contribute to".
 - After a merge, ask what remains and what would prove it works.
 
 Fix what does not:
-- Bare encouragement. "Continue!", "Finish it!", and "You can do it!" made up 53 of 139 GPT-6 Pro turns.
+
+- Bare encouragement.
+  "Continue!", "Finish it!", and "You can do it!" made up 53 of 139 GPT-6 Pro turns.
   33 of those 53 ended with under 400 characters of answer, against 34 of 76 for messages that named work.
   Name the next deliverable and its check instead.
-- One chat carrying several items. Chats ran to 27 user messages and drifted across topics and repos.
-  Open a new item for new work; the ledger and title then say what the chat is for.
-- Dictated run-on prompts with several asks in one breath. Split them: one outcome, its constraints, its check.
+- One chat carrying several items.
+  Chats ran to 27 user messages and drifted across topics and repos.
+  Open a new item for new work, so the ledger and title say what each chat is for.
+- Dictated run-on prompts with several asks in one breath.
+  Split them into one outcome, its constraints, and its check.
 - Pasting another agent's transcript as the prompt (735, 945 and 4,354 words).
   Summarize the claim to check in a few lines, and point at the repository for the rest.
 - Mixing an open product question into a build turn.
@@ -133,18 +163,16 @@ This works: a probe given that instruction volunteered that its installation dat
 
 On the GTR the fleet runs headless with `CHATGPT_FLEET_CHROME=~/.local/bin/chrome-wayland`.
 Measured 2026-09-22: a headless `send` on slot a opened, renamed and answered a GPT-6 Pro item, and `wait` exported it.
-Sign a profile in once with a window (or `login` over ssh); headless reuses its cookies.
+Sign a profile in once with a window, or with `login` over ssh.
+Headless mode reuses its cookies.
 Check `status` for the account, plan, room and managed project per slot before dispatching.
 
 Default slots are `a` to `d` on ports 9301 to 9304.
 Every send asks for `gpt-6-pro` and checks the reply against it.
 
-A slot's GitHub connector reaches only the repositories connected in that account.
-On 2026-09-22 slot a answered 404 for a private repository; the session said so instead of inventing findings.
-Before a build item, confirm the chosen account can read the repository.
-
 Keep prompts, replies and downloaded files under `~/.local/state/chatgpt-fleet/`.
-A scratch directory does not survive a long run; five hours of evidence was lost that way, including the probes that would have settled a later question.
+A scratch directory does not survive a long run.
+Five hours of evidence was lost that way, including the probes that would have settled a later question.
 The full conversations are in `~/traces/chatgpt/<account>/<conversation>/` after every finished turn.
 
 ## Then consider
