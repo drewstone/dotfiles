@@ -1,15 +1,15 @@
 # shellcheck shell=bash
-# tangle-tools: acct, fleet, the shared :1 desktop and chatgpt-fleet come from the
-# tangle-tools deploy clone. This module runs the two install commands that tangle-tools documents
-# (deploy/README.md); it never copies or reimplements those tools.
+# tangle-tools: acct, fleet and chatgpt-fleet come from the deploy clone.
+# The only shared :1 view is fleet-pages.service, owned by fleet.
 
 TT_REPO=git@github.com:drewstone/tangle-tools.git
 TT_DIR="$HOME/.local/share/tangle-tools"
 
 tt_installed() {
-  [ -x "$TT_DIR/deploy/tangle-tools-deploy" ] && [ -L "$HOME/.local/bin/acct" ] &&
-    [ -L "$HOME/.local/bin/tangle-tools-deploy" ] &&
-    link_is "$TT_DIR/fleet/gtr-desktop" "$HOME/.local/bin/gtr-desktop"
+  [ -x "$TT_DIR/deploy/tangle-tools-deploy" ] &&
+    link_is "$TT_DIR/deploy/tangle-tools-deploy" "$HOME/.local/bin/tangle-tools-deploy" &&
+    link_is "$TT_DIR/agent-accounts/acct" "$HOME/.local/bin/acct" &&
+    link_is "$TT_DIR/fleet/fleet" "$HOME/.local/bin/fleet"
 }
 
 # Apply mode records GitHub's host key on first contact (accept-new). Check
@@ -31,7 +31,7 @@ install_tt() {
   if [ ! -d "$TT_DIR/.git" ]; then
     git clone -q "$TT_REPO" "$TT_DIR" || return 1
   else
-    # The old installer can fetch new code but still runs its old in-memory LINKS list.
+    # The old installer can fetch new code but still runs its old LINKS list.
     # Update first, then execute the installer from the new checkout.
     indent "$TT_DIR/deploy/tangle-tools-deploy" update || return 1
   fi
@@ -39,51 +39,33 @@ install_tt() {
   indent "$TT_DIR/deploy/tangle-tools-deploy" install
 }
 
-# Both kiosk units run from the deploy clone. vnc-desktop.service starts them
-# with the shared :1 display; the wall unit never opens a Ghostty window.
-WALL_UNIT_SRC="$TT_DIR/fleet/systemd/fleet-wall.service"
-WALL_UNIT="$HOME/.config/systemd/user/fleet-wall.service"
-DESKTOP_UNIT_SRC="$TT_DIR/fleet/systemd/gtr-desktop.service"
-DESKTOP_UNIT="$HOME/.config/systemd/user/gtr-desktop.service"
+PAGES_UNIT_SRC="$TT_DIR/fleet/systemd/fleet-pages.service"
+PAGES_UNIT="$HOME/.config/systemd/user/fleet-pages.service"
 
-vnc_wants_unit() {
-  local link="$HOME/.config/systemd/user/vnc-desktop.service.wants/$1"
-  [ -L "$link" ] && [ "$(readlink -f "$link")" = "$2" ]
-}
-
-wall_unit_on() {
+pages_unit_on() {
+  local wants="$HOME/.config/systemd/user/vnc-desktop.service.wants/fleet-pages.service"
   user_bus || true
-  link_is "$WALL_UNIT_SRC" "$WALL_UNIT" &&
-    vnc_wants_unit fleet-wall.service "$WALL_UNIT_SRC" &&
-    systemctl --user is-enabled --quiet fleet-wall.service 2>/dev/null
-}
-
-install_wall_unit() {
-  [ -f "$WALL_UNIT_SRC" ] || { printf '%s is missing; update the deploy clone first\n' "$WALL_UNIT_SRC" >&2; return 1; }
-  link_into "$WALL_UNIT_SRC" "$WALL_UNIT" || return 1
-  user_bus || { printf 'no session bus for %s: enable linger or log in once\n' "$USER" >&2; return 1; }
-  systemctl --user daemon-reload && systemctl --user reenable --quiet fleet-wall.service
-}
-
-desktop_unit_on() {
-  user_bus || true
-  link_is "$DESKTOP_UNIT_SRC" "$DESKTOP_UNIT" &&
-    vnc_wants_unit gtr-desktop.service "$DESKTOP_UNIT_SRC" &&
-    systemctl --user is-enabled --quiet gtr-desktop.service 2>/dev/null &&
+  vnc_session_ready &&
+    link_is "$PAGES_UNIT_SRC" "$PAGES_UNIT" &&
+    [ -L "$wants" ] && [ "$(readlink -f "$wants")" = "$(readlink -f "$PAGES_UNIT_SRC")" ] &&
+    systemctl --user is-enabled --quiet fleet-pages.service 2>/dev/null &&
     systemctl --user is-enabled --quiet vnc-desktop.service 2>/dev/null
 }
 
-install_desktop_unit() {
-  [ -f "$DESKTOP_UNIT_SRC" ] || { printf '%s is missing; update the deploy clone first\n' "$DESKTOP_UNIT_SRC" >&2; return 1; }
-  user_bus || { printf 'no session bus for %s: enable linger or log in once\n' "$USER" >&2; return 1; }
-  if ! systemctl --user is-enabled --quiet vnc-desktop.service 2>/dev/null; then
-    systemctl --user enable --quiet vnc-desktop.service || {
-      printf 'vnc-desktop.service must be installed before the shared desktop\n' >&2
-      return 1
-    }
+install_pages_unit() {
+  legacy_view_present && {
+    printf 'legacy view units need the explicit fleet-pages apply step\n' >&2
+    return 1
+  }
+  [ -f "$PAGES_UNIT_SRC" ] || { printf '%s is missing; update the deploy clone first\n' "$PAGES_UNIT_SRC" >&2; return 1; }
+  if ! vnc_session_ready; then
+    printf 'the shared VNC startup and credentials must be ready before enabling fleet-pages\n' >&2
+    return 1
   fi
-  link_into "$DESKTOP_UNIT_SRC" "$DESKTOP_UNIT" || return 1
-  systemctl --user daemon-reload && systemctl --user reenable --quiet gtr-desktop.service
+  user_bus || { printf 'no session bus for %s: enable linger or log in once\n' "$USER" >&2; return 1; }
+  vnc_unit_on || install_vnc_unit || return 1
+  link_into "$PAGES_UNIT_SRC" "$PAGES_UNIT" || return 1
+  systemctl --user daemon-reload && systemctl --user enable --force --quiet "$PAGES_UNIT_SRC"
 }
 
 module_tangle_tools() {
@@ -92,9 +74,12 @@ module_tangle_tools() {
   # person, not drift.
   if tt_installed || github_ssh_ok; then
     ensure "tangle-tools deploy clone and command links" tt_installed -- install_tt
-    ensure "fleet wall starts with :1 ($WALL_UNIT -> deploy clone)" wall_unit_on -- install_wall_unit
-    ensure "shared desktop starts with :1 ($DESKTOP_UNIT -> deploy clone)" desktop_unit_on -- install_desktop_unit
-    ensure "no old Ghostty autostart" no_old_autostart -- drop_old_autostart
+    if legacy_view_present; then
+      skip "legacy :1 view units are present; fleet-pages migration waits for Drew's explicit apply"
+    else
+      ensure "single fleet pages view starts with :1 ($PAGES_UNIT -> deploy clone)" pages_unit_on -- install_pages_unit
+      ensure "no old Ghostty autostart" no_old_autostart -- drop_old_autostart
+    fi
     return 0
   fi
   manual_after_signin "Install the tangle-tools commands after GitHub accepts this box's SSH key:" \
