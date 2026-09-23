@@ -1,7 +1,6 @@
 # shellcheck shell=bash disable=SC2153 # HOST_DIR comes from host/provision.sh
-# desktop: GNOME on boot, Ghostty with its config, and the JetBrainsMono Nerd
-# Font it draws with. The fleet wall (tangle-tools module) is the only Ghostty
-# window that opens at login; the snap's own launcher still opens tmux work.
+# desktop: GDM starts the existing gtr-kiosk session, which mirrors :1 on the
+# monitor. The tangle-tools module installs the board and focus desktop on :1.
 
 # GDM logs the user in at boot unless --no-autologin: after an unattended
 # reboot, the fleet wall and chatgpt-fleet's Chrome need a session.
@@ -19,7 +18,6 @@ LOGIN_KEYRING="$HOME/.local/share/keyrings/login.keyring"
 networkd_wait_off() { ! systemctl is-enabled --quiet systemd-networkd-wait-online.service 2>/dev/null; }
 
 boots_graphical() { [ "$(systemctl get-default 2>/dev/null)" = graphical.target ]; }
-snap_has() { snap list "$1" >/dev/null 2>&1; }
 font_present() { fc-list : family 2>/dev/null | grep 'JetBrainsMono Nerd Font' >/dev/null; }
 
 install_font() {
@@ -33,11 +31,6 @@ install_font() {
   fi
   mkdir -p "$FONT_DIR" && tar -xJf "$tar" -C "$FONT_DIR" && fc-cache -f "$FONT_DIR" >/dev/null
 }
-
-# The snap's own binary, not /snap/bin/ghostty: "snap run" rewrites files under
-# ~/snap/ghostty, and check mode writes nothing.
-GHOSTTY_BIN=/snap/ghostty/current/bin/ghostty
-ghostty_valid() { [ -x "$GHOSTTY_BIN" ] && "$GHOSTTY_BIN" +validate-config >/dev/null 2>&1; }
 
 # The autostart entry this module used to link. It opened a second full-screen
 # Ghostty on tmux work, stacked on the fleet wall.
@@ -53,12 +46,13 @@ no_old_autostart() { ! ours_old_autostart; }
 
 # drop_old_autostart: remove the link, or move a copy of the old entry aside.
 # Any other ghostty.desktop (file or link) is a person's own; it stays.
-# Runs only once the wall unit is enabled.
+# Runs only once the replacement :1 desktop unit is enabled.
 drop_old_autostart() {
-  # Never leave the desktop with no terminal: the wall must start at login first.
+  # Never leave the desktop with no terminal: the replacement must start with :1 first.
   user_bus || true
-  if ! systemctl --user is-enabled --quiet fleet-wall.service 2>/dev/null; then
-    printf 'fleet-wall.service is not enabled yet; the tangle-tools module enables it, then run desktop again\n' >&2
+  if ! systemctl --user is-enabled --quiet gtr-desktop.service 2>/dev/null ||
+     ! systemctl --user is-enabled --quiet vnc-desktop.service 2>/dev/null; then
+    printf 'gtr-desktop.service and vnc-desktop.service must be enabled before removing the old autostart\n' >&2
     return 1
   fi
   if old_autostart_link; then
@@ -111,8 +105,8 @@ write_gdm_custom() {
 login_keyring_has_password() { [ "$(head -c 12 "$LOGIN_KEYRING" 2>/dev/null)" = GnomeKeyring ]; }
 
 module_desktop() {
-  section "desktop: GNOME, Ghostty, JetBrainsMono Nerd Font"
-  ensure "desktop installed (gdm3)" pkg_installed gdm3 -- apt_install ubuntu-desktop-minimal
+  section "desktop: GDM kiosk and JetBrainsMono Nerd Font"
+  ensure "GDM installed" pkg_installed gdm3 -- apt_install gdm3
   ensure "boots to graphical.target" boots_graphical -- as_root systemctl set-default graphical.target
   ensure "systemd-networkd-wait-online off (NetworkManager waits for the network)" networkd_wait_off -- \
     quiet as_root systemctl disable systemd-networkd-wait-online.service
@@ -124,11 +118,8 @@ module_desktop() {
     manual "GDM is not running yet. Reboot when the run is done; the desktop starts at boot:" \
       "sudo systemctl reboot"
   fi
-  ensure "Ghostty snap (classic)" snap_has ghostty -- quiet as_root snap install ghostty --classic
   ensure "JetBrainsMono Nerd Font $NERD_FONTS_VERSION in $FONT_DIR" font_present -- install_font
-  want_link "$HOST_DIR/desktop/ghostty-config" "$HOME/.config/ghostty/config"
-  ensure "Ghostty accepts its config" ghostty_valid
-  ensure "no second Ghostty at login (the fleet wall is the only window)" no_old_autostart -- drop_old_autostart
+  ensure "no old Ghostty autostart" no_old_autostart -- drop_old_autostart
 
   if [ "$AUTOLOGIN" = 1 ]; then
     ensure "GDM logs $USER in at boot (from the next GDM start)" autologin_on -- write_gdm_custom 1

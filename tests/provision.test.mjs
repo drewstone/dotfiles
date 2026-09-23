@@ -436,10 +436,8 @@ test("--replace-psk without a file compares with the prompt's passphrase, and ch
   assert.match(r.stdout, /\n0\n$/);
 });
 
-// The fleet wall is the only Ghostty window at login: check mode reports the old
-// autostart entry and a missing wall unit as drift and changes nothing; apply
-// removes the entry dotfiles installed, only once the wall unit is enabled; a linked, enabled unit is clean.
-test("desktop drops the old Ghostty autostart and tangle-tools enables the wall unit", () => {
+// The kiosk desktop replaces the old Ghostty autostart after its unit is enabled.
+test("desktop drops the old Ghostty autostart after the deployed kiosk unit is enabled", () => {
   const home = mkdtempSync(join(tmpdir(), "prov-wall-"));
   const entry = join(home, ".config/autostart/ghostty.desktop");
   mkdirSync(join(home, ".config/autostart"), { recursive: true });
@@ -447,23 +445,37 @@ test("desktop drops the old Ghostty autostart and tangle-tools enables the wall 
   const run = (mode) => sh("bash", ["-c", `
     DOTFILES="$PWD"; HOST_DIR="$PWD/host"; HOME="${home}"; PROVISION_MODE=${mode}
     . host/provision/lib.sh; . host/provision/desktop.sh; . host/provision/tangle-tools.sh
-    systemctl() { [ "$*" = "--user is-enabled --quiet fleet-wall.service" ] && [ -e "$HOME/enabled" ]; }
+    systemctl() {
+      case "$*" in
+        "--user is-enabled --quiet fleet-wall.service") [ -e "$HOME/wall-enabled" ] ;;
+        "--user is-enabled --quiet gtr-desktop.service") [ -e "$HOME/desktop-enabled" ] ;;
+        "--user is-enabled --quiet vnc-desktop.service") [ -e "$HOME/vnc-enabled" ] ;;
+      esac
+    }
     user_bus() { return 0; }
     ensure "old autostart" no_old_autostart -- drop_old_autostart
-    ensure "wall unit" wall_unit_on -- false`]);
+    ensure "wall unit" wall_unit_on -- false
+    ensure "desktop unit" desktop_unit_on -- false`]);
   const check = run("check");
   assert.match(check.stdout, /drift +old autostart/);
   assert.match(check.stdout, /drift +wall unit/);
+  assert.match(check.stdout, /drift +desktop unit/);
   assert.ok(existsSync(entry), "check mode must not remove the entry");
   assert.match(run("apply").stdout, /FAILED +old autostart/);
-  assert.ok(existsSync(entry), "the entry stays while the wall unit is not enabled");
-  writeFileSync(join(home, "enabled"), "");
+  assert.ok(existsSync(entry), "the entry stays while the desktop unit is not enabled");
+  writeFileSync(join(home, "wall-enabled"), "");
+  writeFileSync(join(home, "desktop-enabled"), "");
+  assert.match(run("apply").stdout, /FAILED +old autostart/);
+  assert.ok(existsSync(entry), "the entry stays while VNC is not enabled");
+  writeFileSync(join(home, "vnc-enabled"), "");
   assert.match(run("apply").stdout, /changed +old autostart/);
   assert.ok(!existsSync(entry), "apply removes the entry dotfiles installed");
   const unit = join(home, ".local/share/tangle-tools/fleet/systemd/fleet-wall.service");
+  const desktopUnit = join(home, ".local/share/tangle-tools/fleet/systemd/gtr-desktop.service");
   mkdirSync(join(home, ".local/share/tangle-tools/fleet/systemd"), { recursive: true });
   mkdirSync(join(home, ".config/systemd/user"), { recursive: true });
   symlinkSync(unit, join(home, ".config/systemd/user/fleet-wall.service"));
+  symlinkSync(desktopUnit, join(home, ".config/systemd/user/gtr-desktop.service"));
   // A person's own entry, as a file or as a link elsewhere, is not drift and stays.
   const own = join(home, "own.desktop");
   writeFileSync(own, "[Desktop Entry]\nExec=ghostty\n");
@@ -476,6 +488,7 @@ test("desktop drops the old Ghostty autostart and tangle-tools enables the wall 
   assert.match(run("apply").stdout, /changed +old autostart/);
   assert.throws(() => lstatSync(entry), "the old managed link is removed");
   assert.match(clean.stdout, /ok +wall unit/);
+  assert.match(clean.stdout, /ok +desktop unit/);
 });
 
 test("a commented-out authorized key does not hide the ssh-copy-id step", () => {
