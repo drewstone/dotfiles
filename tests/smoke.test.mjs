@@ -9,6 +9,16 @@ function run(cmd, args, cwd, env = process.env) {
   return result;
 }
 
+function commit(args, cwd) {
+  return run("git", ["commit", ...args], cwd, {
+    ...process.env,
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.invalid",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.invalid",
+  });
+}
+
 const repoRoot = mkdtempSync(join(tmpdir(), "ai-agent-hooks-"));
 const remoteRoot = mkdtempSync(join(tmpdir(), "ai-agent-hooks-remote-"));
 const scriptPath = resolve("bin/ai-agent-hooks.mjs");
@@ -19,7 +29,7 @@ assert.equal(result.status, 0, result.stderr);
 writeFileSync(join(repoRoot, "README.txt"), "hello\n", "utf8");
 result = run("git", ["add", "README.txt"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
-result = run("git", ["commit", "-m", "init"], repoRoot);
+result = commit(["-m", "init"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
 
 result = run("git", ["init", "--bare"], remoteRoot);
@@ -85,14 +95,14 @@ result = run("git", ["clone", remoteRoot, conflictRepo], process.cwd());
 assert.equal(result.status, 0, result.stderr);
 writeFileSync(join(conflictRepo, ".ai-agent-hooks.mjs"), readFileSync(configPath, "utf8"), "utf8");
 writeFileSync(join(conflictRepo, "README.txt"), "local\n", "utf8");
-result = run("git", ["commit", "-am", "local"], conflictRepo);
+result = commit(["-am", "local"], conflictRepo);
 assert.equal(result.status, 0, result.stderr);
 
 const remoteWriter = mkdtempSync(join(tmpdir(), "ai-agent-hooks-remote-writer-"));
 result = run("git", ["clone", remoteRoot, remoteWriter], process.cwd());
 assert.equal(result.status, 0, result.stderr);
 writeFileSync(join(remoteWriter, "README.txt"), "remote\n", "utf8");
-result = run("git", ["commit", "-am", "remote"], remoteWriter);
+result = commit(["-am", "remote"], remoteWriter);
 assert.equal(result.status, 0, result.stderr);
 result = run("git", ["push", "origin", "main"], remoteWriter);
 assert.equal(result.status, 0, result.stderr);
@@ -105,7 +115,7 @@ const globalBaselineRepo = mkdtempSync(join(tmpdir(), "ai-agent-hooks-global-"))
 result = run("git", ["clone", remoteRoot, globalBaselineRepo], process.cwd());
 assert.equal(result.status, 0, result.stderr);
 writeFileSync(join(globalBaselineRepo, "README.txt"), "global baseline\n", "utf8");
-result = run("git", ["commit", "-am", "global baseline"], globalBaselineRepo);
+result = commit(["-am", "global baseline"], globalBaselineRepo);
 assert.equal(result.status, 0, result.stderr);
 result = run("node", [scriptPath, "run", "pre-push"], globalBaselineRepo, {
   ...process.env,
@@ -146,7 +156,7 @@ writeFileSync(
 writeFileSync(join(repoRoot, "README.txt"), "hello again\n", "utf8");
 result = run("git", ["add", "README.txt"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
-result = run("git", ["commit", "-m", "update"], repoRoot);
+result = commit(["-m", "update"], repoRoot);
 assert.equal(result.status, 0, result.stderr);
 
 const fakeBinDir = join(repoRoot, "fake-bin");
