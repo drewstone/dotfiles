@@ -354,6 +354,8 @@ class RecheckTest(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 1)
 
 
+@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
 class RecheckAfterScanTest(unittest.TestCase):
     """A file written during the final process scan must stop the removal."""
 
@@ -369,7 +371,7 @@ class RecheckAfterScanTest(unittest.TestCase):
         def scan_then_write(*a, **k):
             calls.append(1)
             held = real_scan(*a, **k)
-            if len(calls) == 2:  # the recheck's scan, after its first evaluate
+            if len(calls) == 2:  # the recheck's first scan, after its first evaluate
                 Fixture.write(late, '.env', 'TOKEN=1\n')
             return held
 
@@ -378,8 +380,44 @@ class RecheckAfterScanTest(unittest.TestCase):
         os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old_env)))
         mod.main(['--root', f.root, '--no-log-file', '--idle-hours', str(IDLE_HOURS)])
-        self.assertEqual(len(calls), 2)
         self.assertTrue(os.path.isfile(os.path.join(late, '.env')))
+
+
+@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class ScanLastTest(unittest.TestCase):
+    """The last check before the remove must be a process scan."""
+
+    def test_process_scan_is_last(self):
+        f = Fixture()
+        self.addCleanup(f.cleanup)
+        path = f.add('gone')
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        mod = load_reaper()
+        order = []
+        real_scan, real_eval, real_git = mod.scan_processes, mod.evaluate, mod.git
+
+        def scan(*a, **k):
+            order.append('scan')
+            return real_scan(*a, **k)
+
+        def ev(*a, **k):
+            order.append('evaluate')
+            return real_eval(*a, **k)
+
+        def git(argv, *a, **k):
+            if 'remove' in argv:
+                order.append('remove')
+            return real_git(argv, *a, **k)
+
+        mod.scan_processes, mod.evaluate, mod.git = scan, ev, git
+        old_env = dict(os.environ)
+        os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old_env)))
+        mod.main(['--root', f.root, '--no-log-file', '--idle-hours', str(IDLE_HOURS)])
+        self.assertFalse(os.path.isdir(path))
+        self.assertEqual(order[order.index('remove') - 1], 'scan', order)
+        self.assertEqual(order[-5:-1], ['evaluate', 'scan', 'evaluate', 'scan'], order)
 
 
 class MacLsofParseTest(unittest.TestCase):

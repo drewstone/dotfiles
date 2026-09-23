@@ -802,16 +802,18 @@ def recheck(rpath, main_path, common_dir, args, log):
         raise Skip('no longer registered')
     # Refetch so a remote branch deleted since the first pass is seen.
     git(['--git-dir', common_dir, 'fetch', '--all', '--prune', '--quiet'], '/', timeout=300)
-    evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
-    held = scan_processes(not args.no_sudo, log)
-    if IS_MAC:
-        held = {real(p) for p in held} | held
-    users = sorted(p for p in held if inside(p, rpath))
-    if users:
-        raise Skip('in use by a process: %s' % users[0])
-    # The scan can take seconds; a short-lived writer may have created an
-    # ignored file and exited during it, so check the tree once more last.
-    evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
+    # Check-then-remove cannot be atomic, so interleave the checks: a writer
+    # that exits during a scan is caught by the following evaluate, and a
+    # process that arrives during an evaluate is caught by the following scan.
+    # The scan runs last so the remaining window is the gap until the remove.
+    for _ in range(2):
+        evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
+        held = scan_processes(not args.no_sudo, log)
+        if IS_MAC:
+            held = {real(p) for p in held} | held
+        users = sorted(p for p in held if inside(p, rpath))
+        if users:
+            raise Skip('in use by a process: %s' % users[0])
 
 
 def is_default_name(default, name):
