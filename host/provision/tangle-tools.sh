@@ -40,7 +40,7 @@ module_tangle_tools() {
     ensure "tangle-tools deploy clone and command links" tt_installed -- install_tt
     return 0
   fi
-  manual "Install the tangle-tools commands after GitHub accepts this box's SSH key:" \
+  manual_after_signin "Install the tangle-tools commands after GitHub accepts this box's SSH key:" \
     "git clone $TT_REPO $TT_DIR" \
     "$TT_DIR/deploy/tangle-tools-deploy install"
 }

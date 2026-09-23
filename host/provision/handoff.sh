@@ -42,7 +42,7 @@ module_handoff() {
       'gh ssh-key add ~/.ssh/id_ed25519.pub --title "$(hostname -s)"'
   fi
   if command -v tailscale >/dev/null 2>&1 && ! tailscale status >/dev/null 2>&1; then
-    manual "Join the tailnet (a browser sign-in; the box then answers as \$(hostname -s) over MagicDNS):" \
+    manual "Join the tailnet (a browser sign-in; the box then answers as $(hostname -s | tr '[:upper:]' '[:lower:]') over MagicDNS):" \
       "sudo tailscale up --ssh --operator=$USER"
   fi
   # Credential files, not the CLIs: a status call can refresh a token, and

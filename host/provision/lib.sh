@@ -12,6 +12,7 @@ N_CHANGED=0
 N_DRIFT=0
 N_FAILED=0
 MANUAL_STEPS=()
+MANUAL_AFTER_SIGNIN=()
 APT_UPDATED=0
 
 section() { printf '\n== %s\n' "$*"; }
@@ -34,6 +35,15 @@ manual() {
     entry+=$'\n'"    $line"
   done
   MANUAL_STEPS+=("$entry")
+}
+
+# manual_after_signin WHAT COMMAND...: a step that waits on the sign-ins. The
+# closing list puts it after every other step.
+manual_after_signin() {
+  local -a before=("${MANUAL_STEPS[@]}")
+  manual "$@"
+  MANUAL_AFTER_SIGNIN+=("${MANUAL_STEPS[${#MANUAL_STEPS[@]} - 1]}")
+  MANUAL_STEPS=("${before[@]}")
 }
 
 checking() { [ "$PROVISION_MODE" = check ]; }
