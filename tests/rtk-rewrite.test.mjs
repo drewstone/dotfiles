@@ -723,6 +723,7 @@ test("the fidelity predicate fires on each defect and stays quiet otherwise", ()
 
 test("guard recognises object names outside any repository", (t) => {
   if (!has("git")) return t.skip("git not installed");
+  if (!has("rtk")) return t.skip("rtk not installed");
   const outside = mkdtempSync(join(tmpdir(), "rtk-guard-norepo-"));
   try {
     assert.equal(guardVerdict("git show 928295edde6eb51c6faf16d904d6dc6601c52713", outside), "real");
@@ -741,6 +742,7 @@ test("guard recognises object names outside any repository", (t) => {
 // ---------------------------------------------------------------------------
 test("a rewrite from an rtk build the table was not measured against is refused", (t) => {
   if (!has("git")) return t.skip("git not installed");
+  if (!has("jq")) return t.skip("jq not installed");
   const dir = mkdtempSync(join(tmpdir(), "rtk-guard-version-"));
   const measured = ask(["--measured-rtk-version"]);
   try {
