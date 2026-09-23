@@ -52,7 +52,7 @@ claude_links_current() {
     link_is "$f" "$HOME/.claude/hooks/$(basename "$f")" || return 1
   done
   for f in "$c"/tools/*; do
-    [ -f "$f" ] && [ "$(basename "$f")" != README.md ] || continue
+    if [ ! -f "$f" ] || [ "$(basename "$f")" = README.md ]; then continue; fi
     link_is "$f" "$HOME/bin/$(basename "$f")" || return 1
   done
 }
