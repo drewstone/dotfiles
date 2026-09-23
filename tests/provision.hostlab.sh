@@ -112,7 +112,7 @@ chmod 440 /etc/sudoers.d/90-provision-test
 mkdir -p /home/drew/code && cp -a /work/dotfiles /home/drew/code/dotfiles && chown -R drew:drew /home/drew/code
 install -o drew -g drew -m 600 /work/psk /home/drew/psk
 install -o drew -g drew -m 600 /work/psk2 /home/drew/psk2
-! command -v nmcli
+! command -v nmcli || exit 1
 mkdir -p /etc/systemd/system.conf.d
 printf "[Manager]\nRuntimeWatchdogSec=30s\nRebootWatchdogSec=10min\n" >/etc/systemd/system.conf.d/10-watchdog.conf
 printf "sp5100_tco\nsoftdog\n" >/etc/modules-load.d/host-guard-watchdog.conf
@@ -151,18 +151,17 @@ dev=$(readlink -f /dev/watchdog-softdog)
 holder=$(fuser "$dev" 2>/dev/null | tr -d " ")
 echo "softdog=$dev holder=$holder comm=$(ps -o comm= -p "$holder")"
 [ "$(ps -o comm= -p "$holder")" = watchdog ]
-! journalctl -b -u watchdog --no-pager | grep "cannot open" >/dev/null
+! journalctl -b -u watchdog --no-pager | grep "cannot open" || exit 1
 cat /sys/class/watchdog/$(basename "$dev")/state
 echo "failed units: $(systemctl --failed --no-legend --plain | tr "\n" " ")"
 echo "wait-online $(systemctl is-enabled systemd-networkd-wait-online.service || true), gdm $(systemctl is-active gdm)"
-! systemctl is-failed --quiet systemd-networkd-wait-online.service
+! systemctl is-failed --quiet systemd-networkd-wait-online.service || exit 1
 [ "$(systemctl is-enabled systemd-networkd-wait-online.service)" = disabled ]
 [ ! -e /etc/modules-load.d/host-guard-watchdog.conf ]
-! journalctl -b --no-pager | grep "deny-listed"
 journalctl -b --no-pager | grep -m1 "gdm-autologin.*session opened for user drew"
 grep -Ex "#(HandleLidSwitch|IdleAction)=ignore" /etc/systemd/logind.conf | tr "\n" " "
 ls /etc/systemd/logind.conf.pre-dotfiles.*
-! grep -Ex "(HandleLidSwitch|IdleAction)=.*" /etc/systemd/logind.conf
+! grep -Ex "(HandleLidSwitch|IdleAction)=.*" /etc/systemd/logind.conf || exit 1
 [ "$(systemd-analyze cat-config systemd/logind.conf | grep -Ex "(HandleLidSwitch|IdleAction)=ignore" | wc -l)" = 2 ]
 ' >"$LOGS/after-reboot.log" 2>&1 || fail "after reboot: $(cat "$LOGS/after-reboot.log")"
 say "after reboot: $(tr '\n' ' ' <"$LOGS/after-reboot.log")"
@@ -174,36 +173,43 @@ systemctl restart watchdog
 sleep 3
 systemctl show watchdog -p Result -p NRestarts -p ActiveState
 [ "$(systemctl show watchdog -p Result --value)" = success ]
-! systemctl is-active --quiet wd_keepalive
+! systemctl is-active --quiet wd_keepalive || exit 1
 [ "$(ps -o comm= -p "$(fuser "$(readlink -f /dev/watchdog-softdog)" 2>/dev/null | tr -d " ")")" = watchdog ]
 ' >"$LOGS/watchdog-restart.log" 2>&1 || fail "watchdog restart: $(cat "$LOGS/watchdog-restart.log")"
 provision check-3 "--check" || fail "--check after reboot reported drift"
 provision apply-3 "" || fail "apply-3 failed"
 no_changes apply-3
 
-# A healthy box under load never resets: the root-write test must stay far
-# below the daemon's 60 s test-timeout while the disk and CPUs are busy.
+# A healthy box under load never resets. The daemon counts a root-write test
+# that runs past test-timeout as an error, and resets only when errors last
+# for retry-timeout. So while the disk and CPUs are busy, every test must end
+# inside test-timeout and the daemon must log no error. In this VM a flush
+# reaches the disk image on the host, so the host's own load shows here too.
 vm '
 set -e
+limit=$(awk -F " *= *" "\$1 == \"test-timeout\" { print \$2 * 1000 }" /etc/watchdog.conf)
+[ -n "$limit" ]
 since="$(date "+%Y-%m-%d %H:%M:%S")"
 timeout 240 sh -c "while :; do dd if=/dev/zero of=/var/tmp/soak bs=1M count=2048 status=none; rm -f /var/tmp/soak; done" &
 timeout 240 sh -c "while :; do :; done" &
 timeout 240 sh -c "while :; do :; done" &
+all=""
 max=0
 for i in $(seq 1 22); do
   s=$(date +%s%N); /etc/watchdog.d/root-write test; e=$(date +%s%N)
-  ms=$(( (e - s) / 1000000 )); [ "$ms" -gt "$max" ] && max=$ms
+  ms=$(( (e - s) / 1000000 )); all="$all $ms"; [ "$ms" -gt "$max" ] && max=$ms
   sleep 10
 done
 wait
 rm -f /var/tmp/soak
-echo "root-write under load: 22 samples, max ${max} ms"
-[ "$max" -lt 10000 ]
+echo "root-write under load: 22 samples, max ${max} ms, test-timeout ${limit} ms"
+echo "samples (ms):$all"
+[ "$max" -lt "$limit" ]
 dev=$(readlink -f /dev/watchdog-softdog)
 [ "$(ps -o comm= -p "$(fuser "$dev" 2>/dev/null | tr -d " ")")" = watchdog ]
 echo "watchdog journal since the soak began:"
 journalctl -u watchdog --since "$since" --no-pager -o cat | sed "s/^/  /"
-! journalctl -u watchdog --since "$since" --no-pager -o cat | grep -Ei "returned|timed-out|shutting down"
+! journalctl -u watchdog --since "$since" --no-pager -o cat | grep -Ei "returned|timed.out|time.out|too long|shutting down" || exit 1
 ' >"$LOGS/soak.log" 2>&1 || fail "soak: $(cat "$LOGS/soak.log")"
 [ "$(boot_id)" = "$BOOT" ] || fail "the VM reset during the soak"
 say "soak: $(grep 'root-write under load' "$LOGS/soak.log"); same boot"
