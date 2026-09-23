@@ -23,6 +23,10 @@ if [ -n "$existing_excludes" ] && [ "$existing_excludes" != "$GLOBAL_IGNORE_FILE
 else
   git config --global core.excludesfile "$GLOBAL_IGNORE_FILE"
 fi
+echo "== worktree reaper"
+"$SCRIPT_DIR/worktree-reaper/install.sh"
+echo
+
 echo "Configured global Git hooks:"
 echo "  core.hooksPath=$GLOBAL_HOOKS_DIR"
 echo "  init.templateDir=$TEMPLATE_DIR"

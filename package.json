@@ -12,7 +12,7 @@
     "templates"
   ],
   "scripts": {
-    "test": "node --test ./tests/adc-wt.test.mjs ./tests/kill-guard.test.mjs ./tests/host-blast-guard.test.mjs ./tests/codex-wrapper.test.mjs ./tests/rtk-rewrite.test.mjs ./tests/skills.test.mjs ./tests/semgrep-merge.test.mjs ./tests/tmux-heal.test.mjs ./tests/provision.test.mjs && node ./tests/smoke.test.mjs"
+    "test": "node --test ./tests/adc-wt.test.mjs ./tests/kill-guard.test.mjs ./tests/host-blast-guard.test.mjs ./tests/codex-wrapper.test.mjs ./tests/rtk-rewrite.test.mjs ./tests/skills.test.mjs ./tests/semgrep-merge.test.mjs ./tests/tmux-heal.test.mjs ./tests/provision.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py' && node ./tests/smoke.test.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
