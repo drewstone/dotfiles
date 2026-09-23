@@ -62,10 +62,12 @@ stored_psk() {
 # sudo logs every command line to the journal and auth.log, which the adm
 # group reads, and ps shows it to every user while nmcli runs. The editor
 # asks for a value given on its own line and keeps it whole, spaces included;
-# "set PROP VALUE" on one line trims them.
+# "set PROP VALUE" on one line trims them. The editor drops a psk-flags change
+# on a profile whose secret an agent owned, so the flag goes through modify.
 nm_store_psk() {
-  printf 'set 802-11-wireless-security.psk-flags 0\nset 802-11-wireless-security.psk\n%s\nsave persistent\nquit\n' \
-    "$WIFI_PSK_VALUE" | as_root nmcli connection edit uuid "$1" >/dev/null
+  as_root nmcli connection modify uuid "$1" 802-11-wireless-security.psk-flags 0 &&
+    printf 'set 802-11-wireless-security.psk\n%s\nsave persistent\nquit\n' "$WIFI_PSK_VALUE" |
+    as_root nmcli connection edit uuid "$1" >/dev/null
 }
 
 # psk-flags 0 stores the passphrase with the system profile. A passphrase held

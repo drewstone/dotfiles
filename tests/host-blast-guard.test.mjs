@@ -61,6 +61,8 @@ const blocked = [
   "tmux send-keys -t work 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y' Enter",
   'sudo "$(git rev-parse --show-toplevel)"/host/bin/format-traces-drive --model X --serial Y',
   "F=host/bin/format-traces-drive; sudo $F --model X --serial Y",
+  "echo ERASE | ssh -tt box 'sudo ~/code/dotfiles/host/bin/format-traces-drive \\\n  --model X --serial Y'",
+  "ssh box 'F=~/code/dotfiles/host/bin/format-traces-drive\nsudo $F --model X --serial Y'",
 ];
 
 const allowed = [

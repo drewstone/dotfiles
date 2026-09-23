@@ -15,9 +15,10 @@
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
 # One exception: format-traces-drive is refused anywhere in the command when
-# erase arguments follow its name on the same line, also after ssh, inside
-# bash -c, script -c or tmux send-keys. It exists only on the Linux boxes, so
-# a remote call is the case that matters.
+# erase arguments follow its name anywhere after it, also after ssh, across a
+# line continuation or a variable, inside bash -c, script -c or tmux
+# send-keys. It exists only on the Linux boxes, so a remote call is the case
+# that matters.
 #
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
@@ -57,8 +58,10 @@ if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
     sys.exit(2)
 
 # Erasing the trace drive belongs to Drew at a terminal outside Claude. Its
-# name alone (sed, git add, shellcheck) passes; erase arguments do not.
-if re.search(r"format-traces-drive\b[^\n]*?--(?:model|serial|transport)\b", cmd):
+# name alone (sed, git add, shellcheck) passes. Erase arguments anywhere after
+# it do not: a remote run over ssh never has a claude ancestor on the box, so
+# this hook is the only check there.
+if re.search(r"format-traces-drive\b.*?--(?:model|serial|transport)\b", cmd, re.S):
     err = sys.stderr
     print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
     print("Give Drew the command to run himself. To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
