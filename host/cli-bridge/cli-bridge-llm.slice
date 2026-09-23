@@ -1,0 +1,28 @@
+[Unit]
+Description=Slice for cli-bridge transient LLM-spawn scopes
+Documentation=man:systemd.slice(5)
+
+# cli-bridge wraps every opencode/kimi/claude/codex invocation in a
+# transient systemd scope under this slice. That isolates each LLM
+# process tree (including tool-use shell commands and any vitest /
+# pnpm dev / test-fixture descendants) into its own cgroup, so the
+# bridge can tear it down via cgroup.kill on chat() finally.
+#
+# Why this slice exists separately from cli-bridge.service: LLM CLIs
+# spawn user code under test (pnpm test, vitest, etc.) that can call
+# setsid() and escape any pgid we control. Without cgroup-level
+# isolation those descendants accumulated in the bridge's own cgroup
+# until TasksMax was hit and every new fork returned EAGAIN, which
+# the pr-reviewer surfaced as "⚠️ Review Failed — All review passes
+# errored". See ops-board #341.
+
+[Slice]
+TasksAccounting=yes
+# Generous: ~32 concurrent reviews × ~500 procs each, with headroom.
+# A single runaway scope is capped by its own per-scope TasksMax.
+TasksMax=16384
+MemoryAccounting=yes
+MemoryMax=32G
+CPUAccounting=yes
+CPUWeight=100
+IOAccounting=yes

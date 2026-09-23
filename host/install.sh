@@ -7,6 +7,8 @@
 #   /etc/watchdog.conf, /etc/watchdog.d/root-write, /etc/default/watchdog,
 #   /etc/modules-load.d, /etc/modprobe.d, watchdog.service drop-in
 #                                          a frozen root resets the box in ~4 min (measured)
+#   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
+#                                          cli-bridge LLM scopes capped at 24 of 32 cores
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -76,4 +78,11 @@ holder="$($SUDO fuser "$softdev" 2>/dev/null | tr -d ' ' || true)"
 printf '  %s held by pid %s (%s)\n' "$softdev" "${holder:-none}" "$(ps -o comm= -p "${holder:-1}" 2>/dev/null)"
 [ -n "$holder" ] || { echo "  FAIL: watchdog daemon does not hold $softdev"; exit 1; }
 printf '  %s timeout=%ss state=%s\n' "$softdev" "$(cat "/sys/class/watchdog/$(basename "$softdev")/timeout")" "$(cat "/sys/class/watchdog/$(basename "$softdev")/state")"
+
+echo "== cli-bridge slice"
+if [ -n "${SUDO_USER:-}" ] && [ "$(id -u)" = 0 ]; then
+  sudo -u "$SUDO_USER" XDG_RUNTIME_DIR="/run/user/$(id -u "$SUDO_USER")" "$SCRIPT_DIR/install-cli-bridge-slice.sh"
+else
+  "$SCRIPT_DIR/install-cli-bridge-slice.sh"
+fi
 echo "host guards installed"
