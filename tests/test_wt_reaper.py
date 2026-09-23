@@ -354,6 +354,49 @@ class RecheckTest(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 1)
 
 
+class RecheckAfterScanTest(unittest.TestCase):
+    """A file written during the final process scan must stop the removal."""
+
+    def test_write_during_final_scan_skips(self):
+        f = Fixture()
+        self.addCleanup(f.cleanup)
+        late = f.add('late')
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        mod = load_reaper()
+        real_scan = mod.scan_processes
+        calls = []
+
+        def scan_then_write(*a, **k):
+            calls.append(1)
+            held = real_scan(*a, **k)
+            if len(calls) == 2:  # the recheck's scan, after its first evaluate
+                Fixture.write(late, '.env', 'TOKEN=1\n')
+            return held
+
+        mod.scan_processes = scan_then_write
+        old_env = dict(os.environ)
+        os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old_env)))
+        mod.main(['--root', f.root, '--no-log-file', '--idle-hours', str(IDLE_HOURS)])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(os.path.isfile(os.path.join(late, '.env')))
+
+
+class MacLsofParseTest(unittest.TestCase):
+    """A path containing ' (' must still be held in full."""
+
+    def test_parenthesized_path_is_held(self):
+        mod = load_reaper()
+        out = b'p42\nn/Users/me/tree (old)/src\nn/Users/me/x.db (deleted)\n'
+        mod._lsof = lambda extra, use_sudo: (out, True)
+        mod.process_table = lambda: {42: 'S', os.getpid(): 'R'}
+        paths, unreadable, _ = mod._mac_scan(True)
+        self.assertEqual(unreadable, [])
+        self.assertTrue(mod.inside('/Users/me/tree (old)/src', '/Users/me/tree (old)'))
+        self.assertIn('/Users/me/tree (old)/src', paths)
+        self.assertIn('/Users/me/x.db', paths)
+
+
 @unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
 class IncompleteScanTest(unittest.TestCase):
     """Without sudo, root processes are unreadable, so nothing may be removed."""

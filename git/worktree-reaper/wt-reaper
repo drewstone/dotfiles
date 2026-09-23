@@ -561,7 +561,14 @@ def _mac_scan(use_sudo):
             if line.startswith('p'):
                 seen.add(int(line[1:]))
             elif line.startswith('n/'):
-                paths.add(line[1:].split(' (')[0])
+                # lsof may append ' (...)' notes, but a path can itself contain
+                # ' ('. Hold every candidate prefix; extra holds only skip more.
+                name = line[1:]
+                paths.add(name)
+                cut = name.find(' (')
+                while cut != -1:
+                    paths.add(name[:cut])
+                    cut = name.find(' (', cut + 1)
         missing = set(process_table()) - seen - attempted - {os.getpid()}
         if not missing:
             break
@@ -802,6 +809,9 @@ def recheck(rpath, main_path, common_dir, args, log):
     users = sorted(p for p in held if inside(p, rpath))
     if users:
         raise Skip('in use by a process: %s' % users[0])
+    # The scan can take seconds; a short-lived writer may have created an
+    # ignored file and exited during it, so check the tree once more last.
+    evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
 
 
 def is_default_name(default, name):
