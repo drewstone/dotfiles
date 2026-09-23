@@ -458,6 +458,10 @@ test("Claude install and provisioning remove temporary trust without losing othe
     assert.equal(config.projects["/tmp"].history, 1);
     assert.equal(config.projects[join(home, "company")].hasTrustDialogAccepted, true);
     assert.equal(config.other, 42);
+    writeFileSync(global, JSON.stringify({ other: 42 }));
+    const fresh = sh("bash", ["-c", '. host/provision/agents.sh; DOTFILES="$PWD"; claude_running() { return 1; }; add_claude_trust; claude_trust_ok'], { env: { ...process.env, HOME: home } });
+    assert.equal(fresh.status, 0, fresh.stderr);
+    assert.equal(JSON.parse(readFileSync(global, "utf8")).projects[join(home, "code")].hasTrustDialogAccepted, true);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

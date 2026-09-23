@@ -50,7 +50,7 @@ def main():
             write(path, data)
             print(f"  REMOVED temporary directories from {path}")
     elif action in ("check-projects", "set-projects"):
-        projects = data.get("projects", {})
+        projects = data.setdefault("projects", {}) if action == "set-projects" else data.get("projects", {})
         if not isinstance(projects, dict):
             raise ValueError("projects must be a JSON object")
         if not all(isinstance(key, str) and isinstance(value, dict) for key, value in projects.items()):
