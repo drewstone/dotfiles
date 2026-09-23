@@ -20,6 +20,22 @@ Always require the pull request itself as the deliverable, by number and URL.
 A patch file makes you the courier, and a zip makes you the courier of something you must first unpack.
 Ask for files only when there is no repository to write to.
 
+## Chat rules
+
+The tool enforces these; know them so you work with them, not around them.
+
+- Every chat lives in the account's one `Tangle Agent Managed` project. Never use or change any other project.
+  Slot d also holds Drew's personal projects, including `Tangle AI`. Read them only; never send into them.
+- One chat per work item (a PR or a research question). Continue that chat until the item merges or is abandoned.
+- Open an item with `send --repo OWNER/NAME --item '<one line>' --file prompt.md`.
+  The tool writes the ledger entry first, picks the account with the most room, and names the chat `repo · item`.
+- Continue it with `send --ref <item>`, `continue <item>`, `wait <item>`. Never start a second chat for the same item.
+- `send --second-opinion` is the only way onto a second account, and it is labeled. Use it for a decision that needs an independent read.
+- When the session opens its PR, run `pr <item> <number>`. The chat becomes `repo · item · #N`.
+- Finish with `close <item> --merged` (GitHub must show the merge) or `close <item> --abandoned '<reason>'`.
+  The tool exports the chat into `~/traces/chatgpt/` and archives it. Nothing deletes a chat.
+- A sweep timer closes items whose PR merged, restores titles, and exports every managed chat.
+
 ## The loop
 
 Use three rounds. Do not collapse them into one prompt.
@@ -40,6 +56,28 @@ A pull request is already reviewable, already has CI, and already has a number y
 **Round 3 and later — close named gaps.** Name what is missing and what finished means.
 Never send encouragement.
 A continue that names no deliverable spends an hour and returns prose.
+
+## Lessons from Drew's own prompting
+
+Read-only study of the 92 chats in slot d's `Tangle AI` project on 2026-09-22: 515 user messages, median 45 words.
+
+Keep what works:
+- Name the finished state: "non-draft PR, mergeable", "one PR per repo", "finish in one PR".
+- Push for reuse and simplicity: "evaluate if this already exists", "improve it at the source", "never duplicate".
+- Ask for the critique behind each decision: "why is this here, what does it contribute to".
+- After a merge, ask what remains and what would prove it works.
+
+Fix what does not:
+- Bare encouragement. "Continue!", "Finish it!", and "You can do it!" made up 53 of 139 GPT-6 Pro turns.
+  33 of those 53 ended with under 400 characters of answer, against 34 of 76 for messages that named work.
+  Name the next deliverable and its check instead.
+- One chat carrying several items. Chats ran to 27 user messages and drifted across topics and repos.
+  Open a new item for new work; the ledger and title then say what the chat is for.
+- Dictated run-on prompts with several asks in one breath. Split them: one outcome, its constraints, its check.
+- Pasting another agent's transcript as the prompt (735, 945 and 4,354 words).
+  Summarize the claim to check in a few lines, and point at the repository for the rest.
+- Mixing an open product question into a build turn.
+  Ask the question as its own item, or put it in the build's acceptance check.
 
 ## Size the prompt, not the ambition
 
@@ -65,7 +103,7 @@ Reading the conversations instead showed three of those eight had in fact linked
 Two had genuinely delivered nothing while exiting zero, and three were real failures the tool had already flagged.
 Derive delivery from the conversation, never from a field that says it happened.
 
-Run `files --require` after a build round.
+Run `files <item> --require` after a build round.
 It exits 9 when the conversation links no file, instead of reporting success.
 Use the plain `files` for a probe that is expected to link nothing.
 
@@ -93,22 +131,21 @@ This works: a probe given that instruction volunteered that its installation dat
 
 ## Run it headless
 
-Run with a window. `send` is broken under `--headless` as of 2026-09-22 and the fault is open.
+On the GTR the fleet runs headless with `CHATGPT_FLEET_CHROME=~/.local/bin/chrome-wayland`.
+Measured 2026-09-22: a headless `send` on slot a opened, renamed and answered a GPT-6 Pro item, and `wait` exported it.
+Sign a profile in once with a window (or `login` over ssh); headless reuses its cookies.
+Check `status` for the account, plan, room and managed project per slot before dispatching.
 
-Headless `up` and `status` work: the profile signs in and reports its account and plan.
-`send` then fails, because the composer either does not render or does not accept inserted text,
-and the turn ends with `the composer never held exactly the prompt without attachments`
-plus a screenshot under `logs/`. The same send succeeds with a window every time.
-
-A profile must be signed in once with a window on each machine regardless, so on a new host
-sign in, then keep using windows until the headless send fault is closed.
-Check `status` for the account and plan per slot before dispatching.
-
-Default slots are `a`, `b` and `c` on ports 9301 to 9303.
+Default slots are `a` to `d` on ports 9301 to 9304.
 Every send asks for `gpt-6-pro` and checks the reply against it.
+
+A slot's GitHub connector reaches only the repositories connected in that account.
+On 2026-09-22 slot a answered 404 for a private repository; the session said so instead of inventing findings.
+Before a build item, confirm the chosen account can read the repository.
 
 Keep prompts, replies and downloaded files under `~/.local/state/chatgpt-fleet/`.
 A scratch directory does not survive a long run; five hours of evidence was lost that way, including the probes that would have settled a later question.
+The full conversations are in `~/traces/chatgpt/<account>/<conversation>/` after every finished turn.
 
 ## Then consider
 
