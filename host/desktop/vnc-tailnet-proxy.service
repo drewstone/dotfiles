@@ -1,0 +1,12 @@
+[Unit]
+Description=Tailnet access to the shared :1 VNC desktop
+After=vnc-desktop.service
+BindsTo=vnc-desktop.service
+
+[Service]
+ExecStart=%h/.local/bin/gtr-vnc-tailnet-proxy
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=vnc-desktop.service

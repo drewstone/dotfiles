@@ -1,0 +1,5 @@
+#!/bin/sh
+# Keep the shared :1 desktop independent of the physical GDM session.
+unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS
+export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_TYPE=x11
+exec dbus-launch --exit-with-session startxfce4

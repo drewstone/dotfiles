@@ -7,7 +7,7 @@
 # Modules, in the order a full run takes them:
 #   guards        root wrappers, sudoers, frozen-root watchdog (host/install.sh)
 #   tools         base packages, OpenSSH (keys only), Google Chrome, Tailscale, GitHub CLI, uv
-#   desktop       GNOME at boot, Ghostty config, JetBrainsMono Nerd Font
+#   desktop       GDM kiosk, shared :1 VNC, cage, Remmina, NetworkManager, font
 #   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
 #   nosleep       masked sleep targets, logind, login screen, GNOME session
 #   shell         starship prompt; the Linux console keeps the plain prompt
@@ -15,7 +15,7 @@
 #   tmux          ~/.tmux.conf, plugins, tmux-heal (tmux/install.sh, install-heal.sh)
 #   agents        Claude Code, Codex, rtk, then claude/install.sh
 #   traces        mount the drive labelled traces at /mnt/traces
-#   tangle-tools  acct, fleet, the fleet wall and chatgpt-fleet from tangle-tools
+#   tangle-tools  acct, fleet, one pages view on :1, chatgpt-fleet
 #   handoff       print the sign-ins and other steps for a person
 #
 # Options:
@@ -37,8 +37,8 @@ set -uo pipefail
 
 DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_DIR="$DOTFILES/host"
-# desktop comes before wifi and nosleep: on a Server install the desktop brings
-# NetworkManager, and nosleep configures the GNOME that desktop installs.
+# desktop comes before wifi and nosleep: it installs NetworkManager on Server,
+# and nosleep configures the login session after GDM is installed.
 ALL_MODULES=(guards tools desktop wifi nosleep shell git tmux agents traces tangle-tools handoff)
 
 # shellcheck source=provision/lib.sh

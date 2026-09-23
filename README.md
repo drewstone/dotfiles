@@ -112,7 +112,8 @@ Do these steps in this order:
    ~/code/dotfiles/host/provision.sh --wifi-ssid '<SSID>'
    ```
 
-   GDM logs `drew` in at boot, so the fleet wall and chatgpt-fleet come back after an unattended reboot.
+   GDM logs `drew` into `gtr-kiosk` at boot.
+   The kiosk shows the shared :1 fleet pages view, and chatgpt-fleet returns after an unattended reboot.
    Anyone at the keyboard then has `drew`'s session, and `drew` has passwordless sudo.
    Keep the box where only trusted people can reach it, or add `--no-autologin` to wait for a person to log in.
 5. Do each step in the "steps for a person" list at the end of the run, in order.
@@ -135,7 +136,7 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
-| `desktop` | Boots to GNOME, logs the user in, links the Ghostty config, and removes the old Ghostty autostart entry, so the fleet wall is the only window at login. It never starts GDM itself; a restart of the box does. |
+| `desktop` | Installs the `gtr-kiosk` session, the shared :1 VNC service and Xfce startup, and the cage and Remmina viewer. It selects the session in GDM and AccountsService. It never restarts GDM during the run. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
@@ -143,8 +144,17 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | `tmux` | Links `tmux/tmux.conf`, clones its plugins, and runs `tmux/install-heal.sh`. It never reloads a running server. |
 | `agents` | Installs Claude Code, Codex and rtk, then runs `claude/install.sh`. |
 | `traces` | Mounts the ext4 drive labelled `traces` at `/mnt/traces` for the user. |
-| `tangle-tools` | Runs the tangle-tools install for `acct`, `fleet` and `chatgpt-fleet`, and enables the fleet wall unit from the deploy clone. |
+| `tangle-tools` | Installs `acct`, `fleet`, and `chatgpt-fleet`. On a fresh box, it links and enables only `fleet-pages.service` from the deploy clone, then removes the old managed Ghostty autostart. Existing view units wait for an explicit migration. |
 | `handoff` | Prints the sign-ins and the other steps for a person. |
+
+On a fresh box, provisioning generates a shared VNC password at `~/.config/gtr-kiosk/vnc-password` with mode `0600`.
+It writes VNC's password file and Remmina's encrypted profile without printing the password.
+The VNC service listens on this box's loopback interface for the physical kiosk.
+A proxy binds port 5901 to its Tailscale IPv4 address for direct Mac viewing.
+The proxy retries until Tailscale is ready, so the Mac can connect to `vnc://<box-tailnet-ip>:5901`.
+The Mac uses the password in the local credential file; transfer it through the existing SSH connection.
+Provisioning preserves existing VNC credentials and display units.
+It enables the VNC and fleet pages units for the next user login without starting or restarting the display during the run.
 
 The Wi-Fi name and passphrase come from the command line or a prompt, never from this repository.
 The passphrase reaches NetworkManager on standard input, so it never appears in a command line or in the sudo log.

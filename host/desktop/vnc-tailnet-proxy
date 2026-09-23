@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Expose the loopback VNC server only on this machine's Tailscale IPv4 address.
+set -euo pipefail
+
+address="$(tailscale ip -4 2>/dev/null | head -n 1)"
+case "$address" in
+  '' | *[!0-9.]*) exit 1 ;;
+esac
+ip -4 -o addr show dev tailscale0 | awk '{ print $4 }' | cut -d/ -f1 | grep -Fx "$address" >/dev/null || exit 1
+
+# TigerVNC checks whether any address already uses 5901 before it binds.
+# Wait for its loopback socket, or this proxy can win the startup race.
+for ((attempt = 0; attempt < 150; attempt++)); do
+  if ss -H -ltn '( sport = :5901 )' |
+     awk '$4 == "127.0.0.1:5901" { found = 1 } END { exit !found }'; then
+    exec socat "TCP4-LISTEN:5901,bind=$address,reuseaddr,fork" TCP4:127.0.0.1:5901
+  fi
+  sleep 0.1
+done
+exit 1

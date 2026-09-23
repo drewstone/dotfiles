@@ -1,0 +1,10 @@
+[remmina]
+name=GTR shared desktop
+protocol=VNC
+server=localhost:5901
+colordepth=32
+quality=9
+viewmode=4
+scale=1
+showcursor=0
+viewonly=0

@@ -88,7 +88,7 @@ module_handoff() {
   fi
 
   # Each tangle-tools step shows until the artifact its README names exists:
-  # an account in ~/.config/agent-accounts, the fleet-wall user unit, and a
+  # an account in ~/.config/agent-accounts, the fleet-pages user unit, and a
   # chatgpt-fleet profile. None of their commands run here: acct status and
   # chatgpt-fleet status reach the network and can refresh tokens.
   [ -d "$TT_DIR" ] || return 0
@@ -97,7 +97,7 @@ module_handoff() {
       "$TT_DIR/agent-accounts/README.md"
     print_tt_section agent-accounts/README.md "Provision a machine"
   fi
-  if ! user_unit_enabled fleet-wall.service; then
+  if ! user_unit_enabled fleet-pages.service && ! legacy_view_present; then
     manual "Set up the fleet: do the \"Install on a machine\" steps (printed in the handoff section) in:" \
       "$TT_DIR/fleet/README.md"
     print_tt_section fleet/README.md "Install on a machine"
