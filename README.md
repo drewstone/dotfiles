@@ -106,11 +106,13 @@ Do these steps in this order:
    ~/code/dotfiles/host/provision.sh --wifi-ssid '<SSID>'
    ```
 
-   To log in to the desktop at boot without a password, add `--autologin`.
-   Without it, Ghostty and chatgpt-fleet start only after a person logs in.
+   GDM logs `drew` in at boot, so Ghostty, the fleet wall and chatgpt-fleet come back after an unattended reboot.
+   Anyone at the keyboard then has `drew`'s session, and `drew` has passwordless sudo.
+   Keep the box where only trusted people can reach it, or add `--no-autologin` to wait for a person to log in.
 5. Do each step in the "steps for a person" list at the end of the run, in order.
    The list has the GitHub, Tailscale, Claude and Codex sign-ins, the Git identity, and the agent-bus name.
    It also has the `ssh-copy-id` step that authorizes the Mac's key for ssh.
+   While the login keyring has a password, it has the keyring step: automatic login cannot unlock that keyring, and chatgpt-fleet's Chrome waits for it.
 6. Run the provisioning again, from the box or over ssh.
    It installs the tangle-tools commands and the Claude plugins from the private marketplaces, which need the sign-ins.
    It also prints the account, fleet and ChatGPT steps from the tangle-tools READMEs until each one is done.
@@ -127,9 +129,9 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
-| `desktop` | Boots to GNOME and starts Ghostty full screen on the tmux session `work`. It never starts GDM itself; a reboot does. |
+| `desktop` | Boots to GNOME, logs the user in, and starts Ghostty full screen on the tmux session `work`. It never starts GDM itself; a reboot does. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
-| `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. |
+| `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
 | `git` | Runs `git/install.sh`. |
 | `tmux` | Links `tmux/tmux.conf`, clones its plugins, and runs `tmux/install-heal.sh`. It never reloads a running server. |

@@ -76,14 +76,16 @@ check_disk() {
     die "$DEV is on transport '$(field TRAN "$DEV")', not '$WANT_TRAN'"
   fi
 
-  # The disks under /, /boot and /boot/efi. -l lists plain names; the default
-  # tree output prefixes them with drawing characters.
+  # The disks under /, /boot and /boot/efi. A mount point can carry several
+  # stacked mounts, one source per line. -l lists plain names; the default tree
+  # output prefixes them with drawing characters.
   for m in / /boot /boot/efi; do
-    src="$(findmnt -no SOURCE "$m" 2>/dev/null)" || continue
-    src="${src%%\[*}"
-    for n in $(lsblk -snlpo NAME "$src" 2>/dev/null); do
-      [ "$n" = "$DEV" ] && die "$DEV holds $m"
-    done
+    while read -r src; do
+      src="${src%%\[*}"
+      for n in $(lsblk -snlpo NAME "$src" 2>/dev/null); do
+        [ "$n" = "$DEV" ] && die "$DEV holds $m"
+      done
+    done < <(findmnt -nro SOURCE --mountpoint "$m" 2>/dev/null)
   done
   if lsblk -nro MOUNTPOINTS "$DEV" 2>/dev/null | grep . >/dev/null; then
     die "$DEV has a mounted partition or active swap: $(lsblk -nro NAME,MOUNTPOINTS "$DEV" | awk 'NF > 1' | tr '\n' ' ')"

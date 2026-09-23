@@ -2,10 +2,13 @@
 # desktop: GNOME on boot, Ghostty full screen on the agent tmux session, and
 # the JetBrainsMono Nerd Font it draws with.
 
-AUTOLOGIN="${AUTOLOGIN:-0}"
+# GDM logs the user in at boot unless --no-autologin: after an unattended
+# reboot, Ghostty, the fleet wall and chatgpt-fleet's Chrome need a session.
+AUTOLOGIN="${AUTOLOGIN:-1}"
 NERD_FONTS_VERSION=v3.5.1
 FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNF"
 GDM_CUSTOM=/etc/gdm3/custom.conf
+LOGIN_KEYRING="$HOME/.local/share/keyrings/login.keyring"
 
 # Ubuntu Desktop waits for the network through NetworkManager only. On a
 # Server install the desktop packages make NetworkManager netplan's renderer
@@ -44,23 +47,34 @@ autologin_on() {
   ' "$GDM_CUSTOM" 2>/dev/null
 }
 
-# set_autologin: put the two keys at the top of [daemon] and drop any other
-# uncommented AutomaticLogin lines. GDM reads the file when it starts.
-set_autologin() {
-  local new="$WORK/custom.conf.new"
+autologin_off() {
+  ! grep -Ei '^[[:space:]]*AutomaticLoginEnable[[:space:]]*=[[:space:]]*(true|1)[[:space:]]*$' "$GDM_CUSTOM" >/dev/null 2>&1
+}
+
+# write_gdm_custom ON: drop every uncommented AutomaticLogin line, and with
+# ON=1 put the two keys at the top of [daemon]. GDM reads the file when it
+# starts. The old file stays beside it.
+write_gdm_custom() {
+  local on="$1" new="$WORK/custom.conf.new"
   : >"$new"
   if [ -f "$GDM_CUSTOM" ]; then
-    awk -v user="$USER" '
-      /^AutomaticLogin(Enable)?[ \t]*=/ { next }
+    awk -v user="$USER" -v on="$on" '
+      /^[ \t]*AutomaticLogin(Enable)?[ \t]*=/ { next }
       { print }
-      $0 == "[daemon]" { print "AutomaticLoginEnable=true"; print "AutomaticLogin=" user }
+      on == 1 && $0 == "[daemon]" { print "AutomaticLoginEnable=true"; print "AutomaticLogin=" user }
     ' "$GDM_CUSTOM" >"$new" || return 1
-    as_root cp -p "$GDM_CUSTOM" "$GDM_CUSTOM.pre-dotfiles" || return 1
+    as_root cp -p "$GDM_CUSTOM" "$GDM_CUSTOM.pre-dotfiles.$(date +%Y%m%d%H%M%S)" || return 1
   fi
-  grep -qx '\[daemon\]' "$new" ||
+  if [ "$on" = 1 ] && ! grep -qx '\[daemon\]' "$new"; then
     printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' "$USER" >>"$new"
+  fi
   root_install 0644 "$new" "$GDM_CUSTOM"
 }
+
+# login_keyring_has_password: gnome-keyring writes a keyring with a password in
+# its binary format, which starts with "GnomeKeyring", and an empty-password
+# keyring as text. Automatic login has no password to unlock the first kind.
+login_keyring_has_password() { [ "$(head -c 12 "$LOGIN_KEYRING" 2>/dev/null)" = GnomeKeyring ]; }
 
 module_desktop() {
   section "desktop: GNOME, Ghostty full screen on tmux, JetBrainsMono Nerd Font"
@@ -83,11 +97,12 @@ module_desktop() {
   want_link "$HOST_DIR/desktop/ghostty.desktop" "$HOME/.config/autostart/ghostty.desktop"
 
   if [ "$AUTOLOGIN" = 1 ]; then
-    ensure "GDM logs $USER in at boot (from the next GDM start)" autologin_on -- set_autologin
-  elif autologin_on; then
-    ok "GDM logs $USER in at boot"
+    ensure "GDM logs $USER in at boot (from the next GDM start)" autologin_on -- write_gdm_custom 1
+    if login_keyring_has_password; then
+      manual "Automatic login leaves the login keyring locked, so chatgpt-fleet's Chrome waits on an unlock prompt after a reboot. To start it unattended, give the keyring an empty password; its secrets are then stored unencrypted in ~/.local/share/keyrings. In Passwords and Keys, right-click Login, choose Change Password, and leave the new one empty:" \
+        "seahorse"
+    fi
   else
-    manual "No desktop session starts after a reboot until someone logs in; Ghostty and chatgpt-fleet need one. Log in at the box, or turn on automatic login:" \
-      "$DOTFILES/host/provision.sh desktop --autologin"
+    ensure "GDM logs no one in at boot (--no-autologin)" autologin_off -- write_gdm_custom 0
   fi
 }

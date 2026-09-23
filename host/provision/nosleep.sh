@@ -4,6 +4,8 @@
 
 SLEEP_TARGETS="sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target"
 GDM_KEYFILE=/etc/dconf/db/gdm.d/90-no-suspend
+LOGIND_MAIN=/etc/systemd/logind.conf
+LOGIND_DROPIN=/etc/systemd/logind.conf.d/10-host-no-sleep.conf
 
 # schema|key|value as `gsettings get` prints it
 GNOME_NO_SLEEP=(
@@ -24,6 +26,26 @@ install_dconf_file() {
   root_install 0644 "$1" "$2" && as_root dconf update
 }
 
+# logind_keys: the keys the drop-in sets, as an extended regex alternation.
+logind_keys() { sed -n 's/^\([A-Za-z]*\)=.*/\1/p' "$HOST_DIR/nosleep/logind.conf" | paste -sd'|' -; }
+
+# logind_main_clean: the package's logind.conf sets none of the drop-in's keys,
+# so the drop-in is the one place they live. A hand edit there would keep a
+# value after the drop-in changes it.
+logind_main_clean() {
+  [ -f "$LOGIND_MAIN" ] || return 0
+  ! grep -E "^[[:space:]]*($(logind_keys))[[:space:]]*=" "$LOGIND_MAIN" >/dev/null
+}
+
+# comment_logind_main: comment those keys out in logind.conf, once the drop-in
+# holds them. The values do not change, so logind needs no restart.
+comment_logind_main() {
+  root_file_is 0644 "$HOST_DIR/nosleep/logind.conf" "$LOGIND_DROPIN" || return 1
+  sed -E "s/^([[:space:]]*($(logind_keys))[[:space:]]*=)/#\1/" "$LOGIND_MAIN" >"$WORK/logind.conf.new" || return 1
+  as_root cp -p "$LOGIND_MAIN" "$LOGIND_MAIN.pre-dotfiles.$(date +%Y%m%d%H%M%S)" &&
+    root_install 0644 "$WORK/logind.conf.new" "$LOGIND_MAIN"
+}
+
 gdm_db_current() {
   [ -f /etc/dconf/db/gdm ] && [ /etc/dconf/db/gdm -nt "$GDM_KEYFILE" ]
 }
@@ -39,8 +61,8 @@ module_nosleep() {
   section "nosleep: masked sleep targets, logind, login screen, GNOME session"
   # shellcheck disable=SC2086
   ensure "sleep targets masked" unit_masked $SLEEP_TARGETS -- mask_sleep
-  want_root_file 0644 "$HOST_DIR/nosleep/logind.conf" /etc/systemd/logind.conf.d/10-host-no-sleep.conf \
-    "/etc/systemd/logind.conf.d/10-host-no-sleep.conf (read at boot)"
+  want_root_file 0644 "$HOST_DIR/nosleep/logind.conf" "$LOGIND_DROPIN" "$LOGIND_DROPIN (read at boot)"
+  ensure "$LOGIND_MAIN leaves $(logind_keys | tr '|' ' ') to the drop-in" logind_main_clean -- comment_logind_main
 
   if [ -f /usr/share/dconf/profile/gdm ]; then
     ensure "/etc/dconf/profile/gdm reads the gdm system database" \

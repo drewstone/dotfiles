@@ -293,3 +293,80 @@ test("check mode never adds a host key to known_hosts", () => {
   assert.match(check, /StrictHostKeyChecking=yes\b/);
   assert.match(apply, /StrictHostKeyChecking=accept-new\b/);
 });
+
+test("desktop turns GDM automatic login on by default and off with --no-autologin", () => {
+  const dir = mkdtempSync(join(tmpdir(), "gdm-custom-"));
+  const conf = join(dir, "custom.conf");
+  writeFileSync(conf, "# GDM configuration\n[daemon]\n#  AutomaticLoginEnable = true\n AutomaticLoginEnable=false\nWaylandEnable=true\n\n[security]\n");
+  const script = `
+    . host/provision/lib.sh
+    . host/provision/desktop.sh
+    as_root() { "$@"; }
+    root_install() { cp "$2" "$3"; }
+    USER=drew WORK="${dir}" GDM_CUSTOM="${conf}"
+    echo "default=$AUTOLOGIN"
+    autologin_on && echo ON0
+    autologin_off && echo OFF0
+    write_gdm_custom 1
+    autologin_on && echo ON1
+    autologin_off && echo OFF1
+    write_gdm_custom 0
+    autologin_on && echo ON2
+    autologin_off && echo OFF2
+    true
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.trim().split("\n"), ["default=1", "OFF0", "ON1", "OFF2"]);
+  const after = readFileSync(conf, "utf8");
+  assert.match(after, /#  AutomaticLoginEnable = true/);
+  assert.match(after, /WaylandEnable=true/);
+  assert.doesNotMatch(after, /^\s*AutomaticLogin/m);
+  assert.ok(readdirSync(dir).some((f) => f.startsWith("custom.conf.pre-dotfiles.")));
+});
+
+test("the keyring step shows only for a login keyring with a password", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keyring-"));
+  writeFileSync(join(dir, "binary"), Buffer.from("GnomeKeyring\n\r\0\n\0\0\0\0", "binary"));
+  writeFileSync(join(dir, "text"), "[keyring]\ndisplay-name=Login\n");
+  const script = `
+    . host/provision/lib.sh
+    . host/provision/desktop.sh
+    for k in binary text missing; do
+      LOGIN_KEYRING="${dir}/$k"; login_keyring_has_password && echo "$k"
+    done
+    true
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "binary");
+});
+
+test("nosleep moves logind keys out of logind.conf only after the drop-in holds them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "logind-"));
+  const main = join(dir, "logind.conf");
+  writeFileSync(main, "[Login]\n#HandleLidSwitch=suspend\nHandleLidSwitch=ignore\nKillUserProcesses=no\n IdleAction=ignore\n");
+  const script = `
+    . host/provision/lib.sh
+    . host/provision/nosleep.sh
+    as_root() { "$@"; }
+    root_install() { cp "$2" "$3"; }
+    HOST_DIR=host WORK="${dir}" LOGIND_MAIN="${main}" LOGIND_DROPIN="${dir}/dropin"
+    echo "keys=$(logind_keys)"
+    root_file_is() { false; }
+    comment_logind_main || echo "REFUSED without the drop-in"
+    logind_main_clean || echo "HAS KEYS"
+    root_file_is() { true; }
+    comment_logind_main && logind_main_clean && echo CLEAN
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "keys=HandleLidSwitch|IdleAction\nREFUSED without the drop-in\nHAS KEYS\nCLEAN\n");
+  assert.equal(readFileSync(main, "utf8"), "[Login]\n#HandleLidSwitch=suspend\n#HandleLidSwitch=ignore\nKillUserProcesses=no\n# IdleAction=ignore\n");
+});
+
+test("the trace-drive eraser reads every mount stacked on /, /boot and /boot/efi", () => {
+  const body = readFileSync("host/bin/format-traces-drive", "utf8");
+  assert.match(body, /done < <\(findmnt -nro SOURCE --mountpoint "\$m"/);
+  assert.match(body, /lsblk -snlpo NAME/);
+});

@@ -7,19 +7,23 @@
 #   PROVISION_TEST_FREEZE=0 tests/provision.hostlab.sh
 #
 # In a fresh Ubuntu 24.04 Server VM, which has no NetworkManager, it:
-#   1. sets the watchdog up the way drew-gtr-pro had it (PID 1 takes the softdog)
+#   1. sets the watchdog and logind up the way drew-gtr-pro had them (PID 1
+#      takes the softdog; logind.conf edited in place)
 #   2. runs --check, which must drift and write nothing, then provisions as drew
 #   3. provisions again and fails on any "changed" line; requires --check to
 #      exit 0 without writing; requires the passphrase to be stored exactly and
 #      to appear in no log; requires the official Claude plugins
 #   4. reboots; requires the watchdog daemon, not PID 1, to hold the softdog,
 #      a restart of it to succeed, systemd-networkd-wait-online to stay off,
-#      and no change from a run
+#      GDM to log drew in, logind's keys to live only in the drop-in, and no
+#      change from a run; then loads the disk and CPUs for 4 minutes and
+#      requires no reset and no failed root-write test
 #   5. stores an agent-owned Wi-Fi passphrase, and keeps a stored passphrase
 #      unless --replace-psk is given
 #   6. formats a scsi_debug disk with host/bin/format-traces-drive, requires
 #      each refusal, and requires the traces module to mount it for drew
-#   7. freezes / and requires the VM to reset by itself
+#   7. requires the VM to be on the same boot since step 4, then freezes /
+#      and requires the VM to reset by itself
 # It stops and removes only its own VM. Logs stay in the printed directory.
 set -euo pipefail
 
@@ -111,6 +115,8 @@ install -o drew -g drew -m 600 /work/psk2 /home/drew/psk2
 ! command -v nmcli
 mkdir -p /etc/systemd/system.conf.d
 printf "[Manager]\nRuntimeWatchdogSec=30s\nRebootWatchdogSec=10min\n" >/etc/systemd/system.conf.d/10-watchdog.conf
+printf "sp5100_tco\nsoftdog\n" >/etc/modules-load.d/host-guard-watchdog.conf
+printf "HandleLidSwitch=ignore\nIdleAction=ignore\n" >>/etc/systemd/logind.conf
 ' >"$LOGS/setup.log" 2>&1 || fail "setup (see $LOGS/setup.log)"
 reboot_vm
 vm 'for d in /sys/class/watchdog/*; do echo "$d $(cat $d/identity)"; done; fuser -v /dev/watchdog0 2>&1; journalctl -b -u watchdog --no-pager | grep -i "cannot open" || true' >"$LOGS/watchdog-before.log" 2>&1 || true
@@ -151,8 +157,17 @@ echo "failed units: $(systemctl --failed --no-legend --plain | tr "\n" " ")"
 echo "wait-online $(systemctl is-enabled systemd-networkd-wait-online.service || true), gdm $(systemctl is-active gdm)"
 ! systemctl is-failed --quiet systemd-networkd-wait-online.service
 [ "$(systemctl is-enabled systemd-networkd-wait-online.service)" = disabled ]
+[ ! -e /etc/modules-load.d/host-guard-watchdog.conf ]
+! journalctl -b --no-pager | grep "deny-listed"
+journalctl -b --no-pager | grep -m1 "gdm-autologin.*session opened for user drew"
+grep -Ex "#(HandleLidSwitch|IdleAction)=ignore" /etc/systemd/logind.conf | tr "\n" " "
+ls /etc/systemd/logind.conf.pre-dotfiles.*
+! grep -Ex "(HandleLidSwitch|IdleAction)=.*" /etc/systemd/logind.conf
+[ "$(systemd-analyze cat-config systemd/logind.conf | grep -Ex "(HandleLidSwitch|IdleAction)=ignore" | wc -l)" = 2 ]
 ' >"$LOGS/after-reboot.log" 2>&1 || fail "after reboot: $(cat "$LOGS/after-reboot.log")"
 say "after reboot: $(tr '\n' ' ' <"$LOGS/after-reboot.log")"
+BOOT="$(boot_id)"
+BOOT_AT="$(date +%s)"
 vm '
 set -e
 systemctl restart watchdog
@@ -165,6 +180,33 @@ systemctl show watchdog -p Result -p NRestarts -p ActiveState
 provision check-3 "--check" || fail "--check after reboot reported drift"
 provision apply-3 "" || fail "apply-3 failed"
 no_changes apply-3
+
+# A healthy box under load never resets: the root-write test must stay far
+# below the daemon's 60 s test-timeout while the disk and CPUs are busy.
+vm '
+set -e
+since="$(date "+%Y-%m-%d %H:%M:%S")"
+timeout 240 sh -c "while :; do dd if=/dev/zero of=/var/tmp/soak bs=1M count=2048 status=none; rm -f /var/tmp/soak; done" &
+timeout 240 sh -c "while :; do :; done" &
+timeout 240 sh -c "while :; do :; done" &
+max=0
+for i in $(seq 1 22); do
+  s=$(date +%s%N); /etc/watchdog.d/root-write test; e=$(date +%s%N)
+  ms=$(( (e - s) / 1000000 )); [ "$ms" -gt "$max" ] && max=$ms
+  sleep 10
+done
+wait
+rm -f /var/tmp/soak
+echo "root-write under load: 22 samples, max ${max} ms"
+[ "$max" -lt 10000 ]
+dev=$(readlink -f /dev/watchdog-softdog)
+[ "$(ps -o comm= -p "$(fuser "$dev" 2>/dev/null | tr -d " ")")" = watchdog ]
+echo "watchdog journal since the soak began:"
+journalctl -u watchdog --since "$since" --no-pager -o cat | sed "s/^/  /"
+! journalctl -u watchdog --since "$since" --no-pager -o cat | grep -Ei "returned|timed-out|shutting down"
+' >"$LOGS/soak.log" 2>&1 || fail "soak: $(cat "$LOGS/soak.log")"
+[ "$(boot_id)" = "$BOOT" ] || fail "the VM reset during the soak"
+say "soak: $(grep 'root-write under load' "$LOGS/soak.log"); same boot"
 
 # ── 5. Wi-Fi passphrases ────────────────────────────────────────────────────
 vm 'nmcli connection add type wifi con-name oldnet ssid oldnet wifi-sec.key-mgmt wpa-psk wifi-sec.psk-flags 1 >/dev/null'
@@ -226,8 +268,10 @@ vm "/usr/bin/umount /boot && /usr/bin/mount /mnt/traces" || fail "restore /mnt/t
 refused format-refuse-boot "holds /boot"
 
 # ── 7. frozen root resets the box ───────────────────────────────────────────
+before="$(boot_id)"
+[ "$before" = "$BOOT" ] || fail "the VM reset between step 4 and the freeze"
+say "same boot for $(($(date +%s) - BOOT_AT)) s since the step 4 reboot, with the watchdog armed"
 if [ "$FREEZE" = 1 ]; then
-  before="$(boot_id)"
   say "freezing / (boot $before); the softdog should reset the VM in about 4 minutes"
   # The real binary: the provisioned guard wrapper refuses a freeze of /.
   vm_quick 'nohup sh -c "sleep 2; /usr/sbin/fsfreeze -f /" >/dev/null 2>&1 &' || true

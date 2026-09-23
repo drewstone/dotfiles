@@ -25,7 +25,8 @@
 #   --wifi-psk-file FILE   read its passphrase from FILE (/dev/stdin works);
 #                          without it the wifi module asks on the terminal
 #   --replace-psk          replace a different passphrase the profile stores
-#   --autologin            GDM logs this user in at boot (desktop)
+#   --no-autologin         GDM waits for a person to log in (desktop); by
+#                          default it logs this user in at boot
 #   --list                 print the module names and exit
 #
 # Exit status: 0 when every step holds or was fixed, 1 when a step failed or
@@ -47,7 +48,7 @@ for m in "${ALL_MODULES[@]}"; do
   . "$HOST_DIR/provision/$m.sh"
 done
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 SELECTED=()
 SKIPPED=()
@@ -63,7 +64,7 @@ while [ $# -gt 0 ]; do
     --wifi-ssid) WIFI_SSID="${2:?--wifi-ssid needs an SSID}"; shift ;;
     --wifi-psk-file) WIFI_PSK_FILE="${2:?--wifi-psk-file needs a file}"; shift ;;
     --replace-psk) REPLACE_PSK=1 ;;
-    --autologin) AUTOLOGIN=1 ;;
+    --no-autologin) AUTOLOGIN=0 ;;
     --list) printf '%s\n' "${ALL_MODULES[@]}"; exit 0 ;;
     -h | --help) usage; exit 0 ;;
     -*) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
