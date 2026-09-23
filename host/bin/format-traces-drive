@@ -6,9 +6,9 @@
 #
 # Drew runs this himself, in a terminal outside Claude and Codex. Two checks
 # stop an agent that runs it by mistake: the Claude host-blast-guard hook
-# refuses any command that names this script, except one read-only command
-# such as cat or grep, also over ssh; and this script refuses when a claude or
-# codex process is one of its ancestors. They do not stop an agent that means
+# refuses every Bash command that names this script, read-only, ssh and
+# hostlab forms included; and this script refuses when a claude or codex
+# process is one of its ancestors. They do not stop an agent that means
 # to erase a disk, because an agent with sudo can erase one without it.
 #
 # It refuses unless exactly one whole disk has SERIAL and that disk also has
@@ -122,8 +122,9 @@ read -r -p "Type ERASE to continue: " answer </dev/tty
 seen_dev="$DEV"
 seen_byid="$BYID"
 check_disk
-[ "$DEV" = "$seen_dev" ] && [ "$BYID" = "$seen_byid" ] ||
+if [ "$DEV" != "$seen_dev" ] || [ "$BYID" != "$seen_byid" ]; then
   die "the disk changed while the prompt waited ($seen_dev is now $DEV); run it again"
+fi
 
 shopt -s nullglob
 parts=("$BYID"-part*)

@@ -14,12 +14,11 @@
 # Scope: the verb must appear in command position (start of a command, after
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
-# One exception, which fails closed: a command that names format-traces-drive
-# is refused unless it is one local read-only command (cat, head, grep and the
-# like, never git or ssh) or one hostlab command. So variables, line
-# continuations, bash -c, script -c, tmux send-keys and every ssh form are
-# refused. This matters most over ssh, where the remote session has no claude
-# ancestor for the script's own check to find.
+# One exception, which fails closed: any command that names format-traces-drive
+# is refused, wherever the name appears. That includes read-only commands, git,
+# ssh and hostlab. Each narrower rule had a bypass: line continuations, option
+# variables, ssh -o and ~/.ssh/config, sed -e, and git helpers. Over ssh the
+# remote session has no claude ancestor for the script's own check to find.
 
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
@@ -35,7 +34,6 @@ command -v python3 >/dev/null || exit 0
 read -r -d '' GUARD_PY <<'PY'
 import json
 import re
-import shlex
 import sys
 
 try:
@@ -48,52 +46,18 @@ cmd = inp.get("command") or ""
 if not cmd:
     sys.exit(0)
 
-# Erasing the trace drive belongs to Drew at a terminal outside Claude. Only
-# a single read-only command may name the script; anything else that names it
-# is refused, however its options are spelled. Each listed command runs no
-# other command whatever its options; sed (e, -e) and awk (system) can.
-READ_ONLY = {"cat", "grep", "head", "tail", "wc", "ls", "stat", "file", "diff", "shellcheck", "readlink", "realpath"}
-# git is left out: every subcommand can start a configured helper (an editor,
-# a hook, a pager, a filter, an external diff or core.fsmonitor). Commit with
-# -F FILE, or stage the directory, to leave the name off the command line.
-# ssh is left out: ~/.ssh/config can give any host a ProxyCommand or a
-# LocalCommand, which runs here whatever the remote command is.
-HOSTLAB_RUNS = {"run", "shell", "build", "ssh"}
-
-def one_command(c):
-    """The tokens of C when it is one simple command, else None."""
-    if re.search(r"[\n`]|\$\(|<\(|>\(", c):
-        return None
-    try:
-        lex = shlex.shlex(c, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        tokens = list(lex)
-    except ValueError:
-        return None
-    # An operator or a redirection outside quotes makes it more than one
-    # command.
-    if not tokens or any(t and set(t) <= set(";&|()<>") for t in tokens):
-        return None
-    return tokens
-
-def in_vm(c):
-    """C is one hostlab command, which runs its argument inside the VM."""
-    tokens = one_command(c)
-    return bool(tokens) and tokens[0] == "hostlab" and len(tokens) > 1 and tokens[1] in HOSTLAB_RUNS
-
-def read_only(c):
-    tokens = one_command(c)
-    return bool(tokens) and tokens[0] in READ_ONLY
-
-if "format-traces-drive" in cmd and not (read_only(cmd) or in_vm(cmd)):
+# Erasing the trace drive belongs to Drew at a terminal outside Claude. The
+# hook sees only Bash commands, so the Read and Grep tools still read the
+# script, and a commit can name it through -F FILE.
+if "format-traces-drive" in cmd:
     err = sys.stderr
     print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
-    print("Give Drew the command to run himself. Reading the script (cat, head, grep) is allowed as one command; git is not, so commit with -F FILE.", file=err)
-    print("To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
+    print("No Bash command may name it. Give Drew the command to run himself. Read the script with the Read or Grep tool, and commit with -F FILE.", file=err)
+    print("To test it, run tests/provision.hostlab.sh: it erases a scratch disk in a throwaway VM (hostlab run).", file=err)
     sys.exit(2)
 
 # The VM lane is the allowed venue; a command handed to it passes whole. The
-# eraser rule above comes first: there only one hostlab command counts.
+# eraser rule above comes first, so a hostlab command that names it is refused.
 if re.search(r"(^|[\s;&|(])hostlab\s+(run|shell|build|ssh)\b", cmd):
     sys.exit(0)
 

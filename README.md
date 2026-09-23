@@ -157,7 +157,8 @@ It refuses unless exactly one disk has that serial and model.
 It also refuses the system disk and a disk that is in use, and it asks you to type ERASE.
 After ERASE it checks the disk again and writes only through the `/dev/disk/by-id` name that carries the serial.
 It refuses to run under a `claude` or `codex` process.
-The Claude hook refuses any command that names it, ssh included, except one local read-only command such as `cat` or `grep`, or one `hostlab` command.
+The Claude hook refuses every Bash command that names it, including `cat`, `grep`, git, ssh and `hostlab` forms.
+Agents read it with the Read and Grep tools.
 These checks stop a mistake, not an agent that means to erase a disk: an agent with sudo can erase one without the script.
 When it is done, it runs the `traces` module.
 
