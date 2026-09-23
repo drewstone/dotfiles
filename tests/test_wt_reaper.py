@@ -355,6 +355,41 @@ class IncompleteScanTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(path))
 
 
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class RecheckFetchTest(unittest.TestCase):
+    """A remote branch deleted after the first pass must stop the removal."""
+
+    def test_remote_branch_deleted_between_passes_skips(self):
+        f = Fixture()
+        self.addCleanup(f.cleanup)
+        path = f.add('gone', detach=True)
+        git(['checkout', '-q', '-b', 'tmp-feature'], path)
+        f.write(path, 'e.txt', 'e\n')
+        git(['add', '.'], path)
+        git(['commit', '-qm', 'e'], path)
+        git(['push', '-q', 'origin', 'HEAD:refs/heads/tmp-feature'], path)
+        git(['checkout', '-q', '--detach'], path)
+        git(['branch', '-D', 'tmp-feature'], path)
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        mod = load_reaper()
+        real_scan = mod.scan_processes
+        calls = []
+
+        def scan_then_delete(*a, **k):
+            calls.append(1)
+            if len(calls) == 1:
+                # Delete on the remote side only; the local tracking ref goes stale.
+                git(['--git-dir', f.remote, 'update-ref', '-d', 'refs/heads/tmp-feature'], f.tmp)
+            return real_scan(*a, **k)
+
+        mod.scan_processes = scan_then_delete
+        old_env = dict(os.environ)
+        os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old_env)))
+        mod.main(['--root', f.root, '--no-log-file', '--idle-hours', str(IDLE_HOURS)])
+        self.assertTrue(os.path.isdir(path))
+
+
 class RootRefusalTest(unittest.TestCase):
     @unittest.skipUnless(os.geteuid() == 0, 'needs root')
     def test_refuses_root(self):

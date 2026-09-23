@@ -647,6 +647,8 @@ def recheck(rpath, main_path, common_dir, args, log):
     entry = [e for e in list_worktrees(common_dir)[1:] if real(e.get('worktree', '')) == rpath]
     if len(entry) != 1:
         raise Skip('no longer registered')
+    # Refetch so a remote branch deleted since the first pass is seen.
+    git(['--git-dir', common_dir, 'fetch', '--all', '--prune', '--quiet'], '/', timeout=300)
     evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
     held = scan_processes(not args.no_sudo, log)
     if IS_MAC:
