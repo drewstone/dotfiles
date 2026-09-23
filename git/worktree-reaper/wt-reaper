@@ -159,6 +159,15 @@ def find_repos(roots, max_depth):
                 except (Skip, subprocess.TimeoutExpired, OSError):
                     pass
                 continue
+            if (os.path.isfile(os.path.join(path, 'HEAD')) and os.path.isdir(os.path.join(path, 'objects'))
+                    and os.path.isdir(os.path.join(path, 'refs'))):
+                # A bare repository (or a .git dir used as a root) has no .git child.
+                try:
+                    if git(['--git-dir', path, 'rev-parse', '--is-bare-repository'], '/').strip() == 'true':
+                        common_dirs.add(real(path))
+                except (Skip, subprocess.TimeoutExpired, OSError):
+                    pass
+                continue
             if depth >= max_depth:
                 continue
             try:

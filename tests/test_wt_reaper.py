@@ -429,6 +429,27 @@ class ArgumentTest(unittest.TestCase):
             self.assertEqual(proc.returncode, 2, value)
 
 
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class BareRepositoryTest(unittest.TestCase):
+    """Linked worktrees of a bare repository under a root are in scope."""
+
+    def test_bare_repo_worktree_is_found(self):
+        f = Fixture()
+        self.addCleanup(f.cleanup)
+        bare = os.path.join(f.root, 'bare.git')
+        git(['clone', '-q', '--bare', f.remote, bare], f.tmp)
+        git(['--git-dir', bare, 'config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'], f.tmp)
+        git(['--git-dir', bare, 'fetch', '-q', 'origin'], f.tmp)
+        linked = os.path.join(f.tmp, 'bare-linked')
+        git(['--git-dir', bare, 'worktree', 'add', '-q', '--detach', linked, 'origin/main'], f.tmp)
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        rows = run_reaper(f.root, '--dry-run')
+        row = [r for r in rows if r.get('path') == linked]
+        self.assertEqual(len(row), 1, rows)
+        self.assertEqual(row[0]['decision'], 'would-remove', row)
+        self.assertTrue(os.path.isdir(bare))
+
+
 class RootRefusalTest(unittest.TestCase):
     @unittest.skipUnless(os.geteuid() == 0, 'needs root')
     def test_refuses_root(self):
