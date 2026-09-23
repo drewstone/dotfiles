@@ -387,7 +387,9 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
     root_file_is() { true; }
     printf 'usepam yes\\npasswordauthentication yes\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
     sshd_keys_only && echo "PASSWORDS COUNTED AS KEYS ONLY"
-    printf 'passwordauthentication no\\nkbdinteractiveauthentication no\\n' >"${dir}/effective"
+    printf 'passwordauthentication no\\nkbdinteractiveauthentication no\\npubkeyauthentication no\\n' >"${dir}/effective"
+    sshd_keys_only && echo "KEY LOGIN OFF COUNTED AS KEYS ONLY"
+    printf 'passwordauthentication no\\nkbdinteractiveauthentication no\\npubkeyauthentication yes\\n' >"${dir}/effective"
     sshd_keys_only && echo "keys only"
     printf 'Match User drew\\n  PasswordAuthentication=yes\\n' >"$SSHD_CONFIG_D/20-match.conf"
     sshd_keys_only || echo "a Match block allows passwords"
@@ -395,6 +397,8 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
     sshd_keys_only || echo "a quoted value counts too"
     printf 'Match User drew\\n  PasswordAuthentication "no"\\n' >"$SSHD_CONFIG_D/20-match.conf"
     sshd_keys_only && echo "a Match block that says no is fine"
+    printf 'Match Address 10.0.0.0/8\\n  PubkeyAuthentication no\\n' >"$SSHD_CONFIG_D/20-match.conf"
+    sshd_keys_only || echo "a Match block that turns key login off counts"
     rm "$SSHD_CONFIG_D/20-match.conf"
     printf 'Include /etc/ssh/local/*.cfg\\n' >"$SSHD_CONFIG_D/30-include.conf"
     sshd_keys_only || echo "an Include the run does not read"
@@ -405,9 +409,9 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
   `;
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "keys only\na Match block allows passwords\na quoted value counts too\na Match block that says no is fine\nan Include the run does not read\nthe drop-in Include is fine\nno drop-in\n");
+  assert.equal(r.stdout, "keys only\na Match block allows passwords\na quoted value counts too\na Match block that says no is fine\na Match block that turns key login off counts\nan Include the run does not read\nthe drop-in Include is fine\nno drop-in\n");
   // A drop-in can be root-only, so sshd -G runs as root.
-  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(7));
+  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(9));
 });
 
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {
@@ -488,5 +492,13 @@ test("a commented-out authorized key does not hide the ssh-copy-id step", () => 
   writeFileSync(keys, "# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample old-laptop\n");
   assert.equal(sh("bash", ["-c", script]).stdout, "");
   writeFileSync(keys, 'from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample mac\n');
+  assert.equal(sh("bash", ["-c", script]).stdout, "active\n");
+  // StrictModes: sshd ignores the file when it or ~/.ssh is writable by others.
+  chmodSync(keys, 0o666);
+  assert.equal(sh("bash", ["-c", script]).stdout, "", "a world-writable authorized_keys");
+  chmodSync(keys, 0o600);
+  chmodSync(join(home, ".ssh"), 0o775);
+  assert.equal(sh("bash", ["-c", script]).stdout, "", "a group-writable ~/.ssh");
+  chmodSync(join(home, ".ssh"), 0o700);
   assert.equal(sh("bash", ["-c", script]).stdout, "active\n");
 });

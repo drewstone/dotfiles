@@ -76,16 +76,17 @@ install_sshd_keys_only() {
   as_root systemctl try-reload-or-restart ssh.service || return 1
   if ! sshd_keys_only_effective; then
     printf 'sshd still allows passwords, or the run cannot tell. sshd keeps the first value it reads; change these by hand:\n' >&2
-    as_root "$SSHD_BIN" -G 2>&1 | grep -E '^(passwordauthentication|kbdinteractiveauthentication) ' >&2
+    as_root "$SSHD_BIN" -G 2>&1 | grep -E '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication) ' >&2
     sshd_unverified_lines >&2
     return 1
   fi
 }
 
-# sshd_unverified_lines: the lines that can turn password login back on where
-# sshd -G does not look. sshd -G applies no Match block unless given one
-# connection, so a Match block that sets either key to anything but no (after
-# quotes and case) counts, for any user or address. An Include other than the drop-in directory can reach any
+# sshd_unverified_lines: the lines that can turn password login back on, or
+# key login off, where sshd -G does not look. sshd -G applies no Match block
+# unless given one connection, so a Match block counts, for any user or
+# address, when it sets either password key to anything but no, or
+# PubkeyAuthentication to anything but yes (after quotes and case). An Include other than the drop-in directory can reach any
 # file, so it counts too: the run vouches only for files it reads. It fails
 # when a file cannot be read, so an unread file never counts as clean.
 sshd_unverified_lines() {
@@ -99,6 +100,7 @@ sshd_unverified_lines() {
     tolower($1) == "include" && !(NF == 2 && value == tolower(dropins)) { print FILENAME ": " $0; next }
     tolower($1) == "match" { match_block = 1; next }
     match_block && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication)$/ && value != "no" { print FILENAME ": " $0 }
+    match_block && tolower($1) == "pubkeyauthentication" && value != "yes" { print FILENAME ": " $0 }
   ' "${files[@]}"
 }
 
@@ -110,7 +112,8 @@ sshd_unverified_lines() {
 sshd_keys_only_effective() {
   local t u
   t="$(as_root "$SSHD_BIN" -G 2>/dev/null)" || return 1
-  grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t" || return 1
+  grep -qx 'passwordauthentication no' <<<"$t" && grep -qx 'kbdinteractiveauthentication no' <<<"$t" &&
+    grep -qx 'pubkeyauthentication yes' <<<"$t" || return 1
   u="$(sshd_unverified_lines 2>/dev/null)" || return 1
   [ -z "$u" ]
 }
@@ -119,8 +122,17 @@ sshd_keys_only() {
   root_file_is 0644 "$HOST_DIR/ssh/10-dotfiles-keys-only.conf" "$SSHD_KEYS_ONLY" && sshd_keys_only_effective
 }
 
-# ssh_key_authorized: an active key line; a commented-out key does not count.
+# key_path_ok PATH: owned by the user or root and writable by neither group
+# nor others. sshd's StrictModes ignores authorized_keys otherwise, and it
+# checks the file, ~/.ssh and the home directory.
+key_path_ok() {
+  [ -n "$(find "$1" -maxdepth 0 \( -user "$USER" -o -user root \) ! -perm -020 ! -perm -002 2>/dev/null)" ]
+}
+
+# ssh_key_authorized: an active key line that sshd will read; a commented-out
+# key, or one behind a path that StrictModes rejects, does not count.
 ssh_key_authorized() {
+  key_path_ok "$HOME" && key_path_ok "$HOME/.ssh" && key_path_ok "$HOME/.ssh/authorized_keys" || return 1
   grep -vE '^[[:space:]]*#' "$HOME/.ssh/authorized_keys" 2>/dev/null |
     grep -E '(^|[[:space:]])(ssh-|ecdsa-|sk-)[^[:space:]]+[[:space:]]+AAAA' >/dev/null
 }
@@ -138,7 +150,7 @@ module_tools() {
   want_pkgs $BASE_PACKAGES
   ensure "ssh accepts keys only ($SSHD_KEYS_ONLY, effective in sshd -G)" sshd_keys_only -- install_sshd_keys_only
   if ! ssh_key_authorized; then
-    manual_after_signin "ssh accepts keys only, and no key is authorized for $USER yet. From the Mac, after the tailnet join (Tailscale SSH carries the copy):" \
+    manual_after_signin "ssh accepts keys only, and no usable key is authorized for $USER yet (an active line in ~/.ssh/authorized_keys; the file, ~/.ssh and the home directory writable only by $USER). From the Mac, after the tailnet join (Tailscale SSH carries the copy):" \
       "ssh-copy-id $USER@$(hostname -s | tr '[:upper:]' '[:lower:]')"
   fi
   ensure "user services run without a login (linger)" linger_on -- as_root loginctl enable-linger "$USER"
