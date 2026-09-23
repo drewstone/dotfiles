@@ -64,5 +64,5 @@ sed -n "s/^set -g @plugin '\([^']*\)'.*/\1/p" "$SCRIPT_DIR/tmux.conf" | while re
 done
 
 if [ "$RELOAD" = 1 ] && tmux list-sessions &>/dev/null; then
-  tmux source-file "$HOME/.tmux.conf" 2>/dev/null && echo "  RELOADED tmux config" || true
+  if tmux source-file "$HOME/.tmux.conf" 2>/dev/null; then echo "  RELOADED tmux config"; fi
 fi
