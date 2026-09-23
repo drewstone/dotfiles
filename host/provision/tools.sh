@@ -5,7 +5,7 @@
 BASE_PACKAGES="curl ca-certificates git jq unzip xz-utils fontconfig tmux psmisc dconf-cli wl-clipboard iw python3-venv qemu-system-x86 qemu-utils cloud-image-utils"
 
 linger_on() { [ -e "/var/lib/systemd/linger/$USER" ]; }
-in_group() { id -nG "$USER" | tr ' ' '\n' | grep -qx "$1"; }
+in_group() { id -nG "$USER" | tr ' ' '\n' | grep -x "$1" >/dev/null; }
 
 install_chrome() {
   local deb="$WORK/google-chrome-stable_current_amd64.deb"

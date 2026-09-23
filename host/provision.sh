@@ -8,8 +8,8 @@
 #   guards        root wrappers, sudoers, frozen-root watchdog (host/install.sh)
 #   tools         base packages, Google Chrome, Tailscale, GitHub CLI, uv
 #   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
-#   nosleep       masked sleep targets, logind, login screen, GNOME session
 #   desktop       GNOME at boot, Ghostty full screen on tmux, JetBrainsMono Nerd Font
+#   nosleep       masked sleep targets, logind, login screen, GNOME session
 #   shell         starship prompt; the Linux console keeps the plain prompt
 #   git           global Git hooks (git/install.sh)
 #   tmux          ~/.tmux.conf, plugins, tmux-heal (tmux/install.sh, install-heal.sh)
@@ -35,7 +35,8 @@ set -uo pipefail
 
 DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST_DIR="$DOTFILES/host"
-ALL_MODULES=(guards tools wifi nosleep desktop shell git tmux agents traces tangle-tools handoff)
+# desktop comes before nosleep: nosleep configures the GNOME that desktop installs.
+ALL_MODULES=(guards tools wifi desktop nosleep shell git tmux agents traces tangle-tools handoff)
 
 # shellcheck source=provision/lib.sh
 . "$HOST_DIR/provision/lib.sh"

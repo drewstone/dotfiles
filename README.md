@@ -99,8 +99,8 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, Google Chrome, Tailscale, the GitHub CLI, the hostlab packages, and uv. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
-| `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. |
 | `desktop` | Boots to GNOME and starts Ghostty full screen on the tmux session `work`. |
+| `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
 | `git` | Runs `git/install.sh`. |
 | `tmux` | Links `tmux/tmux.conf`, clones its plugins, and runs `tmux/install-heal.sh`. It never reloads a running server. |

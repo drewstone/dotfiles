@@ -77,6 +77,10 @@ ensure() {
   return 0
 }
 
+# grep -q in a pipeline: grep exits at the first match, the writer can then die
+# of SIGPIPE, and pipefail turns a match into a failure. So a pipeline ends in
+# grep >/dev/null, which reads all of its input.
+
 # ── root ────────────────────────────────────────────────────────────────────
 
 # as_root CMD...: run as root. Check mode uses sudo -n, so it never prompts;
@@ -109,7 +113,7 @@ want_root_file() {
 pkg_installed() {
   local p
   for p in "$@"; do
-    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'ok installed' || return 1
+    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep 'ok installed' >/dev/null || return 1
   done
 }
 

@@ -53,7 +53,7 @@ module_nosleep() {
     skip "GDM is not installed; no login-screen settings"
   fi
 
-  if ! gsettings list-schemas 2>/dev/null | grep -qx org.gnome.settings-daemon.plugins.power; then
+  if ! gsettings list-schemas 2>/dev/null | grep -x org.gnome.settings-daemon.plugins.power >/dev/null; then
     skip "GNOME is not installed; no session power settings"
     return 0
   fi

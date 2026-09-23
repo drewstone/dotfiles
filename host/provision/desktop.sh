@@ -9,7 +9,7 @@ GDM_CUSTOM=/etc/gdm3/custom.conf
 
 boots_graphical() { [ "$(systemctl get-default 2>/dev/null)" = graphical.target ]; }
 snap_has() { snap list "$1" >/dev/null 2>&1; }
-font_present() { fc-list : family 2>/dev/null | grep -q 'JetBrainsMono Nerd Font'; }
+font_present() { fc-list : family 2>/dev/null | grep 'JetBrainsMono Nerd Font' >/dev/null; }
 
 install_font() {
   local base="https://github.com/ryanoasis/nerd-fonts/releases/download/$NERD_FONTS_VERSION"

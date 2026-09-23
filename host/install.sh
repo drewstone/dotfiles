@@ -91,7 +91,7 @@ want_file 0440 "$TMP/sudoers" /etc/sudoers.d/zz-agent-blast-guard
 if [ "$CHECK" = 0 ]; then $SUDO visudo -c >/dev/null; fi
 
 echo "== watchdog"
-if ! dpkg-query -W -f='${Status}' watchdog 2>/dev/null | grep -q 'ok installed'; then
+if ! dpkg-query -W -f='${Status}' watchdog 2>/dev/null | grep 'ok installed' >/dev/null; then
   if [ "$CHECK" = 1 ]; then
     drift "package watchdog is not installed"
   else

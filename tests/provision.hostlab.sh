@@ -45,6 +45,7 @@ cleanup() {
   say "removed VM $ID; logs in $LOGS"
 }
 trap cleanup EXIT
+trap 'exit 143' TERM INT
 
 wait_up() {
   local t=0
@@ -113,7 +114,7 @@ dev=$(readlink -f /dev/watchdog-softdog)
 holder=$(fuser "$dev" 2>/dev/null | tr -d " ")
 echo "softdog=$dev holder=$holder comm=$(ps -o comm= -p "$holder")"
 [ "$(ps -o comm= -p "$holder")" = watchdog ]
-! journalctl -b -u watchdog --no-pager | grep -q "cannot open"
+! journalctl -b -u watchdog --no-pager | grep "cannot open" >/dev/null
 cat /sys/class/watchdog/$(basename "$dev")/state
 ' >"$LOGS/watchdog-after.log" 2>&1 || fail "watchdog after reboot: $(cat "$LOGS/watchdog-after.log")"
 say "watchdog after: $(tr '\n' ' ' <"$LOGS/watchdog-after.log")"

@@ -61,10 +61,10 @@ for m in / /boot /boot/efi; do
     [ "$n" = "$DEV" ] && die "$DEV holds $m"
   done
 done
-if lsblk -nro MOUNTPOINTS "$DEV" 2>/dev/null | grep -q .; then
+if lsblk -nro MOUNTPOINTS "$DEV" 2>/dev/null | grep . >/dev/null; then
   die "$DEV has a mounted partition or active swap: $(lsblk -nro NAME,MOUNTPOINTS "$DEV" | awk 'NF > 1' | tr '\n' ' ')"
 fi
-if lsblk -nro FSTYPE "$DEV" | grep -Eq 'LVM2_member|linux_raid_member|crypto_LUKS|zfs_member'; then
+if lsblk -nro FSTYPE "$DEV" | grep -E 'LVM2_member|linux_raid_member|crypto_LUKS|zfs_member' >/dev/null; then
   die "$DEV is part of LVM, RAID, LUKS or ZFS"
 fi
 
