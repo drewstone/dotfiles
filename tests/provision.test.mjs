@@ -391,6 +391,10 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
     sshd_keys_only && echo "keys only"
     printf 'Match User drew\\n  PasswordAuthentication=yes\\n' >"$SSHD_CONFIG_D/20-match.conf"
     sshd_keys_only || echo "a Match block allows passwords"
+    printf 'Match User drew\\n  KbdInteractiveAuthentication "Yes"\\n' >"$SSHD_CONFIG_D/20-match.conf"
+    sshd_keys_only || echo "a quoted value counts too"
+    printf 'Match User drew\\n  PasswordAuthentication "no"\\n' >"$SSHD_CONFIG_D/20-match.conf"
+    sshd_keys_only && echo "a Match block that says no is fine"
     rm "$SSHD_CONFIG_D/20-match.conf"
     printf 'Include /etc/ssh/local/*.cfg\\n' >"$SSHD_CONFIG_D/30-include.conf"
     sshd_keys_only || echo "an Include the run does not read"
@@ -401,9 +405,9 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
   `;
   const r = sh("bash", ["-c", script]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "keys only\na Match block allows passwords\nan Include the run does not read\nthe drop-in Include is fine\nno drop-in\n");
+  assert.equal(r.stdout, "keys only\na Match block allows passwords\na quoted value counts too\na Match block that says no is fine\nan Include the run does not read\nthe drop-in Include is fine\nno drop-in\n");
   // A drop-in can be root-only, so sshd -G runs as root.
-  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(5));
+  assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(7));
 });
 
 test("--replace-psk without a file compares with the prompt's passphrase, and check mode never prompts", () => {
@@ -468,4 +472,21 @@ test("desktop drops the old Ghostty autostart and tangle-tools enables the wall 
   assert.match(run("apply").stdout, /changed +old autostart/);
   assert.throws(() => lstatSync(entry), "the old managed link is removed");
   assert.match(clean.stdout, /ok +wall unit/);
+});
+
+test("a commented-out authorized key does not hide the ssh-copy-id step", () => {
+  const home = mkdtempSync(join(tmpdir(), "authkeys-"));
+  mkdirSync(join(home, ".ssh"));
+  const keys = join(home, ".ssh/authorized_keys");
+  const script = `
+    . host/provision/lib.sh
+    . host/provision/tools.sh
+    HOME="${home}"
+    ssh_key_authorized && echo active
+    true
+  `;
+  writeFileSync(keys, "# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample old-laptop\n");
+  assert.equal(sh("bash", ["-c", script]).stdout, "");
+  writeFileSync(keys, 'from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample mac\n');
+  assert.equal(sh("bash", ["-c", script]).stdout, "active\n");
 });

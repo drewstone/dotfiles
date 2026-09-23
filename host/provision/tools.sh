@@ -84,8 +84,8 @@ install_sshd_keys_only() {
 
 # sshd_unverified_lines: the lines that can turn password login back on where
 # sshd -G does not look. sshd -G applies no Match block unless given one
-# connection, so a Match block that sets either key to yes counts, for any
-# user or address. An Include other than the drop-in directory can reach any
+# connection, so a Match block that sets either key to anything but no (after
+# quotes and case) counts, for any user or address. An Include other than the drop-in directory can reach any
 # file, so it counts too: the run vouches only for files it reads. It fails
 # when a file cannot be read, so an unread file never counts as clean.
 sshd_unverified_lines() {
@@ -95,10 +95,10 @@ sshd_unverified_lines() {
   # shellcheck disable=SC2016 # $1, $2 and $0 are awk fields
   as_root awk -F '[ \t=]+' -v dropins="$SSHD_CONFIG_D/*.conf" '
     FNR == 1 { match_block = 0 }
-    { sub(/^[ \t]+/, "") }
-    tolower($1) == "include" && !(NF == 2 && $2 == dropins) { print FILENAME ": " $0; next }
+    { sub(/^[ \t]+/, ""); value = tolower($2); gsub(/"/, "", value) }
+    tolower($1) == "include" && !(NF == 2 && value == tolower(dropins)) { print FILENAME ": " $0; next }
     tolower($1) == "match" { match_block = 1; next }
-    match_block && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication)$/ && tolower($2) == "yes" { print FILENAME ": " $0 }
+    match_block && tolower($1) ~ /^(passwordauthentication|kbdinteractiveauthentication)$/ && value != "no" { print FILENAME ": " $0 }
   ' "${files[@]}"
 }
 
@@ -119,8 +119,10 @@ sshd_keys_only() {
   root_file_is 0644 "$HOST_DIR/ssh/10-dotfiles-keys-only.conf" "$SSHD_KEYS_ONLY" && sshd_keys_only_effective
 }
 
+# ssh_key_authorized: an active key line; a commented-out key does not count.
 ssh_key_authorized() {
-  grep -E '(^|[[:space:]])(ssh-|ecdsa-|sk-)[^[:space:]]+[[:space:]]+AAAA' "$HOME/.ssh/authorized_keys" >/dev/null 2>&1
+  grep -vE '^[[:space:]]*#' "$HOME/.ssh/authorized_keys" 2>/dev/null |
+    grep -E '(^|[[:space:]])(ssh-|ecdsa-|sk-)[^[:space:]]+[[:space:]]+AAAA' >/dev/null
 }
 
 # uv's installer edits shell profiles unless told not to; the shell module
