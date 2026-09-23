@@ -19,7 +19,9 @@ unreadable state, or any doubt skips it, and every decision is logged.
   - After `git fetch --all --prune`, every commit reachable from its HEAD is
     reachable from a remote-tracking ref.
   - No process has its cwd, root, an open file or a mapped file inside it
-    (/proc on Linux, lsof on macOS).
+    (/proc on Linux, lsof on macOS). The scan must see every live process,
+    so it uses `sudo -n`; if any live process stays unreadable, nothing is
+    removed that run.
 
 Removal uses `git worktree remove` without --force, so git re-checks the tree,
 then `git worktree prune --expire=<idle>`. The local branch is deleted with
@@ -401,43 +403,38 @@ def proc_dump():
     return paths, unreadable
 
 
+MAC_LSOF = ['/usr/sbin/lsof', '-n', '-P', '-w', '-F', 'pn']
+MAC_SUDOERS_HINT = ('add "%s ALL=(root) NOPASSWD: %s" with visudo -f /etc/sudoers.d/wt-reaper'
+                    % (os.environ.get('USER', 'drew'), ' '.join(MAC_LSOF)))
+
+
 def process_table():
-    """pid -> (uid, ppid) for every process, via ps (works on both OSes)."""
-    out = subprocess.run(['ps', '-axo', 'pid=,uid=,ppid='], stdout=subprocess.PIPE,
+    """pid -> ps state letters for every process (works on Linux and macOS)."""
+    out = subprocess.run(['ps', '-axo', 'pid=,stat='], stdout=subprocess.PIPE,
                          stderr=subprocess.DEVNULL, check=True).stdout.decode()
     table = {}
     for line in out.splitlines():
         f = line.split()
-        if len(f) == 3 and all(x.isdigit() for x in f):
-            table[int(f[0])] = (int(f[1]), int(f[2]))
+        if len(f) == 2 and f[0].isdigit():
+            table[int(f[0])] = f[1]
     return table
 
 
-def alive(pid):
-    """True while pid exists. Filters short-lived helpers such as setuid ps itself."""
+def alive(pid, table):
+    """True while pid exists and is not a zombie (a zombie holds no files)."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
-    return True
-
-
-def started_by_us(pid, table, uid):
-    """True when an ancestor of pid runs as uid (for example `sudo` from a session)."""
-    seen = set()
-    while pid in table and pid not in seen and pid > 1:
-        seen.add(pid)
-        pid = table[pid][1]
-        if pid in table and table[pid][0] == uid:
-            return True
-    return False
+        pass
+    state = table.get(pid)
+    return state is not None and not state.startswith('Z')
 
 
 def scan_processes(use_sudo, log, attempts=3, pause=3.0):
-    """Scan until complete. Short-lived sudo or setuid helpers make a scan
-    incomplete; they usually exit within seconds, so retry before giving up."""
+    """Scan until complete. A process that exits or starts mid-scan makes a
+    scan incomplete; retry a few times before giving up."""
     for attempt in range(1, attempts + 1):
         try:
             return _scan_processes(use_sudo, log)
@@ -449,8 +446,12 @@ def scan_processes(use_sudo, log, attempts=3, pause=3.0):
 
 
 def _scan_processes(use_sudo, log):
-    """Return the set of held paths, or raise Skip when the scan is incomplete."""
-    uid = os.getuid()
+    """Return every path a live process holds, or raise Skip.
+
+    Any live process the scan cannot inspect makes the whole scan incomplete:
+    a root daemon may hold a worktree, and its ancestry proves nothing.
+    """
+    hint = ''
     if IS_LINUX:
         paths, unreadable = proc_dump()
         if unreadable and use_sudo:
@@ -461,30 +462,34 @@ def _scan_processes(use_sudo, log):
                 data = json.loads(proc.stdout.decode('utf-8', 'surrogateescape'))
                 paths.update(data['paths'])
                 unreadable = data['unreadable']
-            else:
-                log.write(event='proc-scan', note='sudo -n unavailable; using own view')
+        hint = '; the Linux scan needs passwordless sudo to read other accounts\' processes'
     elif IS_MAC:
-        proc = subprocess.run(['lsof', '-n', '-P', '-w', '-F', 'pn'], stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, timeout=600)
+        before = process_table()
+        proc = None
+        if use_sudo:
+            proc = subprocess.run(['sudo', '-n'] + MAC_LSOF, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, timeout=600)
+            if proc.returncode not in (0, 1) or not proc.stdout:
+                proc = None
+        if proc is None:
+            hint = '; lsof needs root to see other accounts: ' + MAC_SUDOERS_HINT
+            proc = subprocess.run(MAC_LSOF, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=600)
         if proc.returncode not in (0, 1) or not proc.stdout:
             raise Skip('lsof failed (exit %d)' % proc.returncode)
-        paths, seen_pids = set(), set()
+        paths, seen = set(), set()
         for line in proc.stdout.decode('utf-8', 'surrogateescape').splitlines():
             if line.startswith('p'):
-                seen_pids.add(int(line[1:]))
+                seen.add(int(line[1:]))
             elif line.startswith('n/'):
                 paths.add(line[1:].split(' (')[0])
-        table = process_table()
-        unreadable = [p for p, (u, _) in table.items() if p not in seen_pids and u != uid]
-        # lsof also misses processes that exit mid-scan; they no longer matter.
+        unreadable = [p for p in before if p not in seen]
     else:
         raise Skip('unsupported platform %s' % sys.platform)
-    if unreadable:
-        table = process_table()
-        ours = [p for p in unreadable if p in table and alive(p) and started_by_us(p, table, uid)]
-        if ours:
-            raise Skip('process scan incomplete: cannot inspect pid(s) %s started from this account'
-                       % ','.join(str(p) for p in ours[:10]))
+    table = process_table()
+    live = [p for p in unreadable if p != os.getpid() and alive(p, table)]
+    if live:
+        raise Skip('process scan incomplete: %d live process(es) not inspectable, e.g. pid %s%s'
+                   % (len(live), ','.join(str(p) for p in live[:5]), hint))
     return paths
 
 
@@ -688,7 +693,7 @@ def main(argv=None):
     parser.add_argument('--idle-hours', type=float, default=24.0)
     parser.add_argument('--log-file', default=os.path.expanduser('~/.local/state/wt-reaper/wt-reaper.log'))
     parser.add_argument('--no-log-file', action='store_true')
-    parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the Linux process scan')
+    parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the process scan')
     parser.add_argument('--proc-dump', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.proc_dump:

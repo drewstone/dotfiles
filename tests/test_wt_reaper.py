@@ -52,6 +52,40 @@ def run_reaper(root, *extra):
     return parse(proc.stdout.decode())
 
 
+def load_reaper():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader('wt_reaper', REAPER)
+    spec = importlib.util.spec_from_loader('wt_reaper', loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def scan_is_complete():
+    """The reaper removes nothing unless it can inspect every process (sudo -n)."""
+    if os.geteuid() == 0:
+        return False
+    mod = load_reaper()
+
+    class Quiet:
+        def write(self, **_):
+            pass
+    try:
+        mod._scan_processes(True, Quiet())
+        return True
+    except mod.Skip:
+        try:  # a process may have exited mid-scan; one retry
+            mod._scan_processes(True, Quiet())
+            return True
+        except mod.Skip:
+            return False
+
+
+SCAN_COMPLETE = scan_is_complete()
+NEEDS_SCAN = 'needs a complete process scan (passwordless sudo for ps/lsof reads)'
+
+
 class Fixture:
     """A bare remote, a main clone, and one worktree per case under <root>/_wt."""
 
@@ -96,7 +130,7 @@ class Fixture:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
-@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
 class ReaperTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -277,17 +311,7 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(int(s['scanned']), int(s['removed']) + int(s['skipped']))
 
 
-def load_reaper():
-    import importlib.machinery
-    import importlib.util
-    loader = importlib.machinery.SourceFileLoader('wt_reaper', REAPER)
-    spec = importlib.util.spec_from_loader('wt_reaper', loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    return mod
-
-
-@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
 class RecheckTest(unittest.TestCase):
     """A file written after the first pass must stop the removal."""
 
@@ -313,6 +337,22 @@ class RecheckTest(unittest.TestCase):
         mod.main(['--root', f.root, '--no-log-file', '--idle-hours', str(IDLE_HOURS)])
         self.assertTrue(os.path.isfile(os.path.join(late, '.env')))
         self.assertGreaterEqual(len(calls), 1)
+
+
+@unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
+class IncompleteScanTest(unittest.TestCase):
+    """Without sudo, root processes are unreadable, so nothing may be removed."""
+
+    def test_unreadable_processes_block_removal(self):
+        f = Fixture()
+        self.addCleanup(f.cleanup)
+        path = f.add('blocked')
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        rows = run_reaper(f.root, '--no-sudo')
+        row = [r for r in rows if r.get('path') == path][0]
+        self.assertEqual(row['decision'], 'skip', row)
+        self.assertIn('process scan incomplete', row['reason'])
+        self.assertTrue(os.path.isdir(path))
 
 
 class RootRefusalTest(unittest.TestCase):
