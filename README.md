@@ -19,6 +19,7 @@ project_doc_fallback_filenames = ["CLAUDE.md"]
 This lets Codex discover repositories that use only `CLAUDE.md`.
 If fallback names already exist, append this name to that list.
 On a Linux box, `host/provision.sh agents` adds the setting.
+It writes `config.toml` with mode 0600 to keep it private.
 Codex prefers `AGENTS.override.md`, then `AGENTS.md`, then configured fallback names within each directory.
 Keep shared repository guidance in `AGENTS.md` when both agents use it; a Claude entry can import `@AGENTS.md`.
 See the [current Codex discovery rules](https://developers.openai.com/codex/guides/agents-md) for scope and limits.
@@ -36,6 +37,8 @@ Run `./host/install.sh --check` to report drift without a change.
   PID 1 is pinned to a hardware timer (`/dev/watchdog-hw`), so a `RuntimeWatchdogSec` setting never takes the softdog.
 - `claude/hooks/host-blast-guard.sh` blocks the same verbs inside Claude Code before sudo sees them.
   It also blocks `host/bin/format-traces-drive`, which erases a disk.
+- `claude/hooks/kill-guard.sh` refuses broad process signals from Claude Bash commands.
+  If `jq` is unavailable, it refuses every matched Bash command because it cannot inspect the input.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
 
 The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.
@@ -72,6 +75,7 @@ Install the tmux watcher and make its user manager a last-resort memory-pressure
 ```
 
 The watcher saves a workspace index every minute.
+It uses a UTF-8 locale for the tmux client so empty service locales do not corrupt the tab-separated index.
 It also asks tmux-resurrect to save its standard snapshot every 15 minutes when installed.
 After server loss, it recreates session and window names with shells in their prior directories.
 It cannot revive processes, pane splits, scrollback, or unsaved work.

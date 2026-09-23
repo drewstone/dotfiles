@@ -213,21 +213,26 @@ test('installer skips and prunes directories without SKILL.md', () => {
     const invalidSource = join(home, 'invalid-source')
     writeSkill(join(home, 'external'), 'valid-source', 'External skill')
     mkdirSync(invalidSource)
-    const managedOrigin = execFileSync('git', ['remote', 'get-url', 'origin'], {
+    const origin = spawnSync('git', ['remote', 'get-url', 'origin'], {
       cwd: repoRoot,
       encoding: 'utf8',
-    }).trim()
-    const oldCheckout = join(home, 'old-dotfiles')
-    const retired = writeSkill(join(oldCheckout, 'claude', 'skills'), 'retired', 'Retired skill')
-    execFileSync('git', ['init', '--quiet'], { cwd: oldCheckout })
-    execFileSync('git', ['remote', 'add', 'origin', managedOrigin], { cwd: oldCheckout })
+    })
+    // An archive has no origin, so the installer cannot identify a separate
+    // checkout as managed. Keep the invalid-link assertions in that case.
+    let retired
+    if (origin.status === 0) {
+      const oldCheckout = join(home, 'old-dotfiles')
+      retired = writeSkill(join(oldCheckout, 'claude', 'skills'), 'retired', 'Retired skill')
+      execFileSync('git', ['init', '--quiet'], { cwd: oldCheckout })
+      execFileSync('git', ['remote', 'add', 'origin', origin.stdout.trim()], { cwd: oldCheckout })
+    }
 
     for (const harness of ['.claude', '.codex']) {
       const root = join(home, harness, 'skills')
       mkdirSync(root, { recursive: true })
       symlinkSync(invalidSource, join(root, 'invalid-source'))
       symlinkSync('../../external/valid-source', join(root, 'valid-source'))
-      symlinkSync(retired, join(root, 'retired'))
+      if (retired) symlinkSync(retired, join(root, 'retired'))
     }
 
     const result = spawnSync('bash', [installer], {
@@ -240,12 +245,12 @@ test('installer skips and prunes directories without SKILL.md', () => {
     })
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /invalid skill symlink/)
-    assert.match(result.stdout, /retired managed skill/)
+    if (retired) assert.match(result.stdout, /retired managed skill/)
 
     for (const harness of ['.claude', '.codex']) {
       const root = join(home, harness, 'skills')
       assert.throws(() => readlinkSync(join(root, 'invalid-source')), { code: 'ENOENT' })
-      assert.throws(() => readlinkSync(join(root, 'retired')), { code: 'ENOENT' })
+      if (retired) assert.throws(() => readlinkSync(join(root, 'retired')), { code: 'ENOENT' })
       assert.equal(readlinkSync(join(root, 'valid-source')), '../../external/valid-source')
     }
   })

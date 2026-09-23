@@ -22,11 +22,17 @@
 
 set -u
 
-command -v jq >/dev/null 2>&1 || exit 0
-
 LOG_DIR="${HOME}/.claude/logs"
 mkdir -p "$LOG_DIR"
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG_DIR/kill-guard.log"; }
+
+# This hook is registered only for Bash. Without jq, its input cannot be
+# inspected, so refuse the command until the parser is installed.
+if ! command -v jq >/dev/null 2>&1; then
+  log 'DENY reason="jq missing; Bash command cannot be inspected"'
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Bash command cannot be inspected because jq is missing. Install jq."}}'
+  exit 0
+fi
 
 INPUT=$(cat)
 [ "$(printf '%s' "$INPUT" | jq -r '.tool_name // empty')" = "Bash" ] || exit 0
