@@ -254,7 +254,7 @@ fi
 # harness that can consume a transport-neutral profile object.
 PROFILE_DIR="$HOME/.config/agent-profiles"
 mkdir -p "$PROFILE_DIR"
-ALL_SKILLS=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -mindepth 1 -type d -exec test -f "{}/SKILL.md" \; -print | xargs -n1 basename 2>/dev/null | paste -sd, -)
+ALL_SKILLS=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -mindepth 1 -type d -exec test -f "{}/SKILL.md" \; -print0 | xargs -0 -n1 basename 2>/dev/null | paste -sd, -)
 python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" \
   --source "$SCRIPT_DIR" \
   --out "$PROFILE_DIR/drew-default.json" \
@@ -376,30 +376,35 @@ sync_plugins() {
     return 0
   }
 
-  # Step 1: register every marketplace listed in settings.json. Claude
-  # Code reads `extraKnownMarketplaces` at startup but doesn't actually
-  # register them with the plugin CLI; install fails until we tell it.
-  local marketplaces_json
-  if command -v jq >/dev/null 2>&1; then
-    marketplaces_json=$(jq -c '.extraKnownMarketplaces // {} | to_entries[] | {name: .key, repo: .value.source.repo}' "$settings" 2>/dev/null || true)
-  else
-    marketplaces_json=$(python3 -c "
-import json
-d = json.load(open('$settings')).get('extraKnownMarketplaces', {})
-for k, v in d.items():
-    repo = v.get('source', {}).get('repo')
-    if repo: print(json.dumps({'name': k, 'repo': repo}))
-" 2>/dev/null || true)
-  fi
-  local known
-  known=$(claude plugin marketplace list 2>/dev/null | tr -d ' ' || true)
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    local name repo
-    name=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])" 2>/dev/null)
-    repo=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin)['repo'])" 2>/dev/null)
+  # Step 1: register every marketplace a plugin needs. Claude Code reads
+  # `extraKnownMarketplaces` at startup but doesn't register them with the
+  # plugin CLI; install fails until we tell it. The official marketplace is
+  # not listed there, and a fresh box does not have it either, so a plugin
+  # that names it adds it from its fixed repository.
+  local wanted known name repo
+  wanted=$(python3 - "$settings" <<'PY' 2>/dev/null || true
+import json, sys
+d = json.load(open(sys.argv[1]))
+builtin = {"claude-plugins-official": "anthropics/claude-plugins-official"}
+repos = {k: v.get("source", {}).get("repo") for k, v in d.get("extraKnownMarketplaces", {}).items()}
+for key in d.get("enabledPlugins", {}):
+    market = key.partition("@")[2]
+    if market in builtin and market not in repos:
+        repos[market] = builtin[market]
+for name, repo in repos.items():
+    if repo:
+        print(name + "\t" + repo)
+PY
+)
+  # The text listing decorates each name; the JSON listing does not.
+  known=$(claude plugin marketplace list --json 2>/dev/null | python3 -c '
+import json, sys
+for m in json.load(sys.stdin):
+    print(m.get("name", ""))
+' 2>/dev/null || true)
+  while IFS=$'\t' read -r name repo; do
     [ -z "$name" ] || [ -z "$repo" ] && continue
-    if echo "$known" | grep -q "^${name}\$\|^${name}[^a-zA-Z0-9_-]"; then
+    if printf '%s\n' "$known" | grep -xF "$name" >/dev/null; then
       continue
     fi
     if claude plugin marketplace add "$repo" >/dev/null 2>&1; then
@@ -407,7 +412,7 @@ for k, v in d.items():
     else
       echo "  WARN  marketplace add $name failed"
     fi
-  done <<<"$marketplaces_json"
+  done <<<"$wanted"
 
   # Step 2: install every enabledPlugin. Idempotent — `details` returns
   # 0 when present at any version.

@@ -3,18 +3,22 @@
 # mt7925e firmware resets look like a wrong key to NetworkManager. It then marks
 # the profile "no-secrets" and stops autoconnecting, and a headless box has no
 # secret agent to answer, so the box stays offline until someone reconnects it.
-# When the box has no connection, bring Wi-Fi profiles up again, most recently
-# used first. An explicit "connection up" clears the autoconnect block.
+# When no Wi-Fi device is up and nothing else gives full connectivity, bring
+# Wi-Fi profiles up again, most recently used first. An explicit
+# "connection up" clears the autoconnect block.
 [ "$(nmcli -t -f RUNNING general 2>/dev/null)" = running ] || exit 0
-case "$(nmcli -t -f STATE general 2>/dev/null)" in
-  connected* | connecting) exit 0 ;;
-esac
+# Full connectivity through any device, Ethernet included.
+[ "$(nmcli -t -f STATE general 2>/dev/null)" = connected ] && exit 0
+# The general state alone is not enough: tailscale0, docker0 and bridges keep
+# it at "connected (local only)" after Wi-Fi drops. A Wi-Fi device that is
+# connected or connecting stays alone, so an upstream outage never bounces it.
+nmcli -t -f TYPE,STATE device 2>/dev/null | grep '^wifi:connect' >/dev/null && exit 0
 nmcli -t -f TIMESTAMP,UUID,TYPE,AUTOCONNECT connection show |
   awk -F: '$3 == "802-11-wireless" && $4 == "yes" { print $1, $2 }' |
   sort -rn |
   while read -r _ uuid; do
     name="$(nmcli -g connection.id connection show uuid "$uuid" 2>/dev/null)"
-    logger -t wifi-watchdog "not connected; bringing up $name"
+    logger -t wifi-watchdog "no Wi-Fi connection; bringing up $name"
     if nmcli --wait 45 connection up uuid "$uuid" >/dev/null 2>&1; then
       logger -t wifi-watchdog "reconnected $name"
       exit 0

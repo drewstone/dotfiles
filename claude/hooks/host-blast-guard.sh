@@ -14,6 +14,10 @@
 # Scope: the verb must appear in command position (start of a command, after
 # sudo, ;, &&, ||, |, $( or a newline). `grep fsfreeze` and a remote command
 # after `ssh host '...'` pass. `hostlab run -- ...` passes.
+# One exception: format-traces-drive is refused anywhere in the command when
+# erase arguments follow its name on the same line, also after ssh, inside
+# bash -c, script -c or tmux send-keys. It exists only on the Linux boxes, so
+# a remote call is the case that matters.
 #
 # Fail-open on parse failure: a missing python3 or malformed payload exits 0.
 
@@ -52,11 +56,20 @@ if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
     print("host-blast-guard: HOST_BLAST_GUARD=off is a human-only bypass. Run the experiment in a throwaway VM (hostlab run -- '<command>') or ask Drew to run this himself (prefix it with ! in the prompt).", file=sys.stderr)
     sys.exit(2)
 
+# Erasing the trace drive belongs to Drew at a terminal outside Claude. Its
+# name alone (sed, git add, shellcheck) passes; erase arguments do not.
+if re.search(r"format-traces-drive\b[^\n]*?--(?:model|serial|transport)\b", cmd):
+    err = sys.stderr
+    print("host-blast-guard: blocked format-traces-drive: it erases a whole disk; only Drew runs it, in a terminal outside Claude.", file=err)
+    print("Give Drew the command to run himself. To test it, use a throwaway VM:  hostlab run -- '<command>'   (hostlab --help).", file=err)
+    sys.exit(2)
+
 # Command position: start, after a separator, or after sudo/exec/timeout.
 # A backtick is not a separator here: inline code in a heredoc or commit
 # message mentions these verbs far more often than backtick substitution runs
 # them, and the root wrappers still catch the substitution case.
-LEAD = r"(?:^|[\n;&|({]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*|exec\s+|nohup\s+|env\s+|timeout\s+\S+\s+|nice\s+(?:-n\s*\S+\s+)?|(?:do|then|else)\s+)*"
+SUDO_OPT = r"(?:-[ugCDhpRrTU]\s+\S+|--(?:user|group|chdir|host|prompt|chroot|close-from|command-timeout|other-user)(?:=|\s+)\S+|-\S+)\s+"
+LEAD = r"(?:^|[\n;&|({]|\$\()\s*(?:sudo\s+(?:" + SUDO_OPT + r")*|exec\s+|nohup\s+|env\s+|timeout\s+\S+\s+|nice\s+(?:-n\s*\S+\s+)?|(?:do|then|else)\s+)*"
 KERNEL_DIR = r"/(?:proc|sys|dev|run|boot(?:/efi)?)/?(?=\s|$|['\"])"
 ROOT_DISK = r"/dev/(?:nvme\d+n\d+(?:p\d+)?|sd[a-z]+\d*|vd[a-z]+\d*|hd[a-z]+\d*|mmcblk\d+(?:p\d+)?)\b"
 
@@ -74,7 +87,6 @@ RULES = [
     (r"lvm\s+(?:pvcreate|vgcreate|lvcreate|lvremove|vgremove|pvremove|lvchange|vgchange|lvconvert|pvmove)\s+(?:\S+\s+)*" + ROOT_DISK, "LVM on a real disk"),
     (r"(?:mkfs(?:\.\w+)?|mke2fs|mkswap|wipefs|blkdiscard|sgdisk|sfdisk|fdisk|parted)\s+(?:\S+\s+)*" + ROOT_DISK, "writing a real disk"),
     (r"dd\s+(?:\S+\s+)*of=" + ROOT_DISK, "dd onto a real disk"),
-    (r"(?:(?:ba)?sh\s+)?(?:\S*/)?format-traces-drive\b", "format-traces-drive erases a whole disk; only Drew runs it"),
     (r"(?:echo|printf)\s+\S+\s*>\s*/proc/sysrq-trigger", "sysrq reboots or crashes the host"),
     (r"(?:systemctl\s+(?:reboot|poweroff|halt|kexec)|reboot|poweroff|halt|shutdown|init\s+[06])\b", "rebooting or powering off the host"),
 ]

@@ -46,10 +46,21 @@ const blocked = [
   'S=/tmp/s; sudo umount -l "$S/mnt/parent"; bash "$S/proof.sh" 2>&1 | tail -120; sudo fsfreeze -f $S/mnt/parent',
   "cd /x && sudo timeout 30 fsfreeze -f /x/mnt",
   "for i in 1 2; do sudo fsfreeze -f /mnt/$i; done",
-  "sudo ~/code/dotfiles/host/bin/format-traces-drive --model ST8000DM004-2U9188 --serial ZR16L1DM",
+  "sudo -u root fsfreeze -f /mnt/x",
+  "sudo --user=root unshare -m true",
+  "sudo ~/code/dotfiles/host/bin/format-traces-drive --model EXAMPLE-MODEL --serial EXAMPLE123",
   "sudo host/bin/format-traces-drive --model X --serial Y",
   "cd ~/code/dotfiles && sudo bash host/bin/format-traces-drive --model X --serial Y",
   "echo ERASE | format-traces-drive --model X --serial Y",
+  // The forms that passed the first version of the hook.
+  "sudo -u root host/bin/format-traces-drive --model X --serial Y",
+  "script -qec 'sudo host/bin/format-traces-drive --model X --serial Y' /dev/null <<<ERASE",
+  "bash -c 'sudo host/bin/format-traces-drive --model X --serial Y'",
+  "echo ERASE | ssh -tt drew@box 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y'",
+  "ssh box sudo /home/drew/code/dotfiles/host/bin/format-traces-drive --serial Y --model X",
+  "tmux send-keys -t work 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y' Enter",
+  'sudo "$(git rev-parse --show-toplevel)"/host/bin/format-traces-drive --model X --serial Y',
+  "F=host/bin/format-traces-drive; sudo $F --model X --serial Y",
 ];
 
 const allowed = [
@@ -89,6 +100,8 @@ const allowed = [
   "shellcheck host/bin/format-traces-drive",
   "git add host/bin/format-traces-drive host/provision.sh",
   "sed -n 1,20p host/bin/format-traces-drive",
+  "ssh box 'ls -l ~/code/dotfiles/host/bin/format-traces-drive'",
+  "grep -n 'format-traces-drive' README.md host/provision/traces.sh",
   "hostlab run -- 'echo ERASE | host/bin/format-traces-drive --model scsi_debug --serial 1'",
 ];
 
