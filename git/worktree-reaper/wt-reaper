@@ -396,11 +396,16 @@ def _translate(path, their_mounts, host_mounts):
 SCAN_ROUNDS = 6
 
 
-def _unix_sockets(pid, cache):
-    """inode -> bound path for pathname Unix sockets in pid's network namespace."""
+def _unix_sockets(pid, cache, inodes=()):
+    """inode -> bound path for pathname Unix sockets in pid's network namespace.
+
+    The table is cached per namespace, but a socket bound after the cache was
+    filled would be missed, so an inode absent from the cached table rereads it.
+    """
     ns = _readlink('/proc/%d/ns/net' % pid)
-    if ns in cache:
-        return cache[ns]
+    cached = cache.get(ns)
+    if cached is not None and all(i in cached for i in inodes):
+        return cached
     table = {}
     try:
         with open('/proc/%d/net/unix' % pid, encoding='utf-8', errors='replace') as fh:
@@ -439,7 +444,7 @@ def _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets=None):
         if inodes:
             # A pathname-bound Unix socket shows as socket:[inode]; map it to
             # its bound path so a live service's socket file counts as held.
-            table = _unix_sockets(pid, sockets)
+            table = _unix_sockets(pid, sockets, inodes)
             if table is None:
                 ok = False
             else:

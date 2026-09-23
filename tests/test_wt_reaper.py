@@ -458,6 +458,26 @@ class UnixSocketTest(unittest.TestCase):
         self.assertIn(sock, paths)
 
 
+    def test_socket_bound_after_cache_fill_is_held(self):
+        mod = load_reaper()
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-sock2-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        sock = os.path.join(tmp, '.cache', 'late.sock')
+        os.makedirs(os.path.dirname(sock))
+        cache = {}
+        self.assertIsNotNone(mod._unix_sockets(os.getpid(), cache))
+        child = subprocess.Popen(
+            [sys.executable, '-c', 'import os,socket,sys,time; os.chdir("/"); s=socket.socket(socket.AF_UNIX); '
+             's.bind(sys.argv[1]); s.listen(); print("ok", flush=True); time.sleep(60)', sock],
+            stdout=subprocess.PIPE)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        child.stdout.readline()
+        found = mod._proc_one(child.pid, mod._readlink('/proc/self/ns/mnt'), mod._mountinfo('self') or {}, {}, cache)
+        self.assertIn(sock, found or [])
+
+
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
 class RelativeSocketTest(unittest.TestCase):
     """A socket bound by relative path has no known directory: the process is unreadable."""
