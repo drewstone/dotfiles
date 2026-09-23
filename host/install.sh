@@ -8,6 +8,8 @@
 #   /etc/watchdog.conf, /etc/watchdog.d/root-write, /etc/default/watchdog,
 #   /etc/modprobe.d, udev rule, system.conf.d, watchdog.service drop-in
 #                                          a frozen root resets the box in ~4 min (measured)
+#   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
+#                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #
 # Usage: host/install.sh [--check]
 #   --check   report drift and change nothing; exit 1 when anything differs.
@@ -170,6 +172,26 @@ else
     note changed "restarted watchdog.service"
   fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do daemon_holds_softdog && break; sleep 1; done
+fi
+
+echo "== cli-bridge slice"
+# The 24-of-32-core cap is sized for drew-gtr-pro; other boxes skip it.
+if [ "$(hostname | tr '[:upper:]' '[:lower:]')" = drew-gtr-pro ]; then
+  slice_args=()
+  [ "$CHECK" = 1 ] && slice_args=(--check)
+  if [ "$(id -u)" = 0 ]; then
+    # The slice is a user unit of the account that owns this checkout.
+    owner="${SUDO_USER:-$(stat -c %U "$SCRIPT_DIR")}"
+    if [ "$owner" = root ]; then echo "  FAIL: cannot tell which account owns the cli-bridge slice"; exit 1; fi
+    slice=(sudo -u "$owner" XDG_RUNTIME_DIR="/run/user/$(id -u "$owner")" "$SCRIPT_DIR/install-cli-bridge-slice.sh")
+  else
+    slice=("$SCRIPT_DIR/install-cli-bridge-slice.sh")
+  fi
+  if ! "${slice[@]}" "${slice_args[@]}"; then
+    if [ "$CHECK" = 1 ]; then DRIFT=1; else exit 1; fi
+  fi
+else
+  note skipped "not drew-gtr-pro"
 fi
 
 echo "== verify"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Remove idle, clean, fully pushed git worktrees (dotfiles git/worktree-reaper)
+Documentation=file://%h/.local/bin/wt-reaper
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.local/bin/wt-reaper
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=2h

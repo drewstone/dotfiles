@@ -38,6 +38,31 @@ Run `./host/install.sh --check` to report drift without a change.
   It also blocks `host/bin/format-traces-drive`, which erases a disk.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
 
+The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.
+`CPUQuota=2400%` and `CPUWeight=50` hold every cli-bridge LLM scope, including discovery-lab's kissat campaign, to 24 of 32 cores.
+Run `./host/install-cli-bridge-slice.sh` alone to install only the slice; it needs no sudo.
+
+## Worktree reaper
+
+`git/install.sh` installs `wt-reaper`: a systemd user timer on Linux and a launchd agent on macOS, both at 04:15 daily.
+It covers every linked worktree registered with a repository under `~/code` or `~/company`, wherever that worktree lives (for example `~/code/_wt/*`, `~/worktrees/*`, or `/tmp`).
+It removes one only when every check passes:
+
+- The worktree is not locked and has no merge, rebase, bisect, cherry-pick, or revert in progress.
+- Nothing in it, its index, HEAD, or reflogs changed in the last 24 hours.
+- `git status` is empty; only ignored build output such as `node_modules/` may remain. An ignored `.env` keeps the tree.
+- It holds no nested repository.
+- After `git fetch --all --prune`, every commit on its HEAD is on a remote-tracking ref.
+- No process has its cwd, an open file, or a mapped file inside it (`/proc` on Linux, `lsof` on macOS).
+  The scan must read every live process, so it uses `sudo -n`; if any live process stays unreadable, the run removes nothing.
+  On macOS this needs a sudoers rule for `/usr/sbin/lsof`; the installer prints it.
+
+Any error or doubt skips the tree, and every decision is logged to `~/.local/state/wt-reaper/wt-reaper.log`.
+Removal uses `git worktree remove` without `--force`.
+The local branch is deleted only when it is merged into the remote default branch.
+Run `wt-reaper --dry-run` to see the decisions without removing anything.
+Main checkouts are never candidates, and the reaper refuses to run as root.
+
 ## Tmux recovery
 
 Install the tmux watcher and make its user manager a last-resort memory-pressure target:
