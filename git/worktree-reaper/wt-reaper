@@ -241,6 +241,17 @@ def newest_git_activity(gitdir, common_dir, branch):
     return newest
 
 
+def _looks_bare(path, entries):
+    """A bare repository or a moved .git dir: HEAD file plus objects/ and refs/."""
+    names = {e.name: e for e in entries}
+    try:
+        return ('HEAD' in names and names['HEAD'].is_file(follow_symlinks=False)
+                and 'objects' in names and names['objects'].is_dir(follow_symlinks=False)
+                and 'refs' in names and names['refs'].is_dir(follow_symlinks=False))
+    except OSError:
+        return True
+
+
 def walk_tree(path, cutoff):
     """Return (newest_time, nested_git_path). Stops early on a recent entry."""
     newest = 0.0
@@ -252,23 +263,25 @@ def walk_tree(path, cutoff):
             newest = max(newest, st.st_mtime, st.st_ctime)
             if newest > cutoff:
                 return newest, None
-            it = os.scandir(cur)
+            with os.scandir(cur) as it:
+                entries = list(it)
         except OSError as exc:
             raise Skip('cannot read %s: %s' % (cur, exc.strerror))
-        with it:
-            for entry in it:
-                try:
-                    if entry.name == '.git' and cur != path:
-                        return newest, entry.path
-                    if entry.is_dir(follow_symlinks=False):
-                        stack.append(entry.path)
-                        continue
-                    st = entry.stat(follow_symlinks=False)
-                    newest = max(newest, st.st_mtime, st.st_ctime)
-                    if newest > cutoff:
-                        return newest, None
-                except OSError as exc:
-                    raise Skip('cannot stat %s: %s' % (entry.path, exc.strerror))
+        if cur != path and _looks_bare(cur, entries):
+            return newest, cur
+        for entry in entries:
+            try:
+                if entry.name == '.git' and cur != path:
+                    return newest, entry.path
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(entry.path)
+                    continue
+                st = entry.stat(follow_symlinks=False)
+                newest = max(newest, st.st_mtime, st.st_ctime)
+                if newest > cutoff:
+                    return newest, None
+            except OSError as exc:
+                raise Skip('cannot stat %s: %s' % (entry.path, exc.strerror))
     return newest, None
 
 
@@ -367,7 +380,7 @@ def _unix_sockets(pid, cache):
             next(fh, None)
             for line in fh:
                 f = line.split(None, 7)
-                if len(f) == 8 and f[7].startswith('/'):
+                if len(f) == 8 and not f[7].startswith('@'):  # '@' is abstract: no file
                     table[f[6]] = f[7].rstrip('\n')
     except OSError:
         table = None
@@ -403,7 +416,10 @@ def _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets=None):
             if table is None:
                 ok = False
             else:
-                found.extend(table[i] for i in inodes if i in table)
+                bound = [table[i] for i in inodes if i in table]
+                found.extend(b for b in bound if b.startswith('/'))
+                if any(not b.startswith('/') for b in bound):
+                    ok = False  # bound by relative path: its directory is unknown
     except FileNotFoundError:
         return []  # exited
     except OSError:

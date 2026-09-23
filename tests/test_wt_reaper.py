@@ -165,6 +165,9 @@ class ReaperTest(unittest.TestCase):
         p['nested'] = f.add('nested')
         git(['init', '-q', os.path.join(p['nested'], 'sub')], f.tmp)
 
+        p['nested_bare'] = f.add('nested_bare')
+        git(['init', '-q', '--bare', os.path.join(p['nested_bare'], 'node_modules', 'mirror.git')], f.tmp)
+
         p['locked'] = f.add('locked')
         git(['worktree', 'lock', '--reason', 'agent at work', p['locked']], f.repo)
 
@@ -277,6 +280,9 @@ class ReaperTest(unittest.TestCase):
 
     def test_skip_nested_repository(self):
         self.assertSkipped('nested', 'nested git repository')
+
+    def test_skip_nested_bare_repository_in_build_output(self):
+        self.assertSkipped('nested_bare', 'nested git repository')
 
     def test_skip_locked(self):
         self.assertSkipped('locked', 'locked')
@@ -441,6 +447,26 @@ class UnixSocketTest(unittest.TestCase):
         child.stdout.readline()
         paths, _ = mod.proc_dump()
         self.assertIn(sock, paths)
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
+class RelativeSocketTest(unittest.TestCase):
+    """A socket bound by relative path has no known directory: the process is unreadable."""
+
+    def test_relative_socket_makes_process_unreadable(self):
+        mod = load_reaper()
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-rsock-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        child = subprocess.Popen(
+            [sys.executable, '-c', 'import os,socket,time; s=socket.socket(socket.AF_UNIX); '
+             's.bind("rel.sock"); os.chdir("/"); s.listen(); print("ok", flush=True); time.sleep(60)'],
+            cwd=tmp, stdout=subprocess.PIPE)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        child.stdout.readline()
+        _, unreadable = mod.proc_dump()
+        self.assertIn(child.pid, unreadable)
 
 
 class ArgumentTest(unittest.TestCase):
