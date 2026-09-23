@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Erase one named drive and make it the ext4 trace drive, labelled "traces".
+# Then host/provision.sh traces mounts it at /mnt/traces for the calling user.
+#
+# Usage: sudo host/bin/format-traces-drive --model MODEL --serial SERIAL [--transport TRAN]
+#
+# A person runs this, never an agent: the Claude host-blast-guard hook refuses
+# it, and it reads the ERASE confirmation from the terminal, not from stdin.
+# It refuses unless exactly one whole disk has SERIAL and that disk also has
+# MODEL (and TRAN, when given), so a re-enumerated disk is never erased by
+# mistake. It also refuses the disk that holds / or /boot, a disk with a
+# mounted or active partition, and a disk that is part of LVM or RAID.
+#
+# Find the values with: lsblk -dno NAME,MODEL,SERIAL,TRAN,SIZE
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WANT_MODEL=""
+WANT_SERIAL=""
+WANT_TRAN=""
+
+die() { printf 'REFUSING: %s\n' "$*" >&2; exit 1; }
+usage() { sed -n '5p' "$0" | sed 's/^# //'; exit 2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --model) WANT_MODEL="${2:-}"; shift 2 ;;
+    --serial) WANT_SERIAL="${2:-}"; shift 2 ;;
+    --transport) WANT_TRAN="${2:-}"; shift 2 ;;
+    -h | --help) usage ;;
+    *) printf 'unknown argument: %s\n' "$1" >&2; usage ;;
+  esac
+done
+[ -n "$WANT_MODEL" ] && [ -n "$WANT_SERIAL" ] || usage
+[ "$(id -u)" = 0 ] || die "run with sudo"
+[ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ] || die "run with sudo from the account that will own /mnt/traces"
+
+trim() { sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+field() { lsblk -dno "$1" "$2" 2>/dev/null | trim; }
+
+# The one whole disk with the wanted serial.
+matches=()
+while read -r name; do
+  [ "$(field SERIAL "$name")" = "$WANT_SERIAL" ] && matches+=("$name")
+done < <(lsblk -dnpo NAME,TYPE | awk '$2 == "disk" { print $1 }')
+[ ${#matches[@]} -eq 1 ] || die "${#matches[@]} disks have serial '$WANT_SERIAL' (want exactly 1)"
+DEV="${matches[0]}"
+
+model="$(field MODEL "$DEV")"
+tran="$(field TRAN "$DEV")"
+[ "$model" = "$WANT_MODEL" ] || die "$DEV has model '$model', not '$WANT_MODEL'"
+if [ -n "$WANT_TRAN" ] && [ "$tran" != "$WANT_TRAN" ]; then
+  die "$DEV is on transport '$tran', not '$WANT_TRAN'"
+fi
+
+# The disks that hold / and /boot.
+for m in / /boot /boot/efi; do
+  src="$(findmnt -no SOURCE "$m" 2>/dev/null)" || continue
+  src="${src%%\[*}"
+  for n in $(lsblk -snpo NAME "$src" 2>/dev/null); do
+    [ "$n" = "$DEV" ] && die "$DEV holds $m"
+  done
+done
+if lsblk -nro MOUNTPOINTS "$DEV" 2>/dev/null | grep -q .; then
+  die "$DEV has a mounted partition or active swap: $(lsblk -nro NAME,MOUNTPOINTS "$DEV" | awk 'NF > 1' | tr '\n' ' ')"
+fi
+if lsblk -nro FSTYPE "$DEV" | grep -Eq 'LVM2_member|linux_raid_member|crypto_LUKS|zfs_member'; then
+  die "$DEV is part of LVM, RAID, LUKS or ZFS"
+fi
+
+echo "About to ERASE every partition and all data on:"
+lsblk -o NAME,MODEL,SERIAL,TRAN,SIZE,FSTYPE,LABEL "$DEV"
+[ -r /dev/tty ] || die "no terminal to confirm on"
+read -r -p "Type ERASE to continue: " answer </dev/tty
+[ "$answer" = ERASE ] || { echo "aborted"; exit 1; }
+
+# shellcheck disable=SC2046 # one argument per partition
+wipefs -a $(lsblk -nrpo NAME,TYPE "$DEV" | awk '$2 == "part" { print $1 }') "$DEV"
+parted -s "$DEV" mklabel gpt mkpart traces ext4 0% 100%
+udevadm settle
+PART="$(lsblk -nrpo NAME,TYPE "$DEV" | awk '$2 == "part" { print $1; exit }')"
+[ -b "$PART" ] || die "no partition appeared on $DEV"
+mkfs.ext4 -F -L traces -m 0 -E lazy_itable_init=1,lazy_journal_init=1 "$PART"
+udevadm settle
+echo "Formatted $PART as ext4, label traces (UUID $(blkid -s UUID -o value "$PART"))."
+
+# Mounting belongs to the provisioning module, as the user it mounts for.
+exec sudo -u "$SUDO_USER" -H "$SCRIPT_DIR/../provision.sh" traces
