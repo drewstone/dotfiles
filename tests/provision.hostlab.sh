@@ -218,10 +218,11 @@ erase format "<<<ERASE" "" || fail "format (see $LOGS/format.log)"
 vm 'findmnt -no SOURCE,FSTYPE /mnt/traces && stat -c %U /mnt/traces && grep " /mnt/traces " /etc/fstab && ls /etc/fstab.pre-dotfiles.*' >"$LOGS/traces.log" 2>&1 || fail "traces not mounted"
 say "traces: $(tr '\n' ' ' <"$LOGS/traces.log")"
 provision check-traces "--check traces" || fail "--check traces reported drift"
-# The disk that holds /boot is refused before anything else.
-vm "umount /mnt/traces && mount /dev/${SD_NAME}1 /boot" || fail "mount the test disk at /boot"
+# The disk that holds /boot is refused before anything else. The real
+# binaries: the provisioned guard wrappers refuse a mount over /boot.
+vm "/usr/bin/umount /mnt/traces && /usr/bin/mount /dev/${SD_NAME}1 /boot" || fail "mount the test disk at /boot"
 erase format-refuse-boot "<<<ERASE" "" && fail "format accepted the disk that holds /boot"
-vm "umount /boot && mount /mnt/traces" || fail "restore /mnt/traces"
+vm "/usr/bin/umount /boot && /usr/bin/mount /mnt/traces" || fail "restore /mnt/traces"
 refused format-refuse-boot "holds /boot"
 
 # ── 7. frozen root resets the box ───────────────────────────────────────────

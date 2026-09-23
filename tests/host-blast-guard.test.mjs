@@ -71,6 +71,12 @@ const blocked = [
   "git -c alias.x='!sudo host/bin/format-traces-drive' x",
   "sed -n '1e sudo host/bin/format-traces-drive' README.md",
   "git show HEAD:host/bin/format-traces-drive > /tmp/x",
+  // ssh options that run a command locally.
+  `ssh -oProxyCommand="echo ERASE | ssh -tt box 'sudo ~/code/dotfiles/host/bin/format-traces-drive --model X --serial Y'" unused cat host/bin/format-traces-drive`,
+  "ssh -o LocalCommand='sudo host/bin/format-traces-drive' -o PermitLocalCommand=yes box cat host/bin/format-traces-drive",
+  "ssh -F /tmp/evil.conf box cat host/bin/format-traces-drive",
+  "ssh -J jump box cat host/bin/format-traces-drive",
+  "git grep -O'sudo host/bin/format-traces-drive' pattern",
 ];
 
 const allowed = [

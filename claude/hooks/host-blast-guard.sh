@@ -63,8 +63,12 @@ if re.search(r"(?:^|[\s;&|(])HOST_BLAST_GUARD=off\s+\S", cmd, re.M):
 # a single read-only command may name the script; anything else that names it
 # is refused, however its options are spelled.
 READ_ONLY = {"cat", "grep", "head", "tail", "wc", "ls", "stat", "file", "diff", "shellcheck", "readlink", "realpath"}
-GIT_READ = {"add", "diff", "log", "show", "status", "blame", "grep", "ls-files", "rm", "mv", "restore", "commit"}
-SSH_ARG_OPTS = set("bcDEeFIiJLlmOoPpQRSWw")
+# git grep is left out: its -O option runs a command.
+GIT_READ = {"add", "diff", "log", "show", "status", "blame", "ls-files", "rm", "mv", "restore", "commit"}
+# ssh options that run nothing: -o, -F and -J can start a ProxyCommand or a
+# LocalCommand, so any other option refuses the command.
+SSH_FLAGS = {"-t", "-tt", "-T", "-q", "-n", "-4", "-6"}
+SSH_ARG_FLAGS = {"-p", "-l", "-i"}
 
 def read_only(c, depth=0):
     if depth > 2 or re.search(r"[\n`]|\$\(|<\(|>\(", c):
@@ -89,10 +93,12 @@ def read_only(c, depth=0):
     if verb == "ssh":
         i = 1
         while i < len(tokens) and tokens[i].startswith("-"):
-            flag = tokens[i]
-            i += 1
-            if len(flag) == 2 and flag[1] in SSH_ARG_OPTS:
+            if tokens[i] in SSH_FLAGS:
                 i += 1
+            elif tokens[i] in SSH_ARG_FLAGS and i + 1 < len(tokens):
+                i += 2
+            else:
+                return False
         remote = tokens[i + 1:]
         return bool(remote) and read_only(" ".join(remote), depth + 1)
     return False
