@@ -1,6 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Ghostty
-Comment=Full-screen terminal on the agent tmux session (dotfiles host/provision.sh)
-Exec=/snap/bin/ghostty --fullscreen=true
-X-GNOME-Autostart-enabled=true

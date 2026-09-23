@@ -6,8 +6,8 @@
 #
 # Modules, in the order a full run takes them:
 #   guards        root wrappers, sudoers, frozen-root watchdog (host/install.sh)
-#   tools         base packages, OpenSSH (keys only), Chrome, Tailscale, GitHub CLI, uv
-#   desktop       GNOME at boot, Ghostty full screen on tmux, JetBrainsMono Nerd Font
+#   tools         base packages, OpenSSH (keys only), Google Chrome, Tailscale, GitHub CLI, uv
+#   desktop       GNOME at boot, Ghostty config, JetBrainsMono Nerd Font
 #   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
 #   nosleep       masked sleep targets, logind, login screen, GNOME session
 #   shell         starship prompt; the Linux console keeps the plain prompt
@@ -15,7 +15,7 @@
 #   tmux          ~/.tmux.conf, plugins, tmux-heal (tmux/install.sh, install-heal.sh)
 #   agents        Claude Code, Codex, rtk, then claude/install.sh
 #   traces        mount the drive labelled traces at /mnt/traces
-#   tangle-tools  acct, fleet and chatgpt-fleet through tangle-tools' installer
+#   tangle-tools  acct, fleet, the fleet wall and chatgpt-fleet from tangle-tools
 #   handoff       print the sign-ins and other steps for a person
 #
 # Options:
