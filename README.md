@@ -105,7 +105,7 @@ Do these steps in this order:
    ```
 
    To log in to the desktop at boot without a password, add `--autologin`.
-   Without it, Ghostty and chatgpt-fleet start only after a person logs in.
+   Without it, the fleet wall and chatgpt-fleet start only after a person logs in.
 5. Do each step in the "steps for a person" list at the end of the run, in order.
    The list has the GitHub, Tailscale, Claude and Codex sign-ins, the Git identity, and the agent-bus name.
 6. Run the provisioning again.
@@ -125,14 +125,14 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, Google Chrome, Tailscale, the GitHub CLI, the hostlab packages, and uv. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
-| `desktop` | Boots to GNOME and starts Ghostty full screen on the tmux session `work`. |
+| `desktop` | Boots to GNOME, links the Ghostty config, and removes the old Ghostty autostart entry, so the fleet wall is the only window at login. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
 | `git` | Runs `git/install.sh`. |
 | `tmux` | Links `tmux/tmux.conf`, clones its plugins, and runs `tmux/install-heal.sh`. It never reloads a running server. |
 | `agents` | Installs Claude Code, Codex and rtk, then runs `claude/install.sh`. |
 | `traces` | Mounts the ext4 drive labelled `traces` at `/mnt/traces` for the user. |
-| `tangle-tools` | Runs the tangle-tools install for `acct`, `fleet` and `chatgpt-fleet`. |
+| `tangle-tools` | Runs the tangle-tools install for `acct`, `fleet` and `chatgpt-fleet`, and enables the fleet wall unit from the deploy clone. |
 | `handoff` | Prints the sign-ins and the other steps for a person. |
 
 The Wi-Fi name and passphrase come from the command line or a prompt, never from this repository.
@@ -149,7 +149,7 @@ It refuses unless exactly one disk has that serial and model.
 It also refuses the system disk and a disk that is in use, and it asks you to type ERASE.
 When it is done, it runs the `traces` module.
 
-Other repositories install their own services: cli-bridge, pr-reviewer, the trace units, and the fleet wall.
+Other repositories install their own services: cli-bridge, pr-reviewer, and the trace units.
 The provisioning does not install Docker, ROCm, Ollama, nvm, or Rust.
 
 `tests/provision.hostlab.sh` runs the whole provisioning twice in a hostlab VM on a KVM host.

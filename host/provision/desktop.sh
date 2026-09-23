@@ -1,6 +1,7 @@
 # shellcheck shell=bash disable=SC2153 # HOST_DIR comes from host/provision.sh
-# desktop: GNOME on boot, Ghostty full screen on the agent tmux session, and
-# the JetBrainsMono Nerd Font it draws with.
+# desktop: GNOME on boot, Ghostty with its config, and the JetBrainsMono Nerd
+# Font it draws with. The fleet wall (tangle-tools module) is the only Ghostty
+# window that opens at login; the snap's own launcher still opens tmux work.
 
 AUTOLOGIN="${AUTOLOGIN:-0}"
 NERD_FONTS_VERSION=v3.5.1
@@ -24,6 +25,35 @@ install_font() {
 }
 
 ghostty_valid() { [ -x /snap/bin/ghostty ] && /snap/bin/ghostty +validate-config >/dev/null 2>&1; }
+
+# The autostart entry this module used to link. It opened a second full-screen
+# Ghostty on tmux work, stacked on the fleet wall.
+OLD_AUTOSTART="$HOME/.config/autostart/ghostty.desktop"
+OLD_AUTOSTART_MARK='Comment=Full-screen terminal on the agent tmux session (dotfiles host/provision.sh)'
+
+# A link is ours only when it points at the entry dotfiles used to ship.
+old_autostart_link() { [ -L "$OLD_AUTOSTART" ] && [ "$(readlink "$OLD_AUTOSTART")" = "$HOST_DIR/desktop/ghostty.desktop" ]; }
+ours_old_autostart() {
+  old_autostart_link || { [ ! -L "$OLD_AUTOSTART" ] && grep -qxF "$OLD_AUTOSTART_MARK" "$OLD_AUTOSTART" 2>/dev/null; }
+}
+no_old_autostart() { ! ours_old_autostart; }
+
+# drop_old_autostart: remove the link, or move a copy of the old entry aside.
+# Any other ghostty.desktop (file or link) is a person's own; it stays.
+# Runs only once the wall unit is enabled.
+drop_old_autostart() {
+  # Never leave the desktop with no terminal: the wall must start at login first.
+  user_bus || true
+  if ! systemctl --user is-enabled --quiet fleet-wall.service 2>/dev/null; then
+    printf 'fleet-wall.service is not enabled yet; the tangle-tools module enables it, then run desktop again\n' >&2
+    return 1
+  fi
+  if old_autostart_link; then
+    rm -f "$OLD_AUTOSTART"
+  else
+    mv "$OLD_AUTOSTART" "$OLD_AUTOSTART.pre-dotfiles.$(date +%Y%m%d%H%M%S)"
+  fi
+}
 
 autologin_on() {
   awk -v user="$USER" '
@@ -53,7 +83,7 @@ set_autologin() {
 }
 
 module_desktop() {
-  section "desktop: GNOME, Ghostty full screen on tmux, JetBrainsMono Nerd Font"
+  section "desktop: GNOME, Ghostty, JetBrainsMono Nerd Font"
   ensure "desktop installed (gdm3)" pkg_installed gdm3 -- apt_install ubuntu-desktop-minimal
   ensure "boots to graphical.target" boots_graphical -- as_root systemctl set-default graphical.target
   ensure "gdm is running" systemctl is-active --quiet gdm -- as_root systemctl start gdm
@@ -61,14 +91,14 @@ module_desktop() {
   ensure "JetBrainsMono Nerd Font $NERD_FONTS_VERSION in $FONT_DIR" font_present -- install_font
   want_link "$HOST_DIR/desktop/ghostty-config" "$HOME/.config/ghostty/config"
   ensure "Ghostty accepts its config" ghostty_valid
-  want_link "$HOST_DIR/desktop/ghostty.desktop" "$HOME/.config/autostart/ghostty.desktop"
+  ensure "no second Ghostty at login (the fleet wall is the only window)" no_old_autostart -- drop_old_autostart
 
   if [ "$AUTOLOGIN" = 1 ]; then
     ensure "GDM logs $USER in at boot (from the next GDM start)" autologin_on -- set_autologin
   elif autologin_on; then
     ok "GDM logs $USER in at boot"
   else
-    manual "No desktop session starts after a reboot until someone logs in; Ghostty and chatgpt-fleet need one. Log in at the box, or turn on automatic login:" \
+    manual "No desktop session starts after a reboot until someone logs in; the fleet wall and chatgpt-fleet need one. Log in at the box, or turn on automatic login:" \
       "$DOTFILES/host/provision.sh desktop --autologin"
   fi
 }

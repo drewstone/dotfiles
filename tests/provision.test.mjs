@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -174,4 +174,46 @@ test("tmux.conf loads without errors and keeps the resurrect safety list", { ski
   } finally {
     sh("tmux", ["-L", sock, "kill-server"], { env });
   }
+});
+
+// The fleet wall is the only Ghostty window at login: check mode reports the old
+// autostart entry and a missing wall unit as drift and changes nothing; apply
+// removes the entry dotfiles installed, only once the wall unit is enabled; a linked, enabled unit is clean.
+test("desktop drops the old Ghostty autostart and tangle-tools enables the wall unit", () => {
+  const home = mkdtempSync(join(tmpdir(), "prov-wall-"));
+  const entry = join(home, ".config/autostart/ghostty.desktop");
+  mkdirSync(join(home, ".config/autostart"), { recursive: true });
+  writeFileSync(entry, "[Desktop Entry]\nComment=Full-screen terminal on the agent tmux session (dotfiles host/provision.sh)\n");
+  const run = (mode) => sh("bash", ["-c", `
+    DOTFILES="$PWD"; HOST_DIR="$PWD/host"; HOME="${home}"; PROVISION_MODE=${mode}
+    . host/provision/lib.sh; . host/provision/desktop.sh; . host/provision/tangle-tools.sh
+    systemctl() { [ "$*" = "--user is-enabled --quiet fleet-wall.service" ] && [ -e "$HOME/enabled" ]; }
+    user_bus() { return 0; }
+    ensure "old autostart" no_old_autostart -- drop_old_autostart
+    ensure "wall unit" wall_unit_on -- false`]);
+  const check = run("check");
+  assert.match(check.stdout, /drift +old autostart/);
+  assert.match(check.stdout, /drift +wall unit/);
+  assert.ok(existsSync(entry), "check mode must not remove the entry");
+  assert.match(run("apply").stdout, /FAILED +old autostart/);
+  assert.ok(existsSync(entry), "the entry stays while the wall unit is not enabled");
+  writeFileSync(join(home, "enabled"), "");
+  assert.match(run("apply").stdout, /changed +old autostart/);
+  assert.ok(!existsSync(entry), "apply removes the entry dotfiles installed");
+  const unit = join(home, ".local/share/tangle-tools/fleet/systemd/fleet-wall.service");
+  mkdirSync(join(home, ".local/share/tangle-tools/fleet/systemd"), { recursive: true });
+  mkdirSync(join(home, ".config/systemd/user"), { recursive: true });
+  symlinkSync(unit, join(home, ".config/systemd/user/fleet-wall.service"));
+  // A person's own entry, as a file or as a link elsewhere, is not drift and stays.
+  const own = join(home, "own.desktop");
+  writeFileSync(own, "[Desktop Entry]\nExec=ghostty\n");
+  symlinkSync(own, entry);
+  const clean = run("apply");
+  assert.ok(lstatSync(entry).isSymbolicLink(), "a person's link stays");
+  assert.match(clean.stdout, /ok +old autostart/);
+  rmSync(entry);
+  symlinkSync(join(process.cwd(), "host/desktop/ghostty.desktop"), entry);
+  assert.match(run("apply").stdout, /changed +old autostart/);
+  assert.throws(() => lstatSync(entry), "the old managed link is removed");
+  assert.match(clean.stdout, /ok +wall unit/);
 });
