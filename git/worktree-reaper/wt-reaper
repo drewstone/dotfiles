@@ -242,14 +242,13 @@ def newest_git_activity(gitdir, common_dir, branch):
 
 
 def _looks_bare(path, entries):
-    """A bare repository or a moved .git dir: HEAD file plus objects/ and refs/."""
-    names = {e.name: e for e in entries}
-    try:
-        return ('HEAD' in names and names['HEAD'].is_file(follow_symlinks=False)
-                and 'objects' in names and names['objects'].is_dir(follow_symlinks=False)
-                and 'refs' in names and names['refs'].is_dir(follow_symlinks=False))
-    except OSError:
-        return True
+    """A bare repository or a moved .git dir: HEAD plus objects and refs.
+
+    Name presence alone decides, so a symlinked objects/ or refs/ store (which
+    Git accepts) still counts; a false positive only keeps a worktree.
+    """
+    names = {e.name for e in entries}
+    return {'HEAD', 'objects', 'refs'} <= names
 
 
 def mount_points():

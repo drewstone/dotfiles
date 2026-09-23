@@ -168,6 +168,14 @@ class ReaperTest(unittest.TestCase):
         p['nested_bare'] = f.add('nested_bare')
         git(['init', '-q', '--bare', os.path.join(p['nested_bare'], 'node_modules', 'mirror.git')], f.tmp)
 
+        # Git accepts a bare repository whose objects/ is a symlink to a store elsewhere.
+        p['nested_bare_link'] = f.add('nested_bare_link')
+        mirror = os.path.join(p['nested_bare_link'], 'node_modules', 'mirror.git')
+        git(['init', '-q', '--bare', mirror], f.tmp)
+        store = os.path.join(p['nested_bare_link'], 'node_modules', 'store')
+        os.rename(os.path.join(mirror, 'objects'), store)
+        os.symlink('../store', os.path.join(mirror, 'objects'))
+
         p['locked'] = f.add('locked')
         git(['worktree', 'lock', '--reason', 'agent at work', p['locked']], f.repo)
 
@@ -283,6 +291,7 @@ class ReaperTest(unittest.TestCase):
 
     def test_skip_nested_bare_repository_in_build_output(self):
         self.assertSkipped('nested_bare', 'nested git repository')
+        self.assertSkipped('nested_bare_link', 'nested git repository')
 
     def test_skip_locked(self):
         self.assertSkipped('locked', 'locked')
