@@ -31,19 +31,20 @@ ghostty_valid() { [ -x /snap/bin/ghostty ] && /snap/bin/ghostty +validate-config
 OLD_AUTOSTART="$HOME/.config/autostart/ghostty.desktop"
 OLD_AUTOSTART_MARK='Comment=Full-screen terminal on the agent tmux session (dotfiles host/provision.sh)'
 
-ours_old_autostart() { [ -L "$OLD_AUTOSTART" ] || grep -qxF "$OLD_AUTOSTART_MARK" "$OLD_AUTOSTART" 2>/dev/null; }
-no_old_autostart() { [ ! -e "$OLD_AUTOSTART" ] && [ ! -L "$OLD_AUTOSTART" ]; }
+# A link is ours only when it points at the entry dotfiles used to ship.
+old_autostart_link() { [ -L "$OLD_AUTOSTART" ] && [ "$(readlink "$OLD_AUTOSTART")" = "$HOST_DIR/desktop/ghostty.desktop" ]; }
+ours_old_autostart() {
+  old_autostart_link || { [ ! -L "$OLD_AUTOSTART" ] && grep -qxF "$OLD_AUTOSTART_MARK" "$OLD_AUTOSTART" 2>/dev/null; }
+}
+no_old_autostart() { ! ours_old_autostart; }
 
 # drop_old_autostart: remove the link, or move a copy of the old entry aside.
-# A different ghostty.desktop is a person's own, so it stays.
+# Any other ghostty.desktop (file or link) is a person's own; it stays.
 drop_old_autostart() {
-  if [ -L "$OLD_AUTOSTART" ]; then
+  if old_autostart_link; then
     rm -f "$OLD_AUTOSTART"
-  elif ours_old_autostart; then
-    mv "$OLD_AUTOSTART" "$OLD_AUTOSTART.pre-dotfiles.$(date +%Y%m%d%H%M%S)"
   else
-    printf '%s is not the entry dotfiles installed; remove it by hand if it opens a second Ghostty\n' "$OLD_AUTOSTART" >&2
-    return 1
+    mv "$OLD_AUTOSTART" "$OLD_AUTOSTART.pre-dotfiles.$(date +%Y%m%d%H%M%S)"
   fi
 }
 

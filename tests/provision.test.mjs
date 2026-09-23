@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -202,7 +202,16 @@ test("desktop drops the old Ghostty autostart and tangle-tools enables the wall 
   mkdirSync(join(home, ".config/systemd/user"), { recursive: true });
   symlinkSync(unit, join(home, ".config/systemd/user/fleet-wall.service"));
   writeFileSync(join(home, "enabled"), "");
-  const clean = run("check");
+  // A person's own entry, as a file or as a link elsewhere, is not drift and stays.
+  const own = join(home, "own.desktop");
+  writeFileSync(own, "[Desktop Entry]\nExec=ghostty\n");
+  symlinkSync(own, entry);
+  const clean = run("apply");
+  assert.ok(lstatSync(entry).isSymbolicLink(), "a person's link stays");
   assert.match(clean.stdout, /ok +old autostart/);
+  rmSync(entry);
+  symlinkSync(join(process.cwd(), "host/desktop/ghostty.desktop"), entry);
+  assert.match(run("apply").stdout, /changed +old autostart/);
+  assert.throws(() => lstatSync(entry), "the old managed link is removed");
   assert.match(clean.stdout, /ok +wall unit/);
 });
