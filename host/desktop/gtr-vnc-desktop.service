@@ -1,0 +1,16 @@
+[Unit]
+Description=Virtual remote desktop on :1 (TigerVNC + Xfce), viewed from the Mac with Screen Sharing on port 5901
+
+[Service]
+Type=simple
+# Own X cookie; do not inherit the physical GDM session display or cookie.
+Environment=XAUTHORITY=%h/.Xauthority
+UnsetEnvironment=DISPLAY WAYLAND_DISPLAY
+ExecStartPre=-/usr/bin/vncserver -kill :1
+ExecStart=/usr/bin/vncserver :1 -fg -localhost no -geometry 2560x1440 -depth 24 -SecurityTypes VncAuth -rfbauth %h/.vnc/passwd -xstartup %h/.vnc/xstartup
+ExecStop=/usr/bin/vncserver -kill :1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

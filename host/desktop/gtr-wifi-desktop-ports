@@ -5,6 +5,7 @@ set -euo pipefail
 
 [[ $(id -u) == 0 ]] || { echo 'run as root' >&2; exit 2; }
 [[ ${1:-} == check || ${1:-} == apply ]] || { echo 'usage: gtr-wifi-desktop-ports check|apply' >&2; exit 2; }
+ip link show dev wlp193s0 >/dev/null 2>&1 || { echo 'wlp193s0 is missing; Wi-Fi drop would match no traffic' >&2; exit 1; }
 
 rule=(-i wlp193s0 -p tcp -m multiport --dports '5900,5901,3389' -j DROP)
 line="-A INPUT ${rule[*]}"

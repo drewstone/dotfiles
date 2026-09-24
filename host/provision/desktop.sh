@@ -31,6 +31,8 @@ CHROME_WRAPPER="$HOME/.local/bin/chrome-wayland"
 CHATGPT_ENV_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/60-chatgpt-fleet.conf"
 CHATGPT_ENV="$HOME/.config/environment.d/60-chatgpt-fleet.conf"
 WIFI_FIREWALL="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/gtr-wifi-desktop-ports"
+GTR_VNC_UNIT_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/gtr-vnc-desktop.service"
+GTR_VNC_STARTUP_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/gtr-vnc-xstartup"
 
 # A hand-placed file becomes a link only if it matches the reviewed source.
 # Do not keep password-adjacent backup copies of the old launcher or unit.
@@ -53,6 +55,35 @@ link_matching_copy() {
     rm -f -- "$staged"
     return 1
   fi
+}
+
+# Root-owned session files become links only when they match the current host
+# or the pinned, inspected copy. The atomic swap does not restart a session.
+root_link_matching_copy() {
+  local src=$1 dst=$2 old_sha=${3:-} stage
+  if as_root test -L "$dst"; then
+    [ "$(as_root readlink "$dst")" = "$src" ]
+    return $?
+  fi
+  if as_root test -e "$dst"; then
+    as_root test -f "$dst" || return 1
+    if ! as_root cmp -s "$src" "$dst"; then
+      [ -n "$old_sha" ] &&
+        [ "$(as_root sha256sum "$dst" | cut -d' ' -f1)" = "$old_sha" ] || return 1
+    fi
+  fi
+  as_root mkdir -p "${dst%/*}" || return 1
+  stage=$(as_root mktemp -d "${dst}.dotfiles.XXXXXX") || return 1
+  if ! as_root ln -s "$src" "$stage/link" || ! as_root mv -Tf "$stage/link" "$dst"; then
+    as_root rm -rf -- "$stage"
+    return 1
+  fi
+  as_root rmdir "$stage" || true
+}
+
+link_gtr_vnc_unit() {
+  link_matching_copy "$GTR_VNC_UNIT_SRC" "$VNC_UNIT" &&
+    systemctl --user daemon-reload
 }
 
 gtr_desktop_unit_ready() {
@@ -389,12 +420,18 @@ module_desktop() {
       ensure "current :1 layout unit is versioned and enabled" \
         gtr_desktop_unit_ready -- install_gtr_desktop_unit
     fi
-    if checking; then
-      root_file_is 0755 "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" || drift "gtr-kiosk launcher differs from the versioned session"
-      root_file_is 0644 "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE" || drift "gtr-kiosk GDM session differs from the versioned session"
-      cmp -s "$assets/vnc-desktop.service" "$VNC_UNIT" || drift "shared :1 VNC unit differs from the versioned session"
-      cmp -s "$assets/vnc-xstartup" "$VNC_STARTUP" || drift "shared :1 startup differs from the versioned session"
-    fi
+    ensure "current gtr-kiosk launcher is versioned" \
+      link_is "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" -- \
+      root_link_matching_copy "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" \
+        a482ae2e1f8c406d50af24f91bdc0dded9842e0dd2d102ea2d3bb3b578f14a5d
+    ensure "current gtr-kiosk GDM session is versioned" \
+      link_is "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE" -- \
+      root_link_matching_copy "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE"
+    ensure "current shared :1 VNC unit is versioned" \
+      link_is "$GTR_VNC_UNIT_SRC" "$VNC_UNIT" -- link_gtr_vnc_unit
+    ensure "current shared :1 startup is versioned" \
+      link_is "$GTR_VNC_STARTUP_SRC" "$VNC_STARTUP" -- \
+      link_matching_copy "$GTR_VNC_STARTUP_SRC" "$VNC_STARTUP"
     skip "legacy :1 view units are present; desktop migration waits for Drew's explicit apply"
     return 0
   fi

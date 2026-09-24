@@ -156,7 +156,13 @@ The proxy retries until Tailscale is ready, so the Mac can connect to `vnc://<bo
 The Mac uses the password in the local credential file; transfer it through the existing SSH connection.
 Provisioning preserves existing VNC credentials and display units.
 It enables the VNC and fleet pages units for the next user login without starting or restarting the display during the run.
-On the GTR host, the desktop module also versions the existing `gtr-desktop` command and unit while `gtr-pages` still owns the view.
+On the GTR host, the desktop module also links the existing kiosk, VNC, and `gtr-desktop` files into dotfiles while `gtr-pages` still owns the view.
+This preserves the current VNC listener on port 5901 and does not restart the live desktop.
+The Wi-Fi packet filter drops incoming VNC and RDP traffic before any later INPUT accept rule.
+Run this migration only during Drew's selected display window.
+The localhost-only VNC template and Tailscale proxy are a separate cutover that requires a live Mac access check.
+L3's pages cutover removes the versioned `gtr-desktop` unit and its enable links after `fleet-pages` works on :1.
+Until then, the legacy gate keeps the current view in place.
 It records the Wi-Fi drop for TCP 5900, 5901, and 3389 in both persistent IPv4 and IPv6 rules, ahead of other input rules.
 Check mode reports kiosk and VNC drift even while the old view units defer the display migration.
 The display migration remains a scheduled action because replacing a running VNC unit can interrupt both monitor and Mac viewing.

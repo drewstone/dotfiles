@@ -254,8 +254,8 @@ test("desktop check reports kiosk and VNC drift while the old pages unit exists"
       env: { ...process.env, HOME: home, HOST_DIR: join(root, "host"), PROVISION_MODE: "check" },
     });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /drift +gtr-kiosk launcher differs/);
-    assert.match(r.stdout, /drift +shared :1 VNC unit differs/);
+    assert.match(r.stdout, /drift +current gtr-kiosk launcher is versioned/);
+    assert.match(r.stdout, /drift +current shared :1 VNC unit is versioned/);
     assert.match(r.stdout, /drifts=[1-9]/);
   } finally {
     rmSync(home, { recursive: true, force: true });
