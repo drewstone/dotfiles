@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Create a worktree and mark it owned by the current Claude Code session.
+#
+# The marker is what makes `wt-save` safe by default: multiple agent sessions
+# share one Unix user on this host, so a directory alone cannot say who is
+# working in it. wt-new writes a `.wt-owner` file naming CLAUDE_CODE_SESSION_ID
+# (or, outside a session, a per-invocation id that will never match anything
+# later — safe by construction, not by convention). wt-save only auto-commits
+# and auto-pushes a tree whose marker matches the CALLING session, or a tree
+# passed to it by explicit path.
+#
+# usage:
+#   wt-new <repo> <branch> [--base <ref>]
+#
+# <repo> is a name (resolved under ~/webb, ~/company, ~/code, in that order)
+# or an absolute path to an existing git checkout. The new worktree lands
+# under ~/company/_wt/ when the source repo is under ~/company, else
+# ~/webb/_wt/ — matching where each pool's reaper and gate tooling already
+# look. Prints the new worktree's path on stdout (only), so callers do
+# `cd "$(wt-new repo branch)"`.
+set -euo pipefail
+
+die() { echo "wt-new: $*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: wt-new <repo> <branch> [--base <ref>]"
+repo_arg="$1"; branch="$2"; shift 2
+base=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base) base="$2"; shift 2 ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+
+resolve_repo() {
+  local name="$1"
+  if [ -d "$name/.git" ] || git -C "$name" rev-parse --git-dir >/dev/null 2>&1; then
+    (cd "$name" && git rev-parse --show-toplevel); return 0
+  fi
+  local base_dir
+  for base_dir in "$HOME/webb" "$HOME/company" "$HOME/code"; do
+    if [ -d "$base_dir/$name/.git" ]; then
+      echo "$base_dir/$name"; return 0
+    fi
+  done
+  return 1
+}
+
+repo="$(resolve_repo "$repo_arg")" || die "no git repo named '$repo_arg' under ~/webb, ~/company, ~/code, and it is not itself a repo path"
+
+if [ -n "${WT_NEW_POOL:-}" ]; then
+  pool="$WT_NEW_POOL"
+else
+  case "$repo" in
+    "$HOME"/company/*) pool="$HOME/company/_wt" ;;
+    *)                 pool="$HOME/webb/_wt" ;;
+  esac
+fi
+mkdir -p "$pool"
+
+repo_base="$(basename "$repo")"
+slug="$(echo "$branch" | tr '/' '-')"
+dir="$pool/${repo_base}-${slug}"
+[ -e "$dir" ] && die "already exists: $dir"
+
+if [ -z "$base" ]; then
+  git -C "$repo" fetch origin --quiet 2>/dev/null || true
+  base="$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+  [ -n "$base" ] || base="main"
+  base="origin/$base"
+fi
+
+if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+  git -C "$repo" worktree add "$dir" "$branch" >/dev/null || die "worktree add failed"
+else
+  # --no-track: a new branch off origin/<base> must NOT track origin/<base>.
+  # With tracking, a later bare `git push` targets the base branch instead of
+  # refusing (push.default=simple only saves you when the names differ AND
+  # the push is rejected as non-fast-forward) — wt-save pushes explicitly to
+  # the same-named branch instead of trusting `@{u}` for exactly this reason.
+  git -C "$repo" worktree add --no-track -b "$branch" "$dir" "$base" >/dev/null || die "worktree add failed"
+fi
+
+owner="${CLAUDE_CODE_SESSION_ID:-manual-$(date +%s)-$$}"
+cat > "$dir/.wt-owner" <<EOF
+owner=$owner
+created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+created_by=$(whoami)
+source_repo=$repo
+branch=$branch
+EOF
+
+echo "$dir"

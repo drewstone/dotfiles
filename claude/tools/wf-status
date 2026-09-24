@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+# wf-status — summarize Claude Code workflow runs (parallel subagent fan-outs)
+# from ~/.claude/projects/*/<session>/subagents/workflows/<run>/.
+#
+# Each run directory holds one journal.jsonl (started/launched/failed/result
+# events keyed by agentId) plus one agent-<id>.jsonl transcript per subagent.
+# A transcript with no later journal event past started/launched is the
+# resume-after-cutoff case this exists for: the orchestrator never got to
+# record a verdict because the whole process tree died first.
+#
+# usage:
+#   wf-status [--since DURATION] [--all] [--project SUBSTR] [--agents] [RUN_ID]
+#
+# Default: one line per run, most recently active first, for runs touched in
+# the last --since window (default 24h, e.g. --since 3d, --since 6h). --all
+# removes the time filter. --project narrows to project dirs whose name
+# contains SUBSTR (e.g. company). Naming a RUN_ID (the wf_xxxxxxxx-xxx
+# directory name, or a unique prefix of it), or passing --agents, expands to
+# one line per agent: label, start, idle minutes, tool count, last text, and
+# a died/DIED-LIKELY verdict. That verdict is a heuristic — no explicit
+# "killed by usage limit" event exists in the data — so it is reported as a
+# hypothesis (DIED-LIKELY / RUNNING?), never asserted as fact.
+set -uo pipefail
+
+SINCE_HOURS=24
+ALL=0
+PROJECT=""
+AGENTS=0
+RUN_FILTER=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --since)
+      case "$2" in
+        *d) SINCE_HOURS=$(( ${2%d} * 24 )) ;;
+        *h) SINCE_HOURS="${2%h}" ;;
+        *) SINCE_HOURS="$2" ;;
+      esac
+      shift 2 ;;
+    --all) ALL=1; shift ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    --agents) AGENTS=1; shift ;;
+    -h|--help)
+      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    -*) echo "wf-status: unknown flag $1" >&2; exit 2 ;;
+    *) RUN_FILTER="$1"; AGENTS=1; shift ;;
+  esac
+done
+
+WF_STATUS_SINCE_HOURS="$SINCE_HOURS" \
+WF_STATUS_ALL="$ALL" \
+WF_STATUS_PROJECT="$PROJECT" \
+WF_STATUS_AGENTS="$AGENTS" \
+WF_STATUS_RUN_FILTER="$RUN_FILTER" \
+WF_STATUS_PROJECTS_ROOT="$HOME/.claude/projects" \
+python3 - <<'PYEOF'
+import json, os, sys, time, glob, re
+
+root = os.environ["WF_STATUS_PROJECTS_ROOT"]
+since_hours = float(os.environ["WF_STATUS_SINCE_HOURS"])
+show_all = os.environ["WF_STATUS_ALL"] == "1"
+project_filter = os.environ["WF_STATUS_PROJECT"]
+show_agents = os.environ["WF_STATUS_AGENTS"] == "1"
+run_filter = os.environ["WF_STATUS_RUN_FILTER"]
+
+now = time.time()
+cutoff = now - since_hours * 3600
+
+def parse_ts(s):
+    if not s:
+        return None
+    try:
+        return time.mktime(time.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+    except Exception:
+        return None
+
+def fmt_ago(ts):
+    if ts is None:
+        return "?"
+    m = (now - ts) / 60
+    if m < 60:
+        return f"{m:.0f}m"
+    h = m / 60
+    if h < 48:
+        return f"{h:.1f}h"
+    return f"{h/24:.1f}d"
+
+def fmt_local(ts):
+    if ts is None:
+        return "?"
+    return time.strftime("%m-%d %H:%M", time.localtime(ts))
+
+def one_line(text):
+    if text is None:
+        return ""
+    return re.sub(r"\s+", " ", str(text)).strip()
+
+# This harness's own prompts wrap every launch in fixed boilerplate (a
+# "user request" preamble, then a "computed task" preamble) that swamps any
+# fixed-length prefix with identical text across every run. Skip past the
+# last of these markers so the label shows the actual task, not the wrapper.
+BOILERPLATE_MARKERS = ("this request wins:", "The computed task text follows:")
+
+def distill(text):
+    if not text:
+        return text
+    for marker in BOILERPLATE_MARKERS:
+        idx = text.rfind(marker)
+        if idx != -1:
+            text = text[idx + len(marker):]
+    return text.strip()
+
+def extract_text_blocks(content):
+    """content is either a string or a list of content blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return block.get("text", "")
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                inp = block.get("input", {}) or {}
+                desc = inp.get("description")
+                return desc or f"[tool: {block.get('name')}]"
+    return None
+
+# Read a single agent transcript. Returns dict or None on total failure.
+def read_agent(path):
+    first_ts = last_ts = None
+    tool_count = 0
+    pre_assistant_texts = []
+    seen_assistant = False
+    last_text = None
+    last_line_type = None
+    last_had_dangling_tool_use = False
+    usage_limit_resets_at = None
+    try:
+        with open(path, "r", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    d = json.loads(raw)
+                except Exception:
+                    continue
+                ts = parse_ts(d.get("timestamp"))
+                if ts:
+                    if first_ts is None:
+                        first_ts = ts
+                    last_ts = ts
+                typ = d.get("type")
+                last_line_type = typ
+                msg = d.get("message") or {}
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if typ == "user" and not seen_assistant and isinstance(content, str):
+                    pre_assistant_texts.append(content)
+                # The harness's own usage-cutoff message: a synthetic assistant
+                # turn with quotaLimits.status == "rejected". This is a fact
+                # from the record, not a guess — take it over the idle-time
+                # heuristic below whenever it is present.
+                if typ == "assistant" and isinstance(msg, dict) and msg.get("model") == "<synthetic>":
+                    ql = d.get("quotaLimits") or {}
+                    if ql.get("status") == "rejected":
+                        usage_limit_resets_at = ql.get("resetsAt")
+                if typ == "assistant" and isinstance(content, list):
+                    seen_assistant = True
+                    dangling = False
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_count += 1
+                            dangling = True
+                        elif isinstance(block, dict) and block.get("type") == "text":
+                            dangling = False
+                    t = extract_text_blocks(content)
+                    if t:
+                        last_text = one_line(t)[:140]
+                    last_had_dangling_tool_use = dangling
+                elif typ == "user":
+                    last_had_dangling_tool_use = False
+    except (OSError, IOError):
+        return None
+    label = one_line(distill(" ".join(pre_assistant_texts)))[:90] if pre_assistant_texts else ""
+    return dict(first_ts=first_ts, last_ts=last_ts, tool_count=tool_count,
+                label=label or "(no label)", last_text=last_text or "",
+                dangling=last_had_dangling_tool_use,
+                usage_limit_resets_at=usage_limit_resets_at)
+
+def read_journal(path):
+    """Latest event type per agentId, in file order."""
+    status = {}
+    try:
+        with open(path, "r", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    d = json.loads(raw)
+                except Exception:
+                    continue
+                aid = d.get("agentId")
+                if aid:
+                    status[aid] = d.get("type")
+    except (OSError, IOError):
+        pass
+    return status
+
+runs = []  # (run_dir, session_id, project, mtime)
+for proj_dir in sorted(glob.glob(os.path.join(root, "*"))):
+    proj_name = os.path.basename(proj_dir)
+    if project_filter and project_filter not in proj_name:
+        continue
+    for wf_dir in glob.glob(os.path.join(proj_dir, "*", "subagents", "workflows", "wf_*")):
+        journal = os.path.join(wf_dir, "journal.jsonl")
+        if not os.path.isfile(journal):
+            continue
+        mtime = os.path.getmtime(journal)
+        if not show_all and mtime < cutoff:
+            continue
+        run_id = os.path.basename(wf_dir)
+        if run_filter and run_filter not in run_id:
+            continue
+        session_id = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(wf_dir))))
+        runs.append((wf_dir, run_id, session_id, proj_name, mtime))
+
+runs.sort(key=lambda r: r[4])
+
+if not runs:
+    print(f"wf-status: no runs matched (since={since_hours}h all={show_all} project={project_filter or '*'} run={run_filter or '*'})")
+    sys.exit(0)
+
+DIED_IDLE_MIN = 10  # started/launched with no result and idle past this: presumed dead
+
+def verdict(journal_status, agent, is_latest_in_run):
+    idle_m = (now - agent["last_ts"]) / 60 if agent["last_ts"] else 1e9
+    if agent.get("usage_limit_resets_at"):
+        return "USAGE-LIMIT"  # confirmed from a quotaLimits.status=="rejected" record, not a guess
+    if journal_status == "result":
+        return "done"
+    if journal_status == "failed":
+        return "failed"
+    # started / launched / missing-from-journal, no concluding event, and no
+    # usage-limit record either: a real crash, an interrupt, or still running.
+    if idle_m > DIED_IDLE_MIN:
+        return "DIED-LIKELY" + ("*" if agent["dangling"] else "")
+    return "running?"
+
+for wf_dir, run_id, session_id, proj_name, mtime in runs:
+    journal_status = read_journal(os.path.join(wf_dir, "journal.jsonl"))
+    agent_files = sorted(glob.glob(os.path.join(wf_dir, "agent-*.jsonl")))
+    agents = []
+    for af in agent_files:
+        aid = os.path.basename(af)[len("agent-"):-len(".jsonl")]
+        a = read_agent(af)
+        if a is None:
+            continue
+        a["id"] = aid
+        a["journal"] = journal_status.get(aid, "unknown")
+        agents.append(a)
+    if not agents:
+        continue
+    agents.sort(key=lambda a: a["last_ts"] or 0)
+    latest = agents[-1]
+    starts = [a["first_ts"] for a in agents if a["first_ts"]]
+    run_start = min(starts) if starts else None
+    total_tools = sum(a["tool_count"] for a in agents)
+    verdicts = [verdict(a["journal"], a, a is latest) for a in agents]
+    n_done = verdicts.count("done")
+    n_failed = verdicts.count("failed")
+    n_limit = verdicts.count("USAGE-LIMIT")
+    n_died = sum(1 for v in verdicts if v.startswith("DIED-LIKELY"))
+    n_running = sum(1 for v in verdicts if v == "running?")
+    status_bits = []
+    if n_done: status_bits.append(f"{n_done} done")
+    if n_limit: status_bits.append(f"{n_limit} usage-limit")
+    if n_died: status_bits.append(f"{n_died} died?")
+    if n_failed: status_bits.append(f"{n_failed} failed")
+    if n_running: status_bits.append(f"{n_running} running?")
+    status = ", ".join(status_bits) or "?"
+
+    headline = latest["last_text"] or latest["label"]
+    print(f"{run_id}  sess={session_id[:8]} proj={proj_name[:28]:<28} agents={len(agents):<3} "
+          f"start={fmt_local(run_start)} idle={fmt_ago(latest['last_ts']):<6} tools={total_tools:<4} "
+          f"[{status}]  last: {headline[:70]}")
+
+    if show_agents and (not run_filter or run_filter in run_id):
+        for a in agents:
+            v = verdict(a["journal"], a, a is latest)
+            print(f"    {a['id'][:10]:<10} start={fmt_local(a['first_ts'])} idle={fmt_ago(a['last_ts']):<6} "
+                  f"tools={a['tool_count']:<4} {v:<12} {a['label'][:56]}")
+            if a["last_text"]:
+                print(f"        last: {a['last_text'][:120]}")
+PYEOF
