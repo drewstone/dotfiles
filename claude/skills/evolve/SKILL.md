@@ -19,6 +19,7 @@ Keep the user outcome, required behavior, and resource limits fixed unless the t
 3. Inspect and exercise the existing measurement on the actual execution path.
    Verify its inputs, emitted evidence, tested identity, and error handling.
 4. Establish a comparable baseline.
+   For latency, throughput or cost-per-task targets, read [the speed loop](references/speed-loop.md) first: a numeric target per round, a deterministic proxy used as a CI ratchet, anti-gaming rules, convergence and breakthrough rounds, and staged rollout.
    For noisy measurements or multiple candidates, read [comparison design](references/STATS.md) before choosing samples, stopping, and promotion criteria.
    Reuse baseline evidence only while its execution conditions remain applicable.
 
