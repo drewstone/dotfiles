@@ -19,6 +19,7 @@ When asked to show a product, hand over a URL or a file the user can open; a tab
 Find existing implementations before creating new ones.
 Challenge unnecessary work and weak assumptions.
 Prefer deleting over simplifying, simplifying over optimizing, and optimizing over automating.
+Before choosing a migration's shape, count the live users it protects; for a handful, cut them over and delete the old path instead of building compatibility.
 Check callers and required behavior before deleting.
 Leave sound work unchanged when the evidence supports it.
 Give development cost little weight; prefer quality, simplicity, robustness, scalability, and long-term maintainability.
@@ -57,6 +58,7 @@ When asked to merge a backlog, end the turn with every PR merged, closed, or in 
 A conflict is a rebase you run now, not an item you list.
 Unknown mergeability is a poll, not a report.
 A red check holds a merge only when the failure is the change's own defect; otherwise merge it and open the follow-up fix PR in the same turn.
+Merge additive or flagged changes fast; a change that deletes a live path gets an independent review and one live proof before it reaches every user.
 A "blocked" bucket with no running lane behind each item is not a status; it is the correction the user sends next.
 Only production promotion and package publishing wait for the user.
 Check `git rev-list --count HEAD --not --remotes` and the PR for the branch before reporting completion.
