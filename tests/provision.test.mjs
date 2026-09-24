@@ -35,7 +35,7 @@ test("every provisioning script parses", () => {
 });
 
 test("shellcheck passes", { skip: !have("shellcheck") && "shellcheck not installed" }, () => {
-  const r = sh("shellcheck", ["-x", "-P", "host", ...scripts, "tests/provision.hostlab.sh"]);
+  const r = sh("shellcheck", ["-x", "-P", "host", ...scripts, "tests/provision.hostlab.sh", "tests/sshd-listen.hostlab.sh"]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });
 
@@ -628,6 +628,135 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
   assert.equal(r.stdout, "keys only\na Match block allows passwords\na quoted value counts too\na Match block that says no is fine\na Match block that turns key login off counts\nan Include the run does not read\nthe drop-in Include is fine\nan allowed Include inside Match is unverified\nno drop-in\n");
   // A drop-in can be root-only, so sshd -G runs as root.
   assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(10));
+});
+
+// Stubs for the sshd listen step: sshd -G prints $dir/effective, ss prints
+// $dir/listeners, and systemctl reads unit state from marker files.
+function sshdListenStubs(dir) {
+  const stub = join(dir, "sshd");
+  writeFileSync(stub, '#!/bin/sh\n[ "$1" = -G ] || exit 2\ncat "$(dirname "$0")/effective"\n');
+  chmodSync(stub, 0o755);
+  return `
+    . host/provision/lib.sh
+    . host/provision/tools.sh
+    SSHD_BIN="${stub}" SSHD_CONFIG="${dir}/sshd_config" SSHD_CONFIG_D="${dir}/sshd_config.d"
+    SSHD_LISTEN="$SSHD_CONFIG_D/10-dotfiles-listen.conf" WORK="${dir}" HOST_DIR=/dotfiles/host
+    mkdir -p "$SSHD_CONFIG_D"
+    : >"$SSHD_CONFIG"
+    as_root() { "$@"; }
+    stat() { echo "644 root"; }
+    ss() { cat "${dir}/listeners" 2>/dev/null; }
+    systemctl() {
+      case "$*" in
+        "show -p MainPID --value ssh.service") echo 4242 ;;
+        "is-enabled --quiet ssh.socket" | "is-active --quiet ssh.socket") [ -e "${dir}/socket-on" ] ;;
+        "is-enabled --quiet ssh.service") [ -e "${dir}/service-on" ] ;;
+        *) echo "systemctl $*" >>"${dir}/calls" ;;
+      esac
+    }
+    good() {
+      sshd_listen_text 100.64.0.9 fd7a:115c:a1e0::9 >"$SSHD_LISTEN"
+      { printf 'port 22\\nport 2200\\n'; sshd_listen_want 100.64.0.9 fd7a:115c:a1e0::9 | sed 's/^/listenaddress /'; } >"${dir}/effective"
+      sshd_listen_want 100.64.0.9 fd7a:115c:a1e0::9 | awk '{ print "LISTEN 0 4096 " $1 " *:*" }' >"${dir}/listeners"
+      : >"${dir}/socket-on"
+      rm -f "${dir}/service-on"
+    }
+    listen() { sshd_listen 100.64.0.9 fd7a:115c:a1e0::9; }
+  `;
+}
+
+test("ssh counts as off the LAN only when the drop-in, sshd -G, the socket and the live listeners agree", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sshd-listen-"));
+  const script = `${sshdListenStubs(dir)}
+    sshd_listen_text 100.64.0.9 fd7a:115c:a1e0::9 | grep -E '^(Port|ListenAddress) '
+    good; listen && echo "off the LAN"
+    good; echo 'LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*' >>"${dir}/listeners"; listen || echo "a LAN listener counts"
+    good; grep -v '100.64.0.9:2200' "${dir}/effective" >"${dir}/e" && mv "${dir}/e" "${dir}/effective"; listen || echo "a missing tailnet address counts"
+    good; sed -i.bak '/100.64.0.9:2200/d' "${dir}/listeners"; listen || echo "a missing live listener counts"
+    good; echo 'port 22' >>"${dir}/effective"; listen || echo "a second copy of a port counts"
+    good; : >"${dir}/service-on"; listen || echo "ssh.service still enabled counts"
+    good; rm "${dir}/socket-on"; listen || echo "no socket counts"
+    good; sshd_listen_text 100.64.0.10 fd7a:115c:a1e0::9 >"$SSHD_LISTEN"; listen || echo "a drop-in for another address counts"
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, [
+    "Port 22", "Port 2200",
+    "ListenAddress 127.0.0.1", "ListenAddress ::1", "ListenAddress 100.64.0.9", "ListenAddress fd7a:115c:a1e0::9",
+    "off the LAN",
+    "a LAN listener counts",
+    "a missing tailnet address counts",
+    "a missing live listener counts",
+    "a second copy of a port counts",
+    "ssh.service still enabled counts",
+    "no socket counts",
+    "a drop-in for another address counts",
+    "",
+  ].join("\n"));
+});
+
+test("the sshd listen step refuses ports or addresses set in another file, and moves sshd to the socket", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sshd-listen-"));
+  const script = `${sshdListenStubs(dir)}
+    root_install() { echo "installed $3" >>"${dir}/calls"; cp "$2" "$3"; }
+    printf '#Port 22\\n#ListenAddress 0.0.0.0\\n' >"$SSHD_CONFIG"
+    printf 'Port 22\\nPort 2200\\n' >"$SSHD_CONFIG_D/10-fallback-port.conf"
+    install_sshd_listen 100.64.0.9 2>"${dir}/err" || echo "refused"
+    cat "${dir}/err"
+    [ -e "${dir}/calls" ] || echo "nothing installed"
+    rm "$SSHD_CONFIG_D/10-fallback-port.conf"
+    printf '%s\\n' 'LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=4242,fd=3),("systemd",pid=1,fd=57))' \\
+      'LISTEN 0 128 [::]:22 [::]:* users:(("sshd",pid=927,fd=4))' >"${dir}/listeners"
+    install_sshd_listen 100.64.0.9 2>"${dir}/err" || echo "refused"
+    cat "${dir}/err"
+    [ -e "${dir}/calls" ] || echo "nothing installed"
+    : >"${dir}/listeners"
+    printf '#!/bin/sh\\nexit 0\\n' >"${dir}/sshd"
+    install() { :; }
+    install_sshd_listen 100.64.0.9 && echo "installed"
+    cat "${dir}/calls"
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, [
+    "refused",
+    `Other sshd files set ports or addresses. ${dir}/sshd_config.d/10-dotfiles-listen.conf owns them; delete these lines, then run again:`,
+    `${dir}/sshd_config.d/10-fallback-port.conf: Port 22`,
+    `${dir}/sshd_config.d/10-fallback-port.conf: Port 2200`,
+    "nothing installed",
+    "refused",
+    "Processes outside ssh.service hold an ssh port, so ssh.socket could not bind; stop them, then run again:",
+    "[::]:22 held by pid 927",
+    "nothing installed",
+    "installed",
+    `installed ${dir}/sshd_config.d/10-dotfiles-listen.conf`,
+    "systemctl daemon-reload",
+    "systemctl disable --quiet --now ssh.service",
+    "systemctl enable --quiet ssh.socket",
+    "systemctl restart ssh.socket",
+    "",
+  ].join("\n"));
+});
+
+test("the LAN door closes only after the tailnet join", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sshd-listen-"));
+  const script = `${sshdListenStubs(dir)}
+    ensure() { echo "ensure: $1 :: \${*:2}"; }
+    tailscale() { :; }
+    want_sshd_listen
+    printf '%s\\n' "\${MANUAL_AFTER_SIGNIN[@]}"
+    : >"$SSHD_LISTEN"
+    want_sshd_listen
+    tailscale() { case "$2" in -4) echo 100.64.0.9 ;; -6) echo 'fd7a:115c:a1e0::9'; echo 'no tailnet' ;; esac; }
+    want_sshd_listen
+  `;
+  const r = sh("bash", ["-c", script]);
+  assert.equal(r.status, 0, r.stderr);
+  const lines = r.stdout.trim().split("\n");
+  assert.match(lines[0], /manual {3}ssh still answers on every address, the LAN included/);
+  assert.ok(r.stdout.includes("    /dotfiles/host/provision.sh tools"), r.stdout);
+  assert.match(r.stdout, /skip {5}ssh listen addresses: Tailscale reports no address now/);
+  assert.match(r.stdout, /ensure: ssh answers only on loopback and the tailnet \(100\.64\.0\.9 fd7a:115c:a1e0::9; ports 22 2200\) :: sshd_listen 100\.64\.0\.9 fd7a:115c:a1e0::9 -- install_sshd_listen 100\.64\.0\.9 fd7a:115c:a1e0::9\n/);
 });
 
 test("Claude install and provisioning remove temporary trust without losing other settings", () => {

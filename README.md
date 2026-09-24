@@ -102,6 +102,7 @@ Do these steps in this order:
 
 4. Run the provisioning from a terminal on the box.
    Ubuntu Desktop has no SSH server; the run installs one that accepts keys only.
+   After the tailnet join, a later run moves that server off the LAN (see [SSH access](#ssh-access)).
    The SSH check refuses an `Include` inside `Match` because included lines can reenable password login.
    Claude trust excludes temporary directories and removes existing temporary trust during provisioning.
    Give the Wi-Fi name.
@@ -136,7 +137,7 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 | Module | What it does |
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
-| `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
+| `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. After the tailnet join, it binds OpenSSH to loopback and the tailnet addresses only. |
 | `desktop` | Installs the `gtr-kiosk` session, shared :1 VNC service, Xfce startup, cage, and Remmina viewer. It links the ChatGPT Chrome wrapper and blocks VNC/RDP ports on Wi-Fi when the existing VNC service listens on all interfaces. It never restarts GDM during the run. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
@@ -194,6 +195,65 @@ The provisioning does not install Docker, ROCm, Ollama, nvm, or Rust.
 
 `tests/provision.hostlab.sh` runs the whole provisioning twice in a hostlab VM on a KVM host.
 It also reboots the VM, formats a test disk, and freezes the root filesystem to prove the reset.
+
+### SSH access
+
+Agents on the Mac reach the box with Tailscale SSH: `ssh drew-gtr-pro`.
+Tailscale SSH takes port 22 on the box's tailnet address and never uses OpenSSH.
+OpenSSH accepts keys only, and it answers only on loopback and the tailnet addresses, on ports 22 and 2200.
+When Tailscale SSH fails, `ssh -p 2200 drew@drew-gtr-pro` reaches OpenSSH over the tailnet.
+The LAN address gets no SSH answer; a connection to it is refused.
+
+The `tools` module writes `/etc/ssh/sshd_config.d/10-dotfiles-listen.conf` and serves OpenSSH from `ssh.socket`.
+The socket binds with FreeBind, so it holds the tailnet address before `tailscaled` brings it up at boot.
+The module waits for the tailnet join, because before it the console would be the only way in.
+It refuses to run while another sshd file sets `Port` or `ListenAddress`; delete those lines, then run it again.
+`tests/sshd-listen.hostlab.sh` proves the step, its refusal, and the rollback in a hostlab VM.
+
+The physical console is the recovery path.
+To open the LAN door again, run these commands at the console or over Tailscale SSH:
+
+```bash
+sudo systemctl stop ssh.socket ssh.service
+sudo rm /etc/ssh/sshd_config.d/10-dotfiles-listen.conf
+sudo systemctl disable ssh.socket
+sudo systemctl daemon-reload
+sudo systemctl enable --now ssh.service
+```
+
+Stop both units together: a socket stopped alone leaves a running sshd that holds its listeners outside any unit.
+
+The tailnet policy decides when Tailscale SSH asks for a browser check that only the tailnet owner can approve.
+With the default `check` rule, every agent on the Mac stalls when the approval expires.
+These rules accept the Mac as `drew` without a check, and keep the check for `root` and for every other device.
+Tailscale applies a matching `check` rule before an `accept` rule, so the `check` rules must leave out the Mac's `drew` login.
+An SSH rule cannot name one untagged device, so the device posture `node:os` separates the Mac from the other devices.
+`autogroup:self` covers every device of the owner that runs Tailscale SSH; today that is only this box.
+
+```json
+"postures": {
+  "posture:mac": ["node:os == 'macos'"],
+  "posture:notMac": ["node:os != 'macos'"],
+},
+"hosts": {
+  "gtr-pro": "100.87.125.67",
+},
+"ssh": [
+  {"action": "accept", "src": ["drewstone@github"], "srcPosture": ["posture:mac"], "dst": ["autogroup:self"], "users": ["drew"]},
+  {"action": "check", "src": ["autogroup:member"], "srcPosture": ["posture:mac"], "dst": ["autogroup:self"], "users": ["root"]},
+  {"action": "check", "src": ["autogroup:member"], "srcPosture": ["posture:notMac"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot", "root"]},
+],
+"sshTests": [
+  {"src": "drewstone@github", "srcPostureAttrs": {"node:os": "macos"}, "dst": ["gtr-pro"], "accept": ["drew"], "check": ["root"]},
+  {"src": "drewstone@github", "srcPostureAttrs": {"node:os": "ios"}, "dst": ["gtr-pro"], "check": ["drew", "root"]},
+  {"src": "drewstone@github", "srcPostureAttrs": {"node:os": "linux"}, "dst": ["gtr-pro"], "check": ["drew", "root"]},
+],
+```
+
+To apply the rules, open the [policy file editor](https://login.tailscale.com/admin/acls/file).
+Replace the `ssh` section, and add the other three sections or merge them into the existing ones.
+Save the file. Tailscale runs `sshTests` on save and refuses a policy that fails one.
+On the box, `sudo tailscale debug netmap` then shows an `accept` rule for the Mac's addresses with the user `drew` and no `ruleExpires`.
 
 ## Global Git Etiquette Guard
 

@@ -6,7 +6,7 @@
 #
 # Modules, in the order a full run takes them:
 #   guards        root wrappers, sudoers, frozen-root watchdog (host/install.sh)
-#   tools         base packages, OpenSSH (keys only), Google Chrome, Tailscale, GitHub CLI, uv
+#   tools         base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv
 #   desktop       GDM kiosk, shared :1 VNC, cage, Remmina, NetworkManager, font
 #   wifi          Wi-Fi power save off, system-wide passphrase, reconnect watchdog
 #   nosleep       masked sleep targets, logind, login screen, GNOME session
