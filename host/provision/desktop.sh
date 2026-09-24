@@ -57,14 +57,10 @@ link_matching_copy() {
   fi
 }
 
-# Root-owned session files become links only when they match the current host
-# or the pinned, inspected copy. The atomic swap does not restart a session.
-root_link_matching_copy() {
-  local src=$1 dst=$2 old_sha=${3:-} stage
-  if as_root test -L "$dst"; then
-    [ "$(as_root readlink "$dst")" = "$src" ]
-    return $?
-  fi
+# GDM's greeter cannot traverse Drew's private home to read a session link.
+# Install exact root-owned copies only from a matching or pinned current file.
+install_root_matching_copy() {
+  local mode=$1 src=$2 dst=$3 old_sha=${4:-}
   if as_root test -e "$dst"; then
     as_root test -f "$dst" || return 1
     if ! as_root cmp -s "$src" "$dst"; then
@@ -72,33 +68,25 @@ root_link_matching_copy() {
         [ "$(as_root sha256sum "$dst" | cut -d' ' -f1)" = "$old_sha" ] || return 1
     fi
   fi
-  as_root mkdir -p "${dst%/*}" || return 1
-  stage=$(as_root mktemp -d "${dst}.dotfiles.XXXXXX") || return 1
-  if ! as_root ln -s "$src" "$stage/link" || ! as_root mv -Tf "$stage/link" "$dst"; then
-    as_root rm -rf -- "$stage"
-    return 1
-  fi
-  as_root rmdir "$stage" || true
+  root_install "$mode" "$src" "$dst"
 }
 
 link_gtr_vnc_unit() {
+  user_bus || return 1
   link_matching_copy "$GTR_VNC_UNIT_SRC" "$VNC_UNIT" &&
     systemctl --user daemon-reload
 }
 
-gtr_desktop_unit_ready() {
-  link_is "$GTR_DESKTOP_UNIT_SRC" "$GTR_DESKTOP_UNIT" &&
-    systemctl --user is-enabled --quiet gtr-desktop.service 2>/dev/null
-}
+gtr_desktop_unit_ready() { link_is "$GTR_DESKTOP_UNIT_SRC" "$GTR_DESKTOP_UNIT"; }
 
 install_gtr_desktop_unit() {
   user_bus || return 1
   link_matching_copy "$GTR_DESKTOP_UNIT_SRC" "$GTR_DESKTOP_UNIT" &&
-    systemctl --user daemon-reload &&
-    systemctl --user enable --quiet gtr-desktop.service
+    systemctl --user daemon-reload
 }
 
 private_file() { [ -f "$1" ] && [ "$(stat -c %a "$1" 2>/dev/null)" = 600 ]; }
+gtr_vnc_public_bind() { [ -f "$VNC_UNIT" ] && grep -Fq -- '-localhost no' "$VNC_UNIT"; }
 
 # Old display units need a scheduled swap. Detect their files even when the
 # user manager is down, and never repair the new desktop over an old view.
@@ -404,11 +392,13 @@ module_desktop() {
     ensure "kiosk log is private" private_file "$HOME/.local/state/gtr-kiosk.log" -- \
       chmod 0600 "$HOME/.local/state/gtr-kiosk.log"
   fi
-  ensure "persistent packet filter installed" pkg_installed iptables-persistent -- \
-    apt_install iptables-persistent
-  if pkg_installed iptables-persistent; then
-    ensure "Wi-Fi blocks VNC and RDP ports now and after reboot" \
-      as_root "$WIFI_FIREWALL" check -- as_root "$WIFI_FIREWALL" apply
+  if gtr_vnc_public_bind; then
+    ensure "persistent packet filter installed" pkg_installed iptables-persistent -- \
+      apt_install iptables-persistent
+    if pkg_installed iptables-persistent; then
+      ensure "Wi-Fi blocks VNC and RDP ports now and after reboot" \
+        as_root "$WIFI_FIREWALL" check -- as_root "$WIFI_FIREWALL" apply
+    fi
   fi
   if legacy_view_present; then
     if [ -e "$GTR_DESKTOP_UNIT" ] || [ -L "$GTR_DESKTOP_UNIT" ] ||
@@ -417,16 +407,16 @@ module_desktop() {
         link_is "$GTR_DESKTOP_SRC" "$GTR_DESKTOP" -- \
         link_matching_copy "$GTR_DESKTOP_SRC" "$GTR_DESKTOP" \
           a430e2b15cb6d72d73c8bafcd01831c73f90d4ef956bf2b7be5094914909692a
-      ensure "current :1 layout unit is versioned and enabled" \
+      ensure "current :1 layout unit is versioned" \
         gtr_desktop_unit_ready -- install_gtr_desktop_unit
     fi
     ensure "current gtr-kiosk launcher is versioned" \
-      link_is "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" -- \
-      root_link_matching_copy "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" \
+      root_file_is 0755 "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" -- \
+      install_root_matching_copy 0755 "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" \
         a482ae2e1f8c406d50af24f91bdc0dded9842e0dd2d102ea2d3bb3b578f14a5d
     ensure "current gtr-kiosk GDM session is versioned" \
-      link_is "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE" -- \
-      root_link_matching_copy "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE"
+      root_file_is 0644 "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE" -- \
+      install_root_matching_copy 0644 "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE"
     ensure "current shared :1 VNC unit is versioned" \
       link_is "$GTR_VNC_UNIT_SRC" "$VNC_UNIT" -- link_gtr_vnc_unit
     ensure "current shared :1 startup is versioned" \

@@ -256,6 +256,7 @@ test("desktop check reports kiosk and VNC drift while the old pages unit exists"
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /drift +current gtr-kiosk launcher is versioned/);
     assert.match(r.stdout, /drift +current shared :1 VNC unit is versioned/);
+    assert.doesNotMatch(r.stdout, /persistent packet filter installed/);
     assert.match(r.stdout, /drifts=[1-9]/);
   } finally {
     rmSync(home, { recursive: true, force: true });

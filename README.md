@@ -137,7 +137,7 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
-| `desktop` | Installs the `gtr-kiosk` session, shared :1 VNC service, Xfce startup, cage, and Remmina viewer. It links the ChatGPT Chrome wrapper and blocks VNC/RDP ports on Wi-Fi. It never restarts GDM during the run. |
+| `desktop` | Installs the `gtr-kiosk` session, shared :1 VNC service, Xfce startup, cage, and Remmina viewer. It links the ChatGPT Chrome wrapper and blocks VNC/RDP ports on Wi-Fi when the existing VNC service listens on all interfaces. It never restarts GDM during the run. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
@@ -156,7 +156,7 @@ The proxy retries until Tailscale is ready, so the Mac can connect to `vnc://<bo
 The Mac uses the password in the local credential file; transfer it through the existing SSH connection.
 Provisioning preserves existing VNC credentials and display units.
 It enables the VNC and fleet pages units for the next user login without starting or restarting the display during the run.
-On the GTR host, the desktop module also links the existing kiosk, VNC, and `gtr-desktop` files into dotfiles while `gtr-pages` still owns the view.
+On the GTR host, the desktop module installs exact root-owned kiosk files and links the user-owned VNC and `gtr-desktop` files into dotfiles while `gtr-pages` still owns the view.
 This preserves the current VNC listener on port 5901 and does not restart the live desktop.
 The Wi-Fi packet filter drops incoming VNC and RDP traffic before any later INPUT accept rule.
 Run this migration only during Drew's selected display window.
