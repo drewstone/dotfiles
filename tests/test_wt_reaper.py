@@ -675,5 +675,20 @@ class IgnoredClassifierTest(unittest.TestCase):
             self.assertFalse(mod.is_build_output(rel), rel)
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'the storage_lifecycle handoff is Linux-only')
+class InstallerDefersToStorageLifecycleTest(unittest.TestCase):
+    def test_install_skips_timer_where_storage_lifecycle_is_deployed(self):
+        # tangle-tools#239: the dotfiles installer re-enabled wt-reaper.timer on
+        # the GTR, beside the salvaging lifecycle that owns deletion there.
+        installer = os.path.join(HERE, '..', 'git', 'worktree-reaper', 'install.sh')
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, '.local/share/tangle-tools/storage_lifecycle'))
+            proc = subprocess.run(['bash', installer], env=dict(os.environ, HOME=home),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn(b'storage_lifecycle owns worktree removal', proc.stdout)
+            self.assertFalse(os.path.exists(os.path.join(home, '.local/bin/wt-reaper')))
+            self.assertFalse(os.path.exists(os.path.join(home, '.config/systemd/user/wt-reaper.timer')))
+
 if __name__ == '__main__':
     unittest.main()
