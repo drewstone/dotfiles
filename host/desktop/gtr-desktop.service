@@ -1,0 +1,12 @@
+[Unit]
+Description=Shared :1 desktop layout: fleet board and one agent large
+After=vnc-desktop.service
+BindsTo=vnc-desktop.service
+
+[Service]
+ExecStart=%h/.local/bin/gtr-desktop
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=vnc-desktop.service

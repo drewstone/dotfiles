@@ -1,0 +1,20 @@
+#!/bin/bash
+# Keep one maximized pages terminal on the shared :1 desktop.
+unset WAYLAND_DISPLAY; export GDK_BACKEND=x11 DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority" PATH="$HOME/.local/bin:$PATH"
+FONT='JetBrainsMono NF 13'
+until wmctrl -m >/dev/null 2>&1; do sleep 2; done
+# gtr-pages.service owns the pages session; wait for it.
+until tmux has-session -t =pages 2>/dev/null; do sleep 1; done
+term() {
+  local title=$1; shift
+  wmctrl -l | grep -q " $title\$" && return
+  xfce4-terminal --disable-server --hide-menubar --hide-toolbar --hide-scrollbar --font "$FONT" \
+    --title "$title" -x "$@" >/dev/null 2>&1 &
+  for _ in $(seq 1 20); do wmctrl -l | grep -q " $title\$" && break; sleep 0.5; done
+  # Maximized, not full screen: the panel and taskbar stay usable for switching to other windows.
+  for _ in 1 2; do sleep 1; wmctrl -r "$title" -b add,maximized_vert,maximized_horz; done
+}
+while :; do
+  term 'fleet wall' tmux attach -t pages
+  sleep 10
+done

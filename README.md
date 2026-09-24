@@ -119,7 +119,8 @@ Do these steps in this order:
 5. Do each step in the "steps for a person" list at the end of the run, in order.
    The list has the GitHub, Tailscale, Claude and Codex sign-ins, the Git identity, and the agent-bus name.
    It also has the `ssh-copy-id` step that authorizes the Mac's key for ssh.
-   While the login keyring has a password, it has the keyring step: automatic login cannot unlock that keyring, and chatgpt-fleet's Chrome waits for it.
+   The ChatGPT fleet Chrome wrapper uses Chrome's basic password store only for fleet profiles.
+   Those profiles remain signed in after an unattended reboot without unlocking the login keyring.
 6. Run the provisioning again, from the box or over ssh.
    It installs the tangle-tools commands and the Claude plugins from the private marketplaces, which need the sign-ins.
    It also prints the account, fleet and ChatGPT steps from the tangle-tools READMEs until each one is done.
@@ -136,7 +137,7 @@ Each module can run alone, for example `host/provision.sh wifi --wifi-ssid '<SSI
 |---|---|
 | `guards` | Runs `host/install.sh`: root wrappers, sudoers, and the frozen-root watchdog. |
 | `tools` | Installs base packages, the OpenSSH server with key-only login, Google Chrome, Tailscale, GitHub's build of the GitHub CLI, the hostlab packages, and uv. |
-| `desktop` | Installs the `gtr-kiosk` session, the shared :1 VNC service and Xfce startup, and the cage and Remmina viewer. It selects the session in GDM and AccountsService. It never restarts GDM during the run. |
+| `desktop` | Installs the `gtr-kiosk` session, shared :1 VNC service, Xfce startup, cage, and Remmina viewer. It links the ChatGPT Chrome wrapper and blocks VNC/RDP ports on Wi-Fi. It never restarts GDM during the run. |
 | `wifi` | Turns Wi-Fi power save off, stores the passphrase system-wide, and installs a reconnect watchdog. |
 | `nosleep` | Masks the sleep targets and stops logind, the login screen, and the GNOME session from sleeping. logind's keys live in a drop-in; the run comments out the same keys in `/etc/systemd/logind.conf`. |
 | `shell` | Installs starship with the catppuccin-powerline preset; the Linux text console keeps the plain prompt. |
@@ -155,6 +156,10 @@ The proxy retries until Tailscale is ready, so the Mac can connect to `vnc://<bo
 The Mac uses the password in the local credential file; transfer it through the existing SSH connection.
 Provisioning preserves existing VNC credentials and display units.
 It enables the VNC and fleet pages units for the next user login without starting or restarting the display during the run.
+On the GTR host, the desktop module also versions the existing `gtr-desktop` command and unit while `gtr-pages` still owns the view.
+It records the Wi-Fi drop for TCP 5900, 5901, and 3389 in both persistent IPv4 and IPv6 rules, ahead of other input rules.
+Check mode reports kiosk and VNC drift even while the old view units defer the display migration.
+The display migration remains a scheduled action because replacing a running VNC unit can interrupt both monitor and Mac viewing.
 
 The Wi-Fi name and passphrase come from the command line or a prompt, never from this repository.
 The passphrase reaches NetworkManager on standard input, so it never appears in a command line or in the sudo log.

@@ -236,6 +236,32 @@ test("desktop runs before wifi and nosleep, so a Server install has NetworkManag
   assert.ok(order.indexOf("desktop") < order.indexOf("nosleep"), order.join(" "));
 });
 
+test("desktop check reports kiosk and VNC drift while the old pages unit exists", () => {
+  const home = mkdtempSync(join(tmpdir(), "desktop-legacy-check-"));
+  try {
+    const units = join(home, ".config/systemd/user");
+    mkdirSync(units, { recursive: true });
+    writeFileSync(join(units, "gtr-pages.service"), "[Unit]\nDescription=old pages\n");
+    const script = `
+      . host/provision/lib.sh
+      . host/provision/desktop.sh
+      pkg_installed() { return 1; }
+      as_root() { return 1; }
+      module_desktop
+      printf 'drifts=%s\\n' "$N_DRIFT"
+    `;
+    const r = sh("bash", ["-c", script], {
+      env: { ...process.env, HOME: home, HOST_DIR: join(root, "host"), PROVISION_MODE: "check" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /drift +gtr-kiosk launcher differs/);
+    assert.match(r.stdout, /drift +shared :1 VNC unit differs/);
+    assert.match(r.stdout, /drifts=[1-9]/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 // wifi-watchdog with a stand-in nmcli: STATE is the general state, DEVICES the
 // TYPE:STATE lines. It must reconnect only when no Wi-Fi device is up and
 // nothing else gives full connectivity.
@@ -401,7 +427,7 @@ test("one desktop apply installs kiosk assets before selecting the GDM session",
     . host/provision/lib.sh; . host/provision/desktop.sh
     GDM_CUSTOM="${conf}" ACCOUNTS_USER="${accounts}"
     KIOSK_LAUNCHER="${launcher}" KIOSK_SESSION_FILE="${session}"
-    as_root() { "$@"; }
+    as_root() { [ "$1" = "$WIFI_FIREWALL" ] || "$@"; }
     root_install() { cp "$2" "$3"; chmod "$1" "$3"; }
     root_file_is() { [ -f "$3" ] && cmp -s "$2" "$3"; }
     pkg_installed() { return 0; }
@@ -856,10 +882,9 @@ test("legacy view units defer the pages swap even when the new unit is available
     tt_installed() { return 0; }
     pages_unit_on() { return 1; }
     install_pages_unit() { touch "$HOME/pages-installed"; }
-    ensure() { touch "$HOME/desktop-ensure"; }
+    ensure() { :; }
     systemctl() { return 1; }
     module_desktop
-    [ ! -e "$HOME/desktop-ensure" ] || exit 1
     module_tangle_tools
     [ ! -e "$HOME/pages-installed" ]
   `]);

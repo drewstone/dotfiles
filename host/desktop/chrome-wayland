@@ -1,0 +1,15 @@
+#!/bin/sh
+# chatgpt-fleet launches Chrome from SSH/tmux. Prefer the Xorg desktop (GDM autologin keeps its cookie in
+# /run/user/UID/gdm/Xauthority), then GNOME's Xwayland cookie, then native Wayland.
+uid=$(id -u)
+# ChatGPT fleet profiles use Chrome's basic store: the keyring stays locked after autologin, and a
+# keyring- or portal-held key made every slot look signed out after each reboot.
+case "$*" in *chatgpt-fleet/profiles*) set -- --password-store=basic "$@";; esac
+# The remote-viewing desktop (TigerVNC :1) comes first: it works regardless of the physical monitor.
+if [ -S /tmp/.X11-unix/X1 ] && [ -s "$HOME/.Xauthority" ]; then export DISPLAY=:1 XAUTHORITY="$HOME/.Xauthority"; exec /usr/bin/google-chrome --ozone-platform=x11 "$@"; fi
+if [ -s "/run/user/$uid/gdm/Xauthority" ]; then export DISPLAY=:0 XAUTHORITY="/run/user/$uid/gdm/Xauthority"; exec /usr/bin/google-chrome --ozone-platform=x11 "$@"; fi
+for xa in "/run/user/$uid"/.mutter-Xwaylandauth.*; do
+  if [ -s "$xa" ]; then export DISPLAY=:0 XAUTHORITY="$xa"; exec /usr/bin/google-chrome --ozone-platform=x11 "$@"; fi
+done
+export WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR="/run/user/$uid"
+exec /usr/bin/google-chrome --ozone-platform=wayland "$@"

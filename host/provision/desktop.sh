@@ -22,6 +22,52 @@ PROXY_UNIT_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/vnc-tailn
 PROXY_UNIT="$HOME/.config/systemd/user/vnc-tailnet-proxy.service"
 PROXY_COMMAND_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/vnc-tailnet-proxy"
 PROXY_COMMAND="$HOME/.local/bin/gtr-vnc-tailnet-proxy"
+GTR_DESKTOP_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/gtr-desktop"
+GTR_DESKTOP="$HOME/.local/bin/gtr-desktop"
+GTR_DESKTOP_UNIT_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/gtr-desktop.service"
+GTR_DESKTOP_UNIT="$HOME/.config/systemd/user/gtr-desktop.service"
+CHROME_WRAPPER_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/chrome-wayland"
+CHROME_WRAPPER="$HOME/.local/bin/chrome-wayland"
+CHATGPT_ENV_SRC="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/60-chatgpt-fleet.conf"
+CHATGPT_ENV="$HOME/.config/environment.d/60-chatgpt-fleet.conf"
+WIFI_FIREWALL="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop/gtr-wifi-desktop-ports"
+
+# A hand-placed file becomes a link only if it matches the reviewed source.
+# Do not keep password-adjacent backup copies of the old launcher or unit.
+link_matching_copy() {
+  local src=$1 dst=$2 old_sha=${3:-} staged
+  if [ -L "$dst" ]; then
+    [ "$(readlink "$dst")" = "$src" ]
+    return $?
+  fi
+  if [ -e "$dst" ]; then
+    [ -f "$dst" ] || return 1
+    if ! cmp -s "$src" "$dst"; then
+      [ -n "$old_sha" ] && [ "$(sha256sum "$dst" | cut -d' ' -f1)" = "$old_sha" ] || return 1
+    fi
+  fi
+  mkdir -p "${dst%/*}" || return 1
+  staged=$(mktemp "${dst}.dotfiles.XXXXXX") || return 1
+  rm -- "$staged" || return 1
+  if ! ln -s "$src" "$staged" || ! mv -Tf "$staged" "$dst"; then
+    rm -f -- "$staged"
+    return 1
+  fi
+}
+
+gtr_desktop_unit_ready() {
+  link_is "$GTR_DESKTOP_UNIT_SRC" "$GTR_DESKTOP_UNIT" &&
+    systemctl --user is-enabled --quiet gtr-desktop.service 2>/dev/null
+}
+
+install_gtr_desktop_unit() {
+  user_bus || return 1
+  link_matching_copy "$GTR_DESKTOP_UNIT_SRC" "$GTR_DESKTOP_UNIT" &&
+    systemctl --user daemon-reload &&
+    systemctl --user enable --quiet gtr-desktop.service
+}
+
+private_file() { [ -f "$1" ] && [ "$(stat -c %a "$1" 2>/dev/null)" = 600 ]; }
 
 # Old display units need a scheduled swap. Detect their files even when the
 # user manager is down, and never repair the new desktop over an old view.
@@ -312,7 +358,43 @@ login_keyring_has_password() { [ "$(head -c 12 "$LOGIN_KEYRING" 2>/dev/null)" = 
 module_desktop() {
   local assets="${HOST_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/desktop"
   section "desktop: GDM kiosk, NetworkManager and JetBrainsMono Nerd Font"
+  ensure "Chrome wrapper uses the basic store for ChatGPT fleet profiles" \
+    link_is "$CHROME_WRAPPER_SRC" "$CHROME_WRAPPER" -- \
+    link_matching_copy "$CHROME_WRAPPER_SRC" "$CHROME_WRAPPER" \
+      273457c22ec4b33bf779ecf8bea03b4a27cd7046337725b1898311de2b767da2
+  ensure "ChatGPT fleet points to the versioned Chrome wrapper" \
+    link_is "$CHATGPT_ENV_SRC" "$CHATGPT_ENV" -- \
+    link_matching_copy "$CHATGPT_ENV_SRC" "$CHATGPT_ENV"
+  if [ -f "$REMMINA_PROFILE" ]; then
+    ensure "Remmina VNC credential is private" private_file "$REMMINA_PROFILE" -- \
+      chmod 0600 "$REMMINA_PROFILE"
+  fi
+  if [ -f "$HOME/.local/state/gtr-kiosk.log" ]; then
+    ensure "kiosk log is private" private_file "$HOME/.local/state/gtr-kiosk.log" -- \
+      chmod 0600 "$HOME/.local/state/gtr-kiosk.log"
+  fi
+  ensure "persistent packet filter installed" pkg_installed iptables-persistent -- \
+    apt_install iptables-persistent
+  if pkg_installed iptables-persistent; then
+    ensure "Wi-Fi blocks VNC and RDP ports now and after reboot" \
+      as_root "$WIFI_FIREWALL" check -- as_root "$WIFI_FIREWALL" apply
+  fi
   if legacy_view_present; then
+    if [ -e "$GTR_DESKTOP_UNIT" ] || [ -L "$GTR_DESKTOP_UNIT" ] ||
+       [ -e "$HOME/.config/systemd/user/gtr-pages.service" ]; then
+      ensure "current :1 layout command is versioned" \
+        link_is "$GTR_DESKTOP_SRC" "$GTR_DESKTOP" -- \
+        link_matching_copy "$GTR_DESKTOP_SRC" "$GTR_DESKTOP" \
+          a430e2b15cb6d72d73c8bafcd01831c73f90d4ef956bf2b7be5094914909692a
+      ensure "current :1 layout unit is versioned and enabled" \
+        gtr_desktop_unit_ready -- install_gtr_desktop_unit
+    fi
+    if checking; then
+      root_file_is 0755 "$assets/gtr-kiosk" "$KIOSK_LAUNCHER" || drift "gtr-kiosk launcher differs from the versioned session"
+      root_file_is 0644 "$assets/gtr-kiosk.desktop" "$KIOSK_SESSION_FILE" || drift "gtr-kiosk GDM session differs from the versioned session"
+      cmp -s "$assets/vnc-desktop.service" "$VNC_UNIT" || drift "shared :1 VNC unit differs from the versioned session"
+      cmp -s "$assets/vnc-xstartup" "$VNC_STARTUP" || drift "shared :1 startup differs from the versioned session"
+    fi
     skip "legacy :1 view units are present; desktop migration waits for Drew's explicit apply"
     return 0
   fi
