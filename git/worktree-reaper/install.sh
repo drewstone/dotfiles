@@ -12,6 +12,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$HOME/.local/bin/wt-reaper"
 
+# On a host where tangle-tools deploys storage_lifecycle, that package owns
+# every deletion and keeps wt-reaper.timer disabled until its owner accepts it.
+# A second, salvage-free reaper here would delete ignored files such as .env.
+if [ "$(uname -s)" = Linux ] && [ -d "$HOME/.local/share/tangle-tools/storage_lifecycle" ]; then
+  echo "wt-reaper: skipped; tangle-tools storage_lifecycle owns worktree removal on this host"
+  exit 0
+fi
+
 install -d "$HOME/.local/bin" "$HOME/.local/state/wt-reaper"
 install -m 0755 "$SCRIPT_DIR/wt-reaper" "$BIN"
 /usr/bin/python3 "$BIN" --help >/dev/null
