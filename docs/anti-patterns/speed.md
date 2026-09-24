@@ -13,6 +13,8 @@ Distilled from Anthropic's claude.ai performance sprint (3.1x on the journeys th
 6. **Ship behind a flag, roll out in rings.** Employees, then 1%, then everyone; retire the flag once the win holds. Half the flags should be gone by the end of the sprint.
 7. **Many narrow threads, one human taste.** Parallel agents each own one narrow, measurable thread; the human supplies ambition, before/after judgement, and scope discipline. Cheap subagents explore hypotheses; the expensive one integrates.
 8. **Delete on the way.** A refactor pass with a size target (at least 20% fewer lines, zero regressions) after an optimization pass keeps the win maintainable.
+9. **Break through after convergence.** When rounds stall at 3–5%, run one round that forbids parameter-only changes and asks for a different algorithm or architecture, with explicit permission for a radical change.
+10. **Race the best alternative.** Benchmark against the strongest competing implementation under the same rules, and set the target relative to it.
 
 ## What agents do that is not a win
 
