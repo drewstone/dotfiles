@@ -102,6 +102,7 @@ Update affected documentation with behavior changes.
 
 For a bug, reproduce the failure in a realistic user flow, then fix its cause.
 For performance or reliability work, measure the actual execution path and identify the dominant causes before changing them.
+For speed work, follow `docs/anti-patterns/speed.md`: a numbered baseline on the deployed path, a constraint target, deterministic counters for gates, a ratchet or test that guards each win, and flags with ringed rollout.
 Include relevant deployment boundaries, warm or cold state, sample counts, and missing observations.
 Instrument missing portions needed to explain the result.
 Use a reversible test setup that protects shared state.
