@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Keep remote desktop ports closed on Wi-Fi for both IP families. Tailscale
+# access uses its own interface and remains available.
+set -euo pipefail
+
+[[ $(id -u) == 0 ]] || { echo 'run as root' >&2; exit 2; }
+[[ ${1:-} == check || ${1:-} == apply ]] || { echo 'usage: gtr-wifi-desktop-ports check|apply' >&2; exit 2; }
+ip link show dev wlp193s0 >/dev/null 2>&1 || { echo 'wlp193s0 is missing; Wi-Fi drop would match no traffic' >&2; exit 1; }
+
+rule=(-i wlp193s0 -p tcp -m multiport --dports '5900,5901,3389' -j DROP)
+line="-A INPUT ${rule[*]}"
+
+first_input_rule() {
+  awk '$0 == "*filter" { filter = 1; next } filter && $0 == "COMMIT" { exit } filter && /^-A INPUT / { print; exit }' "$1"
+}
+
+persisted() {
+  local file=$1
+  [[ -f $file ]] && [[ $(first_input_rule "$file") == "$line" ]] &&
+    [[ $(grep -Fxc -- "$line" "$file") == 1 ]]
+}
+
+runtime() {
+  local command=$1
+  "$command" -C INPUT "${rule[@]}" &&
+    [[ $("$command" -S INPUT | awk '/^-A INPUT / { print; exit }') == "$line" ]]
+}
+
+insert_persisted() {
+  local file=$1 command=$2 tmp mode owner group
+  [[ -f $file ]] || { echo "missing $file" >&2; return 1; }
+  tmp=$(mktemp "${file}.XXXXXX")
+  mode=$(stat -c %a "$file")
+  owner=$(stat -c %u "$file")
+  group=$(stat -c %g "$file")
+  if ! grep -Fxq '*filter' "$file"; then
+    # A fresh iptables-persistent install can leave an empty rules file.
+    # Capture the live filter table after the drop is first in INPUT.
+    cat "$file" >"$tmp"
+    if ! "${command}-save" -t filter >>"$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  else
+    if ! awk -v rule="$line" '
+      $0 == "*filter" { filter = 1 }
+      filter && $0 == rule { next }
+      filter && /^-A INPUT / && !inserted { print rule; inserted = 1 }
+      filter && $0 == "COMMIT" { if (!inserted) print rule; filter = 0; inserted = 1 }
+      { print }
+      END { if (!inserted) exit 1 }
+    ' "$file" >"$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  fi
+  chown "$owner:$group" "$tmp"
+  chmod "$mode" "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+apply_family() {
+  local command=$1 file=$2
+  # Remove any later copies so an earlier accept rule cannot bypass this drop.
+  while "$command" -C INPUT "${rule[@]}" 2>/dev/null; do
+    "$command" -D INPUT "${rule[@]}"
+  done
+  "$command" -I INPUT 1 "${rule[@]}"
+  persisted "$file" || insert_persisted "$file" "$command"
+}
+
+if [[ $1 == apply ]]; then
+  systemctl enable --quiet netfilter-persistent.service
+  apply_family iptables /etc/iptables/rules.v4
+  apply_family ip6tables /etc/iptables/rules.v6
+fi
+
+systemctl is-enabled --quiet netfilter-persistent.service &&
+  runtime iptables && persisted /etc/iptables/rules.v4 &&
+  runtime ip6tables && persisted /etc/iptables/rules.v6
