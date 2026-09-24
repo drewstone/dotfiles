@@ -48,7 +48,7 @@ Run `./host/install-cli-bridge-slice.sh` alone to install only the slice; it nee
 ## Worktree reaper
 
 `git/install.sh` installs `wt-reaper`: a systemd user timer on Linux and a launchd agent on macOS, both at 04:15 daily.
-It covers every linked worktree registered with a repository under `~/code` or `~/company`, wherever that worktree lives (for example `~/code/_wt/*`, `~/worktrees/*`, or `/tmp`).
+It covers every linked worktree registered with a repository under `~/code`, `~/company`, or `~/webb`, wherever that worktree lives (for example `~/webb/_wt/*`, `~/worktrees/*`, or `/tmp`).
 It removes one only when every check passes:
 
 - The worktree is not locked and has no merge, rebase, bisect, cherry-pick, or revert in progress.

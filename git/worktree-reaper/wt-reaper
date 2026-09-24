@@ -6,8 +6,8 @@ unreadable state, or any doubt skips it, and every decision is logged.
 
   - It is a linked worktree, never a main checkout or a bare repository.
     Scope: every linked worktree registered with a repository found under
-    the roots (default ~/code and ~/company), wherever the worktree lives;
-    a lane worktree in ~/code/_wt and one in /tmp are both in scope.
+    the roots (default ~/code, ~/company and ~/webb), wherever the worktree
+    lives; a lane worktree in ~/webb/_wt and one in /tmp are both in scope.
   - It is not locked, and has no merge, rebase, bisect, cherry-pick or revert
     in progress.
   - Nothing in it (files, directories, its index, HEAD and reflogs) changed
@@ -864,7 +864,7 @@ def delete_branch(ref, main_path, common_dir, log):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--dry-run', action='store_true', help='decide and log, remove nothing')
-    parser.add_argument('--root', action='append', help='scan root (repeatable); default ~/code and ~/company')
+    parser.add_argument('--root', action='append', help='scan root (repeatable); default ~/code, ~/company and ~/webb')
     parser.add_argument('--depth', type=int, default=3, help='directory depth searched for repositories')
     parser.add_argument('--idle-hours', type=float, default=24.0)
     parser.add_argument('--log-file', default=os.path.expanduser('~/.local/state/wt-reaper/wt-reaper.log'))
@@ -881,7 +881,7 @@ def main(argv=None):
         # create root-owned state in a user's repositories.
         parser.error('run as the owning user, not root')
     if args.root is None:
-        args.root = [os.path.expanduser('~/code'), os.path.expanduser('~/company')]
+        args.root = [os.path.expanduser(r) for r in ('~/code', '~/company', '~/webb')]
     if not math.isfinite(args.idle_hours) or args.idle_hours <= 0:
         parser.error('--idle-hours must be a finite positive number')
     return run(args)
