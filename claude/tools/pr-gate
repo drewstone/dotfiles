@@ -151,7 +151,7 @@ if [ "$ADMIN" = 1 ]; then
   merge_out="$($GH pr merge "$PR" -R "$REPO" --squash --admin 2>&1)"
 else
   merge_out="$($GH pr merge "$PR" -R "$REPO" --squash 2>&1)" || {
-    if printf '%s' "$merge_out" | grep -qi "required status check\|not all checks\|review\|protected"; then
+    if printf '%s' "$merge_out" | grep -qi "required status check\|not all checks\|review\|protected\|branch policy\|not mergeable"; then
       echo "pr-gate: normal merge refused (branch protection), retrying with --admin"
       merge_out="$($GH pr merge "$PR" -R "$REPO" --squash --admin 2>&1)"
     fi
