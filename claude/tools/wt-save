@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+# wt-save — save (commit + push) ONLY the worktrees this Claude Code session owns.
+#
+# Why this exists: an unscoped save script committed and pushed another
+# session's in-progress work (2026-09-24). Multiple agent sessions share one
+# Unix user on this host, so a bare directory scan cannot tell whose work is
+# whose — ownership has to be a marker, not a guess.
+#
+# usage:
+#   wt-save [PATH...] [--all] [--dry-run] [--parallel N]
+#
+# Ownership: a worktree is owned when its `.wt-owner` marker's `owner=` line
+# equals $CLAUDE_CODE_SESSION_ID (written by `wt-new`), OR when its path is
+# named explicitly on the command line — naming a directory is taking
+# responsibility for it. A worktree with no marker, or a marker for a
+# different session, is never touched unless named explicitly.
+#
+# For each owned worktree:
+#   - mid-merge or mid-rebase             -> skipped, always
+#   - dirty, pre-commit hook allows it    -> stage tracked + untracked under 5 MB, `git commit` (a
+#                                             clearly labeled wip commit; the
+#                                             hook runs normally, never
+#                                             --no-verify)
+#   - dirty, pre-commit hook blocks it    -> patch saved to
+#                                             ~/attic/wt-save-patches/<date>/,
+#                                             working tree left dirty
+#   - unpushed commits                    -> pushed to origin
+#
+# --all also lists every OTHER worktree in the same pools (owned by another
+# session, or unmarked) with its status, but never touches them.
+# --dry-run reports what would happen without writing or pushing anything.
+# --parallel N bounds concurrent workers (default 8).
+set -uo pipefail
+
+if [ -n "${WT_SAVE_POOLS:-}" ]; then
+  read -r -a POOLS <<< "$WT_SAVE_POOLS"
+else
+  POOLS=("$HOME/webb/_wt" "$HOME/company/_wt")
+fi
+PARALLEL=8
+ALL=0
+DRY=0
+explicit=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all) ALL=1; shift ;;
+    --dry-run) DRY=1; shift ;;
+    --parallel) PARALLEL="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do explicit+=("$1"); shift; done ;;
+    -*) echo "wt-save: unknown flag $1" >&2; exit 2 ;;
+    *) explicit+=("$1"); shift ;;
+  esac
+done
+
+session_owner="${CLAUDE_CODE_SESSION_ID:-}"
+patch_dir="$HOME/attic/wt-save-patches/$(date +%Y-%m-%d)"
+
+# Build the candidate list: every worktree in both pools, plus any explicit
+# path (resolved to absolute, deduped against the pool scan).
+declare -A seen
+candidates=()
+for pool in "${POOLS[@]}"; do
+  [ -d "$pool" ] || continue
+  for d in "$pool"/*/; do
+    d="${d%/}"
+    [ -e "$d/.git" ] || continue
+    [ -n "${seen[$d]:-}" ] && continue
+    seen[$d]=1
+    candidates+=("$d")
+  done
+done
+declare -A is_explicit
+for p in "${explicit[@]}"; do
+  ap="$(cd "$p" 2>/dev/null && pwd)" || { echo "wt-save: not a directory: $p" >&2; continue; }
+  [ -e "$ap/.git" ] || { echo "wt-save: not a git worktree: $ap" >&2; continue; }
+  is_explicit[$ap]=1
+  if [ -z "${seen[$ap]:-}" ]; then
+    seen[$ap]=1
+    candidates+=("$ap")
+  fi
+done
+
+[ ${#candidates[@]} -gt 0 ] || { echo "wt-save: no worktrees found under ${POOLS[*]}"; exit 0; }
+
+owner_of() {
+  local marker="$1/.wt-owner"
+  [ -f "$marker" ] || return 1
+  awk -F= '$1=="owner"{print $2; found=1} END{exit !found}' "$marker"
+}
+
+results_dir="$(mktemp -d -t wt-save-results)"
+trap 'rm -rf "$results_dir"' EXIT
+
+
+# Stage tracked changes and untracked files under WT_SAVE_MAX_BYTES (default 5 MB).
+# Larger untracked files are listed, never added: big artifacts belong in the trace
+# archive, and one `git add -A` over a lab tree once wrote 7.7 GB of loose objects.
+WT_SAVE_MAX_BYTES=${WT_SAVE_MAX_BYTES:-5242880}
+stage_safe() {
+  local d="$1" f size skipped=0
+  git -C "$d" add -u 2>/dev/null || return 1
+  while IFS= read -r -d '' f; do
+    size=$(stat -f %z "$d/$f" 2>/dev/null || stat -c %s "$d/$f" 2>/dev/null || echo 0)
+    if [ "$size" -le "$WT_SAVE_MAX_BYTES" ]; then
+      git -C "$d" add -- "$f" 2>/dev/null
+    else
+      skipped=$((skipped + 1))
+      printf '%s\t%s\n' "$size" "$f" >> "${WT_SAVE_SKIPPED:-/dev/null}"
+    fi
+  done < <(git -C "$d" ls-files -z --others --exclude-standard 2>/dev/null)
+  STAGE_SKIPPED=$skipped
+}
+
+process_one() {
+  local d="$1" idx="$2"
+  local out="$results_dir/$idx"
+  local name marker_owner br
+  name="$(basename "$d")"
+  br="$(git -C "$d" branch --show-current 2>/dev/null)"
+  marker_owner="$(owner_of "$d" 2>/dev/null || true)"
+
+  local gd
+  gd="$(git -C "$d" rev-parse --git-dir 2>/dev/null)"
+  if [ -z "$gd" ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$br" "unowned" "-" "-" "BROKEN git dir" > "$out"
+    return
+  fi
+  if [ -e "$gd/MERGE_HEAD" ] || [ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$br" "owned" "-" "-" "SKIP mid-merge/rebase" > "$out"
+    return
+  fi
+
+  local dirty unpushed action
+  dirty=$(git -C "$d" status --porcelain --untracked-files=normal 2>/dev/null | wc -l | tr -d ' ')
+  action=""
+
+  if [ "$dirty" != 0 ]; then
+    if [ "$DRY" = 1 ]; then
+      action="would-commit(dirty=$dirty)"
+    elif stage_safe "$d" && git -C "$d" commit -q -m "wip: preserve in-progress work (wt-save $(date -u +%Y-%m-%dT%H:%M:%SZ))" >/dev/null 2>&1; then
+      action="committed"
+      [ "${STAGE_SKIPPED:-0}" -gt 0 ] && action="committed, left $STAGE_SKIPPED untracked file(s) over $((WT_SAVE_MAX_BYTES / 1048576)) MB unstaged"
+    else
+      git -C "$d" reset >/dev/null 2>&1
+      if [ "${is_explicit[$d]:-0}" != 1 ] && [ -z "$marker_owner" ]; then
+        : # unreachable: unowned+unmarked never reaches process_one
+      fi
+      mkdir -p "$patch_dir" 2>/dev/null
+      local patch_file="$patch_dir/${name}.patch"
+      stage_safe "$d"
+      git -C "$d" diff --cached > "$patch_file" 2>/dev/null
+      git -C "$d" reset >/dev/null 2>&1
+      if [ -s "$patch_file" ]; then
+        action="HOOK-BLOCKED patch->$patch_file"
+      else
+        rm -f "$patch_file"
+        action="HOOK-BLOCKED commit failed, empty patch — inspect by hand"
+      fi
+    fi
+  fi
+
+  unpushed=$(git -C "$d" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0)
+  if [ -z "$br" ]; then
+    [ -n "$action" ] || action="detached, nothing to push"
+  elif [ "$unpushed" != 0 ]; then
+    if [ "$DRY" = 1 ]; then
+      action="${action:+$action, }would-push($unpushed)"
+    else
+      # Always push explicitly to the same-named branch on origin. Never rely
+      # on `@{u}` / bare `git push`: a branch started from origin/<base> can
+      # carry that as its configured upstream, and a bare push then targets
+      # <base> instead of this branch. Retry: parallel workers pushing new
+      # branches to the same bare origin at once can hit a transient ref lock.
+      local attempt ok=0
+      for attempt in 1 2 3; do
+        if git -C "$d" push -q -u origin "HEAD:refs/heads/$br" 2>/dev/null; then
+          ok=1; break
+        fi
+        sleep 0.5
+      done
+      if [ "$ok" = 1 ]; then
+        action="${action:+$action, }pushed"
+      else
+        action="${action:+$action, }PUSH-FAILED"
+      fi
+    fi
+  fi
+
+  [ -n "$action" ] || action="clean"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$br" "owned" "$dirty" "$unpushed" "$action" > "$out"
+}
+
+owned_list=()
+other_list=()
+for d in "${candidates[@]}"; do
+  marker_owner="$(owner_of "$d" 2>/dev/null || true)"
+  owned=0
+  if [ "${is_explicit[$d]:-0}" = 1 ]; then
+    owned=1
+  elif [ -n "$session_owner" ] && [ -n "$marker_owner" ] && [ "$marker_owner" = "$session_owner" ]; then
+    owned=1
+  fi
+  if [ "$owned" = 1 ]; then
+    owned_list+=("$d")
+  else
+    other_list+=("$d|${marker_owner:-unmarked}")
+  fi
+done
+
+running=0
+idx=0
+for d in "${owned_list[@]}"; do
+  idx=$((idx + 1))
+  process_one "$d" "$idx" &
+  running=$((running + 1))
+  if [ "$running" -ge "$PARALLEL" ]; then
+    wait -n
+    running=$((running - 1))
+  fi
+done
+wait
+
+printf '%-34s %-30s %-7s %-6s %-9s %s\n' "WORKTREE" "BRANCH" "OWNED" "DIRTY" "UNPUSHED" "ACTION"
+for i in $(seq 1 "$idx"); do
+  [ -f "$results_dir/$i" ] || continue
+  IFS=$'\t' read -r name br status dirty unpushed action < "$results_dir/$i"
+  printf '%-34s %-30s %-7s %-6s %-9s %s\n' "$name" "${br:--}" "owned" "$dirty" "$unpushed" "$action"
+done
+
+if [ "$ALL" = 1 ] && [ ${#other_list[@]} -gt 0 ]; then
+  echo ""
+  echo "-- other sessions' worktrees (not touched) --"
+  for entry in "${other_list[@]}"; do
+    d="${entry%|*}"; mo="${entry##*|}"
+    name="$(basename "$d")"
+    br="$(git -C "$d" branch --show-current 2>/dev/null)"
+    dirty=$(git -C "$d" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    printf '%-34s %-30s %-7s %-6s %-9s owner=%s\n' "$name" "${br:--}" "other" "$dirty" "-" "$mo"
+  done
+fi
+
+exit 0
