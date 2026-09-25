@@ -1026,7 +1026,12 @@ test("legacy view units defer the pages swap even when the new unit is available
 
 test("a commented-out authorized key does not hide the ssh-copy-id step", () => {
   const home = mkdtempSync(join(tmpdir(), "authkeys-"));
+  // Hermetic perms: a group-writable umask (agent shells run 002) would otherwise
+  // make the home directory and ~/.ssh group-writable and fail StrictModes
+  // before the assertions run.
+  chmodSync(home, 0o700);
   mkdirSync(join(home, ".ssh"));
+  chmodSync(join(home, ".ssh"), 0o700);
   const keys = join(home, ".ssh/authorized_keys");
   const script = `
     . host/provision/lib.sh
@@ -1037,6 +1042,7 @@ test("a commented-out authorized key does not hide the ssh-copy-id step", () => 
     true
   `;
   writeFileSync(keys, "# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample old-laptop\n");
+  chmodSync(keys, 0o600);
   assert.equal(sh("bash", ["-c", script]).stdout, "");
   writeFileSync(keys, 'from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample mac\n');
   assert.equal(sh("bash", ["-c", script]).stdout, "active\n");
