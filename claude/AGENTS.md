@@ -69,6 +69,7 @@ Keep these guardrails even when agents share the repository:
 - No `reset --hard` over uncommitted work.
 - No `--no-verify`; inspect and fix a failing hook or its cause.
 - No branch deletion without confirming it is merged or abandoned.
+- Remove a worktree only with `wt-remove <path>`, never a bare `git worktree remove`; git treats ignored files as clean and deletes them.
 - Never set a Git identity or add co-authorship trailers.
   Before the first commit in a repository or worktree, check `git config user.email`.
   Use the existing global identity, `drewstone329@gmail.com`; remove conflicting local overrides instead of setting another identity.
