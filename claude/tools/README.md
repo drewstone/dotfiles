@@ -15,6 +15,26 @@ agent-doc-lengths --format json
 Reports lines, words, chars, approximate tokens, skill-description size, category totals, largest files, and threshold findings.
 Skill descriptions default to a 96-character limit because every description competes for the discovery context before a skill is selected.
 
+## gh-drew
+
+Run `gh` as `drewstone` with the token from the environment or the devops vault.
+Below 150 core calls left (`GH_DREW_MIN_CORE`), it refuses reads and keeps the rest for writes.
+
+Each call appends one line to `~/.local/state/gh-drew/calls-<hour>.tsv` (`GH_DREW_LOG_DIR`):
+
+```text
+epoch  outcome  caller  session  directory  command shape
+1790332581  called  pr-drive-watch  tmux:%7  ~/code/lane  api repos/o/r/actions/runs?status=queued
+```
+
+- The caller is the first ancestor that is not a shell or launcher; an interpreter is named by its script.
+- The session is the tmux pane, else the systemd service, else the Claude Code session.
+- The shape keeps subcommands, the API path, numbers and repository names.
+  It never holds the token or a flag value, such as a body, a field or a header.
+- On Linux the line costs about 0.8 ms and no fork. Files older than 25 hours are deleted.
+
+The fleet invariant "GitHub core quota" in tangle-tools reads these files to name the top callers.
+
 ## wt-new, wt-save
 
 Scoped worktree lifecycle for parallel agent sessions sharing one Unix user.
