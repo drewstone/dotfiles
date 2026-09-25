@@ -1,0 +1,38 @@
+#!/bin/bash
+# Mac disk guard: reclaim regenerable space in order of safety until free space
+# is back above the floor, logging one line per tier with GiB freed.
+# Why a Mac-native guard: storage_lifecycle (tangle-tools) is Linux-first and
+# depends on the /mnt/traces archive mount, so on the Mac it exits 1 every run.
+# Tiers never touch docker volumes, trace spools, or any worktree that wt-reaper
+# or wt-remove would refuse.
+set -uo pipefail
+FLOOR_GB=${MAC_DISK_GUARD_FLOOR_GB:-60}
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin
+free_gb() { df -g / | awk 'NR==2{print $4}'; }
+# Every external call gets a hard time budget: on 2026-09-25 `docker info` hung
+# 23 minutes on the docker-scout plugin and stalled the whole guard.
+TIER_SECONDS=${MAC_DISK_GUARD_TIER_SECONDS:-600}
+budget() { local s=$1; shift; perl -e 'alarm shift; exec @ARGV' "$s" "$@"; }
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
+tier() {
+  local name=$1; shift
+  local before; before=$(free_gb)
+  if [ "$before" -ge "$FLOOR_GB" ] && [ "$name" != snapshots ]; then return 0; fi
+  budget "$TIER_SECONDS" "$@" >/dev/null 2>&1; local rc=$?
+  log "tier=$name rc=$rc free_gb=$before->$(free_gb) freed_gb=$(( $(free_gb) - before ))"
+}
+
+log "start free_gb=$(free_gb) floor_gb=$FLOOR_GB"
+# 1. Time Machine local snapshots pin deleted blocks; always trimmed when no backup disk is attached.
+tier snapshots tm-snapshot-trim
+# 2. Docker build cache and dangling images inside Colima: regenerable by definition.
+budget 20 docker ps -q >/dev/null 2>&1 && { tier docker-build-cache docker builder prune -f; tier docker-dangling-images docker image prune -f; }
+# 3. Worktree reaper: removes only idle, clean, pushed trees; needs `sudo -n lsof` to see every process.
+tier worktrees /usr/bin/python3 "$HOME/.local/bin/wt-reaper" --idle-hours 24
+# 4. pnpm store entries no project references.
+command -v pnpm >/dev/null && tier pnpm-store pnpm store prune
+# 5. Snapshots again, so space freed by tiers 2-4 is not pinned by a snapshot taken meanwhile.
+tier snapshots tm-snapshot-trim
+free=$(free_gb)
+log "end free_gb=$free floor_gb=$FLOOR_GB status=$([ "$free" -ge "$FLOOR_GB" ] && echo ok || echo under-floor)"
+[ "$free" -ge "$FLOOR_GB" ]
