@@ -22,6 +22,27 @@ tier() {
   log "tier=$name rc=$rc free_gb=$before->$(free_gb) freed_gb=$(( $(free_gb) - before ))"
 }
 
+# Trees whose remote branch is gone (GitHub deletes the head branch when a PR merges),
+# idle for GONE_IDLE_HOURS, go through wt-remove, which still salvages unpushed commits
+# and uncommitted or ignored non-build files to gtr-pro before removing anything.
+GONE_IDLE_HOURS=${MAC_DISK_GUARD_GONE_IDLE_HOURS:-2}
+gone_branch_trees() {
+  local wt_remove="$HOME/company/tools/worktree-reap/bin/wt-remove" open list d b
+  [ -x "$wt_remove" ] || return 1
+  open=$(mktemp); list=$(mktemp)
+  lsof -Fcn 2>/dev/null | awk '/^c/{c=substr($0,2)} /^n/{ if (c!="bfs" && c!="find" && c!="mdworker_shared") print substr($0,2)}' > "$open"
+  for d in "$HOME"/webb/_wt/*/ "$HOME"/company/_wt/*/; do
+    d=${d%/}; [ -f "$d/.git" ] || continue
+    b=$(git -C "$d" symbolic-ref -q --short HEAD) || continue
+    git -C "$d" config "branch.$b.remote" >/dev/null || continue   # never pushed: leave it
+    [ -z "$(budget 20 git -C "$d" ls-remote --heads origin "$b" 2>/dev/null)" ] || continue
+    echo "$d"
+  done > "$list"
+  # Children must not share xargs' stdin, or an ssh inside rsync could eat the list.
+  OPEN_LIST=$open IDLE_HOURS=$GONE_IDLE_HOURS WT_REMOVE=$wt_remove xargs -P 4 -I{} sh -c '"$WT_REMOVE" "$1" < /dev/null' _ {} < "$list" >> "$HOME/.local/state/mac-disk-guard/wt-remove.jsonl" 2>/dev/null
+  rm -f "$open" "$list"
+}
+
 log "start free_gb=$(free_gb) floor_gb=$FLOOR_GB"
 # 1. Time Machine local snapshots pin deleted blocks; always trimmed when no backup disk is attached.
 tier snapshots tm-snapshot-trim
@@ -29,6 +50,8 @@ tier snapshots tm-snapshot-trim
 budget 20 docker ps -q >/dev/null 2>&1 && { tier docker-build-cache docker builder prune -f; tier docker-dangling-images docker image prune -f; }
 # 3. Worktree reaper: removes only idle, clean, pushed trees; needs `sudo -n lsof` to see every process.
 tier worktrees /usr/bin/python3 "$HOME/.local/bin/wt-reaper" --idle-hours 24
+# 3b. Trees whose PR merged (remote branch deleted), through wt-remove.
+tier gone-branch-trees gone_branch_trees
 # 4. pnpm store entries no project references.
 command -v pnpm >/dev/null && tier pnpm-store pnpm store prune
 # 5. Snapshots again, so space freed by tiers 2-4 is not pinned by a snapshot taken meanwhile.
