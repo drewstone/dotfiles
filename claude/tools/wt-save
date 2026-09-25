@@ -17,7 +17,7 @@
 #
 # For each owned worktree:
 #   - mid-merge or mid-rebase             -> skipped, always
-#   - dirty, pre-commit hook allows it    -> `git add -A && git commit` (a
+#   - dirty, pre-commit hook allows it    -> stage tracked + untracked under 5 MB, `git commit` (a
 #                                             clearly labeled wip commit; the
 #                                             hook runs normally, never
 #                                             --no-verify)
@@ -95,6 +95,26 @@ owner_of() {
 results_dir="$(mktemp -d -t wt-save-results)"
 trap 'rm -rf "$results_dir"' EXIT
 
+
+# Stage tracked changes and untracked files under WT_SAVE_MAX_BYTES (default 5 MB).
+# Larger untracked files are listed, never added: big artifacts belong in the trace
+# archive, and one `git add -A` over a lab tree once wrote 7.7 GB of loose objects.
+WT_SAVE_MAX_BYTES=${WT_SAVE_MAX_BYTES:-5242880}
+stage_safe() {
+  local d="$1" f size skipped=0
+  git -C "$d" add -u 2>/dev/null || return 1
+  while IFS= read -r -d '' f; do
+    size=$(stat -f %z "$d/$f" 2>/dev/null || stat -c %s "$d/$f" 2>/dev/null || echo 0)
+    if [ "$size" -le "$WT_SAVE_MAX_BYTES" ]; then
+      git -C "$d" add -- "$f" 2>/dev/null
+    else
+      skipped=$((skipped + 1))
+      printf '%s\t%s\n' "$size" "$f" >> "${WT_SAVE_SKIPPED:-/dev/null}"
+    fi
+  done < <(git -C "$d" ls-files -z --others --exclude-standard 2>/dev/null)
+  STAGE_SKIPPED=$skipped
+}
+
 process_one() {
   local d="$1" idx="$2"
   local out="$results_dir/$idx"
@@ -121,8 +141,9 @@ process_one() {
   if [ "$dirty" != 0 ]; then
     if [ "$DRY" = 1 ]; then
       action="would-commit(dirty=$dirty)"
-    elif git -C "$d" add -A 2>/dev/null && git -C "$d" commit -q -m "wip: preserve in-progress work (wt-save $(date -u +%Y-%m-%dT%H:%M:%SZ))" >/dev/null 2>&1; then
+    elif stage_safe "$d" && git -C "$d" commit -q -m "wip: preserve in-progress work (wt-save $(date -u +%Y-%m-%dT%H:%M:%SZ))" >/dev/null 2>&1; then
       action="committed"
+      [ "${STAGE_SKIPPED:-0}" -gt 0 ] && action="committed, left $STAGE_SKIPPED untracked file(s) over $((WT_SAVE_MAX_BYTES / 1048576)) MB unstaged"
     else
       git -C "$d" reset >/dev/null 2>&1
       if [ "${is_explicit[$d]:-0}" != 1 ] && [ -z "$marker_owner" ]; then
@@ -130,7 +151,7 @@ process_one() {
       fi
       mkdir -p "$patch_dir" 2>/dev/null
       local patch_file="$patch_dir/${name}.patch"
-      git -C "$d" add -A 2>/dev/null
+      stage_safe "$d"
       git -C "$d" diff --cached > "$patch_file" 2>/dev/null
       git -C "$d" reset >/dev/null 2>&1
       if [ -s "$patch_file" ]; then
