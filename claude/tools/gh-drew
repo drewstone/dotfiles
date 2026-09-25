@@ -70,6 +70,213 @@ try_token() {
   printf '%s' "$login"
 }
 
+# Every call leaves one line in an hourly log, so the fleet can name who spends the shared quota
+# (tangle-tools fleet/INVARIANTS.md, "GitHub core quota"). A line is: epoch, outcome (called or
+# refused), caller, session, working directory and the command's shape, tab-separated. It never
+# holds the token or a flag's value (a body, a field, a header): only subcommands, the API path,
+# numbers and repository names. On Linux the line costs no fork: /proc and builtins give the caller.
+log_dir="${GH_DREW_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gh-drew}"
+
+# Launchers that sit between an agent and gh-drew; the caller is the first ancestor that is not one.
+passthrough='@env@timeout@nice@nohup@xargs@flock@stdbuf@setsid@ionice@time@sudo@rtk@'
+
+# Sets argv to the first words of a process's command line.
+read_argv() {
+  local args
+  argv=()
+  if [[ -r "/proc/$1/cmdline" ]]; then
+    local a0='' a1='' a2='' a3='' a4=''
+    { IFS= read -r -d '' a0 && IFS= read -r -d '' a1 && IFS= read -r -d '' a2 &&
+      IFS= read -r -d '' a3 && IFS= read -r -d '' a4; } < "/proc/$1/cmdline" || true
+    argv=("$a0" "$a1" "$a2" "$a3" "$a4")
+  else
+    args="$(ps -o args= -p "$1" 2>/dev/null || true)"
+    read -r -a argv <<< "$args" || true
+  fi
+  return 0
+}
+
+# Sets script to the script an interpreter or shell runs (python3 .../fleet/fleet is "fleet"), or to
+# nothing for inline code (bash -c, python -c) and an interactive shell.
+script_of() {
+  local arg dir
+  script=''
+  for arg in "$@"; do
+    case "$arg" in
+      '') continue ;;
+      --*) continue ;;
+      -*c*) return 0 ;;
+      -*) continue ;;
+    esac
+    script="${arg##*/}"
+    case "$script" in
+      cli.js|cli.mjs|cli.cjs|index.js|index.mjs|main.js|main.mjs|main.py|__main__.py|cli.py)
+        dir="${arg%/*}"
+        if [[ "$dir" != "$arg" ]]; then
+          script="${dir##*/}"
+        fi
+        ;;
+    esac
+    script="${script%.js}"; script="${script%.mjs}"; script="${script%.cjs}"; script="${script%.py}"
+    script="${script%.ts}"; script="${script%.sh}"
+    return 0
+  done
+  return 0
+}
+
+# Sets caller from the process tree: /proc on Linux, ps elsewhere.
+find_caller() {
+  local pid="$PPID" hops=0 comm ppid stat rest script
+  local -a argv
+  caller='?'
+  while (( hops < 8 )); do
+    hops=$((hops + 1))
+    if [[ ! "$pid" =~ ^[0-9]+$ ]] || (( pid <= 1 )); then
+      return 0
+    fi
+    if [[ -r "/proc/$pid/stat" ]]; then
+      IFS= read -r stat < "/proc/$pid/stat" || return 0
+      comm="${stat#*\(}"; comm="${comm%\)*}"
+      rest="${stat##*\) }"; ppid="${rest#* }"; ppid="${ppid%% *}"
+    else
+      read -r ppid comm < <(ps -o ppid= -o comm= -p "$pid" 2>/dev/null) || return 0
+      comm="${comm##*/}"
+    fi
+    case "$comm" in
+      bash|sh|dash|zsh|fish|python*|node|bun|deno|ruby|perl|uv|npx|tsx)
+        read_argv "$pid"
+        script_of "${argv[@]:1}"
+        if [[ -n "$script" && "$script" != gh-drew ]]; then
+          caller="$script"
+          return 0
+        fi
+        case "$comm" in
+          bash|sh|dash|zsh|fish) pid="$ppid"; continue ;;
+        esac
+        ;;
+    esac
+    if [[ "$passthrough" == *"@$comm@"* ]]; then
+      pid="$ppid"
+      continue
+    fi
+    caller="$comm"
+    return 0
+  done
+  return 0
+}
+
+# Sets session: the tmux pane (the fleet maps it to a lane), else the systemd service, else the Claude session.
+find_session() {
+  local cgroup unit
+  session=''
+  if [[ -n "${TMUX_PANE-}" ]]; then
+    session="tmux:$TMUX_PANE"
+    return 0
+  fi
+  if [[ -r "/proc/$$/cgroup" ]] && IFS= read -r cgroup < "/proc/$$/cgroup"; then
+    unit="${cgroup##*/}"
+    if [[ "$unit" == *.service && "$unit" != user@*.service ]]; then
+      session="unit:$unit"
+      return 0
+    fi
+  fi
+  if [[ -n "${CLAUDE_CODE_SESSION_ID-}" ]]; then
+    session="claude:${CLAUDE_CODE_SESSION_ID:0:8}"
+  fi
+  return 0
+}
+
+# Sets shape: the subcommand and what names the target, never a flag's value.
+call_shape() {
+  local -a words=()
+  local arg skip='' first="${1-}"
+  shift || true
+  words+=("$first")
+  if [[ "$first" == api ]]; then
+    for arg in "$@"; do
+      if [[ -n "$skip" ]]; then
+        if [[ "$skip" == method ]]; then
+          words+=("$arg")
+        fi
+        skip=''
+        continue
+      fi
+      case "$arg" in
+        -X|--method) skip=method ;;
+        -H|--header|-f|--raw-field|-F|--field|-q|--jq|-t|--template|--input|-p|--preview|--hostname|--cache) skip=value ;;
+        -X?*) words+=("${arg#-X}") ;;
+        --method=*) words+=("${arg#--method=}") ;;
+        -*) ;;
+        *)
+          # gh api takes one positional argument, the endpoint. A credential in its query is dropped.
+          if [[ "$arg" == *\?* && "$arg" =~ (token|key|secret|password)= ]]; then
+            arg="${arg%%\?*}"
+          fi
+          if (( ${#words[@]} < 3 )); then
+            words+=("$arg")
+          fi
+          ;;
+      esac
+    done
+  else
+    if [[ -n "${1-}" && "${1-}" != -* ]]; then
+      words+=("$1")
+      shift
+    fi
+    case "$first" in
+      secret|variable|auth|ssh-key|gpg-key|config|alias|extension) ;;
+      *)
+        for arg in "$@"; do
+          if [[ "$arg" =~ ^[0-9]+$ || "$arg" =~ ^https://github\.com/[A-Za-z0-9_./#-]+$ ||
+                "$arg" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            words+=("$arg")
+          fi
+          if (( ${#words[@]} >= 5 )); then
+            break
+          fi
+        done
+        ;;
+    esac
+  fi
+  printf -v shape '%s ' "${words[@]}"
+  shape="${shape% }"
+  return 0
+}
+
+write_call() {
+  local outcome="$1" stamp='' epoch hour file line where caller session shape
+  shift
+  printf -v stamp '%(%s %Y%m%d%H)T' -1 2>/dev/null || stamp="$(date '+%s %Y%m%d%H')"
+  epoch="${stamp% *}"; hour="${stamp#* }"
+  find_caller
+  find_session
+  call_shape "$@"
+  where="$PWD"
+  if [[ "$where" == "$HOME" || "$where" == "$HOME"/* ]]; then
+    where="~${where#"$HOME"}"
+  fi
+  printf -v line '%s\t%s\t%s\t%s\t%s\t%s' "$epoch" "$outcome" "${caller//[$'\t\n\r']/ }" \
+    "${session//[$'\t\n\r']/ }" "${where//[$'\t\n\r']/ }" "${shape//[$'\t\n\r']/ }"
+  file="$log_dir/calls-$hour.tsv"
+  if [[ ! -e "$file" ]]; then
+    [[ -d "$log_dir" ]] || mkdir -p "$log_dir"
+    # A new hour: drop the hours the fleet no longer reads, in the background.
+    find "$log_dir" -maxdepth 1 -name 'calls-*.tsv' -mmin +1500 -delete </dev/null >/dev/null 2>&1 &
+  fi
+  # One line under PIPE_BUF, appended: concurrent callers never interleave.
+  printf '%s\n' "${line:0:1000}" >> "$file"
+}
+
+log_call() {
+  if [[ -r "/proc/$$/stat" ]]; then
+    write_call "$@" 2>/dev/null || true
+  else
+    # Without /proc the caller costs ps forks; they run beside gh and hold none of its output.
+    ( write_call "$@" ) </dev/null >/dev/null 2>&1 &
+  fi
+  return 0
+}
+
 # Reads must never starve writes. /rate_limit does not count against the core
 # quota, so this check is free. Below the floor, refuse read-only commands (the
 # polling loops that cause exhaustion) while letting mutations through, so a
@@ -105,6 +312,7 @@ guard_reads() {
   remaining="$(GH_TOKEN="$token" gh api rate_limit --jq .resources.core.remaining 2>/dev/null || true)"
   [[ "$remaining" =~ ^[0-9]+$ ]] || return 0
   if (( remaining < core_floor )); then
+    log_call refused "$@"
     local reset
     reset="$(GH_TOKEN="$token" gh api rate_limit --jq '.resources.core.reset' 2>/dev/null || true)"
     cat >&2 <<EOF
@@ -125,6 +333,7 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
 
   if [[ "$login" == "$expected_login" ]]; then
     guard_reads "$token" "$@"
+    log_call called "$@"
     exec env GH_TOKEN="$token" gh "$@"
   fi
 done
@@ -135,6 +344,7 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
 
   if [[ "$login" == "$expected_login" ]]; then
     guard_reads "$token" "$@"
+    log_call called "$@"
     exec env GH_TOKEN="$token" gh "$@"
   fi
 done
