@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.drew.tm-snapshot-trim</string>
+  <string>com.drew.mac-disk-guard</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>@HOME@/.local/bin/tm-snapshot-trim</string>
+    <string>@HOME@/.local/bin/mac-disk-guard</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -17,7 +17,7 @@
     <string>@HOME@</string>
   </dict>
   <key>StartInterval</key>
-  <integer>1200</integer>
+  <integer>900</integer>
   <key>RunAtLoad</key>
   <true/>
   <key>LowPriorityIO</key>
@@ -27,8 +27,8 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>
-  <string>@HOME@/.local/state/tm-snapshot-trim/launchd.out</string>
+  <string>@HOME@/.local/state/mac-disk-guard/launchd.out</string>
   <key>StandardErrorPath</key>
-  <string>@HOME@/.local/state/tm-snapshot-trim/launchd.err</string>
+  <string>@HOME@/.local/state/mac-disk-guard/launchd.err</string>
 </dict>
 </plist>
