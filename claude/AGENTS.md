@@ -70,8 +70,9 @@ Keep these guardrails even when agents share the repository:
 - No `--no-verify`; inspect and fix a failing hook or its cause.
 - No branch deletion without confirming it is merged or abandoned.
 - Remove a worktree only with `wt-remove <path>`, never a bare `git worktree remove`; git treats ignored files as clean and deletes them.
-- On the Mac, reuse one worktree per repository and switch branches in it; put new worktrees that need a full dependency install on `drew-gtr-pro`.
-  Each fresh install makes macOS index and scan hundreds of thousands of files, which filled the disk and pushed load past 50 on 2026-09-25.
+- On the Mac, reuse one worktree per repository and switch branches in it.
+  Run new worktrees, full dependency installs, builds, type checks, and test suites on `drew-gtr-pro`; keep the Mac for sessions, edits, and pushes.
+  Why: on 2026-09-25 parallel lanes did this work on the Mac, filled its disk twice, and pushed load to 178 on 10 cores with swap full.
 - Never set a Git identity or add co-authorship trailers.
   Before the first commit in a repository or worktree, check `git config user.email`.
   Use the existing global identity, `drewstone329@gmail.com`; remove conflicting local overrides instead of setting another identity.
