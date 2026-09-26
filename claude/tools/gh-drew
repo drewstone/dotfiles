@@ -64,6 +64,8 @@ try_token() {
   fi
   if [[ -n "$login" ]]; then
     mkdir -p "$verify_cache_dir" 2>/dev/null || true
+    # Something on the Mac resets this directory to 0600, which blocks reads and writes.
+    chmod 700 "$verify_cache_dir" 2>/dev/null || true
     printf '%s\n%s\n' "$now" "$login" > "$cache" 2>/dev/null || true
     chmod 600 "$cache" 2>/dev/null || true
   fi
