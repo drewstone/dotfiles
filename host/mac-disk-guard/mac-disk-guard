@@ -18,7 +18,10 @@ tier() {
   local name=$1; shift
   local before; before=$(free_gb)
   if [ "$before" -ge "$FLOOR_GB" ] && [ "$name" != snapshots ]; then return 0; fi
-  budget "$TIER_SECONDS" "$@" >/dev/null 2>&1; local rc=$?
+  # perl cannot exec a shell function, so functions run directly and bound their own calls.
+  local rc
+  if [ "$(type -t "$1")" = function ]; then "$@" >/dev/null 2>&1; rc=$?
+  else budget "$TIER_SECONDS" "$@" >/dev/null 2>&1; rc=$?; fi
   log "tier=$name rc=$rc free_gb=$before->$(free_gb) freed_gb=$(( $(free_gb) - before ))"
 }
 
