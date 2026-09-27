@@ -270,8 +270,9 @@ case "$command" in
   claim)
     [ $# -eq 1 ] || invalid_args 'claim requires one branch'
     case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
-    git check-ref-format --branch "$1" >/dev/null 2>&1 || invalid_args "invalid branch: $1"
-    cmd_claim "$1"
+    branch="$(git -C "$REPO" check-ref-format --branch "$1" 2>/dev/null)" || invalid_args "invalid branch: $1"
+    [ -n "$branch" ] || invalid_args "invalid branch: $1"
+    cmd_claim "$branch"
     ;;
   release)
     escaped=0
