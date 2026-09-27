@@ -34,6 +34,55 @@ export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
 
 log() { echo "[adc-wt $(date +%H:%M:%S)] $*"; }
 
+# A pool name is not proof that a directory is an isolated Git worktree. In
+# particular, Git can walk up from a stale seed and mutate the canonical repo.
+pool_tree_is_valid() {
+  local dir="$1" candidate pool_root top candidate_common repo_common git_dir
+  local records line current_matches=0 current_blocked=0 registered=0
+
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  pool_root="$(cd "$POOL" 2>/dev/null && pwd -P)" || return 1
+  candidate="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  [ "$candidate" = "$pool_root/$(basename "$dir")" ] || return 1
+  [ -e "$candidate/.git" ] && [ ! -L "$candidate/.git" ] || return 1
+
+  top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  top="$(cd "$top" 2>/dev/null && pwd -P)" || return 1
+  [ "$top" = "$candidate" ] || return 1
+
+  candidate_common="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$candidate_common" in /*) ;; *) candidate_common="$candidate/$candidate_common" ;; esac
+  candidate_common="$(cd "$candidate_common" 2>/dev/null && pwd -P)" || return 1
+  repo_common="$(git -C "$REPO" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$repo_common" in /*) ;; *) repo_common="$REPO/$repo_common" ;; esac
+  repo_common="$(cd "$repo_common" 2>/dev/null && pwd -P)" || return 1
+  [ "$candidate_common" = "$repo_common" ] || return 1
+
+  git_dir="$(git -C "$candidate" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  case "$git_dir" in "$repo_common"/worktrees/*) ;; *) return 1 ;; esac
+  [ -f "$git_dir/gitdir" ] || return 1
+  [ "$(cat "$git_dir/gitdir")" = "$candidate/.git" ] || return 1
+
+  records="$(git -C "$REPO" worktree list --porcelain 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        if [ "$current_matches" -eq 1 ] && [ "$current_blocked" -eq 0 ]; then
+          registered=1
+        fi
+        [ "${line#worktree }" = "$candidate" ] && current_matches=1 || current_matches=0
+        current_blocked=0
+        ;;
+      locked|locked\ *|prunable|prunable\ *)
+        [ "$current_matches" -eq 1 ] && current_blocked=1
+        ;;
+    esac
+  done <<< "$records"
+  [ "$current_matches" -eq 1 ] && [ "$current_blocked" -eq 0 ] && registered=1
+  [ "$registered" -eq 1 ]
+}
+
 # The repo owns this: scripts/bootstrap-worktree.sh runs the frozen install, the
 # workspace build, and the native-addon heal in one idempotent shot. Run it with
 # cwd INSIDE the tree — `pnpm -C <dir>` leaves the addon heal pointed at the
@@ -59,11 +108,19 @@ cmd_warm() {
   local want="${1:-3}" have=0 i=0
   mkdir -p "$POOL" "$TURBO_CACHE_DIR"
   ( cd "$REPO" && git fetch origin --quiet ) || true
-  for d in "$POOL"/${SEED_PREFIX}*; do [ -d "$d" ] && have=$((have + 1)); done
+  for d in "$POOL"/"${SEED_PREFIX}"*; do
+    [ -d "$d" ] || continue
+    if pool_tree_is_valid "$d"; then
+      have=$((have + 1))
+    else
+      log "skipping invalid ready-tree candidate: $d"
+    fi
+  done
   log "pool has $have, want $want (shared cache: $TURBO_CACHE_DIR)"
   while [ "$have" -lt "$want" ]; do
     i=$((i + 1))
-    local dir="$POOL/${SEED_PREFIX}$(date +%s)-$i"
+    local dir
+    dir="$POOL/${SEED_PREFIX}$(date +%s)-$i"
     ( cd "$REPO" && git worktree add --detach "$dir" origin/develop >/dev/null 2>&1 ) \
       || { log "worktree add FAILED"; return 1; }
     prepare_tree "$dir" || return 1
@@ -90,8 +147,12 @@ cmd_claim() {
     printf '%s\n' "$existing"
     return 0
   fi
-  for d in "$POOL"/${SEED_PREFIX}*; do
+  for d in "$POOL"/"${SEED_PREFIX}"*; do
     [ -d "$d" ] || continue
+    if ! pool_tree_is_valid "$d"; then
+      log "skipping invalid ready-tree candidate: $d" >&2
+      continue
+    fi
     dir="$d"; break
   done
   if [ -z "${dir:-}" ]; then
@@ -140,7 +201,9 @@ cmd_status() {
   for d in "$POOL"/*; do
     [ -d "$d" ] || continue
     case "$(basename "$d")" in
-      ${SEED_PREFIX}*) ready=$((ready + 1)) ;;
+      ${SEED_PREFIX}*)
+        if pool_tree_is_valid "$d"; then ready=$((ready + 1)); fi
+        ;;
       *) claimed=$((claimed + 1)) ;;
     esac
   done
