@@ -18,7 +18,10 @@ cached_secret() {
   local key="$1" f="$secret_cache_dir/$1" now mtime
   [[ "$secret_ttl" -gt 0 && -f "$f" && -O "$f" ]] || return 1
   now=$(date +%s)
-  mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null) || return 1
+  if ! mtime=$(stat -c %Y "$f" 2>/dev/null); then
+    mtime=$(stat -f %m "$f" 2>/dev/null) || return 1
+  fi
+  [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
   (( now - mtime < secret_ttl )) || return 1
   [[ "$f" -nt "$secrets_file" ]] || return 1
   cat "$f"
