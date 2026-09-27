@@ -18,6 +18,8 @@
 #   adc-wt claim <branch>  print the path of a ready tree, on a new branch
 #   adc-wt release <path>  remove a tree through the guarded worktree tool
 #   adc-wt status
+#   adc-wt -h|--help
+# Prefix a release path that begins with '-' with '--': adc-wt release -- -tree.
 set -uo pipefail
 
 # The checkout lives at ~/webb on the laptop and ~/code on the desktop; probe both, like the
@@ -210,6 +212,7 @@ cmd_release() {
     log "wt-remove is unavailable; refusing unsafe release" >&2
     return 127
   fi
+  case "$dir" in -*) dir="./$dir" ;; esac
   wt-remove "$dir"
 }
 
@@ -231,10 +234,57 @@ cmd_status() {
   echo "claimed:      $claimed"
 }
 
-case "${1:-status}" in
-  warm)    shift; cmd_warm "$@" ;;
-  claim)   shift; cmd_claim "$@" ;;
-  release) shift; cmd_release "$@" ;;
-  status)  cmd_status ;;
-  *) echo "usage: adc-wt {warm [N]|claim <branch>|release <path>|status}" >&2; exit 2 ;;
+usage() {
+  cat <<'EOF'
+usage: adc-wt {warm [N]|claim <branch>|release <path>|status}
+       adc-wt -h|--help
+Use 'adc-wt release -- -path' for a release path beginning with '-'.
+EOF
+}
+
+invalid_args() {
+  echo "adc-wt: $1" >&2
+  usage >&2
+  exit 2
+}
+
+# Parse the whole command before warm/claim can create or bootstrap a tree.
+for arg in "$@"; do
+  case "$arg" in
+    --) break ;;
+    -h|--help) usage; exit 0 ;;
+  esac
+done
+
+command="${1:-status}"
+[ $# -eq 0 ] || shift
+case "$command" in
+  warm)
+    [ $# -le 1 ] || invalid_args 'warm accepts one count'
+    if [ $# -eq 1 ]; then
+      case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
+      [[ "$1" =~ ^[0-9]+$ ]] || invalid_args 'warm count must be a nonnegative integer'
+    fi
+    cmd_warm "$@"
+    ;;
+  claim)
+    [ $# -eq 1 ] || invalid_args 'claim requires one branch'
+    case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
+    git check-ref-format --branch "$1" >/dev/null 2>&1 || invalid_args "invalid branch: $1"
+    cmd_claim "$1"
+    ;;
+  release)
+    escaped=0
+    if [ "${1:-}" = -- ]; then escaped=1; shift; fi
+    [ $# -eq 1 ] || invalid_args 'release requires one path'
+    if [ "$escaped" -eq 0 ]; then
+      case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
+    fi
+    cmd_release "$1"
+    ;;
+  status)
+    [ $# -eq 0 ] || invalid_args 'status takes no arguments'
+    cmd_status
+    ;;
+  *) invalid_args "unknown command: $command" ;;
 esac

@@ -4,6 +4,8 @@
 # Usage:
 #   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
 #                         [--project NAME] [--transcript PATH] [--trace-dir PATH]
+#   skill-run-log -h|--help
+# Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
 #
 # Example:
 #   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor \
@@ -20,10 +22,25 @@
 
 set -euo pipefail
 
-if [ $# -lt 1 ]; then
-  echo "usage: skill-run-log <skill> [--target X] [--prompt \"...\"] [--duration MIN] [--verdict V] [--next /SKILL] [--project NAME] [--transcript PATH] [--trace-dir PATH]" >&2
+usage() {
+  cat <<'EOF'
+usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--project NAME] [--transcript PATH] [--trace-dir PATH]
+       skill-run-log -h|--help
+Use --option=-literal for a value beginning with '-'.
+EOF
+}
+
+invalid_args() {
+  echo "skill-run-log: $1" >&2
+  usage >&2
   exit 2
-fi
+}
+
+[ $# -ge 1 ] || invalid_args 'skill is required'
+case "$1" in
+  -h|--help) usage; exit 0 ;;
+  -*) invalid_args "unknown flag: $1" ;;
+esac
 
 skill="$1"; shift
 
@@ -38,17 +55,40 @@ trace_dir=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --target)     target="$2"; shift 2;;
-    --prompt)     prompt="$2"; shift 2;;
-    --duration)   duration="$2"; shift 2;;
-    --verdict)    verdict="$2"; shift 2;;
-    --next)       next_skill="$2"; shift 2;;
-    --project)    project="$2"; shift 2;;
-    --transcript) transcript="$2"; shift 2;;
-    --trace-dir)  trace_dir="$2"; shift 2;;
-    *) echo "skill-run-log: unknown arg $1" >&2; exit 2;;
+    -h|--help) usage; exit 0 ;;
+    --target|--prompt|--duration|--verdict|--next|--project|--transcript|--trace-dir)
+      option="$1"
+      shift
+      [ $# -ge 1 ] || invalid_args "$option requires a value"
+      case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -*) invalid_args "$option requires a value; use $option=-literal for a value beginning with '-'" ;;
+      esac
+      value="$1"
+      shift
+      ;;
+    --target=*|--prompt=*|--duration=*|--verdict=*|--next=*|--project=*|--transcript=*|--trace-dir=*)
+      option="${1%%=*}"
+      value="${1#*=}"
+      shift
+      ;;
+    *) invalid_args "unknown argument: $1" ;;
+  esac
+  case "$option" in
+    --target) target="$value" ;;
+    --prompt) prompt="$value" ;;
+    --duration) duration="$value" ;;
+    --verdict) verdict="$value" ;;
+    --next) next_skill="$value" ;;
+    --project) project="$value" ;;
+    --transcript) transcript="$value" ;;
+    --trace-dir) trace_dir="$value" ;;
   esac
 done
+
+if [ "$duration" != null ] && ! [[ "$duration" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
+  invalid_args 'duration must be a nonnegative JSON number'
+fi
 
 # Artifact dir is .agent/. A repo that still has the legacy .evolve/ keeps using
 # it until someone migrates, so no in-flight run loses its history. Delete
