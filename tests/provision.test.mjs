@@ -152,6 +152,14 @@ test("the watchdog daemon and PID 1 use the udev names, never a probe-order numb
   assert.doesNotMatch(conf + readFileSync("host/install.sh", "utf8"), /\/dev\/watchdog[0-9]/);
 });
 
+test("watchdog flushes only its probe file and keeps failure semantics", () => {
+  const script = readFileSync("host/watchdog/root-write", "utf8");
+  assert.doesNotMatch(script, /^\s*sync(?:\s|$)/m, "sync -f calls syncfs and flushes unrelated filesystem writes");
+  assert.match(script, /dd of="\$d\/root-write" conv=fsync status=none/);
+  assert.equal(sh("sh", ["host/watchdog/root-write", "repair"]).status, 1);
+  assert.equal(sh("sh", ["host/watchdog/root-write", "unknown"]).status, 0);
+});
+
 test("format-traces-drive needs a model and a serial, then root", () => {
   let r = sh("bash", ["host/bin/format-traces-drive"]);
   assert.equal(r.status, 2);
