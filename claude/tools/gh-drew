@@ -27,7 +27,13 @@ verify_cache_dir="${GH_DREW_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/gh-drew}"
 verify_ttl="${GH_DREW_VERIFY_TTL:-21600}" # 6h
 
 token_fingerprint() {
-  printf '%s' "$1" | sha256sum | cut -c1-16
+  # macOS may lack sha256sum; an empty fingerprint once made the cache path the
+  # directory itself, and `chmod 600` then locked the directory.
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | cut -c1-16
+  else
+    printf '%s' "$1" | shasum -a 256 | cut -c1-16
+  fi
 }
 
 try_token() {
