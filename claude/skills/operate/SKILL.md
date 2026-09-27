@@ -13,16 +13,19 @@ Record every observer contribution, at launch and mid-run, separately from what 
 ## Before launch or resume
 
 Read the active pursuit, its existing run records, and the resources it may draw on.
-Hand the system sources, resources, and the fixed invariants.
-Do not hand it a problem, a decomposition, a team shape, or a research method.
-Fix independence, stated unknowns, and immutable evidence, and leave the measurement to the system.
+Apply the `profile-authoring` skill before launch.
+Name the result's audience, quote its acceptance test, and probe the in-run check's gap.
+Hold the acceptance check outside the agents' reward loop.
+Hand the system its sources, resources, fixed invariants and that acceptance contract.
+Whether the system also chooses its problem, decomposition or team is a registered arm of the claim, never a default.
+Fix independence, stated unknowns, and immutable evidence.
 For every claimed mechanism, identify an observable event.
-Read [the recursive proof requirements](../discovery-lead/references/recursive-proof.md) when the run claims recursion, learning, artifact reuse, or recovery.
+Read [the recursive proof requirements](references/recursive-proof.md) when the run claims recursion, learning, artifact reuse, or recovery.
 
 Keep ownership visible:
 
 - The observer and shared execution stack produce execution state, identities, traces, cost, failures, and recovery records.
-- The profiled system sources its own problems, organizes itself, finds what is measurable, and produces claims about the research subject.
+- The profiled system does the research and produces claims about the research subject.
 - Assessment commissioned from outside the authoring lineage decides acceptance and comparison.
 
 Label observer contributions and their effects.

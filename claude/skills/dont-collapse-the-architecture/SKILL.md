@@ -22,7 +22,7 @@ Repair the relevant test within the existing scope and resource limits.
 A mechanism that cannot execute or costs too much may still fail a feasibility or efficiency requirement.
 Missing evidence of quality is not an exemption from those requirements.
 
-For a recursive claim, use [the recursive proof requirements](../discovery-lead/references/recursive-proof.md) to identify the events that the claim needs.
+For a recursive claim, use [the recursive proof requirements](../operate/references/recursive-proof.md) to identify the events that the claim needs.
 
 If a valid comparison excludes the registered useful effect or violates required limits, reject or simplify the design.
 If the evidence cannot decide, retain the uncertainty and name the test that would resolve it.

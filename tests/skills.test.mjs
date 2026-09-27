@@ -199,12 +199,81 @@ test('every conversation profile skill exists in the source catalog', () => {
   assert.deepEqual(missing, [], `PI_SKILLS cites missing skills: ${missing.join(', ')}`)
 })
 
-test('an explicit Runtime skill source wins over guessed checkout paths', () => {
-  const installer = readFileSync(join(repoRoot, 'claude', 'install.sh'), 'utf8')
-  const explicit = installer.indexOf('${AGENT_RUNTIME_DIR:+$AGENT_RUNTIME_DIR/skills}')
-  const guessed = installer.indexOf('$HOME/webb/agent-runtime/skills')
-  assert.ok(explicit >= 0, 'install.sh must honor AGENT_RUNTIME_DIR')
-  assert.ok(explicit < guessed, 'AGENT_RUNTIME_DIR must precede guessed checkout paths')
+// Runtime skills come from a published version in a store, not from a checkout. Offline, the
+// installer keeps the version it already has; a link into an agent-runtime checkout from before
+// the store is relinked when its skill still ships and pruned when it no longer does.
+test('installer links Runtime skills from the store and retires checkout links', () => {
+  withHome((home) => {
+    const installer = join(repoRoot, 'claude', 'install.sh')
+    const store = join(home, '.local', 'share', 'agent-runtime-skills')
+    const release = join(store, '0.999.0')
+    writeSkill(join(release, 'skills'), 'profile-authoring', 'Runtime authoring')
+    writeSkill(join(release, 'skills'), 'supervise', 'Runtime supervise')
+    writeFileSync(join(release, 'manifest.json'), JSON.stringify({
+      version: '0.999.0',
+      integrity: 'sha512-test',
+      skills: { 'profile-authoring': {}, supervise: {} },
+    }))
+    symlinkSync('0.999.0', join(store, 'current'))
+
+    const checkout = join(home, 'old-runtime')
+    const oldSupervise = writeSkill(join(checkout, 'skills'), 'supervise', 'Old supervise')
+    const retired = writeSkill(join(checkout, 'skills'), 'retired-runtime', 'Retired Runtime skill')
+    execFileSync('git', ['init', '--quiet'], { cwd: checkout })
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/tangle-network/agent-runtime.git'], { cwd: checkout })
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      mkdirSync(root, { recursive: true })
+      symlinkSync(oldSupervise, join(root, 'supervise'))
+      symlinkSync(retired, join(root, 'retired-runtime'))
+    }
+
+    const result = spawnSync('bash', [installer], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: '/usr/local/bin:/usr/bin:/bin',
+        AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /Runtime skills: @tangle-network\/agent-runtime@0\.999\.0/)
+    assert.match(result.stderr, /keeping installed @tangle-network\/agent-runtime@0\.999\.0/)
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      for (const name of ['profile-authoring', 'supervise']) {
+        assert.equal(readlinkSync(join(root, name)), `${join(store, 'current', 'skills', name)}/`)
+      }
+      assert.throws(() => readlinkSync(join(root, 'retired-runtime')), { code: 'ENOENT' })
+    }
+  })
+})
+
+test('an installer with no store and no registry leaves Runtime links alone', () => {
+  withHome((home) => {
+    const installer = join(repoRoot, 'claude', 'install.sh')
+    const checkout = join(home, 'old-runtime')
+    const oldSupervise = writeSkill(join(checkout, 'skills'), 'supervise', 'Old supervise')
+    execFileSync('git', ['init', '--quiet'], { cwd: checkout })
+    execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:tangle-network/agent-runtime.git'], { cwd: checkout })
+    const root = join(home, '.claude', 'skills')
+    mkdirSync(root, { recursive: true })
+    symlinkSync(oldSupervise, join(root, 'supervise'))
+
+    const result = spawnSync('bash', [installer], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: '/usr/local/bin:/usr/bin:/bin',
+        AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /WARN Runtime skills not installed/)
+    assert.equal(readlinkSync(join(root, 'supervise')), oldSupervise)
+  })
 })
 
 test('installer skips and prunes directories without SKILL.md', () => {
@@ -241,6 +310,7 @@ test('installer skips and prunes directories without SKILL.md', () => {
         ...process.env,
         HOME: home,
         PATH: '/usr/local/bin:/usr/bin:/bin',
+        AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
       },
     })
     assert.equal(result.status, 0, result.stderr)
