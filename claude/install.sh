@@ -132,27 +132,27 @@ for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   link "$skill_dir" "$CODEX_DIR/skills/$skill"
 done
 
-# Skills owned by a sibling repo are resolved here, not committed as a symlink.
-# An absolute link checked into the repo cannot be right on more than one machine:
-# agent-runtime sits at ~/webb/agent-runtime on the laptop and ~/code/agent-runtime
-# on the dev box, so whichever path is committed dangles on the other and the skill
-# silently disappears.
+# agent-runtime's skills come from a published npm version: the bytes a project that pins
+# that version mounts into its agents. A working checkout drifted instead; on 2026-09-27 the
+# laptop's sat 316 commits behind and the dev box's was on a feature branch, so operators and
+# agents read different text. The installer checks the tarball's integrity, records each
+# SKILL.md's sha256 in the store's manifest.json, and keeps the installed version when the
+# registry is unreachable. AGENT_RUNTIME_SKILLS_VERSION picks an exact version or a dist-tag.
+RUNTIME_SKILLS_HOME="$HOME/.local/share/agent-runtime-skills"
 RUNTIME_SKILLS_DIR=""
-for candidate in \
-  "${AGENT_RUNTIME_DIR:+$AGENT_RUNTIME_DIR/skills}" \
-  "$HOME/webb/agent-runtime/skills" \
-  "$HOME/code/agent-runtime/skills"; do
-  [ -d "$candidate" ] || continue
-  RUNTIME_SKILLS_DIR="$candidate"
-  for ext in "$candidate"/*/; do
+if runtime_release=$(python3 "$SCRIPT_DIR/install-runtime-skills.py" --store "$RUNTIME_SKILLS_HOME"); then
+  RUNTIME_SKILLS_DIR="$RUNTIME_SKILLS_HOME/current/skills"
+  echo "  Runtime skills: @tangle-network/agent-runtime@$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["version"])' "$runtime_release")"
+  for ext in "$RUNTIME_SKILLS_DIR"/*/; do
     [ -f "$ext/SKILL.md" ] || continue
     name="$(basename "$ext")"
     [ -e "$SCRIPT_DIR/skills/$name" ] && continue   # a local skill of the same name wins
     link "$ext" "$CLAUDE_DIR/skills/$name"
     link "$ext" "$CODEX_DIR/skills/$name"
   done
-  break
-done
+else
+  echo "  WARN Runtime skills not installed; existing Runtime skill links are left in place"
+fi
 
 # Commands
 if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/null)" ]; then
@@ -291,17 +291,24 @@ repository_origin() {
 
 DOTFILES_COMMON_DIR=$(repository_common_dir "$SCRIPT_DIR" || true)
 DOTFILES_ORIGIN=$(repository_origin "$SCRIPT_DIR" || true)
-RUNTIME_COMMON_DIR=""
-RUNTIME_ORIGIN=""
-if [ -n "$RUNTIME_SKILLS_DIR" ]; then
-  RUNTIME_COMMON_DIR=$(repository_common_dir "$RUNTIME_SKILLS_DIR" || true)
-  RUNTIME_ORIGIN=$(repository_origin "$RUNTIME_SKILLS_DIR" || true)
-fi
 
 skill_is_current() {
   local name="$1"
   [ -f "$SCRIPT_DIR/skills/$name/SKILL.md" ] || \
     { [ -n "$RUNTIME_SKILLS_DIR" ] && [ -f "$RUNTIME_SKILLS_DIR/$name/SKILL.md" ]; }
+}
+
+# A Runtime link, into the store or into an agent-runtime checkout from before the store,
+# counts as managed only after an install succeeded, so an offline run never prunes one.
+runtime_link_is_managed() {
+  local link_path="$1" origin
+  [ -n "$RUNTIME_SKILLS_DIR" ] || return 1
+  case "$(readlink "$link_path")" in "$RUNTIME_SKILLS_HOME"/*) return 0 ;; esac
+  origin=$(repository_origin "$link_path" || true)
+  case "$origin" in
+    *[:/]tangle-network/agent-runtime | *[:/]tangle-network/agent-runtime.git) return 0 ;;
+  esac
+  return 1
 }
 
 skill_link_is_managed() {
@@ -311,8 +318,7 @@ skill_link_is_managed() {
   origin=$(repository_origin "$link_path" || true)
   { [ -n "$common_dir" ] && [ "$common_dir" = "$DOTFILES_COMMON_DIR" ]; } || \
     { [ -n "$origin" ] && [ "$origin" = "$DOTFILES_ORIGIN" ]; } || \
-    { [ -n "$common_dir" ] && [ "$common_dir" = "$RUNTIME_COMMON_DIR" ]; } || \
-    { [ -n "$origin" ] && [ "$origin" = "$RUNTIME_ORIGIN" ]; }
+    runtime_link_is_managed "$link_path"
 }
 
 # A missing SKILL.md is invalid. A managed link absent from the current source
