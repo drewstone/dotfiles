@@ -36,7 +36,8 @@ try_token() {
   [[ -n "$token" ]] || return 1
 
   local fp cache now stamp
-  fp="$(token_fingerprint "$token")"
+  fp="$(token_fingerprint "$token")" || return 1
+  [[ "$fp" =~ ^[0-9a-f]{16}$ ]] || return 1
   cache="$verify_cache_dir/$fp"
   now="$(date +%s)"
 
@@ -64,10 +65,11 @@ try_token() {
   fi
   if [[ -n "$login" ]]; then
     mkdir -p "$verify_cache_dir" 2>/dev/null || true
-    # Something on the Mac resets this directory to 0600, which blocks reads and writes.
+    # The private cache directory must be searchable before writing a verdict.
     chmod 700 "$verify_cache_dir" 2>/dev/null || true
-    printf '%s\n%s\n' "$now" "$login" > "$cache" 2>/dev/null || true
-    chmod 600 "$cache" 2>/dev/null || true
+    if printf '%s\n%s\n' "$now" "$login" > "$cache" 2>/dev/null; then
+      chmod 600 "$cache" 2>/dev/null || true
+    fi
   fi
   printf '%s' "$login"
 }
