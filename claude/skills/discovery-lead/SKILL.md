@@ -8,6 +8,10 @@ description: Build a discovery system from its first AgentProfile, handed source
 Build a system that sources its own problems, performs the research, and produces independently checked results.
 Keep the observer's contribution distinguishable from the system's.
 
+Use the [maintained profile-authoring procedure](https://github.com/tangle-network/discovery-lab/blob/master/skills/profile-authoring/SKILL.md) for the shared AgentProfile contract.
+It owns acceptance, audience, independent challenge, known traps, durable notes, limits, stopping, and honest null reporting.
+Apply it before creating the initial root or any descendant profile.
+
 ## Assign authority
 
 | Owner | Responsibility |
@@ -30,9 +34,9 @@ Do not let the measured system alter its own assessment, allocation, or accepted
 2. Register the capability claim about the system, the useful-effect threshold when comparing systems, and the evidence that would refute it.
    That claim is about the system, not about its research subject.
    Do not freeze the research measurement on the system's behalf.
-3. Author a complete root profile with the capabilities needed for the research policy.
+3. Apply the maintained profile-authoring procedure to the initial root profile.
    Configure execution limits, recovery, and cancellation through the existing runtime.
-   A per-child stop is a request the owning manager's live acknowledger applies, so plan the out-of-band procedure a wedged root or dead runner needs.
+   The profile does not replace the observer's resource ceiling or the runtime's cancellation path.
 4. Keep shared execution mechanisms in their owning package.
    Fix an authorized upstream defect there instead of duplicating the mechanism in the research project.
 5. Read [the recursive proof requirements](references/recursive-proof.md) when the claim includes recursion, learning, or recovery.
