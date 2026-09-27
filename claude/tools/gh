@@ -11,7 +11,22 @@
 set -euo pipefail
 
 if [[ "${GH_DREW_SHIM:-}" == "1" ]]; then
-  exec "${GH_SHIM_REAL_GH:-/usr/bin/gh}" "$@"
+  if [[ -n "${GH_SHIM_REAL_GH:-}" ]]; then
+    exec "$GH_SHIM_REAL_GH" "$@"
+  fi
+  # The real gh is the first one on PATH that is not this shim. It lives in
+  # /usr/bin on the dev box and /opt/homebrew/bin on the laptop; a fixed
+  # /usr/bin/gh broke every gh call on the laptop once install.sh linked this.
+  self=$(readlink -f "${BASH_SOURCE[0]}")
+  IFS=: read -r -a dirs <<< "${PATH:-}"
+  for dir in "${dirs[@]}" /opt/homebrew/bin /usr/local/bin /usr/bin; do
+    candidate="$dir/gh"
+    [[ -f "$candidate" && -x "$candidate" ]] || continue
+    [[ "$(readlink -f "$candidate")" == "$self" ]] && continue
+    exec "$candidate" "$@"
+  done
+  echo "gh shim: no gh binary other than this shim on PATH" >&2
+  exit 127
 fi
 
 export GH_DREW_SHIM=1

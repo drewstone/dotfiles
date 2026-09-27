@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -49,6 +49,30 @@ test("with the marker set the shim runs the real gh directly", () => {
     const result = spawnSync(shim, ["api", "rate_limit"], { env: { ...s.env, GH_DREW_SHIM: "1" }, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "real-gh shim=1 args=api rate_limit");
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("with the marker and no override the shim runs the first real gh on PATH, never itself", () => {
+  const s = sandbox();
+  try {
+    const shimDir = join(s.root, "shim-bin");
+    const realDir = join(s.root, "real-bin");
+    mkdirSync(shimDir);
+    mkdirSync(realDir);
+    symlinkSync(shim, join(shimDir, "gh"));
+    writeFileSync(join(realDir, "gh"), `#!/usr/bin/env bash
+printf 'path-gh args=%s\\n' "$*"
+`);
+    chmodSync(join(realDir, "gh"), 0o755);
+    const { GH_SHIM_REAL_GH: _unused, ...env } = s.env;
+    const result = spawnSync(join(shimDir, "gh"), ["api", "user"], {
+      env: { ...env, GH_DREW_SHIM: "1", PATH: `${shimDir}:${realDir}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "path-gh args=api user");
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
