@@ -5,7 +5,44 @@ expected_login="${GH_DREW_EXPECTED_LOGIN:-drewstone}"
 secrets_file="${GH_DREW_SECRETS_FILE:-$HOME/company/devops/secrets/agent-state.env}"
 keys_file="${GH_DREW_KEYS_FILE:-$HOME/company/devops/secrets/.env.keys}"
 
+# Decrypting the vault starts a Node process per call. Thirteen agent sessions
+# calling gh-drew kept 3-6 decrypts running at once (2026-09-27, several cores).
+# A decrypted value is cached for GH_DREW_SECRET_TTL seconds (default 900) in a
+# per-user private temp directory (0700, files 0600), and is discarded early when
+# the vault file changes. The vault's own key file lives in the same home, so the
+# cache does not widen who can read the token.
+secret_ttl="${GH_DREW_SECRET_TTL:-900}"
+secret_cache_dir="${TMPDIR:-/tmp}/gh-drew-secrets-$(id -u)"
+
+cached_secret() {
+  local key="$1" f="$secret_cache_dir/$1" now mtime
+  [[ "$secret_ttl" -gt 0 && -f "$f" && -O "$f" ]] || return 1
+  now=$(date +%s)
+  mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null) || return 1
+  (( now - mtime < secret_ttl )) || return 1
+  [[ "$f" -nt "$secrets_file" ]] || return 1
+  cat "$f"
+}
+
+store_secret() {
+  local key="$1" value="$2" tmp
+  [[ "$secret_ttl" -gt 0 && -n "$value" ]] || return 0
+  ( umask 077; mkdir -p "$secret_cache_dir" ) 2>/dev/null || return 0
+  chmod 700 "$secret_cache_dir" 2>/dev/null || return 0
+  [[ -O "$secret_cache_dir" ]] || return 0
+  tmp=$(umask 077; mktemp "$secret_cache_dir/.$key.XXXXXX") || return 0
+  printf '%s' "$value" > "$tmp" && mv -f "$tmp" "$secret_cache_dir/$key"
+}
+
 read_secret() {
+  local key="$1" value
+  if value=$(cached_secret "$key"); then printf '%s' "$value"; return 0; fi
+  value=$(read_secret_uncached "$key")
+  store_secret "$key" "$value"
+  printf '%s' "$value"
+}
+
+read_secret_uncached() {
   local key="$1"
 
   if command -v dotenvx >/dev/null 2>&1 && [[ -f "$secrets_file" ]]; then
