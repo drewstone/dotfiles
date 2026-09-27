@@ -49,6 +49,23 @@ Know them so you work with them, not around them.
   Nothing deletes a chat.
 - A sweep timer closes items whose PR merged, restores titles, and exports every managed chat.
 
+## Revisit work and recover windows
+
+Read `runs --all --json` before dispatching more work.
+Set `--limit` high enough to cover the ledger; the default view can omit older items.
+Review pending answers and failure states, then give each unfinished item an owner and an exact next deliverable.
+Read the captured answer before its owner records `ack <item>`.
+Continue the same item by reference; a closed browser tab does not finish or abandon its work.
+
+Use the maintained sweep to capture results and retire eligible tool-owned tabs.
+Keep active turns, unsent drafts, unreadable tabs, and unmanaged conversations intact.
+Revisit pending items through their recorded conversation links instead of keeping every chat open.
+Check current cleanup behavior in the installed command's README before applying it to a recovered browser.
+
+After a browser or machine restart, restore profiles individually and verify the signed-in account and actual tab count.
+Resume tracked work from the ledger instead of restoring every previous tab.
+Check the owner process separately; a restored window does not prove that its worker resumed.
+
 ## Repository access
 
 A slot's GitHub connector reaches only the repositories connected in that account.
