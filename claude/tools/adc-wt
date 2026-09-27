@@ -16,7 +16,7 @@
 # usage:
 #   adc-wt warm [N]        keep N ready trees (default 3)
 #   adc-wt claim <branch>  print the path of a ready tree, on a new branch
-#   adc-wt release <path>  return a tree to the pool (reset + refresh)
+#   adc-wt release <path>  remove a tree through the guarded worktree tool
 #   adc-wt status
 set -uo pipefail
 
@@ -161,19 +161,36 @@ cmd_claim() {
     ( cd "$REPO" && git worktree add --detach "$dir" origin/develop >/dev/null 2>&1 ) || return 1
     prepare_tree "$dir" || return 1
   fi
-  local claimed="$POOL/${branch//\//-}"
-  mv "$dir" "$claimed" 2>/dev/null || claimed="$dir"
-  ( cd "$REPO" && git worktree repair "$claimed" >/dev/null 2>&1 ) || true
+  local claimed="$POOL/${branch//\//-}" move_output
+  if [ -e "$claimed" ] || [ -L "$claimed" ]; then
+    log "claim destination already exists; seed left unchanged: $claimed" >&2
+    return 1
+  fi
+  if ! move_output="$(cd "$REPO" && git worktree move "$dir" "$claimed" 2>&1)"; then
+    log "worktree move FAILED: ${move_output:-unknown}" >&2
+    return 1
+  fi
+  if ! pool_tree_is_valid "$claimed"; then
+    local nested
+    nested="$claimed/$(basename "$dir")"
+    if [ -d "$nested" ]; then
+      log "moved worktree failed validation; no checkout performed; nested seed preserved at $nested; destination preserved at $claimed" >&2
+    else
+      log "moved worktree failed validation; no checkout performed; inspect preserved path $claimed" >&2
+    fi
+    return 1
+  fi
   if ! ( cd "$claimed" \
     && git fetch origin --quiet \
     && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ); then
-    # Leave the tree in the pool under its seed name. A tree stranded under a
-    # branch name is claimed by nobody and warms nothing.
-    local reason
+    # Keep failed checkouts registered as worktrees when returning them to the pool.
+    local reason recycled recycle_output
     reason="$( cd "$claimed" && git checkout -B "$branch" origin/develop 2>&1 | tail -2 )"
-    mv "$claimed" "$POOL/${SEED_PREFIX}$(date +%s)-recycled" 2>/dev/null || true
-    ( cd "$REPO" && git worktree prune >/dev/null 2>&1 ) || true
-    log "branch checkout FAILED: ${reason:-unknown}"
+    recycled="$POOL/${SEED_PREFIX}$(date +%s)-recycled"
+    if ! recycle_output="$(cd "$REPO" && git worktree move "$claimed" "$recycled" 2>&1)"; then
+      log "failed to return worktree to pool, left at $claimed: ${recycle_output:-unknown}" >&2
+    fi
+    log "branch checkout FAILED: ${reason:-unknown}" >&2
     return 1
   fi
   # A pooled tree carries the dependencies of the develop it was warmed from.
@@ -189,8 +206,11 @@ cmd_claim() {
 
 cmd_release() {
   local dir="${1:?usage: adc-wt release <path>}"
-  ( cd "$REPO" && git worktree remove --force "$dir" >/dev/null 2>&1 ) || rm -rf "$dir"
-  log "released $dir"
+  if ! command -v wt-remove >/dev/null 2>&1; then
+    log "wt-remove is unavailable; refusing unsafe release" >&2
+    return 127
+  fi
+  wt-remove "$dir"
 }
 
 cmd_status() {
