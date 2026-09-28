@@ -119,7 +119,15 @@ Support consequential claims with the check you ran and its relevant evidence.
 Local success does not prove production success; a build-hook response does not prove a completed deployment.
 Check the served artifact and user flow when claiming a deployment works.
 If deployment logs are unavailable, use infrastructure you can inspect when feasible.
-For UI claims, test the actual interaction.
+For every delivered feature or fix, record the complete intended workflow using the actual product or consumer entrypoint.
+Show the starting state, actions, and observable result, including persistence or reopening when relevant.
+Capture browser interactions for UI changes and real terminal operations for SDK, CLI, infrastructure, and agent changes.
+Retain the uncut recording and provide a fast playback copy with its speed and process boundaries labeled.
+Attach playable videos and useful screenshots to the PR and delivery.
+Open and play the published links as the intended viewer.
+Keep credentials and unrelated personal data out of captures.
+Name the source revision, execution target, missing coverage, and failures beside the proof.
+Test counts support engineering checks; report actual user outcomes and distinguish external customer revenue from internal proof spending.
 Label unchecked explanations as hypotheses.
 Keep measurement errors and exit status visible, and reconcile aggregate parts against the whole.
 A failed instrument is not an answer: when a tool cannot read the target, switch instruments and report the number.
@@ -179,7 +187,7 @@ Start with `blog-and-research.md`, `copywriting.md`, `product-design.md`, or `re
 These documents own the detailed writing and design rules; skills may summarize them.
 Inspect real product references and prior versions the user liked before choosing a visual direction.
 Verify the result in the browser and fix visual defects encountered during product testing.
-A UI PR includes screenshots; an interactive flow includes a short video or GIF.
+Apply the delivery recording requirements above to UI changes.
 Use before and after images for a redesign.
 
 Remove redundant labels, procedural narration, dead panels, repeated actions, and fake readiness states.
