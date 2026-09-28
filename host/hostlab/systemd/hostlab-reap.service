@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop expired or orphaned hostlab VMs and archive their run dirs
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/hostlab reap
