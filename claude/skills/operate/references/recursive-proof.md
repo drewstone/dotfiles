@@ -1,30 +1,33 @@
-# Prove the claimed recursive behavior
+# Prove the claimed mechanisms
 
-Use this reference when a run claims recursive delegation, learning, artifact reuse, or recovery.
-Record the required observations before the run.
-Include each behavior the claim relies on; explain exclusions before seeing the result.
+Use this reference for recursion, learning, artifact reuse, or recovery claims.
+Register each required observation before the run.
+Include only mechanisms on which the claim depends.
 
 | Claim | Required evidence |
 |---|---|
-| Recursive delegation | A root-authored child profile and child-authored grandchild profile, their identities, and actual spawn and completion records |
-| Reuse of descendant work | A checked descendant artifact and an ancestor decision that demonstrably uses it |
-| Learning or adaptation | Recorded evidence, a resulting profile or strategy revision, and subsequent execution of that revision |
-| Continuation through context or process replacement | Durable assignment identity, resumed work, and evidence that completed work was not duplicated |
-| Independent claim checking | A deliberately false claim rejected by checks the measured system cannot alter |
+| Recursive delegation | Root-authored child and child-authored grandchild profiles, with actual execution records at both edges |
+| Reuse of descendant work | A checked descendant artifact and a recorded ancestor decision that uses it |
+| Adaptation | Recorded evidence, a resulting profile or strategy revision, and execution of that revision |
+| Recovery | Durable assignment identity, reconciled completed work, and resumed execution without duplicate assignment |
+| Persistent tools | Retained tool sources and dependencies, followed by successful tool use after replacement |
+| Independent checking | A false claim rejected by an instrument the measured authors cannot alter |
 
-Keep the root, descendant, observer, and assessment contributions attributable in the trace.
-An observer-authored child does not prove that the root can author children.
-A stored artifact does not prove that an ancestor used it.
-A profile edit does not prove that the edited profile ran.
+Report Runtime edges and harness-native children separately.
+Group revisions and retries of the same assignment into one lineage.
+Count independent teams only when their assignments and evidence support that classification.
+Report observed concurrency, depth, and completion separately from configured limits.
 
-Register synthetic facts used to test assessment separately from research inputs.
-Label their producer and intervention time.
-Never count them as discoveries or evidence for the subject under research.
-Require the system to produce any real research counterpart itself.
+Keep root, descendant, operator, and assessor contributions attributable.
+An operator-authored child does not prove that the root authored it.
+A stored report establishes availability; ancestor consumption needs its own evidence.
+A profile edit establishes intent; execution needs its own receipt.
 
-Preserve complete attempts, execution identities, traces, failures, retries, model and coordination use, cost, and elapsed time.
-Check accepted research claims independently of the system that produced them.
+For recovery, distinguish retained artifacts from disposable scratch intermediates.
+Check exact retained bytes and their subsequent use before claiming continuity.
+Register synthetic assessment fixtures separately from research inputs.
+Preserve their producer and intervention time.
 
-These events establish that mechanisms ran.
-They do not by themselves establish novel research, reliable performance, or an advantage over a simpler system.
-Those conclusions require the corresponding assessment and comparison.
+Retain complete attempts, identities, traces, failures, retries, resource use, and elapsed time.
+These observations establish which mechanisms ran.
+Novelty, reliability, and advantage over a simpler system require their corresponding assessments and comparisons.
