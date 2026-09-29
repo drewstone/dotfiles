@@ -46,6 +46,14 @@ Keep these constraints visible in every implementation:
 Run a customer-like flow against the actual backend and storage.
 Check the final artifact, authorized side effect, usage record, and interruption outcome, including denial when permission is absent.
 For visible flows, click through the product and inspect errors and retained state.
+For workspace UI changes, compare the primary flow with the product brief and its actual users.
+Inspect installed exports before composing the shell.
+Reuse `AgentWorkspaceLayout`, `PageHeader` from `sandbox-ui/primitives`, and `WorkspacePaneHeader` from `sandbox-ui/workspace` when applicable.
+Use the shell's header slots and omit private session history from unrelated operational views.
+Inspect every navigation route at desktop and mobile widths.
+Require aligned header boundaries, consistent page spacing, one primary title, and useful empty states.
+Trace which product owns each live profile, channel, and secret.
+Distinguish saved settings, published profiles, and delivered messages through actual consumer proof.
 For deployed work, repeat the relevant flow on the deployed artifact.
 
 Report the working flow, retained adapters, removed competing paths, checks, and unresolved limits.
