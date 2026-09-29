@@ -23,7 +23,9 @@ A useful artifact establishes output.
 An independent check establishes only the claim it tested.
 Keep those statements separate.
 
-For behavioral causes or trace analysis, read [trace workflows](references/trace-workflows.md).
+For recurring fleet reviews or a broad research audit, read the [fleet review question register](references/fleet-review.md).
+Use its 12 core questions, evidence records, and triggered deeper reviews.
+Verify the actual scheduled command and loaded inputs before claiming automated question coverage.
 For fleet comparisons, recursion, efficiency, or account questions, read [topology and resources](references/topology-and-resources.md).
 
 ## Answer the human question
@@ -58,8 +60,9 @@ skill-run-log /research-lead-interface --target "<question/run/fleet>" --verdict
 
 ## Then consider
 
-| Condition | Next skill | What to pass |
+| Condition | Next skill or reference | What to pass |
 |---|---|---|
+| Behavioral causes or artifact consumption need trace inspection | [Trace workflows](references/trace-workflows.md) | Exact runs, native sessions, time window, and unanswered questions |
 | The finding requires operating an authorized run | `/operate` | Current state, bounds, and the next action |
 | A comparative conclusion needs deeper analysis | `/report` | The measured population, artifacts, and remaining uncertainty |
 | A surprising result needs causal investigation | `/autopsy` | Exact run records and competing explanations |
