@@ -25,6 +25,7 @@ Reuse each package's behavior while retaining product policy at typed boundaries
   Install only modules needed by the user flow.
 - When replacing existing infrastructure, read [migration](references/migration.md) before choosing what to delete or retain.
 - When a sandbox turn must survive a caller or support live viewers, read [sandbox execution and viewing](references/sandbox-viewing.md) before adding transport or replay state.
+- When agents build embedded apps, read [embedded app continuity](references/embedded-apps.md) before adding previews, storage, or model switching.
 
 ## Build the complete flow
 
