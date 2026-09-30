@@ -26,6 +26,13 @@ Keep unavailable, unreadable, and indeterminate checks distinct from healthy res
 An empty log is not evidence of success; try the owning tool's log retrieval path and retain the failure reason.
 A cancelled run is incomplete evidence; inspect its cause before rerunning it.
 
+## Trace a Sandbox execution
+
+For a failed, slow, or unexpectedly long turn, run tangle-ops trace <execution-id>; use trace-stats for trends.
+Trust totalMs only when its bounds show sandbox_execution_ledger or builder_timeline.
+Treat replayed /events durations as observer evidence; they do not set execution end.
+The host egress reader returns bounded rejection classifications and variable names; full logs and values stay on host.
+
 ## Preserve operational constraints
 
 - Probe the same request path as the product, including idempotency headers and auth identity.
