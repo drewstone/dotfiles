@@ -60,7 +60,6 @@ Unknown mergeability is a poll, not a report.
 A red check holds a merge only when the failure is the change's own defect; otherwise merge it and open the follow-up fix PR in the same turn.
 Merge additive or flagged changes fast; a change that deletes a live path gets an independent review and one live proof before it reaches every user.
 A "blocked" bucket with no running lane behind each item is not a status; it is the correction the user sends next.
-Only production promotion and package publishing wait for the user.
 Check `git rev-list --count HEAD --not --remotes` and the PR for the branch before reporting completion.
 
 Keep these guardrails even when agents share the repository:
