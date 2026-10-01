@@ -13,10 +13,12 @@ Use `WorkspaceLayout` from `sandbox-ui/workspace` with the app preview in `cente
 When Copilot closes, pass `right={null}` and `centerHeaderVisibility="auto"` to remove its toggle and any empty center header.
 Pass pane labels through `WorkspaceLayout` header slots; use `WorkspacePaneHeader` only for headers outside those slots.
 Render the preview with `EmbeddedAppView` from `sandbox-ui/workbench/embedded-app`.
-Send structured text and attachment parts through `ChatComposer` from `agent-app/web-react` using `onSendParts`.
+Pass message text and ready attachment descriptors through `ChatComposer` from `agent-app/web-react` using `onSendParts`.
 Render real live and persisted tool calls and results with `AgentTimeline` from `sandbox-ui/chat`.
 Preserve tool call IDs, inputs, statuses, and results through storage and reopening.
-Show the `AgentProfile` saved with each turn, the requested model, and the independently verified served model.
+Persist each turn's actual saved profile ID and version.
+Show its safe label and version beside the requested and independently verified served models.
+Keep the full `AgentProfile` server-side.
 Label the served model unverified when execution did not attest it.
 
 Keep the app ID stable when editing its source.
@@ -33,7 +35,9 @@ Browser localStorage alone cannot retain shared business data across preview URL
 
 Open the app at desktop and mobile widths with Copilot both open and closed.
 Record app, native session, and sandbox IDs before and after a live edit; confirm the preview changes.
-Reopen the app and confirm real owner-supplied data and tool history persist after a server restart.
+Reopen the app and compare those IDs and the edited preview.
+Add and edit real owner-supplied data.
+After a server restart, reopen again and confirm data and tool history persist.
 Verify another account and the standalone public preview cannot read private app data.
 Inspect the deployed app in its real iframe, including delayed mounting and preview replacement.
 Use maintained route recovery so a retired lazy-loaded asset shows a reload action instead of a blank page.
