@@ -33,6 +33,19 @@ Trust totalMs only when its bounds show sandbox_execution_ledger or builder_time
 Treat replayed /events durations as observer evidence; they do not set execution end.
 The host egress reader returns bounded rejection classifications and variable names; full logs and values stay on host.
 
+## Check native CLI delivery and authentication
+
+For native CLI version failures, read the [Nix CLI pins](https://github.com/tangle-network/agent-dev-container/blob/develop/infra/nix/agent-clis.nix), [signed profile publication](https://github.com/tangle-network/agent-dev-container/blob/develop/.github/workflows/nix-profile.yml), and [host activation](https://github.com/tangle-network/agent-dev-container/blob/develop/scripts/update-host-agent.sh).
+The managed Docker path mounts host Nix tools into the sandbox.
+An OCI image change or profile publication does not prove that a fresh sandbox runs the new CLI.
+Bind the receipt to the signed closure, source identity, active host profile, and actual CLI version in a fresh sandbox.
+Check [image and Sidecar capture proofs](https://github.com/tangle-network/agent-dev-container/blob/develop/apps/orchestrator/src/driver/host-capture-proof.ts) separately from the CLI profile.
+
+For subscription authentication, read the [auth reference and materialization contract](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/cli-agent-registry/src/cli-auth-bundle.ts).
+Transport validation accepts supported secret references; the private executor resolves them into native authentication material.
+A validated reference does not prove login or model execution.
+Keep credential values outside profiles and traces.
+
 ## Preserve operational constraints
 
 - Probe the same request path as the product, including idempotency headers and auth identity.
