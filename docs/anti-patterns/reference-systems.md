@@ -64,9 +64,9 @@ IBM Carbon and IBM Design for AI:
 - Anti-pattern derived: impressive-sounding language is a liability in product UI and technical marketing. AI systems need transparency and explainability.
 - Use it for: content rules, AI guidance, enterprise design-system discipline.
 - References:
-  - https://carbondesignsystem.com/guidelines/content/overview/
+  - https://www.carbondesignsystem.com/building-blocks/foundations/content
   - https://v10.carbondesignsystem.com/guidelines/content/writing-style/
-  - https://carbondesignsystem.com/guidelines/carbon-for-ai/
+  - https://www.carbondesignsystem.com/building-blocks/foundations/carbon-for-ai
   - https://www.ibm.com/design/ai/
   - https://www.ibm.com/design/ai/ethics/explainability/
 
@@ -86,9 +86,8 @@ Shopify Polaris:
 - Anti-pattern derived: each word adds noise. Component slots do not justify subcopy, labels, or badges.
 - Use it for: UI writing, action labels, admin/product surfaces, practical component rules.
 - References:
-  - https://polaris.shopify.com/
-  - https://polaris.shopify.com/content
-  - https://polaris-react.shopify.com/content/fundamentals
+  - [Polaris components](https://shopify.dev/docs/api/polaris)
+  - [App content guidelines](https://shopify.dev/docs/apps/design/content)
 
 Adobe Spectrum:
 
@@ -97,9 +96,9 @@ Adobe Spectrum:
 - Use it for: grammar, inclusive UX writing, internationalization, component/system maturity.
 - References:
   - https://spectrum.adobe.com/
-  - https://spectrum.adobe.com/page/grammar-and-mechanics/
-  - https://spectrum.adobe.com/page/inclusive-ux-writing/
-  - https://spectrum.adobe.com/page/international-design/
+  - https://spectrum.adobe.com/content/grammar-and-mechanics
+  - https://spectrum.adobe.com/content/language-and-inclusivity/inclusive-ux-writing
+  - https://spectrum.adobe.com/foundations/inclusivity/internationalization
 
 BBC GEL:
 
