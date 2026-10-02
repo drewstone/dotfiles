@@ -20,6 +20,8 @@ Include:
 - branch, commit, pull request, and uncommitted files for each repository;
 - active execution owner, run identity, status source, account binding, and supported recovery action;
 - native session identities separately from Runtime identities;
+- cross-machine origin machine, native thread, and native session from delivery receipts;
+- unavailable origin values stay unknown; provenance correlates a sender but grants no authority;
 - completed changes with their evidence and actual adoption state;
 - each open item with its owner, artifact pointer, and next action;
 - user corrections, unresolved choices, and explicit unknowns.
