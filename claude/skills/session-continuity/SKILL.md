@@ -6,53 +6,58 @@ description: Preserve a long-running task across context, process, provider, or 
 # Session continuity
 
 Use this before or after context, process, provider, or machine replacement, and before a project switch.
-The active goal survives unless it reached a terminal condition.
+The active objective and existing authorization survive until their completion or stop conditions apply.
 
 ## Capture checked state
 
-1. Re-read the active goal and the user's latest instruction.
-2. Inspect git state, recent commits, open pull requests, active subagents, and running processes.
-3. Read the repository's durable task state.
-4. Recheck every live lane through its authoritative status source.
-5. Record one compact brief in the repository's existing state location or the session scratch directory.
+Read the objective, latest user instruction, repository state, active agents, and authoritative run records.
+Replace the current handoff header with a concise, dated brief.
+Preserve its predecessor as history instead of appending corrections below stale status.
 
 Include:
 
-- objective, current status, and explicit completion conditions;
-- exact branch, commit, pull request, and uncommitted files for each repository;
-- every active process or subagent, its harness, account, native session ID, status source, and safe resume command;
-- every completed change with the check that proved it;
-- every open item with one state, one artifact pointer, and one next command;
-- decisions with evidence and the condition that would reverse each one;
-- user corrections that must not be relearned;
-- uncertainty at replacement time.
+- objective, authority, resource bounds, and completion conditions;
+- branch, commit, pull request, and uncommitted files for each repository;
+- active execution owner, run identity, status source, account binding, and supported recovery action;
+- native session identities separately from Runtime identities;
+- completed changes with their evidence and actual adoption state;
+- each open item with its owner, artifact pointer, and next action;
+- user corrections, unresolved choices, and explicit unknowns.
 
 Reference existing records instead of copying them.
-Never infer a live process from age or silence.
-Never describe an unchecked claim as settled.
+Recheck live lanes through their authoritative status sources.
+An old transcript or restored terminal does not establish a running worker.
 
-## Recover from native sessions
+## Preserve useful work
+
+Retain required candidate artifacts, tool sources, dependency identities, and reproducible build instructions in durable workspace storage.
+Keep disposable scratch intermediates separate.
+Snapshot moved parent and worker traces with sizes and hashes.
+Record missing workers explicitly.
+Preserve source paths and use supported relocation when available.
+
+## Recover through the owner
 
 Resolve the installed trace tool and check its help before selecting a parser.
-A command name can resolve to an unrelated package on another machine.
-Start with session metadata, the latest relevant user turn, and its linked workers.
-Use deterministic facts before model analysis; ask a bounded question only when those facts leave a decision unresolved.
-Keep source file and record references for consequential claims.
+Use deterministic records before bounded model analysis.
+Reconcile recovered claims with current commits, live identities, and task ownership.
 
-When moving traces, preserve immutable snapshots of the parent and referenced workers with a size and hash manifest.
-Record missing workers explicitly; a parent transcript alone does not establish what its children delivered.
-Keep recorded source paths intact and use the tool's supported relocation mechanism.
+Use Runtime's maintained recovery path for Runtime-owned assignments.
+Resume a standalone native session only when that harness owns the task and its resume contract permits it.
+Verify account binding and workspace identity without exposing credentials.
+Reconcile an uncertain admission before issuing replacement work.
+Preserve terminal records; a new experiment or changed profile needs an immutable successor.
 
-Reconcile recovered claims against current commits, pull requests, process identities, and task ownership before resuming.
-After a reboot, a restored terminal or board entry does not prove that its worker is running.
-Resume a stopped task with its verified native session ID, account, and checkout.
-Recover one worker first and verify execution and result capture before restoring the former concurrency.
+Recover one worker first when restoring a fleet after failure.
+Verify execution, capture, and use of a retained artifact or tool before claiming continuity.
+Then restore authorized concurrency within current capacity.
 
 ## Continue
 
-After the brief is written, continue the already-authorized goal automatically when the environment supports it.
-Do not ask the user to restate the task.
-Ask only when progress needs new authority or a material choice that cannot be inferred.
+Continue already-authorized work when the environment supports it.
+A terminal run can leave the broader objective unfinished.
+State a specific missing capability or authority when it prevents the next action.
+Keep pending outside assessment separate from measured research progress.
 
 ## Log the run
 
@@ -64,7 +69,7 @@ skill-run-log /session-continuity --target "<active goal>" --verdict <VERDICT> -
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Two or more valid next actions compete | `/governor` | the brief and active objective |
-| The brief contains an unproven completion claim | `/verify` | the claim and its real-path check |
-| Several completed skill runs have not been assessed | `/reflect` | the run log and brief |
-| One next action is already determined | active skill | the brief path and exact next command |
+| A research run needs recovery or a successor | `/operate` | The checked brief and execution owner's records |
+| Two valid next actions compete | `/governor` | The brief and active objective |
+| A completion claim remains unproved | `/verify` | The claim and its consumer check |
+| Repeated continuity failures need assessment | `/reflect` | The handoffs and retained evidence |
