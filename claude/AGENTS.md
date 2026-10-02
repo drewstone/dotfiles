@@ -51,7 +51,11 @@ If changes share a PR with unrelated work, finish and report the scope mix.
 Do not rewrite others' work to separate it without authorization.
 
 Find the actual owning repository, including a directory that is itself a repo or uses selective unignores.
-Use Git metadata to distinguish repositories, aliases, and worktrees.
+Before creating a clone or worktree, inspect existing checkouts on the selected host.
+Match the origin URL, resolve the Git common directory, and read its worktree list.
+On GTR, inspect both ~/code and existing ~/webb checkouts; reuse the owning clone.
+Place genuinely new GTR repositories under ~/code.
+A worktree's directory prefix does not identify its owning clone.
 Commit completed changes, open a PR, satisfy its checks and reviews, and merge when ready.
 Verify the merge; a pushed branch without a PR is not delivery.
 When asked to merge a backlog, end the turn with every PR merged, closed, or in a lane you have already started.
@@ -69,9 +73,13 @@ Keep these guardrails even when agents share the repository:
 - No `--no-verify`; inspect and fix a failing hook or its cause.
 - No branch deletion without confirming it is merged or abandoned.
 - Remove a worktree only with `wt-remove <path>`, never a bare `git worktree remove`; git treats ignored files as clean and deletes them.
-- On the Mac, reuse one worktree per repository and switch branches in it.
-  Run new worktrees, full dependency installs, builds, type checks, and test suites on `drew-gtr-pro`; keep the Mac for sessions, edits, and pushes.
-  Why: on 2026-09-25 parallel lanes did this work on the Mac, filled its disk twice, and pushed load to 178 on 10 cores with swap full.
+- Choose the host by its job.
+  Use the Mac for sessions, lightweight reads, edits, and pushes; reuse one worktree per repository.
+  Use `drew-gtr-pro` for new worktrees, full installs, builds, type checks, test suites, and retained trace storage.
+  Run Discovery research in Tangle sandboxes through the maintained CLI.
+  A working local CLI can submit directly; GTR is not a required SSH hop.
+  Research must continue when the Mac or GTR disconnects.
+  Why: parallel builds previously filled the Mac's disk twice and pushed load to 178 on 10 cores.
 - Never set a Git identity or add co-authorship trailers.
   Before the first commit in a repository or worktree, check `git config user.email`.
   Use the existing global identity, `drewstone329@gmail.com`; remove conflicting local overrides instead of setting another identity.
@@ -160,6 +168,8 @@ Tie results to the changed behavior and the outcome the user wanted.
 When reporting a failure, include its cause or the investigation and corrective action already underway.
 
 Report the state of the work, not your progress through it.
+For long runs, report native execution state, the last productive event, and the current wait reason.
+A live controller or fresh heartbeat alone does not prove productive work.
 A correction to your own earlier claim is one clause inside the current finding, never the subject of the message.
 Do not open consecutive messages with what you got wrong; the user is tracking the work, not your reliability.
 Carry an unresolved decision in one place and act on it or hand it to a named owner; an item that appears in two consecutive messages without moving is yours to resolve.
