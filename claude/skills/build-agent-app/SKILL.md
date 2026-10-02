@@ -70,6 +70,17 @@ Track which product owns each live profile, channel, and secret.
 Keep saved settings, published profiles, and delivered messages distinct; prove each through its consumer.
 For deployed work, repeat the changed flow on the served artifact before claiming it works live.
 
+Discover applicable skills and existing product capabilities for the user's goal.
+Use the app as the intended user through maintained routes and tools.
+Retain actual invocation, tool, artifact, and stored-readback identities; reopen the saved result.
+Apply user corrections to workspace context or scoped implementation while preserving the goal and authorization.
+Exercise the correction in a fresh eligible session, reusing persisted context and preserving pending execution identities.
+Compare audience utility, cost, and owner intervention against a comparable control; retain failures and unknowns.
+Persist the supported lesson immediately in the product's adopted workspace memory, with evidence links.
+Promote shared profile or skill changes through owning review, versioning, and measured evaluation, retaining rollback.
+Use maintained APIs for promotion; a saved lesson does not establish an update to the active agent.
+Stop when the user's acceptance gate and requested delivery are proved; retain missing proof and its owner.
+
 Report the user-visible result, run and artifact identities, checks, unresolved limits, and retained or removed adapters when relevant.
 
 ## Log the run
