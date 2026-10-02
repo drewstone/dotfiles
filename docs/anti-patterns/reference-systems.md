@@ -120,6 +120,21 @@ AGENTS.md:
   - https://github.com/agentsmd/agents.md
   - https://github.blog/ai-and-ml/github-copilot/how-to-write-a-great-agents-md-lessons-from-over-2500-repositories/
 
+## Browser evidence and accessibility
+
+These references describe capture and interaction behavior.
+They support [UI evidence](ui-evidence.md); they do not define a brand aesthetic.
+
+- [Playwright screenshots](https://playwright.dev/docs/screenshots): capture the actual page or changed element.
+  Preserve matching viewports and states for before and after images.
+- [Playwright videos](https://playwright.dev/docs/videos): close the browser context before collecting its saved recording.
+  Retain successful interaction recordings when the PR changes a user flow.
+- [WCAG target size](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html): evaluate control size and spacing together.
+  Use the applicable accessibility rule and product touch-target standard; a screenshot alone cannot establish keyboard access.
+
+A passing browser test without reviewable media does not satisfy the product evidence requirement.
+A recording of terminal output does not demonstrate a UI flow.
+
 ## Tier 2: Open-Source UI Systems To Learn From
 
 These systems are not automatically appropriate for a brand. Use them to study constraints, accessibility defaults, component ownership, and documentation quality.
