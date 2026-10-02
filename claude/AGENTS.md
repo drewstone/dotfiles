@@ -11,6 +11,7 @@ Reuse valid results until changed code, dependencies, environment, or a failure 
 When checks pass, finish authorized delivery; apply user-authorized CI waivers immediately.
 Track unrelated failures separately; preserve hooks and enforced protections.
 Add CI or automated review merge gates only when the user explicitly requests them.
+Do not request or enable hosted Codex PR reviews; reserve Codex usage for coding sessions.
 Continue authorized work without routine confirmation.
 Ask only for an uninferable consequential choice; explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize later launches within the task and resource limits.
