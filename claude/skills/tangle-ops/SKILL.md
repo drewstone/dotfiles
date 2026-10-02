@@ -7,64 +7,64 @@ description: Diagnose Tangle production health, deployment failures, provisionin
 
 Read live state for the requested product and environment before changing it.
 Use the maintained [operator tool](https://github.com/drewstone/tangle-tools/tree/main/tangle-ops) and its current help.
-Confirm its repository mapping and target; a healthy response from another product is irrelevant.
+Confirm its repository mapping and target; another product's healthy response proves nothing here.
 
-Start with `tangle-ops status` for the overview, then the command that addresses the observed symptom.
-If the tool is unavailable, use the owning repository's runbook and current probes rather than inferring health.
+Start with `tangle-ops status`, then run the command for the observed symptom.
+If the tool is unavailable, use the owning repository's runbook and current probes.
 
 ## Diagnose the actual failure
 
 | Symptom | Evidence needed |
 |---|---|
 | Failed deployment or blocked PR | Exact failed or cancelled step and its logs |
-| Product stuck provisioning | Product request, admission state, and the corresponding sandbox create result |
-| Slow startup | Measured production timing and warm-claim results across representative requests |
+| Product stuck provisioning | Product request, admission state, and sandbox create result |
+| Slow startup | Production timing and warm-claim results across representative requests |
 | Environment drift | Configured target plus live credential and service checks |
-| Inaccessible host or admin endpoint | Current allowed access route and its read-only probe |
+| Inaccessible host or admin endpoint | Current allowed access route and read-only probe |
 
 Keep unavailable, unreadable, and indeterminate checks distinct from healthy results.
-An empty log is not evidence of success; try the owning tool's log retrieval path and retain the failure reason.
-A cancelled run is incomplete evidence; inspect its cause before rerunning it.
+An empty log is not success; use the owning log-retrieval path and retain the failure reason.
+Inspect why a run was cancelled before rerunning it.
 
 ## Trace a Sandbox execution
 
-For a failed, slow, or unexpectedly long turn, run tangle-ops trace <execution-id>; use trace-stats for trends.
-Trust totalMs only when its bounds show sandbox_execution_ledger or builder_timeline.
-Treat replayed /events durations as observer evidence; they do not set execution end.
-The host egress reader returns bounded rejection classifications and variable names; full logs and values stay on host.
+For failed, slow, or unexpectedly long turns, run `tangle-ops trace <execution-id>`; use `trace-stats` for trends.
+Trust `totalMs` only when timing bounds identify `sandbox_execution_ledger` or `builder_timeline`.
+Replayed `/events` durations are observer evidence, not execution end.
+The host egress reader returns bounded rejection classes and variable names; keep full logs and values on host.
 
 ## Check native CLI delivery and authentication
 
-For native CLI version failures, read the [Nix CLI pins](https://github.com/tangle-network/agent-dev-container/blob/develop/infra/nix/agent-clis.nix), [signed profile publication](https://github.com/tangle-network/agent-dev-container/blob/develop/.github/workflows/nix-profile.yml), and [host activation](https://github.com/tangle-network/agent-dev-container/blob/develop/scripts/update-host-agent.sh).
+For native CLI version failures, read the [Nix pins](https://github.com/tangle-network/agent-dev-container/blob/develop/infra/nix/agent-clis.nix), [signed profile workflow](https://github.com/tangle-network/agent-dev-container/blob/develop/.github/workflows/nix-profile.yml), and [host activation](https://github.com/tangle-network/agent-dev-container/blob/develop/scripts/update-host-agent.sh).
 The managed Docker path mounts host Nix tools into the sandbox.
-An OCI image change or profile publication does not prove that a fresh sandbox runs the new CLI.
+An image change or profile publication does not prove a fresh sandbox runs the new CLI.
 Bind the receipt to the signed closure, source identity, active host profile, and actual CLI version in a fresh sandbox.
 Check [image and Sidecar capture proofs](https://github.com/tangle-network/agent-dev-container/blob/develop/apps/orchestrator/src/driver/host-capture-proof.ts) separately from the CLI profile.
 
-For subscription authentication, read the [auth reference and materialization contract](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/cli-agent-registry/src/cli-auth-bundle.ts).
-Transport validation accepts supported secret references; the private executor resolves them into native authentication material.
+For subscription auth, read the [auth and materialization contract](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/cli-agent-registry/src/cli-auth-bundle.ts).
+Transport validation accepts supported secret references; the private executor resolves them to native authentication material.
 A validated reference does not prove login or model execution.
 Keep credential values outside profiles and traces.
 
 ## Preserve operational constraints
 
-- Probe the same request path as the product, including idempotency headers and auth identity.
-- Test credential validity without exporting credential values; presence alone does not establish validity.
-- Use the secret owner's current runbook and strict decryption behavior.
-- Keep host administration on the configured access path; public routes and host-local administration use different authority.
-- Track test resources and confirm their deletion after the probe.
+- Probe the product's real request path, including idempotency headers and auth identity.
+- Test credential validity without exposing values; presence alone proves nothing.
+- Follow the secret owner's current runbook and strict decryption behavior.
+- Keep host administration on its configured access path; public routes use different authority.
+- Track test resources and confirm cleanup.
 
-Read the repository's current deployment workflow before selecting the integration and production branches.
-A deployment step passing does not override a failed product journey or recovery check.
+Read the current deployment workflow before selecting integration or production branches.
+A passing deploy step does not prove the product journey or recovery path works.
 
 ## Prove recovery
 
-Repeat the failing product flow on the deployed target and inspect its final artifact or state.
-For latency changes, retain the measurement conditions and compare the same production path.
+Repeat the failed journey against the deployed target and inspect its final state.
+For latency changes, compare the same production path and conditions.
 For provisioning changes, confirm the created resource works and cleanup completes.
+Do not turn unknown health into success by probing until one request passes.
 
-Report the cause, change, live result, and any checks that could not run.
-Do not convert unknown health into success by repeatedly probing until one request passes.
+Report the cause, change, live result, and checks that could not run.
 
 ## Log the run
 
@@ -74,7 +74,7 @@ skill-run-log /tangle-ops --target "<target>" --verdict <VERDICT> --next /<next-
 
 ## Then consider
 
-- `slack-alerts` when unresolved recurring notifications need producer-level investigation.
-- `deploy-proof` when deployment completed and serving behavior remains to prove.
-- `ground-truth` when startup or runtime latency lacks a complete production breakdown.
+- `slack-alerts` when recurring notifications need producer-level investigation.
+- `deploy-proof` when deployment completed but served behavior remains unverified.
+- `ground-truth` when startup or runtime latency lacks a production breakdown.
 - `verify` when the operational fix works and repository delivery checks remain.
