@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Run typecheck, tests, build, deploy, and live checks for a release; report exact proof.
+description: Release a verified artifact through the authorized path and prove its live behavior.
 ---
 
 # Ship
@@ -17,9 +17,10 @@ Release the intended artifact to the authorized target and prove its live behavi
 
 ## Release
 
-1. Run required checks and build the artifact according to their dependencies.
+1. Reuse valid verification, run remaining required checks, and build the artifact according to their dependencies.
    Run independent commands concurrently only when they do not share mutable outputs; collect every exit status.
-2. Fix failed checks without bypassing hooks, suppressing tests, or weakening requirements.
+2. Fix change defects; track unrelated failures separately and continue the permitted release path.
+   Apply user-authorized CI waivers immediately; preserve hooks and enforced protections.
 3. Deploy through the repository's authorized release path.
 4. Wait for the deployment to reach a terminal state.
 5. Match the served revision or artifact to the intended release and exercise the changed live user path.
@@ -40,6 +41,6 @@ skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --ne
 | Condition | Next skill | What to pass |
 |---|---|---|
 | The served artifact or behavior remains unverified | `/deploy-proof` | the expected revision, target, and missing check |
-| CI blocks the release | `/converge` | the failing job and target |
+| An in-scope defect or enforced CI check blocks release | `/converge` | the failing job and target |
 | The authorized release requires custom artifact coordination | `/release-conductor` | artifacts, current deployment state, and rollback procedure |
 | Live behavior fails after recovery | `/diagnose` | the failed probe, served revision, and recovery evidence |
