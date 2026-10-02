@@ -121,6 +121,17 @@ class HostlabReapTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(manual), 'archive entry without a reaped file pruned')
         self.assertIn('caller exited', open(os.path.join(self.home, 'reap.log')).read())
 
+    def test_unmounted_archive_drive_keeps_the_run_on_disk(self):
+        # A missing drive leaves its mount point as a plain directory on root.
+        mount = os.path.join(self.tmp, 'drive')
+        os.makedirs(mount)
+        self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
+        r = self.hostlab('reap', HOSTLAB_ARCHIVE_MOUNT=mount, HOSTLAB_ARCHIVE=os.path.join(mount, 'archive'))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isdir(os.path.join(self.runs, 'dead-qemu')), 'run moved or deleted')
+        self.assertFalse(os.path.exists(os.path.join(mount, 'archive')), 'archive created on the root disk')
+        self.assertIn('not mounted', r.stdout)
+
     def test_unwritable_archive_deletes_the_run(self):
         self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
         r = self.hostlab('reap', HOSTLAB_ARCHIVE='/proc/hostlab-archive')

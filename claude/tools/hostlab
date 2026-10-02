@@ -47,6 +47,10 @@ CPUS="${HOSTLAB_CPUS:-4}"
 SCRATCH="${HOSTLAB_SCRATCH:-16G}"
 DISK="${HOSTLAB_DISK:-20G}"
 ARCHIVE="${HOSTLAB_ARCHIVE:-/mnt/traces/archive/hostlab}"
+# The archive lives on the external drive. When that drive is missing, the
+# path is a plain directory on the root disk, and archiving there would move
+# VM disks onto root (2026-09-28: the drive vanished after a crash).
+ARCHIVE_MOUNT="${HOSTLAB_ARCHIVE_MOUNT:-/mnt/traces}"
 MIN_FREE_GB=100
 ARCHIVE_KEEP_DAYS=14
 TTL=2h
@@ -404,6 +408,13 @@ archive_run() {
   local d="$1" reason="$2" id
   id="$(basename "$d")"
   echo "$reason at $(date -u +%FT%TZ)" > "$d/reaped"
+  case "$ARCHIVE/" in
+    "$ARCHIVE_MOUNT"/*)
+      if ! mountpoint -q "$ARCHIVE_MOUNT"; then
+        reap_log "$id $reason: stopped and kept in place, because $ARCHIVE_MOUNT is not mounted (owner: $(cat "$d/owner" 2>/dev/null))"
+        return 0
+      fi ;;
+  esac
   if mkdir -p "$ARCHIVE" 2>/dev/null && [ -w "$ARCHIVE" ] && mv "$d" "$ARCHIVE/$id"; then
     reap_log "$id $reason: stopped and archived to $ARCHIVE/$id (owner: $(cat "$ARCHIVE/$id/owner" 2>/dev/null))"
   else
