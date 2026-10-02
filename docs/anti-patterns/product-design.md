@@ -23,6 +23,15 @@ Good:
 
 If the label is removed and the UI collapses, the design is not carrying meaning.
 
+## Settings Page Drift
+
+Keep sibling settings tabs on one content inset and heading baseline.
+Constrain a form or card inside that frame instead of centering each page independently.
+Use the same frame for loading states, with an accessible status and a skeleton shaped like the coming content.
+
+Remove decorative category eyebrows that repeat the tab or page title, such as “Private to this business” above “Secrets.”
+Keep a privacy, permission, or status label where it explains a real choice or action.
+
 ## Card Grids
 
 Cards are allowed for repeated content items, modals, and true collections. Cards are not a solution for unclear product strategy.
