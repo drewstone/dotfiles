@@ -152,6 +152,14 @@ test("the watchdog daemon and PID 1 use the udev names, never a probe-order numb
   assert.doesNotMatch(conf + readFileSync("host/install.sh", "utf8"), /\/dev\/watchdog[0-9]/);
 });
 
+test("watchdog flushes only its probe file and keeps failure semantics", () => {
+  const script = readFileSync("host/watchdog/root-write", "utf8");
+  assert.doesNotMatch(script, /^\s*sync(?:\s|$)/m, "sync -f calls syncfs and flushes unrelated filesystem writes");
+  assert.match(script, /dd of="\$d\/root-write" conv=fsync status=none/);
+  assert.equal(sh("sh", ["host/watchdog/root-write", "repair"]).status, 1);
+  assert.equal(sh("sh", ["host/watchdog/root-write", "unknown"]).status, 0);
+});
+
 test("format-traces-drive needs a model and a serial, then root", () => {
   let r = sh("bash", ["host/bin/format-traces-drive"]);
   assert.equal(r.status, 2);
@@ -1026,7 +1034,12 @@ test("legacy view units defer the pages swap even when the new unit is available
 
 test("a commented-out authorized key does not hide the ssh-copy-id step", () => {
   const home = mkdtempSync(join(tmpdir(), "authkeys-"));
+  // Hermetic perms: a group-writable umask (agent shells run 002) would otherwise
+  // make the home directory and ~/.ssh group-writable and fail StrictModes
+  // before the assertions run.
+  chmodSync(home, 0o700);
   mkdirSync(join(home, ".ssh"));
+  chmodSync(join(home, ".ssh"), 0o700);
   const keys = join(home, ".ssh/authorized_keys");
   const script = `
     . host/provision/lib.sh
@@ -1037,6 +1050,7 @@ test("a commented-out authorized key does not hide the ssh-copy-id step", () => 
     true
   `;
   writeFileSync(keys, "# ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample old-laptop\n");
+  chmodSync(keys, 0o600);
   assert.equal(sh("bash", ["-c", script]).stdout, "");
   writeFileSync(keys, 'from="10.0.0.0/8" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample mac\n');
   assert.equal(sh("bash", ["-c", script]).stdout, "active\n");

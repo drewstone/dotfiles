@@ -16,12 +16,24 @@
 #   hostlab run [opts] -- CMD...  boot, run CMD in /work as root, tear down
 #   hostlab shell [opts]          boot and open an interactive root shell
 #   hostlab ssh ID [-- CMD...]    reach a kept VM
-#   hostlab status                list kept VMs
+#   hostlab status                list kept VMs with owner and expiry
+#   hostlab extend ID DURATION    move a kept VM's expiry to DURATION from now
+#   hostlab reap                  stop expired or orphaned VMs, archive their run dirs
 #   hostlab clean                 stop and delete every kept VM
 #
 # Options for run/shell: --keep (leave the VM running, print its ID),
+#   --ttl 2h (a kept VM's lifetime; 90s, 45m, 2h, 1d), --owner NAME,
 #   --mem 4G, --cpus 4, --scratch 16G, --work DIR (default: cwd)
-# Env: HOSTLAB_HOME (default ~/.cache/hostlab)
+# Env: HOSTLAB_HOME (default ~/.cache/hostlab),
+#   HOSTLAB_ARCHIVE (default /mnt/traces/archive/hostlab), HOSTLAB_OWNER
+#
+# Every VM records its owner, its caller and, when kept, an expiry. The
+# hostlab-reap timer (host/hostlab/install.sh) runs `hostlab reap` every
+# minute. It stops a kept VM past its expiry, a run whose caller exited, and a
+# run whose qemu died, then moves the run dir to the archive, which keeps 14
+# days. A boot refuses when the disk holding the runs has under 100 GB free.
+# Why: on 2026-09-27, VMs whose callers were gone held 60 GB of RAM and 70 GB
+# of disk on drew-gtr-pro, and one run's copy of /nix filled 36 GB.
 set -euo pipefail
 
 CACHE="${HOSTLAB_HOME:-$HOME/.cache/hostlab}"
@@ -34,12 +46,53 @@ MEM="${HOSTLAB_MEM:-4G}"
 CPUS="${HOSTLAB_CPUS:-4}"
 SCRATCH="${HOSTLAB_SCRATCH:-16G}"
 DISK="${HOSTLAB_DISK:-20G}"
+ARCHIVE="${HOSTLAB_ARCHIVE:-/mnt/traces/archive/hostlab}"
+# The archive lives on the external drive. When that drive is missing, the
+# path is a plain directory on the root disk, and archiving there would move
+# VM disks onto root (2026-09-28: the drive vanished after a crash).
+ARCHIVE_MOUNT="${HOSTLAB_ARCHIVE_MOUNT:-/mnt/traces}"
+MIN_FREE_GB=100
+ARCHIVE_KEEP_DAYS=14
+TTL=2h
+OWNER="${HOSTLAB_OWNER:-}"
 KEEP=0
 WORK="$PWD"
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
 
 die() { printf 'hostlab: %s\n' "$*" >&2; exit 1; }
+
+to_seconds() {
+  # to_seconds 90s|45m|2h|1d|120 -> seconds
+  [[ "$1" =~ ^([0-9]+)([smhd]?)$ ]] || die "bad duration $1 (use 90s, 45m, 2h or 1d)"
+  local n="${BASH_REMATCH[1]}"
+  case "${BASH_REMATCH[2]}" in
+    s|'') echo "$n" ;; m) echo $((n * 60)) ;; h) echo $((n * 3600)) ;; d) echo $((n * 86400)) ;;
+  esac
+}
+
+# The kernel start time of PID, or nothing when it has exited. Paired with the
+# PID it identifies the caller even after the PID is reused.
+proc_start() {
+  [ -r "/proc/$1/stat" ] || return 0
+  sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null | awk '{ print $20 }'
+}
+
+caller_alive() {
+  local pid start
+  read -r pid start < "$1/caller" 2>/dev/null || return 1
+  [ -n "$start" ] && [ "$(proc_start "$pid")" = "$start" ]
+}
+
+check_free() {
+  mkdir -p "$RUNS"
+  local avail
+  avail="$(df -P -BG "$RUNS" | awk 'NR == 2 { sub(/G$/, "", $4); print $4 }')"
+  [ "${avail:-0}" -ge "$MIN_FREE_GB" ] ||
+    die "only ${avail:-0}G free on the disk holding $RUNS; a VM needs ${MIN_FREE_GB}G (hostlab status; hostlab reap)"
+}
+
+reap_log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$CACHE/reap.log"; }
 
 need() {
   local b
@@ -206,12 +259,19 @@ cmd_build() {
 
 vm_boot() {
   # vm_boot -> prints RUN DIR; boots an overlay of the base with WORK at /work
+  check_free
   need
   [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
   local id dir port
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
   dir="$RUNS/$id"; mkdir -p "$dir"
+  # Recorded before qemu starts, so the reaper never sees an unowned run.
+  # Command substitution keeps $$ as the hostlab process: the caller.
+  printf '%s\n' "$OWNER" > "$dir/owner"
+  echo "$KEEP" > "$dir/keep"
+  echo "$$ $(proc_start $$)" > "$dir/caller"
+  if [ "$KEEP" = 1 ]; then echo $(( $(date +%s) + $(to_seconds "$TTL") )) > "$dir/expires"; else echo none > "$dir/expires"; fi
   qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMG" "$dir/disk.qcow2"
   qemu-img create -q -f qcow2 "$dir/scratch.qcow2" "$SCRATCH"
   {
@@ -244,6 +304,8 @@ parse_opts() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --keep) KEEP=1; shift ;;
+      --ttl) TTL="$2"; shift 2 ;;
+      --owner) OWNER="$2"; shift 2 ;;
       --mem) MEM="$2"; shift 2 ;;
       --cpus) CPUS="$2"; shift 2 ;;
       --scratch) SCRATCH="$2"; shift 2 ;;
@@ -255,6 +317,15 @@ parse_opts() {
     esac
   done
   REST=("$@")
+  to_seconds "$TTL" >/dev/null
+  [ -n "$OWNER" ] || OWNER="$(id -un) pid $PPID: $(ps -o args= -p "$PPID" 2>/dev/null | cut -c1-100)"
+}
+
+# A run that is not kept stops its VM when interrupted. A SIGKILL skips this;
+# the reaper then finds the caller gone.
+stop_on_signal() {
+  [ "$KEEP" = 1 ] && return 0
+  trap 'vm_stop "$dir"; rm -rf "$dir"; exit 130' INT TERM HUP
 }
 
 cmd_run() {
@@ -262,9 +333,10 @@ cmd_run() {
   [ "${#REST[@]}" -gt 0 ] || die "run needs a command after --"
   local dir port rc=0
   dir="$(vm_boot)"; port="$(cat "$dir/port")"
+  stop_on_signal
   ssh $(ssh_opts) -p "$port" root@127.0.0.1 "cd /work && ${REST[*]}" || rc=$?
   if [ "$KEEP" = 1 ]; then
-    echo "hostlab: kept $(basename "$dir") (hostlab ssh $(basename "$dir") -- CMD; hostlab clean)" >&2
+    echo "hostlab: kept $(basename "$dir") until $(date -d "@$(cat "$dir/expires")" +%FT%T%z) (hostlab ssh $(basename "$dir") -- CMD; hostlab extend $(basename "$dir") 2h)" >&2
   else
     vm_stop "$dir"; rm -rf "$dir"
   fi
@@ -275,6 +347,7 @@ cmd_shell() {
   parse_opts "$@"
   local dir port rc=0
   dir="$(vm_boot)"; port="$(cat "$dir/port")"
+  stop_on_signal
   ssh -t $(ssh_opts) -p "$port" root@127.0.0.1 'cd /work && exec bash -l' || rc=$?
   if [ "$KEEP" = 1 ]; then
     echo "hostlab: kept $(basename "$dir")" >&2
@@ -296,12 +369,16 @@ cmd_ssh() {
 
 cmd_status() {
   need
-  local d pid state
+  local d pid state exp left now
+  now="$(date +%s)"
   for d in "$RUNS"/*/; do
     [ -d "$d" ] || continue
     pid="$(cat "$d/qemu.pid" 2>/dev/null || echo -)"
     state=dead; [ "$pid" != - ] && kill -0 "$pid" 2>/dev/null && state=running
-    printf '%s  %s  port=%s  work=%s\n' "$(basename "$d")" "$state" "$(cat "$d/port" 2>/dev/null)" "$(cat "$d/work" 2>/dev/null)"
+    exp="$(cat "$d/expires" 2>/dev/null || echo unset)"
+    case "$exp" in ''|*[!0-9]*) left="$exp" ;; *) left="$(( (exp - now) / 60 ))m" ;; esac
+    printf '%s  %s  expires_in=%s  owner=%s  port=%s  work=%s\n' "$(basename "$d")" "$state" "$left" \
+      "$(cat "$d/owner" 2>/dev/null || echo unrecorded)" "$(cat "$d/port" 2>/dev/null)" "$(cat "$d/work" 2>/dev/null)"
   done
   [ -f "$BASE_IMG" ] && echo "base: $BASE_IMG (built $(cat "$BASE_IMG.built" 2>/dev/null))" || echo "base: not built (hostlab build)"
 }
@@ -316,12 +393,86 @@ cmd_clean() {
   done
 }
 
+cmd_extend() {
+  local id="${1:-}" dur="${2:-}"
+  [ -n "$id" ] && [ -n "$dur" ] || die "usage: hostlab extend ID DURATION"
+  local dir="$RUNS/$id"
+  [ -d "$dir" ] || die "no VM $id"
+  to_seconds "$dur" >/dev/null
+  echo $(( $(date +%s) + $(to_seconds "$dur") )) > "$dir/expires"
+  echo 1 > "$dir/keep"
+  echo "hostlab: $id expires at $(date -d "@$(cat "$dir/expires")" +%FT%T%z)"
+}
+
+archive_run() {
+  local d="$1" reason="$2" id
+  id="$(basename "$d")"
+  echo "$reason at $(date -u +%FT%TZ)" > "$d/reaped"
+  case "$ARCHIVE/" in
+    "$ARCHIVE_MOUNT"/*)
+      if ! mountpoint -q "$ARCHIVE_MOUNT"; then
+        reap_log "$id $reason: stopped and kept in place, because $ARCHIVE_MOUNT is not mounted (owner: $(cat "$d/owner" 2>/dev/null))"
+        return 0
+      fi ;;
+  esac
+  if mkdir -p "$ARCHIVE" 2>/dev/null && [ -w "$ARCHIVE" ] && mv "$d" "$ARCHIVE/$id"; then
+    reap_log "$id $reason: stopped and archived to $ARCHIVE/$id (owner: $(cat "$ARCHIVE/$id/owner" 2>/dev/null))"
+  else
+    reap_log "$id $reason: stopped and deleted, because $ARCHIVE is not writable (owner: $(cat "$d/owner" 2>/dev/null))"
+    rm -rf "$d"
+  fi
+}
+
+cmd_reap() {
+  mkdir -p "$CACHE" "$RUNS"
+  exec 9> "$CACHE/reap.lock"
+  flock -n 9 || { echo "hostlab reap: another reap holds $CACHE/reap.lock"; return 0; }
+  local now d id pid alive exp keep reason
+  now="$(date +%s)"
+  for d in "$RUNS"/*/; do
+    [ -d "$d" ] || continue
+    d="${d%/}"; id="$(basename "$d")"
+    pid="$(cat "$d/qemu.pid" 2>/dev/null || true)"
+    alive=0; [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && alive=1
+    if [ ! -f "$d/caller" ]; then
+      # A run from before owners were recorded: give it the default lifetime
+      # from now instead of stopping it under whoever is using it.
+      echo $(( now + $(to_seconds "$TTL") )) > "$d/expires"
+      echo "unrecorded (started before hostlab recorded owners)" > "$d/owner"
+      echo 1 > "$d/keep"; echo "0 unknown" > "$d/caller"
+      reap_log "$id has no recorded owner: expires in $TTL (hostlab extend $id DURATION)"
+      continue
+    fi
+    exp="$(cat "$d/expires" 2>/dev/null || echo none)"
+    keep="$(cat "$d/keep" 2>/dev/null || echo 1)"
+    reason=
+    if [ "$exp" != none ] && [ "$now" -ge "$exp" ]; then
+      reason=expired
+    elif [ "$keep" != 1 ] && ! caller_alive "$d"; then
+      reason="caller exited"
+    elif [ "$alive" = 0 ] && { ! caller_alive "$d" || [ $(( now - $(stat -c %Y "$d") )) -gt 600 ]; }; then
+      # qemu writes its pid a moment after the run dir appears; only a gone
+      # caller or a 10-minute-old dir makes a missing qemu final.
+      reason="qemu not running"
+    fi
+    [ -n "$reason" ] || continue
+    vm_stop "$d"
+    archive_run "$d" "$reason"
+  done
+  if [ -d "$ARCHIVE" ]; then
+    find "$ARCHIVE" -mindepth 2 -maxdepth 2 -name reaped -mtime +"$ARCHIVE_KEEP_DAYS" -printf '%h\n' 2>/dev/null |
+      while read -r old; do rm -rf "$old"; reap_log "pruned $(basename "$old") from the archive after $ARCHIVE_KEEP_DAYS days"; done
+  fi
+}
+
 case "${1:-}" in
   build) shift; cmd_build "$@" ;;
   run) shift; cmd_run "$@" ;;
   shell) shift; cmd_shell "$@" ;;
   ssh) shift; cmd_ssh "$@" ;;
   status) shift; cmd_status ;;
+  extend) shift; cmd_extend "$@" ;;
+  reap) shift; cmd_reap ;;
   clean) shift; cmd_clean ;;
   -h|--help|help|"") usage; exit 0 ;;
   *) die "unknown command $1 (hostlab --help)" ;;

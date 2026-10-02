@@ -11,7 +11,8 @@ The rule: when working on public writing, research, marketing pages, product UI,
 - `blog-and-research.md` - blog posts, research notes, comparison posts, and technical arguments.
 - `blog-discovery.md` - SEO, answer-engine, and generative-search discovery failures.
 - `marketing-pages.md` - public pages, homepages, product pages, landing pages, and CTAs.
-- `product-design.md` - UI structure, cards, labels, visual systems, and product proof.
+- [Product design](product-design.md) - UI structure, cards, labels, visual systems, and product proof.
+- [UI evidence](ui-evidence.md) - before and after screenshots, interaction videos, and reviewable PR proof.
 - `ai-agent-work.md` - how agents should operate when doing design or writing.
 - `source-quality.md` - source ranking, reference extraction, and anti-reference-theater rules.
 - `world-class-site.md` - the bar for serious technical startup sites, including Tangle's current site doctrine.
@@ -47,7 +48,7 @@ Before design or writing work:
 Before claiming done:
 
 1. Grep changed files for `kicker`, `eyebrow`, `badge`, `chip`, `label`, `step`, `phase`, `platform loop`, `what * builds`, `proof over positioning`.
-2. Screenshot the result when it is visual.
+2. Apply [UI evidence](ui-evidence.md) to visible product changes, including PR attachments.
 3. State what was removed, not only what was added.
 4. If the work is still mostly text, say that plainly and keep iterating.
 

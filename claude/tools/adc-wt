@@ -16,8 +16,10 @@
 # usage:
 #   adc-wt warm [N]        keep N ready trees (default 3)
 #   adc-wt claim <branch>  print the path of a ready tree, on a new branch
-#   adc-wt release <path>  return a tree to the pool (reset + refresh)
+#   adc-wt release <path>  remove a tree through the guarded worktree tool
 #   adc-wt status
+#   adc-wt -h|--help
+# Prefix a release path that begins with '-' with '--': adc-wt release -- -tree.
 set -uo pipefail
 
 # The checkout lives at ~/webb on the laptop and ~/code on the desktop; probe both, like the
@@ -33,6 +35,55 @@ SEED_PREFIX="wt-warm-"
 export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
 
 log() { echo "[adc-wt $(date +%H:%M:%S)] $*"; }
+
+# A pool name is not proof that a directory is an isolated Git worktree. In
+# particular, Git can walk up from a stale seed and mutate the canonical repo.
+pool_tree_is_valid() {
+  local dir="$1" candidate pool_root top candidate_common repo_common git_dir
+  local records line current_matches=0 current_blocked=0 registered=0
+
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  pool_root="$(cd "$POOL" 2>/dev/null && pwd -P)" || return 1
+  candidate="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  [ "$candidate" = "$pool_root/$(basename "$dir")" ] || return 1
+  [ -e "$candidate/.git" ] && [ ! -L "$candidate/.git" ] || return 1
+
+  top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  top="$(cd "$top" 2>/dev/null && pwd -P)" || return 1
+  [ "$top" = "$candidate" ] || return 1
+
+  candidate_common="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$candidate_common" in /*) ;; *) candidate_common="$candidate/$candidate_common" ;; esac
+  candidate_common="$(cd "$candidate_common" 2>/dev/null && pwd -P)" || return 1
+  repo_common="$(git -C "$REPO" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$repo_common" in /*) ;; *) repo_common="$REPO/$repo_common" ;; esac
+  repo_common="$(cd "$repo_common" 2>/dev/null && pwd -P)" || return 1
+  [ "$candidate_common" = "$repo_common" ] || return 1
+
+  git_dir="$(git -C "$candidate" rev-parse --absolute-git-dir 2>/dev/null)" || return 1
+  git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P)" || return 1
+  case "$git_dir" in "$repo_common"/worktrees/*) ;; *) return 1 ;; esac
+  [ -f "$git_dir/gitdir" ] || return 1
+  [ "$(cat "$git_dir/gitdir")" = "$candidate/.git" ] || return 1
+
+  records="$(git -C "$REPO" worktree list --porcelain 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        if [ "$current_matches" -eq 1 ] && [ "$current_blocked" -eq 0 ]; then
+          registered=1
+        fi
+        [ "${line#worktree }" = "$candidate" ] && current_matches=1 || current_matches=0
+        current_blocked=0
+        ;;
+      locked|locked\ *|prunable|prunable\ *)
+        [ "$current_matches" -eq 1 ] && current_blocked=1
+        ;;
+    esac
+  done <<< "$records"
+  [ "$current_matches" -eq 1 ] && [ "$current_blocked" -eq 0 ] && registered=1
+  [ "$registered" -eq 1 ]
+}
 
 # The repo owns this: scripts/bootstrap-worktree.sh runs the frozen install, the
 # workspace build, and the native-addon heal in one idempotent shot. Run it with
@@ -59,11 +110,19 @@ cmd_warm() {
   local want="${1:-3}" have=0 i=0
   mkdir -p "$POOL" "$TURBO_CACHE_DIR"
   ( cd "$REPO" && git fetch origin --quiet ) || true
-  for d in "$POOL"/${SEED_PREFIX}*; do [ -d "$d" ] && have=$((have + 1)); done
+  for d in "$POOL"/"${SEED_PREFIX}"*; do
+    [ -d "$d" ] || continue
+    if pool_tree_is_valid "$d"; then
+      have=$((have + 1))
+    else
+      log "skipping invalid ready-tree candidate: $d"
+    fi
+  done
   log "pool has $have, want $want (shared cache: $TURBO_CACHE_DIR)"
   while [ "$have" -lt "$want" ]; do
     i=$((i + 1))
-    local dir="$POOL/${SEED_PREFIX}$(date +%s)-$i"
+    local dir
+    dir="$POOL/${SEED_PREFIX}$(date +%s)-$i"
     ( cd "$REPO" && git worktree add --detach "$dir" origin/develop >/dev/null 2>&1 ) \
       || { log "worktree add FAILED"; return 1; }
     prepare_tree "$dir" || return 1
@@ -90,8 +149,12 @@ cmd_claim() {
     printf '%s\n' "$existing"
     return 0
   fi
-  for d in "$POOL"/${SEED_PREFIX}*; do
+  for d in "$POOL"/"${SEED_PREFIX}"*; do
     [ -d "$d" ] || continue
+    if ! pool_tree_is_valid "$d"; then
+      log "skipping invalid ready-tree candidate: $d" >&2
+      continue
+    fi
     dir="$d"; break
   done
   if [ -z "${dir:-}" ]; then
@@ -100,19 +163,36 @@ cmd_claim() {
     ( cd "$REPO" && git worktree add --detach "$dir" origin/develop >/dev/null 2>&1 ) || return 1
     prepare_tree "$dir" || return 1
   fi
-  local claimed="$POOL/${branch//\//-}"
-  mv "$dir" "$claimed" 2>/dev/null || claimed="$dir"
-  ( cd "$REPO" && git worktree repair "$claimed" >/dev/null 2>&1 ) || true
+  local claimed="$POOL/${branch//\//-}" move_output
+  if [ -e "$claimed" ] || [ -L "$claimed" ]; then
+    log "claim destination already exists; seed left unchanged: $claimed" >&2
+    return 1
+  fi
+  if ! move_output="$(cd "$REPO" && git worktree move "$dir" "$claimed" 2>&1)"; then
+    log "worktree move FAILED: ${move_output:-unknown}" >&2
+    return 1
+  fi
+  if ! pool_tree_is_valid "$claimed"; then
+    local nested
+    nested="$claimed/$(basename "$dir")"
+    if [ -d "$nested" ]; then
+      log "moved worktree failed validation; no checkout performed; nested seed preserved at $nested; destination preserved at $claimed" >&2
+    else
+      log "moved worktree failed validation; no checkout performed; inspect preserved path $claimed" >&2
+    fi
+    return 1
+  fi
   if ! ( cd "$claimed" \
     && git fetch origin --quiet \
     && git checkout -B "$branch" origin/develop >/dev/null 2>&1 ); then
-    # Leave the tree in the pool under its seed name. A tree stranded under a
-    # branch name is claimed by nobody and warms nothing.
-    local reason
+    # Keep failed checkouts registered as worktrees when returning them to the pool.
+    local reason recycled recycle_output
     reason="$( cd "$claimed" && git checkout -B "$branch" origin/develop 2>&1 | tail -2 )"
-    mv "$claimed" "$POOL/${SEED_PREFIX}$(date +%s)-recycled" 2>/dev/null || true
-    ( cd "$REPO" && git worktree prune >/dev/null 2>&1 ) || true
-    log "branch checkout FAILED: ${reason:-unknown}"
+    recycled="$POOL/${SEED_PREFIX}$(date +%s)-recycled"
+    if ! recycle_output="$(cd "$REPO" && git worktree move "$claimed" "$recycled" 2>&1)"; then
+      log "failed to return worktree to pool, left at $claimed: ${recycle_output:-unknown}" >&2
+    fi
+    log "branch checkout FAILED: ${reason:-unknown}" >&2
     return 1
   fi
   # A pooled tree carries the dependencies of the develop it was warmed from.
@@ -128,8 +208,12 @@ cmd_claim() {
 
 cmd_release() {
   local dir="${1:?usage: adc-wt release <path>}"
-  ( cd "$REPO" && git worktree remove --force "$dir" >/dev/null 2>&1 ) || rm -rf "$dir"
-  log "released $dir"
+  if ! command -v wt-remove >/dev/null 2>&1; then
+    log "wt-remove is unavailable; refusing unsafe release" >&2
+    return 127
+  fi
+  case "$dir" in -*) dir="./$dir" ;; esac
+  wt-remove "$dir"
 }
 
 cmd_status() {
@@ -140,7 +224,9 @@ cmd_status() {
   for d in "$POOL"/*; do
     [ -d "$d" ] || continue
     case "$(basename "$d")" in
-      ${SEED_PREFIX}*) ready=$((ready + 1)) ;;
+      ${SEED_PREFIX}*)
+        if pool_tree_is_valid "$d"; then ready=$((ready + 1)); fi
+        ;;
       *) claimed=$((claimed + 1)) ;;
     esac
   done
@@ -148,10 +234,58 @@ cmd_status() {
   echo "claimed:      $claimed"
 }
 
-case "${1:-status}" in
-  warm)    shift; cmd_warm "$@" ;;
-  claim)   shift; cmd_claim "$@" ;;
-  release) shift; cmd_release "$@" ;;
-  status)  cmd_status ;;
-  *) echo "usage: adc-wt {warm [N]|claim <branch>|release <path>|status}" >&2; exit 2 ;;
+usage() {
+  cat <<'EOF'
+usage: adc-wt {warm [N]|claim <branch>|release <path>|status}
+       adc-wt -h|--help
+Use 'adc-wt release -- -path' for a release path beginning with '-'.
+EOF
+}
+
+invalid_args() {
+  echo "adc-wt: $1" >&2
+  usage >&2
+  exit 2
+}
+
+# Parse the whole command before warm/claim can create or bootstrap a tree.
+for arg in "$@"; do
+  case "$arg" in
+    --) break ;;
+    -h|--help) usage; exit 0 ;;
+  esac
+done
+
+command="${1:-status}"
+[ $# -eq 0 ] || shift
+case "$command" in
+  warm)
+    [ $# -le 1 ] || invalid_args 'warm accepts one count'
+    if [ $# -eq 1 ]; then
+      case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
+      [[ "$1" =~ ^[0-9]+$ ]] || invalid_args 'warm count must be a nonnegative integer'
+    fi
+    cmd_warm "$@"
+    ;;
+  claim)
+    [ $# -eq 1 ] || invalid_args 'claim requires one branch'
+    case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
+    branch="$(git -C "$REPO" check-ref-format --branch "$1" 2>/dev/null)" || invalid_args "invalid branch: $1"
+    [ -n "$branch" ] || invalid_args "invalid branch: $1"
+    cmd_claim "$branch"
+    ;;
+  release)
+    escaped=0
+    if [ "${1:-}" = -- ]; then escaped=1; shift; fi
+    [ $# -eq 1 ] || invalid_args 'release requires one path'
+    if [ "$escaped" -eq 0 ]; then
+      case "$1" in -*) invalid_args "unknown flag: $1" ;; esac
+    fi
+    cmd_release "$1"
+    ;;
+  status)
+    [ $# -eq 0 ] || invalid_args 'status takes no arguments'
+    cmd_status
+    ;;
+  *) invalid_args "unknown command: $command" ;;
 esac

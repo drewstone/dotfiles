@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# gh shim: route plain `gh` through gh-drew (same directory) so no agent pane
+# can spend the shared drewstone token unlogged or under the quota floor.
+# Without this, a shell that exported GH_TOKEN (or gh's own keyring) reaches
+# GitHub directly and the fleet cannot name or throttle the caller.
+#
+# Re-entry: gh-drew execs `gh` by name for its identity check, its free
+# /rate_limit probe, and the final exec. GH_DREW_SHIM marks that the call
+# already went through this shim; those inner calls run the real binary.
+# Set GH_DREW_SHIM=1 yourself to bypass the shim for one command.
+set -euo pipefail
+
+if [[ "${GH_DREW_SHIM:-}" == "1" ]]; then
+  # The real binary lives at a different path per host: apt on GTR installs
+  # /usr/bin/gh, Homebrew on the Mac installs /opt/homebrew/bin/gh.
+  real_gh="${GH_SHIM_REAL_GH:-}"
+  if [[ -z "$real_gh" ]]; then
+    for candidate in /usr/bin/gh /opt/homebrew/bin/gh /usr/local/bin/gh; do
+      if [[ -x "$candidate" ]]; then
+        real_gh="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ -z "$real_gh" ]]; then
+    echo "gh shim: no real gh binary found; set GH_SHIM_REAL_GH" >&2
+    exit 127
+  fi
+  exec "$real_gh" "$@"
+fi
+
+export GH_DREW_SHIM=1
+exec "${GH_SHIM_GH_DREW:-$HOME/bin/gh-drew}" "$@"

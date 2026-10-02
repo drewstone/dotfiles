@@ -28,6 +28,13 @@ If delegation is unavailable, execute locally and report that constraint.
 6. Resolve consequential disagreements through source evidence or reproduction.
 7. Integrate, run the resulting artifact's checks, and complete authorized delivery.
 
+Before costly dispatches, check shared host headroom and active heavy work.
+Start independent, bounded jobs without coordinator approval; wait only on actual dependencies.
+Throttle or stop a job when observed contention traces to it or it fails; resume after recovery or correction.
+Keep source work, reviews, and remote inference moving where resources permit.
+After recovery or a quota reset, reconcile live owners before resuming writes.
+Transfer retained artifacts to one owner when original and replacement workers are both active.
+
 For workflows with partial dependencies, cancellation, or recovery, read [coordination cases](references/coordination.md).
 For resumable work, use existing project state to retain task identities, owners, dependencies, artifacts, checks, failures, and resource use.
 Add a task record only when no existing record carries the needed state.

@@ -8,6 +8,11 @@
 #   /etc/watchdog.conf, /etc/watchdog.d/root-write, /etc/default/watchdog,
 #   /etc/modprobe.d, udev rule, system.conf.d, watchdog.service drop-in
 #                                          a frozen root resets the box in ~4 min (measured)
+#   /etc/systemd/system/user.slice.d/50-agent-cap.conf
+#                                          every agent process capped together (host/cgroup)
+#   /etc/sysctl.d/60-host-guard-writeback.conf
+#                                          dirty data bounded, so the watchdog sync stays short
+#   /etc/docker/daemon.json                containers join the capped user.slice; live-restore
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #
@@ -173,6 +178,39 @@ else
   fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do daemon_holds_softdog && break; sleep 1; done
 fi
+
+echo "== agent cap and writeback"
+# Separate from the watchdog block: a change here reloads systemd and sysctl
+# but never restarts the watchdog.
+cap_before=$CHANGED; CHANGED=0
+want_file 0644 "$SCRIPT_DIR/cgroup/50-agent-cap.conf" /etc/systemd/system/user.slice.d/50-agent-cap.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/60-writeback.conf" /etc/sysctl.d/60-host-guard-writeback.conf
+# Containers that agents and CI start join user.slice, under the same cap.
+# live-restore comes first: it applies on reload, and it keeps containers
+# running when dockerd restarts. cgroup-parent applies only after a restart,
+# and only to containers created afterwards.
+if command -v dockerd >/dev/null 2>&1; then
+  docker_before=$CHANGED
+  want_file 0644 "$SCRIPT_DIR/docker/daemon.json" /etc/docker/daemon.json
+  docker_changed=$([ "$CHANGED" != "$docker_before" ] && echo 1 || echo 0)
+fi
+if [ "$CHECK" = 1 ]; then
+  [ "$(systemctl show user.slice -p MemoryMax --value)" = 115964116992 ] || drift "user.slice MemoryMax is not 108G"
+  [ "$(sysctl -n vm.dirty_bytes)" = 1073741824 ] || drift "vm.dirty_bytes is not 1 GiB"
+  if command -v docker >/dev/null 2>&1 && [ "$(docker info --format "{{.LiveRestoreEnabled}}" 2>/dev/null)" != true ]; then
+    drift "dockerd runs without live-restore"
+  fi
+elif [ "$CHANGED" = 1 ]; then
+  $SUDO systemctl daemon-reload
+  $SUDO sysctl -q -p /etc/sysctl.d/60-host-guard-writeback.conf
+  note changed "user.slice: $(systemctl show user.slice -p MemoryMax -p MemorySwapMax -p CPUWeight | tr "\n" " ")"
+  if [ "${docker_changed:-0}" = 1 ]; then
+    $SUDO dockerd --validate --config-file /etc/docker/daemon.json >/dev/null
+    $SUDO systemctl reload docker
+    note changed "dockerd reloaded (live-restore on); run sudo systemctl restart docker to apply cgroup-parent"
+  fi
+fi
+[ "$CHANGED" = 1 ] || CHANGED=$cap_before
 
 echo "== cli-bridge slice"
 # The 24-of-32-core cap is sized for drew-gtr-pro; other boxes skip it.
