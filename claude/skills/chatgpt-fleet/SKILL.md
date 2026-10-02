@@ -11,6 +11,15 @@ The `chatgpt-fleet` command drives signed-in Chrome profiles over CDP; resolve t
 
 A session can write to GitHub. Make it do so.
 
+Treat a session's capability claim as a hypothesis, not a tool result.
+For an authorized build, discover its GitHub tools and attempt the task's branch, commit, and pull request operations.
+Ask it to invoke available write functions even when it initially describes the connector as read-only.
+Require the attempted function, target repository, and exact returned error before accepting a write blocker.
+Historical write access is evidence to probe current access, not proof that every account can write today.
+When a tool is missing or refuses, check connector selection and repository access, then use another supported authorized route.
+Continue useful implementation while resolving access; retain the work and give the failed delivery a named recovery owner.
+Report observed permissions honestly and preserve enforced protections.
+
 Measured 2026-09-22: the GitHub connector exposes 89 functions, 48 read and **41 write**, including
 `create_branch`, `create_commit`, `create_file`, `update_file`, `create_pull_request`,
 `request_pull_request_reviewers`, `enable_auto_merge` and `merge_pull_request`.
@@ -57,6 +66,12 @@ Review pending answers and failure states, then give each unfinished item an own
 Read the captured answer before its owner records `ack <item>`.
 Continue the same item by reference; a closed browser tab does not finish or abandon its work.
 
+Reconcile each unfinished item with its captured conversation, actual PRs, and remaining consumer or live acceptance.
+An acknowledged answer or merged prerequisite does not complete the original outcome.
+Give every remaining gap an owner, a concrete next deliverable, and its completion check.
+Resume named gaps in the existing chat; retire duplicate or superseded items with retained evidence.
+Report the audited window and unresolved count instead of claiming the whole fleet is finished.
+
 Use the maintained sweep to capture results and retire eligible tool-owned tabs.
 Keep active turns, unsent drafts, unreadable tabs, and unmanaged conversations intact.
 Revisit pending items through their recorded conversation links instead of keeping every chat open.
@@ -77,18 +92,24 @@ A slot without `repos` takes any repository, so check access before its first bu
 ## The loop
 
 Use three rounds.
-Do not collapse them into one prompt.
+Use the scope round when the work needs decomposition.
+When a current accepted plan already defines the outcome, start or resume its build item directly.
 
 **Round 1 — scope.** Open a research item for the scope, for example `--item 'scope: <area>'`.
 Point the session at the system and ask it for the largest set of simple, high-leverage pursuits it can find.
 Let the session decompose the work.
 A plan the session wrote is a plan it will finish; a plan you wrote is a specification it will argue with.
 Forbid questions and require it to decide.
+For broad improvement work, compare the best 5–10 substantial pursuits and alternative approaches.
+Weigh user value, correctness, simplification, reuse, performance evidence, dependencies, and risk.
+Identify existing implementations and current library features before proposing new abstractions.
+Choose coherent batches that close multiple related gaps, with explicit ownership and observable acceptance.
 
 **Round 2 — build and open the PRs.** Open one item per planned PR.
 Copy that plan entry from the scope reply into the item's prompt.
 Name the opened PR as the deliverable.
 Require the PR number and URL in the reply.
+Require an actual write-tool attempt when the session claims it can only provide prose or patches.
 Record the number with `pr <item> <number>`.
 Close the scope item with `--answered` once every build item is open.
 
@@ -140,7 +161,8 @@ Measured over 59 packets in one 33-hour run:
 
 The largest prompt in that run was 7089 words and returned nothing at all.
 Keep a prompt under 350 words.
-Past that the session spends its budget reading your prose instead of reading the repository.
+Treat this as a prompting guideline, not a scope limit.
+Point to source and retained evidence so the session spends its budget doing the work.
 
 Ambition belongs in the scope you name, never in the word count.
 "Find the ten largest simplifications in this subsystem and build them all" is a short prompt and a large job.
@@ -153,9 +175,10 @@ Reading the conversations instead showed three of those eight had in fact linked
 Two had genuinely delivered nothing while exiting zero, and three were real failures the tool had already flagged.
 Derive delivery from the conversation, never from a field that says it happened.
 
-Run `files <item> --require` after a build round.
-It exits 9 when the conversation links no file, instead of reporting success.
-Use the plain `files` for a probe that is expected to link nothing.
+For a repository build, verify the actual PR and its committed diff first.
+Use `files <item> --require` when downloadable artifacts are part of the requested delivery.
+It exits 9 when the conversation links no file; that alone does not invalidate a verified PR delivery.
+Use plain `files` to inspect optional retained artifacts.
 
 Other exit codes that already mean something: 3 wrong model, 5 empty reply, 6 stalled, 7 safety blocked, 8 no answer.
 Treat each as a distinct cause and fix that cause.
