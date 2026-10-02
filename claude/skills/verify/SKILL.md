@@ -19,7 +19,8 @@ A clean or fully pushed branch still needs the requested verification.
 
 ## Run and assess
 
-Run the affected checks and the repository's required validation.
+Run the smallest sufficient affected checks and the repository's enforced validation.
+Reuse valid results until changes or failures invalidate them; stop once the requested coverage passes.
 Respect dependencies between commands and collect each exit status when checks run concurrently.
 Confirm that regression coverage can catch the behavior it claims to protect.
 A test double can isolate a dependency, but cannot stand in for the integration behavior the test claims to verify.
@@ -49,6 +50,6 @@ skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --
 | Condition | Next skill | What to pass |
 |---|---|---|
 | Verification passes and an authorized release remains | `/ship` | the verified revision, target, and release path |
-| Required local or remote checks fail | `/converge` | the failure evidence and preserved requirements |
+| An in-scope defect or enforced blocking check needs repair | `/converge` | the failure evidence and preserved requirements |
 | Unresolved quality gaps need an implementation review | `/polish` | the gaps and checks that exposed them |
 | A security boundary remains untested | `/harden` | the boundary, risk, and missing behavior check |

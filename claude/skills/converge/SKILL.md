@@ -1,11 +1,13 @@
 ---
 name: converge
-description: Drive failing CI to green by reproducing failures, fixing root causes, pushing, and rechecking.
+description: Repair in-scope CI defects and enforced blocking checks; complete full CI recovery when requested.
 ---
 
 # Converge
 
-Resolve failing CI and prove the required checks pass for the current branch revision.
+Repair the in-scope defect or enforced check blocking delivery.
+Full CI recovery belongs here only when explicitly requested.
+Apply user-authorized CI waivers immediately; preserve hooks and enforced protections.
 
 ## Diagnose and repair
 
@@ -15,8 +17,9 @@ Resolve failing CI and prove the required checks pass for the current branch rev
 3. Reproduce the failure through the affected path when practical, then fix the cause.
    For dependency findings, verify the advisory, affected dependency path, and compatible fixed release.
 4. Run the affected local checks and the repository's required preflight before committing and pushing.
-5. Confirm CI started for the pushed revision and wait for its terminal results.
-   Read new failures and repeat until the required checks pass or a proven external dependency prevents progress.
+5. Reuse valid results and check the pushed revision against the required completion condition.
+   Stop when the affected defect is fixed and enforced checks pass; continue authorized delivery.
+   Track unrelated failures separately rather than expanding this repair into full CI recovery.
 
 Preserve the checks' intended coverage.
 Never bypass hooks, suppress failures, or weaken thresholds to obtain a passing result.

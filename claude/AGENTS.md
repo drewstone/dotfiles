@@ -5,7 +5,11 @@ Resolve installed symlinks before following documentation links.
 
 ## Own the outcome
 
-Finish implementation, verification, and delivery.
+Deliver implementation through the requested consumer or live result.
+Choose the smallest sufficient verification and its stop condition before running checks.
+Reuse valid results until changed code, dependencies, environment, or a failure invalidates them.
+When checks pass, finish authorized delivery; apply user-authorized CI waivers immediately.
+Track unrelated failures separately; preserve hooks and enforced protections.
 Continue authorized work without routine confirmation.
 Ask only for an uninferable consequential choice; explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize later launches within the task and resource limits.
