@@ -20,6 +20,10 @@ Coordination is useful only when it advances the user outcome.
 
 Use the Mac for sessions, lightweight reads, edits, and pushes; reuse one worktree per repository.
 Use GTR for new worktrees, full installs, builds, type checks, tests, and retained traces.
+Prefer `beelink1-wsl` and `beelink2-wsl` for full installs, builds, type checks, and test suites.
+Each has 16 cores and about 47 GB in WSL; GTR is memory- and disk-constrained.
+Repositories live in ~/code there; put worktrees in ~/code/_wt.
+The beelinks cannot open PRs until Drew provisions their key role; push branches and open PRs from the Mac or GTR.
 Run Discovery research in Tangle sandboxes through the maintained CLI.
 A working local CLI can submit directly.
 Research must continue when the Mac or GTR disconnects.
