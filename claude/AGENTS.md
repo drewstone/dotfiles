@@ -120,7 +120,8 @@ Check the served artifact and user flow when claiming a deployment works.
 If deployment logs are unavailable, use infrastructure you can inspect when feasible.
 Verify every delivered feature or fix through the actual product or consumer entrypoint.
 Record the starting state, actions, and observable result, including persistence or reopening when relevant.
-Use screenshots or videos when they help demonstrate a feature, such as UI/UX flows or an interactive CLI.
+For visible product changes, read [UI delivery evidence](../docs/anti-patterns/ui-evidence.md) before implementation and before opening the PR.
+Every UI or UX PR includes before and after screenshots of the changed surface, plus a video for changed interactions.
 For nonvisual changes, retain concise execution receipts with commands, relevant outputs, artifact identities, and observable results.
 Do not turn logs or test summaries into videos.
 When recording, retain the uncut original and provide a fast playback copy with speed and process boundaries labeled.
@@ -188,8 +189,7 @@ Start with `blog-and-research.md`, `copywriting.md`, `product-design.md`, or `re
 These documents own the detailed writing and design rules; skills may summarize them.
 Inspect real product references and prior versions the user liked before choosing a visual direction.
 Verify the result in the browser and fix visual defects encountered during product testing.
-Apply the evidence and media rules above to UI changes.
-Use before and after images for a redesign.
+Apply the UI delivery evidence rules above to every visible product change.
 
 Remove redundant labels, procedural narration, dead panels, repeated actions, and fake readiness states.
 Make each product mode use the appropriate input and interaction.
