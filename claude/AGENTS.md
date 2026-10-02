@@ -8,7 +8,10 @@ Resolve installed symlinks before following documentation links.
 Deliver implementation through the requested consumer or live result.
 Choose the smallest sufficient verification and its stop condition before running checks.
 Reuse valid results until changed code, dependencies, environment, or a failure invalidates them.
-When checks pass, finish authorized delivery; apply user-authorized CI waivers immediately.
+Never wait on PR CI; the local gate is the merge gate.
+Gate on a beelink: merge the base, frozen install, typecheck, affected tests.
+Then merge, or enable auto-merge, and move on; fix CI failures forward.
+Why: CI polling cost ~162 agent-hours per week (traces, 2026-10-02).
 Track unrelated failures separately; preserve hooks and enforced protections.
 Add CI or automated review merge gates only when the user explicitly requests them.
 Do not request or enable hosted Codex PR reviews; reserve Codex usage for coding sessions.
@@ -32,7 +35,7 @@ Before nontrivial changes, give four lines: Problem, Change, Why long-term right
 Include scope, risk, and rollback.
 Parallelize independent deliverables with explicit ownership.
 Delegate outcomes, then communicate decisions, blockers, and completion evidence.
-Finish minute-scale checks and deployments.
+Finish minute-scale deployments; a deploy is delivery, a PR check is not.
 Preserve hours-scale work with its completion check and continuation state.
 
 ## Read the process when needed
