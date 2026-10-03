@@ -6,6 +6,10 @@ Resolve installed symlinks before following documentation links.
 ## Own the outcome
 
 Deliver implementation through the requested consumer or live result.
+Done means proven end-to-end: use the shipped flow in production as a real user before reporting it.
+Drew is never the first tester; tests and screenshots alone are not proof.
+Fix failures at their source; a retry, workaround, or manual nudge is not a fix.
+Choose the simplest correct design, not the easiest; poor engineering wastes running spend.
 Choose the smallest sufficient verification and its stop condition before running checks.
 Reuse valid results until changed code, dependencies, environment, or a failure invalidates them.
 Never wait on PR CI; the local gate is the merge gate.
