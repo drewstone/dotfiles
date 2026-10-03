@@ -9,7 +9,7 @@ Release the intended artifact to the authorized target and prove its live behavi
 
 ## Prepare
 
-1. Establish the target, artifact, release path, rollback procedure, and authorization already granted in this session.
+1. Define one shipped user outcome, its artifact, target, release path, rollback, and existing authorization.
    Ask only for missing authority or a target that cannot be inferred reliably.
 2. Inspect git and release state to identify exactly what will ship and preserve unrelated work.
 3. Read the repository's current release scripts, required checks, and deployment instructions.
@@ -22,11 +22,15 @@ Release the intended artifact to the authorized target and prove its live behavi
 2. Fix change defects; track unrelated failures separately and continue the permitted release path.
    Apply user-authorized CI waivers immediately; preserve hooks and enforced protections.
 3. Deploy through the repository's authorized release path.
-4. Wait for the deployment to reach a terminal state.
+4. Use one bounded CLI waiter or completion notification for the deployment.
+   Retain its run identity, terminal exit status, and log path; continue independent implementation meanwhile.
+   Read status when completion, failure, or required intervention changes the next action.
 5. Match the served revision or artifact to the intended release and exercise the changed live user path.
    If live checks fail, follow the documented recovery procedure and verify recovery before further release attempts.
 
 An accepted command or a successful upload is not proof of a working release.
+A passed authorized local merge gate advances to merge; hosted CI adds no wait unless enforced or explicitly requested.
+Keep deployment signing, publishing, rollback, and live verification even when redundant PR checks are retired.
 A release need not print a URL: obtain its target from authoritative deployment records and verify the artifact actually served.
 Report the revision, target, checks, deployment result, live evidence, and remaining uncertainty.
 

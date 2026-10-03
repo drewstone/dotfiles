@@ -16,6 +16,11 @@ Preserve required behavior and public contracts unless their retirement is autho
 4. Check real consumers, including exports, configuration, generated entrypoints, and dynamic references.
 5. Delete unnecessary behavior; simplify, optimize, then automate what survives.
 
+Count live consumers and persisted records before retaining compatibility.
+With none, delete the obsolete path and its redundant checks.
+With consumers, use the existing migration path, prove their cutover, then delete compatibility when the remaining count reaches zero.
+Keep historical evidence distinct from executable compatibility; preserving records does not require maintaining two implementations.
+
 Prefer maintained library implementations and direct calls over wrappers that add no policy.
 Unify callers with the same semantics; retain meaningful domain differences.
 Measure removed concepts, maintenance, and execution cost separately from line counts.
