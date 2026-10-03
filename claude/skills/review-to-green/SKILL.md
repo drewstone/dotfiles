@@ -22,10 +22,10 @@ Infer the PR from the branch when the request does not supply its number or URL.
    Post replies or request review using communication authority already granted for the PR.
 5. Run the repository's required local validation and affected tests before pushing.
    Diagnose environment failures instead of dismissing them or weakening the checks.
-6. Confirm checks and any configured review automation ran for the pushed revision.
-   Wait for their results, then read the newest findings before claiming review is complete.
+6. Read the newest available findings for the pushed revision and resolve actual blockers.
+   Use the authorized merge gate; remote checks or review automation add waits only when enforced or explicitly requested.
 
-Keep required fixes moving while other review results are pending.
+Complete authorized delivery when its gate passes; keep optional remote results separate from the merge verdict.
 If the base changes, resolve mergeability and rerun the affected checks.
 Do not repeat an unchanged push or review request without new evidence.
 
