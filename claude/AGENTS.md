@@ -55,6 +55,9 @@ Never reset away uncommitted work, bypass hooks, change Git identity, or add co-
 Remove worktrees only with wt-remove after verifying retention.
 Root storage, mount, namespace, freeze, reboot, and shutdown work belongs in hostlab's throwaway VM.
 Guard refusals are policy.
+Change production only through its deploy path, admin CLI, or API.
+Never hand-apply a PR on a host or write a production database directly.
+Why: on 2026-10-02 both caused outages (platform writes 2 h; sandbox heartbeats 27 min).
 
 Use plain technical English.
 Lead with the checked outcome; keep unknowns and missing proof explicit.
