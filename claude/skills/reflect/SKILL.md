@@ -11,12 +11,12 @@ Judge outcomes against the user's objective; invocation counts and self-grades d
 ## Inspect the work
 
 1. Define the scope and period.
-   Read relevant prior reflections and `~/.claude/reflections/INDEX.md` when present.
+   Which prior findings in `~/.claude/reflections/INDEX.md` bear on this work?
    Reconcile open actions with current state.
-2. Collect relevant transcripts, run artifacts, repository history, reviews, checks, release evidence, and user corrections.
+2. Inspect the evidence needed to explain outcomes; use [session efficiency](references/session-efficiency.md) for stalled or repetitive coding sessions.
    Record important sources you could not inspect and why.
-3. Compare requested outcomes with observed results; label facts and interpretations.
-4. Trace recurring problems to prior corrections and explain why they failed, were not applied, or remain unverified.
+3. What changed for the user, and what remains unproved? Separate facts from interpretation.
+4. Which recurring cause survived a prior correction, and what evidence explains why?
 5. Identify practices supported by outcomes and failures worth correcting.
 
 Read [portfolio analysis](references/portfolio.md) for work across projects or sessions with different conditions.
@@ -46,14 +46,3 @@ A reflection needs neither a grade, a fixed section list, nor a forced next acti
 ```bash
 skill-run-log /reflect --target "<scope and period>" --verdict <VERDICT> --next /<skill-or-stop>
 ```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| Eligible actions need routing against the active objective | `/governor` | Findings, evidence, and scope |
-| A measured process problem has a testable correction | `/evolve` | Baseline and proposed change |
-| Related failures need a causal explanation | `/diagnose` | Outcomes and shared symptom |
-| An authorized action needs coordination | `/orchestrate` | Work, dependencies, and completion checks |
-| A material claim lacks an available check | `/verify` | Claim, artifact, and required check |
-| Context replacement risks unfinished work | `/session-continuity` | Reflection and exact continuation state |

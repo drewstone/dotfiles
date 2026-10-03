@@ -23,9 +23,8 @@ Infer the PR from the branch when the request does not supply its number or URL.
 5. Run the repository's required local validation and affected tests before pushing.
    Diagnose environment failures instead of dismissing them or weakening the checks.
 6. Read the newest available findings for the pushed revision and resolve actual blockers.
-   Use the authorized merge gate; remote checks or review automation add waits only when enforced or explicitly requested.
+   Use the [shared delivery process](../../../docs/processes/agent-work.md#deliver-through-github).
 
-Complete authorized delivery when its gate passes; keep optional remote results separate from the merge verdict.
 If the base changes, resolve mergeability and rerun the affected checks.
 Do not repeat an unchanged push or review request without new evidence.
 
@@ -35,20 +34,9 @@ Report approval only when current review evidence supports it and required block
 A refuted finding may leave a formal review or branch-protection requirement pending; report that distinction.
 When progress needs new authority, access, or a decision outside scope, identify the concrete remaining action and evidence.
 
-Use merge and release authority already granted for the target.
-Once the PR satisfies its requirements, complete an authorized merge; otherwise present the reviewable result for the remaining approval.
 
 ## Log the run
 
 ```bash
 skill-run-log /review-to-green --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| The approved change still needs an authorized release | `/ship` | the revision, target, and release path |
-| A review finding requires an authorized architectural change | `/pursue` | the contract and reproduced failure |
-| A pushed fix has failing CI | `/converge` | the revision and failed checks |
-| Findings suggest a shared defect beyond the reviewed diff | `/critical-audit` | the affected subsystem and evidence |

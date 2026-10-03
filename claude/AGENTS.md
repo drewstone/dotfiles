@@ -1,68 +1,43 @@
 # Shared agent defaults
 
-Apply these rules to Claude, Codex, and OpenCode.
-Resolve installed symlinks before following documentation links.
+Apply to Claude, Codex, and OpenCode.
+Resolve installed symlinks before following links.
 
 ## Own the outcome
 
-Deliver implementation through the requested consumer or live result.
-Done means proven end-to-end: use the shipped flow in production as a real user before reporting it.
-Drew is never the first tester; tests and screenshots alone are not proof.
-Fix failures at their source; a retry, workaround, or manual nudge is not a fix.
-Choose the simplest correct design, not the easiest; poor engineering wastes running spend.
-Choose the smallest sufficient verification and its stop condition before running checks.
-Reuse valid results until changed code, dependencies, environment, or a failure invalidates them.
-Never wait on PR CI; the local gate is the merge gate.
-Gate on a beelink: merge the base, frozen install, typecheck, affected tests.
-Then merge, or enable auto-merge, and move on; fix CI failures forward.
-Why: CI polling cost ~162 agent-hours per week (traces, 2026-10-02).
-Track unrelated failures separately; preserve hooks and enforced protections.
-Add CI or automated review merge gates only when the user explicitly requests them.
-Do not request or enable hosted Codex PR reviews; reserve Codex usage for coding sessions.
-Continue authorized work without routine confirmation.
-Ask only for an uninferable consequential choice; explain its tradeoff.
-“Yalla”, “go”, and “just do it” authorize later launches within the task and resource limits.
-Under a deadline, launch with what exists, then improve instrumentation while it runs.
-Use the user's named lever in the next run; put alternatives in the control.
-Keep the headline gate fixed; report stricter criteria separately.
-Deliver an openable URL or file when asked to show a product.
+Deliver through the requested consumer; prove production claims through the shipped user flow before Drew tests it.
+Fix causes, not retries or manual workarounds.
+Ask what outcome matters, what can disappear, and what evidence would change the next decision.
+Use these questions for judgment, not a mandatory report or routine confirmation.
+Find existing owners and consumers; prefer deletion, simplification, optimization, then automation.
+Count live consumers before retaining compatibility; preserve required behavior and historical evidence.
+Prioritize correctness, simplicity, robustness, and maintainability over implementation effort.
+Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.
 
-Find existing implementations first.
-Prefer deletion, then simplification, optimization, and automation.
-Check callers before deleting.
-Count live users before designing migration compatibility; cut over small populations when safe.
-Keep sound work unchanged.
-Prioritize quality, correctness, simplicity, robustness, and maintainability over development cost.
-Under ~/code, development cost has zero weight.
+For executable changes, merge the base and pass frozen install, typecheck, and affected tests on a Beelink.
+For documentation-only changes, use relevant content, link, or structural checks.
+When that local gate passes, merge or enable auto-merge immediately.
+Never watch PR CI; fix failures forward while preserving hooks, enforced protections, and release authority.
+Add CI or automated review gates only when requested; never request hosted Codex PR reviews.
+Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
+“Yalla”, “go”, and “just do it” authorize subsequent task work within its resource limits.
+Under a deadline, launch with available capability and improve instrumentation while it runs.
+Use the user's named lever; keep acceptance criteria fixed and report stricter analysis separately.
 
-Before nontrivial changes, give four lines: Problem, Change, Why long-term right, Cost.
-Include scope, risk, and rollback.
-Parallelize independent deliverables with explicit ownership.
-Delegate outcomes, then communicate decisions, blockers, and completion evidence.
-Finish minute-scale deployments; a deploy is delivery, a PR check is not.
-Preserve hours-scale work with its completion check and continuation state.
+Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
+Parallelize independent deliverables with one owner each; finish minute-scale delivery and preserve longer work with its next completion check.
+Use plain technical English: checked outcome first, unknowns explicit, an openable artifact when showing a product.
 
-## Read the process when needed
+## Read when relevant
 
-Before repository changes or delegation, read [checkout, ownership, and delivery](../docs/processes/agent-work.md#delegation).
-Before consequential claims, performance work, or verification, read [evidence](../docs/processes/agent-work.md#establish-evidence).
-Before status or comparisons, read [reporting](../docs/processes/agent-work.md#report-clearly).
-Before writing, UI, commercial work, or skill changes, read [owning guidance](../docs/processes/agent-work.md#use-skills-and-owning-guidance).
-Before host or filesystem work, read [host protection](../docs/processes/agent-work.md#protect-the-host).
+Before repository changes, delegation, or host work, read the relevant [work process](../docs/processes/agent-work.md) section.
+Before verification, reporting, writing, UI, or skill changes, read its evidence or owning-guidance section.
+When progress stalls or work repeats, use [session efficiency](skills/reflect/references/session-efficiency.md).
 
-## Always preserve
+## Preserve
 
-Protect unrelated work, credentials, and historical evidence.
-Use gh-drew as drewstone for Drew and Tangle GitHub operations.
-Force-push requires explicit authorization.
-Never reset away uncommitted work, bypass hooks, change Git identity, or add co-authorship trailers.
-Remove worktrees only with wt-remove after verifying retention.
-Root storage, mount, namespace, freeze, reboot, and shutdown work belongs in hostlab's throwaway VM.
-Guard refusals are policy.
-Change production only through its deploy path, admin CLI, or API.
-Never hand-apply a PR on a host or write a production database directly.
-Why: on 2026-10-02 both caused outages (platform writes 2 h; sandbox heartbeats 27 min).
-
-Use plain technical English.
-Lead with the checked outcome; keep unknowns and missing proof explicit.
-A live controller alone does not prove productive research.
+Protect unrelated work and credentials; use gh-drew as drewstone for Drew and Tangle GitHub operations.
+Never discard uncommitted work, bypass hooks, change Git identity, or add co-authorship trailers.
+Force-push requires explicit authorization; remove worktrees only with wt-remove after verifying retention.
+Root storage, mounts, namespaces, freezes, reboot, and shutdown belong in hostlab's throwaway VM; guard refusals are policy.
+Change production only through its deploy path, admin CLI, or API; never hand-apply a PR or write its database directly.

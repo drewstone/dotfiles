@@ -21,6 +21,8 @@ The rule: when working on public writing, research, marketing pages, product UI,
 
 ## Positive guides and rubrics
 
+- [PRs and issues](../green-patterns/engineering-writing.md) - final behavior, acceptance checklists, and change-specific evidence.
+
 - `../green-patterns/blog-writing.md` - reader-first structures and teachable evidence patterns.
 - `../green-patterns/blog-style-guide.md` - the Tangle voice, article shapes, and reference-specific writing modes.
 - `../green-patterns/blog-reference-notes.md` - rules extracted from real technical articles.
