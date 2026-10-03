@@ -12,7 +12,7 @@ Release the intended artifact to the authorized target and prove its live behavi
 1. Define one shipped user outcome, its artifact, target, release path, rollback, and existing authorization.
    Ask only for missing authority or a target that cannot be inferred reliably.
 2. Inspect git and release state to identify exactly what will ship and preserve unrelated work.
-3. Read the repository's current release scripts, required checks, and deployment instructions.
+3. Read the repository release path and [shared delivery process](../../../docs/processes/agent-work.md#deliver-through-github).
 4. Run the smallest meaningful smoke before expensive release work.
 
 ## Release
@@ -20,7 +20,6 @@ Release the intended artifact to the authorized target and prove its live behavi
 1. Reuse valid verification, run remaining required checks, and build the artifact according to their dependencies.
    Run independent commands concurrently only when they do not share mutable outputs; collect every exit status.
 2. Fix change defects; track unrelated failures separately and continue the permitted release path.
-   Apply user-authorized CI waivers immediately; preserve hooks and enforced protections.
 3. Deploy through the repository's authorized release path.
 4. Use one bounded CLI waiter or completion notification for the deployment.
    Retain its run identity, terminal exit status, and log path; continue independent implementation meanwhile.
@@ -29,7 +28,6 @@ Release the intended artifact to the authorized target and prove its live behavi
    If live checks fail, follow the documented recovery procedure and verify recovery before further release attempts.
 
 An accepted command or a successful upload is not proof of a working release.
-A passed authorized local merge gate advances to merge; hosted CI adds no wait unless enforced or explicitly requested.
 Keep deployment signing, publishing, rollback, and live verification even when redundant PR checks are retired.
 A release need not print a URL: obtain its target from authoritative deployment records and verify the artifact actually served.
 Report the revision, target, checks, deployment result, live evidence, and remaining uncertainty.
@@ -39,12 +37,3 @@ Report the revision, target, checks, deployment result, live evidence, and remai
 ```bash
 skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| The served artifact or behavior remains unverified | `/deploy-proof` | the expected revision, target, and missing check |
-| An in-scope defect or enforced CI check blocks release | `/converge` | the failing job and target |
-| The authorized release requires custom artifact coordination | `/release-conductor` | artifacts, current deployment state, and rollback procedure |
-| Live behavior fails after recovery | `/diagnose` | the failed probe, served revision, and recovery evidence |

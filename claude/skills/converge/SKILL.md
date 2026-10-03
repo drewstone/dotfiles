@@ -7,7 +7,7 @@ description: Repair in-scope CI defects and enforced blocking checks; complete f
 
 Repair the in-scope defect or enforced check blocking delivery.
 Full CI recovery belongs here only when explicitly requested.
-Apply user-authorized CI waivers immediately; preserve hooks and enforced protections.
+Use the [shared delivery process](../../../docs/processes/agent-work.md#deliver-through-github); repair actual defects without waiting for optional CI.
 
 ## Diagnose and repair
 
@@ -39,11 +39,3 @@ A green historical run or a recorded completion does not establish that the curr
 ```bash
 skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| CI passes but review still blocks an authorized merge | `/review-to-green` | the PR and unresolved review findings |
-| Failure causes remain unclear across subsystems | `/diagnose` | logs, reproductions, and the comparison with the base |
-| The verified change still needs an authorized release | `/ship` | the revision, target, and release path |
