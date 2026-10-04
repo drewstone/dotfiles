@@ -21,6 +21,16 @@ Do not use:
 
 Do not use small labels to make text feel designed. Labels are for data, controls, navigation, provenance, status, units, or accessibility. They are not decoration.
 
+## Counting Copy
+
+Do not write sentences that count the page's own items or restate what the list beside them already shows:
+
+- "Three witnesses address two proposed inequalities."
+- "Five tools cover four workflows."
+- A closing note that restates which items on the page share a subject.
+
+The reader can see the list. Name the content or delete the sentence. Counts belong in data: tables, labels and units.
+
 ## Generic AI Marketing Copy
 
 Delete copy that says:
