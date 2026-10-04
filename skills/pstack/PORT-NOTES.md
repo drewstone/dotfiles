@@ -40,12 +40,12 @@ Upstream skill set: 50 skills. This is a curated operator-side subset for pi.
 
     git clone --depth 1 --filter=blob:none --sparse https://github.com/cursor/plugins /tmp/pp
     cd /tmp/pp && git sparse-checkout set pstack
-    cp -r pstack/skills/<name> ~/dotfiles/pi/pstack-skills/
-    ~/dotfiles/pi/install-pstack-skills.sh
+    cp -r pstack/skills/<name> ~/dotfiles/skills/pstack/
+    ~/dotfiles/skills/install-pstack-skills.sh
 
 ## Install
 
-    ~/dotfiles/pi/install-pstack-skills.sh
+    ~/dotfiles/skills/install-pstack-skills.sh
 
 Copies into ~/.agents/skills/ (canonical store) and symlinks each into
 ~/.pi/agent/skills/ following the existing pattern. Re-running is safe.
