@@ -54,6 +54,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/ci-wait-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/scan-guard.sh"
           }
         ]
       },
