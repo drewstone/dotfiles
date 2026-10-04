@@ -88,6 +88,8 @@ On 2026-09-22 slot a answered 404 for a private repository, and the session said
 Record each slot's reachable repositories in `fleet.json` as `"repos": ["owner/*"]`.
 An item then goes only to a slot that can read its repository.
 A slot without `repos` takes any repository, so check access before its first build item.
+Write access can disappear per account: on 2026-10-04 slot a listed 48 read-only GitHub functions and could not open a PR, after writing PRs on 09-30.
+Abandon such an item with the session's function list as proof, and resend it with `--permitted-slot` naming an account that wrote recently.
 
 ## The loop
 
@@ -201,6 +203,13 @@ State in the pull request that the work came from a fleet delivery and what you 
 Tell the session that "my tools returned nothing" is the most useful answer it can give.
 Require it to mark each claim as a tool result or an absence.
 This works: a probe given that instruction volunteered that its installation data did not prove unrestricted access, rather than asserting it did.
+
+## See what the fleet does
+
+`chatgpt-fleet live` prints each slot's tab, conversation, state and current item, plus last-24-hour counts.
+A minute timer on the GTR publishes the same contract to `~/.local/state/fleet/chatgpt.json` for the wall.
+Read it before dispatching and send work to idle slots: over 2026-09-27 to 10-04 the fleet ran about 5% of its turn capacity.
+Every export also writes `otlp/spans.jsonl`, so `traces analyze|facts|validate --otlp ~/traces/chatgpt` read Pro work like any agent run.
 
 ## Run it headless
 
