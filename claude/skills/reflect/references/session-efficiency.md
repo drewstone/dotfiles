@@ -24,3 +24,4 @@ Separate productive execution, necessary waits, user gaps, and avoidable repetit
 Session metadata may span older turns; elapsed time is not wasted time, and unknown cost remains unknown.
 Keep raw facts and traces private; share only reviewed metrics and authorized excerpts.
 For recurring causes, continue [reflect](../SKILL.md) with the evidence and one correction.
+When repeated release checks are the cause, use [work duration](../../tangle-ops/references/work-duration.md) to replace polling with a measured completion check.

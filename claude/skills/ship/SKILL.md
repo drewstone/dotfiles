@@ -14,6 +14,7 @@ Release the intended artifact to the authorized target and prove its live behavi
 2. Inspect git and release state to identify exactly what will ship and preserve unrelated work.
 3. Read the repository release path and [shared delivery process](../../../docs/processes/agent-work.md#deliver-through-github).
 4. Run the smallest meaningful smoke before expensive release work.
+   Before a long release, use [work duration](../tangle-ops/references/work-duration.md) once to select a bounded waiter from current evidence.
 
 ## Release
 
