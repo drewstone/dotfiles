@@ -9,7 +9,8 @@ Read live state for the requested product and environment before changing it.
 Use the maintained [operator tool](https://github.com/drewstone/tangle-tools/tree/main/tangle-ops) and its current help.
 Confirm its repository mapping and target; another product's healthy response proves nothing here.
 
-Start with `tangle-ops status`, then run the command for the observed symptom.
+Use the narrow command for a known symptom; use `tangle-ops status` when the failing surface is unknown.
+For a long release or repeated status checking, read [work duration](references/work-duration.md) and its cached history command once.
 If the tool is unavailable, use the owning repository's runbook and current probes.
 
 ## Diagnose the actual failure
