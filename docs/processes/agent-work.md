@@ -4,10 +4,12 @@ Read only the relevant sections; [shared defaults](../../claude/AGENTS.md) own u
 
 ## Delegation
 
-Reconcile active work before assigning one independent outcome per worker.
+Use existing task ownership; reconcile overlapping scope before assigning one independent outcome per worker.
 Specify ownership, interfaces, checkout, authority, resources, and completion evidence.
 The integrating agent owns consumer proof and delivery.
-Communicate decisions, blockers, and completed results; routine heartbeats and dependent fragments need no extra agents.
+Send updates when a decision, blocking dependency, ownership conflict, finding, or completed artifact changes another owner's next action.
+Include the change, evidence pointer, and required action; use the existing task record for unchanged status.
+Delegate independently useful deliverables; keep dependent fragments and routine heartbeats with their owner.
 
 ## Choose the host and checkout
 
@@ -19,7 +21,7 @@ Run Discovery research through the maintained CLI in Tangle sandboxes so it surv
 
 ## Preserve concurrent work
 
-Inspect status, recent commits, reflog, open PRs, and peer ownership before editing.
+Check the relevant checkout's status, base, and ownership before editing; inspect history, reflog, or PRs when changes or conflicts need explanation.
 Investigate unexpected edits or commits; preserve active merges, rebases, and dirty detached checkouts.
 Keep mixed scope explicit when separating work.
 Delete branches only after proving retention or abandonment; ignored worktree files may contain work.
