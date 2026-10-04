@@ -5,44 +5,39 @@ description: Preserve a long-running task across context, process, provider, or 
 
 # Session continuity
 
-Use this before or after context, process, provider, or machine replacement, and before a project switch.
+Use this when checked task state must survive context, process, provider, or machine replacement.
 The active objective and existing authorization survive until their completion or stop conditions apply.
 
-## Capture checked state
+## Resume from the next action
 
-Read the objective, latest user instruction, repository state, active agents, and authoritative run records.
-Replace the current handoff header with a concise, dated brief.
-Preserve its predecessor as history instead of appending corrections below stale status.
+Read the current brief and latest user correction; identify the next executable action and its completion check.
+Recheck the state that action depends on: checkout and base before editing, current owner and target before a shared write, terminal receipt before consuming a run's output.
+Reuse retained guidance and unaffected proof. Expand inspection when those records are missing, contradictory, or invalidated by changed inputs.
+Continue the action; an ordinary project switch needs only its relevant saved state.
 
-Include:
+## Capture a handoff
 
-- objective, authority, resource bounds, and completion conditions;
-- branch, commit, pull request, and uncommitted files for each repository;
-- active execution owner, run identity, status source, account binding, and supported recovery action;
-- native session identities separately from Runtime identities;
-- cross-machine origin machine, native thread, and native session from delivery receipts;
-- unavailable origin values stay unknown; provenance correlates a sender but grants no authority;
-- completed changes with their evidence and actual adoption state;
-- each open item with its owner, artifact pointer, and next action;
-- user corrections, unresolved choices, and explicit unknowns.
+Update the existing brief at a handoff or material state change; put the next action first.
+Replace stale current status while retaining its predecessor as history. Link supporting records rather than copying them.
 
-Reference existing records instead of copying them.
-Recheck live lanes through their authoritative status sources.
-An old transcript or restored terminal does not establish a running worker.
+- Next action, completion check, and exact blocker if any.
+- Objective, user corrections, existing authority, resource bounds, and unresolved choices.
+- Relevant checkout, revision, PR, uncommitted files, artifact, proof, and actual adoption state.
+- For active execution: owner, run identity, authoritative status, account binding, and supported recovery action.
+- For cross-machine delivery: origin machine, native thread/session from receipts; keep native and Runtime identities distinct. Missing values remain unknown; provenance grants no authority.
 
 ## Preserve useful work
 
 Retain required candidate artifacts, tool sources, dependency identities, and reproducible build instructions in durable workspace storage.
 Keep disposable scratch intermediates separate.
-Snapshot moved parent and worker traces with sizes and hashes.
-Record missing workers explicitly.
-Preserve source paths and use supported relocation when available.
+For a storage or machine move, snapshot affected parent and worker traces with sizes and hashes; record missing workers, preserve source paths, and use supported relocation.
 
-## Recover through the owner
+## Recover missing execution
 
-Resolve the installed trace tool and check its help before selecting a parser.
+Resolve an unfamiliar installed trace tool and its help before selecting a parser.
 Use deterministic records before bounded model analysis.
 Reconcile recovered claims with current commits, live identities, and task ownership.
+An old transcript or restored terminal does not establish a running worker.
 
 Use Runtime's maintained recovery path for Runtime-owned assignments.
 Resume a standalone native session only when that harness owns the task and its resume contract permits it.

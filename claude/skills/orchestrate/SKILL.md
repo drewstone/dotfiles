@@ -10,16 +10,15 @@ Use delegation only when useful work can proceed concurrently or an independent 
 
 ## Resolve execution
 
-Inspect the session's actual creation, messaging, waiting, cancellation, concurrency, and file-sharing contracts.
-Prefer those tools for ordinary delegation.
-When the project already requires a workflow runtime, inspect its current exports and nearest runnable example.
+Reuse the session's known delegation contracts; inspect unfamiliar creation, messaging, cancellation, concurrency, or file-sharing behavior before relying on it.
+When the project requires an unfamiliar workflow runtime, inspect its current exports and nearest runnable example.
 Prove one task can return its artifact before a large dispatch through an unfamiliar runtime.
 If delegation is unavailable, execute locally and report that constraint.
 
 ## Coordinate the work
 
-1. Define each task's input, output, dependencies, allowed files, and completion checks.
-2. Assign disjoint files or isolated worktrees to parallel writers; reserve shared integration for one owner.
+1. Give each deliverable one owner, bounded scope, input, artifact, dependencies, allowed files, and completion checks.
+2. Assign disjoint files or isolated worktrees to parallel writers; reserve shared integration for one owner and a bounded delivery cut.
 3. Dispatch independent work within available resources and existing authorization.
 4. Check each dependency before starting work that consumes it.
    Collect the complete set only when ranking, deduplication, or integration requires it.
@@ -31,10 +30,11 @@ If delegation is unavailable, execute locally and report that constraint.
 Before costly dispatches, check shared host headroom and active heavy work.
 Start independent, bounded jobs without coordinator approval; wait only on actual dependencies.
 Throttle or stop a job when observed contention traces to it or it fails; resume after recovery or correction.
-Keep source work, reviews, and remote inference moving where resources permit.
+Finish the current delivery cut; record unrelated cleanup for a subsequent cut.
 After recovery or a quota reset, reconcile live owners before resuming writes.
 Transfer retained artifacts to one owner when original and replacement workers are both active.
 
+Use the [shared communication rule](../../../docs/processes/agent-work.md#delegation) for updates.
 For workflows with partial dependencies, cancellation, or recovery, read [coordination cases](references/coordination.md).
 For resumable work, use existing project state to retain task identities, owners, dependencies, artifacts, checks, failures, and resource use.
 Add a task record only when no existing record carries the needed state.
