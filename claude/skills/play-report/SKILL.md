@@ -22,7 +22,7 @@ Build the report on that output rather than re-deriving it, and keep its order:
 5. Charts of economics, scenarios, sensitivity and intervals from the run's own numbers, every plotted number source-checked against the page it came from; then spend and tokens per node, timeline, and failures.
 6. Judge scores by category, each marked calibrated or advisory. Exact and executable checks rank first; an LLM judge counts only after it beats always-reject on labelled fixtures (`/calibrate-before-measure`, `/eval-agent`).
 7. The operator dossier, written by the method below.
-8. Links: secret gists and the Intelligence run page's "Final output" panel, never a bare path on a host.
+8. Links: secret gists and the Discovery run page (`/run/<id>`), whose final output panel shows the readout, never a bare path on a host.
 
 The method below writes item 7, and its attribution and accounting rules bind every item.
 Discovery's [run design and readout](https://github.com/tangle-network/discovery/blob/master/meta/experimental-program.md#run-design-and-readout) owns the standard.
