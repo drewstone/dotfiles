@@ -445,7 +445,7 @@ add_squash_body() {
     /^[[:space:]]*```/ { fence = !fence; next }
     fence { next }
     /^[[:space:]]*$/ { if (n) exit; next }
-    /^[[:space:]]*#/ || /^[[:space:]]*[A-Za-z-]+-[Bb]y:/ || /Generated with/ || /^[[:space:]]*<!--/ || /^[[:space:]]*\|/ { if (n) exit; next }
+    /^[[:space:]]*#/ || /^[[:space:]]*[A-Za-z-]+-[Bb]y:/ || /Generated with \[/ || /^[[:space:]]*<!--/ || /^[[:space:]]*\|/ { if (n) exit; next }
     { sub(/^[[:space:]]+/, ""); sub(/^[-*][[:space:]]+/, ""); printf "%s%s", (n ? " " : ""), $0; n++ }
   ' | cut -c1-600)"
   if [[ -n "$summary" ]]; then
