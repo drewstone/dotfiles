@@ -36,6 +36,10 @@ Report the observed problems, decisions, changed files, before/after screenshots
 Complete the requested improvements; a numerical design score is not a completion criterion.
 If deployment is part of the request, also verify the served revision and live user path.
 
+## Pinned design-engineering skills
+
+For interface work, also load `emil-design-eng` (motion and detail), `break-ui` (worst-case data: long names, empty and huge lists, narrow widths), `mobile-native` (phone behaviour), `review-animations` and `apple-design`. They are pinned in `claude/external-skills.json`.
+
 ## Log the run
 
 ```bash
@@ -49,7 +53,3 @@ skill-run-log /product-design-audit --target "<what this run targeted>" --verdic
 | Changed workflows need additional adversarial browser testing | `/ui-test` | the routes, states, and observed risks |
 | Evidence questions the product value rather than UI execution | `/product-innovation-audit` | the workflow and unresolved user value |
 | The requested correction needs a new visual direction | `/product-design` | the design constraints and real references |
-
-## Pinned design-engineering skills
-
-For interface work, also load `emil-design-eng` (motion and detail), `break-ui` (worst-case data: long names, empty and huge lists, narrow widths), `mobile-native` (phone behaviour), `review-animations` and `apple-design`. They are pinned in `claude/external-skills.json`.
