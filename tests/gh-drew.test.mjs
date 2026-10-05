@@ -173,6 +173,10 @@ test("a description of only trailers yields the title alone; an explicit body an
     assert.deepEqual(merge(s, ["pr", "merge", "3", "--squash", "--body", "mine"]), ["pr", "merge", "3", "--squash", "--body", "mine"]);
     assert.deepEqual(merge(s, ["pr", "merge", "3", "-s", "-F", "msg.txt"]), ["pr", "merge", "3", "-s", "-F", "msg.txt"]);
     assert.deepEqual(merge(s, ["pr", "merge", "3", "--merge"]), ["pr", "merge", "3", "--merge"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-sd"]), ["pr", "merge", "3", "-sd", "--body", "fix(x): one change"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-ds", "-Ro/r"]), ["pr", "merge", "3", "-ds", "-Ro/r", "--body", "fix(x): one change"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-sb", "mine"]), ["pr", "merge", "3", "-sb", "mine"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "--squash", "--", "3"]), ["pr", "merge", "--squash", "--body", "fix(x): one change", "--", "3"]);
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }

@@ -397,6 +397,26 @@ add_squash_body() {
       -R|--repo) repo=(--repo "${1:-}"); shift || true ;;
       --repo=*) repo=(--repo "${arg#--repo=}") ;;
       -t|--subject|-A|--author-email|--match-head-commit) shift || true ;;
+      --) [[ -z "$selector" ]] && selector="${1:-}"; break ;;
+      -[!-]?*)
+        # A cluster of short flags (-sd, -sb msg, -Ro/r): read it letter by letter.
+        local i=1 c
+        while (( i < ${#arg} )); do
+          c="${arg:i:1}"
+          case "$c" in
+            s) squash=1 ;;
+            b|F) return 0 ;;
+            R|t|A)
+              if (( i + 1 < ${#arg} )); then
+                [[ "$c" == R ]] && repo=(--repo "${arg:i+1}")
+              else
+                [[ "$c" == R ]] && repo=(--repo "${1:-}")
+                shift || true
+              fi
+              break ;;
+          esac
+          i=$((i + 1))
+        done ;;
       -*) ;;
       *) [[ -z "$selector" ]] && selector="$arg" ;;
     esac
@@ -424,6 +444,20 @@ add_squash_body() {
   fi
 }
 
+# The body goes before a `--`, after which gh reads only positionals.
+final_args=()
+with_squash_body() {
+  local a inserted=0
+  for a in "$@"; do
+    if [[ "$a" == "--" && $inserted -eq 0 ]]; then
+      final_args+=(${squash_body[@]+"${squash_body[@]}"})
+      inserted=1
+    fi
+    final_args+=("$a")
+  done
+  (( inserted )) || final_args+=(${squash_body[@]+"${squash_body[@]}"})
+}
+
 for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
   token="${!key-}"
   login="$(try_token "$token" || true)"
@@ -432,7 +466,8 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
     guard_reads "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
-    exec env GH_TOKEN="$token" gh "$@" ${squash_body[@]+"${squash_body[@]}"}
+    with_squash_body "$@"
+    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
   fi
 done
 
@@ -444,7 +479,8 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
     guard_reads "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
-    exec env GH_TOKEN="$token" gh "$@" ${squash_body[@]+"${squash_body[@]}"}
+    with_squash_body "$@"
+    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
   fi
 done
 
