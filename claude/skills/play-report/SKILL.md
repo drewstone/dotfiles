@@ -1,6 +1,6 @@
 ---
 name: play-report
-description: Report what a play did, for an observer, separating the system's own behavior from what the harness and the operator did to it.
+description: Report what a play did, for an observer, starting from its readout and separating the system's own behavior from what the harness and the operator did to it.
 ---
 
 # Play report
@@ -8,6 +8,24 @@ description: Report what a play did, for an observer, separating the system's ow
 Tell the observer what a play did and what to decide next.
 A play is one press of start, with several agents working one problem under declared invariants and resource limits.
 This skill reports a play; it does not run one, and it does not audit a single director's research quality.
+
+## Start from the readout
+
+Every settled run already has a readout: the run process starts `disco readout <runId>` after every settle, and the fleet-rollup sweep starts any that is missing.
+When none exists, run `disco readout <runId>` on the coordinator host first.
+Build the report on that output rather than re-deriving it, and keep its order:
+
+1. A Feynman-simple answer a non-specialist can present, with every technical number kept.
+2. What the run changed against its baseline, from the registration's `acceptance.design`.
+3. The hypothesis verdict table: met, not met, inconclusive or not measured, each with its evidence.
+4. The final output: each declared deliverable, present or missing, against its bar.
+5. Charts of economics, scenarios, sensitivity and intervals from the run's own numbers, every plotted number source-checked against the page it came from; then spend and tokens per node, timeline, and failures.
+6. Judge scores by category, each marked calibrated or advisory. Exact and executable checks rank first; an LLM judge counts only after it beats always-reject on labelled fixtures (`/calibrate-before-measure`, `/eval-agent`).
+7. The operator dossier, written by the method below.
+8. Links: secret gists and the Intelligence run page's "Final output" panel, never a bare path on a host.
+
+The method below writes item 7, and its attribution and accounting rules bind every item.
+Discovery's [run design and readout](https://github.com/tangle-network/discovery/blob/master/meta/experimental-program.md#run-design-and-readout) owns the standard.
 
 ## Separate the system from its harness
 
