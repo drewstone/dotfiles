@@ -25,6 +25,8 @@ else
 fi
 echo "== worktree reaper"
 "$SCRIPT_DIR/worktree-reaper/install.sh"
+echo "== main checkout fast-forward"
+"$SCRIPT_DIR/main-checkout-ff/install.sh"
 echo
 
 echo "Configured global Git hooks:"

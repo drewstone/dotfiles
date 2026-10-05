@@ -1,0 +1,10 @@
+[Unit]
+Description=Fast-forward idle, clean main checkouts on their default branch (dotfiles git/main-checkout-ff)
+Documentation=file://%h/.local/bin/main-checkout-ff
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/main-checkout-ff
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=20min

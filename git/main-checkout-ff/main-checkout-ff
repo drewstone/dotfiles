@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Fast-forward main checkouts that are safe to move, so they track origin's default branch.
+#
+# A checkout moves only when all of these hold:
+#   - it is a primary clone (its .git is a directory) with an origin,
+#   - it is on origin's default branch and HEAD is an ancestor of it,
+#   - it has no tracked changes (untracked files are kept; git refuses an overwrite),
+#   - the merge would not replace a locally ignored file such as .env,
+#   - no live process has its working directory inside it, read again just before the merge.
+# Anything else is left for its owner, as the fleet main-checkouts runbook requires.
+# It never stashes, resets or cleans: a stash of untracked run directories once killed live runs.
+# When live processes cannot be seen (no lsof on macOS, unreadable /proc entries), it moves nothing.
+#
+# Roots: MAIN_CHECKOUT_ROOTS (colon-separated), default ~/code:~/company:~/webb.
+# Log: ~/.local/state/main-checkout-ff/main-checkout-ff.log
+set -u
+
+state="$HOME/.local/state/main-checkout-ff"
+log="$state/main-checkout-ff.log"
+mkdir -p "$state"
+roots="${MAIN_CHECKOUT_ROOTS:-$HOME/code:$HOME/company:$HOME/webb}"
+dry_run=0
+[ "${1:-}" = "--dry-run" ] && dry_run=1
+
+# A background job must never wait on a prompt: a hung run blocks every later launchd run.
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}"
+
+note() { echo "$(date -u +%FT%TZ) $*" >> "$log"; }
+say() { if [ "$dry_run" = 1 ]; then echo "$*"; else note "$*"; fi; }
+
+# Prints the real working directory of every process, or fails when they cannot all be seen.
+busy_dirs() {
+  if [ -d /proc/self ]; then
+    local p d hidden=0
+    for p in /proc/[0-9]*; do
+      d="$(readlink "$p/cwd" 2>/dev/null)" || { [ -e "$p" ] && hidden=$((hidden + 1)); continue; }
+      echo "$d"
+    done
+    # Other users' processes are unreadable without root; a repo shared with them is not ours to move.
+    [ "$hidden" -eq 0 ] || [ "$(id -u)" -ne 0 ]
+  else
+    command -v lsof >/dev/null 2>&1 || return 1
+    local out
+    out="$(lsof -a -d cwd -F n 2>/dev/null | sed -n 's/^n//p')"
+    [ -n "$out" ] || return 1
+    printf '%s\n' "$out"
+  fi
+}
+
+in_use() {
+  # True when any process cwd is the repo or below it, comparing real paths.
+  local busy
+  busy="$(busy_dirs)" || return 0
+  printf '%s\n' "$busy" | awk -v r="$1" 'index($0, r) == 1 && (length($0) == length(r) || substr($0, length(r) + 1, 1) == "/") { found = 1 } END { exit !found }'
+}
+
+IFS=: read -r -a root_list <<< "$roots"
+for root in "${root_list[@]}"; do
+  [ -d "$root" ] || continue
+  for repo in "$root"/*/; do
+    repo="${repo%/}"; name="${repo##*/}"
+    case "$name" in _*|.*) continue ;; esac
+    [ -d "$repo/.git" ] || continue
+    real="$(cd "$repo" && pwd -P)" || continue
+    git -C "$repo" remote get-url origin >/dev/null 2>&1 || continue
+    def="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"; def="${def#origin/}"
+    [ -n "$def" ] || continue
+    [ "$(git -C "$repo" branch --show-current)" = "$def" ] || continue
+    if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+      say "skipped $repo: tracked changes"
+      continue
+    fi
+    if in_use "$real"; then
+      say "skipped $repo: in use"
+      continue
+    fi
+    if ! err="$(git -C "$repo" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 fetch -q origin "$def" 2>&1)"; then
+      say "fetch-failed $repo: $(printf '%s' "$err" | head -n 1)"
+      continue
+    fi
+    behind="$(git -C "$repo" rev-list --count "HEAD..origin/$def" 2>/dev/null || echo 0)"
+    [ "$behind" -gt 0 ] || continue
+    # Local commits on the default branch need their owner; a fast-forward cannot carry them.
+    if ! git -C "$repo" merge-base --is-ancestor HEAD "origin/$def" 2>/dev/null; then
+      say "diverged $repo (needs its owner)"
+      continue
+    fi
+    # git replaces ignored files silently when origin starts tracking the same path.
+    clobber="$(comm -12 <(git -C "$repo" diff --name-only HEAD "origin/$def" | sort) \
+                        <(git -C "$repo" ls-files -o -i --exclude-standard | sort) | head -n 1)"
+    if [ -n "$clobber" ]; then
+      say "skipped $repo: merge would replace ignored file $clobber"
+      continue
+    fi
+    if [ "$dry_run" = 1 ]; then
+      echo "would fast-forward $repo ($behind behind origin/$def)"
+      continue
+    fi
+    # The fetch can take minutes; look for a new process again right before moving files.
+    if in_use "$real"; then
+      note "skipped $repo: in use"
+      continue
+    fi
+    if out="$(git -C "$repo" -c core.hooksPath=/dev/null merge --ff-only -q "origin/$def" 2>&1)"; then
+      note "ff $repo -> $(git -C "$repo" rev-parse --short HEAD) ($behind)"
+    else
+      note "refused $repo: $(printf '%s' "$out" | head -n 1)"
+    fi
+  done
+done
