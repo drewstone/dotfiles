@@ -11,7 +11,7 @@ Inventory and invocation history describe use; effectiveness needs outcome evide
 
 Keep actual session IDs, trace spans, instruction identity, and outcome references.
 Distinguish a mentioned skill from a successful read and a read from applied instructions.
-A `.agent/skill-runs.jsonl` row without a matching session link is repository history, not proof that the inspected session used the skill.
+A `skill-runs.jsonl` row without a matching session link is repository history, not proof that the inspected session used the skill.
 
 ## Assess use and effects separately
 

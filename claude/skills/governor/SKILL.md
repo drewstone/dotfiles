@@ -54,7 +54,7 @@ Give the selected skill, target, reason, source evidence, first useful check, an
 If no work is justified, record `stop` with the reason.
 Ask for user input only when a material unresolved choice or missing authority actually prevents progress.
 
-Append `.agent/governor.jsonl` with the existing fields `ts`, `repoShape`, `signals`, `decision`, `reason`, `priorChain`, and `operatorOverride`.
+Append `governor.jsonl` in the directory `skill-run-log --dir` prints, with the existing fields `ts`, `repoShape`, `signals`, `decision`, `reason`, `priorChain`, and `operatorOverride`.
 Keep `decision` a bare `/skill` token or `stop`; put explanation in `reason` and evidence in `signals`.
 Build `priorChain` from actual recorded decisions.
 Use `operatorOverride: null` unless an observed user instruction supports an override.

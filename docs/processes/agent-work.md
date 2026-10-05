@@ -78,7 +78,8 @@ Default security and data integrity to fail-closed.
 
 ## Protect the host
 
-Keep artifacts in the project, session scratch directory, or /tmp.
+Keep scratch, logs, and evidence outside repository checkouts, in `~/.local/state/agent-work/<repo>/` (`skill-run-log --dir`), the session scratch directory, or /tmp.
+A checkout holds only files its next pull request commits; a main checkout stays clean and on its default branch.
 For existing screenshots, check ~/.claude/image-cache/ and ~/.tmux/clipboard/images/.
 Mount namespaces do not isolate underlying file operations.
 Run root storage or host experiments through `hostlab run -- '<command>'` in its throwaway VM.
