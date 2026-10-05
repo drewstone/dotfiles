@@ -28,7 +28,9 @@ tier() {
 # Trees whose remote branch is gone (GitHub deletes the head branch when a PR merges),
 # idle for GONE_IDLE_HOURS, go through wt-remove, which still salvages unpushed commits
 # and uncommitted or ignored non-build files to gtr-pro before removing anything.
-GONE_IDLE_HOURS=${MAC_DISK_GUARD_GONE_IDLE_HOURS:-2}
+# 12 h matches wt-remove's own rule: an agent paused on a usage limit sits idle for hours,
+# and on 2026-10-05 a 2 h window removed two worktrees whose agents resumed afterwards.
+GONE_IDLE_HOURS=${MAC_DISK_GUARD_GONE_IDLE_HOURS:-12}
 gone_branch_trees() {
   local wt_remove="$HOME/company/tools/worktree-reap/bin/wt-remove" open list d b
   [ -x "$wt_remove" ] || return 1
@@ -38,6 +40,8 @@ gone_branch_trees() {
     d=${d%/}; [ -f "$d/.git" ] || continue
     b=$(git -C "$d" symbolic-ref -q --short HEAD) || continue
     git -C "$d" config "branch.$b.remote" >/dev/null || continue   # never pushed: leave it
+    # Uncommitted edits on a merged branch are follow-up work in progress, not leftovers.
+    [ -z "$(budget 20 git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ] || continue
     [ -z "$(budget 20 git -C "$d" ls-remote --heads origin "$b" 2>/dev/null)" ] || continue
     echo "$d"
   done > "$list"
