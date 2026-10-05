@@ -377,14 +377,62 @@ EOF
   fi
 }
 
+# A squash merge without an explicit body lets GitHub write the message, and
+# GitHub then appends "Co-authored-by:" for every PR commit whose author email
+# is not verified on the merging account (agents commit as unverified tangle
+# addresses). An explicit --body replaces that message, so a `pr merge
+# --squash` that names no body gets one: the PR title and the first prose
+# paragraph of its description, with trailer and generator lines removed.
+squash_body=()
+add_squash_body() {
+  local token="$1"; shift
+  [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]] || return 0
+  shift 2
+  local squash=0 selector="" repo=() arg
+  while (( $# )); do
+    arg="$1"; shift
+    case "$arg" in
+      -s|--squash) squash=1 ;;
+      -b|--body|-F|--body-file|--body=*|--body-file=*) return 0 ;;
+      -R|--repo) repo=(--repo "${1:-}"); shift || true ;;
+      --repo=*) repo=(--repo "${arg#--repo=}") ;;
+      -t|--subject|-A|--author-email|--match-head-commit) shift || true ;;
+      -*) ;;
+      *) [[ -z "$selector" ]] && selector="$arg" ;;
+    esac
+  done
+  (( squash )) || return 0
+  local view=(pr view) title description summary
+  [[ -n "$selector" ]] && view+=("$selector")
+  view+=(${repo[@]+"${repo[@]}"})
+  title="$(GH_TOKEN="$token" gh "${view[@]}" --json title --jq .title)" || {
+    echo "gh-drew: cannot read the PR title to write the squash body; pass --body explicitly" >&2
+    exit 2
+  }
+  description="$(GH_TOKEN="$token" gh "${view[@]}" --json body --jq .body)" || description=""
+  summary="$(printf '%s\n' "$description" | tr -d '\r' | awk '
+    /^[[:space:]]*```/ { fence = !fence; next }
+    fence { next }
+    /^[[:space:]]*$/ { if (n) exit; next }
+    /^[[:space:]]*#/ || /^[[:space:]]*[A-Za-z-]+-[Bb]y:/ || /Generated with/ || /^[[:space:]]*<!--/ || /^[[:space:]]*\|/ { if (n) exit; next }
+    { sub(/^[[:space:]]+/, ""); sub(/^[-*][[:space:]]+/, ""); printf "%s%s", (n ? " " : ""), $0; n++ }
+  ' | cut -c1-600)"
+  if [[ -n "$summary" ]]; then
+    squash_body=(--body "$title"$'\n\n'"$summary")
+  else
+    squash_body=(--body "$title")
+  fi
+}
+
 for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
   token="${!key-}"
   login="$(try_token "$token" || true)"
 
   if [[ "$login" == "$expected_login" ]]; then
     guard_reads "$token" "$@"
+    add_squash_body "$token" "$@"
     log_call called "$@"
-    exec env GH_TOKEN="$token" gh "$@"
+    exec env GH_TOKEN="$token" gh "$@" ${squash_body[@]+"${squash_body[@]}"}
   fi
 done
 
@@ -394,8 +442,9 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
 
   if [[ "$login" == "$expected_login" ]]; then
     guard_reads "$token" "$@"
+    add_squash_body "$token" "$@"
     log_call called "$@"
-    exec env GH_TOKEN="$token" gh "$@"
+    exec env GH_TOKEN="$token" gh "$@" ${squash_body[@]+"${squash_body[@]}"}
   fi
 done
 
