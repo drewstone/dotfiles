@@ -136,8 +136,10 @@ cmd_claim() {
   local dir
   # Git refuses to check a branch out in two worktrees, so a branch that is
   # already live somewhere can never be claimed into a pooled tree. That tree
-  # IS the claim: print it and stop, instead of burning a warm tree on a
-  # checkout that cannot succeed.
+  # belongs to whoever checked the branch out, and an idle session looks the
+  # same as an abandoned one. Handing it out let a second session's edits
+  # ride into the owner's next `git add -A`. Refuse and name the tree; its
+  # owner keeps working there, and anyone else coordinates with that owner.
   local existing
   existing="$(cd "$REPO" && git worktree list --porcelain 2>/dev/null \
     | awk -v want="refs/heads/$branch" '
@@ -145,9 +147,9 @@ cmd_claim() {
         /^branch /{if (substr($0,8) == want) {print path; exit}}
       ')"
   if [ -n "$existing" ] && [ -d "$existing" ]; then
-    log "branch already checked out; reusing that tree"
-    printf '%s\n' "$existing"
-    return 0
+    log "REFUSED: $branch is already checked out in $existing" >&2
+    log "that tree belongs to the session that checked it out; work there only if it is yours" >&2
+    return 2
   fi
   for d in "$POOL"/"${SEED_PREFIX}"*; do
     [ -d "$d" ] || continue
