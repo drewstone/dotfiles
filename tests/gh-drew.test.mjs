@@ -128,3 +128,57 @@ test("a log directory that cannot be written never fails the call", () => {
     rmSync(s.root, { recursive: true, force: true });
   }
 });
+
+// GitHub appends "Co-authored-by:" to a squash merge it writes itself when PR commits carry an unverified email.
+// gh-drew supplies --body to every squash merge that names none, so GitHub never writes that message.
+function mergeSandbox(description) {
+  const s = sandbox();
+  const argsFile = join(s.root, "merge-args");
+  writeFileSync(join(s.root, "bin", "gh"), `#!/usr/bin/env bash
+case "$*" in
+  "api user --jq .login") echo drewstone ;;
+  "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
+  "pr view"*"--json title --jq .title") echo "fix(x): one change" ;;
+  "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;
+  "pr merge"*|"pr -R "*" merge"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${argsFile}" ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+`);
+  return { ...s, argsFile, env: { ...s.env, FAKE_BODY: description } };
+}
+
+function merge(s, args) {
+  const result = spawnSync(resolve(ghDrew), args, { cwd: s.work, env: s.env, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return readFileSync(s.argsFile, "utf8").split("\0").slice(0, -1);
+}
+
+test("a squash merge without a body gets the PR title and the first prose paragraph, never a trailer", () => {
+  const s = mergeSandbox("## Summary\n\n- Fixes the parser so empty input\n  returns null.\n\nSecond paragraph.\n\nCo-authored-by: X <x@tangle.tools>\n🤖 Generated with [Claude Code](https://claude.com/claude-code)");
+  try {
+    const args = merge(s, ["pr", "merge", "12", "--squash", "-R", "o/r", "--delete-branch"]);
+    assert.deepEqual(args.slice(0, 7), ["pr", "merge", "12", "--squash", "-R", "o/r", "--delete-branch"]);
+    assert.equal(args[7], "--body");
+    assert.equal(args[8], "fix(x): one change\n\nFixes the parser so empty input returns null.");
+    assert.ok(!args[8].includes("Co-authored-by") && !args[8].includes("Generated with"));
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("a description of only trailers yields the title alone; an explicit body and non-squash merges pass through", () => {
+  const s = mergeSandbox("Co-authored-by: X <x@tangle.tools>\n");
+  try {
+    assert.deepEqual(merge(s, ["pr", "merge", "-s", "--repo=o/r"]), ["pr", "merge", "-s", "--repo=o/r", "--body", "fix(x): one change"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "--squash", "--body", "mine"]), ["pr", "merge", "3", "--squash", "--body", "mine"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-s", "-F", "msg.txt"]), ["pr", "merge", "3", "-s", "-F", "msg.txt"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "--merge"]), ["pr", "merge", "3", "--merge"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-sd"]), ["pr", "merge", "3", "-sd", "--body", "fix(x): one change"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-ds", "-Ro/r"]), ["pr", "merge", "3", "-ds", "-Ro/r", "--body", "fix(x): one change"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "3", "-sb", "mine"]), ["pr", "merge", "3", "-sb", "mine"]);
+    assert.deepEqual(merge(s, ["pr", "-R", "o/r", "merge", "3", "-s"]), ["pr", "-R", "o/r", "merge", "3", "-s", "--body", "fix(x): one change"]);
+    assert.deepEqual(merge(s, ["pr", "merge", "--squash", "--", "3"]), ["pr", "merge", "--squash", "--body", "fix(x): one change", "--", "3"]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});

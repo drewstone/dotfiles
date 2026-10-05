@@ -377,14 +377,108 @@ EOF
   fi
 }
 
+# A squash merge without an explicit body lets GitHub write the message, and
+# GitHub then appends "Co-authored-by:" for every PR commit whose author email
+# is not verified on the merging account (agents commit as unverified tangle
+# addresses). An explicit --body replaces that message, so a `pr merge
+# --squash` that names no body gets one: the PR title and the first prose
+# paragraph of its description, with trailer and generator lines removed.
+squash_body=()
+add_squash_body() {
+  local token="$1"; shift
+  [[ "${1:-}" == "pr" ]] || return 0
+  shift
+  local squash=0 selector="" repo=() arg
+  # gh accepts the inherited repository flag before the subcommand: gh pr -R o/r merge 12 -s.
+  while (( $# )) && [[ "$1" != "merge" ]]; do
+    case "$1" in
+      -R|--repo) repo=(--repo "${2:-}"); shift 2 || return 0 ;;
+      --repo=*) repo=(--repo "${1#--repo=}"); shift ;;
+      -R?*) repo=(--repo "${1#-R}"); shift ;;
+      *) return 0 ;;
+    esac
+  done
+  (( $# )) || return 0
+  shift
+  while (( $# )); do
+    arg="$1"; shift
+    case "$arg" in
+      -s|--squash) squash=1 ;;
+      -b|--body|-F|--body-file|--body=*|--body-file=*) return 0 ;;
+      -R|--repo) repo=(--repo "${1:-}"); shift || true ;;
+      --repo=*) repo=(--repo "${arg#--repo=}") ;;
+      -t|--subject|-A|--author-email|--match-head-commit) shift || true ;;
+      --) [[ -z "$selector" ]] && selector="${1:-}"; break ;;
+      -[!-]?*)
+        # A cluster of short flags (-sd, -sb msg, -Ro/r): read it letter by letter.
+        local i=1 c
+        while (( i < ${#arg} )); do
+          c="${arg:i:1}"
+          case "$c" in
+            s) squash=1 ;;
+            b|F) return 0 ;;
+            R|t|A)
+              if (( i + 1 < ${#arg} )); then
+                [[ "$c" == R ]] && repo=(--repo "${arg:i+1}")
+              else
+                [[ "$c" == R ]] && repo=(--repo "${1:-}")
+                shift || true
+              fi
+              break ;;
+          esac
+          i=$((i + 1))
+        done ;;
+      -*) ;;
+      *) [[ -z "$selector" ]] && selector="$arg" ;;
+    esac
+  done
+  (( squash )) || return 0
+  local view=(pr view) title description summary
+  [[ -n "$selector" ]] && view+=("$selector")
+  view+=(${repo[@]+"${repo[@]}"})
+  title="$(GH_TOKEN="$token" gh "${view[@]}" --json title --jq .title)" || {
+    echo "gh-drew: cannot read the PR title to write the squash body; pass --body explicitly" >&2
+    exit 2
+  }
+  description="$(GH_TOKEN="$token" gh "${view[@]}" --json body --jq .body)" || description=""
+  summary="$(printf '%s\n' "$description" | tr -d '\r' | awk '
+    /^[[:space:]]*```/ { fence = !fence; next }
+    fence { next }
+    /^[[:space:]]*$/ { if (n) exit; next }
+    /^[[:space:]]*#/ || /^[[:space:]]*[A-Za-z-]+-[Bb]y:/ || /Generated with/ || /^[[:space:]]*<!--/ || /^[[:space:]]*\|/ { if (n) exit; next }
+    { sub(/^[[:space:]]+/, ""); sub(/^[-*][[:space:]]+/, ""); printf "%s%s", (n ? " " : ""), $0; n++ }
+  ' | cut -c1-600)"
+  if [[ -n "$summary" ]]; then
+    squash_body=(--body "$title"$'\n\n'"$summary")
+  else
+    squash_body=(--body "$title")
+  fi
+}
+
+# The body goes before a `--`, after which gh reads only positionals.
+final_args=()
+with_squash_body() {
+  local a inserted=0
+  for a in "$@"; do
+    if [[ "$a" == "--" && $inserted -eq 0 ]]; then
+      final_args+=(${squash_body[@]+"${squash_body[@]}"})
+      inserted=1
+    fi
+    final_args+=("$a")
+  done
+  (( inserted )) || final_args+=(${squash_body[@]+"${squash_body[@]}"})
+}
+
 for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
   token="${!key-}"
   login="$(try_token "$token" || true)"
 
   if [[ "$login" == "$expected_login" ]]; then
     guard_reads "$token" "$@"
+    add_squash_body "$token" "$@"
     log_call called "$@"
-    exec env GH_TOKEN="$token" gh "$@"
+    with_squash_body "$@"
+    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
   fi
 done
 
@@ -394,8 +488,10 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
 
   if [[ "$login" == "$expected_login" ]]; then
     guard_reads "$token" "$@"
+    add_squash_body "$token" "$@"
     log_call called "$@"
-    exec env GH_TOKEN="$token" gh "$@"
+    with_squash_body "$@"
+    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
   fi
 done
 
