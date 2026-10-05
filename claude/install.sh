@@ -154,6 +154,21 @@ else
   echo "  WARN Runtime skills not installed; existing Runtime skill links are left in place"
 fi
 
+# Skills from other repositories, pinned to a commit with every file's sha256 (external-skills.json).
+# A local skill of the same name wins; when GitHub is unreachable the last verified store is reused.
+EXTERNAL_SKILLS_HOME="$HOME/.local/share/external-skills"
+if external=$(python3 "$SCRIPT_DIR/install-external-skills.py" --manifest "$SCRIPT_DIR/external-skills.json" --store "$EXTERNAL_SKILLS_HOME"); then
+  for pair in $(python3 -c 'import json, sys; [print(f"{k}={v}") for k, v in json.loads(sys.argv[1])["skills"].items()]' "$external"); do
+    name="${pair%%=*}"; dir="${pair#*=}"
+    [ -e "$SCRIPT_DIR/skills/$name" ] && continue   # a local skill of the same name wins
+    link "$dir" "$CLAUDE_DIR/skills/$name"
+    link "$dir" "$CODEX_DIR/skills/$name"
+  done
+  echo "  External skills: $(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])["skills"]))' "$external") pinned"
+else
+  echo "  WARN External skills not installed; existing external skill links are left in place"
+fi
+
 # Commands
 if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/null)" ]; then
   mkdir -p "$CLAUDE_DIR/commands"

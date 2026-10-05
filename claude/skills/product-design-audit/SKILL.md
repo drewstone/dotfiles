@@ -49,3 +49,7 @@ skill-run-log /product-design-audit --target "<what this run targeted>" --verdic
 | Changed workflows need additional adversarial browser testing | `/ui-test` | the routes, states, and observed risks |
 | Evidence questions the product value rather than UI execution | `/product-innovation-audit` | the workflow and unresolved user value |
 | The requested correction needs a new visual direction | `/product-design` | the design constraints and real references |
+
+## Pinned design-engineering skills
+
+For interface work, also load `emil-design-eng` (motion and detail), `break-ui` (worst-case data: long names, empty and huge lists, narrow widths), `mobile-native` (phone behaviour), `review-animations` and `apple-design`. They are pinned in `claude/external-skills.json`.
