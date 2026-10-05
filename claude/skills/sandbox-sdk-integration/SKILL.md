@@ -10,7 +10,7 @@ Use the maintained Sandbox SDK for sessions, dispatch, replay, and browser state
 ## Choose the path from its lifetime
 
 Read the current [SDK integration guide](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/INTEGRATION.md) and [exports](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/package.json).
-Confirm required methods against the consuming project's actual package.
+Confirm required methods against the consuming project's actual package. The model id has one home: top-level `model` (or `backend.modelId` at create time) — routing rides the backend as `provider`/`apiKey`/`baseUrl`; the nested `backend.model.model` spelling is deprecated and conflicts throw.
 
 | Required behavior | Path to inspect |
 |---|---|
