@@ -61,7 +61,8 @@ Migration is optional: check tracked files, compare collisions, and verify every
 ## Run log
 
 Each skill includes `## Log the run` with its invocation of [skill-run-log](../tools/skill-run-log).
-The helper uses `.agent/skill-runs.jsonl`, or the existing `.evolve/` directory when `.agent/` is absent.
+The helper appends to `skill-runs.jsonl` in the repository's state directory; `skill-run-log --dir` prints it.
+Rows written before 2026-10-05 remain in each repository's `.agent/` or `.evolve/` log.
 
 ```bash
 skill-run-log /simplify --target "<scope>" --verdict <result> --next /stop

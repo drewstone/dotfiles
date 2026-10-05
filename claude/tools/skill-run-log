@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Append one structured line to .agent/skill-runs.jsonl per skill invocation.
+# Append one structured line to the repository's off-repo skill-runs.jsonl per skill invocation.
 #
 # Usage:
 #   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
 #                         [--project NAME] [--transcript PATH] [--trace-dir PATH]
+#   skill-run-log --dir    print the state directory for the current repository
 #   skill-run-log -h|--help
 # Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
 #
@@ -11,7 +12,12 @@
 #   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor \
 #                 --trace-dir .agent/runs/evolve-2026-04-25/
 #
-# Writes to <git-root>/.agent/skill-runs.jsonl — falls back to $PWD/.agent/ if not in a git repo.
+# Writes to ${XDG_STATE_HOME:-~/.local/state}/agent-work/<repo>/skill-runs.jsonl, where <repo>
+# names the main checkout, so every worktree of a repository shares one log; outside a git
+# repository <repo> is the basename of $PWD. The log lives outside the checkout because an
+# append inside it left main checkouts permanently dirty (discovery-lab, 2026-10-05: 210
+# unmerged rows blocking a fast-forward). Rows written before then remain in each repo's
+# .agent/skill-runs.jsonl or .evolve/skill-runs.jsonl as history.
 # Creates the directory and file if missing. Append-only; never rewrites prior lines.
 #
 # Schema (see ~/dotfiles/claude/skills/_common.md):
@@ -25,6 +31,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--project NAME] [--transcript PATH] [--trace-dir PATH]
+       skill-run-log --dir
        skill-run-log -h|--help
 Use --option=-literal for a value beginning with '-'.
 EOF
@@ -36,9 +43,27 @@ invalid_args() {
   exit 2
 }
 
+# The main checkout's name, shared by its linked worktrees.
+repo_name() {
+  local common
+  if common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+    case "$common" in
+      */.git) basename "$(dirname "$common")" ;;
+      *) basename "${common%.git}" ;;
+    esac
+  else
+    basename "$PWD"
+  fi
+}
+
+state_dir() {
+  printf '%s/agent-work/%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "$(repo_name)"
+}
+
 [ $# -ge 1 ] || invalid_args 'skill is required'
 case "$1" in
   -h|--help) usage; exit 0 ;;
+  --dir) state_dir; echo; exit 0 ;;
   -*) invalid_args "unknown flag: $1" ;;
 esac
 
@@ -90,32 +115,10 @@ if [ "$duration" != null ] && ! [[ "$duration" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?([e
   invalid_args 'duration must be a nonnegative JSON number'
 fi
 
-# Artifact dir is .agent/. A repo that still has the legacy .evolve/ keeps using
-# it until someone migrates, so no in-flight run loses its history. Delete
-# .evolve/ once its contents are moved and this picks up .agent/ on the next run.
-artifact_dir() {
-  local root="$1"
-  if [ -d "$root/.agent" ]; then
-    printf '%s/.agent' "$root"
-  elif [ -d "$root/.evolve" ]; then
-    printf '%s/.evolve' "$root"
-  else
-    printf '%s/.agent' "$root"
-  fi
-}
-
-# Resolve project root: prefer git, fall back to $PWD basename
 if [ -z "$project" ]; then
-  if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-    project="$(basename "$git_root")"
-    target_dir="$(artifact_dir "$git_root")"
-  else
-    project="$(basename "$PWD")"
-    target_dir="$(artifact_dir "$PWD")"
-  fi
-else
-  target_dir="$(artifact_dir "$PWD")"
+  project="$(repo_name)"
 fi
+target_dir="$(state_dir)"
 
 mkdir -p "$target_dir"
 log="$target_dir/skill-runs.jsonl"
