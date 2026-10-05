@@ -113,6 +113,26 @@ class MainCheckoutFfTest(unittest.TestCase):
         self.assertIn("would fast-forward", out.stdout)
         self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
 
+    def test_leaves_repos_owned_by_another_lane(self):
+        repo = self.clone("discovery-lab")
+        before = git(repo, "rev-parse", "HEAD")
+        self.advance_origin()
+        self.run_ff()
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
+
+    def test_skips_checkout_a_process_runs_by_path(self):
+        repo = self.clone("service")
+        (repo / "run.sh").write_text("sleep 30\n")
+        before = git(repo, "rev-parse", "HEAD")
+        self.advance_origin()
+        holder = subprocess.Popen(["bash", str(repo / "run.sh")], cwd=self.tmp.name)
+        try:
+            self.run_ff()
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
+
     def test_skips_checkout_with_a_process_inside(self):
         repo = self.clone("busy")
         before = git(repo, "rev-parse", "HEAD")

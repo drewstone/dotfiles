@@ -29,30 +29,39 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeou
 note() { echo "$(date -u +%FT%TZ) $*" >> "$log"; }
 say() { if [ "$dry_run" = 1 ]; then echo "$*"; else note "$*"; fi; }
 
-# Prints the real working directory of every process, or fails when they cannot all be seen.
-busy_dirs() {
+# Repositories another lane owns (fleet runbook: discovery-lab-65 owns discovery-lab and discovery).
+# Override with MAIN_CHECKOUT_FF_EXCLUDE, a space-separated list of directory names.
+exclude=" ${MAIN_CHECKOUT_FF_EXCLUDE-discovery-lab discovery} "
+
+# Prints every path a process is using: its working directory and, on Linux, each argument
+# (services run code by absolute path without a cwd inside); on macOS, every open file.
+# Fails when processes cannot be seen, so nothing moves.
+busy_paths() {
   if [ -d /proc/self ]; then
     local p d hidden=0
     for p in /proc/[0-9]*; do
       d="$(readlink "$p/cwd" 2>/dev/null)" || { [ -e "$p" ] && hidden=$((hidden + 1)); continue; }
       echo "$d"
+      tr '\0' '\n' < "$p/cmdline" 2>/dev/null
     done
     # Other users' processes are unreadable without root; a repo shared with them is not ours to move.
     [ "$hidden" -eq 0 ] || [ "$(id -u)" -ne 0 ]
   else
     command -v lsof >/dev/null 2>&1 || return 1
     local out
-    out="$(lsof -a -d cwd -F n 2>/dev/null | sed -n 's/^n//p')"
+    out="$(lsof -F n 2>/dev/null | sed -n 's/^n//p')"
     [ -n "$out" ] || return 1
     printf '%s\n' "$out"
   fi
 }
 
 in_use() {
-  # True when any process cwd is the repo or below it, comparing real paths.
+  # True when any process uses the repo or a path below it ($1 real path, $2 path as listed).
   local busy
-  busy="$(busy_dirs)" || return 0
-  printf '%s\n' "$busy" | awk -v r="$1" 'index($0, r) == 1 && (length($0) == length(r) || substr($0, length(r) + 1, 1) == "/") { found = 1 } END { exit !found }'
+  busy="$(busy_paths)" || return 0
+  printf '%s\n' "$busy" | awk -v r="$1" -v s="$2" '
+    function under(path, root) { return index(path, root) == 1 && (length(path) == length(root) || substr(path, length(root) + 1, 1) == "/") }
+    under($0, r) || under($0, s) { found = 1 } END { exit !found }'
 }
 
 IFS=: read -r -a root_list <<< "$roots"
@@ -61,6 +70,7 @@ for root in "${root_list[@]}"; do
   for repo in "$root"/*/; do
     repo="${repo%/}"; name="${repo##*/}"
     case "$name" in _*|.*) continue ;; esac
+    case "$exclude" in *" $name "*) continue ;; esac
     [ -d "$repo/.git" ] || continue
     real="$(cd "$repo" && pwd -P)" || continue
     git -C "$repo" remote get-url origin >/dev/null 2>&1 || continue
@@ -71,7 +81,7 @@ for root in "${root_list[@]}"; do
       say "skipped $repo: tracked changes"
       continue
     fi
-    if in_use "$real"; then
+    if in_use "$real" "$repo"; then
       say "skipped $repo: in use"
       continue
     fi
@@ -98,7 +108,7 @@ for root in "${root_list[@]}"; do
       continue
     fi
     # The fetch can take minutes; look for a new process again right before moving files.
-    if in_use "$real"; then
+    if in_use "$real" "$repo"; then
       note "skipped $repo: in use"
       continue
     fi
