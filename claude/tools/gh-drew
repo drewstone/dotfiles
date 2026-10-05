@@ -386,9 +386,20 @@ EOF
 squash_body=()
 add_squash_body() {
   local token="$1"; shift
-  [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]] || return 0
-  shift 2
+  [[ "${1:-}" == "pr" ]] || return 0
+  shift
   local squash=0 selector="" repo=() arg
+  # gh accepts the inherited repository flag before the subcommand: gh pr -R o/r merge 12 -s.
+  while (( $# )) && [[ "$1" != "merge" ]]; do
+    case "$1" in
+      -R|--repo) repo=(--repo "${2:-}"); shift 2 || return 0 ;;
+      --repo=*) repo=(--repo "${1#--repo=}"); shift ;;
+      -R?*) repo=(--repo "${1#-R}"); shift ;;
+      *) return 0 ;;
+    esac
+  done
+  (( $# )) || return 0
+  shift
   while (( $# )); do
     arg="$1"; shift
     case "$arg" in
