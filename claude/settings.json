@@ -14,6 +14,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.hindsight/coding-agents/dist/claude-sessionstart-hook.js\"; [ -f \"$f\" ] || exit 0; exec node \"$f\"",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -22,6 +31,15 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/inject-directive.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.hindsight/coding-agents/dist/claude-hook.js\"; [ -f \"$f\" ] || exit 0; exec node \"$f\"",
+            "timeout": 30
           }
         ]
       }
@@ -97,6 +115,17 @@
             "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
             "timeout": 30,
             "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.hindsight/coding-agents/dist/claude-stop-hook.js\"; [ -f \"$f\" ] || exit 0; exec node \"$f\"",
+            "timeout": 60
           }
         ]
       }
