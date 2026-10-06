@@ -35,4 +35,4 @@ skill-run-log /director-autopsy --target "<lines or 'all active'>" --verdict <VE
 |---|---|---|
 | A ranked change is a loop or charter edit | `/implement` | the change and its evidence line |
 | A register candidate is named | `/verify` | the claim page path and its check line |
-| The operator wants the per-run story of one outlier | `/autopsy` | the run dir |
+| The operator wants the per-run story of one outlier | `/diagnose` | the run dir |

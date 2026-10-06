@@ -1,12 +1,13 @@
 ---
 name: orchestrate
-description: Coordinate dependent agent tasks through available tools and deliver one integrated result.
+description: Coordinate dependent or parallel agent tasks, including independent architecture tracks, through available tools and deliver one integrated result.
 ---
 
 # Orchestrate
 
 Complete a goal through bounded tasks, checked dependencies, and one integrated outcome.
 Use delegation only when useful work can proceed concurrently or an independent approach can expose a different error.
+Keep one coherent design with one owner when its parts depend on each other's decisions.
 
 ## Resolve execution
 
@@ -18,13 +19,16 @@ If delegation is unavailable, execute locally and report that constraint.
 ## Coordinate the work
 
 1. Give each deliverable one owner, bounded scope, input, artifact, dependencies, allowed files, and completion checks.
+   Fix the constraints other tracks rely on; let the worker choose implementation details within them.
+   Each track must return its implemented artifact and evidence, or a concrete unresolved condition.
 2. Assign disjoint files or isolated worktrees to parallel writers; reserve shared integration for one owner and a bounded delivery cut.
 3. Dispatch independent work within available resources and existing authorization.
 4. Check each dependency before starting work that consumes it.
    Collect the complete set only when ranking, deduplication, or integration requires it.
 5. Inspect every terminal state, including failed and missing returns.
    Preserve successful artifacts and retry unfinished work only with a supported correction.
-6. Resolve consequential disagreements through source evidence or reproduction.
+6. Resolve consequential disagreements through source evidence or reproduction, and test interactions that cross track boundaries.
+   Choose, combine, or reject parallel proposals explicitly; parallel summaries do not constitute an integrated result.
 7. Integrate, run the resulting artifact's checks, and complete authorized delivery.
 
 Before costly dispatches, check shared host headroom and active heavy work.
@@ -50,6 +54,7 @@ skill-run-log /orchestrate --target "<target>" --verdict <VERDICT> --next /<next
 
 ## Then consider
 
-- `autopsy` when a completed run returns null or contradictory results.
+- `diagnose` when a completed run returns null or contradictory results.
 - `converge` when integration exposes a CI failure.
+- `finalize` when completed tracks remain mixed across branches.
 - `reflect` when checked outcomes reveal reusable coordination improvements.

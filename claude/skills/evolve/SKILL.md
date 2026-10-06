@@ -62,8 +62,7 @@ skill-run-log /evolve --target "<outcome and experiment scope>" --verdict <VERDI
 |---|---|---|
 | The remaining gap needs architectural change | `/pursue` | Baseline, constraint, and rejected approaches |
 | The next useful mechanism is unclear | `/hypothesize` | Goal, prior evidence, and alternatives |
-| A result is null, surprising, or suspect | `/autopsy` | Raw observations and exact command |
-| Failures need causal grouping before another experiment | `/diagnose` | Failures and baseline |
-| Changed scoring invalidates calibration | `/calibrate-before-measure` | Changed path, fixtures, and decision |
-| Independent candidates warrant automated comparison | `/meta-harness` | Candidates, measurement, and resource limits |
+| A result is null, surprising, or suspect, or failures need causal grouping | `/diagnose` | Raw observations, exact command, and baseline |
+| Changed scoring invalidates calibration | `/eval-engineering` | Changed path, fixtures, and decision |
+| Independent candidates warrant automated comparison | `/pursue` | Candidates, measurement, and resource limits |
 | A proven change is ready for authorized release | `/ship` | Tested revision, decision evidence, and release scope |

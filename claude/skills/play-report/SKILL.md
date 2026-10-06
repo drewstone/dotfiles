@@ -20,7 +20,7 @@ Build the report on that output rather than re-deriving it, and keep its order:
 3. The hypothesis verdict table: met, not met, inconclusive or not measured, each with its evidence.
 4. The final output: each declared deliverable, present or missing, against its bar.
 5. Charts of economics, scenarios, sensitivity and intervals from the run's own numbers, every plotted number source-checked against the page it came from; then spend and tokens per node, timeline, and failures.
-6. Judge scores by category, each marked calibrated or advisory. Exact and executable checks rank first; an LLM judge counts only after it beats always-reject on labelled fixtures (`/calibrate-before-measure`, `/eval-agent`).
+6. Judge scores by category, each marked calibrated or advisory. Exact and executable checks rank first; an LLM judge counts only after it beats always-reject on labelled fixtures (`/eval-engineering`).
 7. The operator dossier, written by the method below.
 8. Links: secret gists and the Discovery run page (`/run/<id>`), whose final output panel shows the readout, never a bare path on a host.
 
@@ -134,7 +134,6 @@ skill-run-log /play-report --target "<play or runId>" --verdict <VERDICT> --next
 | Condition | Next skill | What to pass |
 |---|---|---|
 | One director's behavior needs auditing | `/director-autopsy` | The run records and the director's rows |
-| A result is null, surprising, or suspect | `/autopsy` | The run ID and raw artifacts |
-| The harness ended the run | `/diagnose` | The harness log, the settled cause, and the real cause |
+| A result is null, surprising, or suspect, or the harness ended the run | `/diagnose` | The run ID, raw artifacts, harness log, settled cause, and real cause |
 | A claimed event cannot be observed at all | `/ground-truth` | The missing event and the actual execution path |
 | The play is ready to run again | `/operate` | The surviving artifacts and the changed keys |
