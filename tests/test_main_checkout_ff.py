@@ -140,6 +140,18 @@ class MainCheckoutFfTest(unittest.TestCase):
             holder.wait()
         self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
 
+    def test_a_process_reading_files_by_path_does_not_hold_the_checkout(self):
+        repo = self.clone("read-only")
+        target = self.advance_origin()
+        reader = subprocess.Popen(["sleep", "30", str(repo / "a.txt")], cwd=self.tmp.name,
+                                  stderr=subprocess.DEVNULL)
+        try:
+            self.run_ff()
+        finally:
+            reader.kill()
+            reader.wait()
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), target)
+
     def test_skips_checkout_with_a_process_inside(self):
         repo = self.clone("busy")
         before = git(repo, "rev-parse", "HEAD")
