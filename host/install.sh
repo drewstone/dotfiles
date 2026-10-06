@@ -12,6 +12,8 @@
 #                                          every agent process capped together (host/cgroup)
 #   /etc/sysctl.d/60-host-guard-writeback.conf
 #                                          dirty data bounded, so the watchdog sync stays short
+#   /etc/sysctl.d/61-host-guard-vfs-cache.conf
+#                                          inodes and dentries kept in preference to file pages
 #   /etc/modprobe.d/host-usb-storage-quirks.conf
 #                                          archive USB bridge off UAS (host/storage)
 #   /etc/docker/daemon.json               containers join the capped user.slice; live-restore
@@ -191,6 +193,7 @@ echo "== agent cap and writeback"
 cap_before=$CHANGED; CHANGED=0
 want_file 0644 "$SCRIPT_DIR/cgroup/50-agent-cap.conf" /etc/systemd/system/user.slice.d/50-agent-cap.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/60-writeback.conf" /etc/sysctl.d/60-host-guard-writeback.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/61-vfs-cache.conf" /etc/sysctl.d/61-host-guard-vfs-cache.conf
 # Containers that agents and CI start join user.slice, under the same cap.
 # live-restore comes first: it applies on reload, and it keeps containers
 # running when dockerd restarts. cgroup-parent applies only after a restart,
@@ -203,12 +206,14 @@ fi
 if [ "$CHECK" = 1 ]; then
   [ "$(systemctl show user.slice -p MemoryMax --value)" = 115964116992 ] || drift "user.slice MemoryMax is not 108G"
   [ "$(sysctl -n vm.dirty_bytes)" = 1073741824 ] || drift "vm.dirty_bytes is not 1 GiB"
+  [ "$(sysctl -n vm.vfs_cache_pressure)" = 50 ] || drift "vm.vfs_cache_pressure is not 50"
   if command -v docker >/dev/null 2>&1 && [ "$(docker info --format "{{.LiveRestoreEnabled}}" 2>/dev/null)" != true ]; then
     drift "dockerd runs without live-restore"
   fi
 elif [ "$CHANGED" = 1 ]; then
   $SUDO systemctl daemon-reload
   $SUDO sysctl -q -p /etc/sysctl.d/60-host-guard-writeback.conf
+  $SUDO sysctl -q -p /etc/sysctl.d/61-host-guard-vfs-cache.conf
   note changed "user.slice: $(systemctl show user.slice -p MemoryMax -p MemorySwapMax -p CPUWeight | tr "\n" " ")"
   if [ "${docker_changed:-0}" = 1 ]; then
     $SUDO dockerd --validate --config-file /etc/docker/daemon.json >/dev/null
