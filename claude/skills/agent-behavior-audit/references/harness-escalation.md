@@ -1,14 +1,7 @@
----
-name: harness-escalation-audit
-description: Audit how coding backends surface permissions, questions, plans, hooks, and MCP.
----
+# Coding backend escalation
 
-# Harness escalation audit
-
-Check how coding backends surface permission requests, questions, and plans to a user.
+Use this to audit how coding backends surface permission requests, questions, and plans to a user, after a relevant CLI or adapter change or when an integration decision depends on the current capability map.
 Keep documented capability distinct from behavior wired into the current product.
-
-Use this after a relevant CLI or adapter change, or when an integration decision depends on the current capability map.
 
 ## Check the real paths
 
@@ -26,7 +19,6 @@ Use this after a relevant CLI or adapter change, or when an integration decision
    Reconcile declared interaction kinds with the product's coverage record and run its current documentation checks.
 
 Independent backend research can run in parallel when delegation is available and authorized.
-Choose the work split from the backends under review; no particular orchestration API is required.
 
 ## Report
 
@@ -39,17 +31,3 @@ For each backend, interaction kind, and execution mode, record:
 
 Do not infer headless support from an interactive terminal demonstration.
 Recommend a shared integration mechanism only after the current evidence shows which backends it can reach.
-
-## Log the run
-
-```bash
-skill-run-log /harness-escalation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| A required capability is supported but unwired | `/pursue` | the adapter, mechanism, and demonstrated gap |
-| A documented capability still needs a live interaction check | `/verify` | the invocation and expected request-response behavior |
-| Multiple failures appear to share one integration cause | `/diagnose` | the affected paths and per-backend evidence |

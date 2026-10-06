@@ -1,6 +1,6 @@
 ---
 name: build-agent-app
-description: Build or migrate agent products using maintained app modules and a complete user flow.
+description: Build or migrate agent products using maintained app modules, Sandbox SDK execution and viewing, and agent-integrations or Hub SDK connectors, proven through a complete user flow.
 ---
 
 # Build Agent App
@@ -41,7 +41,8 @@ Show authorized app rows in the shared rail; keep preview URLs out of navigation
 - For a new product, inspect the current scaffolder and use it when it supports the chosen runtime and deployment target.
   Install only modules required by the user flow.
 - For infrastructure replacement, read [migration](references/migration.md) before choosing what to retain or delete.
-- For turns that survive callers or support live viewers, read [sandbox execution and viewing](references/sandbox-viewing.md) before adding transport or replay state.
+- For turns that survive callers, retry safely, or support live viewers, read [sandbox execution and viewing](references/sandbox.md) before adding transport or replay state.
+- For connectors, grants, approvals, webhooks, or hosted Hub connections, read [tool integrations](references/integrations.md) before adding a client or connector.
 - For embedded apps, read [embedded app continuity](references/embedded-apps.md) before changing previews, storage, or model switching.
 
 ## Build the complete flow

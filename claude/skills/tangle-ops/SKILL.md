@@ -1,6 +1,6 @@
 ---
 name: tangle-ops
-description: Diagnose Tangle production health, deployment failures, provisioning, credentials, and startup latency.
+description: Diagnose Tangle production health, recurring infrastructure alerts, deployment failures, provisioning, credentials, and startup latency.
 ---
 
 # Tangle Ops
@@ -26,6 +26,19 @@ If the tool is unavailable, use the owning repository's runbook and current prob
 Keep unavailable, unreadable, and indeterminate checks distinct from healthy results.
 An empty log is not success; use the owning log-retrieval path and retain the failure reason.
 Inspect why a run was cancelled before rerunning it.
+
+## Investigate recurring alerts
+
+For recurring infrastructure alerts, read `#infra-alerts` and `#router-alerts` across the relevant incident window with the available Slack read and search tools; inspect their contracts instead of assuming tool names or pagination limits.
+Follow threads and resolution messages, group messages by producer and incident key, and record the newest occurrence and whether a later result resolves it.
+Read [producer discovery](references/alert-producers.md) to trace an alert to its current producer; confirm filenames, schedules, hosts, and dispatch inputs before acting on an older message.
+
+Read the failing workflow step or host journal and connect the message to its actual condition, then fix that cause in the producer's repository through its current deployment procedure.
+Preserve incident identity when a producer is renamed so existing incidents can resolve.
+Changing wording or removing a notification does not resolve the underlying failure.
+Automatic approval of an investigation does not authorize new outbound messages; before manually dispatching a workflow, inspect its side effects, including automatic Slack posts.
+After a fix, verify the next real producer result and its resolution behavior; when success is intentionally silent, inspect the successful run and observe one full repeat interval before claiming recurrence stopped.
+Historical messages remain incident evidence; editing a message is a separate authorized action.
 
 ## Trace a Sandbox execution
 
@@ -75,7 +88,6 @@ skill-run-log /tangle-ops --target "<target>" --verdict <VERDICT> --next /<next-
 
 ## Then consider
 
-- `slack-alerts` when recurring notifications need producer-level investigation.
 - `ship` when deployment completed but served behavior remains unverified.
 - `ground-truth` when startup or runtime latency lacks a production breakdown.
 - `verify` when the operational fix works and repository delivery checks remain.
