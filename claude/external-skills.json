@@ -1,5 +1,5 @@
 {
-  "$comment": "Skills from other repositories, pinned to a commit with every file's sha256. install-external-skills.py installs exactly these bytes; a local skill of the same name wins. Review upstream changes before moving a pin.",
+  "$comment": "Skills from other repositories, pinned to a commit with every file's sha256. install-external-skills.py installs exactly these bytes; a local skill of the same name wins. `rename` installs an upstream skill under another name (only its SKILL.md name line changes) when the upstream name collides with or misdescribes it. Review upstream changes before moving a pin.",
   "sources": [
     {
       "repo": "emilkowalski/skills",
@@ -7,6 +7,9 @@
       "license": "MIT",
       "reviewed": "2026-10-05: no install commands, shell pipes, credential handling or instruction overrides; links only to easing.dev and easings.co.",
       "path": "skills",
+      "rename": {
+        "prototype": "ui-variants"
+      },
       "skills": {
         "emil-design-eng": {
           "SKILL.md": "ffbe68e6007fb42cb8149f089b400a1ca007d59ba23e8948e2be4476f3175939"
