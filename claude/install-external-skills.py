@@ -7,10 +7,13 @@ the GitHub tarball for the pinned commit, refuses any file whose sha256 differs 
 external-skills.json, and stores each source under <store>/<owner>__<repo>@<commit>/.
 It prints one JSON object: {"skills": {name: dir}} for install.sh to link. When GitHub is
 unreachable it reuses a previously verified store and says so on stderr.
+A source's `rename` maps an upstream skill to the name it is installed under: the verified
+files are copied to <store>/<owner>__<repo>@<commit>/<new name>/ with only the SKILL.md
+`name:` line changed, so two different skills never share one name.
 
 Usage: install-external-skills.py --manifest FILE --store DIR
 """
-import argparse, hashlib, io, json, os, shutil, subprocess, sys, tarfile, tempfile
+import argparse, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, tempfile
 
 
 def fetch(url):
@@ -61,6 +64,34 @@ def install_source(source, store):
     return {name: os.path.join(root, name) for name in skills}
 
 
+def renamed(skills, renames):
+    """Install each renamed skill as a copy of its verified upstream files under the new name."""
+    result = dict(skills)
+    for old, new in renames.items():
+        source = result.pop(old)
+        target = os.path.join(os.path.dirname(source), new)
+        staging = tempfile.mkdtemp(dir=os.path.dirname(source))
+        try:
+            for file_name in os.listdir(source):
+                data = open(os.path.join(source, file_name), 'rb').read()
+                if file_name == 'SKILL.md':
+                    text, count = re.subn(r'\A(---\n(?:(?!---\n).*\n)*?)name: *\S+ *\n', lambda m: f'{m.group(1)}name: {new}\n',
+                                          data.decode(), count=1)
+                    if count != 1:
+                        raise SystemExit(f'install-external-skills: {source}/SKILL.md has no front-matter name to rename')
+                    data = text.encode()
+                with open(os.path.join(staging, file_name), 'wb') as handle:
+                    handle.write(data)
+            if os.path.exists(target):
+                shutil.rmtree(target)
+            os.rename(staging, target)
+        finally:
+            if os.path.exists(staging):
+                shutil.rmtree(staging)
+        result[new] = target
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--manifest', required=True)
@@ -70,7 +101,7 @@ def main():
     manifest = json.load(open(args.manifest))
     installed = {}
     for source in manifest.get('sources', []):
-        installed.update(install_source(source, args.store))
+        installed.update(renamed(install_source(source, args.store), source.get('rename', {})))
     print(json.dumps({'skills': installed}))
 
 

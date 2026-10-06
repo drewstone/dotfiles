@@ -157,7 +157,9 @@ fi
 # Skills from other repositories, pinned to a commit with every file's sha256 (external-skills.json).
 # A local skill of the same name wins; when GitHub is unreachable the last verified store is reused.
 EXTERNAL_SKILLS_HOME="$HOME/.local/share/external-skills"
+EXTERNAL_SKILL_NAMES=""
 if external=$(python3 "$SCRIPT_DIR/install-external-skills.py" --manifest "$SCRIPT_DIR/external-skills.json" --store "$EXTERNAL_SKILLS_HOME"); then
+  EXTERNAL_SKILL_NAMES=$(python3 -c 'import json, sys; print("\n".join(json.loads(sys.argv[1])["skills"]))' "$external")
   for pair in $(python3 -c 'import json, sys; [print(f"{k}={v}") for k, v in json.loads(sys.argv[1])["skills"].items()]' "$external"); do
     name="${pair%%=*}"; dir="${pair#*=}"
     [ -e "$SCRIPT_DIR/skills/$name" ] && continue   # a local skill of the same name wins
@@ -326,6 +328,15 @@ runtime_link_is_managed() {
   return 1
 }
 
+# A link into the external store whose name the manifest no longer installs, such as a renamed pin, is retired.
+# Only after the external install succeeded: an offline run never prunes one.
+external_link_is_retired() {
+  local link_path="$1"
+  [ -n "$EXTERNAL_SKILL_NAMES" ] || return 1
+  case "$(readlink "$link_path")" in "$EXTERNAL_SKILLS_HOME"/*) ;; *) return 1 ;; esac
+  ! printf '%s\n' "$EXTERNAL_SKILL_NAMES" | grep -qxF "$(basename "$link_path")"
+}
+
 skill_link_is_managed() {
   local link_path="$1"
   local common_dir origin
@@ -349,6 +360,9 @@ for dir in "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"; do
     name=$(basename "$stale")
     if ! skill_is_current "$name" && skill_link_is_managed "$stale"; then
       echo "  PRUNE $stale (retired managed skill)"
+      rm "$stale"
+    elif external_link_is_retired "$stale"; then
+      echo "  PRUNE $stale (retired external skill)"
       rm "$stale"
     fi
   done
