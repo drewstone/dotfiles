@@ -94,5 +94,5 @@ skill-run-log /build-agent-app --target "<target>" --verdict <VERDICT> --next /<
 - `build-with-agent-runtime` when the change exposes reusable execution or supervision work.
 - `eval-engineering` when the primary flow lacks a meaningful evaluation.
 - `harden` when changed auth, billing, or tenant boundaries need adversarial proof.
-- `ui-test` when the changed UI needs broader interaction or responsive coverage.
+- `product-design` when the changed UI needs broader interaction or responsive coverage.
 - `verify` when implementation is complete and release checks remain.

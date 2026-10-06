@@ -44,7 +44,7 @@ skill-run-log /product-innovation-audit --target "<what this run targeted>" --ve
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The next authorized change concerns visible workflows | `/product-design-audit` | the observed value gap and affected user path |
+| The next authorized change concerns visible workflows | `/product-design` | the observed value gap and affected user path |
 | An established product metric is below its required target | `/evolve` | the metric, comparable baseline, and proposed change |
 | A tested approach cannot meet the required outcome | `/breakout` | the failed mechanism and evidence about the constraint |
 | A decision requires measurements missing from the real path | `/ground-truth` | the decision and missing observations |

@@ -46,6 +46,6 @@ skill-run-log /sandbox-sdk-integration --target "<target>" --verdict <VERDICT> -
 ## Then consider
 
 - `harden` when changed authorization, tenant isolation, or scoped tokens need adversarial proof.
-- `ui-test` when browser-visible streaming needs interaction checks.
+- `product-design` when browser-visible streaming needs interaction checks.
 - `simplify` when duplicate buffering or dispatch remains after the SDK path is proven.
 - `verify` when interruption recovery works and delivery checks remain.
