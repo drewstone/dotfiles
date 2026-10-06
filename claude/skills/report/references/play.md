@@ -1,13 +1,8 @@
----
-name: play-report
-description: Report what a play did, for an observer, starting from its readout and separating the system's own behavior from what the harness and the operator did to it.
----
+# Play reports
 
-# Play report
-
-Tell the observer what a play did and what to decide next.
-A play is one press of start, with several agents working one problem under declared invariants and resource limits.
-This skill reports a play; it does not run one, and it does not audit a single director's research quality.
+Use this for a play: one press of start, with several agents working one problem under declared invariants and resource limits.
+Tell the observer what the play did and what to decide next.
+A play report does not run the play, and it does not audit a single director's research quality.
 
 ## Start from the readout
 
@@ -90,7 +85,7 @@ Do not report on a play from counts and settle records while this exists.
 - The root's own stream is retained by Runtime from agent-runtime 0.226.0: `<pursuit>/root-stream.jsonl` holds `{seq, at, attempt, event}` records, and `result.json` and `failure.json` carry a `rootStream {ref, events}` receipt. `result.json`'s `outRef` on a winner run is still the selected child's artifact, not the root's. Before 0.226.0 nothing of the root was retained (agent-runtime#1233); say so for those runs rather than inferring the director's reasoning from its children.
 - For a root placed on a local bridge that stream is lossy: the bridge forwards `text_delta` and `tool_call` with arguments only, so `root-stream.jsonl` says what the director said and what it called, never what it thought or what a call returned. Measured 2026-09-15 on two live directors: 0 reasoning and 0 tool-output chars in `root-stream.jsonl` against 33k-41k reasoning and 99k-160k tool-output chars in opencode's store (drewstone/cli-bridge#227). That store is `~/.local/share/opencode/opencode.db`, matched on the pursuit's workspace directory; it is harness scratch, not a record, but until #227 lands it is the only complete one. A sandbox-placed root's retained stream is complete.
 
-Render them with discovery-lab `tools/transcript.py <pursuit-dir> [--live] [--agent sN]`, which writes one Markdown transcript per agent under `<pursuit>/transcripts/` with tokens and spend.
+The readout renders every node's retained native session as timed reasoning, speech, and tool calls (discovery-lab `runner/readout-transcripts.mjs`, stage 3 of [the Lab readout](https://github.com/tangle-network/discovery-lab/blob/master/docs/readout.md)); read those transcripts before the raw blobs.
 Quote the agent's own reasoning when the report makes a claim about what it thought, decided, or refused; a paraphrase of a settle record is not evidence of a decision.
 Measured 2026-09-15: a director mid-turn held 94,193 characters of reasoning and 97 tool calls that no report had ever read.
 
@@ -122,18 +117,3 @@ Say which of them a later run can start from.
 
 Give each defect its owner, its evidence, and its issue, and separate a defect in the system from a defect in how it was operated.
 Report a defect that only an operator could have caused as the operator's, not the system's.
-
-## Log the run
-
-```bash
-skill-run-log /play-report --target "<play or runId>" --verdict <VERDICT> --next /<next-skill-or-stop>
-```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| One director's behavior needs auditing | `/director-autopsy` | The run records and the director's rows |
-| A result is null, surprising, or suspect, or the harness ended the run | `/diagnose` | The run ID, raw artifacts, harness log, settled cause, and real cause |
-| A claimed event cannot be observed at all | `/ground-truth` | The missing event and the actual execution path |
-| The play is ready to run again | `/operate` | The surviving artifacts and the changed keys |
