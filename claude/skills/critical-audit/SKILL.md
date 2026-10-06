@@ -1,12 +1,13 @@
 ---
 name: critical-audit
-description: Review code, docs, APIs, SDKs, or products for correctness and risk, with ranked fixes.
+description: Review or polish code, docs, APIs, SDKs, or products for defects, quality gaps, and unsupported claims, with ranked fixes.
 ---
 
 # Critical Audit
 
-Review the requested artifact for concrete defects and rank findings by impact and likelihood.
+Review the requested artifact for concrete defects and quality gaps, and rank findings by impact and likelihood.
 An audit request authorizes investigation; make fixes only when the task also calls for them.
+A request to polish or improve implemented work includes fixing the confirmed gaps within scope; leave sound work unchanged.
 
 ## Review
 
@@ -37,6 +38,39 @@ When reviewing an SDK's customer-facing surface, read only the applicable perspe
 
 `--personas` can select those perspectives; it does not require additional reviewers or make every listed capability a product requirement.
 
+## Polish against explicit criteria
+
+When the task is to polish or judge implemented work, assess correctness, design, robustness, tests, and public interfaces where they apply.
+State what each criterion means for this artifact before judging it, then inspect or run the check that can expose its failure.
+For docs, skills, or unfamiliar artifact types, read [quality checks](references/quality-checks.md) when selecting suitable evidence.
+Fix actionable gaps within scope, repeat the affected checks and required repository validation, and finish when the applicable criteria pass or a specific requirement remains unresolved.
+
+A failing test or missing requested behavior is work to resolve within scope, not a reason to end an authorized implementation task.
+An introduced regression takes priority over further polish.
+Avoid changes that only restate code, rename working concepts, or impose a preferred architecture without a demonstrated benefit.
+Use `PASS`, `FAIL`, `UNCHECKED`, or `N/A` for each criterion; a pass needs a cited check and its result, and a not-applicable criterion needs its reason.
+
+## Review documents
+
+For technical documents, establish the reader's task from the documents in scope and nearby navigation or metadata.
+For public writing, read the relevant repository `docs/anti-patterns/` guidance before editing.
+Verify claims against current source, configuration, public APIs, deployment state, or cited material.
+Distinguish implemented behavior, hosted operations, protocol guarantees, plans, and opinions.
+Remove unsupported claims, generic filler, and procedural copy that does not help the reader act.
+Keep qualifiers that express a real limitation, and preserve technical repetition and passive voice when they improve clarity.
+Follow current product documentation for exact product names and responsibilities; a generic skill cannot own that inventory.
+
+For a broad document set, use [the scanner](scripts/scan-docs-slop.mjs) to find candidate passages:
+
+```bash
+node <skill-directory>/scripts/scan-docs-slop.mjs --json <file-or-directory>...
+```
+
+Check `scannedFiles`, `findingCount`, and `emittedCount` before relying on its output.
+The scanner skips some directories and file types, limits emitted findings, and does not establish factual correctness.
+Read [document patterns](references/docs-patterns.md) when triaging recurring wording or product-boundary findings.
+Separate the material scanned from the material actually reviewed, and run the repository's documentation and link checks after editing.
+
 ## Findings and re-audit
 
 For each finding, include severity, file:line, triggering scenario, evidence, user impact, a proposed fix, and the check that would prove it.
@@ -44,6 +78,7 @@ Use the repository's severity definitions when present.
 Otherwise reserve CRITICAL/HIGH for defects that block release, MEDIUM for material nonblocking defects, and LOW for limited impact.
 Report the scope, checks, uninspected material, and uncertainty with the verdict.
 Quantify impact when evidence permits; identify estimates and unknowns instead of inventing costs or scores.
+A quality verdict does not authorize a release.
 
 Persist runs that need later review under `.agent/critical-audit/<timestamp>/`:
 `manifest.json` records scope and revisions, `findings.jsonl` records findings and evidence, and `summary.md` records the verdict.
@@ -65,4 +100,6 @@ skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <APPROVE|
 | A security finding needs adversarial validation | `/harden` | the affected boundary and triggering scenario |
 | Pushed fixes have failing CI | `/converge` | the revision and failing checks |
 | A shared design problem needs a broader authorized change | `/pursue` | the affected callers and behavior to preserve |
-| Incorrect documentation claims need a focused review | `/docs-slop-audit` | the claims and contradictory sources |
+| Obsolete code and documentation share a removable capability | `/simplify` | the consumer evidence and affected paths |
+| The criteria pass and an authorized release remains | `/ship` | the verified revision, target, and checks |
+| Accurate writing still needs the requested author voice | `/writing-profile` | the draft and real writing samples |

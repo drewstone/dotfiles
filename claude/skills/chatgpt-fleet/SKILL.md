@@ -237,6 +237,6 @@ skill-run-log /chatgpt-fleet --target "<work item and chat>" --verdict <VERDICT>
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The delivered patch needs a quality review | `/polish` | the applied diff and the acceptance bars |
+| The delivered patch needs a quality review | `/critical-audit` | the applied diff and the acceptance bars |
 | The delivery claims a measurement | `/ground-truth` | the claim and the artifact it rests on |
 | Required checks fail after applying | `/converge` | the failing checks and behavior to preserve |

@@ -49,4 +49,4 @@ skill-run-log /writing-profile --target "<target>" --verdict <VERDICT> --next /<
 ## Then consider
 
 - `signal-distill` when a draft needs current factual source material.
-- `docs-slop-audit` when the profile is applied to technical documentation whose claims need source review.
+- `critical-audit` when the profile is applied to technical documentation whose claims need source review.
