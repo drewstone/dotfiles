@@ -1,4 +1,0 @@
-interface:
-  display_name: "Research Lead Interface"
-  short_description: "Answer system and research questions in clear human terms"
-  default_prompt: "Translate my question into the research lead view, inspect the relevant evidence, and tell me what is happening, what it means, and what we should do next."
