@@ -331,10 +331,8 @@ test('installer skips and prunes directories without SKILL.md', () => {
 // zero skills wrote a line for months, leaving /reflect nothing to grade.
 test('every live skill tells the model to log its run', () => {
   const skillsDir = join(repoRoot, 'claude', 'skills')
-  // The remaining shim redirects to another skill, which owns the run log.
-  const shims = new Set(['site-clone'])
   const missing = readdirSync(skillsDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !shims.has(e.name))
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
     .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
     .filter((e) => !readFileSync(join(skillsDir, e.name, 'SKILL.md'), 'utf8').includes('## Log the run'))
     .map((e) => e.name)

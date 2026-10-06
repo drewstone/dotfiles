@@ -1,4 +1,0 @@
-interface:
-  display_name: "Product Design Audit"
-  short_description: "Systematic page-by-page UI redesign audit"
-  default_prompt: "Use $product-design-audit to assess the requested UI workflows, fix supported findings, and verify the rendered result."
