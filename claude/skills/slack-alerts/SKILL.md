@@ -47,4 +47,4 @@ skill-run-log /slack-alerts --target "<target>" --verdict <VERDICT> --next /<nex
 ## Then consider
 
 - `tangle-ops` when a completed alert investigation needs deeper production or deployment diagnosis.
-- `deploy-proof` when a fix has shipped and the serving product still needs verification.
+- `ship` when a fix has shipped and the serving product still needs verification.

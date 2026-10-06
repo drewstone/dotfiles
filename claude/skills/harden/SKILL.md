@@ -67,4 +67,4 @@ skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --
 | Security fixes have failing CI | `/converge` | the failing checks and regression that must remain covered |
 | A security change needs an independent code review | `/critical-audit` | the diff and preserved invariants |
 | Findings identify an unnecessary module | `/simplify` | the module, consumers, and findings |
-| An authorized production fix needs live confirmation | `/deploy-proof` | the released artifact and safe behavior probe |
+| An authorized production fix needs live confirmation | `/ship` | the released artifact and safe behavior probe |

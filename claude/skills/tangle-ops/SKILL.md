@@ -76,6 +76,6 @@ skill-run-log /tangle-ops --target "<target>" --verdict <VERDICT> --next /<next-
 ## Then consider
 
 - `slack-alerts` when recurring notifications need producer-level investigation.
-- `deploy-proof` when deployment completed but served behavior remains unverified.
+- `ship` when deployment completed but served behavior remains unverified.
 - `ground-truth` when startup or runtime latency lacks a production breakdown.
 - `verify` when the operational fix works and repository delivery checks remain.

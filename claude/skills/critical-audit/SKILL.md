@@ -96,9 +96,8 @@ skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <APPROVE|
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Confirmed blockers remain on a PR whose fixes are in scope | `/review-to-green` | the PR, findings, and verification checks |
+| Confirmed blockers or failing CI remain on a PR whose fixes are in scope | `/converge` | the PR, findings, failing checks, and verification |
 | A security finding needs adversarial validation | `/harden` | the affected boundary and triggering scenario |
-| Pushed fixes have failing CI | `/converge` | the revision and failing checks |
 | A shared design problem needs a broader authorized change | `/pursue` | the affected callers and behavior to preserve |
 | Obsolete code and documentation share a removable capability | `/simplify` | the consumer evidence and affected paths |
 | The criteria pass and an authorized release remains | `/ship` | the verified revision, target, and checks |
