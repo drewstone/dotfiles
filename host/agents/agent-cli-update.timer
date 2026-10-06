@@ -1,0 +1,10 @@
+[Unit]
+Description=Update Claude Code and Codex daily
+
+[Timer]
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

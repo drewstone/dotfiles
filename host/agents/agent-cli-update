@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Keep Claude Code and Codex current on this host; agent-cli-update.timer runs it daily.
+# Claude Code's native install updates through `claude update`, which changes nothing when it is current.
+# Codex reinstalls from its official installer only when npm lists a newer release than the installed one.
+# A running session keeps the binary it started with; the next session starts on the new one.
+set -uo pipefail
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+status=0
+
+if [ -x "$HOME/.local/bin/claude" ]; then
+  before="$(claude --version 2>/dev/null | awk '{print $1}')"
+  claude update || status=1
+  printf 'claude %s -> %s\n' "${before:-unknown}" "$(claude --version 2>/dev/null | awk '{print $1}')"
+fi
+
+if [ -x "$HOME/.local/bin/codex" ]; then
+  have="$(codex --version 2>/dev/null | awk '{print $NF}')"
+  want="$(curl -fsS --max-time 30 https://registry.npmjs.org/@openai/codex/latest |
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')" || want=''
+  if [ -z "$want" ]; then
+    echo 'codex: the latest release is unknown; npm did not answer' >&2
+    status=1
+  elif [ "$have" != "$want" ]; then
+    installer="$(mktemp)"
+    if curl -fsSL --max-time 120 https://chatgpt.com/codex/install.sh -o "$installer" &&
+      CODEX_NON_INTERACTIVE=1 sh "$installer"; then
+      printf 'codex %s -> %s\n' "${have:-unknown}" "$(codex --version 2>/dev/null | awk '{print $NF}')"
+    else
+      status=1
+    fi
+    rm -f -- "$installer"
+  else
+    printf 'codex %s is current\n' "$have"
+  fi
+fi
+exit "$status"

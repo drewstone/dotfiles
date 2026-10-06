@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# agents: the Claude Code and Codex CLIs, rtk (the Claude hooks call it), then
+# agents: the Claude Code and Codex CLIs and their daily updater, rtk (the Claude hooks call it), then
 # claude/install.sh with ~/.local/bin on PATH so its plugin sync finds claude.
 
 RTK_VERSION=0.30.1
@@ -158,10 +158,36 @@ add_claude_trust() {
   python3 "$DOTFILES/claude/tools/claude-trust.py" set-projects "$HOME/.claude.json" $CLAUDE_TRUST_DIRS
 }
 
+# agent-cli-update.timer keeps Claude Code and Codex current (host/agents/agent-cli-update). Each user unit
+# names this checkout's script, so it is rendered from its template rather than linked.
+CLI_UPDATE_UNITS="$HOME/.config/systemd/user"
+
+cli_update_unit() { sed "s#@DOTFILES@#$DOTFILES#g" "$DOTFILES/host/agents/$1"; }
+
+cli_updater_on() {
+  local unit
+  for unit in agent-cli-update.service agent-cli-update.timer; do
+    [ "$(cli_update_unit "$unit")" = "$(cat "$CLI_UPDATE_UNITS/$unit" 2>/dev/null)" ] || return 1
+  done
+  systemctl --user is-enabled --quiet agent-cli-update.timer 2>/dev/null &&
+    systemctl --user is-active --quiet agent-cli-update.timer 2>/dev/null
+}
+
+install_cli_updater() {
+  local unit
+  user_bus || true
+  mkdir -p "$CLI_UPDATE_UNITS" || return 1
+  for unit in agent-cli-update.service agent-cli-update.timer; do
+    cli_update_unit "$unit" >"$CLI_UPDATE_UNITS/$unit" || return 1
+  done
+  systemctl --user daemon-reload && systemctl --user enable --now agent-cli-update.timer >/dev/null
+}
+
 module_agents() {
   section "agents: Claude Code, Codex, rtk, claude/install.sh"
   ensure "Claude Code native install in ~/.local/bin" claude_ok -- install_claude
   ensure "Codex standalone install in ~/.local/bin" codex_ok -- install_codex
+  ensure "agent-cli-update.timer updates Claude Code and Codex daily" cli_updater_on -- install_cli_updater
   ensure "rtk $RTK_VERSION in ~/.local/bin" rtk_ok -- install_rtk
   ensure "claude/install.sh links (instructions, settings, skills, hooks, tools)" claude_links_current -- run_claude_install
   ensure "Claude local trust excludes temporary directories" claude_local_trust_ok -- sanitize_claude_local_trust
