@@ -52,4 +52,4 @@ skill-run-log /model-freshness --target "<target>" --verdict <VERDICT> --next /<
 
 - `refresh-reasoning-capabilities` when the chosen model or backend changes supported reasoning controls.
 - `eval-engineering` when a replacement needs a representative quality comparison.
-- `deploy-proof` when the updated model configuration has shipped and live adoption remains to prove.
+- `ship` when the updated model configuration has shipped and live adoption remains to prove.
