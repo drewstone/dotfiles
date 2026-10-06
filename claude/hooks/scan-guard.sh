@@ -7,9 +7,15 @@
 # full, and each answer was available from a narrower path (the repo, the owning
 # state file, or the vault by key name).
 #
-# Scope: grep -r/-R, rg, find, du and fd whose search roots include the home
-# directory itself or a broad state/cache/config tree under it. Searches inside a
-# repository or a named subdirectory stay allowed.
+# On 2026-10-05/06 on drew-gtr-pro, four `find / -name ...` searches ran 20-75 min
+# each. They walked the trace archive HDD (/mnt/traces, 11M inodes) and evicted the
+# inode cache the hourly trace-archive capture needs, which then read about 115
+# entries/s instead of over 1,000.
+#
+# Scope: grep -r/-R, rg, find, du and fd whose search roots include the filesystem
+# root, /home, /mnt, the archive drive, the home directory itself or a broad
+# state/cache/config tree under it. Searches inside a repository or a named
+# subdirectory stay allowed.
 #
 # Fail-open: any parse failure exits 0 so normal Bash use is never blocked.
 
@@ -29,8 +35,9 @@ except Exception:
     sys.exit(0)
 cmd = (d.get("tool_input") or {}).get("command") or ""
 home = os.path.expanduser("~")
-# Roots too broad to scan: the home itself and its sprawling hidden trees.
-BROAD = {home, home + "/", home + "/.local", home + "/.local/state", home + "/.local/share",
+# Roots too broad to scan: the filesystem root, /home, /mnt and the archive drive, the home itself and its
+# sprawling hidden trees.
+BROAD = {"/", "/home", "/mnt", "/mnt/traces", home, home + "/", home + "/.local", home + "/.local/state", home + "/.local/share",
          home + "/.config", home + "/.cache", home + "/Library", home + "/.codex", home + "/.claude"}
 
 def norm(tok):
@@ -53,7 +60,7 @@ def broad_roots(seg):
     if prog == "grep" and not any(t.startswith("-") and ("r" in t or "R" in t) and not t.startswith("--") for t in toks[1:]) \
             and "--recursive" not in toks:
         return []
-    return [t for t in toks[1:] if not t.startswith("-") and norm(t) in {b.rstrip("/") for b in BROAD}]
+    return [t for t in toks[1:] if not t.startswith("-") and norm(t) in {norm(b) for b in BROAD}]
 
 hits = []
 for seg in re.split(r"\|\||&&|;|\||\n", cmd):
@@ -63,8 +70,9 @@ if hits:
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            f"scan-guard: recursive search over a broad home tree ({', '.join(sorted(set(hits)))}) is blocked. "
-            "On the Mac these ran 4-10 min at full CPU while load was 50-110. Search the owning repo, "
+            f"scan-guard: recursive search over a broad tree ({', '.join(sorted(set(hits)))}) is blocked. "
+            "On the Mac these ran 4-10 min at full CPU while load was 50-110; on drew-gtr-pro `find /` "
+            "walked the archive drive for up to 75 min and stalled its trace capture. Search the owning repo, "
             "a named subdirectory, the specific state file, or look up vault secrets by key name "
             "(dotenvx get -f <file>)."
         ),
