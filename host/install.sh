@@ -12,7 +12,9 @@
 #                                          every agent process capped together (host/cgroup)
 #   /etc/sysctl.d/60-host-guard-writeback.conf
 #                                          dirty data bounded, so the watchdog sync stays short
-#   /etc/docker/daemon.json                containers join the capped user.slice; live-restore
+#   /etc/modprobe.d/host-usb-storage-quirks.conf
+#                                          archive USB bridge off UAS (host/storage)
+#   /etc/docker/daemon.json               containers join the capped user.slice; live-restore
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
@@ -235,6 +237,10 @@ if [ "$(hostname | tr '[:upper:]' '[:lower:]')" = drew-gtr-pro ]; then
 else
   note skipped "not drew-gtr-pro"
 fi
+
+echo "== USB storage quirks"
+# Read when usb-storage next loads; the running disk keeps its driver until then.
+want_file 0644 "$SCRIPT_DIR/storage/usb-storage-quirks.conf" /etc/modprobe.d/host-usb-storage-quirks.conf
 
 echo "== DNS"
 # Only where systemd-resolved serves resolv.conf: WSL hosts write their own resolv.conf.
