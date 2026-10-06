@@ -1,6 +1,6 @@
 ---
 name: agent-behavior-audit
-description: Audit whether an autonomous agent observes state, uses tools, and follows its promised behavior and user intent.
+description: Audit whether an autonomous agent or coding backend observes state, uses tools, surfaces permissions and questions, and follows its promised behavior and user intent.
 ---
 
 # Agent behavior audit
@@ -21,6 +21,7 @@ Treat labels, documentation, and the agent's account of its work as claims until
    For each defect, identify the earliest decision or component that explains it.
 
 Read [the evidence guide](references/evidence.md) when records disagree, side effects need attribution, or the scope includes several agents.
+Read [coding backend escalation](references/harness-escalation.md) when the claim concerns how a coding backend surfaces permissions, questions, plans, hooks, or MCP to the user.
 
 ## Report
 
@@ -40,6 +41,5 @@ skill-run-log /agent-behavior-audit --target "<behavior and runs>" --verdict <VE
 | Condition | Next skill | What to pass |
 |---|---|---|
 | A confirmed defect crosses a security or data boundary | `/harden` | The reproduction and affected boundary |
-| The coding backend failed to expose permissions, questions, plans, hooks, or MCP | `/harness-escalation-audit` | The backend and missing surface |
 | A recurring behavior needs an executable regression case | `/eval-engineering` | The claim and passing/failing traces |
 | A valid behavior measure has a known improvement to test | `/evolve` | The baseline, failing traces, and proposed change |
