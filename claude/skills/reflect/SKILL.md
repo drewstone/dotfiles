@@ -36,7 +36,8 @@ Carry authorized corrections through verification; for analysis-only work, repor
 ## Preserve the findings
 
 Write the canonical reflection to `.agent/reflections/YYYY-MM-DD-HHMMSS.md`, or the project's adopted path.
-Add a concise link to `~/.claude/reflections/INDEX.md` without copying the reflection again.
+Add a concise link to `~/.claude/reflections/INDEX.md`, this machine's index outside Git, without copying the reflection again.
+To share a reflection across machines, commit it to dotfiles `claude/reflections/` through a pull request.
 Record scope, sources, outcomes, repeated causes, changes, verification, and unresolved decisions.
 Use counts and denominators for frequency claims; retain unknowns and sampling limits.
 A reflection needs neither a grade, a fixed section list, nor a forced next action.
