@@ -10,6 +10,7 @@ Shared behavior belongs in `AGENTS.md`; this file contains Claude-specific guida
 Read it when changing installation behavior instead of maintaining a second path catalog here.
 Install from a durable checkout that will remain available while its links are in use.
 Preserve unrelated settings, external skills, and active work when updating managed links.
-Portable settings live in the source `claude/settings.json`; machine-specific settings live in `~/.claude/settings.local.json`.
+Portable settings live in the source `claude/settings.json`; `~/.claude/settings.json` is that file merged with this machine's `~/.claude/settings.machine.json`, and runtime writes such as `/model` land in the overlay at the next install.
+`~/.claude/reflections` is machine state seeded from `claude/reflections`; commit a reflection to the repository through a pull request when it should be shared.
 
 @RTK.md

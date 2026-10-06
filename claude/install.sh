@@ -6,10 +6,9 @@
 # Generates platform-specific settings.local.json (trustedDirectories)
 # Safe to re-run — only replaces symlinks, never overwrites real files unless --force
 #
-# Self-heals settings.json when Claude Code replaces the symlink with a regular
-# file (happens whenever Claude Code writes a setting via its UI): any runtime
-# keys that diverge from canonical are migrated to settings.local.json, and the
-# symlink is restored. Re-run this script any time plugins/hooks appear missing.
+# Two paths are machine state, never links into this checkout, because Claude Code and
+# agents write to them: ~/.claude/settings.json (this repo's settings merged with
+# ~/.claude/settings.machine.json, see install-settings.py) and ~/.claude/reflections.
 
 set -euo pipefail
 
@@ -37,56 +36,12 @@ link() {
   echo "  LINK $dst -> $src"
 }
 
-# settings.json is special: Claude Code writes to it atomically (rename), which
-# replaces our symlink with a regular file and silently drops enabledPlugins,
-# extraKnownMarketplaces, hooks, etc. Before (re-)linking, migrate any keys
-# that diverge from canonical into settings.local.json, then restore the link.
-link_settings() {
-  local src="$SCRIPT_DIR/settings.json"
-  local dst="$CLAUDE_DIR/settings.json"
-  local local_file="$CLAUDE_DIR/settings.local.json"
-
-  if [ -f "$dst" ] && [ ! -L "$dst" ]; then
-    echo "  REPAIR $dst (symlink was replaced by Claude Code; migrating runtime keys)"
-    python3 - "$src" "$dst" "$local_file" <<'PYEOF'
-import json, os, sys
-canonical_path, live_path, local_path = sys.argv[1:4]
-try:
-    canonical = json.load(open(canonical_path))
-    live = json.load(open(live_path))
-except (OSError, json.JSONDecodeError) as e:
-    print(f"    WARN: could not parse settings ({e}); leaving live file intact")
-    sys.exit(1)
-extras = {k: v for k, v in live.items() if canonical.get(k) != v}
-if not extras:
-    print("    No runtime-divergent keys to preserve.")
-    sys.exit(0)
-local = {}
-if os.path.exists(local_path):
-    try:
-        local = json.load(open(local_path))
-    except json.JSONDecodeError:
-        print(f"    WARN: {local_path} is malformed; starting fresh")
-local.update(extras)
-with open(local_path, "w") as f:
-    json.dump(local, f, indent=2)
-    f.write("\n")
-print(f"    Migrated to settings.local.json: {sorted(extras.keys())}")
-PYEOF
-    # Only remove the clobbered file if the migration didn't bail out with an error.
-    # A non-zero exit from python3 above trips `set -e` and we never get here.
-    rm "$dst"
-  fi
-
-  link "$src" "$dst"
-}
-
 echo "Installing Claude config from $SCRIPT_DIR"
 
 # Global config
 mkdir -p "$CLAUDE_DIR"
 link "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
-link_settings
+python3 "$SCRIPT_DIR/install-settings.py" --base "$SCRIPT_DIR/settings.json" --claude-dir "$CLAUDE_DIR"
 [ -f "$SCRIPT_DIR/RTK.md" ] && link "$SCRIPT_DIR/RTK.md" "$CLAUDE_DIR/RTK.md"
 
 # Shared agent instructions
@@ -107,8 +62,21 @@ if [ -f "$CODE_TREE_SRC" ] && [ -d "$HOME/code" ]; then
   printf '@AGENTS.md\n' > "$HOME/code/CLAUDE.md"
 fi
 
-# Reflections (cross-project analysis)
-link "$SCRIPT_DIR/reflections" "$CLAUDE_DIR/reflections"
+# Reflections are machine state: agents append to ~/.claude/reflections/INDEX.md and write reflections there.
+# Linked into this checkout, every append dirtied the tracked INDEX.md and the deploy refused to move it.
+# A new home starts from this repository's archive; an old link is replaced by a copy of what it held.
+REFLECTIONS="$CLAUDE_DIR/reflections"
+if [ -L "$REFLECTIONS" ]; then
+  previous="$(cd "$REFLECTIONS" && pwd -P)"
+  rm "$REFLECTIONS"
+  mkdir -p "$REFLECTIONS"
+  cp -R "$previous/." "$REFLECTIONS/"
+  echo "  STATE $REFLECTIONS (copied from $previous)"
+elif [ ! -e "$REFLECTIONS" ]; then
+  mkdir -p "$REFLECTIONS"
+  cp -R "$SCRIPT_DIR/reflections/." "$REFLECTIONS/"
+  echo "  STATE $REFLECTIONS (seeded from $SCRIPT_DIR/reflections)"
+fi
 
 # Directives (per-response interaction-style layer; read by hooks/inject-directive.sh)
 link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"

@@ -43,7 +43,7 @@ install_rtk() {
 claude_links_current() {
   local c="$DOTFILES/claude" f name
   link_is "$c/CLAUDE.md" "$HOME/.claude/CLAUDE.md" &&
-    link_is "$c/settings.json" "$HOME/.claude/settings.json" &&
+    python3 "$c/install-settings.py" --base "$c/settings.json" --claude-dir "$HOME/.claude" --check > /dev/null &&
     link_is "$c/AGENTS.md" "$HOME/.claude/AGENTS.md" &&
     link_is "$c/AGENTS.md" "$HOME/.codex/AGENTS.md" || return 1
   for f in "$c"/skills/*/SKILL.md; do
