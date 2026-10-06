@@ -40,6 +40,10 @@ After a push, read available comments, reviews, and inline threads; fix actual f
 Separate change defects, unrelated defects, and infrastructure failures; repair the first and track the others with their owners.
 For a blocked requirement, record its owner, next action, and completion check in the existing task record.
 Deleting a live path requires independent review and one live proof.
+Workflows run only on the beelink self-hosted runners; `ubuntu-latest`, `macos-*`, and `windows-*` bill per minute and are retired.
+The one exception is an npm trusted-publish job, which npm accepts only from GitHub-hosted runners: it starts only when a version is actually published.
+Do not push a workflow, on any branch, to qualify, capture, or prove something once; run that on a beelink and paste the command and output in the PR.
+The runner contract (labels, no sudo, installed tools, rootless Docker) is in tangle-devops `tangle/inventory/infrastructure.md`.
 A backlog finishes with every PR merged, closed, or actively owned.
 Before claiming completion, check GitHub state and `git rev-list --count HEAD --not --remotes`.
 

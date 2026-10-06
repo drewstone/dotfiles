@@ -19,6 +19,7 @@ For documentation-only changes, use relevant content, link, or structural checks
 When that local gate passes, merge or enable auto-merge immediately.
 Never watch PR CI; fix failures forward while preserving hooks, enforced protections, and release authority.
 Add CI or automated review gates only when requested; never request hosted Codex PR reviews.
+Never run work on GitHub-hosted runners: workflows use `[self-hosted, beelink]` (private) or `[self-hosted, ci-public]` (public tangle-network), and one-off verification runs on a beelink, not in a pushed workflow.
 Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize subsequent task work within its resource limits.
 Under a deadline, launch with available capability and improve instrumentation while it runs.
