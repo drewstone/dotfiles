@@ -1,6 +1,6 @@
 ---
 name: hypothesize
-description: Decide what to try next when progress stalls or an external idea appears; test the limiting constraint, research mechanisms and external claims, and choose the deciding experiments.
+description: Decide what to try next when progress stalls or an external idea appears: test the limiting constraint, research mechanisms, and pick deciding tests.
 ---
 
 # Hypothesize

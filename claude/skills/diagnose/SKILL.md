@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Explain failing, null, surprising, or suspect results, from one run to a failure set, including evaluation-pipeline faults and comparisons that never tested their claim; rank fixes by consequence and reach.
+description: Explain failing, null, or suspect results, from one run to a failure set, including eval-pipeline faults and untested comparison claims; rank the fixes.
 ---
 
 # Diagnose

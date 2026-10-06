@@ -1,6 +1,6 @@
 ---
 name: pursue
-description: Build and compare architectural changes against a measured baseline, from one coherent change to independently proposed variants and controlled architecture comparisons at equal resources.
+description: Build and compare architectural changes against a measured baseline, including independent variants and equal-resource architecture comparisons.
 ---
 
 # Pursue

@@ -1,6 +1,6 @@
 ---
 name: build-agent-app
-description: Build or migrate agent products using maintained app modules, Sandbox SDK execution and viewing, and agent-integrations or Hub SDK connectors, proven through a complete user flow.
+description: Build or migrate agent products with maintained app modules, Sandbox SDK execution, and integration or Hub connectors, proven through a full user flow.
 ---
 
 # Build Agent App
