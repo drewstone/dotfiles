@@ -15,6 +15,10 @@
 #   /etc/docker/daemon.json                containers join the capped user.slice; live-restore
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
+#   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
+#                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
+#                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
+#                                          systemd-resolved's stub)
 #
 # Usage: host/install.sh [--check]
 #   --check   report drift and change nothing; exit 1 when anything differs.
@@ -230,6 +234,21 @@ if [ "$(hostname | tr '[:upper:]' '[:lower:]')" = drew-gtr-pro ]; then
   fi
 else
   note skipped "not drew-gtr-pro"
+fi
+
+echo "== DNS"
+# Only where systemd-resolved serves resolv.conf: WSL hosts write their own resolv.conf.
+if systemctl is-active -q systemd-resolved 2>/dev/null &&
+  [ "$(readlink -f /etc/resolv.conf)" = /run/systemd/resolve/stub-resolv.conf ]; then
+  dns_before=$CHANGED
+  want_file 0644 "$SCRIPT_DIR/dns/60-upstream-tls.conf" /etc/systemd/resolved.conf.d/60-upstream-tls.conf
+  if [ "$CHECK" = 0 ] && [ "$CHANGED" != "$dns_before" ]; then
+    # resolved cannot reload; NetworkManager and tailscaled push their per-link servers again after a restart.
+    $SUDO systemctl restart systemd-resolved
+    note changed "restarted systemd-resolved"
+  fi
+else
+  note skipped "resolv.conf is not systemd-resolved's stub"
 fi
 
 echo "== verify"
