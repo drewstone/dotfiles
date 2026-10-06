@@ -9,7 +9,7 @@
 # Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
 #
 # Example:
-#   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /governor \
+#   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /reflect \
 #                 --trace-dir .agent/runs/evolve-2026-04-25/
 #
 # Writes to ${XDG_STATE_HOME:-~/.local/state}/agent-work/<repo>/skill-runs.jsonl, where <repo>

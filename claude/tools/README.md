@@ -2,19 +2,6 @@
 
 Custom CLI tools for managing Claude Code. Installed via `install.sh` which symlinks tools to `~/bin/`.
 
-## agent-doc-lengths
-
-Measure Markdown and skill size across the dotfiles repo:
-
-```bash
-agent-doc-lengths --top 25
-agent-doc-lengths --all --format markdown
-agent-doc-lengths --format json
-```
-
-Reports lines, words, chars, approximate tokens, skill-description size, category totals, largest files, and threshold findings.
-Skill descriptions default to a 96-character limit because every description competes for the discovery context before a skill is selected.
-
 ## gh-drew
 
 Run `gh` as `drewstone` with the token from the environment or the devops vault.
