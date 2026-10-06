@@ -60,6 +60,13 @@ class MainCheckoutFfTest(unittest.TestCase):
         self.assertEqual(git(repo, "rev-parse", "HEAD"), target)
         self.assertEqual((repo / "notes.txt").read_text(), "keep me\n")
 
+    def test_learns_default_branch_when_origin_head_is_missing(self):
+        repo = self.clone("no-origin-head")
+        git(repo, "remote", "set-head", "origin", "--delete")
+        target = self.advance_origin()
+        self.run_ff()
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), target)
+
     def test_leaves_tracked_changes_alone(self):
         repo = self.clone("dirty")
         (repo / "a.txt").write_text("local edit\n")
