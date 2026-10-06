@@ -53,7 +53,6 @@ skill-run-log /ground-truth --target "<flow and execution boundary>" --verdict <
 | Condition | Next skill | What to pass |
 |---|---|---|
 | A measured removable cost has a testable correction | `/evolve` | The breakdown, baseline, and proposed change |
-| Failures need causal diagnosis | `/diagnose` | The complete outcomes and stage evidence |
-| The required outcome needs a different constraint or formulation | `/breakout` | The measured limit and required invariants |
-| A result remains surprising or suspect | `/autopsy` | The raw observations and exact command |
+| The required outcome needs a different constraint or formulation | `/hypothesize` | The measured limit and required invariants |
+| Failures need causal diagnosis, or a result remains surprising or suspect | `/diagnose` | The complete outcomes, stage evidence, and exact command |
 | The task needs a comparative or analytical report | `/report` | All measured dimensions and execution conditions |

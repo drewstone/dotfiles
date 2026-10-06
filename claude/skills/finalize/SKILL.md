@@ -53,5 +53,5 @@ skill-run-log /finalize --target "<what this run targeted>" --verdict <VERDICT> 
 |---|---|---|
 | A reconstructed change needs a correctness review | `/critical-audit` | the branch, intended base, and scoped diff |
 | A branch has failing CI | `/converge` | the branch and failing checks |
-| Reconstruction differs from the intended target and the cause is unclear | `/autopsy` | the successful operations, tree hashes, and exact diff |
+| Reconstruction differs from the intended target and the cause is unclear | `/diagnose` | the successful operations, tree hashes, and exact diff |
 | Unfinished branch or PR work must survive a session replacement | `/session-continuity` | the branch-to-PR map and current state |

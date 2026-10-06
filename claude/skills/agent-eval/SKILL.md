@@ -45,7 +45,6 @@ skill-run-log /agent-eval --target "<target>" --verdict <VERDICT> --next /<next-
 
 ## Then consider
 
-- `eval-engineering` when the changed production path has no representative evaluation.
-- `eval-agent` when semantic judgments disagree with labeled examples.
-- `eval-harness-diagnose` when measured results conflict with execution evidence.
+- `eval-engineering` when the changed production path has no representative evaluation or semantic judgments disagree with labeled examples.
+- `diagnose` when measured results conflict with execution evidence.
 - `harden` when changed ingestion or release authority crosses a trust boundary.

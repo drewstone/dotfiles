@@ -73,8 +73,7 @@ skill-run-log /operate --target "<pursuit/campaign>" --verdict <VERDICT> --next 
 |---|---|---|
 | A new profile or immutable successor is needed | `/profile-authoring` | Acceptance, available capabilities, and the observed reason for change |
 | A play settled | `/play-report` | Run records, artifacts, and operator contributions |
-| A result or stop cause is surprising | `/autopsy` | The run identity and raw evidence |
-| Several runs share a failure | `/diagnose` | The failure set and confirmed examples |
+| A result or stop cause is surprising, or several runs share a failure | `/diagnose` | The run identities, raw evidence, and confirmed examples |
 | A claimed execution event cannot be observed | `/ground-truth` | The missing event and actual path |
 | A worker ignored state, tools, or user intent | `/agent-behavior-audit` | The trace and missed requirement |
-| A mechanism comparison is ready | `/arena-experiment` | Cases, arms, and actual resource measurements |
+| A mechanism comparison is ready | `/pursue` | Cases, arms, and actual resource measurements |

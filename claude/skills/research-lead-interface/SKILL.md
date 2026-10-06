@@ -65,5 +65,5 @@ skill-run-log /research-lead-interface --target "<question/run/fleet>" --verdict
 | Behavioral causes or artifact consumption need trace inspection | [Trace workflows](references/trace-workflows.md) | Exact runs, native sessions, time window, and unanswered questions |
 | The finding requires operating an authorized run | `/operate` | Current state, bounds, and the next action |
 | A comparative conclusion needs deeper analysis | `/report` | The measured population, artifacts, and remaining uncertainty |
-| A surprising result needs causal investigation | `/autopsy` | Exact run records and competing explanations |
+| A surprising result needs causal investigation | `/diagnose` | Exact run records and competing explanations |
 | Several agents' work needs a full account | `/play-report` | Observed topology, artifacts, and operator contributions |

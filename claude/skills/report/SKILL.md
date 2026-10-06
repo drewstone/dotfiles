@@ -49,7 +49,6 @@ skill-run-log /report --target "<question and evidence scope>" --verdict <VERDIC
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| A result remains null, surprising, or suspect | `/autopsy` | The raw rows and computation |
 | A measured gap has an authorized improvement to test | `/evolve` | The baseline, mechanism, and required outcome |
-| Failures need causal grouping | `/diagnose` | The complete failure set and candidate causes |
+| A result remains null, surprising, or suspect, or failures need causal grouping | `/diagnose` | The raw rows, computation, and candidate causes |
 | A required conclusion lacks observation of the actual path | `/ground-truth` | The missing segment and execution boundary |
