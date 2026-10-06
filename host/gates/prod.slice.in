@@ -1,0 +1,12 @@
+[Unit]
+Description=Production services on this host, with first claim on CPU and memory
+Documentation=file://@DOTFILES@/host/gates/gate-run
+
+# host/install-gates.sh moves the host's production units here (Solve's aggregation, indexer, operators and
+# sponsor; the trace capture; the fleet pages and report) with a drop-in, so agent work never starves them.
+# CPUWeight is 50 times gates.slice's and 10 times app.slice's. MemoryLow keeps their working set from reclaim;
+# user.slice, user-<uid>.slice and user@<uid>.service carry the same protection (host/cgroup), or it would not reach
+# this far down.
+[Slice]
+CPUWeight=1000
+MemoryLow=@MEMORY_LOW@

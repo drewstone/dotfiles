@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# gate-run shim (dotfiles host/gates): the real tool, through gate-run when the command is a heavy gate
+# (install, build, typecheck, lint, test) and no gate is running already. Servers and watchers are never gated.
+tool="$(basename "$0")"
+here="$(cd "$(dirname "$0")" && pwd -P)"
+real=""
+IFS=: read -r -a dirs <<<"$PATH"
+for dir in "${dirs[@]}"; do
+  [ -n "$dir" ] && [ "$(cd "$dir" 2>/dev/null && pwd -P)" != "$here" ] && [ -x "$dir/$tool" ] && { real="$dir/$tool"; break; }
+done
+[ -n "$real" ] || { echo "gate-run shim: no $tool on PATH after $here" >&2; exit 127; }
+if [ -z "${GATE_RUN:-}" ] && command -v gate-run >/dev/null 2>&1 && gate-run --heavy "$tool" "$@"; then
+  exec gate-run --name "$tool ${1:-}" -- "$real" "$@"
+fi
+exec "$real" "$@"

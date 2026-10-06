@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent gates run through gate-run, capped so they never starve the host's services
+Documentation=file://@DOTFILES@/host/gates/gate-run
+
+# host/install-gates.sh renders this per host. gate-run puts every heavy agent gate (install, typecheck, test,
+# signoff) in a scope under this slice and admits at most `slots` at once (~/.config/gate-run/config.json).
+# 2026-10-06: drew-gtr-pro reached load 896 and froze for five minutes under an ADC signoff's ~224 vitest workers,
+# five parallel tsc runs and a 22 GB local model.
+#
+# MemoryMax without MemoryHigh, as for user.slice (host/cgroup/50-agent-cap.conf): a MemoryHigh throttle stalled
+# every session in the slice, while MemoryMax alone OOM-kills the hog inside it in seconds.
+[Slice]
+CPUAccounting=yes
+CPUQuota=@CPU_QUOTA@
+CPUWeight=20
+MemoryAccounting=yes
+MemoryMax=@MEMORY_MAX@
+MemorySwapMax=4G
+TasksAccounting=yes
+TasksMax=16384

@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""gate-run: run a heavy agent gate (install, typecheck, test, signoff) so it can never starve the host.
+
+    gate-run [--name NAME] [--] COMMAND [ARGS...]
+    gate-run --heavy TOOL [ARGS...]     exit 0 when the shims should gate `TOOL ARGS` (pnpm, npm, npx, turbo, vitest, tsc)
+    gate-run --status                   the running and waiting gates
+
+On 2026-10-06 drew-gtr-pro reached load 896 and froze for five minutes: one ADC signoff's vitest forked about 224
+workers, a 22 GB local model loaded into 9 GB of free memory, and five parallel tsc processes ran at 220% each. The
+host also runs Solve's operator, sponsor and indexer, the trace capture and the fleet pages.
+
+A gate runs in a transient systemd user scope inside gates.slice, whose CPU quota and memory ceiling the installer
+sets per host (host/install-gates.sh: about half the CPUs and 40 GB on drew-gtr-pro), pinned to the upper half of the
+CPUs so tools that size their worker pools from the CPUs they may use (Node's availableParallelism, vitest, tsc
+builds) start fewer workers. A host-wide semaphore admits at most `slots` gates at once (drew-gtr-pro 2, a Beelink 1),
+first come first served; the rest wait in line and say so. A gate started inside another gate (GATE_RUN set) runs
+directly, so a signoff that calls pnpm, turbo and vitest holds one slot, not three.
+
+Configuration: ~/.config/gate-run/config.json ({"slots": 2, "cpus": "16-31"}), written by host/install-gates.sh.
+Without systemd (macOS) the command runs directly.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+CONFIG = Path(os.environ.get('GATE_RUN_CONFIG', Path.home() / '.config/gate-run/config.json'))
+STATE = Path(os.environ.get('GATE_RUN_STATE', f"/run/user/{os.getuid()}/gate-run"
+                            if Path(f'/run/user/{os.getuid()}').is_dir() else Path.home() / '.local/state/gate-run'))
+SLICE = 'gates.slice'
+POLL_SECONDS = 2
+SAY_EVERY_SECONDS = 60
+
+# Package scripts and binaries that build, check or test: CPU- and memory-heavy, and finite. Servers and watchers
+# (dev, start, serve, preview, watch) run for hours and would hold a slot, so they are never gated.
+HEAVY_NAME = re.compile(r'^(test|tests|check|check-types|checktypes|typecheck|type-check|types|build|lint|gate|signoff|'
+                        r'verify|ci|e2e|vitest|turbo|tsc|jest|playwright|knip|tsup|vite-build)([:._-].*)?$')
+LONG_RUNNING = re.compile(r'(^|[:._-])(dev|start|serve|server|preview|watch|daemon)([:._-]|$)')
+INSTALL = {'install', 'i', 'add', 'remove', 'rm', 'uninstall', 'update', 'up', 'upgrade', 'rebuild', 'ci', 'dedupe'}
+# pnpm/npm options that take a value, so the value is not the subcommand.
+VALUED = {'-C', '--dir', '--filter', '-F', '--workspace', '-w', '--prefix', '--reporter', '--loglevel', '--config',
+          '--test-pattern', '--changed-files-ignore-pattern'}
+
+
+def positionals(args):
+    out, skip = [], False
+    for arg in args:
+        if skip:
+            skip = False
+            continue
+        if arg == '--':
+            continue
+        if arg.startswith('-'):
+            skip = arg in VALUED
+            continue
+        out.append(arg)
+    return out
+
+
+def heavy_name(name):
+    return bool(HEAVY_NAME.match(name)) and not LONG_RUNNING.search(name)
+
+
+def is_heavy(tool, args):
+    """Whether the shims run `tool args` through a gate."""
+    tool = os.path.basename(tool)
+    words = positionals(args)
+    if tool in ('vitest', 'tsc'):
+        if any(a in ('--watch', '-w', '--version', '-v', '--help', '-h') for a in args):
+            return False
+        return not any(w in ('watch', 'dev', 'serve') for w in words)
+    if tool == 'turbo':
+        tasks = words[1:] if words[:1] == ['run'] else words
+        return bool(tasks) and any(heavy_name(t) for t in tasks) and not any(LONG_RUNNING.search(t) for t in tasks)
+    if tool == 'npx':
+        return bool(words) and heavy_name(os.path.basename(words[0]))
+    if tool in ('pnpm', 'npm'):
+        if not words or any(a in ('--version', '-v', '--help', '-h') for a in args[:1]):
+            return False
+        sub, rest = words[0], words[1:]
+        if sub in INSTALL or sub in ('test', 't', 'tst'):
+            return True
+        if sub in ('run', 'run-script', 'exec', 'dlx', 'x'):
+            return bool(rest) and heavy_name(os.path.basename(rest[0]))
+        return heavy_name(sub)
+    return False
+
+
+def config():
+    try:
+        value = json.loads(CONFIG.read_text())
+    except (OSError, ValueError):
+        value = {}
+    cpus = os.cpu_count() or 2
+    slots = int(value.get('slots') or (2 if cpus >= 32 else 1))
+    return {'slots': max(1, slots), 'cpus': value.get('cpus') or f'{cpus // 2}-{cpus - 1}'}
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def tickets():
+    """Waiting gates, oldest first, without those whose process is gone."""
+    out = []
+    for path in sorted((STATE / 'queue').glob('*.json')):
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if alive(int(record.get('pid', 0))):
+            out.append((path, record))
+        else:
+            path.unlink(missing_ok=True)
+    return out
+
+
+def acquire(name, command, slots):
+    """Wait in line for a slot; returns the open, locked slot file."""
+    import fcntl
+    (STATE / 'queue').mkdir(parents=True, exist_ok=True)
+    ticket = STATE / 'queue' / f'{time.time_ns():020d}-{os.getpid()}.json'
+    ticket.write_text(json.dumps({'pid': os.getpid(), 'name': name, 'command': command[:8], 'since': time.time()}))
+    said = 0.0
+    try:
+        while True:
+            line = tickets()
+            position = next((i for i, (path, _) in enumerate(line) if path == ticket), 0)
+            if position < slots:
+                for slot in range(1, slots + 1):
+                    handle = open(STATE / f'slot-{slot}.lock', 'a+')
+                    try:
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        handle.close()
+                        continue
+                    handle.seek(0)
+                    handle.truncate()
+                    handle.write(json.dumps({'pid': os.getpid(), 'name': name, 'since': time.time()}))
+                    handle.flush()
+                    return handle
+            if time.monotonic() - said >= SAY_EVERY_SECONDS:
+                running = [r.get('name') for r in running_gates(slots)]
+                print(f'gate-run: {name} waits for one of {slots} gate slots (running: {", ".join(running) or "?"}; '
+                      f'{position} ahead in line)', file=sys.stderr, flush=True)
+                said = time.monotonic()
+            time.sleep(POLL_SECONDS)
+    finally:
+        ticket.unlink(missing_ok=True)
+
+
+def running_gates(slots):
+    import fcntl
+    out = []
+    for slot in range(1, slots + 1):
+        path = STATE / f'slot-{slot}.lock'
+        if not path.exists():
+            continue
+        with open(path, 'a+') as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                continue
+            except BlockingIOError:
+                handle.seek(0)
+                try:
+                    out.append(json.loads(handle.read() or '{}'))
+                except ValueError:
+                    out.append({'name': f'slot {slot}'})
+    return out
+
+
+def scoped(command, name, cpus):
+    """The command wrapped in a gates.slice scope and pinned to the gate CPUs, where systemd and taskset exist.
+    GATE_RUN_SCOPE=0 keeps the queue but runs without a scope (tests, containers without a user manager)."""
+    unit = re.sub(r'[^A-Za-z0-9_.-]+', '-', f'gate-{name}')[:60] + f'-{os.getpid()}'
+    inner = ['taskset', '-c', cpus, *command] if shutil.which('taskset') else command
+    if os.environ.get('GATE_RUN_SCOPE') == '0' or not shutil.which('systemd-run') or subprocess.run(
+            ['systemctl', '--user', 'is-system-running'], capture_output=True).returncode not in (0, 1):
+        return inner
+    return ['systemd-run', '--user', '--scope', '--quiet', f'--slice={SLICE}', f'--unit={unit}',
+            '--description', f'gate-run: {name}', *inner]
+
+
+def run(name, command):
+    settings = config()
+    os.environ['GATE_RUN'] = name
+    # A login shell over ssh or a tmux pane may lack the user bus that systemd-run --user needs.
+    runtime = f'/run/user/{os.getuid()}'
+    if os.path.isdir(runtime):
+        os.environ.setdefault('XDG_RUNTIME_DIR', runtime)
+        os.environ.setdefault('DBUS_SESSION_BUS_ADDRESS', f'unix:path={runtime}/bus')
+    if sys.platform == 'darwin' and os.environ.get('GATE_RUN_SCOPE') != '0':
+        os.execvp(command[0], command)
+    handle = acquire(name, command, settings['slots'])
+    child = subprocess.Popen(scoped(command, name, settings['cpus']))
+
+    def forward(signum, frame):
+        child.send_signal(signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, forward)
+    code = child.wait()
+    handle.close()
+    return 128 - code if code < 0 else code
+
+
+def main(argv):
+    if argv[:1] == ['--heavy']:
+        return 0 if len(argv) > 1 and is_heavy(argv[1], argv[2:]) else 1
+    if argv[:1] == ['--status']:
+        settings = config()
+        print(json.dumps({'slots': settings['slots'], 'cpus': settings['cpus'], 'running': running_gates(settings['slots']),
+                          'waiting': [r for _, r in tickets()]}, indent=2))
+        return 0
+    name = None
+    if argv[:1] == ['--name']:
+        name, argv = argv[1], argv[2:]
+    if argv[:1] == ['--']:
+        argv = argv[1:]
+    if not argv:
+        print(__doc__.splitlines()[2].strip(), file=sys.stderr)
+        return 2
+    name = name or ' '.join(os.path.basename(a) for a in argv[:2])
+    if os.environ.get('GATE_RUN'):
+        # Already inside a gate: one slot per gate, however many tools it calls.
+        os.execvp(argv[0], argv)
+    return run(name, argv)
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

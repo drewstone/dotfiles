@@ -19,6 +19,10 @@
 #   /etc/docker/daemon.json               containers join the capped user.slice; live-restore
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
+#   /etc/systemd/system/user-.slice.d, user@.service.d (60-prod-protect.conf)
+#                                          memory protection and CPU weight down to prod.slice
+#   ~/.local/bin/gate-run, gates.slice, prod.slice (host/install-gates.sh)
+#                                          heavy agent gates capped and queued; production services first
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
 #                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
@@ -192,6 +196,8 @@ echo "== agent cap and writeback"
 # but never restarts the watchdog.
 cap_before=$CHANGED; CHANGED=0
 want_file 0644 "$SCRIPT_DIR/cgroup/50-agent-cap.conf" /etc/systemd/system/user.slice.d/50-agent-cap.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/60-user-slice-protect.conf" /etc/systemd/system/user-.slice.d/60-prod-protect.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/60-user-manager-protect.conf" /etc/systemd/system/user@.service.d/60-prod-protect.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/60-writeback.conf" /etc/sysctl.d/60-host-guard-writeback.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/61-vfs-cache.conf" /etc/sysctl.d/61-host-guard-vfs-cache.conf
 # Containers that agents and CI start join user.slice, under the same cap.
@@ -260,6 +266,21 @@ if systemctl is-active -q systemd-resolved 2>/dev/null &&
   fi
 else
   note skipped "resolv.conf is not systemd-resolved's stub"
+fi
+
+echo "== gates"
+# gate-run, its shims, and the gates and prod slices: user units of the account that owns this checkout.
+gate_args=()
+[ "$CHECK" = 1 ] && gate_args=(--check)
+if [ "$(id -u)" = 0 ]; then
+  owner="${SUDO_USER:-$(stat -c %U "$SCRIPT_DIR")}"
+  if [ "$owner" = root ]; then echo "  FAIL: cannot tell which account owns the gates"; exit 1; fi
+  gates=(sudo -u "$owner" XDG_RUNTIME_DIR="/run/user/$(id -u "$owner")" "$SCRIPT_DIR/install-gates.sh")
+else
+  gates=("$SCRIPT_DIR/install-gates.sh")
+fi
+if ! "${gates[@]}" "${gate_args[@]}"; then
+  if [ "$CHECK" = 1 ]; then DRIFT=1; else exit 1; fi
 fi
 
 echo "== verify"
