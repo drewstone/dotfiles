@@ -53,7 +53,7 @@ Inspect the installed path and maintained sources before changing an existing en
 Retain exact revisions and update affected documentation rather than copying version catalogs.
 Reproduce defects through the affected user or consumer path.
 For performance work, use [speed evidence](../anti-patterns/speed.md).
-For test selection or retirement, use the [test-value policy](../../claude/skills/deep-clean/SKILL.md#retire-low-value-tests).
+For test selection or retirement, use the [test-value policy](../../claude/skills/simplify/SKILL.md#retire-low-value-tests).
 Protect shared state; establish minimal execution and capture before expensive verification.
 
 Record starting state, actions, outcome, persistence, revision, target, failures, and missing coverage.

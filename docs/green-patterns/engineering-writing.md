@@ -20,7 +20,7 @@ A green check without execution evidence cannot establish a user outcome.
 | --- | --- |
 | UI | [UI evidence](../anti-patterns/ui-evidence.md): matching images, video for changed interactions, and an openable demo or artifact. |
 | Performance | [Comparable before/after timings](../anti-patterns/speed.md), sample counts, workload, environment, and uncertainty. No timing means no speedup claim. |
-| Tests or cleanup | Removed checks and their exclusive fixtures/tooling, surviving proof, measured verification cost if available, and why retained unit tests earn their cost under the [test-value policy](../../claude/skills/deep-clean/SKILL.md#retire-low-value-tests). |
+| Tests or cleanup | Removed checks and their exclusive fixtures/tooling, surviving proof, measured verification cost if available, and why retained unit tests earn their cost under the [test-value policy](../../claude/skills/simplify/SKILL.md#retire-low-value-tests). |
 | API, data, or reliability | Real boundary or golden evidence, including the affected failure/recovery case and persisted result when relevant. |
 
 Use a short checklist for remaining acceptance, migration, or release work.

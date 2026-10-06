@@ -23,4 +23,4 @@ It does not deduplicate findings: combining run tables would require remapping t
 Compare the output's run and finding counts with the input files and inspect failed invocation status.
 Keep raw artifacts for each scan.
 Deduplicate confirmed issues during triage using their rule, location, data flow, and actual failure scenario, while retaining pointers to each raw occurrence.
-If filtering is requested, apply [result filtering](result-filtering.md) to the JSON and keep its counts separate from unfiltered SARIF.
+If filtering is requested, apply [result filtering](semgrep-filtering.md) to the JSON and keep its counts separate from unfiltered SARIF.

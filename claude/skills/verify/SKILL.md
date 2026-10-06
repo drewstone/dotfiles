@@ -13,7 +13,7 @@ A clean or fully pushed branch still needs the requested verification.
 1. Identify the target, revision, comparison base, and user's completion requirements.
 2. Read current git state, staged and unstaged changes, and the complete relevant branch diff.
 3. Read repository checks and the tests that cover the changed behavior.
-   Apply the [test-value policy](../deep-clean/SKILL.md#retire-low-value-tests); prefer real flows, integration boundaries, and golden data.
+   Apply the [test-value policy](../simplify/SKILL.md#retire-low-value-tests); prefer real flows, integration boundaries, and golden data.
 4. Check changed files for exposed credentials and debug artifacts that would affect the delivered result.
    Inspect candidates in context; legitimate logging or a remaining TODO is not automatically a defect.
 

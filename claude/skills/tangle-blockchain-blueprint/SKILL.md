@@ -50,6 +50,6 @@ skill-run-log /tangle-blockchain-blueprint --target "<target>" --verdict <VERDIC
 
 - `converge` when the required checks fail.
 - `harden` when a changed tenant, operator, custody, or contract boundary needs adversarial tests.
-- `docs-slop-audit` when product documentation needs claim-by-claim review.
+- `critical-audit` when product documentation needs claim-by-claim review.
 - `ui-test` when visible service flows need broader interaction coverage.
 - `verify` when implementation is complete and release proof remains.

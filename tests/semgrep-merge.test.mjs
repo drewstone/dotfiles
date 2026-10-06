@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const mergeScript = join(repoRoot, 'claude', 'skills', 'semgrep', 'scripts', 'merge_sarif.py')
+const mergeScript = join(repoRoot, 'claude', 'skills', 'harden', 'scripts', 'merge_sarif.py')
 const python = execFileSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim()
 
 function withScan(run) {
