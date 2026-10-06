@@ -1,6 +1,6 @@
 ---
 name: report
-description: Answer analytical, status, research-fleet, or play questions from checked evidence, with complete relevant measurements, uncertainty, attribution, and a supported decision.
+description: Answer analytical, status, research-fleet, or play questions from checked evidence, with complete measurements, uncertainty, and a supported decision.
 ---
 
 # Report

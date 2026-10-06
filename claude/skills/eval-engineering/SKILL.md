@@ -1,6 +1,6 @@
 ---
 name: eval-engineering
-description: Build and calibrate agent evaluations through the production entrypoint, including model judges for semantic quality and the pre-spend check that scoring separates required behavior from failure and a simple baseline.
+description: Build and calibrate agent evaluations through the production entrypoint, including semantic model judges and the pre-spend check against a simple baseline.
 ---
 
 # Eval engineering

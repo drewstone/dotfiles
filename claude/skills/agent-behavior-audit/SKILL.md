@@ -1,6 +1,6 @@
 ---
 name: agent-behavior-audit
-description: Audit whether an autonomous agent or coding backend observes state, uses tools, surfaces permissions and questions, and follows its promised behavior and user intent.
+description: Audit whether an autonomous agent or coding backend observes state, uses tools, surfaces permissions, and follows promised behavior and user intent.
 ---
 
 # Agent behavior audit

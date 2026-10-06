@@ -1,6 +1,6 @@
 ---
 name: chatgpt-fleet
-description: Drive ChatGPT Pro reasoning sessions as a work fleet through persistent Chrome profiles, using a short-prompt, large-scope, multi-round loop in which the sessions open their own pull requests.
+description: Drive ChatGPT Pro sessions as a work fleet through persistent Chrome profiles, with short prompts, large scope, and sessions that open their own PRs.
 ---
 
 # ChatGPT Fleet
