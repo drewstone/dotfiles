@@ -83,6 +83,22 @@ content — frozen install, typecheck, an optional proof command). No file
 means no quick check; pr-gate still does the merge/push/gh-merge steps. Any
 merge conflict outside CHANGELOG.md stops the gate for manual resolution.
 
+## beelink-gate
+
+From GTR, run a full-SHA gate on a beelink without creating a lane worktree there:
+
+```bash
+beelink-gate beelink2 git@github.com:owner/repo.git <full-sha> -- bash -c 'pnpm typecheck && pnpm test'
+```
+
+The command streams output and a receipt with the SHA, command, exit code, and duration.
+It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
+locks that checkout through the install and command. It cleans the prior run's
+outputs, fetches the requested commit, and runs a frozen pnpm or npm install
+against that user's shared package store. Different repositories can gate in
+parallel; gates for the same repository wait. The cache is independent of main
+checkouts and lane worktrees.
+
 ## skills
 
 List installed skills or check the discovery catalog budget:

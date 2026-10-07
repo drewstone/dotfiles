@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Gate one commit in a reusable, locked checkout on a beelink.
+# Usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]
+set -uo pipefail
+
+die() { echo "beelink-gate: $*" >&2; exit 2; }
+
+decode() { printf '%s' "$1" | base64 --decode; }
+
+remote_gate() {
+  [ "$#" -ge 3 ] || die "invalid remote request"
+  local repo_url sha key host owner repo cache_root checkout origin actual rc=0
+  local -a command=()
+  repo_url=$(decode "$1") || die "invalid repository encoding"
+  sha=$(decode "$2") || die "invalid SHA encoding"
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    command+=("$(decode "$1")") || die "invalid command encoding"
+    shift
+  done
+  [ "${#command[@]}" -gt 0 ] && [ -n "${command[0]}" ] || die "empty command"
+  [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+
+  # URL components are used only as cache path components; reject traversal and
+  # keep the host in the key so two Git services cannot share one checkout.
+  if [[ "$repo_url" =~ ^git@([A-Za-z0-9.-]+):([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
+    host="${BASH_REMATCH[1]}"; owner="${BASH_REMATCH[2]}"; repo="${BASH_REMATCH[3]}"
+  elif [[ "$repo_url" =~ ^(https|ssh)://(git@)?([A-Za-z0-9.-]+)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
+    host="${BASH_REMATCH[3]}"; owner="${BASH_REMATCH[4]}"; repo="${BASH_REMATCH[5]}"
+  elif [[ "$repo_url" =~ ^file:///([A-Za-z0-9_./-]+)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
+    host=local; owner="${BASH_REMATCH[2]}"; repo="${BASH_REMATCH[3]}"
+  else
+    die "expected a Git URL ending in owner/repo[.git]"
+  fi
+  repo="${repo%.git}"
+  for key in "$host" "$owner" "$repo"; do
+    [ "$key" != . ] && [ "$key" != .. ] && [[ "$key" != -* ]] || die "unsafe repository path"
+  done
+
+  export PATH="$HOME/.local/bin:$PATH"
+  cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  checkout="$cache_root/$host/$owner/$repo"
+  mkdir -p "$cache_root/.locks" "$(dirname "$checkout")" || die "cannot create cache"
+  local lock="$cache_root/.locks/$host-$owner-$repo.lock"
+  exec {lock_fd}>"$lock" || die "cannot open lock"
+  echo "beelink-gate: waiting for $host/$owner/$repo lock" >&2
+  flock -x "$lock_fd" || die "cannot lock checkout"
+
+  local started=$SECONDS display
+  printf -v display '%q ' "${command[@]}"
+  receipt() {
+    local status="$1"
+    printf 'beelink-gate receipt: sha=%s command=%s exit=%s duration=%ss\n' \
+      "$sha" "${display% }" "$status" "$((SECONDS - started))" >&2
+  }
+  trap 'receipt "$?"' EXIT
+
+  if [ ! -e "$checkout/.git" ]; then
+    [ ! -e "$checkout" ] || die "cache path exists without .git: $checkout"
+    git init -q "$checkout" || exit $?
+    git -C "$checkout" remote add origin "$repo_url" || exit $?
+  fi
+  origin=$(git -C "$checkout" remote get-url origin) || exit $?
+  [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+  echo "beelink-gate: fetching $sha into $checkout" >&2
+  git -C "$checkout" fetch --no-tags --filter=blob:none origin "$sha" || exit $?
+  git -C "$checkout" checkout --detach --force "$sha" || exit $?
+  git -C "$checkout" clean -ffdx || exit $?
+  actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
+  [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
+
+  cd "$checkout" || exit $?
+  if [ -f pnpm-lock.yaml ]; then
+    command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
+    pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
+  elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+    command -v npm >/dev/null || die "npm unavailable on beelink"
+    npm ci --cache "$HOME/.npm" || exit $?
+  elif [ -f package.json ]; then
+    # A dependency-free package needs no install. A package with dependencies
+    # and no lock cannot have a frozen install, so fail the gate.
+    node -e 'const p=require("./package.json"); process.exit(Object.keys(p.dependencies||{}).length || Object.keys(p.devDependencies||{}).length || Object.keys(p.optionalDependencies||{}).length ? 1 : 0)' \
+      || die "package.json has dependencies but no pnpm/npm lockfile"
+    echo "beelink-gate: dependency-free package; no frozen install needed" >&2
+  fi
+  echo "beelink-gate: running ${display% }" >&2
+  "${command[@]}"
+  rc=$?
+  exit "$rc"
+}
+
+if [ "${1:-}" = --remote ]; then
+  shift
+  remote_gate "$@"
+fi
+
+[ "$#" -ge 5 ] && [ "$4" = -- ] || die "usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]"
+case "$1" in
+  beelink1|100.98.195.7) beelink_ip=100.98.195.7 ;;
+  beelink2|100.127.22.51) beelink_ip=100.127.22.51 ;;
+  *) die "unknown beelink: $1" ;;
+esac
+shift
+repo_url="$1"; sha="$2"; shift 3
+[[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+encoded=()
+for arg in "$repo_url" "$sha" "$@"; do
+  encoded+=("$(printf '%s' "$arg" | base64 -w0)")
+done
+ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- bash -s -- --remote "${encoded[@]}" < "$0"
