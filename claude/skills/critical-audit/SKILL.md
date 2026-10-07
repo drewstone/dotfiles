@@ -101,4 +101,3 @@ skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <APPROVE|
 | A shared design problem needs a broader authorized change | `/pursue` | the affected callers and behavior to preserve |
 | Obsolete code and documentation share a removable capability | `/simplify` | the consumer evidence and affected paths |
 | The criteria pass and an authorized release remains | `/ship` | the verified revision, target, and checks |
-| Accurate writing still needs the requested author voice | `/writing-profile` | the draft and real writing samples |

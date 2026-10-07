@@ -99,3 +99,6 @@ It fails on duplicate names and broken links.
 It warns when the list exceeds Codex's documented 8,000-character fallback for an unknown model context.
 With a known model context, Codex instead limits the initial list to 2% of that context.
 See [OpenAI's skill documentation](https://learn.chatgpt.com/docs/build-skills).
+
+For usage, run `traces skills --since 30d`: it counts each skill's Claude Code loads and Codex `SKILL.md` reads across every local session, with no model call.
+`traces skills --unused --since 30d` lists installed skills with no use, the candidates to delete.
