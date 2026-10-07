@@ -45,6 +45,12 @@ If the fleet is idle, report that fact and its cause.
 Continue the next authorized action that advances the objective, subject to shared leases and resource limits.
 Name the specific missing authority or evidence when it prevents action.
 
+## Before the deadline
+
+Keep every version: each write a commit by its worker with trace trailers, each release candidate a tag scored by a frozen, pre-registered evaluator set in a fixed order (exact checks, held-out checks, open referee blockers, judges).
+Send the root the release convention and the T−4h freeze, T−2h assembly and T−1h final-referee notes through the steering API (Discovery Lab: `disco wrapup`, `disco steer`).
+At the deadline without an accepted result, turn in the best-scoring tag, not the latest; label it a deadline release, never success, and flag any tag that regressed or rose only on judges.
+
 ## At settlement
 
 Read the recorded stop cause before interpreting the outcome.
