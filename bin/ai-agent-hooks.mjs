@@ -373,6 +373,12 @@ function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
   const remote = typeof check.remote === "string" && check.remote.trim()
     ? check.remote.trim()
     : "origin";
+  // Mergeability is a property of a branch that will be integrated. A push of tags alone, such
+  // as a release tag at the tip of its line, integrates nothing. Secret and conflict-marker
+  // checks still run on every push.
+  if (refUpdates.length > 0 && refUpdates.every((u) => /^refs\/tags\//.test((u && u.remoteRef) || ""))) {
+    return { ok: true, status: 0, output: "Every pushed ref is a tag — mergeability check skipped." };
+  }
   const configuredBase = typeof check.baseRef === "string" && check.baseRef.trim();
   const releaseLine = configuredBase ? undefined : pushedReleaseLine(refUpdates);
   const baseRef = configuredBase

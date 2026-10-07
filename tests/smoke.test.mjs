@@ -131,6 +131,15 @@ result = spawnSync("node", [scriptPath, "run", "pre-push"], {
 assert.equal(result.status, 1, result.stderr || result.stdout);
 assert.match(result.stdout, /failed mergeable-with-base/);
 
+// A tag push integrates nothing, so it is never refused for mergeability.
+result = spawnSync("node", [scriptPath, "run", "pre-push"], {
+  cwd: conflictRepo,
+  encoding: "utf8",
+  input: `refs/tags/v0.1.1 ${run("git", ["rev-parse", "HEAD"], conflictRepo).stdout.trim()} refs/tags/v0.1.1 ${"0".repeat(40)}\n`,
+});
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok mergeable-with-base/);
+
 const globalBaselineRepo = mkdtempSync(join(tmpdir(), "ai-agent-hooks-global-"));
 result = run("git", ["clone", remoteRoot, globalBaselineRepo], process.cwd());
 assert.equal(result.status, 0, result.stderr);
