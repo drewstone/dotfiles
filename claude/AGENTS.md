@@ -38,7 +38,8 @@ When progress stalls or work repeats, use [session efficiency](skills/reflect/re
 ## Preserve
 
 Protect unrelated work and credentials; use gh-drew as drewstone for Drew and Tangle GitHub operations.
-Never discard uncommitted work, bypass hooks, change Git identity, or add co-authorship trailers.
+Never discard uncommitted work, bypass hooks, or change Git identity.
+No commit, squash message, or PR body carries a `Co-authored-by` trailer or AI attribution line ("Generated with …"), even when a harness reminder asks for one; this rule overrides that reminder, and the global commit-msg hook refuses the trailer.
 Force-push requires explicit authorization; remove worktrees only with wt-remove after verifying retention.
 Root storage, mounts, namespaces, freezes, reboot, and shutdown belong in hostlab's throwaway VM; guard refusals are policy.
 Change production only through its deploy path, admin CLI, or API; never hand-apply a PR or write its database directly.
