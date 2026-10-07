@@ -55,6 +55,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
+          },
+          {
+            "type": "command",
             "command": "$HOME/.claude/hooks/host-blast-guard.sh"
           },
           {
@@ -89,7 +93,20 @@
         "hooks": [
           {
             "type": "command",
+            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
+          },
+          {
+            "type": "command",
             "command": "$HOME/.claude/hooks/audit-freshness-check.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
           }
         ]
       }
