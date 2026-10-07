@@ -111,6 +111,26 @@ result = run("node", [scriptPath, "run", "pre-push"], conflictRepo);
 assert.equal(result.status, 1, result.stderr || result.stdout);
 assert.match(result.stdout, /failed mergeable-with-base/);
 
+// A release line is checked against itself, never the default branch it diverged from.
+const releaseInput = (repo, line) =>
+  `refs/heads/${line} ${run("git", ["rev-parse", "HEAD"], repo).stdout.trim()} refs/heads/${line} ${"0".repeat(40)}\n`;
+result = spawnSync("node", [scriptPath, "run", "pre-push"], {
+  cwd: conflictRepo,
+  encoding: "utf8",
+  input: releaseInput(conflictRepo, "release/0.1.x"),
+});
+assert.equal(result.status, 0, result.stderr || result.stdout);
+assert.match(result.stdout, /ok mergeable-with-base/);
+result = run("git", ["push", "origin", "HEAD:refs/heads/release/0.1.x"], remoteWriter);
+assert.equal(result.status, 0, result.stderr);
+result = spawnSync("node", [scriptPath, "run", "pre-push"], {
+  cwd: conflictRepo,
+  encoding: "utf8",
+  input: releaseInput(conflictRepo, "release/0.1.x"),
+});
+assert.equal(result.status, 1, result.stderr || result.stdout);
+assert.match(result.stdout, /failed mergeable-with-base/);
+
 const globalBaselineRepo = mkdtempSync(join(tmpdir(), "ai-agent-hooks-global-"));
 result = run("git", ["clone", remoteRoot, globalBaselineRepo], process.cwd());
 assert.equal(result.status, 0, result.stderr);

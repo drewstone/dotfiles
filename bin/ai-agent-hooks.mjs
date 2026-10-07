@@ -354,13 +354,32 @@ function readPrePushRefUpdates() {
     });
 }
 
+/**
+ * The release line every pushed ref updates, when they all update one: `release/<line>` is a
+ * backport line that consumers pinned to an older version resolve (agent-runtime's publish workflow
+ * releases a tag at the tip of `release/<major>.<minor>.x`). It diverges from the default branch on
+ * purpose, so its base is the line itself.
+ */
+function pushedReleaseLine(refUpdates) {
+  const lines = new Set(
+    refUpdates.map((u) => /^refs\/heads\/(release\/.+)$/.exec((u && u.remoteRef) || "")?.[1]),
+  );
+  if (refUpdates.length === 0 || lines.size !== 1) return undefined;
+  const [line] = lines;
+  return line;
+}
+
 function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
   const remote = typeof check.remote === "string" && check.remote.trim()
     ? check.remote.trim()
     : "origin";
-  const baseRef = typeof check.baseRef === "string" && check.baseRef.trim()
+  const configuredBase = typeof check.baseRef === "string" && check.baseRef.trim();
+  const releaseLine = configuredBase ? undefined : pushedReleaseLine(refUpdates);
+  const baseRef = configuredBase
     ? check.baseRef.trim()
-    : resolveDefaultBaseRef(repoRoot, remote);
+    : releaseLine
+      ? `${remote}/${releaseLine}`
+      : resolveDefaultBaseRef(repoRoot, remote);
   const remoteBranch = typeof check.remoteBranch === "string" && check.remoteBranch.trim()
     ? check.remoteBranch.trim()
     : baseRef.replace(/^refs\/remotes\//, "").replace(`${remote}/`, "");
