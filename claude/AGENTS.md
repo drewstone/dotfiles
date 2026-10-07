@@ -28,6 +28,7 @@ Use the user's named lever; keep acceptance criteria fixed and report stricter a
 Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
 Parallelize independent deliverables with one owner each; finish minute-scale delivery and preserve longer work with its next completion check.
 Use plain technical English: checked outcome first, unknowns explicit, an openable artifact when showing a product.
+When Drew must text or call, give numbered steps naming the exact number to send from, the exact number to send to as +1 (XXX) XXX-XXXX, and the exact message in quotes; never "the existing conversation", "the router", or a line ID.
 
 ## Read when relevant
 
