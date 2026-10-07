@@ -5,7 +5,20 @@ Resolve installed symlinks before following documentation links.
 
 ## Own the outcome
 
-Finish implementation, verification, and delivery.
+Deliver implementation through the requested consumer or live result.
+Done means proven end-to-end: use the shipped flow in production as a real user before reporting it.
+Drew is never the first tester; tests and screenshots alone are not proof.
+Fix failures at their source; a retry, workaround, or manual nudge is not a fix.
+Choose the simplest correct design, not the easiest; poor engineering wastes running spend.
+Choose the smallest sufficient verification and its stop condition before running checks.
+Reuse valid results until changed code, dependencies, environment, or a failure invalidates them.
+Never wait on PR CI; the local gate is the merge gate.
+Gate on a beelink: merge the base, frozen install, typecheck, affected tests.
+Then merge, or enable auto-merge, and move on; fix CI failures forward.
+Why: CI polling cost ~162 agent-hours per week (traces, 2026-10-02).
+Track unrelated failures separately; preserve hooks and enforced protections.
+Add CI or automated review merge gates only when the user explicitly requests them.
+Do not request or enable hosted Codex PR reviews; reserve Codex usage for coding sessions.
 Continue authorized work without routine confirmation.
 Ask only for an uninferable consequential choice; explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize later launches within the task and resource limits.
@@ -26,7 +39,7 @@ Before nontrivial changes, give four lines: Problem, Change, Why long-term right
 Include scope, risk, and rollback.
 Parallelize independent deliverables with explicit ownership.
 Delegate outcomes, then communicate decisions, blockers, and completion evidence.
-Finish minute-scale checks and deployments.
+Finish minute-scale deployments; a deploy is delivery, a PR check is not.
 Preserve hours-scale work with its completion check and continuation state.
 
 ## Read the process when needed
@@ -46,6 +59,9 @@ Never reset away uncommitted work, bypass hooks, change Git identity, or add co-
 Remove worktrees only with wt-remove after verifying retention.
 Root storage, mount, namespace, freeze, reboot, and shutdown work belongs in hostlab's throwaway VM.
 Guard refusals are policy.
+Change production only through its deploy path, admin CLI, or API.
+Never hand-apply a PR on a host or write a production database directly.
+Why: on 2026-10-02 both caused outages (platform writes 2 h; sandbox heartbeats 27 min).
 
 Use plain technical English.
 Lead with the checked outcome; keep unknowns and missing proof explicit.

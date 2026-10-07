@@ -20,6 +20,9 @@ Coordination is useful only when it advances the user outcome.
 
 Use the Mac for sessions, lightweight reads, edits, and pushes; reuse one worktree per repository.
 Use GTR for new worktrees, full installs, builds, type checks, tests, and retained traces.
+Prefer `beelink1-wsl` and `beelink2-wsl` for full installs, builds, type checks, and test suites.
+Each has 16 cores, 93 GB, the operator keyset, and gh-drew; GTR is memory- and disk-constrained.
+Repositories live in ~/code there; put worktrees in ~/code/_wt.
 Run Discovery research in Tangle sandboxes through the maintained CLI.
 A working local CLI can submit directly.
 Research must continue when the Mac or GTR disconnects.
@@ -62,16 +65,19 @@ Resolve conflicts now.
 Use Conventional Commits and the checked-in .ai-agent-hooks.mjs.
 Global hooks belong to dotfiles git/install.sh.
 
-Commit, push, open the PR, address reviews, merge, and verify the merge.
+One owner drives the PR, conflicts, review fixes, authorized merge/release, and requested consumer or live proof.
 After each push, read PR comments, submitted reviews, and inline threads.
-Wait for configured reviews and required checks unless the user authorizes another delivery path.
+Apply user-authorized CI or review waivers immediately through a permitted delivery path.
+Preserve hooks, enforced protections, release authority, and applicable findings.
 Fix newer findings; earlier approval does not cover them.
-A red check holds merge only for the change's own defect.
-Otherwise merge and open the follow-up fix in the same turn.
+Classify failures as change defects, unrelated defects, or infrastructure failures.
+Fix change defects before delivery; track unrelated failures separately and continue permitted delivery.
+An enforced blocking check requires an authorized resolution; a waiver alone does not override repository protection.
 Additive or flagged changes can merge quickly.
 Deleting a live path requires independent review and one live proof.
 A backlog finishes with every PR merged, closed, or in an active lane.
-Poll unknown mergeability.
+Check pending results when they can change the next action; continue independent work meanwhile.
+For a genuine blocker, name the failed requirement, owner, next action, and completion check.
 Before claiming completion, check the PR and `git rev-list --count HEAD --not --remotes`.
 
 ## Establish evidence
@@ -86,6 +92,10 @@ Measure the actual path before changing performance or reliability.
 For speed work, read [speed rules](../anti-patterns/speed.md).
 Keep the numbered baseline, constraint target, deterministic counters, ratchet, and controlled rollout.
 Protect shared state during boundary checks.
+Before verification, choose the smallest sufficient checks and the condition that ends verification.
+Reuse existing results for unchanged code, dependencies, and environment.
+Rerun affected checks only when changes or failures invalidate their evidence.
+After verification passes, continue delivery instead of broadening signoff.
 Prove minimal execution and capture before expensive work.
 
 Verify through the real product or consumer entrypoint.
@@ -106,7 +116,7 @@ Separate actual customer revenue from internal proof spending.
 A failed instrument needs another instrument, not an unsupported answer.
 Investigate null, surprising, and unusually good results.
 A negative verdict requires an isolated check capable of detecting improvement.
-Repair encountered failures and flakiness.
+Repair in-scope failures and flakiness; give unrelated failures a separate follow-up.
 Preserve required user experience while improving metrics.
 
 ## Report clearly

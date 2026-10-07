@@ -26,6 +26,9 @@ Resume its existing coding session and sandbox.
 For model changes, inspect the installed SDK's per-turn override before changing the instance profile version.
 A changed profile version can select a new native session even when the sandbox remains unchanged.
 Verify the requested model, served model, sandbox ID, and native session ID after a switch.
+Keep tool call and result IDs and lifecycle states in the stored build conversation.
+Render the reopened records with the exported `AgentTimeline`; never turn a coding run into prose-only history.
+Show the exact profile saved with the turn and leave the served model unverified when execution did not attest it.
 
 A resumed dev server can receive another port.
 Re-register the actual managed server through the maintained preview validator.

@@ -21,7 +21,11 @@ Reuse each package's behavior while retaining product policy at typed boundaries
 
 ## Compose the product UI
 
-For conversational flows, use `ChatComposer` and `ChatMessages` from `agent-app/web-react` for both ordinary chat and coding-profile chat.
+For conversational flows, use the same `ChatComposer` from `agent-app/web-react` across ordinary and coding chat.
+Use `ChatMessages` for text-only conversations and exported `AgentTimeline` from `sandbox-ui/chat` for tool-bearing coding turns.
+Carry actual tool call IDs, inputs, statuses, and results from maintained Sandbox stream and replay through persistence and reopening.
+Show the saved `AgentProfile` for the turn beside the selected model and the independently verified served model.
+Keep assistant text readable through semantic theme tokens used by shared Markdown, including nested theme scopes.
 Keep their histories, draft models, and persisted session modes distinct in product state.
 Build coding conversations inside the product workspace rather than sending users to another product's builder.
 
