@@ -25,6 +25,13 @@ Distinguish source changes, published packages, installed packages, and observed
 For continuation or outside assessment, read [progress and settlement](references/progress-and-settlement.md).
 For recursion, learning, artifact reuse, or recovery claims, read [mechanism evidence](references/recursive-proof.md).
 
+## Commissions: define excellent first
+
+For a customer deliverable (a report, model or plan), the first milestone is the engagement spec: the directors, as the expert team for the domain, write 50 to 100 checkable expectations, the deliverable spec and a workplan.
+An independent engagement partner on a current model raises that bar against named exemplars and adds what it misses; part of its additions stay held out.
+Score the release against the compiled bar, never against hygiene alone (present, reproduces, calculates).
+Start from the class's best template and save the finished list with its grades as the next version (Discovery Lab: `acceptance.design.engagement`, `disco engagement`).
+
 ## While running
 
 1. Inspect authoritative execution state before acting.
@@ -47,7 +54,7 @@ Name the specific missing authority or evidence when it prevents action.
 
 ## Before the deadline
 
-Keep every version: each write a commit by its worker with trace trailers, each release candidate a tag scored by a frozen, pre-registered evaluator set in a fixed order (exact checks, held-out checks, open referee blockers, judges).
+Keep every version: each write a commit by its worker with trace trailers, each release candidate a tag scored by a frozen, pre-registered evaluator set in a fixed order (exact checks, held-out checks, coverage of a commission's expectations, open referee blockers, judges).
 Send the root the release convention and the T−4h freeze, T−2h assembly and T−1h final-referee notes through the steering API (Discovery Lab: `disco wrapup`, `disco steer`).
 At the deadline without an accepted result, turn in the best-scoring tag, not the latest; label it a deadline release, never success, and flag any tag that regressed or rose only on judges.
 
