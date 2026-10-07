@@ -13,13 +13,14 @@ A clean or fully pushed branch still needs the requested verification.
 1. Identify the target, revision, comparison base, and user's completion requirements.
 2. Read current git state, staged and unstaged changes, and the complete relevant branch diff.
 3. Read repository checks and the tests that cover the changed behavior.
-   Choose unit, integration, build, or browser checks according to the boundary being changed.
+   Apply the [test-value policy](../deep-clean/SKILL.md#retire-low-value-tests); prefer real flows, integration boundaries, and golden data.
 4. Check changed files for exposed credentials and debug artifacts that would affect the delivered result.
    Inspect candidates in context; legitimate logging or a remaining TODO is not automatically a defect.
 
 ## Run and assess
 
-Run the affected checks and the repository's required validation.
+Run the smallest sufficient affected checks and the repository's enforced validation.
+Reuse valid results until changes or failures invalidate them; stop once the requested coverage passes.
 Respect dependencies between commands and collect each exit status when checks run concurrently.
 Confirm that regression coverage can catch the behavior it claims to protect.
 A test double can isolate a dependency, but cannot stand in for the integration behavior the test claims to verify.
@@ -31,7 +32,7 @@ Keep report-only verification read-only.
 
 ## Result
 
-For each relevant check, report `PASS`, `FAIL`, `UNCHECKED`, or `N/A`, with the command or inspection evidence and its result.
+Report each check's type, `PASS`, `FAIL`, `UNCHECKED`, or `N/A`, with evidence and its result.
 Include counts where the tool reports them, exclusions, environment limits, and unresolved concerns.
 Name the verified revision and any changes made after it was checked.
 
@@ -43,12 +44,3 @@ If this is part of an active task, pass the results back to that task and contin
 ```bash
 skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| Verification passes and an authorized release remains | `/ship` | the verified revision, target, and release path |
-| Required local or remote checks fail | `/converge` | the failure evidence and preserved requirements |
-| Unresolved quality gaps need an implementation review | `/polish` | the gaps and checks that exposed them |
-| A security boundary remains untested | `/harden` | the boundary, risk, and missing behavior check |

@@ -1,0 +1,87 @@
+# Agent work process
+
+Read only the relevant sections; [shared defaults](../../claude/AGENTS.md) own universal rules.
+
+## Delegation
+
+Use existing task ownership; reconcile overlapping scope before assigning one independent outcome per worker.
+Specify ownership, interfaces, checkout, authority, resources, and completion evidence.
+The integrating agent owns consumer proof and delivery.
+Send updates when a decision, blocking dependency, ownership conflict, finding, or completed artifact changes another owner's next action.
+Include the change, evidence pointer, and required action; use the existing task record for unchanged status.
+Delegate independently useful deliverables; keep dependent fragments and routine heartbeats with their owner.
+
+## Choose the host and checkout
+
+Use the Mac for lightweight work and pushes; prefer beelink1-wsl or beelink2-wsl for full installs, builds, types, and tests.
+Reuse the owning clone and worktree after checking origins, Git common directories, and worktree lists.
+New Linux checkouts belong under ~/code; worktrees under ~/code/_wt.
+GTR is resource-constrained; inspect its existing ~/code and ~/webb checkouts before adding work.
+Run Discovery research through the maintained CLI in Tangle sandboxes so it survives workstation disconnects.
+
+## Preserve concurrent work
+
+Check the relevant checkout's status, base, and ownership before editing; inspect history, reflog, or PRs when changes or conflicts need explanation.
+Investigate unexpected edits or commits; preserve active merges, rebases, and dirty detached checkouts.
+Keep mixed scope explicit when separating work.
+Delete branches only after proving retention or abandonment; ignored worktree files may contain work.
+Before committing, check Git identity; report a mismatch instead of changing it during the task.
+
+## Deliver through GitHub
+
+Before mutations, `gh-drew api user --jq .login` must return `drewstone`.
+Missing DREW_GH_TOKEN requires restoring its owner, not switching accounts; SSH transport does not establish API identity.
+Fetch the PR target, verify `git merge-tree --write-tree BASE HEAD`, and resolve conflicts.
+Use Conventional Commits and repository hooks; dotfiles git/install.sh owns global hooks.
+Use the [shared merge gate](../../claude/AGENTS.md#own-the-outcome); apply authorized waivers through the permitted path.
+
+One owner carries the PR through review, merge, release, and requested consumer proof.
+After a push, read available comments, reviews, and inline threads; fix actual findings without waiting for optional automation.
+Separate change defects, unrelated defects, and infrastructure failures; repair the first and track the others with their owners.
+For a blocked requirement, record its owner, next action, and completion check in the existing task record.
+Deleting a live path requires independent review and one live proof.
+A backlog finishes with every PR merged, closed, or actively owned.
+Before claiming completion, check GitHub state and `git rev-list --count HEAD --not --remotes`.
+
+## Establish evidence
+
+Inspect the installed path and maintained sources before changing an existing environment or relying on changing APIs.
+Retain exact revisions and update affected documentation rather than copying version catalogs.
+Reproduce defects through the affected user or consumer path.
+For performance work, use [speed evidence](../anti-patterns/speed.md).
+For test selection or retirement, use the [test-value policy](../../claude/skills/deep-clean/SKILL.md#retire-low-value-tests).
+Protect shared state; establish minimal execution and capture before expensive verification.
+
+Record starting state, actions, outcome, persistence, revision, target, failures, and missing coverage.
+Distinguish local, published, installed, and served evidence.
+For visible changes, use [UI evidence](../anti-patterns/ui-evidence.md).
+Unknowns remain unknown; a failed instrument requires another instrument, not an inferred success.
+Investigate surprising or null results before attributing causes; a negative verdict needs a check capable of detecting improvement.
+Preserve the required user experience while changing metrics.
+
+## Report clearly
+
+Report work state and decisions, with links to existing artifacts.
+For long runs, include native execution, the last productive event, and the reason for waiting; controller liveness proves no research result.
+Use `report` for substantive comparisons: scope, denominators, distributions, uncertainty, exclusions, and unequal conditions.
+Separate observation, interpretation, and projection; internal proof spending is not customer revenue.
+Keep unresolved decisions in one current record rather than repeated status narratives.
+
+## Use skills and owning guidance
+
+Discover installed skills; load the relevant guide and finish its task before following optional next-skill suggestions.
+Before GTM, sales, customer, operations, or strategy work, read ~/company/CLAUDE.md and ~/company/gtm/CLAUDE.md; check `ops-board list` ownership.
+For UI, use product-design; for public writing or design, read the relevant [pattern guide](../anti-patterns/README.md).
+Use [engineering writing](../green-patterns/engineering-writing.md) for PRs and issues.
+Follow repository code conventions; comments explain decisions, invariants, constraints, or risks.
+Default security and data integrity to fail-closed.
+
+## Protect the host
+
+Keep artifacts in the project, session scratch directory, or /tmp.
+For existing screenshots, check ~/.claude/image-cache/ and ~/.tmux/clipboard/images/.
+Mount namespaces do not isolate underlying file operations.
+Run root storage or host experiments through `hostlab run -- '<command>'` in its throwaway VM.
+This includes fsfreeze, dmsetup, real-disk LVM, mount --move, unshare --mount, mkfs, wipefs, reboot, and shutdown.
+The VM provides scratch disk /dev/vdb and the caller's directory at /work.
+A guard refusal must be resolved through the supported path, never another shell, interpreter, executable path, or guard-disable variable.

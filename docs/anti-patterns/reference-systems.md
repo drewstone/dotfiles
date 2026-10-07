@@ -64,9 +64,9 @@ IBM Carbon and IBM Design for AI:
 - Anti-pattern derived: impressive-sounding language is a liability in product UI and technical marketing. AI systems need transparency and explainability.
 - Use it for: content rules, AI guidance, enterprise design-system discipline.
 - References:
-  - https://carbondesignsystem.com/guidelines/content/overview/
+  - https://www.carbondesignsystem.com/building-blocks/foundations/content
   - https://v10.carbondesignsystem.com/guidelines/content/writing-style/
-  - https://carbondesignsystem.com/guidelines/carbon-for-ai/
+  - https://www.carbondesignsystem.com/building-blocks/foundations/carbon-for-ai
   - https://www.ibm.com/design/ai/
   - https://www.ibm.com/design/ai/ethics/explainability/
 
@@ -86,9 +86,8 @@ Shopify Polaris:
 - Anti-pattern derived: each word adds noise. Component slots do not justify subcopy, labels, or badges.
 - Use it for: UI writing, action labels, admin/product surfaces, practical component rules.
 - References:
-  - https://polaris.shopify.com/
-  - https://polaris.shopify.com/content
-  - https://polaris-react.shopify.com/content/fundamentals
+  - [Polaris components](https://shopify.dev/docs/api/polaris)
+  - [App content guidelines](https://shopify.dev/docs/apps/design/content)
 
 Adobe Spectrum:
 
@@ -97,9 +96,9 @@ Adobe Spectrum:
 - Use it for: grammar, inclusive UX writing, internationalization, component/system maturity.
 - References:
   - https://spectrum.adobe.com/
-  - https://spectrum.adobe.com/page/grammar-and-mechanics/
-  - https://spectrum.adobe.com/page/inclusive-ux-writing/
-  - https://spectrum.adobe.com/page/international-design/
+  - https://spectrum.adobe.com/content/grammar-and-mechanics
+  - https://spectrum.adobe.com/content/language-and-inclusivity/inclusive-ux-writing
+  - https://spectrum.adobe.com/foundations/inclusivity/internationalization
 
 BBC GEL:
 
@@ -119,6 +118,21 @@ AGENTS.md:
   - https://agents.md/
   - https://github.com/agentsmd/agents.md
   - https://github.blog/ai-and-ml/github-copilot/how-to-write-a-great-agents-md-lessons-from-over-2500-repositories/
+
+## Browser evidence and accessibility
+
+These references describe capture and interaction behavior.
+They support [UI evidence](ui-evidence.md); they do not define a brand aesthetic.
+
+- [Playwright screenshots](https://playwright.dev/docs/screenshots): capture the actual page or changed element.
+  Preserve matching viewports and states for before and after images.
+- [Playwright videos](https://playwright.dev/docs/videos): close the browser context before collecting its saved recording.
+  Retain successful interaction recordings when the PR changes a user flow.
+- [WCAG target size](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html): evaluate control size and spacing together.
+  Use the applicable accessibility rule and product touch-target standard; a screenshot alone cannot establish keyboard access.
+
+A passing browser test without reviewable media does not satisfy the product evidence requirement.
+A recording of terminal output does not demonstrate a UI flow.
 
 ## Tier 2: Open-Source UI Systems To Learn From
 

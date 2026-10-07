@@ -41,9 +41,9 @@ Reject if:
 - the page uses cards for product taxonomy
 - the page has tiny labels above headings
 - the page has decorative chips
-- screenshots are missing
-- desktop and mobile were not checked
 - changed files were not grepped for banned label patterns
+
+Apply [UI evidence](ui-evidence.md) before opening or accepting a UI or UX PR.
 
 Pass only if:
 

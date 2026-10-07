@@ -14,6 +14,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/drew/.hindsight/coding-agents/dist/claude-sessionstart-hook.js\"",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -22,6 +31,15 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/inject-directive.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/drew/.hindsight/coding-agents/dist/claude-hook.js\"",
+            "timeout": 30
           }
         ]
       }
@@ -50,6 +68,14 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/poll-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/ci-wait-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/scan-guard.sh"
           }
         ]
       },
@@ -89,6 +115,17 @@
             "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
             "timeout": 30,
             "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"/Users/drew/.hindsight/coding-agents/dist/claude-stop-hook.js\"",
+            "timeout": 60
           }
         ]
       }
@@ -140,6 +177,9 @@
   "effortLevel": "xhigh",
   "modelSettings": {
     "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    },
+    "claude-opus-5-5": {
       "effortLevel": "xhigh"
     }
   },

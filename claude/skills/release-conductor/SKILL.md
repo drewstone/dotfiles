@@ -19,7 +19,7 @@ Use this when the release requires more state and recovery work than a trusted d
 ## Release and recover
 
 Choose a build and deployment path that produces a compatible, identifiable artifact and exposes its status.
-Respect required repository and release checks.
+Use the [shared delivery process](../../../docs/processes/agent-work.md#deliver-through-github) for verification, merge, and failure handling.
 If a provider hides progress or logs, use an observable path within the existing authority; do not treat a hook response as deployment success.
 For custom binary or service replacement, read [service release checks](references/service-release.md) before changing the running service.
 
@@ -37,12 +37,3 @@ Update existing release tasks when the project uses them.
 ```bash
 skill-run-log /release-conductor --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
 ```
-
-## Then consider
-
-| Condition | Next skill | What to pass |
-|---|---|---|
-| CI blocks an authorized release | `/converge` | the required checks and failed jobs |
-| Artifact identity or live behavior remains unverified | `/deploy-proof` | the expected artifacts and live targets |
-| A release failure required recovery | `/autopsy` | failure evidence, recovery results, and timeline |
-| Release work remains during session replacement | `/session-continuity` | the release record and pending operations |

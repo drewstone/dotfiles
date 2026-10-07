@@ -23,6 +23,30 @@ Good:
 
 If the label is removed and the UI collapses, the design is not carrying meaning.
 
+## Dashboard and Settings Drift
+
+Use one shared page frame and heading component across sibling dashboard pages and settings tabs.
+Keep their width, content inset, heading baseline, and type scale consistent.
+Constrain a form or card inside that frame instead of centering each page independently.
+Use the same frame for loading states, with an accessible status and a skeleton shaped like the coming content.
+
+Remove decorative category eyebrows that repeat the tab or page title, such as “Private to this business” above “Secrets.”
+Keep a privacy, permission, or status label where it explains a real choice or action.
+
+## Controls That Blend Into the Canvas
+
+Give selects and filter controls a distinct surface and subtle elevation; a border alone on the page's background color is insufficient.
+Make selected tabs and view modes clearly different in fill and text contrast from both the canvas and inactive controls.
+Check light and dark themes, keyboard focus, and a narrow viewport in the rendered app.
+
+## Dashboard Filler
+
+Keep content in compact, aligned surfaces. Size metric cards and empty states to their contents.
+Show measured values with a clear scope; omit unavailable gauges and empty columns instead of repeating “Unknown.”
+Keep one primary row action and put secondary actions in an accessible menu, with destructive confirmation intact.
+Remove static security claims, decorative status banners, repeated explanations, and unsupported support links.
+Populate catalogs from usable resources; preserve an honest, actionable empty or failure state when none exist.
+
 ## Card Grids
 
 Cards are allowed for repeated content items, modals, and true collections. Cards are not a solution for unclear product strategy.
