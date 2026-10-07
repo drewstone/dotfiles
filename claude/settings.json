@@ -1,5 +1,10 @@
 {
   "cleanupPeriodDays": 3650,
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
   "permissions": {
     "defaultMode": "auto"
   },
