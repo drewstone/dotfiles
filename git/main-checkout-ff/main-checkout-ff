@@ -60,11 +60,20 @@ busy_paths() {
 
 in_use() {
   # True when any process uses the repo or a path below it ($1 real path, $2 path as listed).
+  # Linked worktrees kept inside the clone (agent-dev-container keeps them in .worktrees/) are separate
+  # checkouts: a merge never touches them, so a lane working in one does not hold the main checkout.
   local busy
   busy="$(busy_paths)" || return 0
-  printf '%s\n' "$busy" | awk -v r="$1" -v s="$2" '
+  local nested
+  nested="$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | awk -v r="$1" 'index($0, r "/") == 1')"
+  printf '%s\n' "$busy" | NESTED="$nested" awk -v r="$1" -v s="$2" '
     function under(path, root) { return index(path, root) == 1 && (length(path) == length(root) || substr(path, length(root) + 1, 1) == "/") }
-    under($0, r) || under($0, s) { found = 1 } END { exit !found }'
+    BEGIN { n = split(ENVIRON["NESTED"], nested, "\n") }
+    {
+      for (i = 1; i <= n; i++) if (nested[i] != "" && under($0, nested[i])) next
+      if (under($0, r) || under($0, s)) found = 1
+    }
+    END { exit !found }'
 }
 
 IFS=: read -r -a root_list <<< "$roots"
