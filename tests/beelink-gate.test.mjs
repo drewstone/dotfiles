@@ -131,6 +131,30 @@ test("pnpm lockfile selects frozen install with one shared store", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("rebuilds a partial cache before a command that reads historical blobs", () => {
+  const f = fixture();
+  try {
+    const checkout = join(f.cache, "local", "owner", "repo");
+    mkdirSync(join(f.cache, "local", "owner"), { recursive: true });
+    f.git(["--git-dir", f.bare, "config", "uploadpack.allowFilter", "true"], f.root);
+    f.git(["init", "-q", checkout], f.root);
+    f.git(["-C", checkout, "remote", "add", "origin", f.url], f.root);
+    f.git(["-C", checkout, "fetch", "--no-tags", "--filter=blob:none", "origin", f.second], f.root);
+    f.git(["-C", checkout, "checkout", "--detach", "--force", f.second], f.root);
+    assert.equal(f.git(["-C", checkout, "config", "--get", "remote.origin.promisor"], f.root), "true");
+    const before = f.git(["-C", checkout, "rev-list", "--objects", "--missing=print", "HEAD", "--", "value.txt"], f.root);
+    assert.match(before, /^\?/m);
+
+    const result = f.call(f.second, ["bash", "-c", "git blame --line-porcelain -- value.txt >/dev/null"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /rebuilding partial cache/);
+    const promisor = run("git", ["-C", checkout, "config", "--get", "remote.origin.promisor"]);
+    assert.equal(promisor.status, 1);
+    const after = f.git(["-C", checkout, "rev-list", "--objects", "--missing=print", "HEAD", "--", "value.txt"], f.root);
+    assert.doesNotMatch(after, /^\?/m);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("refuses below the selected host's floor before creating a cache", () => {
   const f = fixture();
   try {
@@ -160,6 +184,22 @@ test("a symlinked cache checkout cannot redirect cleaning or eviction outside th
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a Git worktree inside the cache path is never cleaned or rebuilt", () => {
+  const f = fixture();
+  try {
+    const checkout = join(f.cache, "local", "owner", "repo");
+    mkdirSync(join(f.cache, "local", "owner"), { recursive: true });
+    f.git(["remote", "add", "origin", f.url]);
+    f.git(["worktree", "add", "-q", "-b", "decoy", checkout]);
+    writeFileSync(join(checkout, "keep"), "lane-owned\n");
+    const result = f.call(f.first, ["true"]);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /not an owned checkout/);
+    assert.equal(readFileSync(join(checkout, "keep"), "utf8"), "lane-owned\n");
+    assert.equal(f.git(["-C", checkout, "branch", "--show-current"], f.root), "decoy");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 function cacheSlot(f, name, usedSeconds) {
   const dir = join(f.cache, "github.com", "test", name);
   mkdirSync(dir, { recursive: true });
@@ -176,7 +216,7 @@ test("evicts the least recently used idle checkout before fetching", () => {
   try {
     const older = cacheSlot(f, "older", 1000);
     const newer = cacheSlot(f, "newer", 2000);
-    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000000" } });
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "1300000" } });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(existsSync(older), false);
     assert.equal(existsSync(newer), true);

@@ -160,6 +160,19 @@ remote_gate() {
   trap finish EXIT
   prune_cache "$cache_root" "$checkout" "$cache_max" || exit $?
 
+  if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
+    die "cache path is not an owned checkout: $checkout"
+  fi
+  if [ -e "$checkout/.git" ]; then
+    origin=$(git -C "$checkout" remote get-url origin) || exit $?
+    [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+    # A blame or history check can otherwise fetch hundreds of missing blobs
+    # one by one. The cache is disposable, and the repo lock is held here.
+    if git -C "$checkout" config --get-regexp '^(remote\.origin\.(promisor|partialclonefilter)|extensions\.partialclone)$' >/dev/null; then
+      echo "beelink-gate: rebuilding partial cache with complete history at $checkout" >&2
+      rm -rf -- "$checkout" || exit $?
+    fi
+  fi
   if [ ! -e "$checkout/.git" ]; then
     [ ! -e "$checkout" ] || die "cache path exists without .git: $checkout"
     git init -q "$checkout" || exit $?
@@ -168,7 +181,7 @@ remote_gate() {
   origin=$(git -C "$checkout" remote get-url origin) || exit $?
   [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
   echo "beelink-gate: fetching $sha into $checkout" >&2
-  git -C "$checkout" fetch --no-tags --filter=blob:none origin "$sha" || exit $?
+  git -C "$checkout" fetch --no-tags origin "$sha" || exit $?
   git -C "$checkout" checkout --detach --force "$sha" || exit $?
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?

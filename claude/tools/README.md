@@ -117,13 +117,15 @@ beelink-gate beelink2 git@github.com:owner/repo.git <full-sha> -- bash -c 'pnpm 
 The command streams output and a receipt with the SHA, command, exit code, and duration.
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's
-outputs, fetches the requested commit, and runs a frozen pnpm or npm install
-against that user's shared package store. Different repositories can gate in
-parallel; gates for the same repository wait. The cache is independent of main
-checkouts and lane worktrees. Its 40 GiB total cap evicts the least recently
-used idle checkout before and after gates; keep retained proof outside the
-cache. A gate refuses before fetching when beelink1 has less than 100 GiB or
-beelink2 has less than 162 GiB free on its root filesystem. A second floor
+outputs, fetches the requested commit with complete history, and runs a frozen
+pnpm or npm install against that user's shared package store. Different repos
+can gate in parallel; gates for the same repo wait. The cache is independent of main
+checkouts and lane worktrees. An older partial cache is rebuilt once under its
+repo lock so history checks do not fetch missing blobs one at a time. Its 40 GiB
+total cap evicts the least recently used idle checkout before and after gates;
+keep retained proof outside the cache. A gate refuses before fetching when
+beelink1 has less than 100 GiB or beelink2 has less than 162 GiB free on its
+root filesystem. A second floor
 check after installation keeps the requested command from starting if its
 install consumed the reserve.
 
