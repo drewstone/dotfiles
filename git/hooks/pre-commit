@@ -71,3 +71,50 @@ fi
 
 echo "ai-agent-hooks not found. Expected $HOOKS_BIN or ai-agent-hooks in PATH." >&2
 exit 1
+
+# Privacy guard: personal details never enter a commit. This repo is public, so the
+# patterns live in a local, untracked file: one case-insensitive fixed string per line
+# (home address variants, personal phone numbers). Matches are never echoed, because the
+# hook's own output lands in agent transcripts and CI logs. Fixture repos opt out the
+# same way as above, with core.hooksPath=/dev/null; there is no escape variable.
+privacy_file="${GIT_PRIVACY_DENYLIST:-$HOME/.config/privacy/denylist}"
+added="$(git diff --cached --no-color --no-ext-diff -U0 --diff-filter=ACMR 2>/dev/null | grep -E '^\+' | grep -v '^+++' || true)"
+if [ -n "$added" ]; then
+  if [ -s "$privacy_file" ]; then
+    patterns="$(grep -v -e '^#' -e '^[[:space:]]*$' "$privacy_file" || true)"
+    if [ -n "$patterns" ] && printf '%s\n' "$added" | grep -q -i -F -f <(printf '%s\n' "$patterns"); then
+      echo "pre-commit: refusing commit: a staged line contains a personal detail listed in $privacy_file." >&2
+      echo "  Remove it. Home addresses, personal phone numbers and card numbers never go in a commit." >&2
+      exit 1
+    fi
+  fi
+  # Payment card numbers: the 16-digit (4-4-4-4) and 15-digit Amex (4-6-5) shapes with a
+  # card-network prefix that pass the Luhn check, except the published processor test
+  # numbers fixtures legitimately use. Shape and prefix keep epoch-millisecond timestamps
+  # and numeric IDs from tripping it.
+  if printf '%s\n' "$added" | python3 -c '
+import re, sys
+TEST = {"4242424242424242", "4000056655665556", "5555555555554444", "2223003122003222",
+        "5200828282828210", "378282246310005", "371449635398431", "6011111111111117",
+        "3566002020360505", "6200000000000005", "4111111111111111", "4000000000000002",
+        "4000000000009995", "4000000000000069", "4000000000000127", "4000000000000119",
+        "4000002500003155", "4000002760003184"}
+PREFIX = re.compile(r"^(4|5[1-5]|2[2-7]|3[47]|6011|65)")
+SHAPE = re.compile(r"(?<![\d])(?:\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}|3[47]\d{2}[ -]?\d{6}[ -]?\d{5})(?![\d])")
+def luhn(d):
+    t = 0
+    for i, c in enumerate(reversed(d)):
+        n = int(c)
+        if i % 2: n = n * 2 - 9 if n > 4 else n * 2
+        t += n
+    return t % 10 == 0
+for m in SHAPE.finditer(sys.stdin.read()):
+    d = re.sub(r"[ -]", "", m.group())
+    if d not in TEST and PREFIX.match(d) and len(set(d)) > 2 and luhn(d):
+        sys.exit(1)
+'; then :; else
+    echo "pre-commit: refusing commit: a staged line contains what looks like a payment card number." >&2
+    echo "  Remove it. If it is a processor test number, use one of the published test cards." >&2
+    exit 1
+  fi
+fi

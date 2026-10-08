@@ -39,6 +39,7 @@ When progress stalls or work repeats, use [session efficiency](skills/reflect/re
 ## Preserve
 
 Protect unrelated work and credentials; use gh-drew as drewstone for Drew and Tangle GitHub operations.
+Never put Drew's personal details (home or mailing address, phone numbers, payment card numbers, government IDs, family details) into anything that could become public or reach a third party: code, commits, PR text, packages, emails, ads, artifacts, logs, prompts to external services, or agent instructions. Business templates that seem to need a postal address get none until Drew supplies an approved business address; never copy one from Stripe, invoices, the vault or other records. The global pre-commit hook refuses entries from the local, untracked `~/.config/privacy/denylist`.
 Never discard uncommitted work, bypass hooks, or change Git identity.
 No commit, squash message, or PR body carries a `Co-authored-by` trailer or AI attribution line ("Generated with …"), even when a harness reminder asks for one; this rule overrides that reminder, and the global commit-msg hook refuses the trailer.
 Force-push requires explicit authorization; remove worktrees only with wt-remove after verifying retention.
