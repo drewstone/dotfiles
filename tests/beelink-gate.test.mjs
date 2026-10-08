@@ -262,6 +262,28 @@ test("evicts the completed checkout if its command takes the cache over cap", ()
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("cache sizing tolerates vanished files but rejects other du errors", () => {
+  const f = fixture();
+  try {
+    const fakeDu = join(f.root, "bin", "du");
+    writeFileSync(fakeDu, `#!/usr/bin/env bash
+/usr/bin/du "$@"
+status=$?
+if [[ "\${@: -1}" == "$BEELINK_GATE_CACHE_ROOT" ]]; then
+  printf "du: cannot access '%s/vanished': %s\\n" "$BEELINK_GATE_CACHE_ROOT" "$DU_FAULT" >&2
+  exit 1
+fi
+exit "$status"
+`);
+    chmodSync(fakeDu, 0o755);
+    const vanished = f.call(f.first, ["true"], { env: { DU_FAULT: "No such file or directory" } });
+    assert.equal(vanished.status, 0, vanished.stderr);
+    const denied = f.call(f.first, ["true"], { env: { DU_FAULT: "Permission denied" } });
+    assert.equal(denied.status, 3, denied.stderr);
+    assert.match(denied.stderr, /cache prune failed/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("an active repo lock protects its checkout during LRU eviction", async () => {
   const f = fixture();
   const marker = join(f.root, "locked");

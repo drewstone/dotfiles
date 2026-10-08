@@ -39,7 +39,24 @@ root, current, cap = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
 locks = root / ".locks"
 
 def size(path):
-    return int(subprocess.check_output(["du", "-s", "-B1", "--", str(path)], text=True).split()[0])
+    result = subprocess.run(
+        ["du", "-s", "-B1", "--", str(path)],
+        text=True, capture_output=True, env={**os.environ, "LC_ALL": "C"},
+    )
+    warnings = result.stderr.splitlines()
+    # Other repo gates can remove node_modules entries during this scan. GNU du
+    # still prints a total; only that expected race may use its partial result.
+    if result.returncode and not (
+        result.returncode == 1 and warnings and all(
+            line.startswith("du: cannot access ") and line.endswith(": No such file or directory")
+            for line in warnings
+        )
+    ):
+        raise OSError(f"du {path}: {result.stderr.strip() or f'exit {result.returncode}'}")
+    fields = result.stdout.split()
+    if not fields:
+        raise OSError(f"du {path}: no size result")
+    return int(fields[0])
 
 try:
     with (locks / ".capacity.lock").open("a+") as global_lock:
@@ -81,7 +98,7 @@ try:
         if total > cap:
             print(f"beelink-gate: cache cap exceeded: {total} > {cap} bytes; active checkouts cannot be evicted", file=sys.stderr)
             sys.exit(3)
-except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+except (OSError, ValueError) as exc:
     print(f"beelink-gate: cache prune failed: {exc}", file=sys.stderr)
     sys.exit(3)
 PY
