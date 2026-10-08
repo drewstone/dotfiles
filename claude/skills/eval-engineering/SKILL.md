@@ -35,6 +35,7 @@ Prevent writes outside the case's authority.
 Use the project's existing runner and record format.
 An adapter may translate inputs and capture outputs; it must not choose agent actions, supply hidden answers, or invent effects.
 Keep expected answers, scoring instructions, and judge credentials unavailable to the target.
+Answer keys and judge personas state no conclusion on the decision the work is meant to reach: a key that answers "build nothing" for a build mandate, or a lender persona that prefers caution, scores the thesis instead of the work.
 Use code for objective checks and a calibrated model judge only for semantic requirements.
 Separate infrastructure and measurement failures from agent outcomes.
 
@@ -46,6 +47,7 @@ Reuse existing calibration while its cases, scoring path, and relevant condition
 1. State the required behavior and the decision the result controls.
 2. Send independently justified acceptable and realistic unacceptable fixtures through the exact scoring path.
    Include borderline cases when the decision depends on a boundary.
+   When public exemplars are not like-for-like, write the acceptable fixture by hand for the requester's goal and degrade copies of it; the set must rank it above the incumbent and the copies below it (Discovery Lab #1518, `tools/evaluator-validation.mjs`).
 3. Check inputs and intermediate results for leaked setup data, filenames, fixtures, answers, or scoring instructions, and for missing evidence, constant output, and unrelated proxy measures.
 4. Confirm that acceptable behavior passes and the relevant failure fails with adequate separation for the observed scoring variation.
    Use the domain's decision boundary and error costs; do not invent a universal score cutoff.
@@ -55,6 +57,7 @@ Reuse existing calibration while its cases, scoring path, and relevant condition
 6. Run a real target attempt and confirm that final output, required effects, traces, usage, and scoring evidence were captured.
    Inspect what the target actually saw and did, and what evidence each check used.
    Repair cases that reward assertions, intermediate artifacts, or irrelevant proxies instead of the required outcome.
+   A check tests substance, not presence: the Terraform dispatch, Monte Carlo and financing checks passed with 0 MWh to GPUs, 0% profitable draws and $0 of debt, so assert the quantity each names is nonzero and in range.
 7. Complete the remaining requested cases and verify each distinct execution or scoring path.
 
 Do not broaden spending while a case's required behavior or evidence cannot be assessed.
