@@ -63,12 +63,22 @@ github_ssh_url() {
   git -C "$1" remote get-url origin 2>/dev/null | sed -n 's#^https://github\.com/\(.*\)$#git@github.com:\1#p'
 }
 
+busy_cache=""
+busy_cached=0
+
 in_use() {
   # True when any process uses the repo or a path below it ($1 real path, $2 path as listed).
   # Linked worktrees kept inside the clone (agent-dev-container keeps them in .worktrees/) are separate
   # checkouts: a merge never touches them, so a lane working in one does not hold the main checkout.
+  # The first check of each repo reuses one process snapshot per run: on macOS each lsof scan takes
+  # about a minute, so a scan per repo made a pass outlast its 30-minute interval. Pass "fresh" as $3
+  # to take a new snapshot, as the check right before a merge does.
   local busy
-  busy="$(busy_paths)" || return 0
+  if [ "${3:-}" = fresh ] || [ "$busy_cached" = 0 ]; then
+    busy_cache="$(busy_paths)" || { busy_cached=0; return 0; }
+    [ "${3:-}" = fresh ] || busy_cached=1
+  fi
+  busy="$busy_cache"
   local nested
   nested="$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | awk -v r="$1" 'index($0, r "/") == 1')"
   printf '%s\n' "$busy" | NESTED="$nested" awk -v r="$1" -v s="$2" '
@@ -144,7 +154,7 @@ for root in "${root_list[@]}"; do
       continue
     fi
     # The fetch can take minutes; look for a new process again right before moving files.
-    if in_use "$real" "$repo"; then
+    if in_use "$real" "$repo" fresh; then
       note "skipped $repo: in use"
       continue
     fi
