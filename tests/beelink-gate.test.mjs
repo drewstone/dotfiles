@@ -7,7 +7,7 @@ import test from "node:test";
 
 const gate = resolve("claude/tools/beelink-gate");
 const run = (bin, args, options = {}) => spawnSync(bin, args, { encoding: "utf8", ...options });
-const encode = (arg) => Buffer.from(arg).toString("base64");
+const encode = (arg) => Buffer.from(String(arg)).toString("base64");
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "beelink-gate-"));
@@ -44,10 +44,29 @@ function fixture() {
   const fakeDf = join(bin, "df");
   writeFileSync(fakeDf, '#!/usr/bin/env bash\nprintf "Avail\\n%s\\n" "${FAKE_AVAIL:-1099511627776}"\n');
   chmodSync(fakeDf, 0o755);
-  const env = { ...process.env, HOME: home, BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  // Keep ordinary fixture gates far from the synthetic weekly update window.
+  const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
+  const windowHour = 12;
+  const env = { ...process.env, HOME: home, TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
-  const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", ...args].map(encode)], { env: { ...env, ...options.env } });
-  return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, first, second, call, git };
+  const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
+  return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
+}
+
+function installFakeSsh(f) {
+  const fakeSsh = join(f.root, "bin", "ssh");
+  writeFileSync(fakeSsh, `#!/usr/bin/env bash
+if [[ "$4" == reg ]]; then
+  [[ "\${FAKE_REG_FAIL:-0}" == 0 ]] || exit 1
+  printf '    ScheduledInstallDay    REG_DWORD    0x%x\\r\\n' "$FAKE_WU_DAY"
+  printf '    ScheduledInstallTime   REG_DWORD    0x%x\\r\\n' "$FAKE_WU_HOUR"
+  exit 0
+fi
+printf '%s\\n' "$3 $4 $5 $6" > '${join(f.root, "ssh-transport")}'
+shift 8
+exec bash -s -- "$@"
+`);
+  chmodSync(fakeSsh, 0o755);
 }
 
 test("reuses one checkout, cleans prior outputs, and receipts the requested SHA and command", () => {
@@ -103,7 +122,7 @@ test("a failed command reports its exit code and an unsafe repository path is re
     const result = f.call(f.first, ["bash", "-c", "exit 7"]);
     assert.equal(result.status, 7, result.stderr);
     assert.match(result.stderr, /exit=7 duration=\d+s/);
-    const invalid = run("bash", [gate, "--remote", ...["beelink2", "https://github.com/../repo.git", f.first, "install", "true"].map(encode)], { env: f.env });
+    const invalid = run("bash", [gate, "--remote", ...["beelink2", "https://github.com/../repo.git", f.first, "install", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
     assert.equal(invalid.status, 2);
     assert.match(invalid.stderr, /unsafe repository path/);
     const wrongSha = run("bash", [gate, "beelink2", f.url, "abc", "--", "true"], { env: f.env });
@@ -115,7 +134,7 @@ test("concurrent gates for one repo serialize the entire command", async () => {
   const f = fixture();
   const events = join(f.root, "events");
   const launch = (id) => new Promise((resolveDone) => {
-    const args = ["beelink2", f.url, f.first, "install", "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
+    const args = ["beelink2", f.url, f.first, "install", f.windowDay, f.windowHour, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -132,24 +151,56 @@ test("concurrent gates for one repo serialize the entire command", async () => {
 test("the GTR entrypoint sends the script and encoded arguments through WSL SSH", () => {
   const f = fixture();
   try {
-    const fakeSsh = join(f.root, "bin", "ssh");
-    writeFileSync(fakeSsh, `#!/usr/bin/env bash
-printf '%s\\n' "$3 $4 $5 $6" > '${join(f.root, "ssh-transport")}'
-shift 8
-exec bash -s -- "$@"
-`);
-    chmodSync(fakeSsh, 0o755);
-    const result = run(gate, ["beelink2", f.url, f.first, "--", "bash", "-c", "printf '%s' 'hello world'"], { env: f.env });
+    installFakeSsh(f);
+    const transportEnv = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) };
+    const result = run(gate, ["beelink2", f.url, f.first, "--", "bash", "-c", "printf '%s' 'hello world'"], { env: transportEnv });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "hello world");
     assert.equal(readFileSync(join(f.root, "ssh-transport"), "utf8").trim(), "100.127.22.51 wsl.exe -- bash");
     assert.match(result.stderr, /receipt: sha=/);
-    const docs = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "cat", "value.txt"], { env: f.env });
+    const docs = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "cat", "value.txt"], { env: transportEnv });
     assert.equal(docs.status, 0, docs.stderr);
     assert.equal(docs.stdout, "first\n");
     assert.match(docs.stderr, /install=no-install/);
     assert.equal(readFileSync(f.npmLog, "utf8").trim().split("\n").length, 1);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Windows policy is required and a blocked start reports the next allowed time", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const now = new Date();
+    const nextHour = new Date(now.getTime() + 60 * 60_000);
+    const day = nextHour.getUTCDay() + 1;
+    const hour = nextHour.getUTCHours();
+    const env = { ...f.env, FAKE_WU_DAY: String(day), FAKE_WU_HOUR: String(hour) };
+    const refused = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(refused.status, 3, refused.stderr);
+    assert.match(refused.stderr, /REFUSED beelink2 Windows Update is scheduled/);
+    assert.match(refused.stderr, /next allowed .* UTC\)/);
+    assert.equal(existsSync(f.cache), false);
+    const unreadable = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1" } });
+    assert.equal(unreadable.status, 2);
+    assert.match(unreadable.stderr, /cannot read Windows Update schedule.*refusing to start/);
+    assert.equal(existsSync(f.cache), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the local update window follows Pacific DST and handles the missing spring hour", () => {
+  const probe = (at) => run("bash", [gate, "--window-probe", "beelink2", "1", "2", "America/Los_Angeles", at]);
+  const daylight = probe("2026-10-25T08:30:00Z");
+  assert.equal(daylight.status, 3, daylight.stderr);
+  assert.match(daylight.stderr, /next allowed 2026-10-25 02:30 PDT \(2026-10-25 09:30 UTC\)/);
+  const firstFallHour = probe("2026-11-01T08:30:00Z");
+  assert.equal(firstFallHour.status, 0, firstFallHour.stderr);
+  const repeatedFallHour = probe("2026-11-01T09:30:00Z");
+  assert.equal(repeatedFallHour.status, 3, repeatedFallHour.stderr);
+  assert.match(repeatedFallHour.stderr, /next allowed 2026-11-01 02:30 PST \(2026-11-01 10:30 UTC\)/);
+  const spring = probe("2027-03-14T09:30:00Z");
+  assert.equal(spring.status, 3, spring.stderr);
+  assert.match(spring.stderr, /scheduled Sunday 2027-03-14 03:00 PDT/);
+  assert.match(spring.stderr, /next allowed 2027-03-14 03:30 PDT \(2027-03-14 10:30 UTC\)/);
 });
 
 test("pnpm lockfile selects frozen install with one shared store", () => {
@@ -178,7 +229,7 @@ test("docs-only gate verifies the requested SHA without installing dependencies"
     assert.equal(result.stdout, "first\n");
     assert.match(result.stderr, /install=no-install/);
     assert.equal(readdirSync(f.root).includes("npm.log"), false);
-    const invalid = run("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "unknown", "true"].map(encode)], { env: f.env });
+    const invalid = run("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "unknown", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
     assert.equal(invalid.status, 2);
     assert.match(invalid.stderr, /unknown install mode/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
