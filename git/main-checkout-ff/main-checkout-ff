@@ -58,6 +58,11 @@ busy_paths() {
   fi
 }
 
+github_ssh_url() {
+  # The SSH form of an https GitHub origin, or nothing for any other remote.
+  git -C "$1" remote get-url origin 2>/dev/null | sed -n 's#^https://github\.com/\(.*\)$#git@github.com:\1#p'
+}
+
 in_use() {
   # True when any process uses the repo or a path below it ($1 real path, $2 path as listed).
   # Linked worktrees kept inside the clone (agent-dev-container keeps them in .worktrees/) are separate
@@ -91,6 +96,11 @@ for root in "${root_list[@]}"; do
       # Clones made before origin set a default branch lack origin/HEAD; ask the remote once.
       git -C "$repo" remote set-head origin --auto >/dev/null 2>&1
       def="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
+      ssh_url="$(github_ssh_url "$repo")"
+      if [ -z "$def" ] && [ -n "$ssh_url" ]; then
+        head="$(git ls-remote --symref "$ssh_url" HEAD 2>/dev/null | sed -n 's#^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$#\1#p')"
+        [ -n "$head" ] && git -C "$repo" remote set-head origin "$head" >/dev/null 2>&1 && def="origin/$head"
+      fi
     fi
     def="${def#origin/}"
     if [ -z "$def" ]; then
@@ -107,8 +117,13 @@ for root in "${root_list[@]}"; do
       continue
     fi
     if ! err="$(git -C "$repo" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 fetch -q origin "$def" 2>&1)"; then
-      say "fetch-failed $repo: $(printf '%s' "$err" | head -n 1)"
-      continue
+      # A host whose https credential lapsed (the Mac's gh login) can still read GitHub over SSH; the
+      # remote stays as configured, only the tracking ref is refreshed.
+      ssh_url="$(github_ssh_url "$repo")"
+      if [ -z "$ssh_url" ] || ! git -C "$repo" fetch -q "$ssh_url" "+$def:refs/remotes/origin/$def" 2>/dev/null; then
+        say "fetch-failed $repo: $(printf '%s' "$err" | head -n 1)"
+        continue
+      fi
     fi
     behind="$(git -C "$repo" rev-list --count "HEAD..origin/$def" 2>/dev/null || echo 0)"
     [ "$behind" -gt 0 ] || continue
