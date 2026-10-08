@@ -24,6 +24,63 @@ check_floor() {
   fi
 }
 
+# Windows owns the update policy; WSL owns the local clock and time-zone rules.
+# Check again after waiting for the repo lock, before any checkout is touched.
+# A gate admitted before the window keeps running, including its install.
+check_update_window() {
+  python3 - "$@" <<'PY'
+from datetime import datetime, time, timedelta, timezone
+import os
+from pathlib import Path
+import sys
+from zoneinfo import ZoneInfo
+
+host, raw_day, raw_hour = sys.argv[1:4]
+try:
+    day, hour = int(raw_day), int(raw_hour)
+    if not 0 <= day <= 7 or not 0 <= hour <= 23:
+        raise ValueError("day or hour out of range")
+    if len(sys.argv) > 4:
+        zone = ZoneInfo(sys.argv[4])
+    elif os.environ.get("TZ"):
+        zone = ZoneInfo(os.environ["TZ"])
+    else:
+        with Path("/etc/localtime").open("rb") as zonefile:
+            zone = ZoneInfo.from_file(zonefile)
+    now = (datetime.fromisoformat(sys.argv[5].replace("Z", "+00:00"))
+           if len(sys.argv) > 5 else datetime.now(timezone.utc))
+    if now.tzinfo is None:
+        raise ValueError("probe time requires a UTC offset")
+    now = now.astimezone(timezone.utc)
+except (OSError, ValueError, IndexError) as exc:
+    print(f"beelink-gate: cannot evaluate Windows Update window: {exc}", file=sys.stderr)
+    sys.exit(2)
+
+local_day = now.astimezone(zone).date()
+for offset in range(-7, 8):
+    candidate = local_day + timedelta(days=offset)
+    # Registry day 0 is daily; 1=Sunday through 7=Saturday.
+    if day and candidate.isoweekday() % 7 + 1 != day:
+        continue
+    scheduled_local = datetime.combine(candidate, time(hour), zone)
+    scheduled = scheduled_local.astimezone(timezone.utc)
+    start = scheduled - timedelta(minutes=60)
+    end = scheduled + timedelta(minutes=30)
+    if start <= now < end:
+        next_local = end.astimezone(zone)
+        print(
+            f"beelink-gate: REFUSED {host} Windows Update is scheduled "
+            f"{scheduled.astimezone(zone):%A %Y-%m-%d %H:%M %Z}; "
+            f"new gates are blocked from {start.astimezone(zone):%Y-%m-%d %H:%M %Z} "
+            f"until {next_local:%Y-%m-%d %H:%M %Z}; "
+            f"next allowed {next_local:%Y-%m-%d %H:%M %Z} "
+            f"({end:%Y-%m-%d %H:%M} UTC)",
+            file=sys.stderr,
+        )
+        sys.exit(3)
+PY
+}
+
 # Cache directories are owned by this command. A global lock serializes size
 # decisions; per-repo locks keep active gates out of the eviction set.
 prune_cache() {
@@ -105,16 +162,18 @@ PY
 }
 
 remote_gate() {
-  [ "$#" -ge 5 ] || die "invalid remote request"
+  [ "$#" -ge 7 ] || die "invalid remote request"
   local beelink repo_url sha install_mode key host owner repo cache_root checkout origin actual cache_max
-  local remote_refs left ref branch
+  local remote_refs left ref branch window_day window_hour
   local -a command=()
   beelink=$(decode "$1") || die "invalid beelink encoding"
   repo_url=$(decode "$2") || die "invalid repository encoding"
   sha=$(decode "$3") || die "invalid SHA encoding"
   install_mode=$(decode "$4") || die "invalid install mode encoding"
+  window_day=$(decode "$5") || die "invalid update day encoding"
+  window_hour=$(decode "$6") || die "invalid update hour encoding"
   case "$install_mode" in install|no-install) ;; *) die "unknown install mode: $install_mode" ;; esac
-  shift 4
+  shift 6
   while [ "$#" -gt 0 ]; do
     command+=("$(decode "$1")") || die "invalid command encoding"
     shift
@@ -140,6 +199,7 @@ remote_gate() {
 
   export PATH="$HOME/.local/bin:$PATH"
   check_floor "$beelink" || exit $?
+  check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
@@ -155,6 +215,7 @@ remote_gate() {
   echo "beelink-gate: waiting for $host/$owner/$repo lock" >&2
   flock -x "$lock_fd" || die "cannot lock checkout"
   check_floor "$beelink" || exit $?
+  check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
 
   local started=$SECONDS display
   printf -v display '%q ' "${command[@]}"
@@ -247,6 +308,11 @@ remote_gate() {
   exit $?
 }
 
+if [ "${1:-}" = --window-probe ]; then
+  shift
+  check_update_window "$@"
+  exit $?
+fi
 if [ "${1:-}" = --remote ]; then
   shift
   remote_gate "$@"
@@ -268,8 +334,19 @@ esac
 shift
 repo_url="$1"; sha="$2"; shift 3
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+policy=$(ssh -o BatchMode=yes "$beelink_ip" reg query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU') \
+  || die "cannot read Windows Update schedule from $beelink; refusing to start"
+policy=$(printf '%s' "$policy" | tr -d '\r')
+day_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallDay" && $2 == "REG_DWORD" {print $3}')
+hour_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallTime" && $2 == "REG_DWORD" {print $3}')
+[[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] \
+  || die "invalid Windows Update schedule from $beelink; refusing to start"
+window_day=$((16#${day_hex#0x}))
+window_hour=$((16#${hour_hex#0x}))
+(( window_day <= 7 && window_hour <= 23 )) \
+  || die "invalid Windows Update day/hour from $beelink; refusing to start"
 encoded=()
-for arg in "$beelink" "$repo_url" "$sha" "$install_mode" "$@"; do
+for arg in "$beelink" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
   encoded+=("$(printf '%s' "$arg" | base64 -w0)")
 done
 ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- bash -s -- --remote "${encoded[@]}" < "$0"
