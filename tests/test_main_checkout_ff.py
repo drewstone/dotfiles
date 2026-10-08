@@ -166,6 +166,16 @@ class MainCheckoutFfTest(unittest.TestCase):
             holder.wait()
         self.assertEqual(git(repo, "rev-parse", "HEAD"), target)
 
+    def test_github_ssh_url_maps_only_https_github_origins(self):
+        repo = self.clone("ssh-map")
+        script = f'source <(sed -n "/^github_ssh_url()/,/^}}/p" {SCRIPT}); github_ssh_url {repo}'
+        git(repo, "remote", "set-url", "origin", "https://github.com/acme/widget.git")
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "git@github.com:acme/widget.git")
+        git(repo, "remote", "set-url", "origin", str(self.origin))
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "")
+
     def test_skips_checkout_with_a_process_inside(self):
         repo = self.clone("busy")
         before = git(repo, "rev-parse", "HEAD")
