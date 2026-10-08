@@ -22,6 +22,29 @@ epoch  outcome  caller  session  directory  command shape
 
 The fleet invariant "GitHub core quota" in tangle-tools reads these files to name the top callers.
 
+## gtm-ask
+
+Hand an outcome-level ask to the production GTM agent (gtm.tangle.tools) and read back its result.
+The `gtm-ask` skill says how a session phrases the ask and gates what comes back.
+
+```bash
+gtm-ask "Make on-brand Reddit ads for Sandbox; find our real logo, fonts and screenshots yourself"
+gtm-ask --thread <id> "Revise: hold the policy ad"     # continue a conversation
+gtm-ask --wait 0 "<ask>"                               # return once the turn is admitted
+gtm-ask status <thread> --wait 30m                     # follow a running turn
+gtm-ask file research/plan.md                          # read a vault file the agent wrote
+gtm-ask --json --download ./assets "<ask>"             # one JSON object; save referenced asset files
+```
+
+It starts a new thread unless `--thread` names one, sends `gpt-6.1-sol` unless `--model` overrides it, and follows the turn through its stream, the replay route, then slow `/api/chat/running` polls.
+The result comes from the persisted thread, not the stream: reply, failure notice, asset-version URLs, vault paths the turn created or edited, and open questions or Hub approvals.
+Exit codes: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question.
+
+The workspace defaults to `GTM_WORKSPACE_ID`, else Drew's "GTM Agent" workspace.
+The key is a `gak_` operator key with `operator:read`, `operator:write` and `operator:run`, read from `GTM_OPERATOR_API_KEY` or that slot in `~/company/devops/secrets/agent-state.env` through dotenvx.
+Each request, reads included, spends the key's allowance of 60 a minute and 1,000 a day.
+The API itself is documented in gtm-agent's `docs/operator-api.md`.
+
 ## wt-new, wt-save
 
 Scoped worktree lifecycle for parallel agent sessions sharing one Unix user.

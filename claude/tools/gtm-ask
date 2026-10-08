@@ -1,0 +1,569 @@
+#!/usr/bin/env node
+// gtm-ask: hand an outcome-level GTM ask to the production GTM agent and read back its result.
+//
+// It speaks the operator private API (gtm-agent docs/operator-api.md) with a `gak_` key that
+// holds operator:read, operator:write and operator:run. A turn outlives its HTTP stream, so the
+// result is read from the persisted thread after /api/chat/running clears, never from the stream.
+// Every request spends the key's allowance (60 a minute, 1,000 a day), so polling stays slow and
+// the stream or its replay carries the wait whenever it can.
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+
+const DEFAULT_BASE = 'https://gtm.tangle.tools'
+// Drew's operator workspace, "GTM Agent".
+const DEFAULT_WORKSPACE = 'b81b721c078853fdd78687ee622a1e69'
+const DEFAULT_MODEL = 'gpt-6.1-sol'
+const KEY_NAME = 'GTM_OPERATOR_API_KEY'
+const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
+// An ask the agent raises can be resolved by the runtime itself; one still open after this is the owner's.
+const INTERACTION_GRACE_MS = Number(process.env.GTM_ASK_INTERACTION_GRACE_MS ?? 20_000)
+const POLL_MS = Number(process.env.GTM_ASK_POLL_MS ?? 10_000)
+const SETTLE_READS = 6
+
+const USAGE = `usage:
+  gtm-ask [options] "<outcome-level ask>"   start a turn and follow it to completion
+  gtm-ask [options] -                       read the ask from stdin
+  gtm-ask status <thread> [options]         show the thread's latest turn (--wait follows a running one)
+  gtm-ask file <vault-path> [options]       print a vault file
+
+options:
+  --workspace <id>   workspace (default $GTM_WORKSPACE_ID, else ${DEFAULT_WORKSPACE})
+  --thread <id>      continue this thread instead of starting a new one
+  --title <text>     title for a new thread (default: the ask's first line)
+  --model <id>       model for the turn (default ${DEFAULT_MODEL})
+  --wait <duration>  how long to follow the turn, e.g. 90s, 30m, 1h (default 30m; status 0);
+                     0 returns once the turn is admitted
+  --download <dir>   save the asset files the reply references into <dir>
+  --json             print one JSON object instead of text
+  --quiet            no progress or thread line on stderr
+
+exit: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question
+key: $${KEY_NAME}, else ${KEY_NAME} in the dotenvx vault ~/company/devops/secrets/agent-state.env
+     ($GTM_ASK_SECRETS_FILE, $GTM_ASK_KEYS_FILE override the vault and its key file)`
+
+class UsageError extends Error {}
+
+class ApiError extends Error {
+  constructor(method, path, status, body) {
+    super(`${method} ${path} answered ${status}: ${body.slice(0, 400)}`)
+    this.status = status
+  }
+}
+
+function parseDuration(value) {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(String(value).trim())
+  if (!match) throw new UsageError(`--wait takes a duration such as 90s, 30m or 1h, not "${value}"`)
+  const unit = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2] ?? 's']
+  return Math.round(Number(match[1]) * unit)
+}
+
+function parseArgs(argv) {
+  const options = { json: false, quiet: false }
+  const positional = []
+  const takesValue = new Set(['--workspace', '--thread', '--title', '--model', '--wait', '--download'])
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]
+    if (arg === '-h' || arg === '--help') return { help: true }
+    if (arg === '--json') { options.json = true; continue }
+    if (arg === '--quiet') { options.quiet = true; continue }
+    if (arg === '--') { positional.push(...argv.slice(index + 1)); break }
+    const [flag, inline] = arg.startsWith('--') ? arg.split(/=(.*)/s, 2) : [arg]
+    if (takesValue.has(flag)) {
+      const value = inline ?? argv[++index]
+      if (value === undefined || value === '') throw new UsageError(`${flag} needs a value`)
+      options[flag.slice(2)] = value
+      continue
+    }
+    if (arg.startsWith('--')) throw new UsageError(`unknown option ${arg}`)
+    positional.push(arg)
+  }
+  let command = 'ask'
+  if (positional[0] === 'status' || positional[0] === 'file') command = positional.shift()
+  if (command === 'status') {
+    if (positional.length !== 1) throw new UsageError('status takes exactly one thread id')
+    options.thread = positional[0]
+  } else if (command === 'file') {
+    if (positional.length !== 1) throw new UsageError('file takes exactly one vault path')
+    options.path = positional[0]
+  } else {
+    if (positional.length === 0) throw new UsageError('give the ask as an argument, or - to read stdin')
+    options.ask = positional.join(' ')
+  }
+  options.waitMs = parseDuration(options.wait ?? (command === 'status' ? '0' : '30m'))
+  return { command, options }
+}
+
+function readKey() {
+  const fromEnv = process.env[KEY_NAME]?.trim()
+  if (fromEnv) return fromEnv
+  const secrets = process.env.GTM_ASK_SECRETS_FILE ?? join(homedir(), 'company/devops/secrets/agent-state.env')
+  const keys = process.env.GTM_ASK_KEYS_FILE ?? join(dirname(secrets), '.env.keys')
+  if (existsSync(secrets)) {
+    const args = ['get', KEY_NAME, '-f', secrets, '--overload']
+    if (existsSync(keys)) args.push('-fk', keys)
+    try {
+      const value = execFileSync('dotenvx', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      if (value.startsWith('gak_')) return value
+    } catch { /* reported below without the vault's output */ }
+  }
+  throw new UsageError(`no operator key: set ${KEY_NAME}, or store it with ` +
+    `\`dotenvx set ${KEY_NAME} <gak_ key> -f ${secrets}\` (the key needs operator:read, operator:write and operator:run)`)
+}
+
+function createClient({ base, key }) {
+  async function request(method, path, { body, signal, raw = false } = {}) {
+    const init = { method, signal, headers: { authorization: `Bearer ${key}`, 'user-agent': 'gtm-ask' } }
+    if (body !== undefined) {
+      init.headers['content-type'] = 'application/json'
+      init.body = JSON.stringify(body)
+    }
+    const response = await fetch(base + path, init)
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new ApiError(method, path.split('?')[0], response.status, text.replaceAll(key, '<key>'))
+    }
+    return raw ? response : response.json()
+  }
+  return { request }
+}
+
+const query = (params) => new URLSearchParams(params).toString()
+
+/** NDJSON lines from a fetch body; a dropped connection ends the iteration instead of throwing. */
+async function* ndjson(response) {
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for await (const chunk of response.body) {
+      buffer += decoder.decode(chunk, { stream: true })
+      let newline
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline).trim()
+        buffer = buffer.slice(newline + 1)
+        if (!line) continue
+        try { yield JSON.parse(line) } catch { /* a non-JSON keepalive or partial frame */ }
+      }
+    }
+  } catch {
+    return
+  }
+  const tail = buffer.trim()
+  if (tail) { try { yield JSON.parse(tail) } catch { /* ignore */ } }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function object(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null
+}
+
+/** A Hub write the agent attempted that waits for the owner's approval (gtm-agent src/lib/chat-hub-approval.ts). */
+function hubApproval(value) {
+  let decoded = value
+  if (typeof value === 'string') {
+    const start = value.indexOf('{')
+    if (start < 0) return null
+    try { decoded = JSON.parse(value.slice(start)) } catch { return null }
+  }
+  const raw = object(decoded)
+  if (!raw) return null
+  if (Array.isArray(raw.content)) {
+    for (const part of raw.content) {
+      const found = hubApproval(object(part)?.text)
+      if (found) return found
+    }
+  }
+  if (raw.code !== 'HUB_APPROVAL_REQUIRED') return null
+  const approval = object(raw.approval ?? object(raw.details)?.approval)
+  if (!approval || typeof approval.id !== 'string') return null
+  return {
+    kind: 'hub', id: approval.id, title: `${approval.providerId ?? 'hub'} ${approval.actionPath ?? ''}`.trim(),
+    status: approval.status ?? 'pending', expiresAt: approval.expiresAt ?? null,
+  }
+}
+
+function assetsOf(message, base, workspaceId) {
+  const ids = []
+  const add = (text) => {
+    for (const match of String(text).matchAll(/asset-versions\/([A-Za-z0-9_-]+)/g)) {
+      if (!ids.includes(match[1])) ids.push(match[1])
+    }
+  }
+  add(message.content ?? '')
+  add(JSON.stringify(message.parts ?? []))
+  return ids.map((versionId) => ({
+    versionId, url: `${base}/api/workspaces/${workspaceId}/asset-versions/${versionId}/file`,
+  }))
+}
+
+/** Summarize one assistant row: reply, failure, assets, vault writes and Hub approvals still open. */
+function summarizeMessage(message, { base, workspaceId }) {
+  const parts = Array.isArray(message?.parts) ? message.parts : []
+  const failure = parts.find((part) => part?.type === 'notice' && part.noticeKind === 'turn-failure')
+  const textParts = parts.filter((part) => part?.type === 'text' && typeof part.text === 'string')
+  const reply = (message?.content || textParts.map((part) => part.text).join('')).trim()
+  const vault = parts
+    .filter((part) => part?.type === 'session-artifact' && typeof part.path === 'string')
+    .map((part) => ({ action: part.action ?? 'changed', path: part.path }))
+  const approvals = []
+  for (const part of parts) {
+    if (part?.type !== 'tool' || part.hubApprovalDecision) continue
+    const state = object(part.state) ?? {}
+    const found = hubApproval(state.error) ?? hubApproval(state.output) ?? hubApproval(part.error) ?? hubApproval(part.output)
+    if (found && found.status === 'pending' && !approvals.some((item) => item.id === found.id)) approvals.push(found)
+  }
+  return {
+    messageId: message?.id ?? null,
+    reply,
+    failure: failure ? { code: failure.code ?? null, text: failure.text ?? '' } : null,
+    model: message?.servedModel ?? message?.model ?? message?.requestedModel ?? null,
+    costUsd: message?.costUsd ?? null,
+    assets: message ? assetsOf(message, base, workspaceId) : [],
+    vault,
+    approvals,
+  }
+}
+
+function interactionOf(event) {
+  const request = object(event.request) ?? object(event.data?.request) ?? object(event.data)
+  if (!request || typeof request.id !== 'string') return null
+  return { kind: request.kind ?? 'question', id: request.id, title: request.title ?? '', body: request.body ?? '' }
+}
+
+/** Questions and permission asks still open on the thread's live turn; unknown reads as none. */
+async function openAsks(client, workspaceId, threadId) {
+  const listed = await client.request('GET', `/api/chat/interactions?${query({ workspaceId, threadId })}`).catch(() => null)
+  return (listed?.interactions ?? [])
+    .filter((item) => !item.status || item.status === 'pending')
+    .map((item) => interactionOf({ request: item }))
+    .filter(Boolean)
+}
+
+function createProgress(enabled) {
+  let lastPhase = ''
+  return (event) => {
+    if (!enabled) return
+    if (event.type === 'session.run.phase' && event.data?.message && event.data.message !== lastPhase) {
+      lastPhase = event.data.message
+      process.stderr.write(`  ${lastPhase}\n`)
+    } else if (event.type === 'tool_call') {
+      const call = event.call ?? {}
+      const args = object(call.args) ?? {}
+      const hint = String(args.command ?? args.filePath ?? args.path ?? args.url ?? '').split('\n')[0].slice(0, 100)
+      process.stderr.write(`  · ${call.toolName ?? 'tool'}${hint ? ` ${hint}` : ''}\n`)
+    } else if (event.type === 'interaction') {
+      const ask = interactionOf(event)
+      if (ask) process.stderr.write(`  ? ${ask.kind}: ${ask.title}\n`)
+    }
+  }
+}
+
+/** Follow a turn until its thread has no running turn, an ask waits on the owner, or the budget ends. */
+async function follow(ctx, { turnId, response }) {
+  const { client, workspaceId, threadId, deadline, progress } = ctx
+  const pending = new Map()
+  let pendingSince = null
+  let seenId = -1
+  let replays = 0
+  let polls = 0
+  let sawTerminal = false
+  const state = { executionId: null, errors: [] }
+
+  const askingOwner = () => pendingSince !== null && Date.now() - pendingSince >= INTERACTION_GRACE_MS
+
+  async function consume(stream, { replay = false } = {}) {
+    // A replay starts from the buffer's beginning; stay quiet until it passes what was already shown.
+    let quiet = replay && seenId >= 0
+    const controller = new AbortController()
+    const timer = setInterval(() => {
+      if (Date.now() >= deadline || askingOwner()) controller.abort()
+    }, 250)
+    let terminal = false
+    try {
+      const iterator = ndjson(stream.response)
+      const reader = iterator[Symbol.asyncIterator]()
+      const aborted = new Promise((resolve) => controller.signal.addEventListener('abort', () => resolve({ done: true }), { once: true }))
+      while (true) {
+        const next = await Promise.race([reader.next(), aborted])
+        if (next.done) break
+        const event = next.value
+        const id = event.id === undefined ? NaN : Number(event.id)
+        if (Number.isFinite(id) && id > seenId) { seenId = id; quiet = false }
+        const fresh = Number.isFinite(id) ? id === seenId && !quiet : !quiet
+        if (event.type === 'execution.started' && !state.executionId) state.executionId = event.data?.executionId ?? null
+        if (event.type === 'error') state.errors.push(String(event.error ?? event.message ?? event.data?.message ?? 'stream error'))
+        if (event.type === 'interaction') {
+          const ask = interactionOf(event)
+          if (ask) { pending.set(ask.id, ask); pendingSince ??= Date.now() }
+        }
+        if (event.type === 'interaction.cancel' || event.type === 'interaction.resolved') {
+          pending.delete(event.data?.id)
+          if (pending.size === 0) pendingSince = null
+        }
+        if (event.type === 'stream.terminal' || event.type === 'done') { terminal = true; sawTerminal = true }
+        if (fresh) progress(event)
+        if (ctx.stopAfterAdmission && state.executionId) return 'admitted'
+      }
+      if (askingOwner()) return 'waiting'
+      if (Date.now() >= deadline) return 'deadline'
+      return terminal ? 'terminal' : 'ended'
+    } finally {
+      clearInterval(timer)
+      // Closing the connection leaves the detached turn running on the server.
+      stream.cancel()
+    }
+  }
+
+  async function openReplay(id) {
+    const controller = new AbortController()
+    try {
+      const reply = await client.request('GET', `/api/chat/replay/${encodeURIComponent(id)}?${query({ workspaceId, threadId, fromSeq: '0' })}`,
+        { raw: true, signal: controller.signal })
+      return { response: reply, cancel: () => controller.abort() }
+    } catch (error) {
+      if (error instanceof ApiError && error.status < 500 && error.status !== 429) return null
+      throw error
+    }
+  }
+
+  let stream = response
+  while (true) {
+    if (stream) {
+      const opened = Date.now()
+      const outcome = await consume(stream, { replay: stream !== response })
+      stream = null
+      // A replay that ends at once is not carrying the wait; do not spend requests reopening it.
+      if (outcome === 'ended' && Date.now() - opened < 5_000) await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())))
+      if (outcome === 'admitted' || outcome === 'deadline') return { outcome: outcome === 'admitted' ? 'admitted' : 'running', ...state, asks: [...pending.values()] }
+      if (outcome === 'waiting') return { outcome: 'waiting', ...state, asks: [...pending.values()] }
+    }
+    if (Date.now() >= deadline) return { outcome: 'running', ...state, asks: [...pending.values()] }
+    let running
+    try {
+      running = (await client.request('GET', `/api/chat/running?${query({ workspaceId, threadId })}`)).running ?? []
+    } catch (error) {
+      if (!(error instanceof ApiError) || (error.status < 500 && error.status !== 429)) throw error
+      running = null
+    }
+    if (Array.isArray(running) && running.length === 0) return { outcome: 'settled', ...state, asks: [] }
+    // After the execution's terminal event only the completion Workflow is left; a running read is cheaper than a replay.
+    if (running && !sawTerminal && replays < 10) {
+      replays++
+      stream = await openReplay(running.includes(turnId) ? turnId : running[0])
+      if (stream) continue
+    }
+    polls++
+    if (polls % 3 === 1) {
+      const asks = await openAsks(client, workspaceId, threadId)
+      if (asks.length > 0) return { outcome: 'waiting', ...state, asks }
+    }
+    const interval = sawTerminal ? Math.min(POLL_MS, 3_000) : POLL_MS * (polls > 12 ? 2 : 1)
+    await sleep(Math.min(interval, Math.max(0, deadline - Date.now())))
+  }
+}
+
+async function readThread(client, threadId) {
+  return client.request('GET', `/api/threads/${encodeURIComponent(threadId)}`)
+}
+
+/** The assistant row answering this ask: its execution's row, else the first reply after the ask itself. */
+function locateReply(messages, { executionId, ask }) {
+  if (executionId) {
+    const exact = messages.find((message) => message.id === `assistant:${executionId}`)
+    if (exact) return exact
+  }
+  let userIndex = -1
+  let lastUser = -1
+  messages.forEach((message, index) => {
+    if (message.role !== 'user') return
+    lastUser = index
+    if (ask !== undefined && String(message.content).trim() === ask.trim()) userIndex = index
+  })
+  if (userIndex < 0) userIndex = lastUser
+  if (userIndex < 0) return [...messages].reverse().find((message) => message.role === 'assistant') ?? null
+  return messages.slice(userIndex + 1).find((message) => message.role === 'assistant') ?? null
+}
+
+async function settledReply(client, threadId, locate, reads) {
+  for (let read = 0; read < reads; read++) {
+    const thread = await readThread(client, threadId)
+    const message = locate(thread.messages ?? [])
+    const settled = message && (String(message.content ?? '').trim() || (message.parts ?? []).some((part) => part?.type === 'notice'))
+    if (settled || read === reads - 1) return message
+    await sleep(Math.min(POLL_MS, 5_000))
+  }
+  return null
+}
+
+const EXTENSIONS = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif', 'image/svg+xml': '.svg', 'video/mp4': '.mp4', 'audio/mpeg': '.mp3', 'application/pdf': '.pdf' }
+
+async function download(client, assets, directory) {
+  mkdirSync(directory, { recursive: true })
+  for (const asset of assets) {
+    const path = asset.url.slice(asset.url.indexOf('/api/'))
+    try {
+      const response = await client.request('GET', path, { raw: true })
+      const type = (response.headers.get('content-type') ?? '').split(';')[0].trim()
+      asset.file = join(directory, asset.versionId + (EXTENSIONS[type] ?? '.bin'))
+      writeFileSync(asset.file, Buffer.from(await response.arrayBuffer()))
+    } catch (error) {
+      asset.error = error.message
+    }
+  }
+}
+
+function render(result) {
+  const lines = []
+  lines.push(`thread   ${result.threadId}  ${result.url}`)
+  const detail = [result.model && `model ${result.model}`, result.costUsd != null && `$${Number(result.costUsd).toFixed(2)}`].filter(Boolean).join(', ')
+  lines.push(`status   ${result.status}${detail ? ` (${detail})` : ''}`)
+  if (result.failure) lines.push(`failure  ${result.failure.code ?? ''} ${result.failure.text}`.trimEnd())
+  if (result.reply) lines.push('', result.reply)
+  if (result.assets.length) {
+    lines.push('', 'assets')
+    for (const asset of result.assets) lines.push(`  ${asset.file ?? asset.url}${asset.error ? `  (download failed: ${asset.error})` : ''}`)
+  }
+  if (result.vault.length) {
+    lines.push('', 'vault')
+    for (const item of result.vault) lines.push(`  ${item.action.padEnd(9)}${item.path}`)
+  }
+  if (result.approvals.length) {
+    lines.push('', `approvals (answer in the conversation: ${result.url})`)
+    for (const item of result.approvals) {
+      lines.push(`  ${item.kind.padEnd(10)}${item.title}${item.expiresAt ? `  expires ${item.expiresAt}` : ''}`)
+      if (item.body) lines.push(`            ${item.body.split('\n')[0].slice(0, 200)}`)
+    }
+  }
+  if (result.next) lines.push('', result.next)
+  return lines.join('\n') + '\n'
+}
+
+function exitFor(status, approvals) {
+  if (status === 'failed') return EXIT.failed
+  if (status === 'running') return EXIT.running
+  if (status === 'waiting' || approvals.length > 0) return EXIT.waiting
+  return EXIT.ok
+}
+
+async function finish(ctx, { followed, locate, turnId }) {
+  const { client, base, workspaceId, threadId, options } = ctx
+  const url = `${base}/app/${workspaceId}/chat/${threadId}`
+  let summary = summarizeMessage(null, { base, workspaceId })
+  let status = followed.outcome
+  if (status === 'settled' || status === 'snapshot') {
+    // The completion Workflow writes the transcript before it releases the turn; a few reads absorb replica lag.
+    const message = await settledReply(client, threadId, locate, status === 'snapshot' ? 1 : SETTLE_READS)
+    summary = summarizeMessage(message, { base, workspaceId })
+    if (summary.failure || (!message && followed.errors.length)) status = 'failed'
+    else if (!message) status = 'unknown'
+    else status = 'completed'
+    if (!summary.failure && !message && followed.errors.length) summary.failure = { code: 'stream', text: followed.errors.join('; ') }
+  } else if (status === 'running' || status === 'waiting') {
+    const thread = await readThread(client, threadId)
+    const message = locate(thread.messages ?? [])
+    if (message) summary = { ...summarizeMessage(message, { base, workspaceId }), failure: null }
+  }
+  const approvals = [...(followed.asks ?? []), ...summary.approvals]
+  if (options.download && summary.assets.length) await download(client, summary.assets, options.download)
+  const next = status === 'running' || status === 'admitted'
+    ? `follow with: gtm-ask status ${threadId} --wait 30m${workspaceId === ctx.defaultWorkspace ? '' : ` --workspace ${workspaceId}`}`
+    : status === 'unknown' ? 'no reply row was found for this turn; open the conversation to inspect it' : null
+  const result = {
+    workspaceId, threadId, turnId: turnId ?? null, executionId: followed.executionId ?? null, url, status,
+    ...summary, approvals, next,
+  }
+  process.stdout.write(options.json ? JSON.stringify(result, null, 2) + '\n' : render(result))
+  return status === 'unknown' ? EXIT.failed : exitFor(status, approvals)
+}
+
+async function readStdin() {
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+async function main(argv) {
+  const parsed = parseArgs(argv)
+  if (parsed.help) { process.stdout.write(USAGE + '\n'); return EXIT.ok }
+  const { command, options } = parsed
+  const base = (process.env.GTM_BASE_URL ?? DEFAULT_BASE).replace(/\/+$/, '')
+  const defaultWorkspace = process.env.GTM_WORKSPACE_ID || DEFAULT_WORKSPACE
+  const workspaceId = options.workspace ?? defaultWorkspace
+  const client = createClient({ base, key: readKey() })
+  const announce = (threadId) => {
+    if (!options.quiet) process.stderr.write(`gtm-ask: thread ${threadId} ${base}/app/${workspaceId}/chat/${threadId}\n`)
+  }
+  const progress = createProgress(!options.quiet && (process.stderr.isTTY || process.env.GTM_ASK_PROGRESS === '1'))
+  const deadline = Date.now() + options.waitMs
+
+  if (command === 'file') {
+    const { file } = await client.request('GET', `/api/vault/file?${query({ workspaceId, path: options.path })}`)
+    if (options.json || typeof file?.content !== 'string') process.stdout.write(JSON.stringify(file, null, 2) + '\n')
+    else process.stdout.write(file.content.endsWith('\n') ? file.content : file.content + '\n')
+    return EXIT.ok
+  }
+
+  if (command === 'status') {
+    const threadId = options.thread
+    const ctx = { client, base, workspaceId, threadId, options, deadline, progress, defaultWorkspace }
+    const latest = (messages) => locateReply(messages, {})
+    const { running = [] } = await client.request('GET', `/api/chat/running?${query({ workspaceId, threadId })}`)
+    let followed
+    if (running.length === 0) followed = { outcome: 'snapshot', errors: [], asks: [] }
+    else if (options.waitMs === 0) {
+      const open = await openAsks(client, workspaceId, threadId)
+      followed = { outcome: open.length ? 'waiting' : 'running', errors: [], asks: open }
+    } else {
+      announce(threadId)
+      followed = await follow(ctx, { turnId: running[0], response: null })
+    }
+    return finish(ctx, { followed, locate: latest, turnId: running[0] ?? null })
+  }
+
+  const ask = options.ask === '-' ? (await readStdin()).trim() : options.ask.trim()
+  if (!ask) throw new UsageError('the ask is empty')
+  let threadId = options.thread
+  if (threadId) {
+    const { running = [] } = await client.request('GET', `/api/chat/running?${query({ workspaceId, threadId })}`)
+    if (running.length > 0) {
+      process.stderr.write(`gtm-ask: thread ${threadId} already has a running turn; follow it with \`gtm-ask status ${threadId} --wait 30m\` before sending another\n`)
+      return EXIT.running
+    }
+  } else {
+    const title = (options.title ?? ask.split('\n')[0]).slice(0, 80)
+    const created = await client.request('POST', `/api/threads?${query({ workspaceId })}`, { body: { title } })
+    threadId = created.thread?.id ?? created.id
+  }
+  announce(threadId)
+  const turnId = randomUUID()
+  const controller = new AbortController()
+  const response = await client.request('POST', '/api/chat', {
+    raw: true,
+    signal: controller.signal,
+    body: { workspaceId, threadId, turnId, model: options.model ?? DEFAULT_MODEL, content: ask },
+  })
+  const ctx = {
+    client, base, workspaceId, threadId, options, progress, defaultWorkspace,
+    deadline: options.waitMs === 0 ? Date.now() + 120_000 : deadline,
+    stopAfterAdmission: options.waitMs === 0,
+  }
+  const followed = await follow(ctx, { turnId, response: { response, cancel: () => controller.abort() } })
+  const locate = (messages) => locateReply(messages, { executionId: followed.executionId, ask })
+  return finish(ctx, { followed, locate, turnId })
+}
+
+main(process.argv.slice(2)).then(
+  (code) => { process.exitCode = code },
+  (error) => {
+    if (error instanceof UsageError) {
+      process.stderr.write(`gtm-ask: ${error.message}\n\n${USAGE}\n`)
+      process.exitCode = EXIT.usage
+    } else {
+      process.stderr.write(`gtm-ask: ${error.message}\n`)
+      process.exitCode = EXIT.failed
+    }
+  },
+)
