@@ -122,8 +122,9 @@ pnpm or npm install against that user's shared package store. Different repos
 can gate in parallel; gates for the same repo wait. The cache is independent of main
 checkouts and lane worktrees. An older partial cache is rebuilt once under its
 repo lock so history checks do not fetch missing blobs one at a time. The gate
-refreshes `origin/` refs for the remote default branch and `main` or `develop`
-when present; the requested SHA remains detached. Its 40 GiB total cap evicts
+refreshes `origin/` refs for the remote default branch, `main` or `develop`,
+and branches whose remote head matches the requested SHA. It fetches only those
+branch histories; the requested SHA remains detached. Its 40 GiB total cap evicts
 the least recently used idle checkout before and after gates;
 keep retained proof outside the cache. A gate refuses before fetching when
 beelink1 has less than 100 GiB or beelink2 has less than 162 GiB free on its
