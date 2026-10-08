@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -290,5 +290,18 @@ test('file prints a vault file', async () => {
 test('a missing key is a configuration error that names where to store it', async () => {
   const result = await run(null, ['Draft the plan'], { env: { GTM_OPERATOR_API_KEY: '', GTM_ASK_SECRETS_FILE: '/nonexistent/agent-state.env' } })
   assert.equal(result.code, 2)
-  assert.match(result.stderr, /no operator key: set GTM_OPERATOR_API_KEY/)
+  assert.match(result.stderr, /no operator key: set GTM_OPERATOR_API_KEY, or store one with `dotenvx set/)
+})
+
+test('a vault without the slot says the checkout may be behind tangle-devops main', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gtm-ask-vault-'))
+  const vault = join(directory, 'agent-state.env')
+  writeFileSync(vault, 'OTHER_KEY="value"\n')
+  try {
+    const result = await run(null, ['Draft the plan'], { env: { GTM_OPERATOR_API_KEY: '', GTM_ASK_SECRETS_FILE: vault } })
+    assert.equal(result.code, 2)
+    assert.match(result.stderr, /GTM_OPERATOR_API_KEY is not readable in .*agent-state\.env|install dotenvx/)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
