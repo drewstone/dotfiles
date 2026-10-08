@@ -152,6 +152,20 @@ class MainCheckoutFfTest(unittest.TestCase):
             reader.wait()
         self.assertEqual(git(repo, "rev-parse", "HEAD"), target)
 
+    def test_a_process_in_a_nested_linked_worktree_does_not_hold_the_checkout(self):
+        repo = self.clone("nested")
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "exclude").write_text(".worktrees/\n")
+        git(repo, "worktree", "add", "-q", "-b", "lane", str(repo / ".worktrees" / "lane"))
+        target = self.advance_origin()
+        holder = subprocess.Popen(["sleep", "30"], cwd=repo / ".worktrees" / "lane")
+        try:
+            self.run_ff()
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), target)
+
     def test_skips_checkout_with_a_process_inside(self):
         repo = self.clone("busy")
         before = git(repo, "rev-parse", "HEAD")
