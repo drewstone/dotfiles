@@ -158,9 +158,7 @@
     "frontend-design@claude-plugins-official": true,
     "codex@openai-codex": true,
     "last30days@last30days-skill": true,
-    "tangle-blueprint-innovate@tangle-network-skills": true,
-    "agent-factory@tangle-skills-internal": true,
-    "agent-platform@tangle-skills-internal": true
+    "agent-factory@tangle-skills-internal": true
   },
   "extraKnownMarketplaces": {
     "anthropic-agent-skills": {
@@ -179,12 +177,6 @@
       "source": {
         "source": "github",
         "repo": "mvanhorn/last30days-skill"
-      }
-    },
-    "tangle-network-skills": {
-      "source": {
-        "source": "github",
-        "repo": "tangle-network/skills"
       }
     },
     "tangle-skills-internal": {

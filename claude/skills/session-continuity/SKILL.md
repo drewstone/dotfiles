@@ -1,6 +1,6 @@
 ---
 name: session-continuity
-description: Preserve a long-running task across context, process, provider, or machine changes with checked state and exact next actions.
+description: Preserve a long-running task across context, process, provider, or machine changes, or write a handoff, with checked state and exact next actions.
 ---
 
 # Session continuity
@@ -19,6 +19,8 @@ Continue the action; an ordinary project switch needs only its relevant saved st
 
 Update the existing brief at a handoff or material state change; put the next action first.
 Replace stale current status while retaining its predecessor as history. Link supporting records rather than copying them.
+With no existing brief, write the handoff to the OS temporary directory rather than the workspace, tailored to what the next session will do, with the skills it should load.
+Redact keys, passwords, and personal data.
 
 - Next action, completion check, and exact blocker if any.
 - Objective, user corrections, existing authority, resource bounds, and unresolved choices.

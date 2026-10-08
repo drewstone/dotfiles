@@ -29,6 +29,8 @@ Include measured costs or projected savings only when evidence supports them; in
 Search the owning guidance, skills, and memory before recording a durable correction.
 Extend an existing owner, and delete unnecessary requirements before adding procedures.
 Create a new rule or skill only when evidence supports its distinct job.
+Fix a mistake that has recurred at the highest level that works: architecture (one owner, one supported path, the wrong import fails), then types, then a lint or check whose error names the fix, then a test, and written rules last, for judgment calls; prove a new check fails on a real past instance.
+Derived from cursor/plugins correct (MIT).
 Leave sound work unchanged.
 
 Carry authorized corrections through verification; for analysis-only work, report the correction and evidence.
