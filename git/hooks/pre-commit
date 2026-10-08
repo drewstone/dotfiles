@@ -58,20 +58,6 @@ if [ -n "$global_email" ] && [ "$global_email" != "drewstone329@gmail.com" ]; th
   echo "    git config --global user.email drewstone329@gmail.com" >&2
 fi
 
-export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
-
-HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
-if [ -x "$HOOKS_BIN" ]; then
-  exec "$HOOKS_BIN" run pre-commit "$@"
-fi
-
-if command -v ai-agent-hooks >/dev/null 2>&1; then
-  exec ai-agent-hooks run pre-commit "$@"
-fi
-
-echo "ai-agent-hooks not found. Expected $HOOKS_BIN or ai-agent-hooks in PATH." >&2
-exit 1
-
 # Privacy guard: personal details never enter a commit. This repo is public, so the
 # patterns live in a local, untracked file: one case-insensitive fixed string per line
 # (home address variants, personal phone numbers). Matches are never echoed, because the
@@ -118,3 +104,17 @@ for m in SHAPE.finditer(sys.stdin.read()):
     exit 1
   fi
 fi
+
+export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
+
+HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
+if [ -x "$HOOKS_BIN" ]; then
+  exec "$HOOKS_BIN" run pre-commit "$@"
+fi
+
+if command -v ai-agent-hooks >/dev/null 2>&1; then
+  exec ai-agent-hooks run pre-commit "$@"
+fi
+
+echo "ai-agent-hooks not found. Expected $HOOKS_BIN or ai-agent-hooks in PATH." >&2
+exit 1
