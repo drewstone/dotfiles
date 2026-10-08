@@ -101,16 +101,20 @@ function readKey() {
   if (fromEnv) return fromEnv
   const secrets = process.env.GTM_ASK_SECRETS_FILE ?? join(homedir(), 'company/devops/secrets/agent-state.env')
   const keys = process.env.GTM_ASK_KEYS_FILE ?? join(dirname(secrets), '.env.keys')
-  if (existsSync(secrets)) {
-    const args = ['get', KEY_NAME, '-f', secrets, '--overload']
-    if (existsSync(keys)) args.push('-fk', keys)
-    try {
-      const value = execFileSync('dotenvx', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-      if (value.startsWith('gak_')) return value
-    } catch { /* reported below without the vault's output */ }
+  const store = `\`dotenvx set ${KEY_NAME} <gak_ key> -f ${secrets}\` (operator:read, operator:write and operator:run)`
+  if (!existsSync(secrets)) throw new UsageError(`no operator key: set ${KEY_NAME}, or store one with ${store}`)
+  const args = ['get', KEY_NAME, '-f', secrets, '--overload']
+  if (existsSync(keys)) args.push('-fk', keys)
+  let value = ''
+  try {
+    value = execFileSync('dotenvx', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new UsageError(`no operator key: set ${KEY_NAME}, or install dotenvx to read ${secrets}`)
   }
-  throw new UsageError(`no operator key: set ${KEY_NAME}, or store it with ` +
-    `\`dotenvx set ${KEY_NAME} <gak_ key> -f ${secrets}\` (the key needs operator:read, operator:write and operator:run)`)
+  if (value.startsWith('gak_')) return value
+  // tangle-devops main carries the slot; a checkout left on another branch does not.
+  throw new UsageError(`no operator key: ${KEY_NAME} is not readable in ${secrets}. ` +
+    `If tangle-devops main has it, bring that checkout to main; otherwise set ${KEY_NAME} or store one with ${store}`)
 }
 
 function createClient({ base, key }) {
