@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -41,9 +41,12 @@ function fixture() {
   const fakePnpm = join(bin, "pnpm");
   writeFileSync(fakePnpm, '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$PNPM_LOG"\n');
   chmodSync(fakePnpm, 0o755);
+  const fakeDf = join(bin, "df");
+  writeFileSync(fakeDf, '#!/usr/bin/env bash\nprintf "Avail\\n%s\\n" "${FAKE_AVAIL:-1099511627776}"\n');
+  chmodSync(fakeDf, 0o755);
   const env = { ...process.env, HOME: home, BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
-  const call = (sha, args) => run("bash", [gate, "--remote", ...[url, sha, ...args].map(encode)], { env });
+  const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, first, second, call, git };
 }
 
@@ -70,7 +73,7 @@ test("a failed command reports its exit code and an unsafe repository path is re
     const result = f.call(f.first, ["bash", "-c", "exit 7"]);
     assert.equal(result.status, 7, result.stderr);
     assert.match(result.stderr, /exit=7 duration=\d+s/);
-    const invalid = run("bash", [gate, "--remote", ...["https://github.com/../repo.git", f.first, "true"].map(encode)], { env: f.env });
+    const invalid = run("bash", [gate, "--remote", ...["beelink2", "https://github.com/../repo.git", f.first, "true"].map(encode)], { env: f.env });
     assert.equal(invalid.status, 2);
     assert.match(invalid.stderr, /unsafe repository path/);
     const wrongSha = run("bash", [gate, "beelink2", f.url, "abc", "--", "true"], { env: f.env });
@@ -82,7 +85,7 @@ test("concurrent gates for one repo serialize the entire command", async () => {
   const f = fixture();
   const events = join(f.root, "events");
   const launch = (id) => new Promise((resolveDone) => {
-    const args = [f.url, f.first, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
+    const args = ["beelink2", f.url, f.first, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -125,5 +128,90 @@ test("pnpm lockfile selects frozen install with one shared store", () => {
     const result = f.call(sha, ["true"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(f.pnpmLog, "utf8").trim(), `install --frozen-lockfile --store-dir ${f.home}/.local/share/pnpm/store`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("refuses below the selected host's floor before creating a cache", () => {
+  const f = fixture();
+  try {
+    const available = 120 * 1024 ** 3;
+    const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(available) } });
+    assert.equal(refused.status, 3);
+    assert.match(refused.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.equal(existsSync(f.cache), false);
+    const allowed = f.call(f.first, ["true"], { host: "beelink1", env: { FAKE_AVAIL: String(available) } });
+    assert.equal(allowed.status, 0, allowed.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a symlinked cache checkout cannot redirect cleaning or eviction outside the cache", () => {
+  const f = fixture();
+  try {
+    const external = join(f.root, "external");
+    mkdirSync(external);
+    f.git(["init", "-q", external], f.root);
+    writeFileSync(join(external, "keep"), "owned elsewhere");
+    mkdirSync(join(f.cache, "local", "owner"), { recursive: true });
+    symlinkSync(external, join(f.cache, "local", "owner", "repo"));
+    const result = f.call(f.first, ["true"]);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /cache path contains a symlink/);
+    assert.equal(readFileSync(join(external, "keep"), "utf8"), "owned elsewhere");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+function cacheSlot(f, name, usedSeconds) {
+  const dir = join(f.cache, "github.com", "test", name);
+  mkdirSync(dir, { recursive: true });
+  f.git(["init", "-q", dir], f.root);
+  writeFileSync(join(dir, "payload"), Buffer.alloc(750_000));
+  const marker = join(dir, ".git", "beelink-gate-used");
+  writeFileSync(marker, "");
+  utimesSync(marker, usedSeconds, usedSeconds);
+  return dir;
+}
+
+test("evicts the least recently used idle checkout before fetching", () => {
+  const f = fixture();
+  try {
+    const older = cacheSlot(f, "older", 1000);
+    const newer = cacheSlot(f, "newer", 2000);
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000000" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(older), false);
+    assert.equal(existsSync(newer), true);
+    assert.match(result.stderr, /evicted LRU cache .*older/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("evicts the completed checkout if its command takes the cache over cap", () => {
+  const f = fixture();
+  try {
+    const result = f.call(f.first, ["node", "-e", 'require("fs").writeFileSync("large.bin",Buffer.alloc(750000))'],
+      { env: { BEELINK_GATE_CACHE_MAX_BYTES: "300000" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(join(f.cache, "local", "owner", "repo")), false);
+    assert.match(result.stderr, /evicted LRU cache .*local\/owner\/repo/);
+    assert.match(result.stderr, /exit=0/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an active repo lock protects its checkout during LRU eviction", async () => {
+  const f = fixture();
+  const marker = join(f.root, "locked");
+  try {
+    const older = cacheSlot(f, "older", 1000);
+    const newer = cacheSlot(f, "newer", 2000);
+    const lockPath = join(f.cache, ".locks", "github.com-test-older.lock");
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; sleep 3`], { env: f.env });
+    try {
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await new Promise((resolveDone) => setTimeout(resolveDone, 20));
+      assert.equal(existsSync(marker), true);
+      const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000000" } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(existsSync(older), true);
+      assert.equal(existsSync(newer), false);
+    } finally { locker.kill(); }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

@@ -120,7 +120,12 @@ locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit, and runs a frozen pnpm or npm install
 against that user's shared package store. Different repositories can gate in
 parallel; gates for the same repository wait. The cache is independent of main
-checkouts and lane worktrees.
+checkouts and lane worktrees. Its 40 GiB total cap evicts the least recently
+used idle checkout before and after gates; keep retained proof outside the
+cache. A gate refuses before fetching when beelink1 has less than 100 GiB or
+beelink2 has less than 162 GiB free on its root filesystem. A second floor
+check after installation keeps the requested command from starting if its
+install consumed the reserve.
 
 ## skills
 
