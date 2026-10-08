@@ -1,6 +1,6 @@
 ---
 name: critical-audit
-description: Review or polish code, docs, APIs, SDKs, or products for defects, quality gaps, and unsupported claims, with ranked fixes.
+description: Review a diff, branch, or PR against standards and spec, or audit and polish code, docs, APIs, or products for defects and unsupported claims.
 ---
 
 # Critical Audit
@@ -37,6 +37,18 @@ When reviewing an SDK's customer-facing surface, read only the applicable perspe
 - [SDK surface designer](agents/personas/sdk-surface-designer.md) for request, schema, server, and client compatibility.
 
 `--personas` can select those perspectives; it does not require additional reviewers or make every listed capability a product requirement.
+
+## Review a change against standards and spec
+
+Derived from mattpocock/skills code-review (MIT).
+
+For a branch, PR, or work since a fixed point, confirm the point resolves and `git diff <base>...HEAD` is non-empty, then review two axes and report them separately:
+
+- **Standards**: the repository's documented conventions, cited by file and rule. Also flag code smells as judgment calls a documented standard overrides: unclear names, duplicated logic, a function using another module's data more than its own, fields that always travel together, primitives standing in for domain types, the same switch repeated, one change scattered across many files, one file changed for unrelated reasons, speculative abstraction, long call chains, pass-through wrappers, and ignored inheritance. Skip what tooling already enforces.
+- **Spec**: the originating issue or spec, found from commit references, a supplied path, or a matching spec file. Quote the spec for each finding: requirements missing or partial, behavior nobody asked for, and requirements implemented wrongly. With no spec, say so and review standards only.
+
+Keep the axes separate: code can follow every standard and build the wrong thing, or do the right thing against the conventions.
+Use independent reviewers per axis only when delegation is available and authorized.
 
 ## Polish against explicit criteria
 

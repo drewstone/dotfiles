@@ -1,6 +1,6 @@
 ---
 name: converge
-description: Drive a pull request to mergeable by repairing in-scope CI defects and enforced checks and resolving review findings; complete full CI recovery when requested.
+description: Drive a PR to mergeable: repair in-scope CI defects and enforced checks, resolve review findings and merge or rebase conflicts; full CI recovery on request.
 ---
 
 # Converge
@@ -27,6 +27,15 @@ An earlier approval does not override a newer blocking review, and a green histo
 Preserve the checks' intended coverage.
 Never bypass hooks, suppress failures, or weaken thresholds to obtain a passing result.
 Diagnose flaky tests; quarantine only when repository policy permits it and replacement coverage preserves the affected requirement.
+
+## Resolve merge conflicts
+
+Derived from mattpocock/skills resolving-merge-conflicts (MIT).
+
+Read the merge or rebase state and, for each conflict, the commits, PRs, and issues that explain why each side changed.
+Keep both intents where they are compatible; where they are not, keep the one matching the merge's goal and record the tradeoff.
+Add no new behavior while resolving, and finish the operation rather than aborting it.
+Run the project's typecheck, tests, and formatter, fix what the merge broke, then commit or continue the rebase.
 
 ## Resolve review findings
 

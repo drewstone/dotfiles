@@ -1,12 +1,27 @@
 ---
 name: diagnose
-description: Explain failing, null, or suspect results, from one run to a failure set, including eval-pipeline faults and untested comparison claims; rank the fixes.
+description: Debug a broken, failing, or slow code path, or explain failing, null, or suspect results and eval faults; find the cause with a red loop and rank fixes.
 ---
 
 # Diagnose
 
 Explain results before choosing fixes, working from raw outcomes and representative traces rather than the aggregate score.
 This covers a set of test, CI, benchmark, or evaluation failures; one null, surprising, or suspect run; and a disappointing comparison that may not have tested its claim.
+
+## Debug a bug or regression
+
+Derived from mattpocock/skills diagnosing-bugs (MIT).
+
+For broken, throwing, flaky, or slow code, build the feedback loop before forming any theory.
+
+1. **Loop**: name one command you have already run that drives the real code path and goes red on the user's exact symptom: a failing test at the seam that reaches the bug, a curl or CLI script against a fixture, a headless browser script, a replayed captured request, a throwaway harness, a fuzz loop, `git bisect run`, or an old-versus-new differential. Make it fast and deterministic; for a flaky bug, raise the reproduction rate with repetition, parallelism, and stress until it is debuggable. If no loop is possible, say what you tried and ask for access, a redacted artifact, or permission to instrument.
+2. **Minimize**: cut inputs, callers, configuration, and steps one at a time while it stays red, until every remaining part is needed.
+3. **Hypothesize**: rank three to five falsifiable causes, each with the change that would make the bug disappear, and share the list when the user is available.
+4. **Instrument**: change one variable per probe. Prefer a debugger; tag temporary logs with a unique prefix such as `[DEBUG-a4f2]`. For performance, measure a baseline and bisect before changing code.
+5. **Fix**: turn the minimal repro into a failing regression test at a seam that exercises the real pattern, watch it fail, fix, watch it pass, and rerun the original loop. If no correct seam exists, report that as a finding.
+6. **Clean up**: remove tagged logs and prototypes, and state the confirmed cause in the commit or PR.
+
+Redact secrets in every command and output you show.
 
 ## Reconstruct what ran
 

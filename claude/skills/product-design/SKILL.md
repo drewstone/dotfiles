@@ -1,6 +1,6 @@
 ---
 name: product-design
-description: Design, audit, and test product UI from real references and browser evidence, including workflow audits, adversarial browser testing, and site reproduction.
+description: Design, polish, audit, and test product UI from real references and browser evidence, including worst-case data, variants, phones, and site reproduction.
 metadata:
   short-description: Reference-first product UI without label/step slop
 ---
@@ -28,6 +28,9 @@ For a blog or research index, read [editorial surfaces](references/editorial-sur
 2. Remove duplicate navigation, decorative panels, repeated action copy, and states that imply readiness the product has not achieved.
    Keep labels that identify controls or clarify status, risk, units, permissions, or accessibility.
 3. Implement with the application's existing components and tokens.
+   Read [polish](references/polish.md) for press feedback, materials, typography, foundations, and phone behavior; use `/motion` for animation.
+
+When the user wants to compare directions, or a state model needs checking before it is built, read [variants and prototypes](references/variants.md).
 
 Match density and media to the task.
 Operational tools need scannable state and actions; product identity may need a real screenshot, person, place, or artifact.
@@ -54,6 +57,7 @@ Start or locate the application as the intended user reaches it.
 Use available browser tools or the repository's UI test stack, and reuse an authorized test session when needed.
 Complete the primary flow, then exercise relevant inputs, loading, empty, error, responsive, and access states.
 Read [adversarial patterns](references/adversarial-patterns.md) when selecting boundary cases for forms, navigation, sessions, or dialogs.
+Read [worst-case data](references/worst-case-data.md) when stress-testing what a component renders: long and short names, unbreakable strings, empty and huge collections, numbers, dates, and media.
 Inspect rendered screenshots and the DOM alongside console and network failures, and check keyboard behavior and focus for changed interactive controls.
 
 Use authorized test accounts and disposable data for submissions that mutate state.
@@ -74,10 +78,6 @@ If deployment is part of the request, also verify the served revision and live u
 
 Report the observed problems, decisions, changed files, before/after screenshots or browser artifacts, tested flows and states, checks, and remaining limitations.
 
-## Pinned design-engineering skills
-
-For interface work, also load `emil-design-eng` (motion and detail), `break-ui` (worst-case data: long names, empty and huge lists, narrow widths), `mobile-native` (phone behaviour), `review-animations` and `apple-design`. They are pinned in `claude/external-skills.json`.
-
 ## Log the run
 
 ```bash
@@ -91,3 +91,4 @@ skill-run-log /product-design --target "<what this run targeted>" --verdict <VER
 | Evidence questions the product value rather than UI execution | `/product-innovation-audit` | the workflow and unresolved user value |
 | A reproduced defect needs deeper source investigation or review | `/critical-audit` | the reproduction, diff, and behavior to preserve |
 | Browser work passes and required non-UI checks remain | `/verify` | the verified flows and remaining checks |
+| The change adds or reviews animation or gesture motion | `/motion` | the components and interactions |

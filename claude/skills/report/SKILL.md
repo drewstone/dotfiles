@@ -1,6 +1,6 @@
 ---
 name: report
-description: Answer analytical, status, research-fleet, or play questions from checked evidence, with complete measurements, uncertainty, and a supported decision.
+description: Research a question from primary sources, or answer analytical, status, fleet, or play questions from checked evidence with uncertainty and a decision.
 ---
 
 # Report
@@ -22,6 +22,15 @@ For collections, report distributions or category counts that expose variation r
 Use sample sizes and uncertainty when the conclusion depends on sampling.
 
 Read [multi-run analysis](references/multi-run-analysis.md) when comparing groups, aggregating run records, or decomposing time and cost.
+
+## Research a question
+
+Derived from mattpocock/skills research (MIT).
+
+Answer from primary sources: official documentation, source code, specifications, and first-party APIs.
+Trace each claim to the source that owns it and cite it.
+When the user wants a durable note, write one Markdown file where the repository keeps such notes and say where.
+Delegate the reading to a background worker only when delegation is available and the user can keep working.
 
 ## Questions about active research and fleets
 
