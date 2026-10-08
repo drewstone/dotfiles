@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317 # receipt and finish run through the EXIT trap.
 # Gate one commit in a reusable, locked checkout on a beelink.
 # Usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]
 set -uo pipefail
@@ -7,18 +8,98 @@ die() { echo "beelink-gate: $*" >&2; exit 2; }
 
 decode() { printf '%s' "$1" | base64 --decode; }
 
+check_floor() {
+  local host="$1" floor_gib available
+  case "$host" in
+    beelink1) floor_gib=100 ;;
+    beelink2) floor_gib=162 ;;
+    *) die "unknown remote beelink: $host" ;;
+  esac
+  available=$(df -B1 --output=avail "$HOME" | tail -n 1 | tr -d ' ') || die "cannot read free disk space"
+  [[ "$available" =~ ^[0-9]+$ ]] || die "invalid free disk reading: $available"
+  if (( available < floor_gib * 1024 * 1024 * 1024 )); then
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_gib" >&2
+    return 3
+  fi
+}
+
+# Cache directories are owned by this command. A global lock serializes size
+# decisions; per-repo locks keep active gates out of the eviction set.
+prune_cache() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import fcntl
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+root, current, cap = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+locks = root / ".locks"
+
+def size(path):
+    return int(subprocess.check_output(["du", "-s", "-B1", "--", str(path)], text=True).split()[0])
+
+try:
+    with (locks / ".capacity.lock").open("a+") as global_lock:
+        fcntl.flock(global_lock, fcntl.LOCK_EX)
+        candidates = []
+        for host in root.iterdir():
+            if host.name == ".locks" or host.is_symlink() or not host.is_dir():
+                continue
+            for owner in host.iterdir():
+                if owner.is_symlink() or not owner.is_dir():
+                    continue
+                for repo in owner.iterdir():
+                    git_dir = repo / ".git"
+                    if repo.is_symlink() or not repo.is_dir() or git_dir.is_symlink() or not git_dir.is_dir():
+                        continue
+                    used = git_dir / "beelink-gate-used"
+                    stamp = used if used.is_file() and not used.is_symlink() else git_dir / "FETCH_HEAD"
+                    if not stamp.exists() or stamp.is_symlink():
+                        stamp = git_dir
+                    candidates.append((stamp.stat().st_mtime_ns, repo, size(repo), host.name, owner.name))
+        total = size(root)
+        for _, repo, bytes_used, host, owner in sorted(candidates):
+            if total <= cap:
+                break
+            lock_path = locks / f"{host}-{owner}-{repo.name}.lock"
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            try:
+                if repo != current:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        continue
+                shutil.rmtree(repo)
+                total -= bytes_used
+                print(f"beelink-gate: evicted LRU cache {repo} ({bytes_used} bytes)", file=sys.stderr)
+            finally:
+                os.close(fd)
+        total = size(root)
+        if total > cap:
+            print(f"beelink-gate: cache cap exceeded: {total} > {cap} bytes; active checkouts cannot be evicted", file=sys.stderr)
+            sys.exit(3)
+except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+    print(f"beelink-gate: cache prune failed: {exc}", file=sys.stderr)
+    sys.exit(3)
+PY
+}
+
 remote_gate() {
-  [ "$#" -ge 3 ] || die "invalid remote request"
-  local repo_url sha key host owner repo cache_root checkout origin actual rc=0
+  [ "$#" -ge 4 ] || die "invalid remote request"
+  local beelink repo_url sha key host owner repo cache_root checkout origin actual cache_max
   local -a command=()
-  repo_url=$(decode "$1") || die "invalid repository encoding"
-  sha=$(decode "$2") || die "invalid SHA encoding"
-  shift 2
+  beelink=$(decode "$1") || die "invalid beelink encoding"
+  repo_url=$(decode "$2") || die "invalid repository encoding"
+  sha=$(decode "$3") || die "invalid SHA encoding"
+  shift 3
   while [ "$#" -gt 0 ]; do
     command+=("$(decode "$1")") || die "invalid command encoding"
     shift
   done
-  [ "${#command[@]}" -gt 0 ] && [ -n "${command[0]}" ] || die "empty command"
+  if [ "${#command[@]}" -eq 0 ] || [ -z "${command[0]}" ]; then die "empty command"; fi
   [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
 
   # URL components are used only as cache path components; reject traversal and
@@ -34,17 +115,26 @@ remote_gate() {
   fi
   repo="${repo%.git}"
   for key in "$host" "$owner" "$repo"; do
-    [ "$key" != . ] && [ "$key" != .. ] && [[ "$key" != -* ]] || die "unsafe repository path"
+    if [ "$key" = . ] || [ "$key" = .. ] || [[ "$key" = -* ]]; then die "unsafe repository path"; fi
   done
 
   export PATH="$HOME/.local/bin:$PATH"
+  check_floor "$beelink" || exit $?
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
+  [[ "$cache_root" = /* ]] || die "cache root must be absolute"
+  [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
   checkout="$cache_root/$host/$owner/$repo"
+  if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] \
+    || [ -L "$cache_root/$host/$owner" ] || [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then
+    die "cache path contains a symlink"
+  fi
   mkdir -p "$cache_root/.locks" "$(dirname "$checkout")" || die "cannot create cache"
   local lock="$cache_root/.locks/$host-$owner-$repo.lock"
   exec {lock_fd}>"$lock" || die "cannot open lock"
   echo "beelink-gate: waiting for $host/$owner/$repo lock" >&2
   flock -x "$lock_fd" || die "cannot lock checkout"
+  check_floor "$beelink" || exit $?
 
   local started=$SECONDS display
   printf -v display '%q ' "${command[@]}"
@@ -53,7 +143,22 @@ remote_gate() {
     printf 'beelink-gate receipt: sha=%s command=%s exit=%s duration=%ss\n' \
       "$sha" "${display% }" "$status" "$((SECONDS - started))" >&2
   }
-  trap 'receipt "$?"' EXIT
+  finish() {
+    local status=$?
+    trap - EXIT
+    if [ -d "$checkout/.git" ]; then
+      if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
+    fi
+    if cd "$cache_root"; then
+      if ! prune_cache "$cache_root" "$checkout" "$cache_max" && [ "$status" -eq 0 ]; then status=3; fi
+    elif [ "$status" -eq 0 ]; then
+      status=3
+    fi
+    receipt "$status"
+    exit "$status"
+  }
+  trap finish EXIT
+  prune_cache "$cache_root" "$checkout" "$cache_max" || exit $?
 
   if [ ! -e "$checkout/.git" ]; then
     [ ! -e "$checkout" ] || die "cache path exists without .git: $checkout"
@@ -68,6 +173,7 @@ remote_gate() {
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
+  check_floor "$beelink" || exit $?
 
   cd "$checkout" || exit $?
   if [ -f pnpm-lock.yaml ]; then
@@ -83,10 +189,10 @@ remote_gate() {
       || die "package.json has dependencies but no pnpm/npm lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
   fi
+  check_floor "$beelink" || exit $?
   echo "beelink-gate: running ${display% }" >&2
   "${command[@]}"
-  rc=$?
-  exit "$rc"
+  exit $?
 }
 
 if [ "${1:-}" = --remote ]; then
@@ -94,17 +200,19 @@ if [ "${1:-}" = --remote ]; then
   remote_gate "$@"
 fi
 
-[ "$#" -ge 5 ] && [ "$4" = -- ] || die "usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]"
+if [ "$#" -lt 5 ] || [ "$4" != -- ]; then
+  die "usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]"
+fi
 case "$1" in
-  beelink1|100.98.195.7) beelink_ip=100.98.195.7 ;;
-  beelink2|100.127.22.51) beelink_ip=100.127.22.51 ;;
+  beelink1|100.98.195.7) beelink_ip=100.98.195.7; beelink=beelink1 ;;
+  beelink2|100.127.22.51) beelink_ip=100.127.22.51; beelink=beelink2 ;;
   *) die "unknown beelink: $1" ;;
 esac
 shift
 repo_url="$1"; sha="$2"; shift 3
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
 encoded=()
-for arg in "$repo_url" "$sha" "$@"; do
+for arg in "$beelink" "$repo_url" "$sha" "$@"; do
   encoded+=("$(printf '%s' "$arg" | base64 -w0)")
 done
 ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- bash -s -- --remote "${encoded[@]}" < "$0"
