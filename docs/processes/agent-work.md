@@ -19,6 +19,8 @@ New Linux checkouts belong under ~/code; worktrees under ~/code/_wt.
 GTR is resource-constrained; inspect its existing ~/code and ~/webb checkouts before adding work.
 Run Discovery research through the maintained CLI in Tangle sandboxes so it survives workstation disconnects.
 
+From GTR, gate an executable revision with `beelink-gate beelink2 <repo-url> <full-sha> -- <command> [args...]` after the revision is pushed. Run the repo's typecheck and affected tests in that command; the gate itself fetches the SHA, checks it out detached, and runs `pnpm install --frozen-lockfile` or `npm ci` against the beelink's shared store before the command. It streams output and prints a SHA, command, exit-code, and duration receipt. The gate owns one locked cache checkout per repo under `~/.cache/beelink-gate/` on that beelink, so concurrent lanes for the same repo wait their turn. Do not create a beelink worktree for this gate or use a beelink's main checkout. A dependency-free package with no lockfile skips installation; a package with dependencies and no pnpm/npm lockfile fails the gate.
+
 ## Preserve concurrent work
 
 Check the relevant checkout's status, base, and ownership before editing; inspect history, reflog, or PRs when changes or conflicts need explanation.
