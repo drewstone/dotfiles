@@ -67,6 +67,32 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("refreshes default, main, and develop tracking refs without moving detached HEAD", () => {
+  const f = fixture();
+  try {
+    f.git(["--git-dir", f.bare, "branch", "main", f.second], f.root);
+    f.git(["--git-dir", f.bare, "branch", "develop", f.first], f.root);
+    const defaultBranch = f.git(["--git-dir", f.bare, "symbolic-ref", "HEAD"], f.root).split("/").at(-1);
+    const checkout = join(f.cache, "local", "owner", "repo");
+    const firstGate = f.call(f.first, ["git", "rev-parse", "HEAD"]);
+    assert.equal(firstGate.status, 0, firstGate.stderr);
+    assert.equal(firstGate.stdout.trim(), f.first);
+    for (const [branch, expected] of [[defaultBranch, f.second], ["main", f.second], ["develop", f.first]]) {
+      assert.equal(f.git(["-C", checkout, "rev-parse", `refs/remotes/origin/${branch}`], f.root), expected);
+    }
+
+    writeFileSync(join(f.source, "value.txt"), "third\n");
+    f.git(["commit", "-qam", "third"]);
+    const third = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, third], f.root);
+    f.git(["--git-dir", f.bare, "update-ref", "refs/heads/main", third], f.root);
+    const secondGate = f.call(f.first, ["true"]);
+    assert.equal(secondGate.status, 0, secondGate.stderr);
+    assert.equal(f.git(["-C", checkout, "rev-parse", "refs/remotes/origin/main"], f.root), third);
+    assert.equal(f.git(["-C", checkout, "rev-parse", "HEAD"], f.root), f.first);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a failed command reports its exit code and an unsafe repository path is rejected", () => {
   const f = fixture();
   try {

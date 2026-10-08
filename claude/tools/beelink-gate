@@ -90,6 +90,7 @@ PY
 remote_gate() {
   [ "$#" -ge 4 ] || die "invalid remote request"
   local beelink repo_url sha key host owner repo cache_root checkout origin actual cache_max
+  local remote_refs left ref branch
   local -a command=()
   beelink=$(decode "$1") || die "invalid beelink encoding"
   repo_url=$(decode "$2") || die "invalid repository encoding"
@@ -180,8 +181,23 @@ remote_gate() {
   fi
   origin=$(git -C "$checkout" remote get-url origin) || exit $?
   [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
-  echo "beelink-gate: fetching $sha into $checkout" >&2
-  git -C "$checkout" fetch --no-tags origin "$sha" || exit $?
+  remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD refs/heads/main refs/heads/develop) || exit $?
+  local -a tracking_refspecs=()
+  local -A seen_branches=()
+  while IFS=$'\t' read -r left ref; do
+    branch=
+    if [[ "$left" == 'ref: refs/heads/'* && "$ref" == HEAD ]]; then
+      branch=${left#ref: refs/heads/}
+    elif [[ "$ref" == refs/heads/main || "$ref" == refs/heads/develop ]]; then
+      branch=${ref#refs/heads/}
+    fi
+    if [ -n "$branch" ] && [ -z "${seen_branches[$branch]:-}" ]; then
+      tracking_refspecs+=("+refs/heads/$branch:refs/remotes/origin/$branch")
+      seen_branches[$branch]=1
+    fi
+  done <<< "$remote_refs"
+  echo "beelink-gate: fetching $sha and ${#tracking_refspecs[@]} tracking branch(es) into $checkout" >&2
+  git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}" || exit $?
   git -C "$checkout" checkout --detach --force "$sha" || exit $?
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
