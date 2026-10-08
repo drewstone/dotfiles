@@ -67,19 +67,23 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("refreshes default, main, and develop tracking refs without moving detached HEAD", () => {
+test("refreshes default, main, develop, and requested-head tracking refs without moving detached HEAD", () => {
   const f = fixture();
   try {
     f.git(["--git-dir", f.bare, "branch", "main", f.second], f.root);
     f.git(["--git-dir", f.bare, "branch", "develop", f.first], f.root);
+    f.git(["--git-dir", f.bare, "branch", "fix/requested", f.first], f.root);
+    f.git(["--git-dir", f.bare, "branch", "fix/unrelated", f.second], f.root);
     const defaultBranch = f.git(["--git-dir", f.bare, "symbolic-ref", "HEAD"], f.root).split("/").at(-1);
     const checkout = join(f.cache, "local", "owner", "repo");
     const firstGate = f.call(f.first, ["git", "rev-parse", "HEAD"]);
     assert.equal(firstGate.status, 0, firstGate.stderr);
     assert.equal(firstGate.stdout.trim(), f.first);
-    for (const [branch, expected] of [[defaultBranch, f.second], ["main", f.second], ["develop", f.first]]) {
+    for (const [branch, expected] of [[defaultBranch, f.second], ["main", f.second], ["develop", f.first], ["fix/requested", f.first]]) {
       assert.equal(f.git(["-C", checkout, "rev-parse", `refs/remotes/origin/${branch}`], f.root), expected);
     }
+    const unrelated = run("git", ["-C", checkout, "show-ref", "--verify", "--quiet", "refs/remotes/origin/fix/unrelated"]);
+    assert.equal(unrelated.status, 1);
 
     writeFileSync(join(f.source, "value.txt"), "third\n");
     f.git(["commit", "-qam", "third"]);

@@ -198,15 +198,17 @@ remote_gate() {
   fi
   origin=$(git -C "$checkout" remote get-url origin) || exit $?
   [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
-  remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD refs/heads/main refs/heads/develop) || exit $?
+  remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*') || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()
   while IFS=$'\t' read -r left ref; do
     branch=
     if [[ "$left" == 'ref: refs/heads/'* && "$ref" == HEAD ]]; then
       branch=${left#ref: refs/heads/}
-    elif [[ "$ref" == refs/heads/main || "$ref" == refs/heads/develop ]]; then
-      branch=${ref#refs/heads/}
+    elif [[ "$ref" == refs/heads/* ]]; then
+      if [[ "$ref" == refs/heads/main || "$ref" == refs/heads/develop || "${left,,}" == "${sha,,}" ]]; then
+        branch=${ref#refs/heads/}
+      fi
     fi
     if [ -n "$branch" ] && [ -z "${seen_branches[$branch]:-}" ]; then
       tracking_refspecs+=("+refs/heads/$branch:refs/remotes/origin/$branch")
