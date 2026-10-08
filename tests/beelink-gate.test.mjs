@@ -46,7 +46,7 @@ function fixture() {
   chmodSync(fakeDf, 0o755);
   const env = { ...process.env, HOME: home, BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
-  const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, ...args].map(encode)], { env: { ...env, ...options.env } });
+  const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, first, second, call, git };
 }
 
@@ -56,7 +56,7 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
     const first = f.call(f.first, ["bash", "-c", "cat value.txt; touch generated.txt"]);
     assert.equal(first.status, 0, first.stderr);
     assert.match(first.stdout, /first/);
-    assert.match(first.stderr, new RegExp(`sha=${f.first} command=bash -c`));
+    assert.match(first.stderr, new RegExp(`sha=${f.first} install=install command=bash -c`));
     assert.match(first.stderr, /exit=0 duration=\d+s/);
     const second = f.call(f.second, ["bash", "-c", "cat value.txt; test ! -e generated.txt"]);
     assert.equal(second.status, 0, second.stderr);
@@ -103,7 +103,7 @@ test("a failed command reports its exit code and an unsafe repository path is re
     const result = f.call(f.first, ["bash", "-c", "exit 7"]);
     assert.equal(result.status, 7, result.stderr);
     assert.match(result.stderr, /exit=7 duration=\d+s/);
-    const invalid = run("bash", [gate, "--remote", ...["beelink2", "https://github.com/../repo.git", f.first, "true"].map(encode)], { env: f.env });
+    const invalid = run("bash", [gate, "--remote", ...["beelink2", "https://github.com/../repo.git", f.first, "install", "true"].map(encode)], { env: f.env });
     assert.equal(invalid.status, 2);
     assert.match(invalid.stderr, /unsafe repository path/);
     const wrongSha = run("bash", [gate, "beelink2", f.url, "abc", "--", "true"], { env: f.env });
@@ -115,7 +115,7 @@ test("concurrent gates for one repo serialize the entire command", async () => {
   const f = fixture();
   const events = join(f.root, "events");
   const launch = (id) => new Promise((resolveDone) => {
-    const args = ["beelink2", f.url, f.first, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
+    const args = ["beelink2", f.url, f.first, "install", "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -144,6 +144,11 @@ exec bash -s -- "$@"
     assert.equal(result.stdout, "hello world");
     assert.equal(readFileSync(join(f.root, "ssh-transport"), "utf8").trim(), "100.127.22.51 wsl.exe -- bash");
     assert.match(result.stderr, /receipt: sha=/);
+    const docs = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "cat", "value.txt"], { env: f.env });
+    assert.equal(docs.status, 0, docs.stderr);
+    assert.equal(docs.stdout, "first\n");
+    assert.match(docs.stderr, /install=no-install/);
+    assert.equal(readFileSync(f.npmLog, "utf8").trim().split("\n").length, 1);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -158,6 +163,24 @@ test("pnpm lockfile selects frozen install with one shared store", () => {
     const result = f.call(sha, ["true"]);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(f.pnpmLog, "utf8").trim(), `install --frozen-lockfile --store-dir ${f.home}/.local/share/pnpm/store`);
+    const docs = f.call(sha, ["true"], { noInstall: true });
+    assert.equal(docs.status, 0, docs.stderr);
+    assert.match(docs.stderr, /install=no-install/);
+    assert.equal(readFileSync(f.pnpmLog, "utf8").trim().split("\n").length, 1);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("docs-only gate verifies the requested SHA without installing dependencies", () => {
+  const f = fixture();
+  try {
+    const result = f.call(f.first, ["bash", "-c", "test -f package-lock.json && cat value.txt"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "first\n");
+    assert.match(result.stderr, /install=no-install/);
+    assert.equal(readdirSync(f.root).includes("npm.log"), false);
+    const invalid = run("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "unknown", "true"].map(encode)], { env: f.env });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /unknown install mode/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

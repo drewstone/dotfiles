@@ -112,14 +112,18 @@ From GTR, run a full-SHA gate on a beelink without creating a lane worktree ther
 
 ```bash
 beelink-gate beelink2 git@github.com:owner/repo.git <full-sha> -- bash -c 'pnpm typecheck && pnpm test'
+beelink-gate --no-install beelink2 git@github.com:owner/repo.git <full-sha> -- node scripts/check-processes.mjs
 ```
 
 The command streams output and a receipt with the SHA, command, exit code, and duration.
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen
-pnpm or npm install against that user's shared package store. Different repos
-can gate in parallel; gates for the same repo wait. The cache is independent of main
+pnpm or npm install against that user's shared package store.
+Use `--no-install` only for dependency-free checks, such as docs content or
+structure checks. The gate still fetches and verifies the exact SHA, and its
+receipt records `install=no-install`.
+Different repos can gate in parallel; gates for the same repo wait. The cache is independent of main
 checkouts and lane worktrees. An older partial cache is rebuilt once under its
 repo lock so history checks do not fetch missing blobs one at a time. The gate
 refreshes `origin/` refs for the remote default branch, `main` or `develop`,
