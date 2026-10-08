@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2317 # receipt and finish run through the EXIT trap.
 # Gate one commit in a reusable, locked checkout on a beelink.
-# Usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]
+# Usage: beelink-gate [--no-install] <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]
 set -uo pipefail
 
 die() { echo "beelink-gate: $*" >&2; exit 2; }
@@ -105,14 +105,16 @@ PY
 }
 
 remote_gate() {
-  [ "$#" -ge 4 ] || die "invalid remote request"
-  local beelink repo_url sha key host owner repo cache_root checkout origin actual cache_max
+  [ "$#" -ge 5 ] || die "invalid remote request"
+  local beelink repo_url sha install_mode key host owner repo cache_root checkout origin actual cache_max
   local remote_refs left ref branch
   local -a command=()
   beelink=$(decode "$1") || die "invalid beelink encoding"
   repo_url=$(decode "$2") || die "invalid repository encoding"
   sha=$(decode "$3") || die "invalid SHA encoding"
-  shift 3
+  install_mode=$(decode "$4") || die "invalid install mode encoding"
+  case "$install_mode" in install|no-install) ;; *) die "unknown install mode: $install_mode" ;; esac
+  shift 4
   while [ "$#" -gt 0 ]; do
     command+=("$(decode "$1")") || die "invalid command encoding"
     shift
@@ -158,8 +160,8 @@ remote_gate() {
   printf -v display '%q ' "${command[@]}"
   receipt() {
     local status="$1"
-    printf 'beelink-gate receipt: sha=%s command=%s exit=%s duration=%ss\n' \
-      "$sha" "${display% }" "$status" "$((SECONDS - started))" >&2
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss\n' \
+      "$sha" "$install_mode" "${display% }" "$status" "$((SECONDS - started))" >&2
   }
   finish() {
     local status=$?
@@ -224,7 +226,9 @@ remote_gate() {
   check_floor "$beelink" || exit $?
 
   cd "$checkout" || exit $?
-  if [ -f pnpm-lock.yaml ]; then
+  if [ "$install_mode" = no-install ]; then
+    echo "beelink-gate: skipping dependency install for this check" >&2
+  elif [ -f pnpm-lock.yaml ]; then
     command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
     pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
   elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
@@ -248,8 +252,13 @@ if [ "${1:-}" = --remote ]; then
   remote_gate "$@"
 fi
 
+install_mode=install
+if [ "${1:-}" = --no-install ]; then
+  install_mode=no-install
+  shift
+fi
 if [ "$#" -lt 5 ] || [ "$4" != -- ]; then
-  die "usage: beelink-gate <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]"
+  die "usage: beelink-gate [--no-install] <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]"
 fi
 case "$1" in
   beelink1|100.98.195.7) beelink_ip=100.98.195.7; beelink=beelink1 ;;
@@ -260,7 +269,7 @@ shift
 repo_url="$1"; sha="$2"; shift 3
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
 encoded=()
-for arg in "$beelink" "$repo_url" "$sha" "$@"; do
+for arg in "$beelink" "$repo_url" "$sha" "$install_mode" "$@"; do
   encoded+=("$(printf '%s' "$arg" | base64 -w0)")
 done
 ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- bash -s -- --remote "${encoded[@]}" < "$0"
