@@ -1,6 +1,6 @@
 ---
 name: agent-ask
-description: Delegate work to a production Tangle agent app (gtm, tax, legal, insurance, creative, hospitality, builder) through its standard operator API with agent-ask, follow the turn, and gate the result before showing Drew.
+description: Delegate work to a production Tangle agent app (gtm, tax, legal, insurance, creative, hospitality, builder, physim) through its standard operator API with agent-ask, follow the turn, and gate the result before showing Drew.
 ---
 
 # Agent ask

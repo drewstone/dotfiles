@@ -20,6 +20,7 @@ const APPS = {
   creative: { name: 'Creative Agent', origin: 'https://creative.tangle.tools' },
   hospitality: { name: 'Hospitality Agent', origin: 'https://hospitality.tangle.tools' },
   builder: { name: 'Agent Builder', origin: 'https://agents.tangle.tools' },
+  physim: { name: 'Physim', origin: 'https://hardware.tangle.tools' },
 }
 const BASE_PATH = '/api/operator/v1'
 const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
