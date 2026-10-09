@@ -21,7 +21,8 @@ function sandbox() {
   const gh = join(bin, "gh");
   writeFileSync(gh, `#!/usr/bin/env bash
 case "$*" in
-  "api user --jq .login") echo drewstone ;;
+  "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
+  "api user --jq .login") echo '{"message":"API rate limit exceeded"}'; exit 1 ;;
   "api rate_limit --jq .resources.core.remaining") echo "\${FAKE_CORE:-4000}" ;;
   "api rate_limit --jq .resources.core.reset") echo 1790332087 ;;
   *) echo "gh ran" ;;
@@ -136,7 +137,8 @@ function mergeSandbox(description) {
   const argsFile = join(s.root, "merge-args");
   writeFileSync(join(s.root, "bin", "gh"), `#!/usr/bin/env bash
 case "$*" in
-  "api user --jq .login") echo drewstone ;;
+  "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
+  "api user --jq .login") echo '{"message":"API rate limit exceeded"}'; exit 1 ;;
   "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
   "pr view"*"--json title --jq .title") echo "fix(x): one change" ;;
   "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;

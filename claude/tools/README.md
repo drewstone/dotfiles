@@ -22,6 +22,17 @@ epoch  outcome  caller  session  directory  command shape
 
 The fleet invariant "GitHub core quota" in tangle-tools reads these files to name the top callers.
 
+## gh-read
+
+Run a read-only `gh` call as the `tangletools` machine account (`TANGLETOOLS_GH_TOKEN`), which has its own 5,000-call core quota.
+Automated fleet reads use it so they never spend drewstone's quota, which merges, PR writes and deploy dispatches need.
+
+- It accepts `gh api` GETs, GraphQL queries without a mutation, `search`, and `list`, `view`, `status`, `checks` and `diff` of `pr`, `issue`, `run`, `release`, `workflow`, `repo`, `label`, `cache` and `ruleset`.
+  Everything else exits 3 before `gh` runs; use `gh-drew` for it.
+- It runs through `gh-drew`, so the identity check and log format are the same.
+  Calls are logged to `~/.local/state/gh-read/` (`GH_READ_LOG_DIR`), apart from Drew's.
+- Reads stop under 500 core calls left (`GH_READ_MIN_CORE`), so the auto-approver keeps its share of the same quota.
+
 ## gtm-ask
 
 Hand an outcome-level ask to the production GTM agent (gtm.tangle.tools) and read back its result.
