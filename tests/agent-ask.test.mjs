@@ -155,6 +155,19 @@ test('exits 4 with the approvals a turn waits on, and 3 when the wait ends first
   }
 })
 
+test('uses the Tangle agent key when the app has no key of its own', async () => {
+  const api = await startApi({ turn: (_reads, turnId) => baseTurn({ turnId, state: 'succeeded', reply: { content: 'ok', mediaType: 'text/markdown' } }) })
+  try {
+    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', 'Go'], { env: { TAX_OPERATOR_API_KEY: '', TANGLE_AGENT_KEY: KEY } })
+    assert.equal(result.code, 0, result.stderr)
+  } finally {
+    await api.close()
+  }
+  const missing = await run(null, ['--app', 'tax', '--workspace', 'ws1', 'Go'], { env: { TAX_OPERATOR_API_KEY: '' } })
+  assert.equal(missing.code, 2)
+  assert.match(missing.stderr, /set TAX_OPERATOR_API_KEY .* or TANGLE_AGENT_KEY/)
+})
+
 test('a failed turn exits 1 and prints its failure', async () => {
   const api = await startApi({ turn: (_reads, turnId) => baseTurn({ turnId, state: 'failed', failure: { code: 'sandbox_unavailable', message: 'The sandbox did not start' } }) })
   try {

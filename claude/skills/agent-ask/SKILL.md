@@ -49,7 +49,9 @@ Show Drew only work that passed, with the conversation link and the gate evidenc
 
 ## Keys
 
-Each app has its own key: `<APP>_OPERATOR_API_KEY`, or that slot in `~/company/devops/secrets/agent-state.env`, from the app's API access page with `operator:read` and `operator:run`.
+Each app accepts its own key, `<APP>_OPERATOR_API_KEY`, from its API access page with `operator:read` and `operator:run`.
+One Tangle agent key, `TANGLE_AGENT_KEY`, works in every app its owner approved on id.tangle.tools; `agent-ask` uses it when the app has no key of its own.
+Either can live in the environment or in `~/company/devops/secrets/agent-state.env`.
 Never paste a key into a prompt, message, file, or command line.
 
 ## Log the run
