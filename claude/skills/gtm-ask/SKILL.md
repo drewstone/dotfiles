@@ -9,6 +9,7 @@ Tangle's production GTM agent at gtm.tangle.tools does GTM work; this session is
 Producing the brand values, files, copy, screenshots or critique fixes yourself hides whether the product works.
 Your job is the ask, the verdict, and the capability the agent was missing.
 
+`agent-ask --app gtm` drives the same workspaces through the standard operator API and other agent apps the same way (`agent-ask` skill).
 `gtm-ask --help` owns the commands, options and exit codes; [the operator loop](https://github.com/tangle-network/gtm-agent/blob/master/docs/operator-loop.md) says where approvals and Drew's other channels show up.
 
 ## 1. Write the outcome-level ask
