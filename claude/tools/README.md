@@ -22,6 +22,25 @@ epoch  outcome  caller  session  directory  command shape
 
 The fleet invariant "GitHub core quota" in tangle-tools reads these files to name the top callers.
 
+## agent-ask
+
+Hand an outcome-level ask to any Tangle agent app through the standard operator API every app mounts at `/api/operator/v1`.
+The `agent-ask` skill says how a session phrases the ask and gates what comes back.
+
+```bash
+agent-ask --app gtm "<ask>"                                  # GTM; Drew's workspace by default
+agent-ask --app tax --workspace <id> "<ask>"                 # any app: gtm, tax, legal, insurance, creative, hospitality, builder
+agent-ask --app tax status <thread> --wait 30m               # follow a running turn
+agent-ask --app tax file <path>                              # read a file the agent wrote
+agent-ask --app tax approvals | scorecard | journal | workspaces
+agent-ask apps                                               # known apps and origins
+```
+
+It starts the turn with a client-generated turn id, so a retried start never runs twice, then holds `?wait=25` turn reads until the turn settles, waits on a decision, or `--wait` ends.
+Exit codes match `gtm-ask`: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on a decision.
+The key is that app's operator key from `<APP>_OPERATOR_API_KEY` or that slot in `~/company/devops/secrets/agent-state.env`; the origin defaults to the app's production host and is overridden by `--origin` or `<APP>_BASE_URL` (HTTPS, or loopback HTTP).
+An app that has not mounted the operator API answers that it does not serve it yet.
+
 ## gtm-ask
 
 Hand an outcome-level ask to the production GTM agent (gtm.tangle.tools) and read back its result.

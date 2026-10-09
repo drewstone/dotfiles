@@ -1,0 +1,424 @@
+#!/usr/bin/env node
+// agent-ask: hand an outcome-level ask to any Tangle agent app and read back its result.
+//
+// It speaks the standard operator API every agent app mounts at /api/operator/v1
+// (agent-app docs/operator-api.md) with that app's scoped operator key. A turn
+// outlives its request, so the result comes from held turn reads (`?wait=25`), never
+// from an open stream. Every request spends the key's allowance, held reads included.
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+
+// Production origins and defaults; --origin or <APP>_BASE_URL overrides the origin.
+const APPS = {
+  gtm: { name: 'GTM Agent', origin: 'https://gtm.tangle.tools', workspace: 'b81b721c078853fdd78687ee622a1e69', model: 'gpt-6-luna' },
+  tax: { name: 'Tax Agent', origin: 'https://taxes.tangle.tools' },
+  legal: { name: 'Legal Agent', origin: 'https://legal.tangle.tools' },
+  insurance: { name: 'Insurance Agent', origin: 'https://insurance.tangle.tools' },
+  creative: { name: 'Creative Agent', origin: 'https://creative.tangle.tools' },
+  hospitality: { name: 'Hospitality Agent', origin: 'https://hospitality.tangle.tools' },
+  builder: { name: 'Agent Builder', origin: 'https://agents.tangle.tools' },
+}
+const BASE_PATH = '/api/operator/v1'
+const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
+const HOLD_SECONDS = Number(process.env.AGENT_ASK_HOLD_SECONDS ?? 25)
+const RETRY_MS = Number(process.env.AGENT_ASK_RETRY_MS ?? 5_000)
+
+const USAGE = `usage:
+  agent-ask --app <app> [options] "<outcome-level ask>"   start a turn and follow it to completion
+  agent-ask --app <app> [options] -                       read the ask from stdin
+  agent-ask --app <app> status <thread> [options]         show the thread's latest turn (--wait follows it)
+  agent-ask --app <app> file <path>                       print a workspace file
+  agent-ask --app <app> journal [--days <n>]              list dated journal files
+  agent-ask --app <app> approvals                         list decisions waiting in the workspace
+  agent-ask --app <app> scorecard [--days <n>]            print the workspace scorecard
+  agent-ask --app <app> workspaces                        list workspaces the key reaches
+  agent-ask apps                                          list known apps and their origins
+
+apps: ${Object.keys(APPS).join(', ')} (default $AGENT_ASK_APP, else gtm)
+
+options:
+  --workspace <id>   workspace (default $<APP>_WORKSPACE_ID, the app default, or the key's only workspace)
+  --thread <id>      continue this conversation instead of starting a new one
+  --title <text>     title for a new conversation (default: the ask's first line)
+  --model <id>       model for the turn (default: gtm uses gpt-6-luna, other apps their workspace default)
+  --wait <duration>  how long to follow the turn, e.g. 90s, 30m, 1h (default 30m; status 0);
+                     0 returns once the turn is admitted
+  --days <n>         window for journal and scorecard (default 7)
+  --origin <url>     the app's origin (default $<APP>_BASE_URL, else the production origin)
+  --download <dir>   save the asset files the reply references into <dir>
+  --json             print one JSON object instead of text
+  --quiet            no progress or thread line on stderr
+
+exit: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question
+key: $<APP>_OPERATOR_API_KEY, else that name in the dotenvx vault ~/company/devops/secrets/agent-state.env
+     ($AGENT_ASK_SECRETS_FILE and $AGENT_ASK_KEYS_FILE override the vault and its key file).
+     The key needs operator:read and operator:run; workspace creation also needs operator:write.`
+
+class UsageError extends Error {}
+
+class ApiError extends Error {
+  constructor(method, path, status, code, message) {
+    super(`${method} ${path} answered ${status}${code ? ` ${code}` : ''}: ${message}`)
+    this.status = status
+    this.code = code
+  }
+}
+
+function parseDuration(value) {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)?$/.exec(String(value).trim())
+  if (!match) throw new UsageError(`--wait takes a duration such as 90s, 30m or 1h, not "${value}"`)
+  const unit = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2] ?? 's']
+  return Math.round(Number(match[1]) * unit)
+}
+
+const COMMANDS = new Set(['status', 'file', 'journal', 'approvals', 'scorecard', 'workspaces', 'apps'])
+
+function parseArgs(argv) {
+  const options = { json: false, quiet: false }
+  const positional = []
+  const takesValue = new Set(['--app', '--workspace', '--thread', '--title', '--model', '--wait', '--download', '--days', '--origin'])
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]
+    if (arg === '-h' || arg === '--help') return { help: true }
+    if (arg === '--json') { options.json = true; continue }
+    if (arg === '--quiet') { options.quiet = true; continue }
+    if (arg === '--') { positional.push(...argv.slice(index + 1)); break }
+    const [flag, inline] = arg.startsWith('--') ? arg.split(/=(.*)/s, 2) : [arg]
+    if (takesValue.has(flag)) {
+      const value = inline ?? argv[++index]
+      if (value === undefined || value === '') throw new UsageError(`${flag} needs a value`)
+      options[flag.slice(2)] = value
+      continue
+    }
+    if (arg.startsWith('--')) throw new UsageError(`unknown option ${arg}`)
+    positional.push(arg)
+  }
+  let command = 'ask'
+  if (COMMANDS.has(positional[0])) command = positional.shift()
+  if (command === 'status') {
+    if (positional.length !== 1) throw new UsageError('status takes exactly one thread id')
+    options.thread = positional[0]
+  } else if (command === 'file') {
+    if (positional.length !== 1) throw new UsageError('file takes exactly one workspace path')
+    options.path = positional[0]
+  } else if (command === 'ask') {
+    if (positional.length === 0) throw new UsageError('give the ask as an argument, or - to read stdin')
+    options.ask = positional.join(' ')
+  } else if (positional.length) {
+    throw new UsageError(`${command} takes no arguments`)
+  }
+  options.app = (options.app ?? process.env.AGENT_ASK_APP ?? 'gtm').toLowerCase()
+  if (command !== 'apps' && !APPS[options.app]) throw new UsageError(`unknown app "${options.app}"; known apps: ${Object.keys(APPS).join(', ')}`)
+  options.waitMs = parseDuration(options.wait ?? (command === 'status' ? '0' : '30m'))
+  if (options.days !== undefined && !/^\d{1,2}$/.test(options.days)) throw new UsageError('--days takes a whole number from 1 to 90')
+  return { command, options }
+}
+
+const envName = (app, suffix) => `${app.toUpperCase()}_${suffix}`
+
+function readKey(app) {
+  const name = envName(app, 'OPERATOR_API_KEY')
+  const fromEnv = process.env[name]?.trim()
+  if (fromEnv) return fromEnv
+  const secrets = process.env.AGENT_ASK_SECRETS_FILE ?? join(homedir(), 'company/devops/secrets/agent-state.env')
+  const keys = process.env.AGENT_ASK_KEYS_FILE ?? join(dirname(secrets), '.env.keys')
+  const store = `\`dotenvx set ${name} <key> -f ${secrets}\` with a key from ${APPS[app].name}'s API access page (operator:read and operator:run)`
+  if (!existsSync(secrets)) throw new UsageError(`no ${app} operator key: set ${name}, or store one with ${store}`)
+  const args = ['get', name, '-f', secrets, '--overload']
+  if (existsSync(keys)) args.push('-fk', keys)
+  let value = ''
+  try {
+    value = execFileSync('dotenvx', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new UsageError(`no ${app} operator key: set ${name}, or install dotenvx to read ${secrets}`)
+  }
+  if (value && !/\s/.test(value)) return value
+  throw new UsageError(`no ${app} operator key: ${name} is not readable in ${secrets}. ` +
+    `If tangle-devops main has it, bring that checkout to main; otherwise set ${name} or store one with ${store}`)
+}
+
+/** The credential goes only to HTTPS, or plain HTTP on this machine for local testing. */
+function resolveOrigin(app, override) {
+  const raw = override ?? process.env[envName(app, 'BASE_URL')] ?? APPS[app].origin
+  let url
+  try { url = new URL(raw) } catch { throw new UsageError(`invalid origin ${raw}`) }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
+    throw new UsageError(`refusing to send a key to ${url.origin}: use https`)
+  }
+  return url.origin
+}
+
+function createClient({ origin, key, app }) {
+  async function request(method, path, { body, signal, raw = false } = {}) {
+    const init = { method, signal, redirect: 'manual', headers: { authorization: `Bearer ${key}`, accept: 'application/json', 'user-agent': 'agent-ask' } }
+    if (body !== undefined) {
+      init.headers['content-type'] = 'application/json'
+      init.body = JSON.stringify(body)
+    }
+    const shown = `${BASE_PATH}${path.split('?')[0]}`
+    let response
+    try {
+      response = await fetch(origin + BASE_PATH + path, init)
+    } catch (error) {
+      throw new ApiError(method, shown, 0, 'transport_failed', String(error?.cause?.code ?? error?.message ?? error).replaceAll(key, '<key>'))
+    }
+    if (response.status >= 300 && response.status < 400) throw new ApiError(method, shown, response.status, 'redirect', 'redirects are refused')
+    if (!response.ok) {
+      const text = (await response.text().catch(() => '')).replaceAll(key, '<key>')
+      let parsed = null
+      try { parsed = JSON.parse(text) } catch { /* not JSON */ }
+      if (response.status === 404 && !parsed?.code) {
+        throw new ApiError(method, shown, 404, 'not_served', `${APPS[app].name} at ${origin} does not serve the operator API yet`)
+      }
+      throw new ApiError(method, shown, response.status, parsed?.code ?? null, (parsed?.error ?? text).slice(0, 400))
+    }
+    return raw ? response : response.json()
+  }
+  return { request }
+}
+
+const query = (params) => {
+  const search = new URLSearchParams()
+  for (const [name, value] of Object.entries(params)) if (value !== undefined && value !== null && value !== '') search.set(name, String(value))
+  const text = search.toString()
+  return text ? `?${text}` : ''
+}
+const segment = encodeURIComponent
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const SETTLED = new Set(['succeeded', 'failed', 'input-required'])
+
+/** Hold turn reads until the turn settles, waits on a decision, or the budget ends. */
+async function follow(ctx, turn) {
+  const { client, workspaceId, deadline, progress } = ctx
+  let current = turn
+  let lastState = turn.state
+  while (!SETTLED.has(current.state) && current.approvals.length === 0) {
+    const remaining = Math.floor((deadline - Date.now()) / 1000)
+    if (remaining <= 0) break
+    const started = Date.now()
+    try {
+      const read = await client.request('GET',
+        `/workspaces/${segment(workspaceId)}/threads/${segment(current.threadId)}/turns/${segment(current.turnId)}${query({ wait: Math.min(HOLD_SECONDS, remaining) })}`)
+      current = read.turn
+    } catch (error) {
+      if (!(error instanceof ApiError) || (error.status !== 0 && error.status !== 429 && error.status < 500)) throw error
+      await sleep(Math.min(RETRY_MS, Math.max(0, deadline - Date.now())))
+      continue
+    }
+    if (current.state !== lastState) { lastState = current.state; progress(`  ${current.state}`) }
+    // A server that answers at once still gets a bounded request rate.
+    if (Date.now() - started < 1_000) await sleep(Math.min(2_000, Math.max(0, deadline - Date.now())))
+  }
+  return current
+}
+
+const EXTENSIONS = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif', 'image/svg+xml': '.svg', 'video/mp4': '.mp4', 'audio/mpeg': '.mp3', 'application/pdf': '.pdf' }
+
+async function download(client, assets, directory) {
+  mkdirSync(directory, { recursive: true })
+  for (const asset of assets) {
+    const path = asset.path.startsWith(BASE_PATH) ? asset.path.slice(BASE_PATH.length) : asset.path
+    try {
+      const response = await client.request('GET', path, { raw: true })
+      const type = (response.headers.get('content-type') ?? '').split(';')[0].trim()
+      asset.file = join(directory, asset.id + (EXTENSIONS[type] ?? '.bin'))
+      writeFileSync(asset.file, Buffer.from(await response.arrayBuffer()))
+    } catch (error) {
+      asset.error = error.message
+    }
+  }
+}
+
+function statusOf(turn) {
+  if (turn.state === 'succeeded') return turn.approvals.length ? 'waiting' : 'completed'
+  if (turn.state === 'failed') return 'failed'
+  if (turn.state === 'input-required' || turn.approvals.length) return 'waiting'
+  if (turn.state === 'unknown') return 'unknown'
+  return 'running'
+}
+
+function exitFor(status) {
+  return { completed: EXIT.ok, failed: EXIT.failed, unknown: EXIT.failed, waiting: EXIT.waiting, running: EXIT.running, admitted: EXIT.running }[status] ?? EXIT.failed
+}
+
+function render(result) {
+  const lines = []
+  lines.push(`thread   ${result.threadId}  ${result.url ?? ''}`.trimEnd())
+  const detail = [result.model && `model ${result.model}`, result.costUsd != null && `$${Number(result.costUsd).toFixed(2)}`].filter(Boolean).join(', ')
+  lines.push(`status   ${result.status}${detail ? ` (${detail})` : ''}`)
+  if (result.failure) lines.push(`failure  ${result.failure.code ?? ''} ${result.failure.message}`.trimEnd())
+  if (result.reply) lines.push('', result.reply)
+  if (result.assets.length) {
+    lines.push('', 'assets')
+    for (const asset of result.assets) lines.push(`  ${asset.file ?? result.origin + asset.path}${asset.error ? `  (download failed: ${asset.error})` : ''}`)
+  }
+  if (result.files.length) {
+    lines.push('', 'files')
+    for (const file of result.files) lines.push(`  ${file.action.padEnd(9)}${file.path}`)
+  }
+  if (result.approvals.length) {
+    lines.push('', 'approvals')
+    for (const item of result.approvals) {
+      lines.push(`  ${item.kind.padEnd(10)}${item.title}  (${item.decidedBy} decides${item.url ? ` at ${item.url}` : ''})`)
+      if (item.detail) lines.push(`            ${item.detail.split('\n')[0].slice(0, 200)}`)
+    }
+  }
+  if (result.next) lines.push('', result.next)
+  return lines.join('\n') + '\n'
+}
+
+async function finish(ctx, turn, { admitted = false } = {}) {
+  const { client, options, origin, app, workspaceId } = ctx
+  const status = admitted ? 'admitted' : statusOf(turn)
+  if (options.download && turn.assets.length) await download(client, turn.assets, options.download)
+  const flags = `${app === 'gtm' ? '' : ` --app ${app}`}${workspaceId === ctx.defaultWorkspace ? '' : ` --workspace ${workspaceId}`}`
+  const next = status === 'running' || status === 'admitted'
+    ? `follow with: agent-ask${flags} status ${turn.threadId} --wait 30m`
+    : status === 'unknown' ? 'the app cannot establish this turn\'s state; open the conversation to inspect it' : null
+  const result = {
+    app, origin, workspaceId, threadId: turn.threadId, turnId: turn.turnId, executionId: turn.executionId ?? null,
+    url: turn.url ?? null, status, state: turn.state, model: turn.model ?? null, costUsd: turn.costUsd ?? null,
+    reply: turn.reply?.content?.trim() ?? '', failure: turn.failure ?? null,
+    assets: turn.assets ?? [], files: turn.files ?? [], approvals: turn.approvals ?? [], next,
+  }
+  process.stdout.write(options.json ? JSON.stringify(result, null, 2) + '\n' : render(result))
+  return exitFor(status)
+}
+
+async function resolveWorkspace(client, app, options) {
+  const configured = options.workspace ?? process.env[envName(app, 'WORKSPACE_ID')] ?? APPS[app].workspace
+  if (configured) return configured
+  const described = await client.request('GET', '')
+  if (described.principal?.workspaces?.length === 1) return described.principal.workspaces[0]
+  const { workspaces } = await client.request('GET', '/workspaces')
+  if (workspaces.length === 1) return workspaces[0].id
+  const listing = workspaces.map((workspace) => `  ${workspace.id}  ${workspace.name}`).join('\n')
+  throw new UsageError(`choose a workspace with --workspace or ${envName(app, 'WORKSPACE_ID')}:\n${listing || '  (the key reaches none)'}`)
+}
+
+async function readStdin() {
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+function printJson(value) {
+  process.stdout.write(JSON.stringify(value, null, 2) + '\n')
+}
+
+async function main(argv) {
+  const parsed = parseArgs(argv)
+  if (parsed.help) { process.stdout.write(USAGE + '\n'); return EXIT.ok }
+  const { command, options } = parsed
+  if (command === 'apps') {
+    for (const [id, app] of Object.entries(APPS)) process.stdout.write(`${id.padEnd(12)}${app.origin}  ${app.name}\n`)
+    return EXIT.ok
+  }
+  const app = options.app
+  const origin = resolveOrigin(app, options.origin)
+  const client = createClient({ origin, key: readKey(app), app })
+  const progress = (line) => { if (!options.quiet && (process.stderr.isTTY || process.env.AGENT_ASK_PROGRESS === '1')) process.stderr.write(`${line}\n`) }
+  const announce = (turn) => { if (!options.quiet) process.stderr.write(`agent-ask: ${app} thread ${turn.threadId} ${turn.url ?? ''}\n`) }
+
+  if (command === 'workspaces') {
+    const { workspaces } = await client.request('GET', '/workspaces')
+    if (options.json) printJson(workspaces)
+    else for (const workspace of workspaces) process.stdout.write(`${workspace.id}  ${workspace.name}${workspace.role ? `  (${workspace.role})` : ''}\n`)
+    return EXIT.ok
+  }
+
+  const workspaceId = await resolveWorkspace(client, app, options)
+  const ws = `/workspaces/${segment(workspaceId)}`
+  const ctx = {
+    client, options, origin, app, workspaceId, progress,
+    defaultWorkspace: process.env[envName(app, 'WORKSPACE_ID')] ?? APPS[app].workspace ?? null,
+    deadline: Date.now() + options.waitMs,
+  }
+
+  if (command === 'file') {
+    const { file } = await client.request('GET', `${ws}/file${query({ path: options.path })}`)
+    if (options.json) printJson(file)
+    else process.stdout.write(file.content.endsWith('\n') ? file.content : file.content + '\n')
+    return EXIT.ok
+  }
+  if (command === 'journal') {
+    const { entries } = await client.request('GET', `${ws}/journal${query({ days: options.days })}`)
+    if (options.json) printJson(entries)
+    else for (const entry of entries) process.stdout.write(`${entry.date}  ${entry.path}\n`)
+    return EXIT.ok
+  }
+  if (command === 'approvals') {
+    const { approvals } = await client.request('GET', `${ws}/approvals`)
+    if (options.json) printJson(approvals)
+    else for (const item of approvals) process.stdout.write(`${item.kind.padEnd(10)}${item.title}  (${item.decidedBy} decides${item.url ? ` at ${item.url}` : ''})\n`)
+    return approvals.length ? EXIT.waiting : EXIT.ok
+  }
+  if (command === 'scorecard') {
+    const { scorecard } = await client.request('GET', `${ws}/scorecard${query({ days: options.days })}`)
+    if (options.json) { printJson(scorecard); return EXIT.ok }
+    process.stdout.write(`${scorecard.window.start.slice(0, 10)} to ${scorecard.window.end.slice(0, 10)}\n`)
+    for (const [heading, metrics] of [['work', scorecard.metrics], ['outcomes', scorecard.outcomes]]) {
+      process.stdout.write(`\n${heading}\n`)
+      for (const metric of metrics) {
+        const value = metric.value === null ? '—' : metric.unit === 'usd' ? `$${metric.value.toFixed(2)}` : metric.unit === 'ratio' ? `${(metric.value * 100).toFixed(1)}%` : String(metric.value)
+        process.stdout.write(`  ${metric.label.padEnd(36)}${value}${metric.note ? `  (${metric.note})` : ''}\n`)
+      }
+    }
+    process.stdout.write(`\n${scorecard.measurement}\n`)
+    return EXIT.ok
+  }
+
+  if (command === 'status') {
+    const { latestTurn } = await client.request('GET', `${ws}/threads/${segment(options.thread)}`)
+    if (!latestTurn) throw new UsageError(`thread ${options.thread} has no turn yet`)
+    if (options.waitMs > 0 && !SETTLED.has(latestTurn.state)) announce(latestTurn)
+    return finish(ctx, options.waitMs > 0 ? await follow(ctx, latestTurn) : latestTurn)
+  }
+
+  const ask = options.ask === '-' ? (await readStdin()).trim() : options.ask.trim()
+  if (!ask) throw new UsageError('the ask is empty')
+  if (options.thread) {
+    const { latestTurn } = await client.request('GET', `${ws}/threads/${segment(options.thread)}`)
+    if (latestTurn && !SETTLED.has(latestTurn.state) && latestTurn.state !== 'unknown') {
+      process.stderr.write(`agent-ask: thread ${options.thread} already has a running turn; follow it with \`agent-ask${app === 'gtm' ? '' : ` --app ${app}`} status ${options.thread} --wait 30m\` before sending another\n`)
+      return EXIT.running
+    }
+  }
+  const model = options.model ?? process.env.AGENT_ASK_MODEL ?? APPS[app].model
+  const body = {
+    turnId: randomUUID(), content: ask,
+    ...(options.thread ? { threadId: options.thread } : { title: (options.title ?? ask.split('\n')[0]).slice(0, 80) }),
+    ...(model ? { model } : {}),
+  }
+  // A lost response is retried with the same turn id, which never starts a second turn.
+  let started
+  for (let attempt = 0; ; attempt++) {
+    try {
+      started = (await client.request('POST', `${ws}/turns`, { body })).turn
+      break
+    } catch (error) {
+      if (attempt >= 2 || !(error instanceof ApiError) || (error.status !== 0 && error.status < 500)) throw error
+      await sleep(RETRY_MS)
+    }
+  }
+  announce(started)
+  if (options.waitMs === 0) return finish(ctx, started, { admitted: !SETTLED.has(started.state) })
+  return finish(ctx, await follow(ctx, started))
+}
+
+main(process.argv.slice(2)).then(
+  (code) => { process.exitCode = code },
+  (error) => {
+    if (error instanceof UsageError) {
+      process.stderr.write(`agent-ask: ${error.message}\n\n${USAGE}\n`)
+      process.exitCode = EXIT.usage
+    } else {
+      process.stderr.write(`agent-ask: ${error.message}\n`)
+      process.exitCode = EXIT.failed
+    }
+  },
+)
