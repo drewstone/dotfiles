@@ -29,7 +29,7 @@ agent-ask --app <app> status <thread> --wait 9m             # resume following a
 
 Turns run for minutes; follow them in slices that fit the tool timeout with `--wait 9m`, then `status --wait 9m` while it exits 3.
 Use an isolated test workspace for product proofs; a customer or Drew workspace holds production state.
-An app that answers `does not serve the operator API yet` has not mounted `/api/operator/v1`; adopting it is that app's engineering task.
+An app that answers `does not serve the operator API yet` has not mounted `/api/operator/v1`; operate it through its own interface. GTM never needs another app to mount it: GTM markets products from their public inputs only.
 Done when the turn exits 0, 1, or 4.
 
 - Exit 1 is a product or platform defect: diagnose it as the builder and fix the capability.
