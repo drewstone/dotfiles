@@ -49,13 +49,14 @@ test("reads run as tangletools and are logged apart from drewstone's calls", () 
     for (const args of [["api", "repos/o/r/actions/workflows/deploy.yml/runs?per_page=5", "--jq", ".x"],
       ["api", "-X", "GET", "search/issues", "-f", "q=repo:o/r"],
       ["api", "graphql", "-f", "query={ repository(owner:\"o\", name:\"r\") { id } }"],
+      ["api", "-iXget", "-q.x", "repos/o/r/pulls"],
       ["pr", "view", "12", "-R", "o/r"], ["run", "list", "-R", "o/r"], ["search", "prs", "x"]]) {
       const result = run(s, "gh-read", args);
       assert.equal(result.status, 0, result.stderr);
     }
-    assert.equal(ran(s).length, 6);
+    assert.equal(ran(s).length, 7);
     assert.ok(ran(s).every((line) => line.startsWith(`${TOOLS} `)), ran(s).join("\n"));
-    assert.equal(logged(s, "gh-read").length, 6);
+    assert.equal(logged(s, "gh-read").length, 7);
     assert.equal(logged(s, "gh-drew").length, 0);
   } finally {
     rmSync(s.root, { recursive: true, force: true });
@@ -69,6 +70,9 @@ test("anything that could write or hand out the token is refused before gh runs"
       ["api", "repos/o/r/issues", "-f", "title=x"], ["api", "repos/o/r/issues", "--input", "body.json"],
       ["api", "graphql", "-f", "query=mutation { addStar(input:{}) { clientMutationId } }"],
       ["api", "graphql", "-F", "query=@q.graphql"],
+      ["api", "-XPOST", "repos/o/r/issues"], ["api", "-iX", "DELETE", "repos/o/r"], ["api", "-iXput", "repos/o/r"],
+      ["api", "repos/o/r/issues", "-ftitle=x"], ["api", "repos/o/r/issues", "-iF", "title=x"],
+      ["api", "graphql", "-fquery=mutation { x }"],
       ["pr", "merge", "1"], ["pr", "create"], ["workflow", "run", "deploy.yml"], ["run", "rerun", "5"],
       ["auth", "token"], ["secret", "list"]]) {
       const result = run(s, "gh-read", args);

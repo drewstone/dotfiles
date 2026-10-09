@@ -39,7 +39,7 @@ check_read() {
 # is named GET; GraphQL takes fields for every query, so a GraphQL call is read
 # when no field holds a mutation.
 check_api() {
-  local arg method='' endpoint='' expect='' fields=() mutation=0
+  local arg method='' endpoint='' expect='' fields=() mutation=0 i c rest
   for arg in "$@"; do
     if [[ -n "$expect" ]]; then
       case "$expect" in
@@ -50,14 +50,29 @@ check_api() {
       continue
     fi
     case "$arg" in
-      -X|--method) expect=method ;;
-      -X?*) method="${arg#-X}" ;;
+      --method) expect=method ;;
       --method=*) method="${arg#--method=}" ;;
-      -f|--raw-field|-F|--field) expect=field ;;
+      --raw-field|--field) expect=field ;;
       --raw-field=*|--field=*) fields+=("${arg#*=}") ;;
       --input|--input=*) refuse "gh api --input" ;;
-      -H|--header|-q|--jq|-t|--template|-p|--preview|--hostname|--cache) expect=value ;;
-      -*) ;;
+      --header|--jq|--template|--preview|--hostname|--cache) expect=value ;;
+      --*) ;;
+      -?*)
+        # A cluster of short flags, read as gh does: -i takes no value; the first flag that takes one
+        # takes the rest of the cluster, or the next argument (-XPOST, -iX POST, -fbody=x, -q.x).
+        i=1
+        while (( i < ${#arg} )); do
+          c="${arg:i:1}"; rest="${arg:i+1}"
+          case "$c" in
+            i) i=$((i + 1)); continue ;;
+            X) if [[ -n "$rest" ]]; then method="$rest"; else expect=method; fi ;;
+            f|F) if [[ -n "$rest" ]]; then fields+=("$rest"); else expect=field; fi ;;
+            H|q|t|p) [[ -n "$rest" ]] || expect=value ;;
+            *) refuse "gh api flag -$c" ;;
+          esac
+          break
+        done
+        ;;
       *) [[ -z "$endpoint" ]] && endpoint="$arg" ;;
     esac
   done
@@ -73,7 +88,7 @@ check_api() {
     return 0
   fi
   if [[ -n "$method" ]]; then
-    [[ "${method^^}" == GET ]] || refuse "gh api -X $method"
+    [[ "$method" == [Gg][Ee][Tt] ]] || refuse "gh api -X $method"
   elif (( ${#fields[@]} )); then
     refuse "gh api with fields (a POST); name -X GET for query parameters"
   fi
