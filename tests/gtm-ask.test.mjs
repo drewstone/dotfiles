@@ -120,7 +120,7 @@ test('a new ask creates a thread, sends the default model, and prints reply, ass
     const result = await run(api, ['--workspace', 'ws1', 'Draft the launch plan'])
     assert.equal(result.code, 0, result.stderr)
     const chat = api.calls.find((call) => call.path === '/api/chat')
-    assert.equal(chat.body.model, 'gpt-6.1-sol')
+    assert.equal(chat.body.model, 'gpt-6-luna')
     assert.equal(chat.body.workspaceId, 'ws1')
     assert.equal(chat.body.threadId, 'th-1')
     assert.equal(chat.body.content, 'Draft the launch plan')
