@@ -53,7 +53,8 @@ options:
   --quiet            no progress or thread line on stderr
 
 exit: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question
-key: $<APP>_OPERATOR_API_KEY, else that name in the dotenvx vault ~/company/devops/secrets/agent-state.env
+key: $<APP>_OPERATOR_API_KEY (the app's own key), else $TANGLE_AGENT_KEY (one Tangle agent key for every
+     app its owner approved), each from the environment or the dotenvx vault ~/company/devops/secrets/agent-state.env
      ($AGENT_ASK_SECRETS_FILE and $AGENT_ASK_KEYS_FILE override the vault and its key file).
      The key needs operator:read and operator:run; workspace creation also needs operator:write.`
 
@@ -119,25 +120,33 @@ function parseArgs(argv) {
 
 const envName = (app, suffix) => `${app.toUpperCase()}_${suffix}`
 
-function readKey(app) {
-  const name = envName(app, 'OPERATOR_API_KEY')
-  const fromEnv = process.env[name]?.trim()
-  if (fromEnv) return fromEnv
+// One Tangle agent key, approved once on id.tangle.tools, reaches every app its owner approved.
+const AGENT_KEY_NAME = 'TANGLE_AGENT_KEY'
+
+/** A slot from the dotenvx vault, or null when the vault or the slot is absent. */
+function vaultValue(name) {
   const secrets = process.env.AGENT_ASK_SECRETS_FILE ?? join(homedir(), 'company/devops/secrets/agent-state.env')
   const keys = process.env.AGENT_ASK_KEYS_FILE ?? join(dirname(secrets), '.env.keys')
-  const store = `\`dotenvx set ${name} <key> -f ${secrets}\` with a key from ${APPS[app].name}'s API access page (operator:read and operator:run)`
-  if (!existsSync(secrets)) throw new UsageError(`no ${app} operator key: set ${name}, or store one with ${store}`)
+  if (!existsSync(secrets)) return null
   const args = ['get', name, '-f', secrets, '--overload']
   if (existsSync(keys)) args.push('-fk', keys)
-  let value = ''
   try {
-    value = execFileSync('dotenvx', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-  } catch (error) {
-    if (error.code === 'ENOENT') throw new UsageError(`no ${app} operator key: set ${name}, or install dotenvx to read ${secrets}`)
+    const value = execFileSync('dotenvx', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return value && !/\s/.test(value) ? value : null
+  } catch {
+    return null
   }
-  if (value && !/\s/.test(value)) return value
-  throw new UsageError(`no ${app} operator key: ${name} is not readable in ${secrets}. ` +
-    `If tangle-devops main has it, bring that checkout to main; otherwise set ${name} or store one with ${store}`)
+}
+
+/** The app's own operator key first, then the Tangle agent key; environment before the vault. */
+function readKey(app) {
+  const name = envName(app, 'OPERATOR_API_KEY')
+  const value = process.env[name]?.trim() || process.env[AGENT_KEY_NAME]?.trim() || vaultValue(name) || vaultValue(AGENT_KEY_NAME)
+  if (value) return value
+  const secrets = process.env.AGENT_ASK_SECRETS_FILE ?? join(homedir(), 'company/devops/secrets/agent-state.env')
+  throw new UsageError(`no ${app} key: set ${name} with a key from ${APPS[app].name}'s API access page, or ${AGENT_KEY_NAME} with a Tangle agent key ` +
+    `the owner approved for this app; either can also live in the dotenvx vault ${secrets} (dotenvx set <name> <key> -f ${secrets}). ` +
+    'If tangle-devops main has the slot, bring that checkout to main.')
 }
 
 /** The credential goes only to HTTPS, or plain HTTP on this machine for local testing. */
