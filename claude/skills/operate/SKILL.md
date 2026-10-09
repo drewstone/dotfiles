@@ -70,6 +70,7 @@ At the deadline without an accepted result, turn in the best-scoring tag, not th
 
 Read the recorded stop cause before interpreting the outcome.
 Read the goal battery that opens the run's readout (the [Terraform post-mortem](https://gist.github.com/drewstone/f911d5be50cf492093a49c75863f8d8d) questions: goal fulfillment, thesis origin, effort, data quality, ruler validity, fork carry-over, agent behavior, ranked causes) before reporting.
+For a flagship play, or when Drew asks how a run is really doing, run the Lab's [deep review](https://github.com/tangle-network/discovery-lab/blob/master/skills/deep-review/SKILL.md): the product on an absolute bar, the rulers, the traces, the system and operator, and the arms, in one ranked page with an owner for each change.
 Separate execution settlement, measured research progress, and final acceptance.
 A bounded run can end while its broader objective remains active.
 Preserve its immutable record and carry checked work into an authorized successor.
