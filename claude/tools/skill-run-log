@@ -3,7 +3,7 @@
 #
 # Usage:
 #   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
-#                         [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH]
+#                         [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH] [--pr URL]
 #   skill-run-log --dir    print the state directory for the current repository
 #   skill-run-log -h|--help
 # Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
@@ -21,8 +21,14 @@
 # Creates the directory and file if missing. Append-only; never rewrites prior lines.
 #
 # Schema (see ~/dotfiles/claude/skills/_common.md):
-#   { skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride,
-#     transcriptPath, traceDir, score }
+#   { id, skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride,
+#     transcriptPath, traceDir, score, pr, machine, sessionId, cwd, branch, headSha }
+#
+# `id` identifies the row; the script prints it so the output can carry it, and the outcome joiner
+# (tangle-tools skill-outcomes) links later outcomes to it without rewriting the row.
+# `pr` is the pull request the run produced or worked on, when the caller names one.
+# `machine`, `sessionId`, `cwd`, `branch` and `headSha` are read from the environment and git, so
+# the joiner can find the run's session and commits; each is null when unavailable.
 #
 # `score` is an independent judge's score of the deliverable (brief-judge totals out of 30),
 # null when the run was not judged. Rows written before it existed simply lack the field.
@@ -34,7 +40,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH]
+usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH] [--pr URL]
        skill-run-log --dir
        skill-run-log -h|--help
 Use --option=-literal for a value beginning with '-'.
@@ -82,11 +88,12 @@ next_skill="stop"
 project=""
 transcript=""
 trace_dir=""
+pr=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --target|--prompt|--duration|--verdict|--next|--score|--project|--transcript|--trace-dir)
+    --target|--prompt|--duration|--verdict|--next|--score|--project|--transcript|--trace-dir|--pr)
       option="$1"
       shift
       [ $# -ge 1 ] || invalid_args "$option requires a value"
@@ -97,7 +104,7 @@ while [ $# -gt 0 ]; do
       value="$1"
       shift
       ;;
-    --target=*|--prompt=*|--duration=*|--verdict=*|--next=*|--score=*|--project=*|--transcript=*|--trace-dir=*)
+    --target=*|--prompt=*|--duration=*|--verdict=*|--next=*|--score=*|--project=*|--transcript=*|--trace-dir=*|--pr=*)
       option="${1%%=*}"
       value="${1#*=}"
       shift
@@ -114,6 +121,7 @@ while [ $# -gt 0 ]; do
     --project) project="$value" ;;
     --transcript) transcript="$value" ;;
     --trace-dir) trace_dir="$value" ;;
+    --pr) pr="$value" ;;
   esac
 done
 
@@ -133,6 +141,13 @@ mkdir -p "$target_dir"
 log="$target_dir/skill-runs.jsonl"
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+id="sr-$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+
+# Link fields; each stays null when its source is unavailable.
+machine="$(hostname -s 2>/dev/null || true)"
+session="${CLAUDE_CODE_SESSION_ID:-${CODEX_SESSION_ID:-${CODEX_COMPANION_SESSION_ID:-}}}"
+branch="$(git branch --show-current 2>/dev/null || true)"
+head_sha="$(git rev-parse --verify --quiet HEAD 2>/dev/null || true)"
 
 # JSON-escape strings (handles quotes, backslashes, newlines)
 esc() {
@@ -151,7 +166,19 @@ next_j="$(esc "$next_skill")"
 if [ -z "$transcript" ]; then transcript_j="null"; else transcript_j="$(esc "$transcript")"; fi
 if [ -z "$trace_dir" ];  then trace_j="null";       else trace_j="$(esc "$trace_dir")"; fi
 
-printf '{"skill":%s,"ts":"%s","project":%s,"target":%s,"operatorPrompt":%s,"durationMin":%s,"verdict":%s,"dispatchedTo":%s,"operatorOverride":null,"transcriptPath":%s,"traceDir":%s,"score":%s}\n' \
-  "$skill_j" "$ts" "$project_j" "$target_j" "$prompt_j" "$duration" "$verdict_j" "$next_j" "$transcript_j" "$trace_j" "$score" >> "$log"
+# Optional string fields: JSON null when empty.
+nullable() {
+  if [ -z "$1" ]; then printf 'null'; else esc "$1"; fi
+}
+pr_j="$(nullable "$pr")"
+machine_j="$(nullable "$machine")"
+session_j="$(nullable "$session")"
+cwd_j="$(nullable "$PWD")"
+branch_j="$(nullable "$branch")"
+head_j="$(nullable "$head_sha")"
 
-echo "logged: $skill -> $next_skill ($verdict) [$log]"
+printf '{"id":"%s","skill":%s,"ts":"%s","project":%s,"target":%s,"operatorPrompt":%s,"durationMin":%s,"verdict":%s,"dispatchedTo":%s,"operatorOverride":null,"transcriptPath":%s,"traceDir":%s,"score":%s,"pr":%s,"machine":%s,"sessionId":%s,"cwd":%s,"branch":%s,"headSha":%s}\n' \
+  "$id" "$skill_j" "$ts" "$project_j" "$target_j" "$prompt_j" "$duration" "$verdict_j" "$next_j" "$transcript_j" "$trace_j" "$score" \
+  "$pr_j" "$machine_j" "$session_j" "$cwd_j" "$branch_j" "$head_j" >> "$log"
+
+echo "logged: $id $skill -> $next_skill ($verdict) [$log]"
