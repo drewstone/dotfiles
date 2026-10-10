@@ -91,7 +91,9 @@ Run this skill as a hill-climb ([the climb](../../../docs/processes/climb.md)).
 - **Every checkpoint is a measurement.** Read the run's goal ruler and system scorecard, never activity alone, and compare them with the ledger's best for this play.
 - **Every steer is a move.** Write the change you expect in the next scored version before you send it; score it when the version lands.
 - **Operator SLOs:** detect a stopped or failing run within 10 minutes and recover within 30. Remove a failing dependency before asking anyone for money or access.
-- **Report each checkpoint in the full form:** the answer with its number, the goal ruler, a lifeline and attempts chart, the prediction scoreboard, and the next move. Build it from the run's data.
+- **Report each checkpoint in the full form:** the answer with its number, the goal ruler, a lifeline and attempts chart, the prediction scoreboard, and the next move. Build it from the run's data with [`viz`](../../tools/README.md#viz) in the terminal, or the [brief kit](../report/references/brief-kit.md) for a page.
+- **Plans and conclusions carry two passes:** before a launch, a resume or a settlement verdict, keep one line each from the [red-team and bigger passes](../../../docs/processes/climb.md#how-to-think-the-level-up-passes): how the plan or verdict is wrong and what evidence would change it, and the ten-times version and what it would take.
+- **A failure that stops the product or a run is an incident:** run it with [incident command](../tangle-ops/SKILL.md#run-an-incident).
 
 ## Log the run
 

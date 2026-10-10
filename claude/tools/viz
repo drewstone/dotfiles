@@ -1,0 +1,130 @@
+#!/usr/bin/env node
+// viz: charts drawn to scale from data, for terminals and for brief pages.
+//
+// Deterministic and offline: no network, no clock, no dependencies. The chart models
+// live in viz-kit/core.mjs; viz-kit/brief.mjs checks a brief spec and renders the
+// report skill's brief kit, so a terminal status and a published page come from the
+// same numbers.
+import { readFileSync, writeFileSync } from 'node:fs'
+import { KINDS, VizError, parseInput, render } from './viz-kit/core.mjs'
+import { briefHtml, briefText, prepareBrief } from './viz-kit/brief.mjs'
+
+const USAGE = `usage:
+  viz <kind> [file|-] [options]     draw a chart from JSON or TSV (stdin when no file)
+  viz brief <spec.json> [-o page.html] [--check] [--section <n|text>]...
+                                    check a brief spec; print it for the terminal, or write the page
+
+kinds:
+  bars       one value per row: label, value [, of] [, tone]; --total reconciles parts with a whole
+  grouped    several series per category: label, <series>... (cells may be ratios like 33/36)
+  spark      a trend line per series: numbers, or label + numeric columns, or rows with values[]
+  strip      pass/fail cells on a time axis: t, status (ok, fail, warn, skip, null) [, note]
+  stack      parts of one whole in one bar, with a legend: label, value [, group]
+  waterfall  the same parts as offset rows; --start/--end give clock ranges and check the span
+  timeline   events with the gap since the previous one: t, text [, status good|bad|warn|info]
+  table      a compact table; numbers right-aligned; --sum adds a total row
+
+options:
+  --width <n>        output width (default: the terminal's, else $COLUMNS, else 80)
+  --title <text>     chart title            --note <text>    a line under the chart
+  --unit <u>         value unit: %, s, ms, m (minutes), h, $, or a word such as PRs
+  --target <n>       draw a target mark     --target-label <text> (default "target")
+  --max <n>          scale maximum (default: the largest value; 100 for percentages)
+  --total <n>        the whole the rows are parts of; a shortfall prints as (unaccounted)
+  --share            show each row's share of the row sum
+  --sort             sort bars by value, largest first
+  --start <HH:MM>    first moment of a stack or waterfall in minutes; --end <HH:MM> checks the span
+  --remainder <text> label for the unattributed remainder
+  --zero             anchor sparklines at zero instead of their minimum
+  --label <col>  --value <col>  --of <col>  --t <col>  --status <col>  --text <col>   pick columns
+  --cols <a,b,c>     table columns, in order     --sum   add a total row to a table
+  --source <text>    where the numbers come from --asof <date>  when they were read
+  -q, --quiet        no warning about a missing source
+
+exit: 0 drawn, 2 bad usage, input or spec (the message names the row or block), 1 internal error`
+
+const FLAGS = new Set(['share', 'sort', 'zero', 'sum', 'check', 'quiet'])
+const NUMERIC = new Set(['width', 'target', 'max', 'total'])
+const ALIASES = { q: 'quiet', o: 'out', h: 'help' }
+
+function parse(argv) {
+  const opts = {}
+  const positional = []
+  const sections = []
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '-' || !a.startsWith('-')) { positional.push(a); continue }
+    let key = a.replace(/^--?/, '')
+    let value
+    if (key.includes('=')) [key, value] = [key.slice(0, key.indexOf('=')), key.slice(key.indexOf('=') + 1)]
+    key = ALIASES[key] ?? key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())
+    if (key === 'help') { opts.help = true; continue }
+    if (FLAGS.has(key)) { opts[key] = true; continue }
+    if (value === undefined) {
+      value = argv[++i]
+      if (value === undefined) throw new VizError(`${a} needs a value`)
+    }
+    if (NUMERIC.has(key)) {
+      const n = Number(value)
+      if (!Number.isFinite(n)) throw new VizError(`${a} needs a number, got ${JSON.stringify(value)}`)
+      value = n
+    }
+    if (key === 'section') sections.push(value)
+    else opts[key] = value
+  }
+  return { opts, positional, sections }
+}
+
+function columns(opts) {
+  if (opts.width) return Math.max(30, Math.floor(opts.width))
+  if (process.stdout.isTTY && process.stdout.columns) return process.stdout.columns
+  const env = Number(process.env.COLUMNS)
+  return Number.isFinite(env) && env > 0 ? env : 80
+}
+
+function readSource(file) {
+  if (file && file !== '-') return readFileSync(file, 'utf8')
+  if (process.stdin.isTTY) throw new VizError('no input: pass a file, or pipe JSON or TSV on stdin')
+  return readFileSync(0, 'utf8')
+}
+
+function main() {
+  const { opts, positional, sections } = parse(process.argv.slice(2))
+  const [kind, file] = positional
+  if (opts.help || !kind) { process.stdout.write(USAGE + '\n'); return kind || opts.help ? 0 : 2 }
+  const cols = columns(opts)
+
+  if (kind === 'brief') {
+    if (!file) throw new VizError('viz brief needs a spec file')
+    let spec
+    try { spec = JSON.parse(readSource(file)) } catch (error) { if (error instanceof VizError) throw error; throw new VizError(`${file} is not valid JSON: ${error.message}`) }
+    const { spec: prepared, errors, warnings } = prepareBrief(spec)
+    if (errors.length) { process.stderr.write(errors.map((e) => `error: ${e}`).join('\n') + '\n'); return 2 }
+    for (const w of warnings) process.stderr.write(`warning: ${w}\n`)
+    if (opts.check) { process.stdout.write(`ok: ${prepared.sections.length} sections, ${warnings.length} warnings\n`); return 0 }
+    if (opts.out) {
+      writeFileSync(opts.out, briefHtml(prepared))
+      process.stdout.write(`wrote ${opts.out} (${warnings.length} warnings)\n`)
+      return 0
+    }
+    process.stdout.write(briefText(prepared, cols, sections.length ? sections : null) + '\n')
+    return 0
+  }
+
+  if (!KINDS[kind]) throw new VizError(`unknown kind ${JSON.stringify(kind)}; run viz --help`)
+  const data = parseInput(readSource(file))
+  const chartOpts = { ...opts }
+  for (const k of ['width', 'quiet', 'out', 'check']) delete chartOpts[k]
+  if (!opts.quiet && !chartOpts.source && !data.source) process.stderr.write('viz: no --source; a reported number needs its source, denominator and date\n')
+  process.stdout.write(render(kind, data, chartOpts, cols) + '\n')
+  return 0
+}
+
+Promise.resolve()
+  .then(main)
+  .then((code) => { process.exitCode = code ?? 0 })
+  .catch((error) => {
+    if (error instanceof VizError) { process.stderr.write(`viz: ${error.message}\n`); process.exitCode = 2; return }
+    process.stderr.write(`viz: internal error: ${error.stack ?? error}\n`)
+    process.exitCode = 1
+  })

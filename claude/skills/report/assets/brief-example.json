@@ -30,9 +30,19 @@
             "marks": [ { "at": "2026-10-08T02:12:00Z", "shape": "detect" }, { "at": "2026-10-08T08:40:00Z", "shape": "owner" }, { "at": "2026-10-08T09:05:00Z", "shape": "cause" }, { "at": "2026-10-08T11:22:00Z", "shape": "fix" } ] },
           { "label": "Apple Pay declines", "segments": [ { "from": "2026-10-10T21:05:00Z", "to": "2026-10-10T21:20:00Z", "tone": "blind", "tip": "15 min with no owner" }, { "from": "2026-10-10T21:20:00Z", "to": "2026-10-10T23:30:00Z", "tone": "crit", "tip": "owned, open" } ],
             "marks": [ { "at": "2026-10-10T21:06:00Z", "shape": "detect" }, { "at": "2026-10-10T21:20:00Z", "shape": "owner" } ] } ],
-        "note": "<b>Time to an owner:</b> 6.5 h, then 15 min. The autopilot shipped on 10-09 is the difference." } ] },
+        "note": "<b>Time to an owner:</b> 6.5 h, then 15 min. The autopilot shipped on 10-09 is the difference." },
+      { "type": "waterfall", "title": "Where the cart outage's 9.2 hours went", "unit": "m", "start": "02:10", "end": "11:22", "rows": [
+        { "label": "until the alarm", "value": 2, "group": "detect", "tone": "warn" }, { "label": "flagged, no owner", "value": 388, "group": "own", "tone": "bad" },
+        { "label": "find the cause", "value": 25, "group": "fix", "tone": "info" }, { "label": "cap the cache, ship", "value": 137, "group": "fix", "tone": "good" } ] },
+      { "type": "events", "title": "Cart outage, 10-08 UTC", "rows": [
+        { "t": "02:10", "status": "bad", "text": "Cart pods start restarting on out-of-memory." }, { "t": "02:12", "status": "warn", "text": "The memory alarm fires; nobody owns it." },
+        { "t": "08:40", "status": "warn", "text": "cart-lane takes the incident." }, { "t": "09:05", "status": "info", "text": "Cause: the session cache is unbounded." },
+        { "t": "11:22", "status": "good", "text": "Cache capped at 50k entries and shipped." } ] } ] },
     { "key": "§4 flow", "title": "Throughput and shape",
       "blocks": [
+        { "type": "grouped", "title": "Payment success by day, card and Apple Pay", "target": 99.5, "targetLabel": "SLO", "series": [{ "key": "card", "label": "Card" }, { "key": "applepay", "label": "Apple Pay" }],
+          "rows": [ { "label": "10-08", "card": "39880/40000", "applepay": "9970/10000" }, { "label": "10-09", "card": "40120/40200", "applepay": "10010/10050" }, { "label": "10-10", "card": "39950/40100", "applepay": "6170/9950" } ],
+          "note": "Apple Pay fell to 62.0% on 10-10 when SDK 4.2 changed the token format." },
         { "type": "hist", "title": "Deploys per day", "sub": "48 total", "labels": ["10-05", "10-06", "10-07", "10-08", "10-09", "10-10", "10-11"], "values": [5, 9, 8, 4, 10, 7, 5], "every": 1, "highlightMax": true, "unit": "deploys" },
         { "type": "cols", "cols": 2, "blocks": [
           { "type": "hbars", "title": "p99 latency by endpoint (ms)", "sub": "Darker tick is p50.", "rows": [["/cart", 210, 42], ["/checkout", 880, 120], ["/payment", 640, 95], ["/receipt", 90, 20]], "hot": ["/checkout"], "unit": "ms" },
@@ -44,7 +54,11 @@
     { "key": "§5 signal", "title": "Canaries by day",
       "blocks": [ { "type": "heatmap", "title": "Pass rate", "cols": 7, "colLabels": { "0": "10-05", "3": "10-08", "6": "10-11" },
         "rows": [ { "label": "Checkout end to end", "sub": "checkout-e2e", "cells": [ { "state": "good", "tip": "48/48" }, { "state": "good", "tip": "48/48" }, { "state": "good", "tip": "48/48" }, { "state": "crit", "tip": "20/48" }, { "state": "good", "tip": "48/48" }, { "state": "warn", "tip": "40/48" }, { "state": "blind", "tip": "harness down" } ] } ],
-        "legend": [["all passed", "good"], ["some failed", "warn"], ["all failed", "crit"], ["blind", "blind"]] } ] },
+        "legend": [["all passed", "good"], ["some failed", "warn"], ["all failed", "crit"], ["blind", "blind"]] },
+      { "type": "strip", "title": "Apple Pay canary, hourly, 10-10 UTC", "rows": [
+        { "t": "16:00", "status": "ok" }, { "t": "17:00", "status": "ok" }, { "t": "18:00", "status": "ok" }, { "t": "19:00", "status": "ok" }, { "t": "20:00", "status": "ok" },
+        { "t": "21:00", "status": "fail", "note": "38%" }, { "t": "22:00", "status": "fail" }, { "t": "23:00", "status": "fail" }, { "t": "23:30", "status": null } ],
+        "note": "The 23:30 run had not reported when this brief was built, so it shows as unknown, not as a failure." } ] },
     { "key": "§6 path", "title": "Path to the fix", "blocks": [ { "type": "steps", "items": [
       { "state": "done", "title": "Pin SDK 4.1", "when": "21:40Z" }, { "state": "wait", "title": "Canary passes 3 times", "text": "Running" }, { "state": "you", "title": "Approve the vendor renewal" } ] } ] },
     { "key": "§7 causes", "title": "Causes and fixes at the source", "blocks": [ { "type": "table", "head": ["Class", "Evidence", "Fix"], "rows": [

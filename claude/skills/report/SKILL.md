@@ -64,12 +64,18 @@ Read [play reports](references/play.md) for the readout order and the rules that
 ## State what the evidence supports
 
 Lead with the answer or correction to the premise and the decision-relevant measurement when one exists.
+For a status or review, open with the scoreboard: the outcome metrics the goal names, each against its target.
+Activity (PRs merged, commits, agents run, tokens) explains the outcome and never headlines it.
+Every number carries its source, its denominator and the date it was read; a rate without its count is unfinished.
 Disclose material resource, sampling, execution, or termination differences before declaring a comparative winner.
 Distinguish observed results from causal interpretation and projected benefits.
 A correlation alone does not establish a mechanism, and an unavailable number is not permission to invent one.
 
 Use tables for comparable rows and dimensions.
-For an answer with more than one dimension, build it with the [brief kit](references/brief-kit.md) and publish it as an artifact; use the project's existing rendering path when it has one.
+A claim resting on three or more data points or a time axis ships with a chart built from the data: [`viz`](../../tools/README.md#viz) `bars`, `grouped`, `spark`, `strip`, `stack`, `waterfall`, `timeline` or `table` in the terminal.
+Give parts their whole (`--total`, or `--start` and `--end`): `viz` refuses parts that exceed it and prints any shortfall, so a hidden or double-counted part shows before the reader finds it.
+For an answer with more than one dimension, build it with the [brief kit](references/brief-kit.md) and publish it as an artifact; `viz brief spec.json` prints the same numbers as the terminal status.
+Use the project's existing rendering path when it has one.
 Keep all measured fields available in the report or its complete linked results, rather than presenting only favorable columns.
 Explain necessary technical terms through their effect on the decision, and keep internal identifiers in evidence links unless the identity itself answers the question.
 
