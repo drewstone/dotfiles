@@ -26,6 +26,11 @@ const FIXTURE = {
   // A cancelled run superseded by a successful re-run of the same check is green.
   10200: [run("CI", "CANCELLED", "2026-10-10T19:00:00Z"), run("CI", "SUCCESS", "2026-10-10T19:30:00Z"), status("signoff/local", "SUCCESS")],
   10201: [run("CI", "FAILURE")],
+  // GitHub CI still running, or another service's status pending, stays quiet on its own.
+  10202: [run("CI", null, "2026-10-10T20:00:00Z", "IN_PROGRESS"), status("signoff/local", "SUCCESS")],
+  10203: [status("vercel", "PENDING"), status("signoff/local", "SUCCESS")],
+  10204: [run("CI", "SUCCESS"), status("merge-gate/revision-receipt", "PENDING")],
+  10205: [run("Semgrep SAST", "CANCELLED")],
 };
 writeFileSync(join(DIR, "rollups.json"), JSON.stringify(FIXTURE));
 const FAKE_GH = join(DIR, "fake-gh");
@@ -66,7 +71,7 @@ test("warns on the 20:34Z merge loop, naming exactly the red and pending PRs and
   for (const n of ["9936", "9937", "10016", "9959"]) assert.doesNotMatch(text, new RegExp(`#${n} `));
   assert.match(text, /#10102 at \w+: red: signoff\/local=failure \(commit status\)/);
   assert.match(text, /#10110 at \w+: pending: signoff\/local=pending \(commit status\)/);
-  assert.match(text, /#10106 at \w+: red: signoff\/scoped=failure \(commit status\); Semgrep SAST=in_progress \(check run\)/);
+  assert.match(text, /#10106 at \w+: red: signoff\/scoped=failure \(commit status\); also still running: Semgrep SAST=in_progress \(check run\)/);
   assert.match(text, /show him this list/);
 });
 
@@ -80,9 +85,11 @@ test("reads PR lists fed through xargs and while-read, and single merges", () =>
   assert.match(single.systemMessage, /#10201 at \w+: red: CI=failure \(check run\)/);
 });
 
-test("green merges, superseded runs and other gh commands stay silent", () => {
+test("green merges, superseded runs, CI still running and other gh commands stay silent", () => {
   assert.deepEqual(hook(`gh-drew pr merge 9936 --repo ${REPO} --squash`), {});
   assert.deepEqual(hook(`gh-drew pr merge 10200 --repo ${REPO} --squash`), {});
+  assert.deepEqual(hook(`gh-drew pr merge 10202 --repo ${REPO} --squash`), {});
+  assert.deepEqual(hook(`gh-drew pr merge 10203 --repo ${REPO} --squash`), {});
   assert.deepEqual(hook(`gh-drew pr view 10102 --repo ${REPO} --json state`), {});
   assert.deepEqual(hook(`gh pr merge --help`), {});
 });
@@ -94,6 +101,14 @@ test("an unreadable PR list is named, and an unsafe awk program is never run", (
   const unsafe = hook(`for n in $(awk 'BEGIN{system("touch ${marker}")} /^MERGE/{print $2}' ${DIR}/merge-list.txt); do gh-drew pr merge $n --repo ${REPO}; done`);
   assert.match(unsafe.systemMessage, /not checked/);
   assert.equal(spawnSync("test", ["-e", marker]).status, 1, "the awk program ran");
+});
+
+test("a pending revision receipt and a cancelled check run still warn", () => {
+  const out = hook(`for n in 10204 10205 10202; do gh-drew pr merge $n --repo ${REPO} --squash; done`);
+  assert.match(out.systemMessage, /2 of 3 PR\(s\)/);
+  assert.match(out.systemMessage, /#10204 at \w+: pending: merge-gate\/revision-receipt=pending \(commit status\)/);
+  assert.match(out.systemMessage, /#10205 at \w+: red: Semgrep SAST=cancelled \(check run\)/);
+  assert.doesNotMatch(out.systemMessage, /#10202 /);
 });
 
 test("the check can be turned off", () => {

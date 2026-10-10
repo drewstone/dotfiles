@@ -9,8 +9,10 @@ branch protection is not available on that plan.
 This never blocks: Drew's instruction to merge stands, and the session shows him the truth first.
 For every PR a command merges, including through a `for` loop, `while read`, or `xargs`, it reads
 the head commit's statusCheckRollup, which holds both check runs (conclusion) and commit statuses
-(state), in one GraphQL request, and lists each PR that is red or pending, and why. Pending counts
-as not passed.
+(state), in one GraphQL request, and lists each PR that is red or pending, and why: a failed or
+cancelled check run, a failed commit status, or a signoff/* or revision-receipt status not yet
+passed. GitHub CI check runs still running stay quiet on their own: the merge gate is the local
+Beelink signoff and PR CI is never awaited; they are listed only beside another finding.
 
 Loop and xargs inputs are read when they are literal, or come from a short pipeline of read-only
 text tools over local files (`awk` without system, getline or redirection, grep, cut, cat, head,
@@ -259,16 +261,36 @@ def query(targets):
     return results
 
 
+def gate_status(context):
+    """The commit statuses that are the merge gate: the local signoff and the revision receipt."""
+    return context.startswith("signoff/") or "revision-receipt" in context
+
+
+def classify_status(context, state):
+    """"red", "pending" (a gate status not finished), "quiet" (another status not finished), or None."""
+    if state in RED_STATES:
+        return "red"
+    if state in PENDING_STATES:
+        return "pending" if gate_status(context) else "quiet"
+    return None
+
+
 def verdict(node, as_of=None):
-    """(red, pending, sha) for one PR node. A re-run supersedes an earlier run of the same check, so only the
-    latest run per check name counts. `as_of` (ISO time, for replays) judges each check as it stood then:
-    a run started later is ignored, and one that completed later was still pending."""
+    """(red, pending, quiet, sha) for one PR node.
+
+    red: a failed or cancelled check run, or a failed commit status. pending: a gate status (signoff/*,
+    revision receipt) not finished. quiet: GitHub CI check runs still running and other unfinished statuses;
+    the merge gate is the local signoff and PR CI is not awaited, so these alone never warn.
+    A re-run supersedes an earlier run of the same check, so only the latest run per check name counts.
+    `as_of` (ISO time, for replays) judges each check as it stood then: a run started later is ignored, and
+    one that completed later was still running."""
     commits = (((node or {}).get("commits") or {}).get("nodes") or [])
     commit = (commits[0] or {}).get("commit") if commits else None
     if not commit:
         return None
     rollup = commit.get("statusCheckRollup")
-    red, pending, runs = [], [], {}
+    found = {"red": [], "pending": [], "quiet": []}
+    runs = {}
     for c in ((rollup or {}).get("contexts") or {}).get("nodes") or []:
         if c.get("__typename") == "CheckRun":
             started = c.get("startedAt") or ""
@@ -278,24 +300,24 @@ def verdict(node, as_of=None):
             if name not in runs or started >= (runs[name].get("startedAt") or ""):
                 runs[name] = c
         elif c.get("__typename") == "StatusContext":
+            context = c.get("context") or ""
             if as_of and (c.get("createdAt") or "") > as_of:
-                pending.append(f"{c.get('context')}=later than the merge; see status history (commit status)")
+                found["pending" if gate_status(context) else "quiet"].append(
+                    f"{context}=later than the merge; see status history (commit status)")
                 continue
-            if c.get("state") in RED_STATES:
-                red.append(f"{c.get('context')}={c.get('state', '').lower()} (commit status)")
-            elif c.get("state") in PENDING_STATES:
-                pending.append(f"{c.get('context')}={c.get('state', '').lower()} (commit status)")
+            kind = classify_status(context, c.get("state"))
+            if kind:
+                found[kind].append(f"{context}={c.get('state', '').lower()} (commit status)")
     for name, c in runs.items():
         done = c.get("status") == "COMPLETED" and not (as_of and (c.get("completedAt") or "") > as_of)
         if not done:
-            pending.append(f"{name}={'in_progress' if c.get('status') == 'COMPLETED' else c.get('status', '').lower()} (check run)")
+            state = "in_progress" if c.get("status") == "COMPLETED" else (c.get("status") or "").lower()
+            found["quiet"].append(f"{name}={state} (check run)")
         elif c.get("conclusion") in RED_CONCLUSIONS:
-            red.append(f"{name}={c.get('conclusion', '').lower()} (check run)")
+            found["red"].append(f"{name}={c.get('conclusion', '').lower()} (check run)")
         elif c.get("conclusion") not in OK_CONCLUSIONS:
-            pending.append(f"{name}={str(c.get('conclusion')).lower()} (check run)")
-    if rollup is None:
-        pending.append("no checks or statuses reported")
-    return red, pending, commit.get("oid", "")[:10]
+            found["quiet"].append(f"{name}={str(c.get('conclusion')).lower()} (check run)")
+    return found["red"], found["pending"], found["quiet"], commit.get("oid", "")[:10]
 
 
 def warnings(cmds, payload, as_of=None):
@@ -321,17 +343,21 @@ def warnings(cmds, payload, as_of=None):
             lines.append(f"- {label}: not found or unreadable")
             flagged += 1
             continue
-        red, pending, sha = v
+        red, pending, quiet, sha = v
         if red or pending:
             flagged += 1
             state = "red" if red else "pending"
-            lines.append(f"- {label} at {sha}: {state}: " + "; ".join(red + pending))
+            line = f"- {label} at {sha}: {state}: " + "; ".join(red + pending)
+            if quiet:
+                line += "; also still running: " + "; ".join(quiet)
+            lines.append(line)
     if unread:
         lines.append("- not checked (PR list not readable from the command): " + ", ".join(dict.fromkeys(unread)))
     if not lines:
         return []
     head = (f"merge-check: {flagged} of {len(targets)} PR(s) this command merges are not green on their head commit "
-            "(check-run conclusions and commit-status states both read; pending counts as not passed):")
+            "(failed or cancelled check runs, failed commit statuses, and signoff or revision-receipt statuses "
+            "not yet passed; GitHub CI still running is not awaited):")
     tail = ("Merging is not blocked. If Drew asked for this merge, show him this list before you run it; "
             "otherwise fix or wait for these checks first.")
     return ["\n".join([head, *lines, tail])]
