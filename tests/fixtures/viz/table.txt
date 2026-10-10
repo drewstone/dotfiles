@@ -1,0 +1,8 @@
+repo    merged  open  state
+──────  ──────  ────  ────────────────────────────
+api        152     4  live
+web         78    11  live, a long note that has
+                      to wrap inside its column
+worker       9     0  archived
+──────  ──────  ────  ────────────────────────────
+total      239    15

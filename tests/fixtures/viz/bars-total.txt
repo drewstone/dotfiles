@@ -1,0 +1,9 @@
+Why turns failed, 171 failures
+provider refused the key  ████████████████████████████████████ 60  35.1%
+vault write failed        ████████████████████████             40  23.4%
+dispatch refused          █████▍                                9   5.3%
+quota exhausted           ████▊                                 8   4.7%
+worker out of memory      ██▍                                   4   2.3%
+unexplained               ██▍                                   4   2.3%
+(unaccounted)             ███████████████████████████▋         46  26.9%
+scale 0–60 · total 171 · source: fixture · as of 2026-10-10

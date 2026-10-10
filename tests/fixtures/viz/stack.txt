@@ -1,0 +1,9 @@
+████████████████▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░░░░░░░░░░
+█ queue wait         4.2s  20.5%
+█ lock               1.3s   6.3%
+▓ harness boot       5.5s  26.8%
+▒ model first token  6.1s  29.8%
+░ tool calls         3.4s  16.6%
+total 20.5s · 5 parts
+by group: waiting 5.5s 26.8% · platform 5.5s 26.8% · model
+6.1s 29.8% · work 3.4s 16.6%

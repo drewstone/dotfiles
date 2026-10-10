@@ -1,0 +1,8 @@
+23:40          ✗ A config change ships to every host.
+23:52    +12m  ✗ New sessions fail at startup.
+00:31    +39m  ! The on-call agent finds the cause in the
+                 harness log.
+00:48    +17m  ✓ A fix is written and checked against the real
+                 binary: red before, green after.
+03:10  +2h22m  ✓ The fix is served; the next canary passes.
+5 events · 23:40→03:10 (3h30m)

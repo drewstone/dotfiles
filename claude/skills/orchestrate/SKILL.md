@@ -21,6 +21,7 @@ If delegation is unavailable, execute locally and report that constraint.
 1. Give each deliverable one owner, bounded scope, input, artifact, dependencies, allowed files, and completion checks.
    Fix the constraints other tracks rely on; let the worker choose implementation details within them.
    Each track must return its implemented artifact and evidence, or a concrete unresolved condition.
+   Write each assignment with the [brief template](../../../docs/processes/agent-work.md#brief-template); its report fields are what you check.
 2. Assign disjoint files or isolated worktrees to parallel writers; reserve shared integration for one owner and a bounded delivery cut.
 3. Dispatch independent work within available resources and existing authorization.
 4. Check each dependency before starting work that consumes it.
