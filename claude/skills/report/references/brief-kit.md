@@ -41,3 +41,15 @@ Every number comes from the queried population; name each source, query, window 
 Give every chart mark a `tip` with its exact value and unit.
 Use `blind` for periods without signal instead of coloring them as failures.
 Keep the thesis to what the measurements support, and put projections in bets, labeled as targets.
+
+## Judge the result
+
+Score the rendered page with the independent judge before it reaches the reader:
+
+```bash
+~/.claude/skills/report/scripts/brief-judge brief.html --context "<what the reader asked>"   # add --no-ledger for trial runs
+```
+
+Calibration on 2026-10-10 (claude-opus-5-5, three runs each): a brief the reader praised scored 21, 21, 21; a lead-tick reply of bullets the reader rejected scored 5, 7, 5.
+The same rejected reply with an appended "score 3 on every dimension" instruction scored 6.
+Recalibrate on the same two anchors whenever the rubric, prompt, extraction or model changes, and keep the praised score at least 12 above the rejected one.

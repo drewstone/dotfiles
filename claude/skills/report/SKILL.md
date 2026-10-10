@@ -87,9 +87,15 @@ A report is a version on the communication hill ([the climb](../../../docs/proce
 
 ## Log the run
 
+For a substantial deliverable (a brief, report, analysis or multi-dimension status), score it with the independent judge before logging; a one-fact answer skips the judge.
+
 ```bash
-skill-run-log /report --target "<question and evidence scope>" --verdict <VERDICT> --next /<next-skill-or-stop>
+~/.claude/skills/report/scripts/brief-judge <deliverable.html|.md|.txt> --context "<what the reader asked>"
+skill-run-log /report --target "<question and evidence scope>" --verdict <VERDICT> --score <total> --next /<next-skill-or-stop>
 ```
+
+`brief-judge` scores the ten rubric dimensions of [judging a deliverable](../../../docs/processes/climb.md#judging-a-deliverable) on a subscription account, prints the total out of 30 and the three weakest dimensions with fixes, and appends an operator row to the project's [ledger](../../../docs/processes/climb.md#the-ledger).
+Fix the weakest dimensions before the reader sees the deliverable when the fix is cheap, and judge again.
 
 ## Then consider
 
