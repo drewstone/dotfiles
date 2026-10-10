@@ -93,7 +93,12 @@ def exempt_roots() -> list[Path]:
     """Checkouts whose installs are a deploy path, not a gate."""
     roots = [HOME / ".cache/beelink-gate",
              Path(os.environ.get("TANGLE_TOOLS_DEPLOY", HOME / ".local/share/tangle-tools")).expanduser(),
-             HOME / "code/_deploy"]  # pinned discovery-lab copies that Discovery runs execute from
+             HOME / "code/_deploy",  # pinned discovery-lab copies that Discovery runs execute from
+             # The Lab keeper's deploy path: each deploy is a fresh discovery-lab-<sha> checkout here,
+             # installed before the keeper starts settle work from it. DISCO_LAB names the rollup, not
+             # these. Refusing them left every deploy without node_modules from 2026-10-10 09:35Z,
+             # and settle checks, ledger rows and wrapups silently did not run.
+             HOME / ".local/share/discovery-lab-deploys"]
     lab = os.environ.get("DISCO_LAB") or env_file_value(HOME / ".config/fleet/lab.env", "DISCO_LAB")
     if lab:
         roots.append(Path(os.path.expandvars(lab)).expanduser())
