@@ -43,14 +43,19 @@ async function startApi(script = {}) {
       threads.set(call.body.threadId, thread)
       return stream(script.chat ?? [], script.holdChat)
     }
-    if (url.pathname === '/api/chat/running') return json(200, { running: script.running?.(calls) ?? [] })
+    if (url.pathname === '/api/chat/running') {
+      const refused = script.runningRefusal?.(calls)
+      if (refused) return json(refused.status, refused.body)
+      return json(200, { running: script.running?.(calls) ?? [] })
+    }
     if (url.pathname.startsWith('/api/chat/replay/')) {
-      return script.replay ? stream(script.replay, false) : json(404, { error: 'no buffer' })
+      const replay = typeof script.replay === 'function' ? script.replay(calls) : script.replay
+      return replay ? stream(replay.events ?? replay, Boolean(replay.hold)) : json(404, { error: 'no buffer' })
     }
     if (url.pathname === '/api/chat/interactions') return json(200, { interactions: script.interactions ?? [] })
     const threadMatch = /^\/api\/threads\/([^/]+)$/.exec(url.pathname)
     if (threadMatch) {
-      const messages = [...(threads.get(threadMatch[1]) ?? []), ...(script.reply ? [script.reply] : [])]
+      const messages = script.messages ?? [...(threads.get(threadMatch[1]) ?? []), ...(script.reply ? [script.reply] : [])]
       return json(200, { thread: { id: threadMatch[1] }, messages })
     }
     if (/\/asset-versions\/[^/]+\/file$/.test(url.pathname)) {
@@ -77,7 +82,7 @@ function run(api, args, { env = {}, input } = {}) {
     const child = spawn(process.execPath, [command, ...args], {
       env: {
         PATH: process.env.PATH, HOME: home, GTM_BASE_URL: api?.base ?? 'http://127.0.0.1:9',
-        GTM_OPERATOR_API_KEY: KEY, GTM_ASK_POLL_MS: '20', GTM_ASK_INTERACTION_GRACE_MS: '100', ...env,
+        GTM_OPERATOR_API_KEY: KEY, GTM_ASK_POLL_MS: '20', GTM_ASK_POLL_MAX_MS: '160', GTM_ASK_INTERACTION_GRACE_MS: '100', ...env,
       },
     })
     let stdout = ''
@@ -169,6 +174,93 @@ test('a stream that drops early is followed by polling until the thread has no r
     assert.equal(result.code, 0, result.stderr)
     assert.match(result.stdout, /completed/)
     assert.ok(api.calls.filter((call) => call.path === '/api/chat/running').length >= 3)
+  } finally {
+    await api.close()
+  }
+})
+
+test('checks between streams back off exponentially to the cap instead of polling at a fixed interval', async () => {
+  const times = []
+  const api = await startApi({
+    chat: [{ type: 'turn', turnId: 'x' }],
+    running: () => { times.push(Date.now()); return times.length < 7 ? ['x'] : [] },
+    reply: reply('th-1'),
+  })
+  try {
+    const result = await run(api, ['--workspace', 'ws1', 'Draft the plan'])
+    assert.equal(result.code, 0, result.stderr)
+    const gaps = times.slice(1).map((time, index) => time - times[index])
+    assert.ok(gaps[1] >= gaps[0] * 1.5 && gaps[2] >= gaps[1] * 1.5, `gaps grow: ${gaps.join(', ')}`)
+    assert.ok(gaps.at(-1) >= 150 && gaps.at(-1) < 400, `the last gaps sit at the 160 ms cap: ${gaps.join(', ')}`)
+  } finally {
+    await api.close()
+  }
+})
+
+test('a replay that carries the wait costs one request, and a reopened replay resumes after the last event', async () => {
+  let replays = 0
+  const api = await startApi({
+    chat: [{ type: 'turn', turnId: 'x' }, { type: 'execution.started', data: { executionId: 'gtm-agent:th-1:0' } }],
+    running: (calls) => (calls.filter((call) => call.path.startsWith('/api/chat/replay/')).length < 2 ? ['x'] : []),
+    replay: () => (++replays === 1
+      ? [{ seq: 5, type: 'text', text: 'a' }, { seq: 7, type: 'text', text: 'b' }]
+      : [{ seq: 8, type: 'done', data: {} }, { seq: 9, type: 'stream.terminal', data: { status: 'completed' } }]),
+    reply: reply('th-1'),
+  })
+  try {
+    const result = await run(api, ['--workspace', 'ws1', 'Draft the plan'])
+    assert.equal(result.code, 0, result.stderr)
+    const opened = api.calls.filter((call) => call.path.startsWith('/api/chat/replay/'))
+    assert.deepEqual(opened.map((call) => call.query.fromSeq), ['0', '7'])
+    assert.ok(api.calls.length <= 10, `${api.calls.length} requests for the whole turn`)
+  } finally {
+    await api.close()
+  }
+})
+
+test('a spent daily allowance stops the wait with the server\'s reason instead of retrying', async () => {
+  const api = await startApi({
+    chat: [{ type: 'turn', turnId: 'x' }],
+    runningRefusal: () => ({ status: 429, body: { code: 'api_key.request_limit_exceeded', limit: 'daily', resetAt: '2026-10-11T00:00:00.000Z' } }),
+  })
+  try {
+    const result = await run(api, ['--workspace', 'ws1', 'Draft the plan'])
+    assert.equal(result.code, 1)
+    assert.match(result.stderr, /429.*daily.*2026-10-11T00:00:00\.000Z/)
+    assert.equal(api.calls.filter((call) => call.path === '/api/chat/running').length, 1)
+  } finally {
+    await api.close()
+  }
+})
+
+test('status reports the answer row, not the work-product rows written before it', async () => {
+  const api = await startApi({
+    messages: [
+      { id: 'u1', role: 'user', content: 'Build the shortlist', parts: [] },
+      { id: 'wp1', role: 'assistant', content: '', parts: [{ type: 'work_product', kind: 'outreach_draft' }] },
+      { id: 'wp2', role: 'assistant', content: '', parts: [{ type: 'work_product', kind: 'outreach_draft' }] },
+      { id: 'assistant:gtm-agent:th-existing:0', role: 'assistant', content: 'Two drafts are held for review.', parts: [] },
+    ],
+  })
+  try {
+    const result = await run(api, ['status', 'th-existing', '--workspace', 'ws1', '--json'])
+    assert.equal(result.code, 0, result.stderr)
+    assert.equal(JSON.parse(result.stdout).reply, 'Two drafts are held for review.')
+  } finally {
+    await api.close()
+  }
+})
+
+test('held calls approved by the thread\'s auto-approve mode report the agent as still resuming', async () => {
+  const api = await startApi({
+    chat: completed('gtm-agent:th-1:0'),
+    reply: reply('th-1', { parts: [{ type: 'tool', hubApprovalAuto: { mode: 'thread' }, hubApprovalDecision: { decision: 'approve' }, state: { status: 'error', error: '{"code":"HUB_APPROVAL_REQUIRED"}' } }] }),
+  })
+  try {
+    const result = await run(api, ['--workspace', 'ws1', 'Open the pull request'])
+    assert.equal(result.code, 3)
+    assert.match(result.stdout, /status {3}resuming/)
+    assert.match(result.stdout, /1 held call ran on the thread's auto-approve mode .*follow with: gtm-ask status th-1 --wait 30m/)
   } finally {
     await api.close()
   }

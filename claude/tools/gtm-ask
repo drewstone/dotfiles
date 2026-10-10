@@ -4,8 +4,8 @@
 // It speaks the operator private API (gtm-agent docs/operator-api.md) with a `gak_` key that
 // holds operator:read, operator:write and operator:run. A turn outlives its HTTP stream, so the
 // result is read from the persisted thread after /api/chat/running clears, never from the stream.
-// Every request spends the key's allowance (60 a minute, 1,000 a day), so polling stays slow and
-// the stream or its replay carries the wait whenever it can.
+// Every request spends the key's allowance (60 a minute and a daily cap), so the stream or its replay
+// carries the wait, and checks between them back off exponentially.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -20,7 +20,10 @@ const KEY_NAME = 'GTM_OPERATOR_API_KEY'
 const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
 // An ask the agent raises can be resolved by the runtime itself; one still open after this is the owner's.
 const INTERACTION_GRACE_MS = Number(process.env.GTM_ASK_INTERACTION_GRACE_MS ?? 20_000)
-const POLL_MS = Number(process.env.GTM_ASK_POLL_MS ?? 10_000)
+// Every request spends the key's allowance. The stream or a replay carries the wait; between them a check
+// backs off from POLL_MS, doubling to POLL_MAX_MS, so a long turn costs about ten requests.
+const POLL_MS = Number(process.env.GTM_ASK_POLL_MS ?? 2_000)
+const POLL_MAX_MS = Number(process.env.GTM_ASK_POLL_MAX_MS ?? 60_000)
 const SETTLE_READS = 6
 
 const USAGE = `usage:
@@ -40,7 +43,8 @@ options:
   --json             print one JSON object instead of text
   --quiet            no progress or thread line on stderr
 
-exit: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question
+exit: 0 completed, 1 failed, 2 usage or config, 3 still running or resuming after auto-approved calls,
+      4 waiting on an approval or question
 key: $${KEY_NAME}, else ${KEY_NAME} in the dotenvx vault ~/company/devops/secrets/agent-state.env
      ($GTM_ASK_SECRETS_FILE, $GTM_ASK_KEYS_FILE override the vault and its key file)`
 
@@ -50,6 +54,8 @@ class ApiError extends Error {
   constructor(method, path, status, body) {
     super(`${method} ${path} answered ${status}: ${body.slice(0, 400)}`)
     this.status = status
+    // A spent daily allowance does not recover by retrying within this wait.
+    this.dailyLimit = status === 429 && /"limit"\s*:\s*"daily"/.test(body)
   }
 }
 
@@ -228,6 +234,8 @@ function summarizeMessage(message, { base, workspaceId }) {
     assets: message ? assetsOf(message, base, workspaceId) : [],
     vault,
     approvals,
+    // Held calls the thread's permissions mode approved at settlement; the agent resumes in a new turn.
+    autoApproved: parts.filter((part) => part?.type === 'tool' && object(part.hubApprovalAuto)).length,
   }
 }
 
@@ -271,8 +279,9 @@ async function follow(ctx, { turnId, response }) {
   const pending = new Map()
   let pendingSince = null
   let seenId = -1
-  let replays = 0
-  let polls = 0
+  let lastSeq = -1
+  let checks = 0
+  let backoff = POLL_MS
   let sawTerminal = false
   const state = { executionId: null, errors: [] }
 
@@ -296,6 +305,7 @@ async function follow(ctx, { turnId, response }) {
         const event = next.value
         const id = event.id === undefined ? NaN : Number(event.id)
         if (Number.isFinite(id) && id > seenId) { seenId = id; quiet = false }
+        if (Number.isSafeInteger(event.seq) && event.seq > lastSeq) lastSeq = event.seq
         const fresh = Number.isFinite(id) ? id === seenId && !quiet : !quiet
         if (event.type === 'execution.started' && !state.executionId) state.executionId = event.data?.executionId ?? null
         if (event.type === 'error') state.errors.push(String(event.error ?? event.message ?? event.data?.message ?? 'stream error'))
@@ -324,7 +334,9 @@ async function follow(ctx, { turnId, response }) {
   async function openReplay(id) {
     const controller = new AbortController()
     try {
-      const reply = await client.request('GET', `/api/chat/replay/${encodeURIComponent(id)}?${query({ workspaceId, threadId, fromSeq: '0' })}`,
+      // Resume after the last event already read instead of replaying the whole buffer again.
+      const fromSeq = String(Math.max(0, lastSeq))
+      const reply = await client.request('GET', `/api/chat/replay/${encodeURIComponent(id)}?${query({ workspaceId, threadId, fromSeq })}`,
         { raw: true, signal: controller.signal })
       return { response: reply, cancel: () => controller.abort() }
     } catch (error) {
@@ -333,39 +345,39 @@ async function follow(ctx, { turnId, response }) {
     }
   }
 
+  const result = (outcome, asks = [...pending.values()]) => ({ outcome, ...state, asks })
   let stream = response
   while (true) {
     if (stream) {
       const opened = Date.now()
       const outcome = await consume(stream, { replay: stream !== response })
       stream = null
-      // A replay that ends at once is not carrying the wait; do not spend requests reopening it.
-      if (outcome === 'ended' && Date.now() - opened < 5_000) await sleep(Math.min(POLL_MS, Math.max(0, deadline - Date.now())))
-      if (outcome === 'admitted' || outcome === 'deadline') return { outcome: outcome === 'admitted' ? 'admitted' : 'running', ...state, asks: [...pending.values()] }
-      if (outcome === 'waiting') return { outcome: 'waiting', ...state, asks: [...pending.values()] }
+      if (outcome === 'admitted') return result('admitted')
+      if (outcome === 'deadline') return result('running')
+      if (outcome === 'waiting') return result('waiting')
+      // A stream that carried the wait earns a quick recheck; one that ended at once keeps backing off.
+      if (Date.now() - opened >= POLL_MAX_MS) backoff = POLL_MS
     }
-    if (Date.now() >= deadline) return { outcome: 'running', ...state, asks: [...pending.values()] }
+    if (Date.now() >= deadline) return result('running')
+    await sleep(Math.min(backoff, Math.max(0, deadline - Date.now())))
+    backoff = Math.min(backoff * 2, POLL_MAX_MS)
+    if (Date.now() >= deadline) return result('running')
     let running
     try {
       running = (await client.request('GET', `/api/chat/running?${query({ workspaceId, threadId })}`)).running ?? []
     } catch (error) {
-      if (!(error instanceof ApiError) || (error.status < 500 && error.status !== 429)) throw error
+      if (!(error instanceof ApiError) || (error.status < 500 && error.status !== 429) || error.dailyLimit) throw error
       running = null
     }
-    if (Array.isArray(running) && running.length === 0) return { outcome: 'settled', ...state, asks: [] }
-    // After the execution's terminal event only the completion Workflow is left; a running read is cheaper than a replay.
-    if (running && !sawTerminal && replays < 10) {
-      replays++
-      stream = await openReplay(running.includes(turnId) ? turnId : running[0])
-      if (stream) continue
-    }
-    polls++
-    if (polls % 3 === 1) {
+    if (Array.isArray(running) && running.length === 0) return result('settled', [])
+    checks++
+    // An ask raised after the stream closed shows only in the interactions list; read it every third check.
+    if (checks % 3 === 1) {
       const asks = await openAsks(client, workspaceId, threadId)
-      if (asks.length > 0) return { outcome: 'waiting', ...state, asks }
+      if (asks.length > 0) return result('waiting', asks)
     }
-    const interval = sawTerminal ? Math.min(POLL_MS, 3_000) : POLL_MS * (polls > 12 ? 2 : 1)
-    await sleep(Math.min(interval, Math.max(0, deadline - Date.now())))
+    // After the execution's terminal event only the completion Workflow is left; a running read is cheaper than a replay.
+    if (running && !sawTerminal) stream = await openReplay(running.includes(turnId) ? turnId : running[0])
   }
 }
 
@@ -388,14 +400,20 @@ function locateReply(messages, { executionId, ask }) {
   })
   if (userIndex < 0) userIndex = lastUser
   if (userIndex < 0) return [...messages].reverse().find((message) => message.role === 'assistant') ?? null
-  return messages.slice(userIndex + 1).find((message) => message.role === 'assistant') ?? null
+  // A turn can write work-product rows before its answer; the answer row has text or a failure notice.
+  const replies = messages.slice(userIndex + 1).filter((message) => message.role === 'assistant')
+  return replies.findLast(hasAnswer) ?? replies[0] ?? null
+}
+
+function hasAnswer(message) {
+  return Boolean(String(message?.content ?? '').trim()) || (message?.parts ?? []).some((part) => part?.type === 'notice')
 }
 
 async function settledReply(client, threadId, locate, reads) {
   for (let read = 0; read < reads; read++) {
     const thread = await readThread(client, threadId)
     const message = locate(thread.messages ?? [])
-    const settled = message && (String(message.content ?? '').trim() || (message.parts ?? []).some((part) => part?.type === 'notice'))
+    const settled = message && hasAnswer(message)
     if (settled || read === reads - 1) return message
     await sleep(Math.min(POLL_MS, 5_000))
   }
@@ -447,7 +465,7 @@ function render(result) {
 
 function exitFor(status, approvals) {
   if (status === 'failed') return EXIT.failed
-  if (status === 'running') return EXIT.running
+  if (status === 'running' || status === 'resuming') return EXIT.running
   if (status === 'waiting' || approvals.length > 0) return EXIT.waiting
   return EXIT.ok
 }
@@ -463,6 +481,7 @@ async function finish(ctx, { followed, locate, turnId }) {
     summary = summarizeMessage(message, { base, workspaceId })
     if (summary.failure || (!message && followed.errors.length)) status = 'failed'
     else if (!message) status = 'unknown'
+    else if (summary.autoApproved > 0 && summary.approvals.length === 0) status = 'resuming'
     else status = 'completed'
     if (!summary.failure && !message && followed.errors.length) summary.failure = { code: 'stream', text: followed.errors.join('; ') }
   } else if (status === 'running' || status === 'waiting') {
@@ -472,9 +491,12 @@ async function finish(ctx, { followed, locate, turnId }) {
   }
   const approvals = [...(followed.asks ?? []), ...summary.approvals]
   if (options.download && summary.assets.length) await download(client, summary.assets, options.download)
+  const followCommand = `gtm-ask status ${threadId} --wait 30m${workspaceId === ctx.defaultWorkspace ? '' : ` --workspace ${workspaceId}`}`
   const next = status === 'running' || status === 'admitted'
-    ? `follow with: gtm-ask status ${threadId} --wait 30m${workspaceId === ctx.defaultWorkspace ? '' : ` --workspace ${workspaceId}`}`
-    : status === 'unknown' ? 'no reply row was found for this turn; open the conversation to inspect it' : null
+    ? `follow with: ${followCommand}`
+    : status === 'resuming'
+      ? `${summary.autoApproved} held call${summary.autoApproved === 1 ? '' : 's'} ran on the thread's auto-approve mode and the agent resumes in this conversation; follow with: ${followCommand}`
+      : status === 'unknown' ? 'no reply row was found for this turn; open the conversation to inspect it' : null
   const result = {
     workspaceId, threadId, turnId: turnId ?? null, executionId: followed.executionId ?? null, url, status,
     ...summary, approvals, next,
