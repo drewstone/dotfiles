@@ -94,7 +94,7 @@ Each candidate leaves with the number to beat and the deciding test.
 ## Log the run
 
 ```bash
-skill-run-log /hypothesize --target "<outcome, constraint, or external claim>" --verdict <VERDICT|ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
+skill-run-log /hypothesize --target "<outcome, constraint, or external claim>" --verdict <PASS|BLOCKED> --detail <ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

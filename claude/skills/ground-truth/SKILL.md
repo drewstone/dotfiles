@@ -45,7 +45,8 @@ When measurement cannot answer the question, state the missing segment and the c
 ## Log the run
 
 ```bash
-skill-run-log /ground-truth --target "<flow and execution boundary>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /ground-truth --target "<flow and execution boundary>" --verdict <PASS|PARTIAL|BLOCKED> \
+  --metric "<measured quantity>" --unit <unit> --after <value> --source <evidence> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

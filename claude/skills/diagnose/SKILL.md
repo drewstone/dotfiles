@@ -112,7 +112,7 @@ For a single run that needs a durable record, write `.agent/autopsies/YYYY-MM-DD
 ## Log the run
 
 ```bash
-skill-run-log /diagnose --target "<failure set or run>" --verdict <ROOT_CAUSE_CONFIRMED|PARTIAL|INSUFFICIENT_DATA> --next /<next-skill-or-stop>
+skill-run-log /diagnose --target "<failure set or run>" --verdict <PASS|PARTIAL|BLOCKED> --detail "<confirmed cause, or the missing data>" --next /<next-skill-or-stop>
 ```
 
 ## Then consider

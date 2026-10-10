@@ -59,7 +59,8 @@ This skill runs one hill; [the climb](../../../docs/processes/climb.md) runs all
 ## Log the run
 
 ```bash
-skill-run-log /evolve --target "<outcome and experiment scope>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /evolve --target "<outcome and experiment scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --detail <KEEP|ITERATE|ABANDON|REGRESSION> \
+  --prediction "<number to beat>" --metric "<metric>" --unit <unit> --before <baseline> --after <result> --source <experiment id> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

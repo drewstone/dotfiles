@@ -55,5 +55,5 @@ A reflection measures the operator and its tools ([the climb](../../../docs/proc
 ## Log the run
 
 ```bash
-skill-run-log /reflect --target "<scope and period>" --verdict <VERDICT> --next /<skill-or-stop>
+skill-run-log /reflect --target "<scope and period>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<skill-or-stop>
 ```

@@ -61,7 +61,7 @@ Keep pending outside assessment separate from measured research progress.
 ## Log the run
 
 ```bash
-skill-run-log /session-continuity --target "<active goal>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /session-continuity --target "<active goal>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

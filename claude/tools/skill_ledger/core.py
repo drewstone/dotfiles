@@ -47,7 +47,7 @@ VERDICT_MEANING = {
 RUNS = "skill-runs.jsonl"
 BACKFILL = "skill-runs.v2.jsonl"
 EVENTS = "skill-run-events.jsonl"
-OVERRIDE_METHOD = "lexical-v1"
+OVERRIDE_METHOD = "lexical-v2"
 
 # Every single-label verdict in the 421 schema-1 rows written 2026-10-05..10 on the Mac and GTR
 # (110 distinct labels), mapped by VERDICT_MEANING. Keys are normalized: upper case, runs of
@@ -526,6 +526,20 @@ def _pr_events(ts, command: str, output, how: str):
     return [Event(ts, "pr", {**ref, "how": how}) for ref in refs]
 
 
+# Codex records every injected turn as a user message. On GTR, 1,398 of 1,461 Codex user messages
+# from 2026-10-07..10 were automation: fleet inbox notices ("[fleet-message-id:...]"), account
+# rotation, task wrappers, role prompts and operator-agent steers. Claude Code tags the operator's
+# own turns (origin.kind "human"), so this filter applies to Codex only.
+_AUTOMATED = re.compile(
+    r"^\s*(\[[a-z][a-z-]*:|acct moved this session|<task>|<turn_aborted>|<user_instructions>|<environment_context>"
+    r"|# AGENTS\.md instructions|You are (the|a|an) |Operator \()")
+
+
+def operator_text(text: str) -> bool:
+    """Whether a Codex user message could be the operator's own words."""
+    return bool((text or "").strip()) and not _AUTOMATED.match(text)
+
+
 def _human_fallback(entry, text) -> bool:
     """For transcripts written before Claude Code recorded `origin`: a typed external prompt."""
     if entry.get("isMeta") or entry.get("userType") not in (None, "external"):
@@ -691,11 +705,13 @@ def scan_codex(path: Path) -> list[Event]:
                     events.extend(_pr_events(ts, command, item.get("aggregated_output"), f"pr-{match.group(1)}"))
             elif kind == "event_msg" and ptype == "item_completed" and (payload.get("item") or {}).get("type") == "UserMessage":
                 item = payload.get("item") or {}
-                events.append(Event(ts, "human", {"interrupt": False, "uuid": item.get("id"),
-                                                  "text": _text_of(item.get("content")), "invoke": False}))
+                text = _text_of(item.get("content"))
+                if operator_text(text):
+                    events.append(Event(ts, "human", {"interrupt": False, "uuid": item.get("id"), "text": text, "invoke": False}))
             elif kind == "event_msg" and ptype == "user_message":
-                events.append(Event(ts, "human", {"interrupt": False, "uuid": None,
-                                                  "text": str(payload.get("message") or ""), "invoke": False}))
+                text = str(payload.get("message") or "")
+                if operator_text(text):
+                    events.append(Event(ts, "human", {"interrupt": False, "uuid": None, "text": text, "invoke": False}))
             elif kind == "event_msg" and ptype == "token_count":
                 total = ((payload.get("info") or {}).get("total_token_usage")) or {}
                 if total:
@@ -819,15 +835,20 @@ def measure(events: list[Event], skill: str, log_ts: dt.datetime, main_events: l
 # Operator corrections: climb.md's reward 3, the person's reaction read by a labeler.
 
 
+# lexical-v2. Tuned on the 15 operator messages that followed Mac runs on 2026-10-05..10: v1 flagged
+# 4 (3 genuine; a question's "instead of" was not) and missed 5 ("have you even...", "...shouldn't
+# exclusively run...", "not all agents...", "do not stop until..."). GTR's messages are its held-out set.
 _CORRECTION = re.compile(
     r"""(?ix)
     ^\W*(no|nope|nah|wrong|stop|wait|hold\ on|undo|revert|redo|actually|instead)\b
     | \b(that|this|it)(\ is|'s|s)\ (not|wrong|incorrect|bad|broken|ugly|unacceptable|terrible)\b
-    | \bnot\ what\ i\b | \bi\ (said|asked|told\ you|meant)\b | \bas\ i\ (said|asked)\b
+    | \bnot\ what\ i\b | \bi\ (said|asked|told\ you|meant|thought)\b | \bas\ i\ (said|asked)\b
     | \b(you|it)\ (didn'?t|did\ not|missed|forgot|ignored|broke|failed\ to|skipped)\b
+    | \b(have|did)\ you\ (even|actually|really)\b
     | \bwhy\ (did|didn'?t|are|is|would|were)\ (you|it|this|we)\b
-    | \b(do\ not|don'?t|never)\ (do|use|ship|merge|say|add|make|touch|change|send|post|publish)\b
-    | \binstead\b | \bstill\ (broken|wrong|failing|not|bad|missing)\b
+    | \b(do\ not|don'?t|never)\ (do|use|ship|merge|say|add|make|touch|change|send|post|publish|stop)\b
+    | \bshould(n'?t|\ not)\b | \bnot\ all\b | \bhate\b
+    | \bstill\ (broken|wrong|failing|not|bad|missing)\b
     | \bnot\ (good|right|correct|done|working|acceptable|enough|amazing|it)\b
     | \b(terrible|garbage|awful|unacceptable|sloppy|lazy|useless|rejected?)\b
     | \btry\ again\b | \bdo\ it\ again\b | \bstart\ over\b
@@ -836,7 +857,7 @@ _CORRECTION = re.compile(
 
 
 def classify_followup(text: str):
-    """lexical-v1: (True, marker) when an operator message reads as a correction or redirect."""
+    """(True, marker) when an operator message reads as a correction or redirect (OVERRIDE_METHOD)."""
     match = _CORRECTION.search((text or "")[:600])
     return (True, match.group(0).strip()) if match else (False, None)
 

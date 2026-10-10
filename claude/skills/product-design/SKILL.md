@@ -81,7 +81,7 @@ Report the observed problems, decisions, changed files, before/after screenshots
 ## Log the run
 
 ```bash
-skill-run-log /product-design --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /product-design --target "<what this run targeted>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

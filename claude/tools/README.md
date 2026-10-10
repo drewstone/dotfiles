@@ -155,6 +155,32 @@ root filesystem. A second floor
 check after installation keeps the requested command from starting if its
 install consumed the reserve.
 
+## skill-run-log, skill-scoreboard, lead-scorecard
+
+The instrument for the climb's "operator tools" and "operator" layers ([climb.md](../../docs/processes/climb.md)).
+Each skill's `## Log the run` calls `skill-run-log`, which appends a schema-2 row to the repository's `skill-runs.jsonl` under `${XDG_STATE_HOME:-~/.local/state}/agent-work/<repo>/`.
+
+```bash
+skill-run-log /verify --target "<scope>" --verdict PASS --pr https://github.com/o/r/pull/12 --next /ship
+skill-run-log /evolve --target "<hill>" --verdict PARTIAL --detail ITERATE --prediction "p90 below 30 s" \
+  --metric "p90 cold start" --unit s --before 41 --after 33 --source .agent/runs/evolve-12/
+skill-run-log --override --theme rigor --note "<what Drew corrected>"   # this session's latest run
+skill-run-log --backfill        # link this host's schema-1 rows into skill-runs.v2.jsonl
+skill-scoreboard                # this machine plus gtr, beelink1-wsl, beelink2-wsl
+skill-scoreboard --by-version --since 30d --skill /verify
+skill-scoreboard --climb --append .agent/climb.jsonl
+lead-scorecard --days 7
+lead-scorecard incident open <id> --started <time> --detected <time> --summary "<what broke>"
+lead-scorecard decision ask <id> --question "<what only Drew can decide>"
+```
+
+- **Verdict:** `PASS`, `FAIL`, `PARTIAL`, `BLOCKED` or `ABANDONED`, for the target against the skill's bar. Schema-1 labels map through a table derived from the 110 labels in the first 421 rows; the skill's own label stays in `verdictDetail`.
+- **Captured without flags:** session, harness and lineage ids (`CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, `TANGLE_*`), the transcript that ran the command (main session or subagent), the trace directory, the duration from the skill's first invocation since its last logged result, tokens in that window, the PRs it created or merged, and the SKILL.md sha.
+- **Outcome:** each PR is checked on GitHub through `gh-drew`, when the row is written and again daily: merged and clean for 7 days passes; reverted or hot-fixed within 7 days (a fix that names the PR as the cause), red CI on the merge commit, or closed unmerged fails. Snapshots go to `agent-work/_outcomes/prs.jsonl`.
+- **Corrections:** the SessionEnd hook `skill-run-settle.sh` reads the operator's next message after each run, and interrupts during it, and writes a judgment to `skill-run-events.jsonl` (layer `operator`). Quotes stay in that local file; climb exports carry a transcript pointer. Subagent runs stay unknown. The same hook runs the daily outcome join and settles Codex sessions.
+- **Scoreboard:** reads only these ledger files on each host over ssh (`SKILL_SCOREBOARD_HOSTS` overrides the list) and orders signals as the climb ranks rewards: outcome, corrections, brief-judge score, then the author's claim. Its renderer is two small functions in `skill_ledger/core.py` for `viz` to replace.
+- **Lead scorecard:** per local day, corrections, guard refusals from `agent-work/_guards/*.jsonl`, revert and rollback PRs by drewstone, incidents with time to detect and recover (`_lead/incidents.jsonl`), and decisions waiting on Drew (`_lead/decisions.jsonl`).
+
 ## skills
 
 List installed skills or check the discovery catalog budget:

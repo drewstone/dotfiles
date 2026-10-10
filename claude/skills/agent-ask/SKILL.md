@@ -57,5 +57,5 @@ Never paste a key into a prompt, message, file, or command line.
 ## Log the run
 
 ```bash
-skill-run-log /agent-ask --target "<app, thread id and outcome>" --verdict <PASS|FAIL|WAITING> --next /<next-skill-or-stop>
+skill-run-log /agent-ask --target "<app, thread id and outcome>" --verdict <PASS|FAIL|PARTIAL> --next /<next-skill-or-stop>
 ```

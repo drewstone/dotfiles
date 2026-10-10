@@ -15,7 +15,8 @@ Columns follow docs/processes/climb.md's rewards, strongest first:
   outcome    machine-checked: PASS merged and clean 7 days; FAIL reverted or hot-fixed within 7
              days, CI red after merge, or closed unmerged; pending otherwise (runs with PRs only)
   corrected  the operator's reaction: corrected / judged runs (subagent runs have no direct channel)
-  claimed    the author's own verdict, PASS share: a claim, never a substitute for the two above
+  judge/30   the median independent brief-judge score of judged deliverables (--score)
+  claimed    the author's own verdict, PASS share: a claim, never a substitute for the ones above
 Durations are minutes from the skill's first invocation to its log. Trends are runs per local day.
 
 --climb prints climb-ledger rows (layer "operator tools" positions per skill and version, and
@@ -145,6 +146,7 @@ def summarize(rows, days):
     judged = [r for r in rows if r.get("operatorOverride") is not None]
     corrected = sum(1 for r in judged if r.get("operatorOverride") is True)
     durations = [r.get("durationMin") for r in rows if isinstance(r.get("durationMin"), (int, float))]
+    scores = [r["score"] for r in rows if isinstance(r.get("score"), (int, float))]
     per_day = collections.Counter(local_day(r["_ts"]) for r in rows)
     metrics = collections.defaultdict(list)
     for row in sorted(rows, key=lambda r: r["_ts"]):
@@ -161,6 +163,8 @@ def summarize(rows, days):
         "runs": len(rows),
         "verdicts": {v: verdicts.get(v, 0) for v in L.VERDICTS},
         "claimedPassPct": pct(verdicts.get("PASS", 0), mapped),
+        "judgeScoreP50": L.percentile(scores, 0.5),
+        "judged30": len(scores),
         "outcome": {"PASS": outcome.get("PASS", 0), "FAIL": outcome.get("FAIL", 0), "PENDING": outcome.get("PENDING", 0)},
         "outcomeFailPct": pct(outcome.get("FAIL", 0), with_prs),
         "outcomeClosed": len(closed),
@@ -228,7 +232,7 @@ def climb_rows(groups, corrections, opts, at, floor):
     stamp = L.iso(at)
     window = f"{local_day(floor)}..{local_day(at)}"
     out = []
-    for (skill, sha), summary in sorted(groups.items()):
+    for (skill, sha), summary in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
         version = sha or "unversioned"
         name = skill.lstrip("/")
         out.append({
@@ -240,6 +244,7 @@ def climb_rows(groups, corrections, opts, at, floor):
             "baseline": None,
             "result": {k: summary[k] for k in ("runs", "outcome", "outcomeFailPct", "outcomeClosed",
                                                "outcomePassPctClosed", "failSignals", "corrected", "judged",
+                                               "judgeScoreP50", "judged30",
                                                "correctedPct", "claimedPassPct", "durationP50", "durationP90")},
             "delta": None, "verdict": None, "durationMs": None, "timestamp": stamp,
             "reasoning": f"skill-scoreboard over {window}; outcome from GitHub via gh-drew, corrections by "
@@ -258,8 +263,9 @@ def climb_rows(groups, corrections, opts, at, floor):
             "timestamp": stamp, "date": local_day(row["_ts"]),
             "layer": L.LAYER_OPERATOR, "hill": "corrections",
             "theme": event.get("theme"), "change": None,
-            # The quote stays in the host's state directory; climb ledgers can be public.
-            "quoteRef": {"host": row["_host"], "transcript": evidence.get("transcript"), "uuid": evidence.get("uuid")},
+            # The quote and transcript path stay in the host's state directory; climb ledgers can be
+            # public. The message's uuid finds it in that host's transcripts.
+            "quoteRef": {"host": row["_host"], "uuid": evidence.get("uuid")},
             "basis": row.get("overrideBasis"), "method": event.get("method") or L.OVERRIDE_METHOD,
             "skill": row["skill"], "runKey": row["runKey"], "project": row.get("project"),
         })
@@ -294,7 +300,7 @@ def render(report, opts):
         else:
             hosts.append(f"{host['host']} unreachable")
     lines.append("hosts: " + " · ".join(hosts))
-    lines.append("rewards, strongest first: outcome (GitHub) > corrected (operator) > claimed (author's verdict)")
+    lines.append("rewards, strongest first: outcome (GitHub) > corrected (operator) > judge/30 (brief-judge) > claimed (author's verdict)")
     if report.get("join"):
         join = report["join"]
         lines.append(f"outcomes: {join['checked']} PR checks this run" + (f"; {len(join['errors'])} errors: {join['errors'][0]}" if join["errors"] else ""))
@@ -302,7 +308,7 @@ def render(report, opts):
     signals = ", ".join(f"{k} {v}" for k, v in t["failSignals"].items()) or "none"
     lines.append(f"outcome FAIL signals (PRs): {signals}; pass % needs a closed 7-day window ({t['outcomeClosed']} runs so far)")
     lines.append("")
-    headers = ["skill", "runs", "outcome P/F/open", "failed", "passed*", "corrected", "claimed", "p50 min", "p90 min",
+    headers = ["skill", "runs", "outcome P/F/open", "failed", "passed*", "corrected", "judge/30", "claimed", "p50 min", "p90 min",
                f"runs/day ({len(window['days'])}d)", "metric Δ"]
     table = []
     for item in report["skills"]:
@@ -316,17 +322,19 @@ def render(report, opts):
             label, s["runs"], f"{s['outcome']['PASS']}/{s['outcome']['FAIL']}/{s['outcome']['PENDING']}",
             fmt_pct(s["outcomeFailPct"]), fmt_pct(s["outcomePassPctClosed"]),
             f"{s['corrected']}/{s['judged']} {fmt_pct(s['correctedPct'])}",
+            fmt_num(s["judgeScoreP50"]) + (f" (n={s['judged30']})" if s["judged30"] else ""),
             fmt_pct(s["claimedPassPct"]), fmt_num(s["durationP50"]), fmt_num(s["durationP90"]),
             L.sparkline(s["runsPerDay"]), metric,
         ])
     table.append(["TOTAL", t["runs"], f"{t['outcome']['PASS']}/{t['outcome']['FAIL']}/{t['outcome']['PENDING']}",
                   fmt_pct(t["outcomeFailPct"]), fmt_pct(t["outcomePassPctClosed"]),
                   f"{t['corrected']}/{t['judged']} {fmt_pct(t['correctedPct'])}",
+                  fmt_num(t["judgeScoreP50"]) + (f" (n={t['judged30']})" if t["judged30"] else ""),
                   fmt_pct(t["claimedPassPct"]), fmt_num(t["durationP50"]), fmt_num(t["durationP90"]),
                   L.sparkline(t["runsPerDay"]), ""])
-    lines.append(L.render_table(headers, table, ["<", ">", ">", ">", ">", ">", ">", ">", ">", "<", "<"]))
+    lines.append(L.render_table(headers, table, ["<", ">", ">", ">", ">", ">", ">", ">", ">", ">", "<", "<"]))
     lines.append("failed = FAIL / runs with PRs; passed* = PASS / runs whose PRs' 7-day windows closed; "
-                 "corrected = corrected / judged runs")
+                 "corrected = corrected / judged runs; judge/30 = median brief-judge score")
     lines.append("")
     lines.append("By day")
     day_rows = []

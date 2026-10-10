@@ -101,7 +101,7 @@ Record resolved, still present, moved, or unverifiable findings with current evi
 ## Log the run
 
 ```bash
-skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <APPROVE|REQUEST_CHANGES> --next /<skill-or-stop>
+skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <PASS|FAIL> --detail "<APPROVE|REQUEST_CHANGES>: <n> findings" [--pr <PR URL>] --next /<skill-or-stop>
 ```
 
 ## Then consider

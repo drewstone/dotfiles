@@ -87,7 +87,7 @@ Report the user-visible result, run and artifact identities, checks, unresolved 
 ## Log the run
 
 ```bash
-skill-run-log /build-agent-app --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /build-agent-app --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
