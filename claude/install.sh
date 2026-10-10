@@ -88,6 +88,7 @@ link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   skill="$(basename "$skill_dir")"
+  case "$skill" in _*) continue ;; esac   # shared material for authors (_probes), not a skill
   if [ ! -f "$skill_dir/SKILL.md" ]; then
     if [ -L "${skill_dir%/}" ]; then
       echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
@@ -432,7 +433,7 @@ for m in json.load(sys.stdin):
 sync_plugins
 
 # Summary
-skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills | wc -l | tr -d ' ')
+skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills ! -name '_*' | wc -l | tr -d ' ')
 cmd_count=$(find "$SCRIPT_DIR/commands" -type f 2>/dev/null | wc -l | tr -d ' ')
 hook_count=$(find "$SCRIPT_DIR/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
 tool_count=$(find "$SCRIPT_DIR/tools" -type f ! -name README.md 2>/dev/null | wc -l | tr -d ' ')

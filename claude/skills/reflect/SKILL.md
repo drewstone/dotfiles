@@ -34,6 +34,7 @@ Derived from cursor/plugins correct (MIT).
 Leave sound work unchanged.
 
 Carry authorized corrections through verification; for analysis-only work, report the correction and evidence.
+A change to operator guidance (AGENTS.md, CLAUDE.md, a skill, `docs/processes/`, or project memory) must pass [the operator scenarios](../_probes/operator-scenarios.md) before it merges: every scenario that passed before the change still passes, and the pull request states both scores.
 
 ## Preserve the findings
 

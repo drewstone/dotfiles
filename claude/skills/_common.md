@@ -85,6 +85,6 @@ Usage counts and document length do not establish task quality.
 
 1. Check descriptions, local references, and any executable examples affected by the edit.
 2. Run `node --test tests/skills.test.mjs` from the repository root.
-3. For substantial behavior changes, use realistic independent tasks in isolated workspaces and inspect the results.
+3. For substantial behavior changes, use realistic independent tasks in isolated workspaces and inspect the results; for operator guidance, those tasks are [the operator scenarios](_probes/operator-scenarios.md).
 4. Check that required behavior survived and unnecessary work was removed before using size reduction as supporting evidence.
 5. Commit, review, and install from the maintained source while preserving unrelated local settings and skills.

@@ -65,7 +65,6 @@ Read [play reports](references/play.md) for the readout order and the rules that
 
 Lead with the answer or correction to the premise and the decision-relevant measurement when one exists.
 For a status or review, open with the scoreboard: the outcome metrics the goal names, each against its target.
-Activity (PRs merged, commits, agents run, tokens) explains the outcome and never headlines it.
 Every number carries its source, its denominator and the date it was read; a rate without its count is unfinished.
 Disclose material resource, sampling, execution, or termination differences before declaring a comparative winner.
 Distinguish observed results from causal interpretation and projected benefits.
@@ -86,10 +85,7 @@ Do not add hypothetical warnings or a forced action list to an already answered 
 
 ## Climb
 
-A report is a version on the communication hill ([the climb](../../../docs/processes/climb.md)).
-- Run the level-up passes, from framing to cutting, before anything reaches the reader.
-- Use the full form for analysis, status and proposals: the answer first with its number, the evidence, visuals built from data, the prediction scoreboard, ranked and tested proposals, and one link to the full page.
-- Thin bullets fail: parallel facts go in a table, and quantities go in a chart.
+A report is a version on the communication hill: run [the climb](../../../docs/processes/climb.md)'s level-up passes before anything reaches the reader, and give analysis, status and proposals its [full form](../../../docs/processes/climb.md#how-to-communicate).
 
 ## Log the run
 
