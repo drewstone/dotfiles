@@ -39,6 +39,10 @@ Run `./host/install.sh --check` to report drift without a change.
   It also blocks `host/bin/format-traces-drive`, which erases a disk.
 - `claude/hooks/kill-guard.sh` refuses broad process signals from Claude Bash commands.
   If `jq` is unavailable, it refuses every matched Bash command because it cannot inspect the input.
+- `claude/hooks/process_guard.py` refuses, in Claude Bash commands and the `ssh`, `bash -c` and heredoc scripts inside them: `gh pr merge --admin` and branch-protection writes; force pushes unless the command sets `CC_ALLOW_FORCE_PUSH=1` with Drew's authorization; `core.hooksPath` overrides and `--no-verify` commits outside throwaway fixture repos; bare `git stash pop`/`apply`, and named ones outside a `_wt` worktree this session created; and, on the Mac only, whole-repo installs, builds, test runs, turbo runs, image builds and signoff (single test files pass; `CC_ALLOW_MAC_BUILD=1` overrides).
+  Denials and overrides go to `~/.claude/logs/process-guard.log`.
+- `claude/hooks/secret_scan.py` runs after Bash, Read and Grep calls and warns when their output or command holds a live-looking credential (`sk-tan-`, `gak_`, `lak_`, `plabs_`, `whsec_`, Stripe, GitHub, OpenAI, Anthropic shapes), with that key type's rotation steps.
+  It records only the kind, length and SHA-256 in `~/.claude/logs/secret-exposures.jsonl`.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
 
 The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.

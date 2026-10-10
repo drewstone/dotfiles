@@ -12,7 +12,8 @@ TIME is ISO 8601 (2026-10-10T08:15:00Z) or "now".
 
 Per day it reports:
   corrections   operator corrections of skill runs / runs judged, from the skill-run ledgers
-  violations    guard and secret-scanner refusals, from the guard ledgers
+  violations    guard refusals and exposed credentials, from the guard hooks' records; bypasses
+                are rule overrides the guards allowed and logged
   reverts       merged PRs by drewstone titled revert or rollback (GitHub, through gh-drew)
   incidents     opened that day, time to detect (detected - started), time to recover
                 (recovered - detected), and incidents still open at the day's end
@@ -22,7 +23,8 @@ Per day it reports:
 Records, append-only events in ${XDG_STATE_HOME:-~/.local/state}/agent-work/ on any host:
   _lead/incidents.jsonl   {"id","event":"open","startedAt","detectedAt","summary",...} then {"id","event":"recover","recoveredAt"}
   _lead/decisions.jsonl   {"id","event":"ask","askedAt","question",...} then {"id","event":"resolve","resolvedAt"}
-  _guards/*.jsonl         one row per guard decision: ts, guard (or hook/rule), decision; LEAD_GUARD_GLOBS adds globs
+Guard records: ~/.claude/logs/{process-guard.log,kill-guard.log,secret-exposures.jsonl}, and
+  _guards/*.jsonl with one row per decision (ts, guard, decision); LEAD_GUARD_GLOBS adds globs.
 The latest event per id wins. Keep personal details out of summaries and questions.
 """
 
@@ -43,7 +45,11 @@ from skill_ledger import outcomes as O  # noqa: E402
 LEAD = "_lead"
 INCIDENTS = f"{LEAD}/incidents.jsonl"
 DECISIONS = f"{LEAD}/decisions.jsonl"
-GUARD_GLOBS = ("_guards/*.jsonl",)
+# The guard hooks' own records: process_guard.py (DENY and BYPASS lines), kill-guard.sh (DENY
+# lines) and secret_scan.py (one JSON row per exposed credential), plus any JSONL under _guards/.
+GUARD_GLOBS = ("~/.claude/logs/process-guard.log", "~/.claude/logs/kill-guard.log",
+               "~/.claude/logs/secret-exposures.jsonl", "_guards/*.jsonl")
+_GUARD_LINE = re.compile(r"^(\S+)\s+(DENY|BYPASS|ALLOW|WARN)\b(?:.*?\brule=(\S+))?")
 # The PR's action is the revert or rollback ("revert: x", "fix: ... (revert #12)", "rollback(api): x"),
 # not a feature about rollback machinery ("guard host-agent rollback"), which a title search also matches.
 REVERT_TITLE = re.compile(r"^\s*(revert|roll\s*back|rollback)\b|^\w+(\([^)]*\))?!?:\s*(revert|roll\s*back|rollback)\b"
@@ -140,17 +146,29 @@ def fold(texts) -> dict:
     return items
 
 
-def guard_events(texts) -> list[dict]:
+def guard_events(files: dict) -> list[dict]:
+    """Refusals and overrides from guard records: {"ts", "guard", "kind": "deny"|"bypass"}."""
     out = []
-    for text in texts:
+    for name, text in files.items():
+        stem = os.path.basename(name).rsplit(".", 1)[0]
+        if name.endswith(".log"):
+            for line in (text or "").splitlines():
+                match = _GUARD_LINE.match(line)
+                ts = L.parse_ts(match.group(1)) if match else None
+                if ts is None or match.group(2) in ("ALLOW", "WARN"):
+                    continue
+                guard = f"{stem}:{match.group(3)}" if match.group(3) else stem
+                out.append({"ts": ts, "guard": guard, "kind": "bypass" if match.group(2) == "BYPASS" else "deny"})
+            continue
         for _, _, obj in L.read_jsonl(text or ""):
             ts = L.parse_ts(obj.get("ts") or obj.get("timestamp") or obj.get("time"))
             if ts is None:
                 continue
             decision = str(obj.get("decision") or obj.get("action") or obj.get("outcome") or obj.get("verdict") or "").lower()
-            if decision and decision not in DENY:
+            if decision and decision not in DENY and decision not in ("bypass", "override"):
                 continue
-            out.append({"ts": ts, "guard": obj.get("guard") or obj.get("hook") or obj.get("scanner") or obj.get("rule") or "unknown"})
+            guard = obj.get("guard") or obj.get("hook") or obj.get("scanner") or obj.get("rule") or stem
+            out.append({"ts": ts, "guard": guard, "kind": "bypass" if decision in ("bypass", "override") else "deny"})
     return out
 
 
@@ -194,7 +212,7 @@ def build(opts, at):
     extra = tuple(g for g in re.split(r"[\s,]+", os.environ.get("LEAD_GUARD_GLOBS", "")) if g)
     globs = L.LEDGER_GLOBS + (INCIDENTS, DECISIONS) + GUARD_GLOBS + extra
     reads = L.gather(hosts, globs)
-    rows, incidents_t, decisions_t, guards_t = [], [], [], []
+    rows, incidents_t, decisions_t, guards_t = [], [], [], {}
     for read in reads:
         if not read.get("ok"):
             continue
@@ -205,8 +223,8 @@ def build(opts, at):
                 incidents_t.append(text)
             elif rel == DECISIONS:
                 decisions_t.append(text)
-            elif rel.startswith("_guards/") or any(re.fullmatch(g.replace("*", "[^/]*"), rel) for g in extra):
-                guards_t.append(text)
+            elif rel.startswith(("_guards/", "~/.claude/logs/")) or any(re.fullmatch(g.replace("*", "[^/]*"), rel) for g in extra):
+                guards_t[f"{label}:{rel}"] = text
     days = [(at.astimezone().date() - dt.timedelta(days=n)).isoformat() for n in range(opts["days"] - 1, -1, -1)]
     start = dt.datetime.fromisoformat(days[0]).astimezone()
     incidents = fold(incidents_t)
@@ -220,7 +238,8 @@ def build(opts, at):
         day_rows = [r for r in rows if (ts := L.parse_ts(r.get("ts"))) and day_of(ts) == day]
         judged = [r for r in day_rows if r.get("operatorOverride") is not None]
         corrected = sum(1 for r in judged if r.get("operatorOverride") is True)
-        day_guards = [g for g in guards if day_of(g["ts"]) == day]
+        day_guards = [g for g in guards if day_of(g["ts"]) == day and g["kind"] == "deny"]
+        day_bypasses = [g for g in guards if day_of(g["ts"]) == day and g["kind"] == "bypass"]
         opened, ttd, ttr = [], [], []
         open_at_end = 0
         for item in incidents.values():
@@ -250,6 +269,7 @@ def build(opts, at):
             "corrected": corrected, "judged": len(judged),
             "violations": len(day_guards),
             "violationsByGuard": dict(collections.Counter(g["guard"] for g in day_guards).most_common()),
+            "bypasses": len(day_bypasses),
             "reverts": None if day_reverts is None else len(day_reverts),
             "revertPRs": None if day_reverts is None else [f"{r['repository']['nameWithOwner']}#{r['number']}" for r in day_reverts],
             "incidentsOpened": len(opened), "ttdHoursP50": L.percentile(ttd, 0.5), "ttrHoursP50": L.percentile(ttr, 0.5),
@@ -285,17 +305,18 @@ def render(report) -> str:
     rows = []
     for d in report["days"]:
         rows.append([d["day"], d["skillRuns"], f"{d['corrected']}/{d['judged']}",
-                     show(d["violations"]) if src["guardLedgers"] else "—", show(d["reverts"]),
+                     show(d["violations"]) if src["guardLedgers"] else "—", show(d["bypasses"]) if src["guardLedgers"] else "—",
+                     show(d["reverts"]),
                      d["incidentsOpened"], show(d["ttdHoursP50"]), show(d["ttrHoursP50"]), d["incidentsOpenAtEnd"],
                      d["queueOpenAtEnd"], show(d["queueOldestHours"]), show(d["queueWaitHoursP50"])])
     lines.append(L.render_table(
-        ["day", "skill runs", "corrected", "violations", "reverts", "incidents", "TTD h", "TTR h", "open",
+        ["day", "skill runs", "corrected", "violations", "bypasses", "reverts", "incidents", "TTD h", "TTR h", "open",
          "Drew queue", "oldest h", "wait h"], rows))
     lines.append("")
     lines.append("corrected = operator corrections / runs judged; TTD and TTR are medians of incidents opened that day; "
                  "Drew queue = decisions open at the day's end")
     if not src["guardLedgers"]:
-        lines.append("violations: no guard ledger under _guards/ yet; the guard hooks own that record")
+        lines.append("violations: no guard records found on any host")
     return "\n".join(lines)
 
 

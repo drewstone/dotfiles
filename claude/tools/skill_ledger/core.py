@@ -237,9 +237,9 @@ def skill_hill(skill: str) -> str:
 
 
 def run_key(row: dict, raw: str) -> str:
-    """Stable identity: a schema-2 row's runId, else a hash of the original line."""
-    if row.get("runId"):
-        return row["runId"]
+    """Stable identity: the row's id, else a hash of its exact bytes (rows written before ids)."""
+    if row.get("id"):
+        return row["id"]
     return "v1-" + hashlib.sha1(raw.strip().encode()).hexdigest()[:16]
 
 
@@ -406,7 +406,7 @@ def detect_session(skill: str | None = None, env=None) -> dict | None:
         "rootRunId": env.get("TANGLE_ROOT_RUN_ID") or None,
         "host": env.get("TANGLE_HOST") or host_name(),
     }
-    sid = env.get("CLAUDE_CODE_SESSION_ID") or env.get("TANGLE_CLAUDE_SESSION")
+    sid = env.get("CLAUDE_CODE_SESSION_ID")
     if sid:
         main = find_claude_transcript(sid)
         invoking, agent = (main, None)
@@ -480,8 +480,8 @@ class Event:
 _SKILL_PATH = re.compile(r"skills/([A-Za-z0-9_.:-]+)/SKILL\.md")
 _COMMAND_NAME = re.compile(r"<command-name>/?([A-Za-z0-9_.:-]+)</command-name>")
 # Non-greedy: Codex nests command output as JSON text, so several results share one line,
-# separated by a literal backslash-n.
-_LOGGED = re.compile(r"logged: (\S+) -> (\S+) \((.*?)\) \[([^\]\n\\]*?skill-runs\.jsonl)\]")
+# separated by a literal backslash-n. Since dotfiles #299 the row id precedes the skill.
+_LOGGED = re.compile(r"logged: (?:(sr-\S+) )?(\S+) -> (\S+) \((.*?)\) \[([^\]\n\\]*?skill-runs\.jsonl)\]")
 _LOGCALL = re.compile(r"skill-run-log\s+(/?[A-Za-z][A-Za-z0-9_.:-]*)")
 _PR_COMMAND = re.compile(r"\bpr\s+(create|merge)\b")
 _INTERRUPT = "[Request interrupted by user"
@@ -513,8 +513,8 @@ def _log_events(ts, value):
             continue
         for match in _LOGGED.finditer(text):
             out.append(Event(ts, "log", {
-                "skill": normalize_skill(match.group(1)), "next": match.group(2),
-                "verdict": match.group(3), "ledger": match.group(4),
+                "id": match.group(1), "skill": normalize_skill(match.group(2)), "next": match.group(3),
+                "verdict": match.group(4), "ledger": match.group(5),
             }))
     return out
 
@@ -918,12 +918,15 @@ LEDGER_GLOBS = ("*/skill-runs.jsonl", "*/skill-runs.v2.jsonl", "*/skill-run-even
 
 
 def _collect_script(globs) -> str:
-    patterns = " ".join(f'"$root"/{g}' for g in globs)
+    """A POSIX sh script printing hostname, then NUL-separated (name, contents) for each file.
+    Globs are relative to the agent-work root, or to $HOME when they start with "~/"."""
+    patterns = " ".join(f'"$HOME"/{g[2:]}' if g.startswith("~/") else f'"$root"/{g}' for g in globs)
     return (
         'root="${XDG_STATE_HOME:-$HOME/.local/state}/agent-work"; '
         "hostname | cut -d. -f1; printf '\\0'; "
         f"for f in {patterns}; do [ -f \"$f\" ] || continue; "
-        "printf '%s\\0' \"${f#$root/}\"; cat \"$f\"; printf '\\0'; done"
+        'case "$f" in "$root"/*) name="${f#$root/}" ;; *) name="~/${f#$HOME/}" ;; esac; '
+        "printf '%s\\0' \"$name\"; cat \"$f\"; printf '\\0'; done"
     )
 
 
@@ -1056,8 +1059,35 @@ def percentile(values, q: float):
     return data[low] + (data[high] - data[low]) * (position - low)
 
 
-def new_run_id() -> str:
-    return "run-" + uuid.uuid4().hex[:16]
+def new_run_id(at: dt.datetime) -> str:
+    """The row id format dotfiles #299 introduced: sr-<UTC stamp>-<8 hex>."""
+    return f"sr-{at.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+
+
+def machine() -> str | None:
+    return socket.gethostname().split(".")[0] or None
+
+
+def env_session_id(env=None) -> str | None:
+    env = os.environ if env is None else env
+    for name in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_COMPANION_SESSION_ID"):
+        if env.get(name):
+            return env[name]
+    return None
+
+
+def git_links(cwd: str | None = None) -> dict:
+    def git(*args):
+        try:
+            done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.stdout.strip() or None if done.returncode == 0 else None
+    return {"branch": git("branch", "--show-current"), "headSha": git("rev-parse", "--verify", "--quiet", "HEAD")}
+
+
+def pr_url(ref: dict) -> str:
+    return ref.get("url") or f"https://github.com/{ref['repo']}/pull/{int(ref['number'])}"
 
 
 def which(name: str) -> str | None:

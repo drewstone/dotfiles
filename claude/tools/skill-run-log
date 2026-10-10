@@ -2,7 +2,7 @@
 """Append one schema-2 row to the repository's off-repo skill-runs.jsonl per skill invocation.
 
 Usage:
-  skill-run-log <skill> --verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED [--detail TEXT] [--target X]
+  skill-run-log <skill> [--verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED] [--detail TEXT] [--target X]
                 [--next /SKILL] [--prediction TEXT] [--pr URL|owner/repo#N]... [--score N]
                 [--metric NAME [--unit U] [--before N] [--after N] [--source REF]]...
                 [--cost-usd N] [--duration MIN] [--prompt TEXT] [--project NAME]
@@ -25,7 +25,8 @@ left main checkouts permanently dirty (discovery-lab, 2026-10-05). Rows written 
 in each repo's .agent/ or .evolve/skill-runs.jsonl as history. Append-only; never rewrites a line.
 
 Each row is a move on the climb's "operator tools" layer (docs/processes/climb.md): layer,
-hill ("skill:/<name>"), prediction, and outcome. Captured without flags:
+hill ("skill:/<name>"), prediction, and outcome. It prints the row's id (sr-<UTC stamp>-<8 hex>);
+keep it with the output. Captured without flags:
   session.{harness,id,agentId,runId,rootRunId,host}  CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID, TANGLE_*
   transcriptPath, traceDir                           the transcript holding this call; the session's trace directory
   startedAt, durationMin                             first invocation of the skill since its last logged result
@@ -34,6 +35,7 @@ hill ("skill:/<name>"), prediction, and outcome. Captured without flags:
   outcome                                            GitHub: merged, reverted or hot-fixed within 7 days, CI after
                                                      merge, served; refreshed by --join (daily from SessionEnd)
   skillSha                                           sha256 of the SKILL.md the harness loads, for version splits
+  pr, machine, sessionId, cwd, branch, headSha       flat link fields for the outcome joiner (null when unknown)
 --score is an independent judge's score of the deliverable (brief-judge totals out of 30), null when
 the run was not judged; climb.md ranks it above the author's verdict and below the operator's reaction.
   operatorOverride                                   settled into skill-run-events.jsonl from the operator's next
@@ -52,7 +54,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from skill_ledger import core as L  # noqa: E402
 from skill_ledger import outcomes as O  # noqa: E402
 
-USAGE = """usage: skill-run-log <skill> --verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED [--detail TEXT] [--target X]
+USAGE = """usage: skill-run-log <skill> [--verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED] [--detail TEXT] [--target X]
                      [--next /SKILL] [--prediction TEXT] [--pr REF]... [--score N] [--metric NAME [--unit U] [--before N]
                      [--after N] [--source REF]]... [--cost-usd N] [--duration MIN] [--prompt TEXT] [--project NAME]
                      [--transcript PATH] [--trace-dir PATH]
@@ -131,7 +133,7 @@ def parse(argv):
             refs = L.pr_refs(value)
             if not refs:
                 fail("--pr takes a pull request URL or owner/repo#N")
-            prs.extend({**ref, "how": "flag"} for ref in refs)
+            prs.extend({**ref, "how": "flag", "url": value if value.startswith("https://") else None} for ref in refs)
         else:
             values[option] = value
     return values, metrics, prs, flags, positional
@@ -141,15 +143,16 @@ def parse(argv):
 
 
 def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
-    if "--verdict" not in values:
-        fail("--verdict is required: " + "|".join(L.VERDICTS))
-    verdict, rule = L.map_verdict(values["--verdict"])
-    if verdict is None:
+    # A missing verdict is stored as null: it is the weakest signal, and refusing the row would
+    # lose the outcome, duration and corrections that outrank it. Free text is refused, because
+    # --detail is where it belongs.
+    verdict, rule = L.map_verdict(values.get("--verdict"))
+    if verdict is None and rule != "missing":
         meanings = "\n".join(f"  {k:9} {v}" for k, v in L.VERDICT_MEANING.items())
         fail(f"verdict {values['--verdict']!r} is not one of {'|'.join(L.VERDICTS)}; "
              f"put the skill's own wording in --detail.\n{meanings}")
     detail = values.get("--detail")
-    if detail is None and rule != "enum":
+    if detail is None and rule not in ("enum", "missing"):
         detail = values["--verdict"].strip()
     duration = None
     if "--duration" in values:
@@ -182,9 +185,10 @@ def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
     prs = L.merge_refs(explicit_prs, [{**r, "how": "target"} for r in L.pr_refs(target)], measured["prs"])
 
     log = L.state_root() / L.repo_name() / L.RUNS
+    links = L.git_links()
     row = {
         "schema": L.SCHEMA,
-        "runId": L.new_run_id(),
+        "id": L.new_run_id(at),
         "layer": L.LAYER_TOOLS,
         "hill": L.skill_hill(skill),
         "skill": skill,
@@ -210,8 +214,15 @@ def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
         "skillSha": L.skill_sha(skill, session.get("harness")),
         "session": session or None,
         "host": L.host_name(),
+        # Flat link fields the outcome joiner reads (dotfiles #299); null when unavailable.
+        "pr": explicit_prs[0]["url"] if explicit_prs and explicit_prs[0].get("url") else (L.pr_url(prs[0]) if prs else None),
+        "machine": L.machine(),
+        "sessionId": session.get("id") or L.env_session_id(),
+        "cwd": os.getcwd(),
+        "branch": links["branch"],
+        "headSha": links["headSha"],
     }
-    if prs:
+    if prs and not os.environ.get("SKILL_LEDGER_OFFLINE"):
         try:  # the strongest reward, attached when the row is written
             existing = {}
             O.join(prs, at=at, existing=existing)
@@ -219,7 +230,7 @@ def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
         except Exception as error:  # GitHub being unreachable never loses the row
             print(f"skill-run-log: outcome check skipped: {error}", file=sys.stderr)
     L.append_jsonl(log, row)
-    print(f"logged: {skill} -> {row['dispatchedTo']} ({verdict}) [{log}]")
+    print(f"logged: {row['id']} {skill} -> {row['dispatchedTo']} ({verdict or 'n/a'}) [{log}]")
     captured = []
     if row["durationMin"] is not None:
         captured.append(f"{row['durationMin']} min ({row['durationSource']})")

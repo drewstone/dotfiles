@@ -67,6 +67,10 @@
           },
           {
             "type": "command",
+            "command": "$HOME/.claude/hooks/process_guard.py"
+          },
+          {
+            "type": "command",
             "command": "$HOME/.claude/hooks/rtk-rewrite.sh"
           },
           {
@@ -107,6 +111,17 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|BashOutput|TaskOutput|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/secret_scan.py"
           }
         ]
       }

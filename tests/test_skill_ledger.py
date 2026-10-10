@@ -65,7 +65,7 @@ class Sandbox(unittest.TestCase):
         self.env = {
             "PATH": f"{self.bin}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
             "HOME": str(base), "XDG_STATE_HOME": str(self.state), "CLAUDE_CONFIG_DIR": str(self.claude),
-            "CODEX_HOME": str(self.codex), "TZ": "UTC", "SKILL_SCOREBOARD_HOSTS": "",
+            "CODEX_HOME": str(self.codex), "TZ": "UTC", "SKILL_SCOREBOARD_HOSTS": "", "SKILL_LEDGER_OFFLINE": "1",
         }
 
     def tearDown(self):
@@ -136,12 +136,15 @@ class LogTest(Sandbox):
 
     def test_log_captures_session_duration_tokens_and_prs(self):
         self.session_transcript()
+        self.env.pop("SKILL_LEDGER_OFFLINE")  # the gh-drew stub answers the write-time outcome check
         done = self.run_tool("skill-run-log", "/verify", "--target", "acme widget", "--verdict", "APPROVE",
                              "--metric", "p90 latency", "--unit", "ms", "--before", "420", "--after", "310",
                              "--source", "run-1", "--prediction", "p90 below 350 ms", "--score", "24",
                              "--next", "/ship", now_minutes=11)
-        self.assertIn("logged: /verify -> /ship (PASS)", done.stdout)
         row = self.ledger()[-1]
+        self.assertIn(f"logged: {row['id']} /verify -> /ship (PASS)", done.stdout)
+        self.assertRegex(row["id"], r"^sr-\d{8}T\d{6}Z-[0-9a-f]{8}$")
+        self.assertEqual((row["pr"], row["sessionId"]), ("https://github.com/acme/widget/pull/5", SID))
         self.assertEqual((row["schema"], row["layer"], row["hill"]), (2, "operator tools", "skill:/verify"))
         self.assertEqual((row["verdict"], row["verdictDetail"]), ("PASS", "APPROVE"))
         self.assertEqual(row["durationMin"], 10.0)
@@ -165,6 +168,12 @@ class LogTest(Sandbox):
         self.assertEqual(row["session"]["agentId"], "abc123")
         self.assertEqual(row["transcriptPath"], str(sub))
         self.assertEqual(row["session"]["mainTranscriptPath"], str(self.transcript))
+
+    def test_missing_verdict_is_null_not_refused(self):
+        self.run_tool("skill-run-log", "/verify", now_minutes=11, session=False)
+        row = self.ledger()[-1]
+        self.assertIsNone(row["verdict"])
+        self.assertIsNone(row["verdictDetail"])
 
     def test_free_text_verdict_is_refused(self):
         done = self.run_tool("skill-run-log", "/verify", "--verdict", "mostly fine", now_minutes=11, check=False)
@@ -268,7 +277,7 @@ class CodexScanTest(Sandbox):
             line(0.5, "event_msg", {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 100, "output_tokens": 10}}}),
             line(1, "response_item", {"type": "function_call", "call_id": "c1", "arguments": json.dumps({"cmd": "cat ~/.codex/skills/ship/SKILL.md"})}),
             line(6, "event_msg", {"type": "item_completed", "item": {"type": "CommandExecution", "command": ["zsh", "-lc", "skill-run-log /ship --verdict PASS"],
-                                                                      "aggregated_output": f"logged: /ship -> stop (PASS) [/x/agent-work/proj/{L.RUNS}]\n"}}),
+                                                                      "aggregated_output": f"logged: sr-20261009T120600Z-abcd1234 /ship -> stop (PASS) [/x/agent-work/proj/{L.RUNS}]\n"}}),
             line(5.5, "event_msg", {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 400, "output_tokens": 70}}}),
             line(6.5, "event_msg", {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 900, "output_tokens": 90}}}),
             line(7, "event_msg", {"type": "item_completed", "item": {"type": "UserMessage", "id": "u1", "content": [{"type": "text", "text": "redo it"}]}}),
@@ -338,12 +347,12 @@ class ScoreboardTest(Sandbox):
         rows = [
             {"skill": "/verify", "ts": ts(0)[:19] + "Z", "verdict": "PASS", "durationMin": None},
             {"skill": "/verify", "ts": ts(60)[:19] + "Z", "verdict": "REQUEST_CHANGES", "durationMin": 4},
-            {"schema": 2, "runId": "run-a", "skill": "/verify", "ts": ts(120)[:19] + "Z", "verdict": "PASS", "durationMin": 10,
+            {"schema": 2, "id": "sr-20261009T140000Z-0000000a", "skill": "/verify", "ts": ts(120)[:19] + "Z", "verdict": "PASS", "durationMin": 10,
              "score": 21, "skillSha": "abc", "metrics": [{"name": "p90", "unit": "ms", "before": 400, "after": 300, "source": None}],
              "session": {"id": SID}, "prs": []},
         ]
         runs.write_text("".join(json.dumps(r) + "\n" for r in rows))
-        (runs.parent / L.EVENTS).write_text(json.dumps({"event": "override", "runKey": "run-a", "operatorOverride": True,
+        (runs.parent / L.EVENTS).write_text(json.dumps({"event": "override", "runKey": "sr-20261009T140000Z-0000000a", "operatorOverride": True,
                                                          "method": "explicit", "basis": "explicit"}) + "\n")
 
     def test_json_summary_and_coverage(self):
@@ -385,11 +394,19 @@ class LeadScorecardTest(Sandbox):
         guards.parent.mkdir(parents=True)
         guards.write_text(json.dumps({"ts": ts(10), "guard": "secret-scan", "decision": "deny"}) + "\n"
                           + json.dumps({"ts": ts(11), "guard": "kill-guard", "decision": "allow"}) + "\n")
+        logs = Path(self.env["HOME"]) / ".claude" / "logs"
+        logs.mkdir(parents=True)
+        (logs / "process-guard.log").write_text(
+            f"{ts(12)[:19]}Z DENY rule=mac-build session=s cwd=/x command=\"pnpm test\"\n"
+            f"{ts(13)[:19]}Z BYPASS rule=force-push session=s cwd=/x command=\"git push -f\"\n")
+        (logs / "secret-exposures.jsonl").write_text(json.dumps({"ts": ts(14), "kind": "GitHub token", "length": 40}) + "\n")
         report = json.loads(run("--local", "--no-github", "--json", "--days", "1", m=180).stdout)
         day = report["days"][-1]
         self.assertEqual((day["incidentsOpened"], day["ttdHoursP50"], day["ttrHoursP50"]), (1, 0.5, 1.0))
         self.assertEqual((day["queueOpenAtEnd"], day["queueOldestHours"]), (1, 2.0))
-        self.assertEqual((day["violations"], day["violationsByGuard"]), (1, {"secret-scan": 1}))
+        self.assertEqual(day["violations"], 3)
+        self.assertEqual(day["violationsByGuard"], {"secret-scan": 1, "process-guard:mac-build": 1, "secret-exposures": 1})
+        self.assertEqual(day["bypasses"], 1)
         climb = run("--local", "--no-github", "--climb", "--days", "1", m=180).stdout.splitlines()
         hills = {json.loads(line)["hill"] for line in climb}
         self.assertIn("operator:time-to-recover", hills)
