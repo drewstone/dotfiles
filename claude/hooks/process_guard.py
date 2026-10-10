@@ -37,6 +37,10 @@ while their briefs said not to:
                 secret_scan.py warned, but only after the output existed. A traced script is read
                 (a remote one over ssh, once, 10 s timeout; unreadable means allowed).
 
+  ledger-write  `echo '{...}' >> .agent/climb.jsonl`, `tee -a reports/climb/ledger.jsonl`: rows written
+                around `climb-log append`, which checks that every reported number names its selection
+                rule. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair Drew approved.
+
 Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed
 too: an admin merge or force push run on a Beelink has the same effect on GitHub. The Mac
 build rule skips remote commands, which is where that work belongs.
@@ -290,6 +294,7 @@ class Command:
         self.loops = dict(ctx.loops)  # loop variables as of this command
         self.upstream = []  # the argvs piped into this command
         self.via_xargs = False  # this command's arguments come from its stdin through xargs
+        self.writes = []  # files this command writes: redirection targets, and tee's arguments
 
     @property
     def prog(self):
@@ -696,6 +701,7 @@ def commands(src, cwd, remote=False, ctx=None):
         cmd.stream_tainted = upstream
         cmd.upstream = piped_from
         cmd.via_xargs = "xargs" in seg.words[:len(seg.words) - len(argv)]
+        cmd.writes = list(seg.writes) + ([a for a in argv[1:] if not a.startswith("-")] if prog == "tee" else [])
         result.append(cmd)
         loaded = secret_load(argv) or (secret_references(argv[1:]) if ctx.xtrace else None)
         if loaded:
@@ -1162,6 +1168,22 @@ def rule_pattern_kill(cmd):
             "of a literal pid stay allowed. User override: CC_ALLOW_BROADCAST_KILL=1 (session-wide, set by Drew).", None)
 
 
+LEDGER = re.compile(r"(?:^|/)(?:\.agent/climb\.jsonl|reports/climb/ledger\.jsonl)$")
+
+
+def rule_ledger_write(cmd):
+    """A shell write into a climb ledger skips climb-log's measurement check (and `>` erases its history)."""
+    hit = next((w for w in cmd.writes if LEDGER.search(w.strip("'\""))), None)
+    if not hit:
+        return None
+    return ("ledger-write", "shell write into a climb ledger",
+            f"This command writes {hit} from the shell. Ledger rows go through `climb-log append --row '<json>'` "
+            "(or `--file row.json`), which refuses a reported number that does not name its selection rule, window "
+            "and code version, the gap behind the 5 numbers retracted on 2026-10-10; a `>` would also erase the "
+            "append-only history. `climb-log schema` prints the contract. To repair a malformed line with Drew's "
+            "approval, rerun with CC_ALLOW_LEDGER_WRITE=1 (logged).", "CC_ALLOW_LEDGER_WRITE")
+
+
 def is_mac():
     return (os.environ.get("CC_GUARD_UNAME") or platform.system()) == "Darwin"
 
@@ -1360,7 +1382,8 @@ def evaluate_full(payload):
     cmds = commands(command, cwd, False, root)
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
-                    rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_pattern_kill(cmd)):
+                    rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_pattern_kill(cmd),
+                    rule_ledger_write(cmd)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])

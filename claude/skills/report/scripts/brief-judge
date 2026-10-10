@@ -7,13 +7,15 @@ usage: brief-judge DELIVERABLE [--context TEXT|@FILE] [--model M] [--project DIR
 DELIVERABLE is an HTML, Markdown or text file ("-" reads text from stdin).
 The judge scores the ten dimensions of docs/processes/climb.md#judging-a-deliverable
 0-3 with a quoted reason, and this script computes the total, the three weakest
-dimensions and their fixes, and appends one operator row to the project's ledger.
+dimensions and their fixes, and appends one operator row to the project's ledger through
+climb-log, which checks its measurement block.
 
 The judge runs through the Claude Code CLI on a subscription account (`acct run`
 when installed), with no tools, no user settings or hooks, and ANTHROPIC_API_KEY
 removed, so it never spends per-token API credit.
 
-Exit codes: 0 scored, 2 usage or input error, 3 judge call or parse failure.
+Exit codes: 0 scored, 2 usage or input error, 3 judge call or parse failure, 4 scored but the
+ledger (climb-log append) refused the row.
 """
 import argparse
 import hashlib
@@ -396,33 +398,56 @@ def last_score(ledger):
         except ValueError:
             continue
         if row.get("layer") == "operator" and row.get("hill") == "deliverable score":
-            total = (row.get("result") or {}).get("total")
+            total = (row.get("result") or row.get("baseline") or {}).get("total")
             if isinstance(total, int):
                 best = total
     return best
 
 
+CLIMB_LOG = pathlib.Path(__file__).resolve().parents[3] / "tools" / "climb-log"
+UNCALIBRATED = {"verdict": "UNCALIBRATED",
+                "next": "score one deliverable the person rejected and one they praised, kept beside the ledger, "
+                        "and report the judge's agreement (docs/processes/climb.md#judging-a-deliverable)"}
+
+
+def measurement(selection, judge=None, baseline=False):
+    """The climb-log measurement block for a rubric total: one deliverable, judged."""
+    block = {"metric": "deliverable score", "unit": "points of 30", "selection": selection, "selectBy": "sample",
+             "n": 1, "basis": "judged"}
+    if judge:
+        block["instrument"] = f"brief-judge ({', '.join(judge['served']) or judge['requested']})"
+    if baseline:
+        block["calibration"] = UNCALIBRATED
+    return block
+
+
 def append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge, beat):
+    """Append the score through climb-log, which checks the row; returns the row, or raises RuntimeError."""
     now = datetime.now(timezone.utc)
+    scored = {"total": total, "max": 30, "scores": {r["key"]: r["score"] for r in rows},
+              "weakest": [r["key"] for r in weakest], "sha256": digest, "judge": judge,
+              "measurement": measurement(f"the deliverable {deliverable} (sha256 {digest[:12]})", judge, beat is None)}
     if beat is None:
         prediction, outcome, verdict, lever = None, f"MEASURED {total}/30", None, "baseline"
+        baseline, result = scored, None
     else:
         passed = total >= beat
         prediction = f"total >= {beat}/30"
         outcome = f"{'PASS' if passed else 'FAIL'} {total}/30"
         verdict, lever = ("KEEP" if passed else "ITERATE"), "deliverable"
+        baseline = {"total": beat, "measurement": measurement("the number to beat: --beat, or the ledger's last "
+                                                              "deliverable score")}
+        result = scored
     row = {
         "id": f"deliverable-score-{now.strftime('%Y%m%dT%H%M%SZ')}-{digest[:8]}",
-        "project": root.name,
         "goal": "Deliverables that an independent judge scores high on the climb rubric",
         "round": 1,
         "hypothesis": f"{deliverable} meets the communication bar",
         "category": "criteria",
         "lever": lever,
         "targets": [deliverable],
-        "baseline": {"total": beat} if beat is not None else None,
-        "result": {"total": total, "max": 30, "scores": {r["key"]: r["score"] for r in rows},
-                   "weakest": [r["key"] for r in weakest], "sha256": digest, "judge": judge},
+        "baseline": baseline,
+        "result": result,
         "delta": (total - beat) if beat is not None else None,
         "verdict": verdict,
         "durationMs": int(judge["seconds"] * 1000),
@@ -431,12 +456,14 @@ def append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge
         "learnings": [f"{r['name']} {r['score']}/3: {r['fix']}" for r in weakest],
         "layer": "operator",
         "hill": "deliverable score",
-        "prediction": prediction,
+        "prediction": prediction or "none: the first score is the hill's baseline",
         "outcome": outcome,
     }
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    with ledger.open("a") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    proc = subprocess.run([sys.executable, str(CLIMB_LOG), "append", "--ledger", str(ledger), "--project", str(root)],
+                          input=json.dumps(row, ensure_ascii=False), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"climb-log exited {proc.returncode}")
+    row["id"] = proc.stdout.strip() or row["id"]
     return row
 
 
@@ -476,21 +503,25 @@ def main():
 
     digest = hashlib.sha256(raw.encode()).hexdigest()
     deliverable = args.deliverable if args.deliverable == "-" else str(pathlib.Path(args.deliverable).resolve())
-    row = None
+    row, refused = None, False
     if not args.no_ledger:
         if args.ledger:
             ledger, root = pathlib.Path(args.ledger), pathlib.Path(args.project or ".").resolve()
         else:
             ledger, root = ledger_path(args.project)
         beat = args.beat if args.beat is not None else last_score(ledger)
-        row = append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge, beat)
+        try:
+            row = append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge, beat)
+        except RuntimeError as e:
+            print(f"brief-judge: the ledger refused the score, which is printed below unrecorded: {e}", file=sys.stderr)
+            refused = True
 
     result = {"deliverable": deliverable, "kind": kind, "total": total, "max": 30, "dimensions": rows,
               "weakest": [{"key": r["key"], "score": r["score"], "fix": r["fix"]} for r in weakest],
               "judge": judge, "ledger": row and {"path": str(ledger), "id": row["id"], "outcome": row["outcome"]}}
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
+        sys.exit(4 if refused else 0)
     served = ", ".join(judge["served"]) or "unknown"
     print(f"{total}/30  {deliverable}")
     print(f"judge: {served} via {judge['via']}" + (f" as {judge['account']}" if judge["account"] else "")
@@ -506,6 +537,8 @@ def main():
         print(f"  {r['name']} {r['score']}/3: {r['fix']}")
     if row:
         print(f"ledger: {ledger} ({row['outcome']})")
+    if refused:
+        sys.exit(4)
 
 
 if __name__ == "__main__":
