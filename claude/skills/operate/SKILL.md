@@ -91,6 +91,8 @@ Run this skill as a hill-climb ([the climb](../../../docs/processes/climb.md)).
 - **Every checkpoint is a measurement.** Read the run's goal ruler and system scorecard, never activity alone, and compare them with the ledger's best for this play.
 - **Every steer is a move.** Write the change you expect in the next scored version before you send it; score it when the version lands.
 - **Operator SLOs:** detect a stopped or failing run within 10 minutes and recover within 30. Remove a failing dependency before asking anyone for money or access.
+- **The fleet does the work.** Never produce research, data or analysis for a run yourself: steer its research director to spawn a team, add a role in the next registration, or run a play. Label any operator-supplied content and record it as an operator ledger row (Drew, 2026-10-10: "why are YOU running it?").
+- **Scale through campaigns, not single runs.** Generate competing arms from one axes build (the factory pattern), gate each with `disco queue arm --when <seat check>`, and score every arm with the same battery.
 - **Report each checkpoint in the full form:** the answer with its number, the goal ruler, a lifeline and attempts chart, the prediction scoreboard, and the next move. Build it from the run's data.
 
 ## Log the run
