@@ -323,7 +323,7 @@ def record_override(values: dict, flags: set):
     events_path, row = target
     event = {"schema": L.SCHEMA, "event": "override", "ts": L.iso(L.now()), "runKey": row["runKey"],
              "skill": row.get("skill"), "runTs": row.get("ts"), "sessionId": (row.get("session") or {}).get("id"),
-             "layer": L.LAYER_OPERATOR, "hill": "corrections", "theme": theme,
+             "layer": L.LAYER_OPERATOR, "hill": "operator:corrections", "theme": theme,
              "method": "explicit", "operatorOverride": "--no" not in flags, "basis": "explicit"}
     if values.get("--note"):
         event["note"] = values["--note"]

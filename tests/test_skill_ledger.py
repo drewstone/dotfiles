@@ -328,6 +328,9 @@ class OutcomeTest(unittest.TestCase):
         red = self.pr(mergeCommit={"oid": "a1", "statusCheckRollup": {"state": "FAILURE"}, "deployments": {"nodes": [{"latestStatus": {"state": "SUCCESS"}}]}})
         snap = O.judge_pr(red, [], [], self.AT)
         self.assertEqual((snap["signal"], snap["served"]), ("ci-red-after-merge", True))
+        inherited = self.pr(mergeCommit={"oid": "a2", "statusCheckRollup": {"state": "FAILURE"},
+                                         "parents": {"nodes": [{"statusCheckRollup": {"state": "FAILURE"}}]}, "deployments": {"nodes": []}})
+        self.assertEqual(O.judge_pr(inherited, [], [], self.AT)["signal"], "merged-clean-7d")  # the base was already red
         closed = self.pr(merged=False, mergedAt=None, state="CLOSED", closedAt="2026-10-09T00:00:00Z")
         self.assertEqual(O.judge_pr(closed, [], [], self.AT)["signal"], "closed-unmerged")
 

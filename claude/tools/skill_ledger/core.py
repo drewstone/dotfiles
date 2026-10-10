@@ -59,7 +59,7 @@ LABEL_VERDICTS = {
         ROOT_CAUSE_CONFIRMED DIAGNOSED FIXED DELIVERED MERGED LIVE SHIPPED KEEP KEEP_CURRENT
         SIMPLIFIED TRIMMED CHOSEN APPLIED REPORTED MEASURED CONTINUE CONTINUED RESUMED CHECKPOINT
         HANDOFF_READY HANDOFF_CURRENT_ACTIVE_GOAL COMPLETED_STATE_VERIFIED IN_SCOPE_GAP_FIXED
-        OWNER_IDENTIFIED_HOST_FULL NO_CHANGE STOP DEFER ADOPT ADAPT REJECT ADVANCE BUILT""".split(),
+        OWNER_IDENTIFIED_HOST_FULL NO_CHANGE CHANGED STOP DEFER ADOPT ADAPT REJECT ADVANCE BUILT""".split(),
         "PASS",
     ),
     **dict.fromkeys(
@@ -81,7 +81,7 @@ LABEL_VERDICTS = {
     **dict.fromkeys("ABANDONED DEFERRED SUPERSEDED CANCELLED CANCELED".split(), "ABANDONED"),
 }
 
-# The 26 schema-1 verdicts written as sentences without a leading label, keyed by the first 16
+# The schema-1 verdicts written as sentences without a leading label (26 in the 421-row snapshot), keyed by the first 16
 # hex digits of the sentence's sha1 so this public repository does not carry their text. Each was
 # read in its row and mapped by VERDICT_MEANING: an unfinished served or consumer proof is PARTIAL,
 # a completed assessment or verification whose remaining work belongs to another skill is PASS,
@@ -114,6 +114,7 @@ SENTENCE_VERDICTS = {
     "44675003977446fa": "PASS",
     "517501da9e5723f8": "PASS",
     "8da282680fb4362b": "PASS",
+    "e496ce1ae920f45a": "PARTIAL",  # written 2026-10-10, after the 421-row snapshot
 }
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z_ -]*")
@@ -879,7 +880,7 @@ def judge_override(run: dict, invoking: list[Event], human: list[Event], *, ende
         return None
     base = {"runKey": run["runKey"], "skill": run.get("skill"), "runTs": run.get("ts"),
             "sessionId": session.get("id"), "method": OVERRIDE_METHOD, "layer": LAYER_OPERATOR,
-            "hill": "corrections", "theme": None}
+            "hill": "operator:corrections", "theme": None}
     if session.get("agentId"):
         return {**base, "operatorOverride": None, "basis": "subagent"}
     if not any(e.kind == "human" for e in human):
@@ -917,6 +918,7 @@ def judge_override(run: dict, invoking: list[Event], human: list[Event], *, ende
 # Host reads
 
 
+NON_REPO_DIRS = {"_outcomes", "_lead", "_guards"}  # state directories that are not a repository's ledger
 LEDGER_GLOBS = ("*/skill-runs.jsonl", "*/skill-runs.v2.jsonl", "*/skill-run-events.jsonl", "_outcomes/prs.jsonl")
 
 
@@ -962,7 +964,7 @@ def rows_from_files(files: dict, host: str) -> list[dict]:
         by_dir.setdefault(directory, {})[name] = text
     rows = []
     for directory, named in sorted(by_dir.items()):
-        if directory.startswith("_"):
+        if directory in NON_REPO_DIRS:
             continue
         backfilled = {obj["runKey"]: obj for _, _, obj in read_jsonl(named.get(BACKFILL, "")) if obj.get("runKey")}
         overrides = {}

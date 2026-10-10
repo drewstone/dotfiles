@@ -25,8 +25,10 @@ RECHECK = dt.timedelta(hours=20)
 # commit. outcome-v3 counts a fix only when it names the PR as the cause: "fixes #N", "since #N",
 # "after #N", "#N broke", and a revert only when it names the PR or its title. On that set it
 # flagged 6, all genuine follow-ups. outcome-v4 keeps those rules and checks a snapshot again until
-# its 7-day window closes, so a green re-run after a red merge is seen.
-RULE = "outcome-v4"
+# its 7-day window closes, so a green re-run after a red merge is seen. outcome-v5 counts red CI only
+# when the merge turned the base red: 103 of 261 PRs merged onto a red merge commit, and a PR merged
+# onto an already-red base did not cause it.
+RULE = "outcome-v5"
 _REVERT_TITLE = re.compile(r'^\s*(revert\b|revert[(:!]|Revert ")', re.I)
 _FIX_TITLE = re.compile(r"^\s*(fix|hotfix)(\([^)]*\))?!?:|\bhot-?fix\b", re.I)
 
@@ -60,7 +62,8 @@ def _quote(text: str) -> str:
 
 _PR_FIELDS = """number title body state merged mergedAt closedAt url author { login }
 files(first: 100) { nodes { path } }
-mergeCommit { oid statusCheckRollup { state } deployments(last: 10) { nodes { environment latestStatus { state } } } }"""
+mergeCommit { oid statusCheckRollup { state } parents(first: 1) { nodes { statusCheckRollup { state } } }
+  deployments(last: 10) { nodes { environment latestStatus { state } } } }"""
 
 
 def fetch_prs(refs: list[dict]) -> tuple[dict, list[str]]:
@@ -165,11 +168,13 @@ def judge_pr(pr: dict, followups: list[dict], reverts: list[dict], at: dt.dateti
     states = [((d or {}).get("latestStatus") or {}).get("state") for d in deployments]
     served = True if "SUCCESS" in states else (False if states else None)
     ci = (commit.get("statusCheckRollup") or {}).get("state")
+    parents = ((commit.get("parents") or {}).get("nodes")) or []
+    ci_before = ((parents[0] or {}).get("statusCheckRollup") or {}).get("state") if parents else None
     snapshot = {
         "repo": pr["repo"], "number": pr["number"], "checkedAt": L.iso(at), "title": pr.get("title"),
         "state": pr.get("state"), "merged": bool(pr.get("merged")), "mergedAt": pr.get("mergedAt"),
         "author": (pr.get("author") or {}).get("login"), "mergeCommit": oid or None, "closedAt": pr.get("closedAt"),
-        "ciAfterMerge": ci, "served": served, "revertedBy": None, "hotfixedBy": None, "fixTouches": 0,
+        "ciAfterMerge": ci, "ciBeforeMerge": ci_before, "served": served, "revertedBy": None, "hotfixedBy": None, "fixTouches": 0,
         "rule": RULE,
     }
     if not merged_at:
@@ -213,7 +218,7 @@ def _status(snapshot: dict, at: dt.datetime) -> dict:
         return {"status": "FAIL", "signal": "reverted-within-7d", "windowClosed": window_closed, "final": True}
     if snapshot["hotfixedBy"]:
         return {"status": "FAIL", "signal": "hot-fixed-within-7d", "windowClosed": window_closed, "final": True}
-    if snapshot["ciAfterMerge"] in ("FAILURE", "ERROR"):
+    if snapshot["ciAfterMerge"] in ("FAILURE", "ERROR") and snapshot.get("ciBeforeMerge") not in ("FAILURE", "ERROR"):
         return {"status": "FAIL", "signal": "ci-red-after-merge", "windowClosed": window_closed, "final": window_closed}
     if window_closed:
         return {"status": "PASS", "signal": "merged-clean-7d", "windowClosed": True, "final": True}

@@ -140,6 +140,10 @@ def fmt_num(value, digits=1):
     return "—" if value is None else f"{value:.{digits}f}"
 
 
+def rounded(value, digits=2):
+    return None if value is None else round(value, digits)
+
+
 def summarize(rows, days):
     verdicts = collections.Counter(r.get("verdict") for r in rows)
     outcome = collections.Counter((r.get("outcome") or {}).get("status") for r in rows if r.get("outcome"))
@@ -173,8 +177,8 @@ def summarize(rows, days):
         "corrected": corrected,
         "judged": len(judged),
         "correctedPct": pct(corrected, len(judged)),
-        "durationP50": L.percentile(durations, 0.5),
-        "durationP90": L.percentile(durations, 0.9),
+        "durationP50": rounded(L.percentile(durations, 0.5)),
+        "durationP90": rounded(L.percentile(durations, 0.9)),
         "durationN": len(durations),
         "runsPerDay": [per_day.get(day, 0) for day in days],
         "metrics": {
@@ -261,7 +265,7 @@ def climb_rows(groups, corrections, opts, at, floor):
         out.append({
             "id": f"climb-correction-{row['runKey']}",
             "timestamp": stamp, "date": local_day(row["_ts"]),
-            "layer": L.LAYER_OPERATOR, "hill": "corrections",
+            "layer": L.LAYER_OPERATOR, "hill": "operator:corrections",
             "theme": event.get("theme"), "change": None,
             # The quote and transcript path stay in the host's state directory; climb ledgers can be
             # public. The message's uuid finds it in that host's transcripts.
