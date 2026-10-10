@@ -11,7 +11,11 @@ unreadable state, or any doubt skips it, and every decision is logged.
   - It is not locked, and has no merge, rebase, bisect, cherry-pick or revert
     in progress.
   - Nothing in it (files, directories, its index, HEAD and reflogs) changed
-    within --idle-hours. Both mtime and ctime count.
+    within --idle-hours. Both mtime and ctime count, except the ctime of a
+    hardlinked file: pnpm links every node_modules file to its shared store,
+    so another checkout's install moves the ctime of files here without
+    touching this tree. Until 2026-10-10 that kept every pnpm worktree
+    "modified 0.1h ago" and the reaper removed none of beelink2's 343.
   - `git status` shows no tracked change and no untracked file. Ignored
     entries are allowed only when they look like build or dependency output
     (node_modules/, dist/, target/, ...); an ignored .env or notes file skips.
@@ -36,6 +40,7 @@ import math
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -53,6 +58,8 @@ BUILD_DIRS = {
     '.wrangler', '.nyc_output', 'storybook-static', '.docusaurus',
     '.expo', '.angular', '.pnpm-store', '.yarn', 'foundry-out', 'cache',
     'artifacts', 'typechain-types', 'test-results', 'playwright-report',
+    # Generated sources: route and content types, codegen output (ADC's products/sandbox/api/src/generated).
+    'generated', '.react-router', '.astro',
 }
 BUILD_FILE_RE = re.compile(
     r'(\.pyc|\.pyo|\.tsbuildinfo|\.log|\.o|\.so|\.dylib|\.class|\.DS_Store'
@@ -273,6 +280,14 @@ def check_no_mounts(rpath):
         raise Skip('mount point inside: %s' % inner[0])
 
 
+def changed_at(st):
+    """When this entry last changed. A hardlinked file's ctime moves whenever any of its links is added or
+    removed elsewhere (another worktree's pnpm install), so only its mtime says this tree was touched."""
+    if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+        return st.st_mtime
+    return max(st.st_mtime, st.st_ctime)
+
+
 def walk_tree(path, cutoff):
     """Return (newest_time, nested_git_path). Stops early on a recent entry.
 
@@ -304,7 +319,7 @@ def walk_tree(path, cutoff):
                     stack.append(entry.path)
                     continue
                 st = entry.stat(follow_symlinks=False)
-                newest = max(newest, st.st_mtime, st.st_ctime)
+                newest = max(newest, changed_at(st))
                 if newest > cutoff:
                     return newest, None
             except OSError as exc:
@@ -317,6 +332,31 @@ def is_build_output(rel):
     if any(p in BUILD_DIRS for p in parts):
         return True
     return bool(parts) and bool(BUILD_FILE_RE.search(parts[-1]))
+
+
+def only_build_output(full, rel, depth=4, budget=None):
+    """An ignored directory holding nothing but build output, such as a package directory left behind
+    with only node_modules/, dist/ and .turbo/. Subdirectories are checked the same way, at most
+    `depth` levels and 500 entries; anything else, a symlink, or any error keeps the tree."""
+    budget = budget if budget is not None else [500]
+    if depth < 0 or os.path.islink(full) or not os.path.isdir(full):
+        return False
+    try:
+        entries = os.listdir(full)
+    except OSError:
+        return False
+    if not entries:
+        return False
+    for name in entries:
+        budget[0] -= 1
+        if budget[0] < 0:
+            return False
+        child = rel.rstrip('/') + '/' + name
+        if is_build_output(child):
+            continue
+        if not only_build_output(os.path.join(full, name), child, depth - 1, budget):
+            return False
+    return True
 
 
 def check_clean(path):
@@ -334,7 +374,7 @@ def check_clean(path):
         if code[0] in 'RC':
             i += 1  # rename/copy carries the source path as the next record
         if code == '!!':
-            if not is_build_output(rel):
+            if not (is_build_output(rel) or only_build_output(os.path.join(path, rel), rel)):
                 keep.append(rel)
         else:
             dirty.append(rel)
