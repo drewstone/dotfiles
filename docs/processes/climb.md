@@ -93,7 +93,7 @@ A score the author assigns to its own work is a claim, not a measurement.
 7. **Ownership:** each open problem has an owner and next action, with time since its first alarm.
 8. **Ambition:** proposals remove a problem class, each with a number to beat and a pre-mortem.
 9. **Decisions:** what only the reader can decide, with a recommendation and its tradeoff.
-10. **Craft:** charts drawn to scale from data, readable in both themes, the first screen complete. `viz` and the brief kit are the instruments: they scale every mark from the data, reconcile parts with their whole, and draw in theme tokens at the reader's width.
+10. **Craft:** charts drawn to scale from data, readable in both themes, the first screen complete. Its instruments are [`viz`](../../claude/tools/README.md#viz) and the [brief kit](../../claude/skills/report/references/brief-kit.md), which scale every mark from the data, reconcile parts with their whole, and draw in theme tokens at the reader's width.
 
 The instrument is [`brief-judge`](../../claude/skills/report/scripts/brief-judge): it scores on a subscription account, quotes the deliverable for each score, and appends the ledger row.
 Calibrate the judge against the person's own ratings: keep at least one deliverable they rejected and one they praised, in their words, beside the project's ledger, and report the judge's agreement as its own hill.
