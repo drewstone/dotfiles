@@ -3,7 +3,7 @@
 
 Usage:
   skill-run-log <skill> --verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED [--detail TEXT] [--target X]
-                [--next /SKILL] [--prediction TEXT] [--pr URL|owner/repo#N]...
+                [--next /SKILL] [--prediction TEXT] [--pr URL|owner/repo#N]... [--score N]
                 [--metric NAME [--unit U] [--before N] [--after N] [--source REF]]...
                 [--cost-usd N] [--duration MIN] [--prompt TEXT] [--project NAME]
                 [--transcript PATH] [--trace-dir PATH]
@@ -34,6 +34,8 @@ hill ("skill:/<name>"), prediction, and outcome. Captured without flags:
   outcome                                            GitHub: merged, reverted or hot-fixed within 7 days, CI after
                                                      merge, served; refreshed by --join (daily from SessionEnd)
   skillSha                                           sha256 of the SKILL.md the harness loads, for version splits
+--score is an independent judge's score of the deliverable (brief-judge totals out of 30), null when
+the run was not judged; climb.md ranks it above the author's verdict and below the operator's reaction.
   operatorOverride                                   settled into skill-run-events.jsonl from the operator's next
                                                      message or an interrupt (layer "operator"), or --override
 Explicit flags win over captured values. The verdict is the author's own grade; climb.md ranks it
@@ -51,7 +53,7 @@ from skill_ledger import core as L  # noqa: E402
 from skill_ledger import outcomes as O  # noqa: E402
 
 USAGE = """usage: skill-run-log <skill> --verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED [--detail TEXT] [--target X]
-                     [--next /SKILL] [--prediction TEXT] [--pr REF]... [--metric NAME [--unit U] [--before N]
+                     [--next /SKILL] [--prediction TEXT] [--pr REF]... [--score N] [--metric NAME [--unit U] [--before N]
                      [--after N] [--source REF]]... [--cost-usd N] [--duration MIN] [--prompt TEXT] [--project NAME]
                      [--transcript PATH] [--trace-dir PATH]
        skill-run-log --override [--run KEY] [--theme T] [--note TEXT] [--no]
@@ -65,7 +67,7 @@ Use --option=-literal for a value beginning with '-'."""
 MODES = ("--override", "--settle", "--join", "--backfill", "--dir")
 VALUE_FLAGS = {"--target", "--prompt", "--duration", "--verdict", "--detail", "--next", "--project",
                "--transcript", "--trace-dir", "--metric", "--unit", "--before", "--after", "--source",
-               "--cost-usd", "--prediction", "--pr", "--run", "--note", "--theme", "--session", "--days"}
+               "--cost-usd", "--prediction", "--pr", "--score", "--run", "--note", "--theme", "--session", "--days"}
 BOOL_FLAGS = {"--no", "--all", "--hook", "--dry-run"}
 THEMES = ("communication", "rigor", "scope", "cost", "autonomy", "safety")
 JOIN_STAMP = "_outcomes/last-join"
@@ -155,6 +157,9 @@ def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
         if duration < 0:
             fail("duration must be a nonnegative JSON number")
     cost_usd = number(values["--cost-usd"], "--cost-usd") if "--cost-usd" in values else None
+    score = number(values["--score"], "--score") if "--score" in values else None
+    if score is not None and score < 0:
+        fail("score must be a nonnegative number")
 
     skill = L.normalize_skill(skill)
     at = L.now()
@@ -191,6 +196,7 @@ def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
         "verdict": verdict,
         "verdictDetail": detail,
         "prediction": values.get("--prediction"),
+        "score": score,
         "dispatchedTo": values.get("--next", "stop"),
         "operatorOverride": None,
         "transcriptPath": transcript,

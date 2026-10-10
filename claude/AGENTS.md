@@ -34,7 +34,6 @@ When Drew must text or call, give numbered steps naming the exact number to send
 
 Before repository changes, delegation, or host work, read the relevant [work process](../docs/processes/agent-work.md) section.
 Before verification, reporting, writing, UI, or skill changes, read its evidence or owning-guidance section.
-Before analysis, operating reports and lead ticks, reflection, or improvement work, read [hillclimb](../docs/processes/hillclimb.md).
 When progress stalls or work repeats, use [session efficiency](skills/reflect/references/session-efficiency.md).
 Before any analysis, review, plan, proposal, or run status, use [the climb](../docs/processes/climb.md): name the hill and the number to beat, run the level-up passes, show data as visuals, and record the move.
 
