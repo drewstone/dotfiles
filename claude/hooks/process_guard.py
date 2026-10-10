@@ -287,6 +287,9 @@ class Command:
         self.origin = ctx.origin  # the script file this command was read from, if any
         self.tainted = frozenset(ctx.tainted)  # taint as of this command, not the end of the script
         self.stream_tainted = False  # stdin carries pids from a pattern match
+        self.loops = dict(ctx.loops)  # loop variables as of this command
+        self.upstream = []  # the argvs piped into this command
+        self.via_xargs = False  # this command's arguments come from its stdin through xargs
 
     @property
     def prog(self):
@@ -310,6 +313,8 @@ class Context:
         self.origin = None
         self.tainted = set()  # variables holding pids from a pattern match (pgrep <pattern>, pidof)
         self.stream_tainted = False  # the previous pipeline stage emits such pids
+        self.loops = {}  # loop variable -> ("words", words, cwd, vars) or ("chain", upstream argvs, cwd, vars)
+        self.chain = []  # argvs of the pipeline so far, for what feeds `xargs` or `while read`
 
 
 def strip_prefix(words):
@@ -657,7 +662,13 @@ def commands(src, cwd, remote=False, ctx=None):
             names = [w for w in lead[2:] if not w.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", w)]
             for name in names:
                 (ctx.tainted.add if upstream else ctx.tainted.discard)(name)
+            if names and seg.pipe_in:
+                ctx.loops[names[0]] = ("chain", list(ctx.chain), ctx.cwd, dict(ctx.vars))
+        if len(lead) >= 3 and lead[0] == "for" and lead[2] == "in":
+            ctx.loops[lead[1]] = ("words", lead[3:], ctx.cwd, dict(ctx.vars))
         env, argv = strip_prefix(seg.words)
+        piped_from = list(ctx.chain) if seg.pipe_in else []
+        ctx.chain = (piped_from + [argv]) if argv else []
         for name, value in env.items():
             (ctx.tainted.add if pattern_source(value, ctx.tainted) else ctx.tainted.discard)(name)
             if name == "BASH_XTRACEFD" or (name == "SHELLOPTS" and "xtrace" in value):
@@ -683,6 +694,8 @@ def commands(src, cwd, remote=False, ctx=None):
         merged.update(env)
         cmd = Command(argv, merged, ctx.remote, ctx.cwd, ctx)
         cmd.stream_tainted = upstream
+        cmd.upstream = piped_from
+        cmd.via_xargs = "xargs" in seg.words[:len(seg.words) - len(argv)]
         result.append(cmd)
         loaded = secret_load(argv) or (secret_references(argv[1:]) if ctx.xtrace else None)
         if loaded:
@@ -1331,15 +1344,21 @@ def rule_mac_build(cmd):
 
 def evaluate(payload):
     """Return a list of (rule, summary, reason, override, bypassed) findings for a PreToolUse payload."""
+    return evaluate_full(payload)[0]
+
+
+def evaluate_full(payload):
+    """(findings, warnings): refusals as in evaluate(), and warnings that let the command run."""
     if payload.get("tool_name") not in (None, "Bash"):
-        return []
+        return [], []
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
-        return []
+        return [], []
     cwd = payload.get("cwd") or None
     findings, seen = [], set()
     root = Context(cwd, False)
-    for cmd in commands(command, cwd, False, root):
+    cmds = commands(command, cwd, False, root)
+    for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_pattern_kill(cmd)):
             if not hit or hit[:2] in seen:
@@ -1353,7 +1372,14 @@ def evaluate(payload):
     hit = rule_xtrace_secrets(root.events)
     if hit:
         findings.append((*hit, False))
-    return findings
+    warnings = []
+    if not findings and re.search(r"\bpr\s+merge\b", command):
+        try:
+            import merge_check
+            warnings = merge_check.warnings(cmds, payload)
+        except Exception as exc:  # a warning tool never blocks or breaks a command
+            warnings = [f"merge-check: could not check the PRs this command merges ({type(exc).__name__}: {exc})."]
+    return findings, warnings
 
 
 def traced_secrets(events):
@@ -1398,7 +1424,7 @@ def log(kind, rule, payload):
 def main():
     try:
         payload = json.loads(sys.stdin.read())
-        findings = evaluate(payload)
+        findings, warnings = evaluate_full(payload)
     except Exception:
         return 0
     denied = [f for f in findings if not f[4]]
@@ -1411,9 +1437,17 @@ def main():
         reason = "\n\n".join(f"process-guard ({rule}): {reason}" for rule, _, reason, _, _ in denied)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                  "permissionDecisionReason": reason}}))
-    elif bypassed:
-        names = ", ".join(f"{summary} via {override}=1" for _, summary, _, override, _ in bypassed)
-        print(json.dumps({"systemMessage": f"process-guard: allowed {names}; logged to {LOG}."}))
+    elif bypassed or warnings:
+        lines = []
+        if bypassed:
+            names = ", ".join(f"{summary} via {override}=1" for _, summary, _, override, _ in bypassed)
+            lines.append(f"process-guard: allowed {names}; logged to {LOG}.")
+        lines += warnings
+        text = "\n".join(lines)
+        out = {"systemMessage": text}
+        if warnings:
+            out["hookSpecificOutput"] = {"hookEventName": "PreToolUse", "additionalContext": text}
+        print(json.dumps(out))
     return 0
 
 
