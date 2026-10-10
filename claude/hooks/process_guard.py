@@ -29,6 +29,13 @@ while their briefs said not to:
                 beelink2 this way. kill-guard.sh refuses pkill and killall; this covers the shapes
                 that reach kill through a substitution, a variable or a loop. `pgrep -P <pid>`
                 stays allowed. Override: CC_ALLOW_BROADCAST_KILL=1 in the session, as kill-guard.
+  xtrace-secrets  shell tracing (`bash -x`, `sh -x`, `set -x`, `set -o xtrace`, BASH_XTRACEFD)
+                while the traced scope loads or expands a secret: dotenvx run/get, sourcing or
+                reading a .env, key, token or secrets file, a *_KEY/*_TOKEN variable set from an
+                expansion or expanded in a command, `gh auth token`. On 2026-10-10 a `bash -x` run
+                of a script over ssh printed the GTM operator key into the transcript;
+                secret_scan.py warned, but only after the output existed. A traced script is read
+                (a remote one over ssh, once, 10 s timeout; unreadable means allowed).
 
 Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed
 too: an admin merge or force push run on a Beelink has the same effect on GitHub. The Mac
@@ -289,10 +296,13 @@ class Command:
 class Context:
     """State shared by the commands of one shell: exported variables and cwd."""
 
-    def __init__(self, cwd, remote):
+    def __init__(self, cwd, remote, events=None, host=None):
         self.vars = {}
         self.cwd = cwd
         self.remote = remote
+        self.host = host  # the ssh host a remote context runs on
+        self.events = [] if events is None else events  # ("secret", what, traced) and ("remote-traced-script", ...)
+        self.xtrace = False  # this shell prints each command with its expansions (set -x, bash -x)
         self.git_init = False
         self.scratch_package = False  # a package.json was created here (npm init, > package.json)
         self.written = {}  # path -> heredoc body written to it earlier in this command
@@ -375,6 +385,26 @@ def expand_path(path, base, env=None):
 SSH_VALUE = set("bcDEeFIiJLlmOopQRSWw")
 
 
+def ssh_target(args):
+    """Return (host, remote command words) of an ssh invocation."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if a.startswith("-") and len(a) > 1:
+            for k, ch in enumerate(a[1:]):
+                if ch in SSH_VALUE:
+                    if k == len(a) - 2:
+                        i += 1
+                    break
+            i += 1
+            continue
+        break
+    return (args[i], args[i + 1:]) if i < len(args) else (None, [])
+
+
 def ssh_remote(args):
     """Return the remote command words of an ssh invocation (after options and host)."""
     i = 0
@@ -448,6 +478,129 @@ def pattern_source(text, tainted):
     return False
 
 
+SECRET_NAME = re.compile(r"(?:^|_)(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PAT|CREDENTIALS?)$", re.I)
+SECRET_PATH = re.compile(r"(?:^|/)(?:\.env(?:\.[\w-]+)*|[\w.-]+\.env|\.envrc|[\w.-]+\.(?:key|pem|p12)|credentials(?:\.json)?"
+                         r"|[\w.-]*tokens?(?:\.json|\.txt)?|secrets?(?:\.\w+)?)$|/secrets/|/job-keys/", re.I)
+NOT_SECRET_PATH = re.compile(r"example|sample|template|\.pub$", re.I)
+READERS = {"cat", "head", "tail", "less", "more", "base64", "tr", "xxd", "od", "strings", "jq", "sed", "awk", "grep"}
+
+
+def secret_path(word):
+    return bool(SECRET_PATH.search(word)) and not NOT_SECRET_PATH.search(word)
+
+
+def secret_load(argv):
+    """What in this command reads or prints a secret, or None."""
+    prog = os.path.basename(argv[0])
+    args = argv[1:]
+    pos = [a for a in args if not a.startswith("-")]
+    if prog == "dotenvx" and pos[:1] and pos[0] in ("run", "get", "decrypt"):
+        return f"dotenvx {pos[0]}"
+    if prog in ("source", ".") and pos and secret_path(pos[0]):
+        return f"{prog} {pos[0]}"
+    if prog in READERS and any(secret_path(a) for a in pos):
+        return f"{prog} {next(a for a in pos if secret_path(a))}"
+    if prog in ("gh", "gh-drew") and pos[:2] == ["auth", "token"]:
+        return f"{prog} auth token"
+    if prog == "tangle-admin" and pos[:1] and pos[0] in ("key-for", "create-key") and "--key-file" not in args:
+        return f"tangle-admin {pos[0]}"
+    if prog == "security" and pos[:1] and pos[0].startswith("find-") and "-w" in args:
+        return f"security {pos[0]} -w"
+    if prog in ("op", "pass", "vault") and pos[:1] and pos[0] in ("read", "show", "kv", "item"):
+        return f"{prog} {pos[0]}"
+    return None
+
+
+def secret_assignment(name, value):
+    """A secret-named variable set from an expansion: xtrace prints the expanded value."""
+    return bool(SECRET_NAME.search(name)) and ("$" in value or "`" in value)
+
+
+def secret_references(words):
+    for word in words:
+        for m in VAR.finditer(word):
+            name = m.group(1) or m.group(2)
+            if SECRET_NAME.search(name):
+                return f"${name}"
+    return None
+
+
+def shell_xtrace(argv):
+    """True when a shell is started with xtrace on (bash -x, sh -ex, bash -o xtrace)."""
+    k = 1
+    while k < len(argv):
+        a = argv[k]
+        if a in ("-o", "+o") and k + 1 < len(argv):
+            if a == "-o" and argv[k + 1] == "xtrace":
+                return True
+            k += 2
+            continue
+        if a.startswith("-") and a not in ("-", "--") and not a.startswith("--"):
+            if "x" in a[1:]:
+                return True
+            k += 1
+            continue
+        break
+    return False
+
+
+def set_xtrace(argv):
+    """The xtrace state a `set` command leaves: True, False, or None when it does not change it."""
+    state, args = None, argv[1:]
+    for k, a in enumerate(args):
+        if a == "--":
+            break
+        if a in ("-o", "+o") and k + 1 < len(args) and args[k + 1] == "xtrace":
+            state = a == "-o"
+        elif len(a) > 1 and a[0] in "-+" and a[1] != "-" and "x" in a[1:]:
+            state = a[0] == "-"
+    return state
+
+
+def note(ctx, what):
+    ctx.events.append(("secret", what, ctx.xtrace))
+
+
+def read_local(path, cwd, env):
+    resolved = expand_path(path, cwd, env)
+    if not resolved:
+        return None
+    try:
+        if os.path.getsize(resolved) > SCRIPT_LIMIT:
+            return None
+        with open(resolved, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    return None if b"\0" in data else data.decode("utf-8", "replace")
+
+
+def remote_quote(path):
+    if path in ("~", "$HOME"):
+        return '"$HOME"'
+    for prefix in ("~/", "$HOME/", "${HOME}/"):
+        if path.startswith(prefix):
+            return '"$HOME"/' + shlex.quote(path[len(prefix):])
+    return shlex.quote(path)
+
+
+def fetch_remote(host, cwd, path):
+    """A remote script's text, read over ssh, or None (no fetch, failure, timeout)."""
+    if os.environ.get("CC_GUARD_NO_REMOTE_FETCH") == "1" or not host or "$" in path.replace("$HOME", ""):
+        return None
+    remote = (f"cd {remote_quote(cwd)} 2>/dev/null; " if cwd and "$" not in cwd.replace("$HOME", "") else "") + \
+        f"head -c {SCRIPT_LIMIT} -- {remote_quote(path)}"
+    ssh = os.environ.get("CC_GUARD_SSH", "ssh")
+    try:
+        r = subprocess.run([ssh, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, remote],
+                           capture_output=True, timeout=10)
+    except Exception:
+        return None
+    if r.returncode != 0 or b"\0" in r.stdout:
+        return None
+    return r.stdout.decode("utf-8", "replace")
+
+
 SCRIPT_LIMIT = 256 * 1024
 SCRIPT_DEPTH = 3
 
@@ -507,6 +660,10 @@ def commands(src, cwd, remote=False, ctx=None):
         env, argv = strip_prefix(seg.words)
         for name, value in env.items():
             (ctx.tainted.add if pattern_source(value, ctx.tainted) else ctx.tainted.discard)(name)
+            if name == "BASH_XTRACEFD" or (name == "SHELLOPTS" and "xtrace" in value):
+                ctx.xtrace = True
+            if secret_assignment(name, value):
+                note(ctx, f"{name}={value[:40]}")
         ctx.stream_tainted = bool(argv) and (pattern_pids(argv, ctx.tainted) or (
             upstream and os.path.basename(argv[0]) in ("grep", "egrep", "head", "tail", "awk", "sort", "uniq", "cut", "tr", "sed", "cat")))
         if not argv:
@@ -519,12 +676,21 @@ def commands(src, cwd, remote=False, ctx=None):
                 if m:
                     ctx.vars[m.group(1)] = m.group(2)
                     (ctx.tainted.add if pattern_source(m.group(2), ctx.tainted) else ctx.tainted.discard)(m.group(1))
+                    if secret_assignment(m.group(1), m.group(2)):
+                        note(ctx, f"{prog} {m.group(1)}={m.group(2)[:40]}")
             continue
         merged = dict(ctx.vars)
         merged.update(env)
         cmd = Command(argv, merged, ctx.remote, ctx.cwd, ctx)
         cmd.stream_tainted = upstream
         result.append(cmd)
+        loaded = secret_load(argv) or (secret_references(argv[1:]) if ctx.xtrace else None)
+        if loaded:
+            note(ctx, loaded)
+        if prog == "set":
+            state = set_xtrace(argv)
+            if state is not None:
+                ctx.xtrace = state
         if prog in ("cd", "pushd"):
             target = next((a for a in argv[1:] if not a.startswith("-")), "~")
             # A remote path is kept as written and never checked against the local disk.
@@ -550,7 +716,12 @@ def commands(src, cwd, remote=False, ctx=None):
         if script_path:
             body = script_text(script_path, ctx.cwd, merged, ctx)
             if body is not None:
+                traced = ctx.xtrace
+                if prog not in ("source", "."):
+                    ctx.xtrace = False  # a child shell starts untraced
                 result.extend(nested(body, ctx.cwd, ctx.remote, ctx, script_path))
+                if prog not in ("source", "."):
+                    ctx.xtrace = traced
         # Nested shells.
         if prog in SHELLS:
             script, has_c, noexec, positional, k = None, False, False, False, 1
@@ -568,6 +739,7 @@ def commands(src, cwd, remote=False, ctx=None):
                 positional = True
                 script = a if has_c else None
                 break
+            traced, ctx.xtrace = ctx.xtrace, shell_xtrace(argv)  # a child shell traces only with -x
             if script is not None:
                 result.extend(commands(script, ctx.cwd, ctx.remote, ctx))
             elif noexec:
@@ -576,6 +748,16 @@ def commands(src, cwd, remote=False, ctx=None):
                 body = script_text(argv[k], ctx.cwd, merged, ctx)
                 if body is not None:
                     result.extend(nested(body, ctx.cwd, ctx.remote, ctx, argv[k]))
+                elif ctx.xtrace and ctx.remote:
+                    ctx.events.append(("remote-traced-script", ctx.host, ctx.cwd, argv[k]))
+                elif ctx.xtrace:
+                    text = ctx.written.get(expand_path(argv[k], ctx.cwd, merged) or "") or read_local(argv[k], ctx.cwd, merged)
+                    if text is not None:  # any traced script, repository scripts included, for secrets only
+                        scan = Context(ctx.cwd, False, events=ctx.events)
+                        scan.vars.update(merged)
+                        scan.xtrace, scan.depth = True, ctx.depth + 1
+                        if scan.depth <= SCRIPT_DEPTH:
+                            commands(text, ctx.cwd, False, scan)
             else:  # `bash`, `bash -s`: the heredoc or the `< file` input is the script
                 for body in seg.heredocs:
                     result.extend(commands(body, ctx.cwd, ctx.remote, ctx))
@@ -583,9 +765,10 @@ def commands(src, cwd, remote=False, ctx=None):
                     body = script_text(source, ctx.cwd, merged, ctx)
                     if body is not None:
                         result.extend(nested(body, ctx.cwd, ctx.remote, ctx, source))
+            ctx.xtrace = traced
         elif prog == "ssh":
-            words = ssh_remote(argv[1:])
-            sub = Context(None, True)
+            host, words = ssh_target(argv[1:])
+            sub = Context(None, True, events=ctx.events, host=host)
             sub.vars.update(merged)
             sub.tainted |= ctx.tainted  # `ssh host "kill $p"` expands $p before ssh runs
             if words:
@@ -600,7 +783,7 @@ def commands(src, cwd, remote=False, ctx=None):
         elif prog == "eval":
             result.extend(commands(" ".join(argv[1:]), ctx.cwd, ctx.remote, ctx))
         elif prog in ("beelink-gate", "hostlab") and "--" in argv:
-            sub = Context(None, True)
+            sub = Context(None, True, events=ctx.events)
             sub.vars.update(merged)
             result.extend(commands(shlex.join(argv[argv.index("--") + 1:]), None, True, sub))
     return result
@@ -1155,7 +1338,8 @@ def evaluate(payload):
         return []
     cwd = payload.get("cwd") or None
     findings, seen = [], set()
-    for cmd in commands(command, cwd):
+    root = Context(cwd, False)
+    for cmd in commands(command, cwd, False, root):
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_pattern_kill(cmd)):
             if not hit or hit[:2] in seen:
@@ -1166,7 +1350,37 @@ def evaluate(payload):
                 summary += f" (in {cmd.origin})"
                 reason = f"The script {cmd.origin}, which this command runs, contains it. " + reason
             findings.append((rule, summary, reason, override, bool(override and flag_on(cmd, override))))
+    hit = rule_xtrace_secrets(root.events)
+    if hit:
+        findings.append((*hit, False))
     return findings
+
+
+def traced_secrets(events):
+    return [what for kind, what, *rest in events if kind == "secret" and rest and rest[0]]
+
+
+def rule_xtrace_secrets(events):
+    """xtrace on while a secret is loaded or expanded: the trace prints the value into the transcript."""
+    found = traced_secrets(events)
+    if not found:
+        for event in [e for e in events if e[0] == "remote-traced-script"]:
+            _, host, cwd, path = event
+            text = fetch_remote(host, cwd, path)
+            if text is None:
+                continue
+            scan = Context(cwd, True, events=[], host=host)
+            scan.xtrace = True
+            commands(text, cwd, True, scan)
+            found += [f"{w} (in {host}:{path})" for w in traced_secrets(scan.events)]
+    if not found:
+        return None
+    return ("xtrace-secrets", "xtrace while loading a secret",
+            f"This command turns on shell tracing (bash -x, sh -x, set -x, set -o xtrace or BASH_XTRACEFD) while it loads "
+            f"or expands a secret ({found[0]}). The trace prints every expanded value, so the secret would land in the "
+            "transcript: on 2026-10-10 a `bash -x` run of a hosted-runner script over ssh printed the GTM operator key. "
+            "Run it without -x, or wrap only the non-secret part: `set +x` before the line that reads the key and "
+            "`set -x` after it. To check a key, print its length or a fingerprint, never the value.", None)
 
 
 def log(kind, rule, payload):

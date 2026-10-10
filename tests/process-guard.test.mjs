@@ -307,6 +307,51 @@ test("pattern-kill: exact pids, children of a literal pid, listings and liveness
   assert.equal(decide("kill $(pgrep -f foo)", { env: { CC_ALLOW_BROADCAST_KILL: "1" } }), "allow");
 });
 
+// ------------------------------------------------------------------------- xtrace-secrets
+
+// A fake ssh that runs the remote command locally, so the guard's read of a remote traced
+// script can be replayed: the host's files live under the test HOME.
+const FAKE_SSH = join(ROOT, "fake-ssh");
+writeFileSync(FAKE_SSH, "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) shift 2;; -*) shift;; *) break;; esac; done\nshift\nexec sh -c \"$1\"\n", { mode: 0o755 });
+const BROKEN_SSH = join(ROOT, "broken-ssh");
+writeFileSync(BROKEN_SSH, "#!/bin/sh\nexit 255\n", { mode: 0o755 });
+const GENERALITY = join(HOME, ".local/state/agent-work/gtm-agent/generality");
+mkdirSync(GENERALITY, { recursive: true });
+writeFileSync(join(GENERALITY, "pipeline6.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nSHA=$1\n" +
+  "export GTM_OPERATOR_API_KEY=$(cat ~/.config/tangle/job-keys/gtm-operator-generality.key)\nnode hosted-runner.mjs \"$SHA\"\n");
+writeFileSync(join(GENERALITY, "plain.sh"), "#!/usr/bin/env bash\nset -euo pipefail\nfor f in a b; do echo $f; done\npnpm exec vitest run tests/a.test.ts\n");
+const remoteFetch = { env: { CC_GUARD_SSH: FAKE_SSH } };
+
+test("xtrace-secrets: refuses tracing a command or script that loads a secret, locally and over ssh", () => {
+  // 2026-10-10: xtrace over ssh printed the expanded GTM operator key from the remote script.
+  assert.equal(decide("timeout 60 ssh -o BatchMode=yes beelink2-wsl 'cd ~/.local/state/agent-work/gtm-agent/generality && head -14 pipeline6.sh; REPEAT=3 MAXCOST=3.5 timeout 20 bash -x ./pipeline6.sh 1cd1dbae9979a852147d272233c2e7bede7ba480 1cd1dbae 2>&1 | head -20'", remoteFetch), "deny");
+  check([
+    "bash -x -c 'export GTM_OPERATOR_API_KEY=$(cat ~/.config/tangle/job-keys/gtm-operator-generality.key); ./run.sh'",
+    "set -x; export OPENAI_API_KEY=$(dotenvx get OPENAI_API_KEY -f ~/company/devops/secrets/tangle-router.env); node probe.mjs",
+    "ssh beelink2-wsl 'set -x; source ~/.config/tangle/vb-publish.env; curl -s https://x'",
+    "set -o xtrace; dotenvx run -f .env -- pnpm dev",
+    "BASH_XTRACEFD=2 bash -x -c 'curl -H \"Authorization: Bearer $GH_TOKEN\" https://api.github.com/user'",
+    "sh -ex -c 'TOKEN=$(gh-drew auth token); echo ok'",
+  ], "deny");
+  assert.match(reason("set -x; dotenvx run -f .env -- pnpm dev"), /set \+x/);
+});
+
+test("xtrace-secrets: ordinary tracing that touches no secret passes", () => {
+  check([
+    "ssh beelink2-wsl 'cd ~/.local/state/agent-work/gtm-agent/generality && bash -x ./plain.sh'",
+    "bash -x -c 'echo hello; ls'",
+    "set -x; pnpm exec vitest run tests/a.test.ts; set +x",
+    "set -x; set +x; export K=$(dotenvx get K -f a.env)",
+    "dotenvx get K -f a.env >/dev/null; bash -n ./x.sh",
+    "grep -n \"set -x\" scripts/*.sh",
+    "echo \"len ${#GTM_OPERATOR_API_KEY}\"; set -x; ls",
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.https://github.com.helper; bash -x -c 'git fetch -q origin'",
+  ], "allow", remoteFetch);
+  // A remote script that cannot be read is let through; secret_scan.py still warns on any key in the output.
+  assert.equal(decide("ssh beelink2-wsl 'cd ~/.local/state/agent-work/gtm-agent/generality && bash -x ./pipeline6.sh'",
+    { env: { CC_GUARD_SSH: BROKEN_SSH } }), "allow");
+});
+
 // ------------------------------------------------------------------------ ad-hoc scripts
 
 test("scripts: a script written to a file and run later is read like the command itself", () => {
