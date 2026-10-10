@@ -9,6 +9,9 @@
 # Allowed:
 #   kill <pid>...                       explicit pids, including $(lsof -ti...) and $(cat pidfile)
 #
+# Kills fed by `pgrep <pattern>` through $(...), a variable or a loop are refused by
+# process_guard.py (pattern-kill), which parses ssh and nested shells.
+#
 # Why: on 2026-09-14 a session ran `pkill -f 'cli-bridge-8921.*' -P 1` to restart one bridge. BSD
 # pkill stops option parsing at the first pattern, so `-P` and `1` became patterns and every user
 # process whose command line contained the digit 1 received SIGTERM: other Claude sessions, Slack,

@@ -272,6 +272,41 @@ test("mac-build: single test files, remote runs and light commands pass on the M
   assert.equal(decide("CC_ALLOW_MAC_BUILD=1 pnpm install --frozen-lockfile", mac), "allow");
 });
 
+// --------------------------------------------------------------------------- pattern-kill
+
+test("pattern-kill: refuses kills fed by pgrep patterns, including the self-kills over ssh", () => {
+  check([
+    // 2026-10-10, beelink2: the pattern matched the ssh session's own command line.
+    "ssh gtr 'p=$(pgrep -f \"beelink-gate beelink2 git@github.com:tangle-network/gtm-agent.git c1c1055\"); echo \"client $p\"; ssh beelink2-wsl \"for p in \\$(pgrep -f mutation-drill.sh); do echo drill \\$p; for c in \\$(pgrep -P \\$p); do for g in \\$(pgrep -P \\$c); do kill \\$g; done; kill \\$c; done; kill \\$p; done\"; [ -n \"$p\" ] && kill $p; sleep 2; ssh beelink2-wsl \"pgrep -f mutation-drill.sh || echo drill-gone\"'",
+    // 2026-10-09, gtr: killed the tailscaled child and bash of that very ssh session.
+    "ssh -n gtr 'for p in $(pgrep -f \"beelink-gate beelink1 .*1cb1dbdf6097d1b0b3446a7e689a0a0ae2468758\"); do echo \"stopping pid $p: $(tr \"\\0\" \" \" < /proc/$p/cmdline | cut -c1-110)\"; kill $p; done'",
+    "ssh gtr 'pids=$(pgrep -f \"beelink-gate beelink1 git@github.com:tangle-network/agent-dev-container.git 97313d51\"); echo \"$pids\"; [ -n \"$pids\" ] && kill $pids; pgrep -af \"agent-dev-container.git 97313d51\" | grep -v pgrep | wc -l'",
+    "timeout 30 ssh -o BatchMode=yes beelink2-wsl 'kill $(pgrep -f \"generality-hosted.ts --label hosted-baseline\") 2>/dev/null; sleep 2; pgrep -fc \"generality-hosted.ts\"'",
+    "ssh -o BatchMode=yes gtr 'pgrep -u drew -f \"find / -path \\*/opencode\\*/src/provider/transform.ts\" | while read p; do echo \"killing find $p\"; kill $p; done'",
+    "pgrep -f \"scratchpad/h-watch.sh\" | while read p; do kill $p 2>/dev/null; done; sleep 1",
+    "ssh -n drew-gtr-pro 'p=$(pgrep -f \"jobmap extract --workers 16\" | grep -v uv | head -3); echo \"extract pids: $p\"; for x in $p; do kill $x; done'",
+    "L=$(pgrep -f \"adc-merge-loop-9344.sh\" | head -1); pgid=$(ps -o pgid= -p $L | tr -d \" \"); kill -TERM -- -$pgid",
+    "ssh gtr 'pgrep -f x | xargs -r kill'",
+    "kill $(pidof node)",
+  ], "deny");
+  assert.match(reason("kill $(pgrep -f foo)"), /kill <pid>/);
+});
+
+test("pattern-kill: exact pids, children of a literal pid, listings and liveness checks pass", () => {
+  check([
+    "kill 12345",
+    "kill -TERM $(lsof -tiTCP:8921 -sTCP:LISTEN)",
+    "kill $(cat /tmp/bridge.pid)",
+    "ssh gtr 'kill 1600183; for c in $(pgrep -P 1674174); do echo \"child $c\"; for g in $(pgrep -P $c); do kill $g; done; kill $c; done; kill 1674174 2>/dev/null'",
+    "ssh gtr 'p=$(tmux list-panes -t side-tasks:wave -F \"#{pane_pid}\"); c=$(pgrep -P $p | head -1); ps -o pid=,etime= -p $c; kill $c'",
+    "pgrep -af \"mutation-drill.sh\" | grep -v -e \"^$$ \" -e \"^$PPID \"",
+    "kill -0 $(pgrep -f foo) && echo alive",
+    "p=$(pgrep -f foo); p=4242; kill $p",
+    "pgrep -fl cli-bridge; ps -eo pid,args | grep cli-bridge",
+  ], "allow");
+  assert.equal(decide("kill $(pgrep -f foo)", { env: { CC_ALLOW_BROADCAST_KILL: "1" } }), "allow");
+});
+
 // ------------------------------------------------------------------------ ad-hoc scripts
 
 test("scripts: a script written to a file and run later is read like the command itself", () => {
