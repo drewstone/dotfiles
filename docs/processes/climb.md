@@ -53,6 +53,8 @@ Each pass leaves a mark in the output, or the pass did not happen.
 3. **Mechanism.** Count the distinct sources of a repeated signal before naming a pattern. In h, 243 notices from one digest were one stuck writer, not 243 collisions.
 4. **Red team.** Write the pre-mortem: it is two weeks later and this failed; why? State the strongest contrary evidence and what would change the conclusion.
    For each headline number, run the narrowest query that would come out differently if it were false: the product or its harness, merged or served, the start of the outage or the start of the log.
+   When a subscription surface offers another model (pi with GLM, Codex, another Claude seat), have it write the red team.
+   On 2026-10-10 an independent GLM red team found that this process's first draft rewarded self-grades, and one route check showed that $583 of "GLM spend" was flat-plan traffic priced at list.
 5. **Bigger.** Ask what would make the result ten times better, what the best practitioner alive would do, and what we should stop doing entirely. Then ask again from the new answer.
 6. **The question not yet asked.** Name the most important question nobody has asked, and answer it or say what would.
 7. **Stress test the winner.** Recompute its numbers from two independent sources, move its weakest input to its market value, and name who loses if it is wrong.
@@ -109,6 +111,25 @@ A row is an [`evolve` experiment record](../../claude/skills/evolve/schema.md) p
 
 A hill's current position is a row with `lever: "baseline"`.
 The skills that analyze or operate (`operate`, `report`, `reflect`, `evolve`, `hypothesize`, and Lab's `deep-review`) read the ledger before starting and append to it before finishing.
+
+### Rewards, strongest first
+
+Judge a move by the strongest signal available:
+
+1. A machine-checked outcome: merged, reverted or hot-fixed within 7 days, CI red after merge, served in production, the hill's metric moved, a proof checked.
+2. The person's explicit rating.
+3. The person's reaction, read by a labeler with measured per-class precision: approval, a status pull, a repeated request, a correction.
+4. An independent judge, calibrated against signals 1–3.
+5. The author's own grade, which is a claim.
+
+A weaker signal never overrides a stronger one.
+Attach outcomes automatically, when the row is written and again in a daily join.
+Waiting for someone to rate later does not work: on 2026-10-10, 421 logged skill runs carried 0 ratings.
+
+Guard each reward against gaming and leaks:
+- **Proxies:** fewer status pulls count only when push volume did not rise; fewer corrections count only beside outcomes, so hedged output cannot win.
+- **Privacy:** transcripts and the person's messages go only to Claude seats through the CLI bridge, never to third-party model APIs.
+- **Spend:** judges, labelers and red teams run on subscription surfaces, never on per-token APIs.
 
 ## Corrections are data
 
