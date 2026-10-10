@@ -266,6 +266,9 @@ def normalize(row: dict, raw: str) -> dict:
     if row.get("schema") == SCHEMA:
         return out
     verdict, rule = map_verdict(row.get("verdict"))
+    # Rows from the shell tool after dotfiles #299 name a PR and a session id; lift them so their
+    # outcomes and links count.
+    session = {"harness": None, "id": row["sessionId"]} if row.get("sessionId") else None
     out.update(
         schema=SCHEMA,
         verdict=verdict,
@@ -273,9 +276,9 @@ def normalize(row: dict, raw: str) -> dict:
         verdictRule=rule,
         prediction=None,
         metrics=[],
-        prs=[],
+        prs=[{**ref, "how": "flag"} for ref in pr_refs(row.get("pr") or "")],
         cost=None,
-        session=None,
+        session=session,
         startedAt=None,
         durationSource="flag" if row.get("durationMin") is not None else None,
         skillSha=None,

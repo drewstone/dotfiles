@@ -166,16 +166,23 @@ def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
 
     skill = L.normalize_skill(skill)
     at = L.now()
-    session = L.detect_session(skill)
-    if values.get("--transcript"):
-        session = {**(session or {}), "transcriptPath": values["--transcript"]}
-    session = session or {}
-    transcript = session.get("transcriptPath")
+    measured = {"startedAt": None, "durationMin": None, "durationSource": None, "cost": None, "prs": []}
     cache: dict = {}
-    events = L.scan(transcript, cache)
-    main_events = L.scan(session.get("mainTranscriptPath"), cache) if session.get("mainTranscriptPath") else events
-    measured = L.measure(events, skill, at, main_events) if transcript else \
-        {"startedAt": None, "durationMin": None, "durationSource": None, "cost": None, "prs": []}
+    try:  # capture is best effort; the row is written regardless
+        session = L.detect_session(skill) or {}
+    except Exception as error:
+        print(f"skill-run-log: session detection skipped: {error}", file=sys.stderr)
+        session = {}
+    if values.get("--transcript"):
+        session = {**session, "transcriptPath": values["--transcript"]}
+    transcript = session.get("transcriptPath")
+    if transcript:
+        try:
+            events = L.scan(transcript, cache)
+            main_events = L.scan(session["mainTranscriptPath"], cache) if session.get("mainTranscriptPath") else events
+            measured = L.measure(events, skill, at, main_events)
+        except Exception as error:
+            print(f"skill-run-log: transcript measurement skipped: {error}", file=sys.stderr)
     if duration is not None:
         measured.update(durationMin=duration, durationSource="flag")
     cost = measured["cost"]

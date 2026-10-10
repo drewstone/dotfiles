@@ -188,7 +188,8 @@ def enrich(row: dict, event, path, cache: dict, at: dt.datetime):
     if row.get("durationMin") is None and measured["durationMin"] is not None:
         row.update(durationMin=measured["durationMin"], durationSource=measured["durationSource"])
     row.update(startedAt=measured["startedAt"], cost=measured["cost"])
-    row["prs"] = L.merge_refs([{**r, "how": "target"} for r in L.pr_refs(row.get("target") or "")], measured["prs"])
+    row["prs"] = L.merge_refs(row.get("prs"), [{**r, "how": "target"} for r in L.pr_refs(row.get("target") or "")],
+                              measured["prs"])
     try:
         ended = isinstance(path, tuple) or (at.timestamp() - os.path.getmtime(main_path or path)) > 12 * 3600
     except OSError:
