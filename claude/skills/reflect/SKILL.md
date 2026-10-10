@@ -44,6 +44,14 @@ Record scope, sources, outcomes, repeated causes, changes, verification, and unr
 Use counts and denominators for frequency claims; retain unknowns and sampling limits.
 A reflection needs neither a grade, a fixed section list, nor a forced next action.
 
+## Climb
+
+A reflection measures the operator and its tools ([the climb](../../../docs/processes/climb.md)).
+- Score every prediction made in the period: give PASS, FAIL or PENDING, plus calibration.
+- Record each correction from the person served as a ledger row with its theme. Count recurrences after a change; a recurring theme escalates to a check or architecture.
+- Compare detect and recover times with the operator SLOs (10 and 30 minutes).
+- Name the operator-tool versions in force (directive, skills, hooks) and their measured effect, or that none was measured.
+
 ## Log the run
 
 ```bash
