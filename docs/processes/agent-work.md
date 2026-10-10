@@ -31,7 +31,8 @@ Before committing, check Git identity; report a mismatch instead of changing it 
 
 ## Deliver through GitHub
 
-Before mutations, `gh-drew api user --jq .login` must return `drewstone`.
+gh-drew refuses any token that is not `drewstone`; to show the identity without spending core quota, run `gh-drew api graphql -f query='{viewer{login}}'`.
+A loop or service that only reads GitHub (runs, statuses, compares, PR files) uses `gh-read`, which reads as `tangletools` and keeps Drew's quota for writes.
 Missing DREW_GH_TOKEN requires restoring its owner, not switching accounts; SSH transport does not establish API identity.
 Fetch the PR target, verify `git merge-tree --write-tree BASE HEAD`, and resolve conflicts.
 Use Conventional Commits and repository hooks; dotfiles git/install.sh owns global hooks.

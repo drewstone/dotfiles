@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Every `gh` this script runs (identity check, quota probe, the call itself)
+# must be the real binary. Without the marker, the gh shim (claude/tools/gh)
+# re-entered gh-drew, so each call was verified and logged twice, and each
+# guarded read logged a phantom `api rate_limit` (found 2026-10-09).
+export GH_DREW_SHIM=1
+
 expected_login="${GH_DREW_EXPECTED_LOGIN:-drewstone}"
 secrets_file="${GH_DREW_SECRETS_FILE:-$HOME/company/devops/secrets/agent-state.env}"
 keys_file="${GH_DREW_KEYS_FILE:-$HOME/company/devops/secrets/.env.keys}"
@@ -63,6 +69,10 @@ read_secret_uncached() {
 # sharing one token (one 5,000/hr core bucket) that alone can exhaust the quota
 # and lock out merges. Cache the verdict per token fingerprint; the token's
 # identity does not change between calls.
+# The check asks GraphQL (`viewer { login }`), whose quota is separate from the
+# core REST quota: on 2026-10-09 the core quota reached 0 at 20:10Z, the 6h
+# verdict expired at 20:20Z, `GET /user` then failed, and every gh-drew call on
+# the host, writes and `/rate_limit` included, refused until the 20:21Z reset.
 verify_cache_dir="${GH_DREW_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/gh-drew}"
 verify_ttl="${GH_DREW_VERIFY_TTL:-21600}" # 6h
 
@@ -102,7 +112,7 @@ try_token() {
   fi
 
   local login
-  login="$(GH_TOKEN="$token" gh api user --jq .login 2>/dev/null || true)"
+  login="$(GH_TOKEN="$token" gh api graphql -f query='{viewer{login}}' --jq .data.viewer.login 2>/dev/null || true)"
   # On a 403 (rate limit) gh prints the JSON error body to stdout; only a real
   # GitHub login may be cached or returned, or one outage locks every caller out
   # for the whole cache TTL.
@@ -469,7 +479,10 @@ with_squash_body() {
   (( inserted )) || final_args+=(${squash_body[@]+"${squash_body[@]}"})
 }
 
-for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
+# GH_DREW_TOKEN_KEYS names other keys for a wrapper that runs as another login (gh-read).
+read -r -a token_keys <<< "${GH_DREW_TOKEN_KEYS:-DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN}"
+
+for key in "${token_keys[@]}"; do
   token="${!key-}"
   login="$(try_token "$token" || true)"
 
@@ -482,7 +495,7 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
   fi
 done
 
-for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
+for key in "${token_keys[@]}"; do
   token="$(read_secret "$key")"
   login="$(try_token "$token" || true)"
 
@@ -496,7 +509,7 @@ for key in DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN; do
 done
 
 cat >&2 <<EOF
-gh-drew: no valid Drew GitHub API token found.
+gh-drew: no valid GitHub API token for '$expected_login' found (keys: ${token_keys[*]}).
 
 Required:
 - Add DREW_GH_TOKEN to $secrets_file, or export it in the shell.

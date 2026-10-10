@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# gh-read: read-only GitHub calls as the tangletools machine account.
+#
+# tangletools has its own 5,000-call core quota. Automated fleet reads (deploy
+# runs, compares, PR files, statuses) go through gh-read so they never spend
+# drewstone's quota, which merges, PR writes and deploy dispatches need.
+# gh-read refuses anything that could write or hand out the token; such calls,
+# and anything that must act as Drew, go through gh-drew.
+#
+# It runs gh-drew with tangletools' token key (TANGLETOOLS_GH_TOKEN, env or
+# vault) and login, so the identity check, the read floor and the call log are
+# gh-drew's. Calls are logged to ~/.local/state/gh-read (GH_READ_LOG_DIR), apart
+# from Drew's, and reads stop under 500 core calls left (GH_READ_MIN_CORE) so
+# the auto-approver keeps its share of the same quota.
+set -euo pipefail
+
+refuse() {
+  echo "gh-read: refused: $*; gh-read only reads. Use gh-drew for writes." >&2
+  exit 3
+}
+
+# Accepts the call when it can only read; exits 3 otherwise.
+check_read() {
+  local sub="${1-}" verb="${2-}"
+  case "$sub" in
+    api) check_api "${@:2}" ;;
+    search) ;;
+    pr|issue|run|release|workflow|repo|label|cache|ruleset)
+      case "$verb" in
+        list|view|status|checks|diff) ;;
+        *) refuse "gh $sub $verb" ;;
+      esac
+      ;;
+    *) refuse "gh $sub" ;;
+  esac
+}
+
+# gh api reads are GETs. A field turns a REST call into a POST unless the method
+# is named GET; GraphQL takes fields for every query, so a GraphQL call is read
+# when no field holds a mutation.
+check_api() {
+  local arg method='' endpoint='' expect='' fields=() mutation=0 i c rest
+  for arg in "$@"; do
+    if [[ -n "$expect" ]]; then
+      case "$expect" in
+        method) method="$arg" ;;
+        field) fields+=("$arg") ;;
+      esac
+      expect=''
+      continue
+    fi
+    case "$arg" in
+      --method) expect=method ;;
+      --method=*) method="${arg#--method=}" ;;
+      --raw-field|--field) expect=field ;;
+      --raw-field=*|--field=*) fields+=("${arg#*=}") ;;
+      --input|--input=*) refuse "gh api --input" ;;
+      --header|--jq|--template|--preview|--hostname|--cache) expect=value ;;
+      --*) ;;
+      -?*)
+        # A cluster of short flags, read as gh does: -i takes no value; the first flag that takes one
+        # takes the rest of the cluster, or the next argument (-XPOST, -iX POST, -fbody=x, -q.x).
+        i=1
+        while (( i < ${#arg} )); do
+          c="${arg:i:1}"; rest="${arg:i+1}"
+          case "$c" in
+            i) i=$((i + 1)); continue ;;
+            X) if [[ -n "$rest" ]]; then method="$rest"; else expect=method; fi ;;
+            f|F) if [[ -n "$rest" ]]; then fields+=("$rest"); else expect=field; fi ;;
+            H|q|t|p) [[ -n "$rest" ]] || expect=value ;;
+            *) refuse "gh api flag -$c" ;;
+          esac
+          break
+        done
+        ;;
+      *) [[ -z "$endpoint" ]] && endpoint="$arg" ;;
+    esac
+  done
+  endpoint="${endpoint#/}"
+  if [[ "$endpoint" == graphql ]]; then
+    for arg in ${fields[@]+"${fields[@]}"}; do
+      [[ "$arg" == *=@* ]] && refuse "gh api graphql with a field read from a file"
+      shopt -s nocasematch
+      [[ "$arg" == *mutation* ]] && mutation=1
+      shopt -u nocasematch
+    done
+    (( mutation )) && refuse "a GraphQL mutation"
+    return 0
+  fi
+  if [[ -n "$method" ]]; then
+    [[ "$method" == [Gg][Ee][Tt] ]] || refuse "gh api -X $method"
+  elif (( ${#fields[@]} )); then
+    refuse "gh api with fields (a POST); name -X GET for query parameters"
+  fi
+}
+
+check_read "$@"
+
+here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+GH_DREW_EXPECTED_LOGIN="${GH_READ_EXPECTED_LOGIN:-tangletools}" \
+GH_DREW_TOKEN_KEYS="${GH_READ_TOKEN_KEYS:-TANGLETOOLS_GH_TOKEN}" \
+GH_DREW_LOG_DIR="${GH_READ_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gh-read}" \
+GH_DREW_MIN_CORE="${GH_READ_MIN_CORE:-500}" \
+  exec "$here/gh-drew" "$@"
