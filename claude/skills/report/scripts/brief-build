@@ -3,7 +3,7 @@
 
 usage: brief-build SPEC.json OUT.html
 
-Schema errors exit 2. Missing hillclimb parts (hill, method, a chart, decisions)
+Schema errors exit 2. Missing climb parts (hill, method, a chart, decisions)
 print warnings, because a brief without them usually answers the wrong question.
 """
 import json

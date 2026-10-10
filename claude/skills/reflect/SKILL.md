@@ -16,7 +16,6 @@ Judge outcomes against the user's objective; invocation counts and self-grades d
 2. Inspect the evidence needed to explain outcomes; use [session efficiency](references/session-efficiency.md) for stalled or repetitive coding sessions.
    Record important sources you could not inspect and why.
 3. What changed for the user, and what remains unproved? Separate facts from interpretation.
-   Count statements later corrected and the time from each alarm to its owner, and append them to the project's [hill](../../../docs/processes/hillclimb.md#hills) series.
 4. Which recurring cause survived a prior correction, and what evidence explains why?
 5. Identify practices supported by outcomes and failures worth correcting.
 
