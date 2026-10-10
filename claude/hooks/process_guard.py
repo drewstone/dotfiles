@@ -27,6 +27,12 @@ Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell 
 too: an admin merge or force push run on a Beelink has the same effect on GitHub. The Mac
 build rule skips remote commands, which is where that work belongs.
 
+So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`,
+`ssh host bash -s < x.sh`): one written by a heredoc earlier in the same command, or a file under
+a temp root such as a scratchpad. On 2026-10-04 an agent wrote a bare `git stash pop` into
+scratchpad/gate1699.sh and ran the file, which no inline check could see. A repository's own
+scripts are not read.
+
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
 redacted. Fail-open: an unparsable payload exits 0 with no output.
 """
@@ -57,7 +63,8 @@ class Segment:
     def __init__(self):
         self.words = []
         self.heredocs = []  # bodies, in order
-        self.writes = []  # redirection targets
+        self.writes = []  # output redirection targets
+        self.inputs = []  # `< file` input redirection sources
 
 
 def lex(src):
@@ -81,6 +88,8 @@ def _lex(src, i, out, stop_paren):
             text = "".join(word)
             if redirect_target == "skip":
                 seg.writes.append(text)
+            elif redirect_target == "input":
+                seg.inputs.append(text)
             elif redirect_target and redirect_target.startswith("heredoc"):
                 pending.append((text, redirect_target.endswith("-"), seg))
             elif redirect_target == "herestring":
@@ -211,7 +220,8 @@ def _lex(src, i, out, stop_paren):
                 j = i + 1
                 while j < n and src[j] in "<>&|":
                     j += 1
-                redirect_target, i = "skip", j
+                redirect_target = "input" if src[i:j] == "<" else "skip"
+                i = j
                 # `>&2`, `2>&1`: the target is attached digits
                 while i < n and src[i] in " \t":
                     i += 1
@@ -254,6 +264,7 @@ SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 class Command:
     def __init__(self, argv, env, remote, cwd, ctx):
         self.argv, self.env, self.remote, self.cwd, self.ctx = argv, env, remote, cwd, ctx
+        self.origin = ctx.origin  # the script file this command was read from, if any
 
     @property
     def prog(self):
@@ -269,6 +280,9 @@ class Context:
         self.remote = remote
         self.git_init = False
         self.scratch_package = False  # a package.json was created here (npm init, > package.json)
+        self.written = {}  # path -> heredoc body written to it earlier in this command
+        self.depth = 0  # nesting of scripts read from files
+        self.origin = None
 
 
 def strip_prefix(words):
@@ -364,6 +378,46 @@ def ssh_remote(args):
     return args[i + 1:] if i < len(args) else []
 
 
+SCRIPT_LIMIT = 256 * 1024
+SCRIPT_DEPTH = 3
+
+
+def script_text(path, cmd_cwd, env, ctx):
+    """The body of an ad-hoc script the command runs: one written by a heredoc earlier in the same
+    command, or a file under a temp root (scratchpads, /tmp), where agents write throwaway
+    scripts. A repository's own entrypoints (dx.sh, scripts/ship.sh) are not read: they are
+    maintained, reviewed code, and the documented local flows run them on the Mac."""
+    if ctx.remote or ctx.depth >= SCRIPT_DEPTH:
+        return None
+    resolved = expand_path(path, cmd_cwd, env)
+    if not resolved:
+        return None
+    if resolved in ctx.written:
+        return ctx.written[resolved]
+    if not under_temp_root(resolved):
+        return None
+    try:
+        if os.path.getsize(resolved) > SCRIPT_LIMIT:
+            return None
+        with open(resolved, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    if b"\0" in data:
+        return None  # a binary, not a script
+    return data.decode("utf-8", "replace")
+
+
+def nested(text, cwd, remote, ctx, origin):
+    ctx.depth += 1
+    outer, ctx.origin = ctx.origin, origin
+    try:
+        return commands(text, cwd, remote, ctx)
+    finally:
+        ctx.depth -= 1
+        ctx.origin = outer
+
+
 def commands(src, cwd, remote=False, ctx=None):
     """Flatten a shell command into Command objects, descending into nested shells."""
     ctx = ctx or Context(cwd, remote)
@@ -394,16 +448,34 @@ def commands(src, cwd, remote=False, ctx=None):
             ctx.scratch_package = True
         if any(os.path.basename(w) == "package.json" for w in seg.writes):
             ctx.scratch_package = True
+        if seg.heredocs and not ctx.remote:
+            targets = list(seg.writes) + ([a for a in argv[1:] if not a.startswith("-")] if prog == "tee" else [])
+            for target in targets:
+                resolved = expand_path(target, ctx.cwd, merged)
+                if resolved:
+                    ctx.written[resolved] = seg.heredocs[-1]
+        # A script file run directly (`./x.sh`, `/tmp/x.sh`) or sourced (`source x.sh`, `. x.sh`).
+        script_path = None
+        if "/" in argv[0] and prog not in SHELLS:
+            script_path = argv[0]
+        elif prog in ("source", ".") and len(argv) > 1:
+            script_path = argv[1]
+        if script_path:
+            body = script_text(script_path, ctx.cwd, merged, ctx)
+            if body is not None:
+                result.extend(nested(body, ctx.cwd, ctx.remote, ctx, script_path))
         # Nested shells.
         if prog in SHELLS:
-            script, has_c, positional, k = None, False, False, 1
+            script, has_c, noexec, positional, k = None, False, False, False, 1
             while k < len(argv):
                 a = argv[k]
                 if a in ("-o", "+o", "-O", "+O"):
+                    noexec = noexec or (a == "-o" and k + 1 < len(argv) and argv[k + 1] == "noexec")
                     k += 2
                     continue
                 if a.startswith("-") and a not in ("-", "--"):
                     has_c = has_c or "c" in a[1:]
+                    noexec = noexec or "n" in a[1:]  # `bash -n x.sh` only checks syntax
                     k += 1
                     continue
                 positional = True
@@ -411,9 +483,19 @@ def commands(src, cwd, remote=False, ctx=None):
                 break
             if script is not None:
                 result.extend(commands(script, ctx.cwd, ctx.remote, ctx))
-            elif not positional:  # `bash`, `bash -s`: the heredoc is the script
+            elif noexec:
+                pass
+            elif positional:  # `bash script.sh`: read an ad-hoc script file
+                body = script_text(argv[k], ctx.cwd, merged, ctx)
+                if body is not None:
+                    result.extend(nested(body, ctx.cwd, ctx.remote, ctx, argv[k]))
+            else:  # `bash`, `bash -s`: the heredoc or the `< file` input is the script
                 for body in seg.heredocs:
                     result.extend(commands(body, ctx.cwd, ctx.remote, ctx))
+                for source in seg.inputs:
+                    body = script_text(source, ctx.cwd, merged, ctx)
+                    if body is not None:
+                        result.extend(nested(body, ctx.cwd, ctx.remote, ctx, source))
         elif prog == "ssh":
             words = ssh_remote(argv[1:])
             sub = Context(None, True)
@@ -423,6 +505,10 @@ def commands(src, cwd, remote=False, ctx=None):
             if not words or os.path.basename(words[0].split()[0] if words[0].split() else "") in SHELLS:
                 for body in seg.heredocs:
                     result.extend(commands(body, None, True, sub))
+                for source in seg.inputs:  # `ssh host bash -s < local.sh` runs the local file remotely
+                    body = script_text(source, ctx.cwd, merged, ctx)
+                    if body is not None:
+                        result.extend(nested(body, None, True, sub, source))
         elif prog == "eval":
             result.extend(commands(" ".join(argv[1:]), ctx.cwd, ctx.remote, ctx))
         elif prog in ("beelink-gate", "hostlab") and "--" in argv:
@@ -935,16 +1021,12 @@ def rule_mac_build(cmd):
 
 # ---------------------------------------------------------------------------------------
 
-PREFILTER = re.compile(r"push|--admin|protection|rulesets|hooks[Pp]ath|GIT_CONFIG|no-verify|commit|stash|pnpm|npm|npx|"
-                       r"yarn|bun|vitest|turbo|docker", re.I)
-
-
 def evaluate(payload):
     """Return a list of (rule, summary, reason, override, bypassed) findings for a PreToolUse payload."""
     if payload.get("tool_name") not in (None, "Bash"):
         return []
     command = (payload.get("tool_input") or {}).get("command") or ""
-    if not command or not PREFILTER.search(command):
+    if not command:
         return []
     cwd = payload.get("cwd") or None
     findings, seen = [], set()
@@ -955,6 +1037,9 @@ def evaluate(payload):
                 continue
             seen.add(hit[:2])
             rule, summary, reason, override = hit
+            if cmd.origin:
+                summary += f" (in {cmd.origin})"
+                reason = f"The script {cmd.origin}, which this command runs, contains it. " + reason
             findings.append((rule, summary, reason, override, bool(override and flag_on(cmd, override))))
     return findings
 

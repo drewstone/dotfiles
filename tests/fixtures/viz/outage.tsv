@@ -1,0 +1,9 @@
+label	value	group	tone
+detect	50	detect	warn
+fix	17	fix	good
+open the PR	14	ship	info
+develop red, agents rate-limited	116	ship	bad
+merge develop, re-prove	11	ship	info
+flaky timing tests	44	ship	bad
+version-PR coupling	108	ship	bad
+cut, promote, deploy	46	ship	info

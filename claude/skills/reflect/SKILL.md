@@ -49,7 +49,10 @@ A reflection needs neither a grade, a fixed section list, nor a forced next acti
 A reflection measures the operator and its tools ([the climb](../../../docs/processes/climb.md)).
 - Score every prediction made in the period: give PASS, FAIL or PENDING, plus calibration.
 - Record each correction from the person served as a ledger row with its theme. Count recurrences after a change; a recurring theme escalates to a check or architecture.
-- Compare detect and recover times with the operator SLOs (10 and 30 minutes).
+- Measure the period with [`scripts/self-audit`](scripts/self-audit) over its session files, and keep its counts in the reflection: guardrail matches, rework (repeated commands, rollbacks, revert commits with `--repo`) and stall minutes. A match is a lead: read it in the transcript before calling it a violation. [The self-audit reference](references/self-audit.md) says where the files and incident times live.
+- For each incident, state the time to detect and to recover from journal or alert times, compare them with the operator SLOs (10 and 30 minutes), and draw where the time went with `viz waterfall --start --end`.
+- Show every count with a time axis or three or more values as a [`viz`](../../tools/README.md#viz) chart, per the [report evidence rule](../report/SKILL.md#state-what-the-evidence-supports).
+- Keep two one-line outcomes from [the level-up passes](../../../docs/processes/climb.md#how-to-think-the-level-up-passes): the red team (how this conclusion is wrong, and the evidence that would change it) and bigger (the ten-times version, and what it would take).
 - Name the operator-tool versions in force (directive, skills, hooks) and their measured effect, or that none was measured.
 
 ## Log the run

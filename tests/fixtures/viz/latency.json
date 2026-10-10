@@ -1,0 +1,5 @@
+{ "title": "First reply by day", "unit": "s", "rows": [
+  { "label": "mon", "note": "n=12", "p50": 31.0, "p95": 120.4 },
+  { "label": "tue", "note": "n=0", "p50": null, "p95": null },
+  { "label": "wed", "note": "n=20", "p50": 28.2, "p95": 64.9 },
+  { "label": "thu", "note": "n=3", "p50": 22.5, "p95": 30.1 } ] }

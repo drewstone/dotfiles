@@ -30,9 +30,19 @@
             "marks": [ { "at": "2026-10-08T02:12:00Z", "shape": "detect" }, { "at": "2026-10-08T08:40:00Z", "shape": "owner" }, { "at": "2026-10-08T09:05:00Z", "shape": "cause" }, { "at": "2026-10-08T11:22:00Z", "shape": "fix" } ] },
           { "label": "Apple Pay declines", "segments": [ { "from": "2026-10-10T21:05:00Z", "to": "2026-10-10T21:20:00Z", "tone": "blind", "tip": "15 min with no owner" }, { "from": "2026-10-10T21:20:00Z", "to": "2026-10-10T23:30:00Z", "tone": "crit", "tip": "owned, open" } ],
             "marks": [ { "at": "2026-10-10T21:06:00Z", "shape": "detect" }, { "at": "2026-10-10T21:20:00Z", "shape": "owner" } ] } ],
-        "note": "<b>Time to an owner:</b> 6.5 h, then 15 min. The autopilot shipped on 10-09 is the difference." } ] },
+        "note": "<b>Time to an owner:</b> 6.5 h, then 15 min. The autopilot shipped on 10-09 is the difference." },
+      { "type": "waterfall", "title": "Where the cart outage's 9.2 hours went", "unit": "m", "start": "02:10", "end": "11:22", "rows": [
+        { "label": "until the alarm", "value": 2, "group": "detect", "tone": "warn" }, { "label": "flagged, no owner", "value": 388, "group": "own", "tone": "bad" },
+        { "label": "find the cause", "value": 25, "group": "fix", "tone": "info" }, { "label": "cap the cache, ship", "value": 137, "group": "fix", "tone": "good" } ] },
+      { "type": "events", "title": "Cart outage, 10-08 UTC", "rows": [
+        { "t": "02:10", "status": "bad", "text": "Cart pods start restarting on out-of-memory." }, { "t": "02:12", "status": "warn", "text": "The memory alarm fires; nobody owns it." },
+        { "t": "08:40", "status": "warn", "text": "cart-lane takes the incident." }, { "t": "09:05", "status": "info", "text": "Cause: the session cache is unbounded." },
+        { "t": "11:22", "status": "good", "text": "Cache capped at 50k entries and shipped." } ] } ] },
     { "key": "§4 flow", "title": "Throughput and shape",
       "blocks": [
+        { "type": "grouped", "title": "Payment success by day, card and Apple Pay", "target": 99.5, "targetLabel": "SLO", "series": [{ "key": "card", "label": "Card" }, { "key": "applepay", "label": "Apple Pay" }],
+          "rows": [ { "label": "10-08", "card": "39880/40000", "applepay": "9970/10000" }, { "label": "10-09", "card": "40120/40200", "applepay": "10010/10050" }, { "label": "10-10", "card": "39950/40100", "applepay": "6170/9950" } ],
+          "note": "Apple Pay fell to 62.0% on 10-10 when SDK 4.2 changed the token format." },
         { "type": "hist", "title": "Deploys per day", "sub": "48 total", "labels": ["10-05", "10-06", "10-07", "10-08", "10-09", "10-10", "10-11"], "values": [5, 9, 8, 4, 10, 7, 5], "every": 1, "highlightMax": true, "unit": "deploys" },
         { "type": "cols", "cols": 2, "blocks": [
           { "type": "hbars", "title": "p99 latency by endpoint (ms)", "sub": "Darker tick is p50.", "rows": [["/cart", 210, 42], ["/checkout", 880, 120], ["/payment", 640, 95], ["/receipt", 90, 20]], "hot": ["/checkout"], "unit": "ms" },
@@ -44,14 +54,29 @@
     { "key": "§5 signal", "title": "Canaries by day",
       "blocks": [ { "type": "heatmap", "title": "Pass rate", "cols": 7, "colLabels": { "0": "10-05", "3": "10-08", "6": "10-11" },
         "rows": [ { "label": "Checkout end to end", "sub": "checkout-e2e", "cells": [ { "state": "good", "tip": "48/48" }, { "state": "good", "tip": "48/48" }, { "state": "good", "tip": "48/48" }, { "state": "crit", "tip": "20/48" }, { "state": "good", "tip": "48/48" }, { "state": "warn", "tip": "40/48" }, { "state": "blind", "tip": "harness down" } ] } ],
-        "legend": [["all passed", "good"], ["some failed", "warn"], ["all failed", "crit"], ["blind", "blind"]] } ] },
+        "legend": [["all passed", "good"], ["some failed", "warn"], ["all failed", "crit"], ["blind", "blind"]] },
+      { "type": "strip", "title": "Apple Pay canary, hourly, 10-10 UTC", "rows": [
+        { "t": "16:00", "status": "ok" }, { "t": "17:00", "status": "ok" }, { "t": "18:00", "status": "ok" }, { "t": "19:00", "status": "ok" }, { "t": "20:00", "status": "ok" },
+        { "t": "21:00", "status": "fail", "note": "38%" }, { "t": "22:00", "status": "fail" }, { "t": "23:00", "status": "fail" }, { "t": "23:30", "status": null } ],
+        "note": "The 23:30 run had not reported when this brief was built, so it shows as unknown, not as a failure." } ] },
     { "key": "§6 path", "title": "Path to the fix", "blocks": [ { "type": "steps", "items": [
       { "state": "done", "title": "Pin SDK 4.1", "when": "21:40Z" }, { "state": "wait", "title": "Canary passes 3 times", "text": "Running" }, { "state": "you", "title": "Approve the vendor renewal" } ] } ] },
     { "key": "§7 causes", "title": "Causes and fixes at the source", "blocks": [ { "type": "table", "head": ["Class", "Evidence", "Fix"], "rows": [
       ["Unpinned SDK", "4.2 auto-installed at build", "Lockfile plus a schema check in CI"], ["Unbounded cache", "RSS grew 4 GB/day", "Cap, plus a memory alarm at 80%"] ] } ] },
     { "key": "§8 bets", "title": "Bets", "blocks": [ { "type": "bets", "items": [
       { "lead": true, "tag": "Bet 1", "title": "Progressive deploys with canary gates", "why": "Both outages hit 100% of traffic at once.", "build": "1% → 10% → 100% with automatic rollback on canary red.", "premortem": "Fails if canaries miss payment-specific paths; add Apple Pay to the canary first.", "target": "Worst outage < 1 h · change failure < 10%" } ] } ] },
-    { "key": "§9 you", "title": "Your decisions", "blocks": [ { "type": "decisions", "items": [
+    { "key": "§9 climb", "title": "Hills and velocity", "lede": "Each hill's trend against its target, and the share of the starting gap closed per week.", "blocks": [ { "type": "hills", "rows": [
+      { "title": "Time to restore checkout", "sub": "system · checkout on-call", "unitTip": "hours from alarm to restored · lower is better", "tone": "good",
+        "points": [["2026-10-01T00:00:00Z", 9.2, "10-01 · 9.2 h"], ["2026-10-05T00:00:00Z", 4.1, "10-05 · 4.1 h"], ["2026-10-09T00:00:00Z", 0.6, "10-09 · 0.6 h"]],
+        "targetValue": 1, "now": "0.6", "unit": "h", "target": "1 h", "gap": "at target", "open": 0,
+        "move": { "status": "kept", "title": "Autopilot pages the owner", "prediction": "restore under 1 h on the next outage" }, "since": "1.0 d ago", "sinceTone": "good" },
+      { "title": "Change failure rate", "sub": "system · release lane", "unitTip": "share of deploys rolled back · lower is better", "tone": "crit",
+        "points": [["2026-10-01T00:00:00Z", 18, "10-01 · 18%"], ["2026-10-05T00:00:00Z", 21, "10-05 · 21%"]],
+        "targetValue": 5, "now": "21", "unit": "%", "target": "5%", "gap": "16% · 123% open", "open": 1.23,
+        "move": { "status": "pending", "title": "Canary every deploy for 10 min", "prediction": "under 10% over the next 20 deploys" }, "since": "no climb yet · first read 9 d ago", "sinceTone": "crit" } ] },
+      { "type": "lines", "title": "Gap closed per week", "labels": ["09-21", "09-28", "10-05"], "yUnit": "%",
+        "series": [ { "name": "gap closed", "tone": "accent", "values": [null, 12.5, 31], "tips": ["week of 09-21: no readings", "week of 09-28: 12.5% of the starting gap", "week of 10-05: 31% of the starting gap"] } ] } ] },
+    { "key": "§10 you", "title": "Your decisions", "blocks": [ { "type": "decisions", "items": [
       { "title": "Renew the fraud vendor at +30%, or run a 2-week bake-off", "text": "Switching costs about 3 engineer-weeks.", "rec": "<b>Recommendation:</b> run the bake-off; the renewal deadline allows it." } ] } ] }
   ],
   "method": "Synthetic example. A real brief lists each source, the exact query, the window, the population size and exclusions.",

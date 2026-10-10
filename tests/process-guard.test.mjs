@@ -272,6 +272,43 @@ test("mac-build: single test files, remote runs and light commands pass on the M
   assert.equal(decide("CC_ALLOW_MAC_BUILD=1 pnpm install --frozen-lockfile", mac), "allow");
 });
 
+// ------------------------------------------------------------------------ ad-hoc scripts
+
+test("scripts: a script written to a file and run later is read like the command itself", () => {
+  // 2026-10-04: the bare pop sat in a scratchpad script that the agent then ran.
+  const scratch = join(ROOT, "scratchpad");
+  mkdirSync(scratch, { recursive: true });
+  const gate = join(scratch, "gate1699.sh");
+  writeFileSync(gate, "set -uo pipefail\ncd ~/code/_wt/adc-child-allowance-20261004\ngit fetch -q origin develop\n" +
+    "git stash -q && git merge -q --no-edit origin/develop && git stash pop -q || { echo MERGE_PROBLEM; git status --short | head; exit 1; }\n");
+  const writing = `cat > ${gate} <<'EOF'\ngit stash -q && git stash pop -q\nEOF\nchmod +x ${gate}`;
+  assert.equal(decide(writing), "allow", "writing a script is not running it");
+  assert.equal(decide(`bash -n ${gate} && echo syntax-ok && scp -q ${gate} gtr:/tmp/`), "allow", "a syntax check runs nothing");
+  for (const command of [`bash ${gate}`, `nohup bash ${gate} > /tmp/g.log 2>&1 &`, gate, `source ${gate}`, `. ${gate}`]) {
+    assert.equal(decide(command), "deny", `deny expected for: ${command}`);
+  }
+  assert.match(reason(`bash ${gate}`), new RegExp(`The script ${gate}`));
+
+  const push = join(scratch, "push.sh");
+  writeFileSync(push, "git push -q --force-with-lease origin feat/x\n");
+  assert.equal(decide(`ssh beelink1-wsl bash -s < ${push}`), "deny");
+  assert.equal(decide(`bash -s < ${push}`), "deny");
+
+  const mac = { uname: "Darwin" };
+  assert.equal(decide("cat > /tmp/pg-inline.sh <<'EOF'\ncd ~/webb/_wt/x\npnpm install --frozen-lockfile\nEOF\nbash /tmp/pg-inline.sh", mac), "deny");
+  assert.equal(decide("cat > /tmp/pg-inline.sh <<'EOF'\nssh gtr 'cd ~/code/x && pnpm install'\nEOF\nbash /tmp/pg-inline.sh", mac), "allow");
+});
+
+test("scripts: repository scripts and binaries are not read", () => {
+  // claude/tools/adc-wt runs `pnpm install` inside the worktrees it claims; it is maintained code.
+  const mac = { uname: "Darwin" };
+  assert.equal(decide("bash claude/tools/adc-wt --help", mac), "allow");
+  assert.equal(decide("./claude/tools/adc-wt --help", mac), "allow");
+  const bin = join(ROOT, "scratchpad", "tool");
+  writeFileSync(bin, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0x67, 0x69, 0x74, 0x20, 0x70, 0x75, 0x73, 0x68, 0x20, 0x2d, 0x66]));
+  assert.equal(decide(bin), "allow");
+});
+
 // -------------------------------------------------------------------------------- general
 
 test("logs never hold a key-shaped value from the command", () => {

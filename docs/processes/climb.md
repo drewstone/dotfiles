@@ -71,8 +71,8 @@ Match depth to the ask:
 1. **Answer first:** one sentence, with its number.
 2. **Evidence:** numbers with value, unit, baseline and source; tables where facts are parallel.
 3. **Visuals built from data:**
-   - in the terminal, ASCII charts (ranges, bars, timelines, grids) from a script, not typed by hand;
-   - for depth, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and published as an artifact; the [operator review](https://claude.ai/artifact/LDsG9LBZzVny7k9acpRoa8) shows the bar.
+   - in the terminal, [`viz`](../../claude/tools/README.md#viz) charts (bars, grouped bars, sparklines, pass/fail strips, stacks, waterfalls, timelines, tables), never typed by hand;
+   - for depth, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and published as an artifact; `viz brief` prints the same spec as the terminal status, and the [operator review](https://github.com/tangle-network/discovery-lab/blob/master/reports/climb/operator-review-20261010.html) shows the bar.
 4. **Scoreboard:** every registered prediction as PASS, FAIL or PENDING beside its measured value.
 5. **Proposals:** each states today's number, the number to beat, the test, the owner and the first step, ranked by impact for the effort.
 6. **One link** to the full page, and one line naming the next action.
@@ -93,7 +93,7 @@ A score the author assigns to its own work is a claim, not a measurement.
 7. **Ownership:** each open problem has an owner and next action, with time since its first alarm.
 8. **Ambition:** proposals remove a problem class, each with a number to beat and a pre-mortem.
 9. **Decisions:** what only the reader can decide, with a recommendation and its tradeoff.
-10. **Craft:** charts drawn to scale from data, readable in both themes, the first screen complete.
+10. **Craft:** charts drawn to scale from data, readable in both themes, the first screen complete. Its instruments are [`viz`](../../claude/tools/README.md#viz) and the [brief kit](../../claude/skills/report/references/brief-kit.md), which scale every mark from the data, reconcile parts with their whole, and draw in theme tokens at the reader's width.
 
 The instrument is [`brief-judge`](../../claude/skills/report/scripts/brief-judge): it scores on a subscription account, quotes the deliverable for each score, and appends the ledger row.
 Calibrate the judge against the person's own ratings: keep at least one deliverable they rejected and one they praised, in their words, beside the project's ledger, and report the judge's agreement as its own hill.

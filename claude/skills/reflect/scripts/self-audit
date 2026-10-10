@@ -1,0 +1,130 @@
+#!/usr/bin/env node
+// self-audit: count rule breaches, rework and stalls in Claude Code or Codex session files.
+//
+// usage: self-audit <session.jsonl>... [--repo <dir>] [--gap <minutes>] [--json] [--width <n>]
+//
+// Every number comes from the files given: commands the agent ran, tool results it read,
+// and event timestamps. Matches are counted, never printed, when they look like secrets.
+// The checks are patterns, so treat a count as a lead to read in the transcript, not a verdict.
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const { barsModel, barsText, tableModel, tableText, fmtDuration } = await import(join(here, '..', '..', '..', 'tools', 'viz-kit', 'core.mjs'))
+
+const args = process.argv.slice(2)
+const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : fallback }
+const flag = (name) => { const i = args.indexOf(name); if (i >= 0) args.splice(i, 1); return i >= 0 }
+const repo = opt('--repo', null)
+const gapMin = Number(opt('--gap', 10))
+const cols = Number(opt('--width', process.stdout.columns || 100))
+const asJson = flag('--json')
+if (!args.length || args.includes('-h') || args.includes('--help')) {
+  process.stdout.write(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 9).map((l) => l.replace(/^\/\/ ?/, '')).join('\n') + '\n')
+  process.exit(args.length ? 0 : 2)
+}
+
+const SECRET = /\b(sk-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|gak_[A-Za-z0-9_-]{20,}|xox[bpa]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/
+const redact = (s) => s.replace(new RegExp(SECRET.source, 'g'), '[redacted]').replace(/\b([A-Z0-9_]*(TOKEN|KEY|SECRET|PASSWORD)[A-Z0-9_]*)=\S+/g, '$1=[redacted]')
+
+// Guardrails from the shared agent defaults, as command patterns.
+const RULES = [
+  ['force push', (c) => /\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*(\s--force(-with-lease)?\b|\s-f\b)/.test(c)],
+  ['merge with --admin', (c) => /\bpr\s+merge\b[^|;&\n]*--admin\b/.test(c)],
+  ['hooks bypassed', (c) => /\s--no-verify\b|core\.hooksPath/.test(c)],
+  ['AI attribution in a commit', (c) => /\bgit\b[^\n]*\bcommit\b/.test(c) && /Co-authored-by:|Generated with/i.test(c)],
+  ['heavy build or suite on the Mac', (c, e) => e.mac && !/^\s*(ssh|beelink-gate|hostlab)\b/.test(c) && /\b(pnpm|npm|yarn)\s+(install|i|ci|build|test|run\s+(build|test|typecheck))\b|\bcargo\s+(build|test)\b|\bnext\s+build\b/.test(c)],
+]
+const REFUSAL = /hook (error|denied|blocked)|denied this tool|blocked by [a-z-]*guard|guard (refused|blocked)/i
+
+function events(file) {
+  const out = []
+  let mac = false
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue
+    let j
+    try { j = JSON.parse(line) } catch { continue }
+    const ts = Date.parse(j.timestamp ?? '')
+    if (!Number.isFinite(ts)) continue
+    if (j.cwd && String(j.cwd).startsWith('/Users/')) mac = true
+    if (j.payload?.cwd && String(j.payload.cwd).startsWith('/Users/')) mac = true
+    // Claude Code: assistant tool_use blocks, user tool_result blocks, user text.
+    if (j.type === 'assistant') {
+      for (const c of j.message?.content ?? []) if (c.type === 'tool_use') out.push({ ts, kind: 'tool', command: c.input?.command ?? null })
+      continue
+    }
+    if (j.type === 'user') {
+      const content = j.message?.content
+      if (Array.isArray(content) && content.some((c) => c.type === 'tool_result')) {
+        const text = content.map((c) => (typeof c.content === 'string' ? c.content : JSON.stringify(c.content ?? ''))).join('\n')
+        out.push({ ts, kind: 'result', text })
+      } else if (!j.isMeta) out.push({ ts, kind: 'user' })
+      continue
+    }
+    // Codex: tool calls carry commands as cmd:"..." or {"cmd": ...} inside their input.
+    const p = j.payload
+    if (!p) continue
+    if (p.type === 'custom_tool_call' || p.type === 'function_call') {
+      const raw = String(p.input ?? p.arguments ?? '')
+      const cmds = [...raw.matchAll(/"?(?:cmd|command)"?\s*:\s*("(?:[^"\\]|\\.)*")/g)].map((m) => { try { return JSON.parse(m[1]) } catch { return null } }).filter(Boolean)
+      if (!cmds.length) out.push({ ts, kind: 'tool', command: null })
+      for (const c of cmds) out.push({ ts, kind: 'tool', command: c })
+    } else if (p.type === 'custom_tool_call_output' || p.type === 'function_call_output') out.push({ ts, kind: 'result', text: String(p.output ?? '') })
+    else if (p.type === 'message' && p.role === 'user') out.push({ ts, kind: 'user' })
+  }
+  for (const e of out) e.mac = mac
+  return out.sort((a, b) => a.ts - b.ts)
+}
+
+const all = args.flatMap(events)
+if (!all.length) { process.stderr.write('self-audit: no timestamped events in the given files\n'); process.exit(2) }
+const tools = all.filter((e) => e.kind === 'tool')
+const commands = tools.filter((e) => e.command).map((e) => ({ ...e, command: String(e.command).replace(/\s+/g, ' ').trim() }))
+
+const rules = RULES.map(([label, test]) => ({ label, value: commands.filter((e) => test(e.command, e)).length }))
+rules.push({ label: 'guard or hook refusals', value: all.filter((e) => e.kind === 'result' && REFUSAL.test(e.text)).length })
+rules.push({ label: 'secret-shaped text in tool output', value: all.filter((e) => e.kind === 'result' && SECRET.test(e.text)).length })
+
+const counts = new Map()
+for (const e of commands) counts.set(e.command, (counts.get(e.command) ?? 0) + 1)
+const repeated = [...counts].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1])
+const rollbacks = commands.filter((e) => /\bgit\s+(revert|reset\s+--hard)\b/.test(e.command)).length
+const start = all[0].ts
+const end = all.at(-1).ts
+let reverts = null
+if (repo) {
+  const log = execFileSync('git', ['-C', repo, 'log', '--oneline', '-i', '--grep=^revert', `--since=${new Date(start).toISOString()}`, `--until=${new Date(end).toISOString()}`], { encoding: 'utf8' })
+  reverts = log.trim() ? log.trim().split('\n').length : 0
+}
+
+// A gap is waiting on a command when it ends with that command's result, idle when it ends
+// with the agent acting again, and the person's time when it ends with their message.
+const gaps = []
+for (let i = 1; i < all.length; i++) {
+  const min = (all[i].ts - all[i - 1].ts) / 60000
+  if (min < gapMin || all[i].kind === 'user') continue
+  gaps.push({ at: new Date(all[i - 1].ts).toISOString().slice(0, 16).replace('T', ' '), minutes: Math.round(min), kind: all[i].kind === 'result' ? 'waiting on a command' : 'idle, no event' })
+}
+
+const metrics = {
+  files: args.length, window: { start: new Date(start).toISOString(), end: new Date(end).toISOString(), minutes: Math.round((end - start) / 60000) },
+  toolCalls: tools.length, commands: commands.length,
+  rules: Object.fromEntries(rules.map((r) => [r.label, r.value])),
+  rework: { repeatedCommands: repeated.length, extraRuns: repeated.reduce((s, [, n]) => s + n - 1, 0), rollbacks, reverts },
+  stalls: { thresholdMinutes: gapMin, count: gaps.length, minutes: gaps.reduce((s, g) => s + g.minutes, 0), byKind: Object.fromEntries(['waiting on a command', 'idle, no event'].map((k) => [k, gaps.filter((g) => g.kind === k).reduce((s, g) => s + g.minutes, 0)])) },
+}
+if (asJson) { process.stdout.write(JSON.stringify(metrics, null, 2) + '\n'); process.exit(0) }
+
+const out = []
+out.push(`self-audit: ${args.length} session file(s), ${metrics.window.start.slice(0, 16).replace('T', ' ')}→${metrics.window.end.slice(0, 16).replace('T', ' ')} UTC (${fmtDuration(metrics.window.minutes)}), ${tools.length} tool calls, ${commands.length} shell commands`)
+out.push('', barsText(barsModel({ rows: rules }, { title: 'Guardrail checks (matches; read each in the transcript)', max: Math.max(1, ...rules.map((r) => r.value)) }), cols))
+out.push('', `Rework: ${repeated.length} commands ran more than once (${metrics.rework.extraRuns} extra runs); ${rollbacks} revert or reset --hard commands${reverts == null ? '' : `; ${reverts} revert commits in ${repo}`}`)
+if (repeated.length) {
+  const top = repeated.slice(0, 6).map(([c, n]) => ({ label: redact(c.length > 70 ? c.slice(0, 69) + '…' : c), value: n }))
+  out.push(barsText(barsModel({ rows: top }, { unit: 'runs' }), cols))
+}
+out.push('', `Stalls of ${gapMin} min or more, the person's time excluded: ${gaps.length}, ${fmtDuration(metrics.stalls.minutes)} (waiting on a command ${fmtDuration(metrics.stalls.byKind['waiting on a command'])}, idle ${fmtDuration(metrics.stalls.byKind['idle, no event'])})`)
+if (gaps.length) out.push(tableText(tableModel({ rows: gaps.sort((a, b) => b.minutes - a.minutes).slice(0, 8), columns: ['at', 'minutes', 'kind'] }), cols))
+process.stdout.write(out.join('\n') + '\n')

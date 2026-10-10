@@ -22,6 +22,30 @@ epoch  outcome  caller  session  directory  command shape
 
 The fleet invariant "GitHub core quota" in tangle-tools reads these files to name the top callers.
 
+## viz
+
+Charts drawn to scale from data, for the terminal and for brief pages.
+It reads JSON or TSV from a file or stdin, needs no network or packages, and prints the same bytes for the same input.
+
+```bash
+viz bars causes.tsv --total 171 --source "reliability endpoint" --asof 2026-10-10   # shares, and any (unaccounted) remainder
+viz grouped success.tsv --target 95                    # cells may be ratios like 33/36: the bar is the rate, the label keeps the denominator
+viz spark latency.tsv --unit s                         # one line per numeric column, with first→last, min, max and n
+viz strip canary.tsv                                   # ✓/✗ cells on a time axis, the pass rate and the longest failing run
+viz stack turn.tsv --unit s                            # parts of one whole; a group column adds a rollup
+viz waterfall outage.tsv --unit m --start 00:45 --end 07:31   # offset rows with clock ranges; the span must equal the parts
+viz timeline events.tsv                                # events with the gap since the previous one
+viz table repos.tsv --sum
+viz brief spec.json                                    # a brief spec as a terminal status
+viz brief spec.json -o page.html                       # the same spec as an artifact-ready page
+```
+
+Width follows the terminal, then `$COLUMNS`, then 80; `--width` overrides it, and every line fits.
+Parts that exceed their whole, ratios above their denominator and values past `--max` exit 2 with the row named; a whole larger than its parts prints the remainder as its own row.
+A chart without `--source` warns on stderr.
+The models live in `viz-kit/core.mjs`, and `viz-kit/brief.mjs` checks brief specs and fills the report skill's [brief kit](../skills/report/references/brief-kit.md).
+Run `viz --help` for every option.
+
 ## agent-ask
 
 Hand an outcome-level ask to any Tangle agent app through the standard operator API every app mounts at `/api/operator/v1`.

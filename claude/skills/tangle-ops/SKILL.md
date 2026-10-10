@@ -1,6 +1,6 @@
 ---
 name: tangle-ops
-description: Diagnose Tangle production health, recurring infrastructure alerts, deployment failures, provisioning, credentials, and startup latency.
+description: Diagnose Tangle production health and run incidents: recurring infrastructure alerts, deployment failures, provisioning, credentials, and startup latency.
 ---
 
 # Tangle Ops
@@ -26,6 +26,16 @@ If the tool is unavailable, use the owning repository's runbook and current prob
 Keep unavailable, unreadable, and indeterminate checks distinct from healthy results.
 An empty log is not success; use the owning log-retrieval path and retain the failure reason.
 Inspect why a run was cancelled before rerunning it.
+
+## Run an incident
+
+An incident is a failure a customer or the synthetic customer turn can see, including a fix that cannot ship.
+1. **Declare it within 10 minutes of the first failing signal.** Name one incident commander (by default the session that owns the fix), the start time from the system's own record, and the symptom users see.
+2. **Send a status every 15 minutes** until recovery: the symptom now, the current blocker and its owner, and the next action with its minute.
+3. **At T+15, list the mitigations with their cost**, even when a fix looks close: roll back the deploy, turn the change off with a flag, switch the model or route, or ship forward. For each, say what it restores, how long it takes and what it breaks; take the fastest one that restores users, and let the fix follow.
+4. **Own every blocker the minute it blocks the fix.** A red base branch, a flaky test, a usage limit, a required version PR or a held runner gets an owner and a next action, never a wait; move to another seat, host or route rather than idle behind a limit.
+5. **Recovery is a passing check on the real path**, such as the synthetic customer turn, not a merged PR or a green deploy step.
+6. **Within a day, write the postmortem** from [the incident reference](references/incident.md): where the time went, drawn with `viz waterfall`, the causes behind the cause, and corrective actions with owners.
 
 ## Investigate recurring alerts
 
