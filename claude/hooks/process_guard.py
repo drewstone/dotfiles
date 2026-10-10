@@ -22,6 +22,13 @@ while their briefs said not to:
   mac-build     whole-repo installs, builds, test runs, turbo runs, image builds and signoff
                 on the Mac (10 cores; agents drove its load to 120). Single test files stay
                 local. Allowed when the command sets CC_ALLOW_MAC_BUILD=1.
+  pattern-kill  `kill` fed by `pgrep <pattern>` or `pidof`: `kill $(pgrep -f X)`, `p=$(pgrep -f X);
+                kill $p`, `for p in $(pgrep -f X); do kill $p`, `pgrep -f X | while read p; do kill`
+                and `| xargs kill`. Over ssh the pattern also matches the ssh session's own command
+                line; on 2026-10-09 and 2026-10-10 agents killed their own sessions on gtr and
+                beelink2 this way. kill-guard.sh refuses pkill and killall; this covers the shapes
+                that reach kill through a substitution, a variable or a loop. `pgrep -P <pid>`
+                stays allowed. Override: CC_ALLOW_BROADCAST_KILL=1 in the session, as kill-guard.
 
 Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed
 too: an admin merge or force push run on a Beelink has the same effect on GitHub. The Mac
@@ -65,6 +72,7 @@ class Segment:
         self.heredocs = []  # bodies, in order
         self.writes = []  # output redirection targets
         self.inputs = []  # `< file` input redirection sources
+        self.pipe_in = False  # stdin comes from the previous segment through `|`
 
 
 def lex(src):
@@ -226,6 +234,11 @@ def _lex(src, i, out, stop_paren):
                 while i < n and src[i] in " \t":
                     i += 1
             continue
+        if ch == "|" and not src.startswith("||", i) and not (i and src[i - 1] == "|"):
+            end_segment()
+            seg.pipe_in = True
+            i += 2 if src.startswith("|&", i) else 1
+            continue
         if ch in ";&|":
             end_segment()
             i += 1
@@ -265,6 +278,8 @@ class Command:
     def __init__(self, argv, env, remote, cwd, ctx):
         self.argv, self.env, self.remote, self.cwd, self.ctx = argv, env, remote, cwd, ctx
         self.origin = ctx.origin  # the script file this command was read from, if any
+        self.tainted = frozenset(ctx.tainted)  # taint as of this command, not the end of the script
+        self.stream_tainted = False  # stdin carries pids from a pattern match
 
     @property
     def prog(self):
@@ -283,6 +298,8 @@ class Context:
         self.written = {}  # path -> heredoc body written to it earlier in this command
         self.depth = 0  # nesting of scripts read from files
         self.origin = None
+        self.tainted = set()  # variables holding pids from a pattern match (pgrep <pattern>, pidof)
+        self.stream_tainted = False  # the previous pipeline stage emits such pids
 
 
 def strip_prefix(words):
@@ -378,6 +395,59 @@ def ssh_remote(args):
     return args[i + 1:] if i < len(args) else []
 
 
+PGREP_VALUE = {"-P", "--parent", "-u", "--euid", "-U", "--uid", "-g", "--pgroup", "-G", "--group", "-s",
+               "--session", "-t", "--terminal", "-F", "--pidfile", "-d", "--delimiter", "--ns", "--nslist",
+               "-r", "--runstates", "--signal"}
+
+
+def references(text, names):
+    return any(m.group(1) in names or m.group(2) in names for m in VAR.finditer(text))
+
+
+def pattern_pids(argv, tainted):
+    """True when argv selects pids by matching a pattern: `pgrep <pattern>`, `pgrep -u <user>`,
+    `pidof <name>`, or `pgrep -P` of a parent that was itself found that way. `pgrep -P <pid>`
+    and `pgrep -F <pidfile>` select exactly and stay allowed."""
+    if not argv:
+        return False
+    prog = os.path.basename(argv[0])
+    if prog == "pidof":
+        return True
+    if prog != "pgrep":
+        return False
+    exact, i = False, 1
+    while i < len(argv):
+        a = argv[i]
+        name = a.split("=", 1)[0]
+        if name in PGREP_VALUE:
+            value = a.split("=", 1)[1] if "=" in a else (argv[i + 1] if i + 1 < len(argv) else "")
+            if name in ("-P", "--parent", "-F", "--pidfile"):
+                if references(value, tainted) or "$(" in value:
+                    return True
+                exact = True
+            i += 1 if "=" in a else 2
+            continue
+        if a.startswith("-"):
+            i += 1
+            continue
+        return True  # a pattern
+    return not exact
+
+
+def pattern_source(text, tainted):
+    """True when a word's value comes from a pattern match: a substitution running one, or a
+    variable that holds one's output."""
+    if references(text, tainted):
+        return True
+    if "$(" not in text and "`" not in text:
+        return False
+    for seg in lex(text):
+        _, argv = strip_prefix(seg.words)
+        if pattern_pids(argv, tainted):
+            return True
+    return False
+
+
 SCRIPT_LIMIT = 256 * 1024
 SCRIPT_DEPTH = 3
 
@@ -423,20 +493,37 @@ def commands(src, cwd, remote=False, ctx=None):
     ctx = ctx or Context(cwd, remote)
     result = []
     for seg in lex(src):
+        upstream = ctx.stream_tainted if seg.pipe_in else False
+        lead = [w for w in seg.words if w not in ("do", "then", "else", "{", "!", "(")]
+        if len(lead) >= 3 and lead[0] == "for" and lead[2] == "in":
+            if any(pattern_source(w, ctx.tainted) for w in lead[3:]):
+                ctx.tainted.add(lead[1])
+            else:
+                ctx.tainted.discard(lead[1])
+        elif len(lead) >= 2 and lead[0] == "while" and lead[1] == "read":
+            names = [w for w in lead[2:] if not w.startswith("-") and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", w)]
+            for name in names:
+                (ctx.tainted.add if upstream else ctx.tainted.discard)(name)
         env, argv = strip_prefix(seg.words)
+        for name, value in env.items():
+            (ctx.tainted.add if pattern_source(value, ctx.tainted) else ctx.tainted.discard)(name)
+        ctx.stream_tainted = bool(argv) and (pattern_pids(argv, ctx.tainted) or (
+            upstream and os.path.basename(argv[0]) in ("grep", "egrep", "head", "tail", "awk", "sort", "uniq", "cut", "tr", "sed", "cat")))
         if not argv:
             ctx.vars.update(env)
             continue
         prog = os.path.basename(argv[0])
-        if prog == "export" or prog == "declare" or prog == "typeset":
+        if prog in ("export", "declare", "typeset", "local", "readonly"):
             for w in argv[1:]:
                 m = ASSIGN.match(w)
                 if m:
                     ctx.vars[m.group(1)] = m.group(2)
+                    (ctx.tainted.add if pattern_source(m.group(2), ctx.tainted) else ctx.tainted.discard)(m.group(1))
             continue
         merged = dict(ctx.vars)
         merged.update(env)
         cmd = Command(argv, merged, ctx.remote, ctx.cwd, ctx)
+        cmd.stream_tainted = upstream
         result.append(cmd)
         if prog in ("cd", "pushd"):
             target = next((a for a in argv[1:] if not a.startswith("-")), "~")
@@ -500,6 +587,7 @@ def commands(src, cwd, remote=False, ctx=None):
             words = ssh_remote(argv[1:])
             sub = Context(None, True)
             sub.vars.update(merged)
+            sub.tainted |= ctx.tainted  # `ssh host "kill $p"` expands $p before ssh runs
             if words:
                 result.extend(commands(" ".join(words), None, True, sub))
             if not words or os.path.basename(words[0].split()[0] if words[0].split() else "") in SHELLS:
@@ -841,6 +929,43 @@ def rule_shared_stash(cmd, payload):
     return None
 
 
+def rule_pattern_kill(cmd):
+    """kill fed by pgrep <pattern> or pidof: through $(...), a variable, a for/while loop or xargs."""
+    if cmd.prog != "kill" or os.environ.get("CC_ALLOW_BROADCAST_KILL") == "1":
+        return None
+    targets, i, args = [], 0, cmd.argv[1:]
+    while i < len(args):
+        a = args[i]
+        if a in ("-l", "-L"):
+            return None
+        if a in ("-s", "-n"):
+            if i + 1 < len(args) and args[i + 1] == "0":
+                return None
+            i += 2
+            continue
+        if a == "--":
+            targets += args[i + 1:]
+            break
+        if a.startswith("-") and not targets:
+            if a == "-0":
+                return None  # a liveness check sends no signal
+            i += 1
+            continue
+        targets.append(a)
+        i += 1
+    fed = any(pattern_source(t, cmd.tainted) for t in targets) or (not targets and cmd.stream_tainted)
+    if not fed:
+        return None
+    return ("pattern-kill", "kill of pids from a pattern match",
+            "This kill takes its pids from `pgrep <pattern>` (or pidof). Over ssh the pattern also matches the ssh "
+            "session's own command line, so the kill takes down the caller: on 2026-10-09 and 2026-10-10 agents killed "
+            "their own sessions on gtr and beelink2 this way. Resolve the exact pid first: list the candidates with their "
+            "command lines, excluding this shell, its parent and the ssh session, e.g. "
+            "`pgrep -af '<pattern>' | grep -v -e \"^$$ \" -e \"^$PPID \"`; read them; then run `kill <pid>` with the "
+            "literal pid in a separate command. A pidfile or launch receipt is better still. `pgrep -P <pid>` children "
+            "of a literal pid stay allowed. User override: CC_ALLOW_BROADCAST_KILL=1 (session-wide, set by Drew).", None)
+
+
 def is_mac():
     return (os.environ.get("CC_GUARD_UNAME") or platform.system()) == "Darwin"
 
@@ -1032,7 +1157,7 @@ def evaluate(payload):
     findings, seen = [], set()
     for cmd in commands(command, cwd):
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
-                    rule_shared_stash(cmd, payload), rule_mac_build(cmd)):
+                    rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_pattern_kill(cmd)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])
