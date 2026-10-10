@@ -93,6 +93,7 @@ A score the author assigns to its own work is a claim, not a measurement.
 9. **Decisions:** what only the reader can decide, with a recommendation and its tradeoff.
 10. **Craft:** charts drawn to scale from data, readable in both themes, the first screen complete.
 
+The instrument is [`brief-judge`](../../claude/skills/report/scripts/brief-judge): it scores on a subscription account, quotes the deliverable for each score, and appends the ledger row.
 Calibrate the judge against the person's own ratings: keep at least one deliverable they rejected and one they praised, in their words, beside the project's ledger, and report the judge's agreement as its own hill.
 
 ## The ledger
