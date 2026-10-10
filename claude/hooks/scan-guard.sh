@@ -37,8 +37,13 @@ cmd = (d.get("tool_input") or {}).get("command") or ""
 home = os.path.expanduser("~")
 # Roots too broad to scan: the filesystem root, /home, /mnt and the archive drive, the home itself and its
 # sprawling hidden trees.
+# ~/code and ~/webb hold every checkout and worktree with their node_modules; a scan there is a scan of all of them.
 BROAD = {"/", "/home", "/mnt", "/mnt/traces", home, home + "/", home + "/.local", home + "/.local/state", home + "/.local/share",
-         home + "/.config", home + "/.cache", home + "/Library", home + "/.codex", home + "/.claude"}
+         home + "/.config", home + "/.cache", home + "/Library", home + "/.codex", home + "/.claude",
+         home + "/code", home + "/code/_wt", home + "/webb", home + "/webb/_wt"}
+# A relative or implicit path resolves against the session's cwd: on 2026-10-10 a lane ran `grep -rln ... .` from
+# ~/code on drew-gtr-pro at 43 MB/s while the box sat at load 90, and the literal "." matched nothing here.
+cwd = d.get("cwd") or os.getcwd()
 
 def norm(tok):
     tok = tok.strip("'\"")
@@ -47,11 +52,19 @@ def norm(tok):
         tok = home + tok[1:]
     return tok.rstrip("/") or "/"
 
-def broad_roots(seg):
+def resolve(tok, base):
+    path = norm(tok)
+    if not path.startswith("/"):
+        path = os.path.normpath(os.path.join(base, path))
+    return path.rstrip("/") or "/"
+
+def broad_roots(seg, base):
     try:
         toks = shlex.split(seg)
     except ValueError:
         return []
+    if toks and os.path.basename(toks[0]) == "rtk":
+        toks = toks[1:]
     if not toks:
         return []
     prog = os.path.basename(toks[0])
@@ -60,11 +73,36 @@ def broad_roots(seg):
     if prog == "grep" and not any(t.startswith("-") and ("r" in t or "R" in t) and not t.startswith("--") for t in toks[1:]) \
             and "--recursive" not in toks:
         return []
-    return [t for t in toks[1:] if not t.startswith("-") and norm(t) in {norm(b) for b in BROAD}]
+    # Operands only: drop options and the separate value an option takes (-e PATTERN, -g GLOB, find's -name X).
+    takes_value = {"-e", "-f", "--regexp", "--file", "-m", "--max-count", "-A", "-B", "-C", "-g", "--glob", "-t",
+                   "--type", "-T", "--type-not", "-name", "-iname", "-path", "-ipath", "-type", "-maxdepth",
+                   "-mindepth", "-newer", "-size", "-mtime", "-mmin", "-user", "-perm", "-regex", "-exec", "-d", "--max-depth"}
+    args, skip = [], False
+    for t in toks[1:]:
+        if skip:
+            skip = False
+        elif t in takes_value:
+            skip = True
+        elif not t.startswith("-"):
+            args.append(t)
+    # grep and rg take the pattern as their first operand unless -e or -f supplies it; fd's first operand is its pattern.
+    if prog in ("grep", "rg", "fd") and args and not any(t in ("-e", "-f", "--regexp", "--file", "--files") for t in toks[1:]):
+        args = args[1:]
+    # With no path operand they search the cwd.
+    if not args:
+        args = ["."]
+    broad = {norm(b) for b in BROAD}
+    return [t for t in args if resolve(t, base) in broad]
 
 hits = []
+# Follow `cd` within the command, so `cd ~/code && grep -r x .` is judged from ~/code.
 for seg in re.split(r"\|\||&&|;|\||\n", cmd):
-    hits += broad_roots(seg.strip())
+    seg = seg.strip()
+    m = re.match(r"cd\s+(\S+)\s*$", seg)
+    if m:
+        cwd = resolve(m.group(1), cwd)
+        continue
+    hits += broad_roots(seg, cwd)
 if hits:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
