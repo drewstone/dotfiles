@@ -121,3 +121,40 @@ Record each one as a ledger row:
 - the change that answers it.
 
 A theme that recurs after its change has failed and needs a change at a higher level: architecture, then a check, then a test, then a rule.
+
+## The engine: what makes the climb run without us
+
+The optimizers already exist: agent-eval's `improve()`, the GEPA, SkillOpt and DSPy bridges, held-out gates and the search ledger's lenses.
+An optimizer climbs whatever it is pointed at, so it needs ground truth and fresh diagnosis first.
+On 2026-10-09 the daily meta-analyst (`trace-mine`) read 3 of 32,093 sessions and asked no questions; the run analysts asked the same 9 questions of every run; and no layer had ground truth beyond hand-made reviews.
+
+| Organ | Job | Owner |
+|---|---|---|
+| **Instruments** | Deterministic numbers every run: scorecard (failure classes, lifelines, tokens, ruler saturation) and goal rulers | Discovery Lab `disco scorecard`, `disco ruler` |
+| **Analysts** | Read traces selected by anomaly and importance, ask new topical questions each time, answer with quotes, and score each question's yield (did its answer lead to a move that passed?) | Lab `disco trace ask` (runs); tangle-tools `trace-mine` (operator and fleet sessions) |
+| **Ground truth** | A calibration set per layer: the requester's verdicts and world-class exemplars for products and rulers; the person's corrections for the operator and its tools; held-out replays for profiles | Ledger rows, the correction dataset, exemplar teardowns |
+| **Optimizers** | Search candidate versions against the ground truth, with train, selection and final splits and a direct-edit baseline | agent-eval |
+| **The loop** | Run nightly: instruments, then analysts, then proposals with predictions, then offline evals, then draft PRs with evidence; promote in the morning through a held-out gate; write the ledger and the page | Keeper and trace-mine timers; the operator promotes |
+
+**Never stop climbing.**
+- **Plateau breaker:** a hill flat for three measurements changes approach, not effort. Run `hypothesize`, and the search ledger's landscape lens drafts a new direction.
+- **Ratchet:** a hill that reaches its target gets a new one: the best exemplar known anywhere, or twice the old target.
+- **Climb the climber:** the climb is itself a hill (hills improved per week, predictions passed), and agent-eval's meta-search lens tunes it.
+
+## Be the best practitioner, then beat them
+
+For every output class we make (a financial model, research report, workbook, chart, deck, operator review), there is someone who does it better.
+1. **Find them:** two or three cited exemplars per class.
+2. **Tear each one down** into checkable features: what they show, how they source, how they structure, how they visualize.
+3. **Turn the teardown into the rubric's top anchor** and the profile's standard, then measure the gap.
+4. **When the gap closes, find the next exemplar.**
+
+## Organize like the hardest projects in history
+
+The Manhattan Project ran parallel approaches to the uncertain parts: three enrichment methods and two bomb designs. It had central technical direction, measurement before scale (Fermi's pile before Hanford), and relentless integration.
+For a fleet, that means:
+- **Parallel arms** on any uncertain approach, selected by verified results.
+- **One technical director** holding the goal.
+- **Instruments before spend.**
+- **Integration** into one deliverable on a fixed cadence.
+- **No idle capacity:** every free seat runs the next most valuable move.
