@@ -78,6 +78,13 @@ When a bad result needs diagnosis, perform the available check within scope befo
 Mention material risks or unanswered questions that could change the decision.
 Do not add hypothetical warnings or a forced action list to an already answered status question.
 
+## Climb
+
+A report is a version on the communication hill ([the climb](../../../docs/processes/climb.md)).
+- Run the level-up passes, from framing to cutting, before anything reaches the reader.
+- Use the full form for analysis, status and proposals: the answer first with its number, the evidence, visuals built from data, the prediction scoreboard, ranked and tested proposals, and one link to the full page.
+- Thin bullets fail: parallel facts go in a table, and quantities go in a chart.
+
 ## Log the run
 
 ```bash
