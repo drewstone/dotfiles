@@ -20,7 +20,7 @@ async function startApi(script = {}) {
     const url = new URL(req.url, 'http://local')
     let body = ''
     for await (const chunk of req) body += chunk
-    const call = { method: req.method, path: url.pathname, query: Object.fromEntries(url.searchParams), body: body ? JSON.parse(body) : null }
+    const call = { method: req.method, path: url.pathname, query: Object.fromEntries(url.searchParams), body: body ? JSON.parse(body) : null, origin: req.headers['x-gtm-run-origin'] }
     calls.push(call)
     if (req.headers.authorization !== `Bearer ${KEY}`) {
       res.writeHead(401, { 'content-type': 'application/json' })
@@ -286,6 +286,22 @@ test('a request refused by the per-minute limit is sent again after Retry-After'
     assert.equal(api.calls.filter((call) => call.path === '/api/chat').length, 2)
     const chats = api.calls.filter((call) => call.path === '/api/chat')
     assert.equal(chats[0].body.turnId, chats[1].body.turnId, 'the retried send keeps its turn id')
+  } finally {
+    await api.close()
+  }
+})
+
+test('GTM_RUN_ORIGIN marks every request, including the turn create', async () => {
+  const api = await startApi({ chat: completed('gtm-agent:th-1:0'), reply: reply('th-1') })
+  try {
+    const marked = await run(api, ['--workspace', 'ws1', 'Draft the plan'], { env: { GTM_RUN_ORIGIN: 'flow' } })
+    assert.equal(marked.code, 0, marked.stderr)
+    const chat = api.calls.find((call) => call.path === '/api/chat')
+    assert.equal(chat.origin, 'flow')
+    assert.ok(api.calls.every((call) => call.origin === 'flow'))
+    api.calls.length = 0
+    await run(api, ['--workspace', 'ws1', 'Draft the plan'])
+    assert.ok(api.calls.every((call) => call.origin === undefined), 'unset sends no header')
   } finally {
     await api.close()
   }

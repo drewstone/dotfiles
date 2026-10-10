@@ -48,7 +48,8 @@ options:
 exit: 0 completed, 1 failed, 2 usage or config, 3 still running or resuming after auto-approved calls,
       4 waiting on an approval or question
 key: $${KEY_NAME}, else ${KEY_NAME} in the dotenvx vault ~/company/devops/secrets/agent-state.env
-     ($GTM_ASK_SECRETS_FILE, $GTM_ASK_KEYS_FILE override the vault and its key file)`
+     ($GTM_ASK_SECRETS_FILE, $GTM_ASK_KEYS_FILE override the vault and its key file)
+origin: $GTM_RUN_ORIGIN (eval, flow or operator) is sent as x-gtm-run-origin on every request`
 
 class UsageError extends Error {}
 
@@ -125,9 +126,14 @@ function readKey() {
     `If tangle-devops main has it, bring that checkout to main; otherwise set ${KEY_NAME} or store one with ${store}`)
 }
 
+// GTM_RUN_ORIGIN (eval, flow or operator) tells GTM's reliability report which harness
+// started a turn or a Stop; the server ignores other values.
+const RUN_ORIGIN = process.env.GTM_RUN_ORIGIN?.trim()
+
 function createClient({ base, key }) {
   async function request(method, path, { body, signal, raw = false } = {}) {
     const init = { method, signal, headers: { authorization: `Bearer ${key}`, 'user-agent': 'gtm-ask' } }
+    if (RUN_ORIGIN) init.headers['x-gtm-run-origin'] = RUN_ORIGIN
     if (body !== undefined) {
       init.headers['content-type'] = 'application/json'
       init.body = JSON.stringify(body)
