@@ -9,7 +9,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 HOME = Path.home()
 DEST = HOME / ".local/libexec/gtr-install-guard/guard.py"
-MANAGERS = ("pnpm", "npm", "yarn", "uv")
+MANAGERS = ("pnpm", "npm", "yarn", "uv", "corepack")
 
 
 def entries():
