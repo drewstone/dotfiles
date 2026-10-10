@@ -1015,7 +1015,7 @@ def gather(hosts, globs=LEDGER_GLOBS) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------------------------
-# Terminal rendering. A deliberately small renderer: swap these functions for `viz` once it ships.
+# Terminal rendering: the fallback when `viz` (claude/tools/viz) or node is missing, and the wide table.
 
 
 _BLOCKS = " ▁▂▃▄▅▆▇█"

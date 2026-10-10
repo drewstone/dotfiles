@@ -30,6 +30,8 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -37,6 +39,23 @@ from skill_ledger import core as L  # noqa: E402
 from skill_ledger import outcomes as O  # noqa: E402
 
 V1_FIELDS = ("durationMin", "traceDir", "transcriptPath", "operatorOverride")
+VIZ = os.path.join(os.path.dirname(os.path.realpath(__file__)), "viz")
+
+
+def viz(kind: str, header, rows, *args) -> str | None:
+    """Draw with viz (claude/tools/viz) from TSV; None when it is missing or fails, so the
+    built-in renderer in skill_ledger/core.py draws instead."""
+    if not os.path.exists(VIZ) or not L.which("node"):
+        return None
+    clean = lambda cell: "" if cell is None else str(cell).replace("\t", " ").replace("\n", " ")
+    tsv = "\t".join(header) + "\n" + "".join("\t".join(clean(c) for c in row) + "\n" for row in rows)
+    width = str(shutil.get_terminal_size((100, 40)).columns)
+    try:
+        done = subprocess.run([VIZ, kind, "-", *args, "--width", width, "-q"], input=tsv, capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.rstrip() if done.returncode == 0 and done.stdout.strip() else None
 
 
 def fail(message: str):
@@ -336,27 +355,49 @@ def render(report, opts):
                   fmt_num(t["judgeScoreP50"]) + (f" (n={t['judged30']})" if t["judged30"] else ""),
                   fmt_pct(t["claimedPassPct"]), fmt_num(t["durationP50"]), fmt_num(t["durationP90"]),
                   L.sparkline(t["runsPerDay"]), ""])
+    # The table stays on the built-in renderer: twelve columns wrap at viz's widths.
     lines.append(L.render_table(headers, table, ["<", ">", ">", ">", ">", ">", ">", ">", ">", ">", "<", "<"]))
     lines.append("failed = FAIL / runs with PRs; passed* = PASS / runs whose PRs' 7-day windows closed; "
                  "corrected = corrected / judged runs; judge/30 = median brief-judge score")
     lines.append("")
-    lines.append("By day")
-    day_rows = []
-    top = max((d["summary"]["runs"] for d in report["daily"]), default=0)
-    for d in report["daily"]:
+    source = f"skill-run ledgers on {sum(1 for h in report['hosts'] if h['ok'])} hosts"
+    daily = report["daily"]
+    runs_chart = viz("bars", ["day", "runs"], [[d["day"], d["summary"]["runs"]] for d in daily],
+                     "--title", "Skill runs by day", "--unit", "runs", "--source", source)
+    rate_rows = []
+    for d in daily:
         s = d["summary"]
-        day_rows.append([d["day"], s["runs"], L.bar(s["runs"], top, 16), fmt_pct(s["claimedPassPct"]),
-                         f"{s['outcome']['PASS']}/{s['outcome']['FAIL']}/{s['outcome']['PENDING']}",
-                         f"{s['corrected']}/{s['judged']}", fmt_num(s["durationP50"])])
-    lines.append(L.render_table(["day", "runs", "", "claimed", "outcome P/F/open", "corrected", "p50 min"], day_rows,
-                                ["<", ">", "<", ">", ">", ">", ">"]))
+        with_prs = sum(s["outcome"].values())
+        mapped = sum(v for v in s["verdicts"].values())
+        rate_rows.append([d["day"], f"{s['outcome']['FAIL']}/{with_prs}", f"{s['corrected']}/{s['judged']}",
+                          f"{s['verdicts']['PASS']}/{mapped}"])
+    rates_chart = viz("grouped", ["day", "outcome failed", "corrected", "claimed PASS"], rate_rows,
+                      "--title", "Signals by day, strongest first", "--source", source)
+    if runs_chart and rates_chart:
+        lines.extend([runs_chart, "", rates_chart])
+    else:
+        lines.append("By day")
+        day_rows = []
+        top = max((d["summary"]["runs"] for d in daily), default=0)
+        for d in daily:
+            s = d["summary"]
+            day_rows.append([d["day"], s["runs"], L.bar(s["runs"], top, 16), fmt_pct(s["claimedPassPct"]),
+                             f"{s['outcome']['PASS']}/{s['outcome']['FAIL']}/{s['outcome']['PENDING']}",
+                             f"{s['corrected']}/{s['judged']}", fmt_num(s["durationP50"])])
+        lines.append(L.render_table(["day", "runs", "", "claimed", "outcome P/F/open", "corrected", "p50 min"], day_rows,
+                                    ["<", ">", "<", ">", ">", ">", ">"]))
     lines.append("")
-    lines.append("Capture coverage, every row on every host (schema-1 originals → now; schema-2 rows)")
     cov_rows = []
     for field, c in report["coverage"].items():
         cov_rows.append([field, f"{c['schema1Original']}/{c['schema1Rows']}", f"{c['schema1Now']}/{c['schema1Rows']}",
                          f"{c['schema2Now']}/{c['schema2Rows']}"])
-    lines.append(L.render_table(["field", "schema-1 as written", "schema-1 now", "schema-2"], cov_rows))
+    chart = viz("grouped", ["field", "schema-1 as written", "schema-1 now", "schema-2"], cov_rows,
+                "--title", "Capture coverage, every row on every host", "--source", source)
+    if chart:
+        lines.append(chart)
+    else:
+        lines.append("Capture coverage, every row on every host (schema-1 originals → now; schema-2 rows)")
+        lines.append(L.render_table(["field", "schema-1 as written", "schema-1 now", "schema-2"], cov_rows))
     return "\n".join(lines)
 
 
