@@ -47,7 +47,7 @@ function fixture() {
   // Keep ordinary fixture gates far from the synthetic weekly update window.
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
-  const env = { ...process.env, HOME: home, TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, HOME: home, TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -56,15 +56,18 @@ function fixture() {
 function installFakeSsh(f) {
   const fakeSsh = join(f.root, "bin", "ssh");
   writeFileSync(fakeSsh, `#!/usr/bin/env bash
-if [[ "$4" == reg ]]; then
+args=("$@"); i=0
+while [[ "\${args[$i]}" == -o ]]; do i=$((i + 2)); done
+host=\${args[$i]}; rest=("\${args[@]:$((i + 1))}")
+if [[ "\${rest[0]}" == reg ]]; then
   [[ "\${FAKE_REG_FAIL:-0}" == 0 ]] || exit 1
   printf '    ScheduledInstallDay    REG_DWORD    0x%x\\r\\n' "$FAKE_WU_DAY"
   printf '    ScheduledInstallTime   REG_DWORD    0x%x\\r\\n' "$FAKE_WU_HOUR"
   exit 0
 fi
-printf '%s\\n' "$3 $4 $5 $6" > '${join(f.root, "ssh-transport")}'
-shift 8
-exec bash -s -- "$@"
+printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
+[[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
+exec "\${rest[@]:2}"
 `);
   chmodSync(fakeSsh, 0o755);
 }
@@ -156,7 +159,7 @@ test("the GTR entrypoint sends the script and encoded arguments through WSL SSH"
     const result = run(gate, ["beelink2", f.url, f.first, "--", "bash", "-c", "printf '%s' 'hello world'"], { env: transportEnv });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "hello world");
-    assert.equal(readFileSync(join(f.root, "ssh-transport"), "utf8").trim(), "100.127.22.51 wsl.exe -- bash");
+    assert.equal(readFileSync(join(f.root, "ssh-transport"), "utf8").trim(), "100.127.22.51 wsl.exe -- env");
     assert.match(result.stderr, /receipt: sha=/);
     const docs = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "cat", "value.txt"], { env: transportEnv });
     assert.equal(docs.status, 0, docs.stderr);
@@ -379,5 +382,153 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
       assert.equal(existsSync(older), true);
       assert.equal(existsSync(newer), false);
     } finally { locker.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+const receipts = (f) => readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+const sleepMs = (ms) => new Promise((resolveDone) => setTimeout(resolveDone, ms));
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test("the hold limit stops a hung command, frees the lock and records the timeout", () => {
+  const f = fixture();
+  try {
+    const started = Date.now();
+    const hung = f.call(f.first, ["sleep", "60"], { env: { BEELINK_GATE_MAX_HOLD: "2s" } });
+    assert.equal(hung.status, 124, hung.stderr);
+    assert.ok(Date.now() - started < 20_000);
+    assert.match(hung.stderr, /hold limit of 2s reached/);
+    assert.match(hung.stderr, /exit=124 waited=\d+s duration=\d+s timed_out=1 watchdog=0/);
+    const [row] = receipts(f);
+    assert.equal(row.timed_out, true);
+    assert.equal(row.exit, 124);
+    const next = f.call(f.first, ["true"]);
+    assert.equal(next.status, 0, next.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a gate whose launcher dies stops its command group and frees the lock", async () => {
+  const f = fixture();
+  const pidFile = join(f.root, "command.pid");
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo $$ > '${pidFile}'; exec sleep 120`].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_HEARTBEAT: "1" }, stdio: ["pipe", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const closed = new Promise((resolveDone) => child.on("close", (status) => resolveDone(status)));
+    for (let i = 0; i < 200 && !existsSync(pidFile); i++) await sleepMs(50);
+    const commandPid = Number(readFileSync(pidFile, "utf8"));
+    assert.ok(alive(commandPid));
+    child.stdin.end();
+    const status = await closed;
+    assert.equal(status, 143, stderr);
+    await sleepMs(200);
+    assert.equal(alive(commandPid), false);
+    const [row] = receipts(f);
+    assert.equal(row.watchdog, true);
+    const started = Date.now();
+    const next = f.call(f.first, ["true"]);
+    assert.equal(next.status, 0, next.stderr);
+    assert.ok(Date.now() - started < 10_000);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a waiting gate names the live holder and records how long it waited", async () => {
+  const f = fixture();
+  const marker = join(f.root, "holding");
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `touch '${marker}'; sleep 3`].map(encode);
+    const holder = spawn("bash", [gate, "--remote", ...args], { env: f.env, stdio: "ignore" });
+    const held = new Promise((resolveDone) => holder.on("close", resolveDone));
+    for (let i = 0; i < 200 && !existsSync(marker); i++) await sleepMs(50);
+    const waiter = await new Promise((resolveDone) => {
+      const child = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (status) => resolveDone({ status, stderr }));
+    });
+    await held;
+    assert.equal(waiter.status, 0, waiter.stderr);
+    assert.match(waiter.stderr, /waiting \d+s for local\/owner\/repo lock on beelink2; holder pid=\d+ \(alive\) sha=/);
+    const waited = receipts(f).find((row) => row.command === "true");
+    assert.ok(waited.waited_s >= 1, JSON.stringify(waited));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a lock left by a dead gate's leftover process is reclaimed; a live holder is not", async () => {
+  const f = fixture();
+  try {
+    const lockPath = join(f.cache, ".locks", "local-owner-repo.lock");
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const dead = spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
+    const leftover = spawn("setsid", ["bash", "-c", `exec 9>'${lockPath}'; flock -x 9; exec sleep 120`], { stdio: "ignore", detached: true });
+    await sleepMs(500);
+    const sid = spawnSync("ps", ["-o", "sid=", "-p", String(leftover.pid)], { encoding: "utf8" }).stdout.trim();
+    writeFileSync(`${lockPath}.holder`, `pid=${dead}\nsid=${sid}\nstarted=1\nsha=${f.first}\nlauncher=test\n`);
+    const result = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, new RegExp(`reclaiming lock from dead gate ${dead}: killing leftover pid ${leftover.pid}`));
+    assert.equal(alive(leftover.pid), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("--ship runs the repo's ship verify with host-sized workers and no gate install", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.source, "scripts"));
+    writeFileSync(join(f.source, "scripts", "ship.sh"), 'echo "ship $1 workers=$SHIP_MAX_WORKERS"\n');
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "ship script"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    installFakeSsh(f);
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), BEELINK_GATE_SHIP_WORKERS: "6" };
+    const shipped = run(gate, ["--ship", "beelink2", f.url, sha], { env });
+    assert.equal(shipped.status, 0, shipped.stderr);
+    assert.equal(shipped.stdout.trim(), "ship verify workers=6");
+    assert.match(shipped.stderr, /install=ship command=bash scripts\/ship.sh verify/);
+    assert.equal(existsSync(f.npmLog), false);
+    const missing = run(gate, ["--ship", "beelink2", f.url, f.first], { env });
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /has no scripts\/ship.sh/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto runs on the free beelink, preferring a warm cache", async () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const prefix = join(f.root, "cache");
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_CACHE_PREFIX: prefix };
+    const warm = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(warm.status, 0, warm.stderr);
+    const preferWarm = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(preferWarm.status, 0, preferWarm.stderr);
+    assert.match(preferWarm.stderr, /auto chose beelink2/);
+    const lockPath = join(`${prefix}-100.127.22.51`, ".locks", "local-owner-repo.lock");
+    const marker = join(f.root, "b2-held");
+    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; sleep 5`], { stdio: "ignore" });
+    try {
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+      const busy = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+      assert.equal(busy.status, 0, busy.stderr);
+      assert.match(busy.stderr, /auto chose beelink1/);
+      assert.match(busy.stderr, /beelink2: host=beelink2 state=busy/);
+    } finally { locker.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("on its own beelink the gate runs locally and reads the policy through reg.exe", () => {
+  const f = fixture();
+  try {
+    const fakeReg = join(f.root, "bin", "reg.exe");
+    writeFileSync(fakeReg, `#!/usr/bin/env bash\nprintf '    ScheduledInstallDay    REG_DWORD    0x%x\\r\\n    ScheduledInstallTime   REG_DWORD    0x%x\\r\\n' ${f.windowDay} ${f.windowHour}\n`);
+    chmodSync(fakeReg, 0o755);
+    writeFileSync(join(f.root, "bin", "ssh"), "#!/usr/bin/env bash\necho ssh-used >&2; exit 99\n");
+    chmodSync(join(f.root, "bin", "ssh"), 0o755);
+    const env = { ...f.env, BEELINK_GATE_SELF: "beelink2", BEELINK_GATE_REG: fakeReg };
+    const local = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "cat", "value.txt"], { env });
+    assert.equal(local.status, 0, local.stderr);
+    assert.equal(local.stdout, "first\n");
+    assert.doesNotMatch(local.stderr, /ssh-used/);
+    assert.equal(receipts(f)[0].host, "beelink2");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
