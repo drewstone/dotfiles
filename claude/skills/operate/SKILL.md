@@ -55,7 +55,7 @@ Start from the class's best template and save the finished list with its grades 
 
 On a stall alarm (the best release tag flat for two hours), diagnose before steering: read the later tags' failing checks and the agents' recent work against the goal, then name the blocker.
 Report the goal score and the best tag's checks; tags written, pull requests merged and agents started are activity.
-A lead tick follows the [hillclimb loop](../../../docs/processes/hillclimb.md): measure from execution records, not lane STATUS, and report each open problem with its owner and time since its first alarm.
+A lead tick measures from execution records, not lane STATUS, and reports each open problem with its owner and the time since its first alarm.
 
 If the fleet is idle, report that fact and its cause.
 Continue the next authorized action that advances the objective, subject to shared leases and resource limits.

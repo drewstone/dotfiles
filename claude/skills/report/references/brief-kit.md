@@ -5,7 +5,7 @@ Write a JSON spec, render it, look once, and publish it as an artifact.
 A one-fact answer stays a sentence.
 
 ```bash
-~/.claude/skills/report/scripts/brief-build spec.json brief.html   # schema errors exit 2; hillclimb gaps print warnings
+~/.claude/skills/report/scripts/brief-build spec.json brief.html   # schema errors exit 2; climb gaps print warnings
 ```
 
 Start from [the example spec](../assets/brief-example.json), which uses every block.

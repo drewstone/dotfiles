@@ -39,7 +39,7 @@ Before work on any layer, name the hill, read its current and best values, and w
 | Rulers and judges | Agreement with expert or requester rankings (Kendall τ); test–retest spread on identical content; headroom | A frozen calibration set of past versions with known verdicts | Exact outcomes and human rankings |
 | Agents and profiles | Held-out replay gain; behavior-hypothesis pass rate | Replays, trace review | Product score |
 | System | Failed-attempt share; input:output; infrastructure settles; time to first usable version; dead-role hours | Per-run scorecard written at settle | Product score per seat-hour |
-| Operator | Prediction calibration; detect and recover times; corrections per hour of the person's attention | The ledger, transcripts | The person's explicit corrections |
+| Operator | Prediction calibration; detect and recover times; corrections per hour of the person's attention; deliverable score | The ledger, transcripts, the deliverable rubric | The person's explicit corrections and ratings |
 | Operator tools (skills, directives, hooks) | Corrections and outcomes per session under each version | Session logs joined to transcripts | Operator metrics |
 | The climb itself | Hills improved per week; share of moves with a prediction; share of predictions that passed | The ledger | All of the above |
 
@@ -52,6 +52,7 @@ Each pass leaves a mark in the output, or the pass did not happen.
 2. **Evidence.** Draft only from measured sources. Label each claim measured, computed or judged.
 3. **Mechanism.** Count the distinct sources of a repeated signal before naming a pattern. In h, 243 notices from one digest were one stuck writer, not 243 collisions.
 4. **Red team.** Write the pre-mortem: it is two weeks later and this failed; why? State the strongest contrary evidence and what would change the conclusion.
+   For each headline number, run the narrowest query that would come out differently if it were false: the product or its harness, merged or served, the start of the outage or the start of the log.
 5. **Bigger.** Ask what would make the result ten times better, what the best practitioner alive would do, and what we should stop doing entirely. Then ask again from the new answer.
 6. **The question not yet asked.** Name the most important question nobody has asked, and answer it or say what would.
 7. **Stress test the winner.** Recompute its numbers from two independent sources, move its weakest input to its market value, and name who loses if it is wrong.
@@ -69,12 +70,30 @@ Match depth to the ask:
 2. **Evidence:** numbers with value, unit, baseline and source; tables where facts are parallel.
 3. **Visuals built from data:**
    - in the terminal, ASCII charts (ranges, bars, timelines, grids) from a script, not typed by hand;
-   - for depth, a designed page (an artifact or a gist) that follows the [operator review template](https://claude.ai/artifact/LDsG9LBZzVny7k9acpRoa8).
+   - for depth, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and published as an artifact; the [operator review](https://claude.ai/artifact/LDsG9LBZzVny7k9acpRoa8) shows the bar.
 4. **Scoreboard:** every registered prediction as PASS, FAIL or PENDING beside its measured value.
 5. **Proposals:** each states today's number, the number to beat, the test, the owner and the first step, ranked by impact for the effort.
 6. **One link** to the full page, and one line naming the next action.
 
 Thin bullets are a failure for analysis: if facts are parallel, use a table; if they are quantities, draw them.
+
+## Judging a deliverable
+
+The rubric is the instrument for the communication hill: an independent judge scores each dimension 0–3, out of 30.
+A score the author assigns to its own work is a claim, not a measurement.
+
+1. **Answer:** one sentence first, with its number, supported by what follows.
+2. **Population:** complete sets, with source, query, window and denominator for every number.
+3. **Refutation:** headline numbers survived a query that could have refuted them; corrections are labeled.
+4. **Benchmark:** compared with a cited exemplar or our own history.
+5. **Shape:** distributions and time series, not only totals.
+6. **Mechanism:** causes named and separated from correlation.
+7. **Ownership:** each open problem has an owner and next action, with time since its first alarm.
+8. **Ambition:** proposals remove a problem class, each with a number to beat and a pre-mortem.
+9. **Decisions:** what only the reader can decide, with a recommendation and its tradeoff.
+10. **Craft:** charts drawn to scale from data, readable in both themes, the first screen complete.
+
+Calibrate the judge against the person's own ratings: keep at least one deliverable they rejected and one they praised, in their words, beside the project's ledger, and report the judge's agreement as its own hill.
 
 ## The ledger
 

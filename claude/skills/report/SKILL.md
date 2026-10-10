@@ -6,7 +6,6 @@ description: Research a question from primary sources, or answer analytical, sta
 # Report
 
 Answer the user's decision with checked data.
-Beyond a one-fact answer, follow the [hillclimb loop](../../../docs/processes/hillclimb.md): name the hill, measure the population, try to break the headline, think bigger, show it, and score it.
 Scale the report to the question: a status fact may need a sentence and its check; a comparative study needs its full evidence.
 Do not impose a section template on every answer.
 
