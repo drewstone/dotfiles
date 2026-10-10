@@ -12,8 +12,8 @@ import sys
 
 KIT = pathlib.Path(__file__).resolve().parent.parent / "assets" / "brief-kit.html"
 BLOCKS = {"text", "callout", "cols", "board", "tiles", "hist", "hbars", "stack", "dots",
-          "heatmap", "timeline", "steps", "table", "bets", "decisions"}
-CHARTS = {"hist", "hbars", "stack", "dots", "heatmap", "timeline"}
+          "heatmap", "timeline", "steps", "table", "bets", "decisions", "hills", "lines"}
+CHARTS = {"hist", "hbars", "stack", "dots", "heatmap", "timeline", "hills", "lines"}
 TONES = {"good", "warn", "serious", "crit", "blind", "accent", None}
 TEXT_TONES = {"bad", "ok", "warn", None}
 
@@ -38,6 +38,16 @@ def walk(blocks, where, errors, seen):
             for r in b.get("rows", []):
                 if len(r.get("cells", [])) > b.get("cols", 0):
                     errors.append(f"{at}: heatmap row {r.get('label')!r} has more cells than cols")
+        if t == "lines":
+            for x in b.get("series", []):
+                if len(x.get("values", [])) != len(b.get("labels", [])):
+                    errors.append(f"{at}: lines series {x.get('name')!r} and labels differ in length")
+        if t == "hills":
+            for r in b.get("rows", []):
+                if not r.get("title"):
+                    errors.append(f"{at}: every hills row needs a title")
+                if (r.get("move") or {}).get("status") not in (None, "pending", "kept", "failed"):
+                    errors.append(f"{at}: hills row {r.get('title')!r} has an unknown move status")
         if t in ("dots", "timeline") and not (b.get("start") and b.get("end")):
             errors.append(f"{at}: {t} needs ISO start and end")
         # Tiles color their number like text (bad/ok/warn); everything else uses status tones.
