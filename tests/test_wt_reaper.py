@@ -98,8 +98,9 @@ class Fixture:
         os.makedirs(self.wt_dir)
         git(['init', '--bare', '-q', self.remote], self.tmp)
         git(['clone', '-q', self.remote, self.repo], self.tmp)
-        self.write(self.repo, '.gitignore', 'node_modules/\n.env\n')
+        self.write(self.repo, '.gitignore', 'node_modules/\n.env\ngenerated/\n.react-router/\npackages/sdk-email/\n')
         self.write(self.repo, 'a.txt', 'a\n')
+        self.write(self.repo, 'packages/core/index.js', 'x\n')
         git(['add', '.'], self.repo)
         git(['commit', '-qm', 'init'], self.repo)
         self.write(self.repo, 'a.txt', 'a2\n')
@@ -147,6 +148,19 @@ class ReaperTest(unittest.TestCase):
 
         p['build_output'] = f.add('build_output')
         f.write(p['build_output'], 'node_modules/x/index.js', 'x\n')
+
+        # Generated sources, and an ignored package directory left holding only build output.
+        p['generated'] = f.add('generated')
+        f.write(p['generated'], 'src/generated/build-stamp.ts', 'export const stamp = 1\n')
+        f.write(p['generated'], '.react-router/types/app.ts', 'export {}\n')
+        f.write(p['generated'], 'packages/sdk-email/node_modules/x/index.js', 'x\n')
+        f.write(p['generated'], 'packages/sdk-email/dist/index.js', 'x\n')
+        f.write(p['generated'], 'packages/sdk-email/.turbo/turbo-build.log', 'x\n')
+
+        # The same ignored package directory with one evidence file in it stays.
+        p['package_evidence'] = f.add('package_evidence')
+        f.write(p['package_evidence'], 'packages/sdk-email/node_modules/x/index.js', 'x\n')
+        f.write(p['package_evidence'], 'packages/sdk-email/notes.md', 'mine\n')
 
         p['env'] = f.add('env')
         f.write(p['env'], '.env', 'SECRET=1\n')
@@ -211,7 +225,26 @@ class ReaperTest(unittest.TestCase):
         # A dry-run fixture that would be removed.
         p['dry'] = f.add('dry')
 
+        # node_modules files hardlinked to a shared pnpm-style store outside the worktree.
+        store = os.path.join(f.tmp, 'pnpm-store')
+        os.makedirs(store)
+        for name in ('hardlinked', 'hardlinked_written'):
+            p[name] = f.add(name)
+            f.write(store, name + '.js', 'module.exports = 1\n')
+            os.makedirs(os.path.join(p[name], 'node_modules', 'pkg'))
+            os.link(os.path.join(store, name + '.js'), os.path.join(p[name], 'node_modules', 'pkg', 'index.js'))
+
         time.sleep(IDLE_HOURS * 3600 + 1.0)
+
+        # Another checkout's install links the same store files: their ctime moves, this tree is untouched.
+        for name in ('hardlinked', 'hardlinked_written'):
+            os.link(os.path.join(store, name + '.js'), os.path.join(store, name + '.other-install.js'))
+        # A real write through the link moves its mtime (an hour ahead, as for 'recent').
+        written = os.path.join(p['hardlinked_written'], 'node_modules', 'pkg', 'index.js')
+        with open(written, 'a') as fh:
+            fh.write('// patched\n')
+        ahead = time.time() + 3600
+        os.utime(written, (ahead, ahead))
 
         # Same content, so the tree stays clean. The mtime is an hour ahead so the
         # file stays inside the idle window however long the lsof scans take.
@@ -255,6 +288,19 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(self.dry[self.paths['dry']]['decision'], 'would-remove')
         self.assertEqual(self.dry[self.paths['env']]['decision'], 'skip')
         self.assertTrue(self.dry_exists)
+
+    def test_generated_and_build_only_directories_are_build_output(self):
+        self.assertRemoved('generated')
+
+    def test_ignored_directory_with_other_files_keeps_the_tree(self):
+        self.assertSkipped('package_evidence', 'ignored non-build files: packages/sdk-email')
+
+    def test_hardlink_ctime_is_not_activity(self):
+        # 2026-10-10: pnpm store links kept every worktree on beelink2 "modified 0.1h ago".
+        self.assertRemoved('hardlinked')
+
+    def test_write_through_a_hardlink_is_activity(self):
+        self.assertSkipped('hardlinked_written', 'modified')
 
     def test_removes_clean_pushed_idle_worktrees(self):
         for name in ('merged', 'detached', 'pushed_unmerged', 'build_output', 'dry'):
@@ -322,7 +368,7 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         s = summaries[0]
         self.assertEqual(s['mode'], 'live')
-        self.assertEqual(int(s['removed']), 5)
+        self.assertEqual(int(s['removed']), 7)  # merged, detached, pushed_unmerged, build_output, dry, hardlinked, generated
         self.assertEqual(int(s['scanned']), int(s['removed']) + int(s['skipped']))
 
 
@@ -676,19 +722,71 @@ class IgnoredClassifierTest(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'the storage_lifecycle handoff is Linux-only')
+# Linux only: on macOS the installer would boot out and replace the live com.drew.wt-reaper agent.
+@unittest.skipUnless(sys.platform.startswith('linux'), 'runs the installer, which on macOS touches the live LaunchAgent')
 class InstallerDefersToStorageLifecycleTest(unittest.TestCase):
     def test_install_skips_timer_where_storage_lifecycle_is_deployed(self):
         # tangle-tools#239: the dotfiles installer re-enabled wt-reaper.timer on
-        # the GTR, beside the salvaging lifecycle that owns deletion there.
+        # the GTR, beside the salvaging lifecycle that owns deletion there. GTR's
+        # host config lists no tiers, so the lifecycle runs its default tiers,
+        # worktrees included.
         installer = os.path.join(HERE, '..', 'git', 'worktree-reaper', 'install.sh')
         with tempfile.TemporaryDirectory() as home:
-            os.makedirs(os.path.join(home, '.local/share/tangle-tools/storage_lifecycle'))
-            proc = subprocess.run(['bash', installer], env=dict(os.environ, HOME=home),
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hosts = os.path.join(home, '.local/share/tangle-tools/storage_lifecycle/hosts')
+            os.makedirs(hosts)
+            with open(os.path.join(hosts, 'testhost.json'), 'w') as fh:
+                json.dump({'docker_cache_bytes': 1}, fh)
+            shim = os.path.join(home, 'bin')
+            os.makedirs(shim)
+            with open(os.path.join(shim, 'hostname'), 'w') as fh:
+                fh.write('#!/bin/sh\necho testhost\n')
+            os.chmod(os.path.join(shim, 'hostname'), 0o755)
+            env = dict(os.environ, HOME=home, PATH=shim + os.pathsep + os.environ['PATH'])
+            proc = subprocess.run(['bash', installer], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertIn(b'storage_lifecycle owns worktree removal', proc.stdout)
+            self.assertIn(b'storage_lifecycle runs the worktrees tier', proc.stdout)
             self.assertFalse(os.path.exists(os.path.join(home, '.local/bin/wt-reaper')))
             self.assertFalse(os.path.exists(os.path.join(home, '.config/systemd/user/wt-reaper.timer')))
+
+
+class InstallOwnershipTest(unittest.TestCase):
+    """install.sh leaves worktree removal to tangle-tools storage_lifecycle only where that host runs its
+    worktrees tier; on the archive-less beelinks wt-reaper is the reaper (tangle-tools #948)."""
+
+    INSTALL = os.path.join(HERE, '..', 'git', 'worktree-reaper', 'install.sh')
+
+    def owns(self, config):
+        home = tempfile.mkdtemp(prefix='wt-reaper-install-')
+        self.addCleanup(shutil.rmtree, home, True)
+        hosts = os.path.join(home, '.local', 'share', 'tangle-tools', 'storage_lifecycle', 'hosts')
+        os.makedirs(hosts)
+        if config is not None:
+            with open(os.path.join(hosts, 'testhost.json'), 'w') as fh:
+                json.dump(config, fh)
+        shim = os.path.join(home, 'bin')
+        os.makedirs(shim)
+        with open(os.path.join(shim, 'hostname'), 'w') as fh:
+            fh.write('#!/bin/sh\necho testhost\n')
+        os.chmod(os.path.join(shim, 'hostname'), 0o755)
+        with open(self.INSTALL) as fh:
+            source = fh.read()
+        func = source[source.index('lifecycle_owns_worktrees() {'):]
+        func = func[:func.index('\n}\n') + 3]
+        env = dict(os.environ, HOME=home, PATH=shim + os.pathsep + os.environ['PATH'])
+        return subprocess.run(['bash', '-c', func + 'lifecycle_owns_worktrees'], env=env).returncode == 0
+
+    def test_beelink_config_without_worktrees_tier_keeps_wt_reaper(self):
+        self.assertFalse(self.owns({'tiers': ['docker-cache', 'docker-images', 'tmp'], 'floor_bytes': 1}))
+
+    def test_default_tiers_include_worktrees(self):
+        self.assertTrue(self.owns({'docker_cache_bytes': 1}))
+
+    def test_explicit_worktrees_tier(self):
+        self.assertTrue(self.owns({'tiers': ['worktrees', 'tmp']}))
+
+    def test_no_host_config_keeps_wt_reaper(self):
+        self.assertFalse(self.owns(None))
+
 
 if __name__ == '__main__':
     unittest.main()
