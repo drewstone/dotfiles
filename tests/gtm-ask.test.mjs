@@ -32,6 +32,12 @@ async function startApi(script = {}) {
       for (const event of events) res.write(JSON.stringify(event) + '\n')
       if (hold) { open.add(res); res.on('close', () => open.delete(res)) } else res.end()
     }
+    const refusal = script.minuteRefusals?.[`${req.method} ${url.pathname}`]
+    if (refusal && refusal.left > 0) {
+      refusal.left -= 1
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' })
+      return res.end(JSON.stringify({ code: 'api_key.request_limit_exceeded', limit: 'minute' }))
+    }
     if (req.method === 'POST' && url.pathname === '/api/threads') {
       const id = `th-${threads.size}`
       threads.set(id, [])
@@ -261,6 +267,23 @@ test('held calls approved by the thread\'s auto-approve mode report the agent as
     assert.equal(result.code, 3)
     assert.match(result.stdout, /status {3}resuming/)
     assert.match(result.stdout, /1 held call ran on the thread's auto-approve mode .*follow with: gtm-ask status th-1 --wait 30m/)
+  } finally {
+    await api.close()
+  }
+})
+
+test('a request refused by the per-minute limit is sent again after Retry-After', async () => {
+  const api = await startApi({
+    chat: completed('gtm-agent:th-1:0'), reply: reply('th-1'),
+    minuteRefusals: { 'POST /api/threads': { left: 1 }, 'POST /api/chat': { left: 1 } },
+  })
+  try {
+    const result = await run(api, ['--workspace', 'ws1', 'Draft the plan'])
+    assert.equal(result.code, 0, result.stderr)
+    assert.equal(api.calls.filter((call) => call.path === '/api/threads' && call.method === 'POST').length, 2)
+    assert.equal(api.calls.filter((call) => call.path === '/api/chat').length, 2)
+    const chats = api.calls.filter((call) => call.path === '/api/chat')
+    assert.equal(chats[0].body.turnId, chats[1].body.turnId, 'the retried send keeps its turn id')
   } finally {
     await api.close()
   }
