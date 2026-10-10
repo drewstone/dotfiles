@@ -29,7 +29,7 @@ The `agent-ask` skill says how a session phrases the ask and gates what comes ba
 
 ```bash
 agent-ask --app gtm "<ask>"                                  # GTM; Drew's workspace by default
-agent-ask --app tax --workspace <id> "<ask>"                 # any app: gtm, tax, legal, insurance, creative, hospitality, builder
+agent-ask --app tax --workspace <id> "<ask>"                 # any app: gtm, tax, legal, insurance, creative, hospitality, builder, physim, super
 agent-ask --app tax status <thread> --wait 30m               # follow a running turn
 agent-ask --app tax file <path>                              # read a file the agent wrote
 agent-ask --app tax approvals | scorecard | journal | workspaces
