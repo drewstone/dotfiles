@@ -11,8 +11,9 @@ import * as core from './core.mjs'
 const KIT = new URL('../../skills/report/assets/brief-kit.html', import.meta.url)
 
 const BLOCKS = new Set(['text', 'callout', 'cols', 'board', 'tiles', 'hist', 'hbars', 'stack', 'dots', 'heatmap',
-  'timeline', 'steps', 'table', 'bets', 'decisions', 'grouped', 'strip', 'waterfall', 'events'])
-const CHARTS = new Set(['hist', 'hbars', 'stack', 'dots', 'heatmap', 'timeline', 'grouped', 'strip', 'waterfall', 'events'])
+  'timeline', 'steps', 'table', 'bets', 'decisions', 'grouped', 'strip', 'waterfall', 'events', 'hills', 'lines'])
+const CHARTS = new Set(['hist', 'hbars', 'stack', 'dots', 'heatmap', 'timeline', 'grouped', 'strip', 'waterfall', 'events', 'hills', 'lines'])
+const MOVE_STATUS = new Set(['pending', 'kept', 'failed', 'planned'])
 const TONES = new Set(['good', 'warn', 'serious', 'crit', 'blind', 'accent'])
 const TEXT_TONES = new Set(['bad', 'ok', 'warn'])
 // Status tones a viz model uses, mapped to the kit's tones.
@@ -90,6 +91,11 @@ function walk(blocks, where, errors, warnings, seen) {
     if (t === 'cols') walk(b.blocks ?? [], `${at}.blocks`, errors, warnings, seen)
     if (t === 'heatmap') for (const r of b.rows ?? []) if ((r.cells ?? []).length > (b.cols ?? 0)) errors.push(`${at}: heatmap row ${JSON.stringify(r.label)} has more cells than cols`)
     if ((t === 'dots' || t === 'timeline') && !(b.start && b.end)) errors.push(`${at}: ${t} needs ISO start and end`)
+    if (t === 'lines') for (const x of b.series ?? []) if ((x.values ?? []).length !== (b.labels ?? []).length) errors.push(`${at}: lines series ${JSON.stringify(x.name)} and labels differ in length`)
+    if (t === 'hills') for (const r of b.rows ?? []) {
+      if (!r.title) errors.push(`${at}: every hills row needs a title`)
+      if (r.move?.status != null && !MOVE_STATUS.has(r.move.status)) errors.push(`${at}: hills row ${JSON.stringify(r.title)} has an unknown move status`)
+    }
     // Tiles color their number like text (bad/ok/warn); every other block uses status tones.
     const allowed = t === 'tiles' ? TEXT_TONES : MODEL_BLOCKS.has(t) ? new Set(Object.keys(MODEL_TONE)) : TONES
     for (const key of ['rows', 'items', 'points']) {
@@ -221,6 +227,27 @@ function blockText(b, cols) {
         for (const mk of ln.marks ?? []) out.push(...indented(`${mk.shape} at ${mk.at}${mk.tip ? ` · ${htmlText(mk.tip)}` : ''}`, cols))
       }
       if (b.now) out.push(`now ${b.now}`)
+      out.push(...noted(b, cols))
+      break
+    }
+    case 'hills':
+      out.push(...titled(b, cols))
+      for (const r of b.rows ?? []) {
+        out.push(...core.wrap(`${STATE_GLYPH[r.tone] ?? '•'} ${r.title}${r.sub ? ` (${r.sub})` : ''}: now ${r.now ?? '—'}${r.unit ? ' ' + r.unit : ''} · target ${r.target ?? '—'} · gap ${r.gap ?? '—'}${Number.isFinite(r.open) ? ` · ${Math.round(r.open * 100)}% of the first gap open` : ''} · last climbed ${r.since ?? '—'}`, cols))
+        const pts = (r.points ?? []).filter((x) => Number.isFinite(x[1]))
+        if (pts.length) out.push(...indented(core.sparkText({ ...core.sparkModel({ values: pts.map((x) => x[1]) }, { unit: r.unit === '%' ? '%' : '' }), title: null }, cols - 2).replace(/^\s+/, ''), cols))
+        if (pts.length) out.push(...indented(`readings: ${pts.map((x) => (x[2] ? htmlText(x[2]) : `${x[0]} ${x[1]}`)).join(' · ')}`, cols))
+        out.push(...indented(r.move ? `move [${r.move.status}] ${r.move.title}${r.move.prediction ? `; predicts ${r.move.prediction}` : ''}${r.move.more ? `; +${r.move.more} more pending` : ''}` : 'no move registered', cols))
+      }
+      out.push(...noted(b, cols))
+      break
+    case 'lines': {
+      out.push(...titled(b, cols))
+      const labels = b.labels ?? []
+      const rows = labels.map((label, i) => Object.fromEntries([['step', label], ...(b.series ?? []).map((x) => [x.name, x.values?.[i] ?? null])]))
+      out.push(...chart(core.tableText(core.tableModel({ rows, columns: ['step', ...(b.series ?? []).map((x) => x.name)] }, {}), cols)))
+      const tips = (b.series ?? []).flatMap((x) => (x.tips ?? []).filter(Boolean).map(htmlText))
+      if (tips.length) out.push(...core.wrap(tips.join(' · '), cols))
       out.push(...noted(b, cols))
       break
     }

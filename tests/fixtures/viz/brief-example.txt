@@ -148,7 +148,30 @@ Bet 1 (lead): Progressive deploys with canary gates
   pre-mortem: Fails if canaries miss payment-specific paths; add Apple Pay to the canary first.
   target: Worst outage < 1 h · change failure < 10%
 
-── §9 you · Your decisions ─────────────────────────────────────────────────────────────────────────
+── §9 climb · Hills and velocity ───────────────────────────────────────────────────────────────────
+Each hill's trend against its target, and the share of the starting gap closed per week.
+
+✓ Time to restore checkout (system · checkout on-call): now 0.6 h · target 1 h · gap at target · 0%
+of the first gap open · last climbed 1.0 d ago
+  █▄▁ 9.2→0.6 · min 0.6 · max 9.2 · n=3
+  readings: 10-01 · 9.2 h · 10-05 · 4.1 h · 10-09 · 0.6 h
+  move [kept] Autopilot pages the owner; predicts restore under 1 h on the next outage
+✗ Change failure rate (system · release lane): now 21 % · target 5% · gap 16% · 123% open · 123% of
+the first gap open · last climbed no climb yet · first read 9 d ago
+  ▁█ 18%→21% · min 18% · max 21% · n=2
+  readings: 10-01 · 18% · 10-05 · 21%
+  move [pending] Canary every deploy for 10 min; predicts under 10% over the next 20 deploys
+
+Gap closed per week
+step   gap closed
+─────  ──────────
+09-21           —
+09-28        12.5
+10-05        31.0
+week of 09-21: no readings · week of 09-28: 12.5% of the starting gap · week of 10-05: 31% of the
+starting gap
+
+── §10 you · Your decisions ────────────────────────────────────────────────────────────────────────
 
 1. Renew the fraud vendor at +30%, or run a 2-week bake-off
    Switching costs about 3 engineer-weeks.
