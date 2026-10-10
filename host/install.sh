@@ -91,6 +91,14 @@ daemon_holds_softdog() {
   [ "$h" != 1 ] && [ "$(ps -o comm= -p "$h" 2>/dev/null)" = watchdog ]
 }
 
+if [ "$(hostname -s)" = drew-GTR-Pro ]; then
+  if [ "$CHECK" = 1 ]; then
+    python3 "$SCRIPT_DIR/gtr-install-guard/install.py" --check || DRIFT=1
+  else
+    python3 "$SCRIPT_DIR/gtr-install-guard/install.py"
+  fi
+fi
+
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh
 for w in fsfreeze unshare mount umount dmsetup lvm-guard device-write-guard; do
