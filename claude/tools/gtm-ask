@@ -25,6 +25,8 @@ const INTERACTION_GRACE_MS = Number(process.env.GTM_ASK_INTERACTION_GRACE_MS ?? 
 const POLL_MS = Number(process.env.GTM_ASK_POLL_MS ?? 2_000)
 const POLL_MAX_MS = Number(process.env.GTM_ASK_POLL_MAX_MS ?? 60_000)
 const SETTLE_READS = 6
+// Requests refused by the per-minute limit are sent again after Retry-After, this many times.
+const MINUTE_RETRIES = Number(process.env.GTM_ASK_MINUTE_RETRIES ?? 4)
 
 const USAGE = `usage:
   gtm-ask [options] "<outcome-level ask>"   start a turn and follow it to completion
@@ -130,7 +132,17 @@ function createClient({ base, key }) {
       init.headers['content-type'] = 'application/json'
       init.body = JSON.stringify(body)
     }
-    const response = await fetch(base + path, init)
+    let response
+    for (let attempt = 0; ; attempt++) {
+      response = await fetch(base + path, init)
+      // A key shared by several clients can spend its per-minute allowance; the
+      // refused request never reached the app, so waiting out the minute and
+      // sending it again is safe. A daily refusal is not retried.
+      const retryAfter = Number(response.headers.get('retry-after'))
+      if (response.status !== 429 || attempt >= MINUTE_RETRIES || !(retryAfter > 0 && retryAfter <= 65)) break
+      await response.body?.cancel().catch(() => {})
+      await sleep((retryAfter + 1) * 1000)
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => '')
       throw new ApiError(method, path.split('?')[0], response.status, text.replaceAll(key, '<key>'))
