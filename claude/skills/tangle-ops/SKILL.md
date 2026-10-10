@@ -93,7 +93,7 @@ Report the cause, change, live result, and checks that could not run.
 ## Log the run
 
 ```bash
-skill-run-log /tangle-ops --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /tangle-ops --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

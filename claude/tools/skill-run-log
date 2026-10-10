@@ -1,184 +1,418 @@
-#!/usr/bin/env bash
-# Append one structured line to the repository's off-repo skill-runs.jsonl per skill invocation.
-#
-# Usage:
-#   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
-#                         [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH] [--pr URL]
-#   skill-run-log --dir    print the state directory for the current repository
-#   skill-run-log -h|--help
-# Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
-#
-# Example:
-#   skill-run-log /evolve --target accuracy --duration 12.4 --verdict KEEP --next /reflect \
-#                 --trace-dir .agent/runs/evolve-2026-04-25/
-#
-# Writes to ${XDG_STATE_HOME:-~/.local/state}/agent-work/<repo>/skill-runs.jsonl, where <repo>
-# names the main checkout, so every worktree of a repository shares one log; outside a git
-# repository <repo> is the basename of $PWD. The log lives outside the checkout because an
-# append inside it left main checkouts permanently dirty (discovery-lab, 2026-10-05: 210
-# unmerged rows blocking a fast-forward). Rows written before then remain in each repo's
-# .agent/skill-runs.jsonl or .evolve/skill-runs.jsonl as history.
-# Creates the directory and file if missing. Append-only; never rewrites prior lines.
-#
-# Schema (see ~/dotfiles/claude/skills/_common.md):
-#   { id, skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride,
-#     transcriptPath, traceDir, score, pr, machine, sessionId, cwd, branch, headSha }
-#
-# `id` identifies the row; the script prints it so the output can carry it, and the outcome joiner
-# (tangle-tools skill-outcomes) links later outcomes to it without rewriting the row.
-# `pr` is the pull request the run produced or worked on, when the caller names one.
-# `machine`, `sessionId`, `cwd`, `branch` and `headSha` are read from the environment and git, so
-# the joiner can find the run's session and commits; each is null when unavailable.
-#
-# `score` is an independent judge's score of the deliverable (brief-judge totals out of 30),
-# null when the run was not judged. Rows written before it existed simply lack the field.
-#
-# `operatorOverride` is left null by this script. Later findings can link an
-# observed correction to this row without rewriting the original record.
+#!/usr/bin/env python3
+"""Append one schema-2 row to the repository's off-repo skill-runs.jsonl per skill invocation.
 
-set -euo pipefail
+Usage:
+  skill-run-log <skill> [--verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED] [--detail TEXT] [--target X]
+                [--next /SKILL] [--prediction TEXT] [--pr URL|owner/repo#N]... [--score N]
+                [--metric NAME [--unit U] [--before N] [--after N] [--source REF]]...
+                [--cost-usd N] [--duration MIN] [--prompt TEXT] [--project NAME]
+                [--transcript PATH] [--trace-dir PATH]
+  skill-run-log --override [--run KEY] [--theme T] [--note TEXT] [--no]   the operator corrected (or accepted) a run
+  skill-run-log --settle [--session ID | --all] [--hook]                 judge operator corrections from transcripts
+  skill-run-log --join [--days N]                                        refresh pull request outcomes on GitHub
+  skill-run-log --backfill [--dry-run]                                   link this host's schema-1 rows (skill-runs.v2.jsonl)
+  skill-run-log --dir                                                    print the state directory for this repository
+Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
 
-usage() {
-  cat <<'EOF'
-usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH] [--pr URL]
+Example:
+  skill-run-log /evolve --target "p90 cold start" --verdict PASS --detail KEEP --prediction "p90 below 30 s" \
+                --metric "p90 cold start" --unit s --before 41 --after 23 --source .agent/runs/evolve-12/ --next /reflect
+
+Writes to ${XDG_STATE_HOME:-~/.local/state}/agent-work/<repo>/skill-runs.jsonl, where <repo> names
+the main checkout, so every worktree of a repository shares one log; outside a git repository
+<repo> is the basename of $PWD. The log lives outside the checkout because an append inside it
+left main checkouts permanently dirty (discovery-lab, 2026-10-05). Rows written before then remain
+in each repo's .agent/ or .evolve/skill-runs.jsonl as history. Append-only; never rewrites a line.
+
+Each row is a move on the climb's "operator tools" layer (docs/processes/climb.md): layer,
+hill ("skill:/<name>"), prediction, and outcome. It prints the row's id (sr-<UTC stamp>-<8 hex>);
+keep it with the output. Captured without flags:
+  session.{harness,id,agentId,runId,rootRunId,host}  CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID, TANGLE_*
+  transcriptPath, traceDir                           the transcript holding this call; the session's trace directory
+  startedAt, durationMin                             first invocation of the skill since its last logged result
+  cost.tokens                                        tokens the invoking transcript spent in that window
+  prs                                                PRs the run created or merged, and PRs in --target
+  outcome                                            GitHub: merged, reverted or hot-fixed within 7 days, CI after
+                                                     merge, served; refreshed by --join (daily from SessionEnd)
+  skillSha                                           sha256 of the SKILL.md the harness loads, for version splits
+  pr, machine, sessionId, cwd, branch, headSha       flat link fields for the outcome joiner (null when unknown)
+--score is an independent judge's score of the deliverable (brief-judge totals out of 30), null when
+the run was not judged; climb.md ranks it above the author's verdict and below the operator's reaction.
+  operatorOverride                                   settled into skill-run-events.jsonl from the operator's next
+                                                     message or an interrupt (layer "operator"), or --override
+Explicit flags win over captured values. The verdict is the author's own grade; climb.md ranks it
+below the outcome and the operator's reaction. Schema-1 labels (APPROVE, ITERATE, ...) are accepted
+and mapped, with the label kept in verdictDetail; a sentence verdict needs an enum value.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from skill_ledger import core as L  # noqa: E402
+from skill_ledger import outcomes as O  # noqa: E402
+
+USAGE = """usage: skill-run-log <skill> [--verdict PASS|FAIL|PARTIAL|BLOCKED|ABANDONED] [--detail TEXT] [--target X]
+                     [--next /SKILL] [--prediction TEXT] [--pr REF]... [--score N] [--metric NAME [--unit U] [--before N]
+                     [--after N] [--source REF]]... [--cost-usd N] [--duration MIN] [--prompt TEXT] [--project NAME]
+                     [--transcript PATH] [--trace-dir PATH]
+       skill-run-log --override [--run KEY] [--theme T] [--note TEXT] [--no]
+       skill-run-log --settle [--session ID | --all] [--hook]
+       skill-run-log --join [--days N]
+       skill-run-log --backfill [--dry-run]
        skill-run-log --dir
        skill-run-log -h|--help
-Use --option=-literal for a value beginning with '-'.
-EOF
-}
+Use --option=-literal for a value beginning with '-'."""
 
-invalid_args() {
-  echo "skill-run-log: $1" >&2
-  usage >&2
-  exit 2
-}
+MODES = ("--override", "--settle", "--join", "--backfill", "--dir")
+VALUE_FLAGS = {"--target", "--prompt", "--duration", "--verdict", "--detail", "--next", "--project",
+               "--transcript", "--trace-dir", "--metric", "--unit", "--before", "--after", "--source",
+               "--cost-usd", "--prediction", "--pr", "--score", "--run", "--note", "--theme", "--session", "--days"}
+BOOL_FLAGS = {"--no", "--all", "--hook", "--dry-run"}
+THEMES = ("communication", "rigor", "scope", "cost", "autonomy", "safety")
+JOIN_STAMP = "_outcomes/last-join"
 
-# The main checkout's name, shared by its linked worktrees.
-repo_name() {
-  local common
-  if common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
-    case "$common" in
-      */.git) basename "$(dirname "$common")" ;;
-      *) basename "${common%.git}" ;;
-    esac
-  else
-    basename "$PWD"
-  fi
-}
 
-state_dir() {
-  printf '%s/agent-work/%s' "${XDG_STATE_HOME:-$HOME/.local/state}" "$(repo_name)"
-}
+def fail(message: str, code: int = 2):
+    print(f"skill-run-log: {message}", file=sys.stderr)
+    print(USAGE, file=sys.stderr)
+    sys.exit(code)
 
-[ $# -ge 1 ] || invalid_args 'skill is required'
-case "$1" in
-  -h|--help) usage; exit 0 ;;
-  --dir) state_dir; echo; exit 0 ;;
-  -*) invalid_args "unknown flag: $1" ;;
-esac
 
-skill="$1"; shift
+def number(value: str, option: str):
+    try:
+        parsed = float(value)
+    except ValueError:
+        fail(f"{option} must be a number")
+    if parsed != parsed or parsed in (float("inf"), float("-inf")):
+        fail(f"{option} must be a finite number")
+    return int(parsed) if parsed.is_integer() and not any(c in value for c in ".eE") else parsed
 
-target=""
-prompt=""
-duration="null"
-score="null"
-verdict="n/a"
-next_skill="stop"
-project=""
-transcript=""
-trace_dir=""
-pr=""
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -h|--help) usage; exit 0 ;;
-    --target|--prompt|--duration|--verdict|--next|--score|--project|--transcript|--trace-dir|--pr)
-      option="$1"
-      shift
-      [ $# -ge 1 ] || invalid_args "$option requires a value"
-      case "$1" in
-        -h|--help) usage; exit 0 ;;
-        -*) invalid_args "$option requires a value; use $option=-literal for a value beginning with '-'" ;;
-      esac
-      value="$1"
-      shift
-      ;;
-    --target=*|--prompt=*|--duration=*|--verdict=*|--next=*|--score=*|--project=*|--transcript=*|--trace-dir=*|--pr=*)
-      option="${1%%=*}"
-      value="${1#*=}"
-      shift
-      ;;
-    *) invalid_args "unknown argument: $1" ;;
-  esac
-  case "$option" in
-    --target) target="$value" ;;
-    --prompt) prompt="$value" ;;
-    --duration) duration="$value" ;;
-    --verdict) verdict="$value" ;;
-    --next) next_skill="$value" ;;
-    --score) score="$value" ;;
-    --project) project="$value" ;;
-    --transcript) transcript="$value" ;;
-    --trace-dir) trace_dir="$value" ;;
-    --pr) pr="$value" ;;
-  esac
-done
+def parse(argv):
+    """Flags in order, so each --unit/--before/--after/--source attaches to the latest --metric."""
+    values, metrics, prs, flags, positional = {}, [], [], set(), []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        index += 1
+        if arg in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        if arg in BOOL_FLAGS:
+            flags.add(arg)
+            continue
+        if "=" in arg and arg.split("=", 1)[0] in VALUE_FLAGS:
+            option, value = arg.split("=", 1)
+        elif arg in VALUE_FLAGS:
+            option = arg
+            if index >= len(argv):
+                fail(f"{option} requires a value")
+            value = argv[index]
+            index += 1
+            if value in ("-h", "--help"):
+                print(__doc__.strip())
+                sys.exit(0)
+            if value.startswith("-"):
+                fail(f"{option} requires a value; use {option}=-literal for a value beginning with '-'")
+        elif arg.startswith("-"):
+            fail(f"unknown argument: {arg}")
+        else:
+            positional.append(arg)
+            continue
+        if option == "--metric":
+            metrics.append({"name": value, "unit": None, "before": None, "after": None, "source": None})
+        elif option in ("--unit", "--before", "--after", "--source"):
+            if not metrics:
+                fail(f"{option} must follow --metric NAME")
+            key = option[2:]
+            metrics[-1][key] = number(value, option) if key in ("before", "after") else value
+        elif option == "--pr":
+            refs = L.pr_refs(value)
+            if not refs:
+                fail("--pr takes a pull request URL or owner/repo#N")
+            prs.extend({**ref, "how": "flag", "url": value if value.startswith("https://") else None} for ref in refs)
+        else:
+            values[option] = value
+    return values, metrics, prs, flags, positional
 
-if [ "$duration" != null ] && ! [[ "$duration" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
-  invalid_args 'duration must be a nonnegative JSON number'
-fi
-if [ "$score" != null ] && ! [[ "$score" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]]; then
-  invalid_args 'score must be a nonnegative number'
-fi
 
-if [ -z "$project" ]; then
-  project="$(repo_name)"
-fi
-target_dir="$(state_dir)"
+# ---------------------------------------------------------------------------------------------
 
-mkdir -p "$target_dir"
-log="$target_dir/skill-runs.jsonl"
 
-ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-id="sr-$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+def log_run(skill: str, values: dict, metrics: list, explicit_prs: list):
+    # A missing verdict is stored as null: it is the weakest signal, and refusing the row would
+    # lose the outcome, duration and corrections that outrank it. Free text is refused, because
+    # --detail is where it belongs.
+    verdict, rule = L.map_verdict(values.get("--verdict"))
+    if verdict is None and rule != "missing":
+        meanings = "\n".join(f"  {k:9} {v}" for k, v in L.VERDICT_MEANING.items())
+        fail(f"verdict {values['--verdict']!r} is not one of {'|'.join(L.VERDICTS)}; "
+             f"put the skill's own wording in --detail.\n{meanings}")
+    detail = values.get("--detail")
+    if detail is None and rule not in ("enum", "missing"):
+        detail = values["--verdict"].strip()
+    duration = None
+    if "--duration" in values:
+        duration = number(values["--duration"], "--duration")
+        if duration < 0:
+            fail("duration must be a nonnegative JSON number")
+    cost_usd = number(values["--cost-usd"], "--cost-usd") if "--cost-usd" in values else None
+    score = number(values["--score"], "--score") if "--score" in values else None
+    if score is not None and score < 0:
+        fail("score must be a nonnegative number")
 
-# Link fields; each stays null when its source is unavailable.
-machine="$(hostname -s 2>/dev/null || true)"
-session="${CLAUDE_CODE_SESSION_ID:-${CODEX_SESSION_ID:-${CODEX_COMPANION_SESSION_ID:-}}}"
-branch="$(git branch --show-current 2>/dev/null || true)"
-head_sha="$(git rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+    skill = L.normalize_skill(skill)
+    at = L.now()
+    measured = {"startedAt": None, "durationMin": None, "durationSource": None, "cost": None, "prs": []}
+    cache: dict = {}
+    try:  # capture is best effort; the row is written regardless
+        session = L.detect_session(skill) or {}
+    except Exception as error:
+        print(f"skill-run-log: session detection skipped: {error}", file=sys.stderr)
+        session = {}
+    if values.get("--transcript"):
+        session = {**session, "transcriptPath": values["--transcript"]}
+    transcript = session.get("transcriptPath")
+    if transcript:
+        try:
+            events = L.scan(transcript, cache)
+            main_events = L.scan(session["mainTranscriptPath"], cache) if session.get("mainTranscriptPath") else events
+            measured = L.measure(events, skill, at, main_events)
+        except Exception as error:
+            print(f"skill-run-log: transcript measurement skipped: {error}", file=sys.stderr)
+    if duration is not None:
+        measured.update(durationMin=duration, durationSource="flag")
+    cost = measured["cost"]
+    if cost_usd is not None:
+        cost = {**(cost or {"tokens": None, "model": None, "scope": None}), "usd": cost_usd, "source": "flag"}
+    target = values.get("--target", "")
+    prs = L.merge_refs(explicit_prs, [{**r, "how": "target"} for r in L.pr_refs(target)], measured["prs"])
 
-# JSON-escape strings (handles quotes, backslashes, newlines)
-esc() {
-  printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()), end="")' 2>/dev/null \
-    || printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/' | tr -d '\n' | sed 's/\\n$//' | awk '{print "\""$0"\""}'
-}
+    log = L.state_root() / L.repo_name() / L.RUNS
+    links = L.git_links()
+    row = {
+        "schema": L.SCHEMA,
+        "id": L.new_run_id(at),
+        "layer": L.LAYER_TOOLS,
+        "hill": L.skill_hill(skill),
+        "skill": skill,
+        "ts": L.iso(at),
+        "project": values.get("--project") or L.repo_name(),
+        "target": target,
+        "operatorPrompt": values.get("--prompt", ""),
+        "durationMin": measured["durationMin"],
+        "verdict": verdict,
+        "verdictDetail": detail,
+        "prediction": values.get("--prediction"),
+        "score": score,
+        "dispatchedTo": values.get("--next", "stop"),
+        "operatorOverride": None,
+        "transcriptPath": transcript,
+        "traceDir": values.get("--trace-dir") or session.get("traceDir"),
+        "startedAt": measured["startedAt"],
+        "durationSource": measured["durationSource"],
+        "metrics": metrics,
+        "prs": prs,
+        "outcome": None,
+        "cost": cost,
+        "skillSha": L.skill_sha(skill, session.get("harness")),
+        "session": session or None,
+        "host": L.host_name(),
+        # Flat link fields the outcome joiner reads (dotfiles #299); null when unavailable.
+        "pr": explicit_prs[0]["url"] if explicit_prs and explicit_prs[0].get("url") else (L.pr_url(prs[0]) if prs else None),
+        "machine": L.machine(),
+        "sessionId": session.get("id") or L.env_session_id(),
+        "cwd": os.getcwd(),
+        "branch": links["branch"],
+        "headSha": links["headSha"],
+    }
+    if prs and not os.environ.get("SKILL_LEDGER_OFFLINE"):
+        try:  # the strongest reward, attached when the row is written
+            existing = {}
+            O.join(prs, at=at, existing=existing)
+            row["outcome"] = O.run_outcome(prs, existing)
+        except Exception as error:  # GitHub being unreachable never loses the row
+            print(f"skill-run-log: outcome check skipped: {error}", file=sys.stderr)
+    L.append_jsonl(log, row)
+    print(f"logged: {row['id']} {skill} -> {row['dispatchedTo']} ({verdict or 'n/a'}) [{log}]")
+    captured = []
+    if row["durationMin"] is not None:
+        captured.append(f"{row['durationMin']} min ({row['durationSource']})")
+    if session.get("id"):
+        captured.append(f"session {session['id'][:8]}" + (f" agent {session['agentId'][:8]}" if session.get("agentId") else ""))
+    if cost and cost.get("tokens"):
+        captured.append(f"{sum(cost['tokens'].values()):,} tokens")
+    if prs:
+        outcome = row["outcome"] or {}
+        captured.append(f"{len(prs)} PR(s), outcome {outcome.get('status', 'unchecked')}")
+    if captured:
+        print("captured: " + "; ".join(captured))
+    if session.get("id"):
+        # Earlier runs in this session close their correction window when a new run logs.
+        try:
+            settle(session["id"], ended=False, cache=cache)
+        except Exception as error:
+            print(f"skill-run-log: settle skipped: {error}", file=sys.stderr)
 
-skill_j="$(esc "$skill")"
-project_j="$(esc "$project")"
-target_j="$(esc "$target")"
-prompt_j="$(esc "$prompt")"
-verdict_j="$(esc "$verdict")"
-next_j="$(esc "$next_skill")"
 
-# transcript and traceDir: emit as JSON null when empty, escaped string otherwise
-if [ -z "$transcript" ]; then transcript_j="null"; else transcript_j="$(esc "$transcript")"; fi
-if [ -z "$trace_dir" ];  then trace_j="null";       else trace_j="$(esc "$trace_dir")"; fi
+def session_rows(session_id: str | None):
+    """(events path, normalized row) for schema-2 rows of one session, or of every session."""
+    for runs in sorted(L.state_root().glob("*/" + L.RUNS)):
+        try:
+            text = runs.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if session_id and session_id not in text:
+            continue
+        for _, raw, obj in L.read_jsonl(text):
+            if obj.get("schema") != L.SCHEMA:
+                continue
+            sid = (obj.get("session") or {}).get("id")
+            if sid and (session_id is None or sid == session_id):
+                yield runs.with_name(L.EVENTS), L.normalize(obj, raw)
 
-# Optional string fields: JSON null when empty.
-nullable() {
-  if [ -z "$1" ]; then printf 'null'; else esc "$1"; fi
-}
-pr_j="$(nullable "$pr")"
-machine_j="$(nullable "$machine")"
-session_j="$(nullable "$session")"
-cwd_j="$(nullable "$PWD")"
-branch_j="$(nullable "$branch")"
-head_j="$(nullable "$head_sha")"
 
-printf '{"id":"%s","skill":%s,"ts":"%s","project":%s,"target":%s,"operatorPrompt":%s,"durationMin":%s,"verdict":%s,"dispatchedTo":%s,"operatorOverride":null,"transcriptPath":%s,"traceDir":%s,"score":%s,"pr":%s,"machine":%s,"sessionId":%s,"cwd":%s,"branch":%s,"headSha":%s}\n' \
-  "$id" "$skill_j" "$ts" "$project_j" "$target_j" "$prompt_j" "$duration" "$verdict_j" "$next_j" "$transcript_j" "$trace_j" "$score" \
-  "$pr_j" "$machine_j" "$session_j" "$cwd_j" "$branch_j" "$head_j" >> "$log"
+def settled_keys(events_path) -> set:
+    try:
+        text = events_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    return {obj["runKey"] for _, _, obj in L.read_jsonl(text) if obj.get("event") == "override" and obj.get("runKey")}
 
-echo "logged: $id $skill -> $next_skill ($verdict) [$log]"
+
+def settle(session_id: str | None, *, ended: bool, cache: dict | None = None) -> int:
+    cache = {} if cache is None else cache
+    at = L.now()
+    written = 0
+    done: dict = {}
+    for events_path, row in session_rows(session_id):
+        if events_path not in done:
+            done[events_path] = settled_keys(events_path)
+        if row["runKey"] in done[events_path]:
+            continue
+        session = row.get("session") or {}
+        invoking = L.scan(session.get("transcriptPath") or row.get("transcriptPath"), cache)
+        main = L.scan(session.get("mainTranscriptPath") or session.get("transcriptPath"), cache)
+        judged = L.judge_override(row, invoking, [e for e in main if e.kind == "human"], ended=ended, at=at)
+        if judged is None:
+            continue
+        L.append_jsonl(events_path, {"schema": L.SCHEMA, "event": "override", "ts": L.iso(at), **judged})
+        done[events_path].add(row["runKey"])
+        written += 1
+    return written
+
+
+def record_override(values: dict, flags: set):
+    """Attach an explicit operator judgment to a run: --run KEY, else this session's latest run."""
+    key = values.get("--run")
+    theme = values.get("--theme")
+    if theme and theme not in THEMES:
+        fail(f"--theme must be one of {', '.join(THEMES)}")
+    session = L.detect_session() or {}
+    target = None
+    for events_path, row in session_rows(None if key else session.get("id")):
+        if key and row["runKey"] != key:
+            continue
+        if target is None or (row.get("ts") or "") >= (target[1].get("ts") or ""):
+            target = (events_path, row)
+    if target is None:
+        fail("no run found: pass --run <runId> (from skill-runs.jsonl) or run inside the session that logged it", 1)
+    events_path, row = target
+    event = {"schema": L.SCHEMA, "event": "override", "ts": L.iso(L.now()), "runKey": row["runKey"],
+             "skill": row.get("skill"), "runTs": row.get("ts"), "sessionId": (row.get("session") or {}).get("id"),
+             "layer": L.LAYER_OPERATOR, "hill": "operator:corrections", "theme": theme,
+             "method": "explicit", "operatorOverride": "--no" not in flags, "basis": "explicit"}
+    if values.get("--note"):
+        event["note"] = values["--note"]
+    L.append_jsonl(events_path, event)
+    print(f"override: {row['skill']} {row['runKey']} -> {event['operatorOverride']} [{events_path}]")
+
+
+def join_host(days: int) -> dict:
+    """Refresh outcomes for every PR a run on this host referenced in the last `days` days."""
+    import datetime as dt
+
+    at = L.now()
+    floor = at - dt.timedelta(days=days)
+    refs = []
+    for name in (L.RUNS, L.BACKFILL):
+        for path in L.state_root().glob("*/" + name):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for _, _, obj in L.read_jsonl(text):
+                ts = L.parse_ts(obj.get("ts"))
+                if obj.get("prs") and ts and ts >= floor:
+                    refs.extend(obj["prs"])
+    report = O.join(refs, at=at)
+    stamp = L.state_root() / JOIN_STAMP
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(L.iso(at) + "\n")
+    return {**report, "refs": len(L.merge_refs(refs))}
+
+
+def session_end_hook():
+    """SessionEnd: settle this session's corrections, then run the daily outcome join when due."""
+    import json
+
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if payload.get("session_id"):
+        settle(payload["session_id"], ended=True)
+    stamp = L.state_root() / JOIN_STAMP
+    try:
+        last = L.parse_ts(stamp.read_text().strip())
+    except OSError:
+        last = None
+    if last is None or (L.now() - last).total_seconds() > 20 * 3600:
+        join_host(21)
+        settle(None, ended=False)  # every session's closed windows, including Codex runs
+
+
+def main(argv):
+    if not argv:
+        fail("skill is required")
+    if argv[0] == "--dir":
+        print(L.state_root() / L.repo_name())
+        return
+    mode = argv[0] if argv[0] in MODES else None
+    values, metrics, prs, flags, positional = parse(argv[1:] if mode else argv)
+    if mode is None:
+        if not positional:
+            fail("skill is required")
+        if len(positional) > 1:
+            fail(f"unexpected argument: {positional[1]}")
+        log_run(positional[0], values, metrics, prs)
+        return
+    if positional:
+        fail(f"unexpected argument: {positional[0]}")
+    if mode == "--override":
+        record_override(values, flags)
+    elif mode == "--join":
+        report = join_host(int(number(values.get("--days", "21"), "--days")))
+        print(f"join: {report['checked']} of {report['refs']} PRs checked ({report['due']} due)"
+              + (f"; errors: {'; '.join(report['errors'][:3])}" if report["errors"] else ""))
+    elif mode == "--backfill":
+        from skill_ledger import backfill as skill_backfill
+
+        skill_backfill.run(dry_run="--dry-run" in flags)
+    elif "--hook" in flags:
+        try:
+            session_end_hook()
+        except Exception:
+            pass  # a SessionEnd hook never blocks or fails the session
+    else:
+        session_id = None if "--all" in flags else (values.get("--session") or (L.detect_session() or {}).get("id"))
+        if session_id is None and "--all" not in flags:
+            fail("no session: pass --session ID or --all", 1)
+        print(f"settle: {settle(session_id, ended=False)} correction judgments written")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

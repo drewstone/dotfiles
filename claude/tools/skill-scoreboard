@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""Rank skills from the skill-run ledgers of this machine and the fleet hosts.
+
+Usage:
+  skill-scoreboard [--since 14d|YYYY-MM-DD] [--skill /NAME] [--project NAME] [--hosts gtr,beelink1-wsl,...]
+                   [--local] [--by-version] [--no-join] [--json]
+  skill-scoreboard --climb [--append PATH] [same filters]
+
+Reads only the ledger files under ${XDG_STATE_HOME:-~/.local/state}/agent-work on this machine
+and, over ssh, on each host (default gtr, beelink1-wsl, beelink2-wsl; SKILL_SCOREBOARD_HOSTS
+overrides): skill-runs.jsonl, skill-runs.v2.jsonl, skill-run-events.jsonl, _outcomes/prs.jsonl.
+Before rendering, PR outcomes that are due are refreshed on GitHub through gh-drew (--no-join skips).
+
+Columns follow docs/processes/climb.md's rewards, strongest first:
+  outcome    machine-checked: PASS merged and clean 7 days; FAIL reverted or hot-fixed within 7
+             days, CI red after merge, or closed unmerged; pending otherwise (runs with PRs only)
+  corrected  the operator's reaction: corrected / judged runs (subagent runs have no direct channel)
+  judge/30   the median independent brief-judge score of judged deliverables (--score)
+  claimed    the author's own verdict, PASS share: a claim, never a substitute for the ones above
+Durations are minutes from the skill's first invocation to its log. Trends are runs per local day.
+
+--climb prints climb-ledger rows (layer "operator tools" positions per skill and version, and
+layer "operator" correction rows without quotes); --append adds the ones PATH lacks.
+"""
+
+from __future__ import annotations
+
+import collections
+import datetime as dt
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from skill_ledger import core as L  # noqa: E402
+from skill_ledger import outcomes as O  # noqa: E402
+
+V1_FIELDS = ("durationMin", "traceDir", "transcriptPath", "operatorOverride")
+VIZ = os.path.join(os.path.dirname(os.path.realpath(__file__)), "viz")
+
+
+def viz(kind: str, header, rows, *args) -> str | None:
+    """Draw with viz (claude/tools/viz) from TSV; None when it is missing or fails, so the
+    built-in renderer in skill_ledger/core.py draws instead."""
+    if not os.path.exists(VIZ) or not L.which("node"):
+        return None
+    clean = lambda cell: "" if cell is None else str(cell).replace("\t", " ").replace("\n", " ")
+    tsv = "\t".join(header) + "\n" + "".join("\t".join(clean(c) for c in row) + "\n" for row in rows)
+    width = str(shutil.get_terminal_size((100, 40)).columns)
+    try:
+        done = subprocess.run([VIZ, kind, "-", *args, "--width", width, "-q"], input=tsv, capture_output=True,
+                              text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.rstrip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def fail(message: str):
+    print(f"skill-scoreboard: {message}", file=sys.stderr)
+    sys.exit(2)
+
+
+def parse(argv):
+    opts = {"since": "14d", "skill": None, "project": None, "hosts": None, "local": False, "by_version": False,
+            "join": True, "json": False, "climb": False, "append": None}
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        index += 1
+        if arg in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        flag = {"--local": "local", "--by-version": "by_version", "--json": "json", "--climb": "climb"}.get(arg)
+        if flag:
+            opts[flag] = True
+            continue
+        if arg == "--no-join":
+            opts["join"] = False
+            continue
+        key = {"--since": "since", "--skill": "skill", "--project": "project", "--hosts": "hosts", "--append": "append"}.get(arg.split("=", 1)[0])
+        if not key:
+            fail(f"unknown argument: {arg}")
+        if "=" in arg:
+            value = arg.split("=", 1)[1]
+        else:
+            if index >= len(argv):
+                fail(f"{arg} requires a value")
+            value = argv[index]
+            index += 1
+        opts[key] = value
+    return opts
+
+
+def since_of(text: str, at: dt.datetime) -> dt.datetime:
+    match = re.fullmatch(r"(\d+)([dh])", text or "")
+    if match:
+        amount = int(match.group(1))
+        return at - (dt.timedelta(days=amount) if match.group(2) == "d" else dt.timedelta(hours=amount))
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text or ""):
+        return dt.datetime.fromisoformat(text).astimezone()  # local midnight, like the day buckets
+    parsed = L.parse_ts(text)
+    if parsed is None:
+        fail(f"--since takes Nd, Nh or YYYY-MM-DD, not {text!r}")
+    return parsed
+
+
+def local_day(ts: dt.datetime) -> str:
+    return ts.astimezone().strftime("%Y-%m-%d")
+
+
+def load(opts, at):
+    hosts = [] if opts["local"] else ([h for h in re.split(r"[\s,]+", opts["hosts"]) if h] if opts["hosts"] is not None else L.default_hosts())
+    reads = L.gather(hosts)
+    rows, prs_texts = [], []
+    for read in reads:
+        label = read.get("hostname") or read["host"]
+        if not read.get("ok"):
+            continue
+        rows.extend(L.rows_from_files(read["files"], label))
+        prs_texts.append(read["files"].get("_outcomes/prs.jsonl", ""))
+    floor = since_of(opts["since"], at)
+    selected = []
+    for row in rows:
+        ts = L.parse_ts(row.get("ts"))
+        if ts is None or ts < floor:
+            continue
+        if opts["skill"] and row["skill"] != L.normalize_skill(opts["skill"]):
+            continue
+        if opts["project"] and row.get("project") != opts["project"]:
+            continue
+        row["_ts"] = ts
+        selected.append(row)
+    return reads, rows, selected, prs_texts, floor
+
+
+def attach_outcomes(rows, prs_texts, opts, at):
+    snapshots = O.latest_snapshots(prs_texts)
+    join_report = None
+    refs = [ref for row in rows for ref in row.get("prs") or []]
+    if opts["join"] and refs:
+        join_report = O.join(refs, at=at, existing=snapshots)
+    for row in rows:
+        row["outcome"] = O.run_outcome(row.get("prs") or [], snapshots) if row.get("prs") else None
+    return join_report
+
+
+def pct(part, whole):
+    return None if not whole else round(100 * part / whole)
+
+
+def fmt_pct(value):
+    return "—" if value is None else f"{value}%"
+
+
+def fmt_num(value, digits=1):
+    return "—" if value is None else f"{value:.{digits}f}"
+
+
+def rounded(value, digits=2):
+    return None if value is None else round(value, digits)
+
+
+def summarize(rows, days):
+    verdicts = collections.Counter(r.get("verdict") for r in rows)
+    outcome = collections.Counter((r.get("outcome") or {}).get("status") for r in rows if r.get("outcome"))
+    judged = [r for r in rows if r.get("operatorOverride") is not None]
+    corrected = sum(1 for r in judged if r.get("operatorOverride") is True)
+    durations = [r.get("durationMin") for r in rows if isinstance(r.get("durationMin"), (int, float))]
+    scores = [r["score"] for r in rows if isinstance(r.get("score"), (int, float))]
+    per_day = collections.Counter(local_day(r["_ts"]) for r in rows)
+    metrics = collections.defaultdict(list)
+    for row in sorted(rows, key=lambda r: r["_ts"]):
+        for metric in row.get("metrics") or []:
+            if isinstance(metric.get("before"), (int, float)) and isinstance(metric.get("after"), (int, float)):
+                metrics[metric["name"]].append(metric)
+    mapped = sum(c for v, c in verdicts.items() if v)
+    with_prs = sum(outcome.values())
+    closed = [r for r in rows if (r.get("outcome") or {}).get("windowClosed")]
+    failed_prs = {(pr["repo"].lower(), pr["number"]): pr["signal"]
+                  for r in rows for pr in (r.get("outcome") or {}).get("prs") or [] if pr["status"] == "FAIL"}
+    signals = collections.Counter(failed_prs.values())  # unique PRs, though several runs may share one
+    return {
+        "runs": len(rows),
+        "verdicts": {v: verdicts.get(v, 0) for v in L.VERDICTS},
+        "claimedPassPct": pct(verdicts.get("PASS", 0), mapped),
+        "judgeScoreP50": L.percentile(scores, 0.5),
+        "judged30": len(scores),
+        "outcome": {"PASS": outcome.get("PASS", 0), "FAIL": outcome.get("FAIL", 0), "PENDING": outcome.get("PENDING", 0)},
+        "outcomeFailPct": pct(outcome.get("FAIL", 0), with_prs),
+        "outcomeClosed": len(closed),
+        "outcomePassPctClosed": pct(sum(1 for r in closed if r["outcome"]["status"] == "PASS"), len(closed)),
+        "failSignals": dict(signals.most_common()),
+        "corrected": corrected,
+        "judged": len(judged),
+        "correctedPct": pct(corrected, len(judged)),
+        "durationP50": rounded(L.percentile(durations, 0.5)),
+        "durationP90": rounded(L.percentile(durations, 0.9)),
+        "durationN": len(durations),
+        "runsPerDay": [per_day.get(day, 0) for day in days],
+        "metrics": {
+            name: {"n": len(items), "unit": items[-1].get("unit"), "first": items[0]["before"], "last": items[-1]["after"],
+                   "delta": round(items[-1]["after"] - items[0]["before"], 6)}
+            for name, items in metrics.items()
+        },
+    }
+
+
+def coverage(all_rows):
+    """Field coverage of the schema-1 originals versus what the ledger holds now."""
+    total = len(all_rows)
+    v1 = [r for r in all_rows if r.get("schemaFrom") == 1]
+    v2 = [r for r in all_rows if r.get("schemaFrom") != 1]
+
+    def has(row, field):
+        if field == "operatorOverride":
+            return row.get("operatorOverride") is not None
+        if field == "session":
+            return bool((row.get("session") or {}).get("id"))
+        if field == "verdict":
+            return row.get("verdict") in L.VERDICTS
+        if field == "prs":
+            return bool(row.get("prs"))
+        if field == "cost":
+            return bool(row.get("cost"))
+        return row.get(field) not in (None, "")
+
+    def original(row, field):
+        source = row.get("_orig") or {}
+        if field == "verdict":
+            return L.map_verdict(source.get("verdict"))[1] == "enum"
+        if field in V1_FIELDS:
+            return source.get(field) not in (None, "")
+        return False
+
+    fields = ("verdict", "durationMin", "session", "transcriptPath", "traceDir", "operatorOverride", "prs", "cost")
+    out = {}
+    for field in fields:
+        out[field] = {
+            "schema1Original": sum(1 for r in v1 if original(r, field)),
+            "schema1Now": sum(1 for r in v1 if has(r, field)),
+            "schema1Rows": len(v1),
+            "schema2Now": sum(1 for r in v2 if has(r, field)),
+            "schema2Rows": len(v2),
+            "all": sum(1 for r in all_rows if has(r, field)),
+            "rows": total,
+        }
+    return out
+
+
+def climb_rows(groups, corrections, opts, at, floor):
+    """Climb-ledger rows: a baseline position per skill hill and version, and each correction."""
+    stamp = L.iso(at)
+    window = f"{local_day(floor)}..{local_day(at)}"
+    out = []
+    for (skill, sha), summary in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
+        version = sha or "unversioned"
+        name = skill.lstrip("/")
+        out.append({
+            "id": f"climb-{local_day(at)}-{name}-{version}",
+            "project": "dotfiles",
+            "goal": "Skills deliver merged, unreverted outcomes without operator corrections",
+            "round": None, "hypothesis": None, "category": "prompt", "lever": "baseline",
+            "targets": [f"claude/skills/{name}/SKILL.md"],
+            "baseline": None,
+            "result": {k: summary[k] for k in ("runs", "outcome", "outcomeFailPct", "outcomeClosed",
+                                               "outcomePassPctClosed", "failSignals", "corrected", "judged",
+                                               "judgeScoreP50", "judged30",
+                                               "correctedPct", "claimedPassPct", "durationP50", "durationP90")},
+            "delta": None, "verdict": None, "durationMs": None, "timestamp": stamp,
+            "reasoning": f"skill-scoreboard over {window}; outcome from GitHub via gh-drew, corrections by "
+                         f"{L.OVERRIDE_METHOD} from transcripts, claimed = the author's own verdict",
+            "learnings": [],
+            "layer": L.LAYER_TOOLS, "hill": L.skill_hill(skill), "skillSha": sha, "prediction": None,
+            "outcome": {"status": None, "value": {"outcomeFailPct": summary["outcomeFailPct"],
+                                                  "outcomePassPctClosed": summary["outcomePassPctClosed"],
+                                                  "correctedPct": summary["correctedPct"]}},
+        })
+    for row in corrections:
+        event = row.get("overrideEvent") or {}
+        evidence = event.get("evidence") or row.get("overrideEvidence") or {}
+        out.append({
+            "id": f"climb-correction-{row['runKey']}",
+            "timestamp": stamp, "date": local_day(row["_ts"]),
+            "layer": L.LAYER_OPERATOR, "hill": "operator:corrections",
+            "theme": event.get("theme"), "change": None,
+            # The quote and transcript path stay in the host's state directory; climb ledgers can be
+            # public. The message's uuid finds it in that host's transcripts.
+            "quoteRef": {"host": row["_host"], "uuid": evidence.get("uuid")},
+            "basis": row.get("overrideBasis"), "method": event.get("method") or L.OVERRIDE_METHOD,
+            "skill": row["skill"], "runKey": row["runKey"], "project": row.get("project"),
+        })
+    return out
+
+
+def append_climb(path: str, rows: list) -> int:
+    existing = set()
+    try:
+        with open(path, encoding="utf-8") as handle:
+            existing = {obj.get("id") for _, _, obj in L.read_jsonl(handle.read())}
+    except OSError:
+        pass
+    added = [row for row in rows if row["id"] not in existing]
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as handle:
+        for row in added:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return len(added)
+
+
+def render(report, opts):
+    lines = []
+    window = report["window"]
+    lines.append(f"Skill scoreboard · {window['from']} → {window['to']} (local days) · {report['totals']['runs']} runs")
+    hosts = []
+    for host in report["hosts"]:
+        if host.get("duplicateOf"):
+            hosts.append(f"{host['host']} = {host['duplicateOf']}")
+        elif host["ok"]:
+            hosts.append(f"{host['label']} {host['runs']}")
+        else:
+            hosts.append(f"{host['host']} unreachable")
+    lines.append("hosts: " + " · ".join(hosts))
+    lines.append("rewards, strongest first: outcome (GitHub) > corrected (operator) > judge/30 (brief-judge) > claimed (author's verdict)")
+    if report.get("join"):
+        join = report["join"]
+        lines.append(f"outcomes: {join['checked']} PR checks this run" + (f"; {len(join['errors'])} errors: {join['errors'][0]}" if join["errors"] else ""))
+    t = report["totals"]
+    signals = ", ".join(f"{k} {v}" for k, v in t["failSignals"].items()) or "none"
+    lines.append(f"outcome FAIL signals (PRs): {signals}; pass % needs a closed 7-day window ({t['outcomeClosed']} runs so far)")
+    lines.append("")
+    headers = ["skill", "runs", "outcome P/F/open", "failed", "passed*", "corrected", "judge/30", "claimed", "p50 min", "p90 min",
+               f"runs/day ({len(window['days'])}d)", "metric Δ"]
+    table = []
+    for item in report["skills"]:
+        s = item["summary"]
+        metric = ""
+        if s["metrics"]:
+            name, m = max(s["metrics"].items(), key=lambda kv: kv[1]["n"])
+            metric = f"{name} {m['first']}→{m['last']}{(' ' + m['unit']) if m['unit'] else ''} (n={m['n']})"
+        label = item["skill"] + (f" @{item['skillSha'] or 'unversioned'}" if opts["by_version"] else "")
+        table.append([
+            label, s["runs"], f"{s['outcome']['PASS']}/{s['outcome']['FAIL']}/{s['outcome']['PENDING']}",
+            fmt_pct(s["outcomeFailPct"]), fmt_pct(s["outcomePassPctClosed"]),
+            f"{s['corrected']}/{s['judged']} {fmt_pct(s['correctedPct'])}",
+            fmt_num(s["judgeScoreP50"]) + (f" (n={s['judged30']})" if s["judged30"] else ""),
+            fmt_pct(s["claimedPassPct"]), fmt_num(s["durationP50"]), fmt_num(s["durationP90"]),
+            L.sparkline(s["runsPerDay"]), metric,
+        ])
+    table.append(["TOTAL", t["runs"], f"{t['outcome']['PASS']}/{t['outcome']['FAIL']}/{t['outcome']['PENDING']}",
+                  fmt_pct(t["outcomeFailPct"]), fmt_pct(t["outcomePassPctClosed"]),
+                  f"{t['corrected']}/{t['judged']} {fmt_pct(t['correctedPct'])}",
+                  fmt_num(t["judgeScoreP50"]) + (f" (n={t['judged30']})" if t["judged30"] else ""),
+                  fmt_pct(t["claimedPassPct"]), fmt_num(t["durationP50"]), fmt_num(t["durationP90"]),
+                  L.sparkline(t["runsPerDay"]), ""])
+    # The table stays on the built-in renderer: twelve columns wrap at viz's widths.
+    lines.append(L.render_table(headers, table, ["<", ">", ">", ">", ">", ">", ">", ">", ">", ">", "<", "<"]))
+    lines.append("failed = FAIL / runs with PRs; passed* = PASS / runs whose PRs' 7-day windows closed; "
+                 "corrected = corrected / judged runs; judge/30 = median brief-judge score")
+    lines.append("")
+    source = f"skill-run ledgers on {sum(1 for h in report['hosts'] if h['ok'])} hosts"
+    daily = report["daily"]
+    runs_chart = viz("bars", ["day", "runs"], [[d["day"], d["summary"]["runs"]] for d in daily],
+                     "--title", "Skill runs by day", "--unit", "runs", "--source", source)
+    rate_rows = []
+    for d in daily:
+        s = d["summary"]
+        with_prs = sum(s["outcome"].values())
+        mapped = sum(v for v in s["verdicts"].values())
+        rate_rows.append([d["day"], f"{s['outcome']['FAIL']}/{with_prs}", f"{s['corrected']}/{s['judged']}",
+                          f"{s['verdicts']['PASS']}/{mapped}"])
+    rates_chart = viz("grouped", ["day", "outcome failed", "corrected", "claimed PASS"], rate_rows,
+                      "--title", "Signals by day, strongest first", "--source", source)
+    if runs_chart and rates_chart:
+        lines.extend([runs_chart, "", rates_chart])
+    else:
+        lines.append("By day")
+        day_rows = []
+        top = max((d["summary"]["runs"] for d in daily), default=0)
+        for d in daily:
+            s = d["summary"]
+            day_rows.append([d["day"], s["runs"], L.bar(s["runs"], top, 16), fmt_pct(s["claimedPassPct"]),
+                             f"{s['outcome']['PASS']}/{s['outcome']['FAIL']}/{s['outcome']['PENDING']}",
+                             f"{s['corrected']}/{s['judged']}", fmt_num(s["durationP50"])])
+        lines.append(L.render_table(["day", "runs", "", "claimed", "outcome P/F/open", "corrected", "p50 min"], day_rows,
+                                    ["<", ">", "<", ">", ">", ">", ">"]))
+    lines.append("")
+    cov_rows = []
+    for field, c in report["coverage"].items():
+        cov_rows.append([field, f"{c['schema1Original']}/{c['schema1Rows']}", f"{c['schema1Now']}/{c['schema1Rows']}",
+                         f"{c['schema2Now']}/{c['schema2Rows']}"])
+    chart = viz("grouped", ["field", "schema-1 as written", "schema-1 now", "schema-2"], cov_rows,
+                "--title", "Capture coverage, every row on every host", "--source", source)
+    if chart:
+        lines.append(chart)
+    else:
+        lines.append("Capture coverage, every row on every host (schema-1 originals → now; schema-2 rows)")
+        lines.append(L.render_table(["field", "schema-1 as written", "schema-1 now", "schema-2"], cov_rows))
+    return "\n".join(lines)
+
+
+def main(argv):
+    opts = parse(argv)
+    at = L.now()
+    reads, all_rows, rows, prs_texts, floor = load(opts, at)
+    join_report = attach_outcomes(all_rows, prs_texts, opts, at)
+    days = []
+    day = floor.astimezone().date()
+    while day <= at.astimezone().date():
+        days.append(day.isoformat())
+        day += dt.timedelta(days=1)
+    groups = collections.defaultdict(list)
+    for row in rows:
+        groups[(row["skill"], row.get("skillSha") if opts["by_version"] or opts["climb"] else None)].append(row)
+    summaries = {key: summarize(items, days) for key, items in groups.items()}
+    corrections = [r for r in rows if r.get("operatorOverride") is True]
+    if opts["climb"]:
+        out = climb_rows(summaries, corrections, opts, at, floor)
+        if opts["append"]:
+            print(f"climb: appended {append_climb(opts['append'], out)} of {len(out)} rows to {opts['append']}")
+        else:
+            for row in out:
+                print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+        return
+    ordered = sorted(summaries.items(), key=lambda kv: (-kv[1]["runs"], kv[0][0]))
+    host_info = []
+    for read in reads:
+        label = read.get("hostname") or read["host"]
+        host_info.append({"host": read["host"], "label": label, "ok": read.get("ok", False),
+                          "duplicateOf": read.get("duplicateOf"), "error": read.get("error"),
+                          "runs": sum(1 for r in all_rows if r["_host"] == label)})
+    report = {
+        "generatedAt": L.iso(at),
+        "window": {"from": days[0] if days else None, "to": days[-1] if days else None, "days": days},
+        "hosts": host_info,
+        "join": join_report,
+        "skills": [{"skill": k[0], "skillSha": k[1], "summary": v} for k, v in ordered],
+        "totals": summarize(rows, days),
+        "daily": [{"day": d, "summary": summarize([r for r in rows if local_day(r["_ts"]) == d], [d])} for d in days],
+        "coverage": coverage(all_rows),
+    }
+    if opts["json"]:
+        print(json.dumps(report, ensure_ascii=False, indent=1, default=str))
+    else:
+        print(render(report, opts))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -42,7 +42,7 @@ A sourced candidate is a starting question with its evidence; it is not a verifi
 ## Log the run
 
 ```bash
-skill-run-log /problem-sourcing --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /problem-sourcing --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

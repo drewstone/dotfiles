@@ -50,7 +50,7 @@ An agent's summary or a majority vote cannot establish that its artifact works.
 ## Log the run
 
 ```bash
-skill-run-log /orchestrate --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /orchestrate --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

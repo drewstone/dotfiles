@@ -60,7 +60,7 @@ Report changed support, silent substitutions, unmeasured cases, and the checks r
 ## Log the run
 
 ```bash
-skill-run-log /model-freshness --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /model-freshness --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

@@ -66,8 +66,15 @@ It prints the row id; keep that id with the output, and pass `--pr <url>` when t
 Rows written before 2026-10-05 remain in each repository's `.agent/` or `.evolve/` log.
 
 ```bash
-skill-run-log /simplify --target "<scope>" --verdict <result> --next /stop
+skill-run-log /simplify --target "<scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /stop
 ```
+
+The verdict is one of five values: the target met the skill's bar, failed it, made partial progress, was blocked by something outside the run, or was abandoned.
+Put a skill's own label (`REQUEST_CHANGES`, `KEEP`) in `--detail`; the helper maps older labels and rejects free-text verdicts.
+Pass `--metric`, `--unit`, `--before`, `--after` and `--source` when the run moved a measured quantity, and `--prediction` with the number to beat.
+The helper also captures the session, transcript, duration, tokens, skill version and the pull requests the run opened or merged; GitHub outcomes and operator corrections attach afterwards.
+Run `skill-run-log --override --note "<what the operator changed>"` when the operator corrects a result the transcript cannot show.
+`skill-scoreboard` ranks skills across hosts and `lead-scorecard` reports the lead's operating metrics; both export [climb](../../docs/processes/climb.md) ledger rows with `--climb`.
 
 The helper owns serialization, record fields, and the available command arguments.
 Leave unavailable measurements unknown.

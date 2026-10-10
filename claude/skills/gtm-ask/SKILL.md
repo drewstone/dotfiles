@@ -60,7 +60,7 @@ Show Drew only work that passed every item, with the conversation link and the g
 ## Log the run
 
 ```bash
-skill-run-log /gtm-ask --target "<thread id and outcome>" --verdict <PASS|FAIL|WAITING> --next /<next-skill-or-stop>
+skill-run-log /gtm-ask --target "<thread id and outcome>" --verdict <PASS|FAIL|PARTIAL> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

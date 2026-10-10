@@ -70,5 +70,5 @@ A recorded completion does not establish that the current revision passes.
 ## Log the run
 
 ```bash
-skill-run-log /converge --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /converge --target "<what this run targeted>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --pr <PR URL> --next /<next-skill-or-stop>
 ```

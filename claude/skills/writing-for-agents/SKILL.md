@@ -47,7 +47,7 @@ Split out a separate skill only when it has its own trigger word or another skil
 ## Log the run
 
 ```bash
-skill-run-log /writing-for-agents --target "<document>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /writing-for-agents --target "<document>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

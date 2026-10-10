@@ -40,7 +40,7 @@ Do not call an unchecked measurement valid.
 ## Log the run
 
 ```bash
-skill-run-log /agent-eval --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /agent-eval --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

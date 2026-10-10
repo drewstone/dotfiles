@@ -101,7 +101,7 @@ Files alone do not complete an evaluation; the case must execute and reject its 
 ## Log the run
 
 ```bash
-skill-run-log /eval-engineering --target "<capabilities and case scope>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /eval-engineering --target "<capabilities and case scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

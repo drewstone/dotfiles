@@ -13,8 +13,9 @@ ID = re.compile(r'^sr-\d{8}T\d{6}Z-[0-9a-f]{8}$')
 
 def run(cwd, state, *args, env=None):
     environment = {k: v for k, v in os.environ.items()
-                   if k not in ('CLAUDE_CODE_SESSION_ID', 'CODEX_SESSION_ID', 'CODEX_COMPANION_SESSION_ID')}
-    environment.update({'XDG_STATE_HOME': state, **(env or {})})
+                   if k not in ('CLAUDE_CODE_SESSION_ID', 'CODEX_SESSION_ID', 'CODEX_COMPANION_SESSION_ID', 'CODEX_THREAD_ID')}
+    # Offline: the tool checks a named PR on GitHub when it writes the row.
+    environment.update({'XDG_STATE_HOME': state, 'SKILL_LEDGER_OFFLINE': '1', **(env or {})})
     return subprocess.run([str(TOOL), *args], cwd=cwd, env=environment, capture_output=True, text=True, check=True)
 
 

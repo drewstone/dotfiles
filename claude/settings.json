@@ -140,6 +140,12 @@
             "command": "$HOME/.claude/hooks/halo-profile.sh",
             "timeout": 30,
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/skill-run-settle.sh",
+            "timeout": 300,
+            "async": true
           }
         ]
       }

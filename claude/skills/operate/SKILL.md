@@ -100,7 +100,7 @@ Run this skill as a hill-climb ([the climb](../../../docs/processes/climb.md)).
 ## Log the run
 
 ```bash
-skill-run-log /operate --target "<pursuit/campaign>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /operate --target "<pursuit/campaign>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

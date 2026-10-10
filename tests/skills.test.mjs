@@ -339,6 +339,27 @@ test('every live skill tells the model to log its run', () => {
   assert.deepEqual(missing, [], `skills with no '## Log the run' section: ${missing.join(', ')}`)
 })
 
+// Free-text verdict placeholders produced 110 distinct labels in 421 runs, which nothing could rank.
+// The helper accepts five values; every skill's logging line offers only those.
+test('every skill logs one of the five run verdicts', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const allowed = new Set(['PASS', 'FAIL', 'PARTIAL', 'BLOCKED', 'ABANDONED'])
+  const offenders = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+    .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
+    .flatMap((e) => {
+      const source = readFileSync(join(skillsDir, e.name, 'SKILL.md'), 'utf8')
+      const start = source.indexOf('\n## Log the run\n')
+      if (start === -1) return []
+      const end = source.indexOf('\n## ', start + 1)
+      const section = source.slice(start, end === -1 ? undefined : end)
+      return [...section.matchAll(/^skill-run-log \S+.*?--verdict <([^>]+)>/gm)]
+        .filter((m) => m[1].split('|').some((value) => !allowed.has(value)))
+        .map((m) => `${e.name}: <${m[1]}>`)
+    })
+  assert.deepEqual(offenders, [], `verdict placeholders outside PASS|FAIL|PARTIAL|BLOCKED|ABANDONED: ${offenders.join(', ')}`)
+})
+
 test('skill chaining uses one final footer after the completed-work log', () => {
   const skillsDir = join(repoRoot, 'claude', 'skills')
   const misplaced = readdirSync(skillsDir, { withFileTypes: true })

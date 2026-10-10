@@ -42,5 +42,5 @@ If this is part of an active task, pass the results back to that task and contin
 ## Log the run
 
 ```bash
-skill-run-log /verify --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /verify --target "<what this run targeted>" --verdict <PASS|FAIL|PARTIAL|BLOCKED> [--pr <PR URL>] --next /<next-skill-or-stop>
 ```

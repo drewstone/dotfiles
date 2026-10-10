@@ -230,7 +230,7 @@ The full conversations are in `~/traces/chatgpt/<account>/<conversation>/` after
 ## Log the run
 
 ```bash
-skill-run-log /chatgpt-fleet --target "<work item and chat>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /chatgpt-fleet --target "<work item and chat>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
