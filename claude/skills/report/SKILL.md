@@ -6,6 +6,7 @@ description: Research a question from primary sources, or answer analytical, sta
 # Report
 
 Answer the user's decision with checked data.
+Beyond a one-fact answer, follow the [hillclimb loop](../../../docs/processes/hillclimb.md): name the hill, measure the population, try to break the headline, think bigger, show it, and score it.
 Scale the report to the question: a status fact may need a sentence and its check; a comparative study needs its full evidence.
 Do not impose a section template on every answer.
 
@@ -69,7 +70,7 @@ Distinguish observed results from causal interpretation and projected benefits.
 A correlation alone does not establish a mechanism, and an unavailable number is not permission to invent one.
 
 Use tables for comparable rows and dimensions.
-Use a chart when its shape clarifies the decision; use the project's existing rendering path when suitable.
+For an answer with more than one dimension, build it with the [brief kit](references/brief-kit.md) and publish it as an artifact; use the project's existing rendering path when it has one.
 Keep all measured fields available in the report or its complete linked results, rather than presenting only favorable columns.
 Explain necessary technical terms through their effect on the decision, and keep internal identifiers in evidence links unless the identity itself answers the question.
 
