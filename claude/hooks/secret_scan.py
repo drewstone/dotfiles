@@ -7,6 +7,8 @@ operator key, a GitHub token inside a clone error). Each one then sat in the ses
 transcript, where every later prompt, summary and subagent brief could carry it on.
 
 The output has already reached the model when this runs, so the hook cannot hide it.
+process_guard.py refuses the commands most likely to print one before they run (xtrace while
+loading a secret).
 It tells the agent the value is exposed and how to rotate that kind of key, shows Drew
 a one-line warning, and appends the event to ~/.claude/logs/secret-exposures.jsonl.
 Neither the warning nor the ledger contains the value: only its kind, length and
