@@ -1,0 +1,240 @@
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Brief kit: one reading column of instrument panels. Every color is a token; charts read tokens at render time. */
+:root {
+  --bg: #f2f4f6; --surface: #fcfdfd; --ink: #0d1117; --ink-2: #4a5361; --muted: #7d858f; --rule: #dde2e7; --rule-2: #c9d0d7;
+  --accent: #2a78d6; --accent-ink: #184f95; --accent-wash: #e3eefb;
+  --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b; --blind: #9aa3ad;
+  --good-ink: #0a7d0a; --crit-ink: #b42f2f; --warn-ink: #946700;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0b0e11; --surface: #13171b; --ink: #f1f3f5; --ink-2: #b6bec7; --muted: #8a929b; --rule: #242a31; --rule-2: #313840;
+  --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a; --good-ink: #3fcf3f; --crit-ink: #ff7b7b; --warn-ink: #fab219; --blind: #5d6670; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0b0e11; --surface: #13171b; --ink: #f1f3f5; --ink-2: #b6bec7; --muted: #8a929b; --rule: #242a31; --rule-2: #313840;
+  --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a; --good-ink: #3fcf3f; --crit-ink: #ff7b7b; --warn-ink: #fab219; --blind: #5d6670; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1160px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 80px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--mono); font-size: 0.86em; }
+code { background: var(--accent-wash); color: var(--accent-ink); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent-ink); }
+.mast { display: grid; gap: 18px; padding-block: 8px 34px; border-bottom: 1px solid var(--rule-2); }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.thesis { font-size: clamp(32px, 6vw, 70px); font-weight: 800; font-stretch: 112%; line-height: 0.98; letter-spacing: -0.02em; }
+.thesis .alert { color: var(--crit-ink); display: block; }
+.dek { font-size: 18px; color: var(--ink-2); max-width: 62ch; }
+.strip { display: grid; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); border: 1px solid var(--rule-2); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.strip > div { padding: 16px 18px; border-left: 1px solid var(--rule); display: grid; gap: 2px; min-width: 0; }
+.strip > div:first-child { border-left: 0; }
+.strip .v { font-family: var(--display); font-weight: 750; font-stretch: 118%; font-size: clamp(24px, 3.4vw, 40px); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.strip .l { font-size: 13px; color: var(--ink-2); }
+.tone-bad { color: var(--crit-ink); } .tone-ok { color: var(--good-ink); } .tone-warn { color: var(--warn-ink); }
+@media (max-width: 760px) { .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .strip > div:nth-child(odd) { border-left: 0; } .strip > div:nth-child(n+3) { border-top: 1px solid var(--rule); } }
+section { padding-block: 40px 8px; display: grid; gap: 18px; }
+.sh { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 4px 16px; align-items: baseline; }
+.sh .k { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.sh h2 { font-size: clamp(22px, 2.6vw, 30px); font-weight: 750; font-stretch: 108%; letter-spacing: -0.01em; }
+.sh p { grid-column: 2; color: var(--ink-2); }
+@media (max-width: 640px) { .sh { grid-template-columns: minmax(0, 1fr); } .sh p { grid-column: 1; } }
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; min-width: 0; }
+.panel h3 { font-family: var(--body); font-size: 14px; font-weight: 600; }
+.panel .sub { font-size: 13px; color: var(--muted); margin-block: 2px 10px; }
+.cols { display: grid; grid-template-columns: repeat(var(--c, 2), minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+.callout { font-size: 14px; color: var(--ink-2); border-top: 1px dashed var(--rule-2); padding-top: 10px; margin-top: 10px; }
+.callout b { color: var(--ink); }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ax { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.lbl { fill: var(--ink-2); font-family: var(--body); font-size: 12px; }
+.lbl-b { fill: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); margin-top: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.board { display: grid; gap: 10px; }
+.row { display: grid; grid-template-columns: 6px 130px minmax(0, 1fr) 170px; gap: 0 16px; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.row > div { padding-block: 14px; min-width: 0; }
+.row .sev { padding: 0; }
+.row .t { font-family: var(--mono); font-size: 12px; color: var(--muted); display: grid; gap: 6px; align-content: start; }
+.row .d strong { display: block; font-size: 15.5px; margin-bottom: 2px; }
+.row .d span { color: var(--ink-2); font-size: 14px; }
+.row .o { font-size: 13px; color: var(--ink-2); padding-right: 16px; }
+.row .o b { display: block; font-family: var(--mono); font-weight: 500; color: var(--ink); font-size: 12.5px; }
+@media (max-width: 760px) { .row { grid-template-columns: 6px minmax(0, 1fr); } .row .t, .row .d, .row .o { grid-column: 2; padding-block: 4px; } .row .t { padding-top: 14px; } .row .o { padding-bottom: 14px; } }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.03em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; width: fit-content; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.c-crit { color: var(--crit-ink); } .c-serious { color: var(--serious); } .c-warn { color: var(--warn-ink); } .c-good { color: var(--good-ink); } .c-blind { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.tiles .panel { display: grid; gap: 8px; align-content: start; }
+.tiles .name { font-size: 13px; color: var(--ink-2); font-weight: 600; }
+.tiles .big { font-family: var(--display); font-weight: 750; font-stretch: 116%; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; }
+.tiles .big small { font-size: 14px; font-stretch: 100%; font-weight: 600; color: var(--ink-2); margin-left: 4px; }
+.tiers { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; }
+.tiers span { font-family: var(--mono); font-size: 10.5px; text-align: center; padding: 3px 0; border-radius: 3px; background: var(--rule); color: var(--muted); }
+.tiers span.on { background: var(--ink); color: var(--surface); font-weight: 600; }
+.tiles .fine { font-size: 12.5px; color: var(--muted); }
+.step { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; padding-block: 10px; border-bottom: 1px solid var(--rule); }
+.step:last-child { border-bottom: 0; }
+.dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--surface); background: var(--good); }
+.step.wait .dot { background: transparent; border: 2px solid var(--warn); color: var(--ink-2); }
+.step.block .dot { background: var(--crit); } .step.you .dot { background: var(--accent); }
+.step .what span { display: block; color: var(--muted); font-size: 13px; }
+.step .when { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--rule-2); }
+td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.bets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .bets { grid-template-columns: minmax(0, 1fr); } }
+.bet { display: grid; gap: 10px; align-content: start; }
+.bet.lead { grid-column: 1 / -1; border-color: var(--accent); }
+.bet .tag { font-family: var(--mono); font-size: 11.5px; color: var(--accent-ink); letter-spacing: 0.04em; text-transform: uppercase; }
+.bet h3 { font-family: var(--display); font-size: 21px; font-weight: 750; font-stretch: 106%; line-height: 1.15; }
+.bet .kv { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; font-size: 14px; }
+.bet .kv b { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding-top: 3px; }
+.bet .target { font-family: var(--mono); font-size: 13px; background: var(--accent-wash); border-radius: 6px; padding: 8px 10px; }
+.dec { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 4px 14px; }
+.dec .n { font-family: var(--display); font-weight: 800; font-stretch: 120%; font-size: 30px; color: var(--accent); line-height: 1; grid-row: span 3; }
+.dec p { color: var(--ink-2); font-size: 14px; }
+.dec .rec b { color: var(--good-ink); }
+.foot { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--rule-2); font-size: 13px; color: var(--muted); display: grid; gap: 8px; }
+.foot p { max-width: 100ch; }
+#tip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: var(--surface); font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 7px 9px; border-radius: 6px; max-width: 300px; transform: translate(12px, 12px); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap" id="root"></div>
+<div id="tip" hidden></div>
+
+<script id="brief" type="application/json">__SPEC__</script>
+<script>
+(function () {
+  'use strict';
+  const S = JSON.parse(document.getElementById('brief').textContent);
+  const NS = 'http://www.w3.org/2000/svg';
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const TONE = { good: '--good', warn: '--warn', serious: '--serious', crit: '--crit', blind: '--blind', accent: '--accent' };
+  const tone = (t) => css(TONE[t] || '--accent');
+  function h(tag, cls, parent, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; if (parent) parent.appendChild(n); return n; }
+  function html(tag, cls, parent, markup) { const n = h(tag, cls, parent); n.innerHTML = markup || ''; return n; }
+  function s(tag, attrs, parent, text) { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; if (parent) parent.appendChild(n); return n; }
+  function svg(parent, w, hgt, label) { return s('svg', { viewBox: `0 0 ${w} ${hgt}`, role: 'img', 'aria-label': label || '' }, parent); }
+  function tipOn(n, t) { if (t) { n.setAttribute('data-tip', t); n.setAttribute('tabindex', '0'); } return n; }
+  function legend(parent, items) { const l = h('div', 'legend', parent); items.forEach(([label, t]) => { const sp = h('span', '', l); const i = h('i', '', sp); i.style.background = `var(${TONE[t] || '--accent'})`; sp.append(label); }); }
+  const T = (iso) => new Date(iso).getTime();
+
+  const root = document.getElementById('root');
+  const mast = h('header', 'mast', root);
+  const eb = h('div', 'eyebrow', mast); (S.eyebrow || []).forEach(x => h('span', '', eb, x));
+  const th = h('h1', 'thesis', mast, S.thesis || ''); if (S.thesisAlert) h('span', 'alert', th, S.thesisAlert);
+  if (S.dek) h('p', 'dek', mast, S.dek);
+  if (S.stats && S.stats.length) { const st = h('div', 'strip', mast); st.style.setProperty('--n', Math.min(S.stats.length, 5)); S.stats.forEach(x => { const d = h('div', '', st); h('span', 'v' + (x.tone ? ' tone-' + x.tone : ''), d, x.v); h('span', 'l', d, x.l); }); }
+
+  const R = {};
+  function panel(parent, b) { const p = h('div', 'panel', parent); if (b.title) h('h3', '', p, b.title); if (b.sub) h('p', 'sub', p, b.sub); return p; }
+  function block(parent, b) { (R[b.type] || R.text)(parent, b); }
+
+  R.text = (parent, b) => html('div', 'panel', parent, b.html || '');
+  R.callout = (parent, b) => html('p', 'callout', parent, b.html || '');
+  R.cols = (parent, b) => { const g = h('div', 'cols', parent); g.style.setProperty('--c', b.cols || 2); (b.blocks || []).forEach(x => block(g, x)); };
+
+  R.board = (parent, b) => { const g = h('div', 'board', parent); (b.rows || []).forEach(r => {
+    const row = h('div', 'row', g); const sev = h('div', 'sev', row); sev.style.background = tone(r.tone);
+    const t = h('div', 't', row); h('span', 'chip c-' + (r.tone || 'blind'), t, r.chip || r.tone); if (r.when) h('span', '', t, r.when);
+    const d = h('div', 'd', row); h('strong', '', d, r.title); if (r.text) h('span', '', d, r.text);
+    const o = h('div', 'o', row); if (r.owner) h('b', '', o, r.owner); if (r.next) o.append(r.next); }); };
+
+  R.tiles = (parent, b) => { const g = h('div', 'tiles', parent); (b.items || []).forEach(x => {
+    const p = h('div', 'panel', g); h('span', 'name', p, x.name); const big = h('span', 'big' + (x.tone ? ' tone-' + x.tone : ''), p, x.value); if (x.unit) h('small', '', big, x.unit);
+    if (x.tiers) { const tr = h('div', 'tiers', p); x.tiers.forEach((name, i) => h('span', i === x.on ? 'on' : '', tr, name)); }
+    if (x.fine) h('span', 'fine', p, x.fine); }); };
+
+  R.hist = (parent, b) => { const p = panel(parent, b), v = b.values, W = 980, H = 220, L = 38, B = 30, Tp = 14;
+    // Round the axis up to 1, 2 or 5 × 10^k so every tick names a readable value.
+    const nice = (m) => { const p = Math.pow(10, Math.floor(Math.log10(m))), f = m / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
+    const max = b.max || nice(Math.max(...v) || 1), bw = (W - L - 8) / v.length, g = svg(p, W, H, b.title);
+    const ticks = b.ticks || [0, max / 4, max / 2, (3 * max) / 4, max].filter(Number.isInteger);
+    ticks.forEach(t => { const y = H - B - (t / max) * (H - B - Tp); s('line', { x1: L, x2: W, y1: y, y2: y, stroke: css('--rule') }, g); s('text', { x: L - 6, y: y + 3.5, 'text-anchor': 'end', class: 'ax' }, g, t); });
+    const peak = Math.max(...v);
+    v.forEach((val, i) => { const bh = (val / max) * (H - B - Tp), x = L + i * bw + 2;
+      tipOn(s('rect', { x, y: H - B - bh, width: Math.max(bw - 4, 1), height: Math.max(bh, 1), rx: 3, fill: (b.highlightMax && val === peak) || (b.hot || []).includes(i) ? tone('crit') : tone(b.tone || 'accent') }, g), `${(b.labels || [])[i] || i} · ${val}${b.unit ? ' ' + b.unit : ''}`);
+      if (b.labels && i % (b.every || 1) === 0) s('text', { x: x + bw / 2 - 2, y: H - 10, 'text-anchor': 'middle', class: 'ax' }, g, b.labels[i]); });
+    s('line', { x1: L, x2: W, y1: H - B, y2: H - B, stroke: css('--rule-2') }, g); if (b.note) R.callout(p, { html: b.note }); };
+
+  R.hbars = (parent, b) => { const p = panel(parent, b), rows = b.rows, W = b.width || 480, L = b.left || 150, rh = b.rowH || 28, Rr = 50;
+    const max = b.max || Math.max(...rows.map(r => r[1])) || 1, g = svg(p, W, rows.length * rh + 8, b.title);
+    rows.forEach((r, i) => { const y = 4 + i * rh, bw = Math.max(2, (r[1] / max) * (W - L - Rr));
+      s('text', { x: L - 10, y: y + rh / 2 + 4, 'text-anchor': 'end', class: 'lbl' }, g, r[0]);
+      tipOn(s('rect', { x: L, y: y + 5, width: bw, height: rh - 12, rx: 3, fill: (b.hot || []).includes(r[0]) ? tone('crit') : tone(b.tone || 'accent') }, g), r[3] || `${r[0]} · ${r[1]}${b.unit ? ' ' + b.unit : ''}`);
+      if (r[2] != null) { const ix = L + (r[2] / max) * (W - L - Rr); s('line', { x1: ix, x2: ix, y1: y + 5, y2: y + rh - 7, stroke: css('--ink'), 'stroke-width': 2 }, g); }
+      s('text', { x: L + bw + 6, y: y + rh / 2 + 4, class: 'lbl-b' }, g, (b.fmt === 'fixed0' ? Number(r[1]).toFixed(0) : r[1]) + (b.suffix || '')); });
+    s('line', { x1: L, x2: L, y1: 4, y2: 4 + rows.length * rh, stroke: css('--rule-2') }, g); if (b.note) R.callout(p, { html: b.note }); };
+
+  R.stack = (parent, b) => { const p = panel(parent, b), W = 980, g = svg(p, W, 80, b.title), tot = b.parts.reduce((a, x) => a + x[1], 0); let x = 0;
+    b.parts.forEach(([label, val, t]) => { const w = (val / tot) * W; tipOn(s('rect', { x: x + 1, y: 6, width: Math.max(w - 2, 1), height: 42, rx: 4, fill: tone(t) }, g), `${label}: ${val} (${(100 * val / tot).toFixed(1)}%)`);
+      if (w > 70) s('text', { x: x + 10, y: 68, class: 'lbl-b' }, g, `${label} ${(100 * val / tot).toFixed(0)}%`); x += w; });
+    legend(p, b.parts.map(([l, v, t]) => [`${l} ${v}`, t])); if (b.note) R.callout(p, { html: b.note }); };
+
+  function timeAxis(g, x0, x1, y, a, z, ticks) { s('line', { x1: x0, x2: x1, y1: y, y2: y, stroke: css('--rule-2') }, g);
+    (ticks || []).forEach(t => { const x = x0 + ((T(t.at) - a) / (z - a)) * (x1 - x0); s('line', { x1: x, x2: x, y1: y, y2: y + 4, stroke: css('--rule-2') }, g); s('text', { x, y: y + 16, 'text-anchor': 'middle', class: 'ax' }, g, t.label); }); }
+
+  R.dots = (parent, b) => { const p = panel(parent, b), W = 480, L = 40, Rr = 14, H = b.yMax ? 160 : 110, B = H - 30, a = T(b.start), z = T(b.end), g = svg(p, W, H, b.title);
+    const X = t => L + ((T(t) - a) / (z - a)) * (W - L - Rr);
+    if (b.yMax) [0, b.yMax / 2, b.yMax].forEach(v => { const y = B - (v / b.yMax) * (B - 10); s('line', { x1: L, x2: W - Rr, y1: y, y2: y, stroke: css('--rule') }, g); s('text', { x: L - 6, y: y + 3.5, 'text-anchor': 'end', class: 'ax' }, g, v + (b.yUnit || '')); });
+    timeAxis(g, L, W - Rr, B, a, z, b.ticks);
+    b.points.forEach((pt, i) => { const x = X(pt.t), y = b.yMax ? B - (Math.min(pt.y, b.yMax) / b.yMax) * (B - 10) : 22 + (i % 3) * 18;
+      if (b.yMax) s('line', { x1: x, x2: x, y1: B, y2: y, stroke: tone(pt.tone), 'stroke-width': 2 }, g);
+      tipOn(s('circle', { cx: x, cy: y, r: 5.5, fill: tone(pt.tone), stroke: css('--surface'), 'stroke-width': 2 }, g), pt.tip); });
+    if (b.legend) legend(p, b.legend); if (b.note) R.callout(p, { html: b.note }); };
+
+  R.heatmap = (parent, b) => { const p = panel(parent, b), W = 980, L = b.left || 240, rh = 40, cols = b.cols, cw = (W - L - 6) / cols, g = svg(p, W, b.rows.length * rh + 46, b.title);
+    const defs = s('defs', {}, g), pat = s('pattern', { id: 'hatch', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+    s('rect', { width: 6, height: 6, fill: css('--rule') }, pat); s('line', { x1: 0, y1: 0, x2: 0, y2: 6, stroke: css('--blind'), 'stroke-width': 2.5 }, pat);
+    b.rows.forEach((r, i) => { const y = 6 + i * rh; s('text', { x: 0, y: y + 16, class: 'lbl-b' }, g, r.label); if (r.sub) s('text', { x: 0, y: y + 31, class: 'ax' }, g, r.sub);
+      r.cells.forEach((c, j) => { if (!c) return; tipOn(s('rect', { x: L + j * cw + 1, y: y + 2, width: cw - 2, height: rh - 8, rx: 3, fill: c.state === 'blind' ? 'url(#hatch)' : tone(c.state) }, g), c.tip); }); });
+    const yb = 6 + b.rows.length * rh + 4; Object.entries(b.colLabels || {}).forEach(([j, label]) => s('text', { x: L + j * cw + cw / 2, y: yb + 12, 'text-anchor': 'middle', class: 'ax' }, g, label));
+    if (b.marker) { const x = L + b.marker.at * cw; s('line', { x1: x, x2: x, y1: 0, y2: yb, stroke: css('--ink'), 'stroke-dasharray': '3 3' }, g); s('text', { x: x - 6, y: yb + 30, 'text-anchor': 'end', class: 'lbl-b' }, g, b.marker.label); }
+    if (b.legend) legend(p, b.legend); if (b.note) R.callout(p, { html: b.note }); };
+
+  R.timeline = (parent, b) => { const p = panel(parent, b), W = 980, L = b.left || 210, Rr = 20, lh = 50, a = T(b.start), z = T(b.end), H = 36 + b.lanes.length * lh + 30, g = svg(p, W, H, b.title);
+    const X = t => L + ((T(t) - a) / (z - a)) * (W - L - Rr), base = 26 + b.lanes.length * lh;
+    (b.ticks || []).forEach(t => { const x = X(t.at); s('line', { x1: x, x2: x, y1: 18, y2: base, stroke: css('--rule') }, g); s('text', { x, y: base + 16, 'text-anchor': 'middle', class: 'ax' }, g, t.label); });
+    if (b.now) { const x = X(b.now); s('line', { x1: x, x2: x, y1: 14, y2: base + 4, stroke: css('--ink'), 'stroke-width': 1.5 }, g); s('text', { x, y: base + 30, 'text-anchor': 'middle', class: 'lbl-b' }, g, 'now'); }
+    b.lanes.forEach((ln, i) => { const y = 30 + i * lh; s('text', { x: 0, y: y + 17, class: 'lbl-b' }, g, ln.label);
+      (ln.segments || []).forEach(sg => tipOn(s('rect', { x: X(sg.from), y, width: Math.max(2, X(sg.to) - X(sg.from)), height: 26, rx: 4, fill: tone(sg.tone), opacity: sg.tone === 'blind' ? 0.6 : 1 }, g), sg.tip));
+      if (ln.note) s('text', { x: X(ln.note.at), y: y + 17, 'text-anchor': 'middle', class: 'lbl-b' }, g, ln.note.text);
+      (ln.marks || []).forEach(m => { const x = X(m.at), yy = y - 12; let n;
+        if (m.shape === 'detect') n = s('path', { d: `M${x},${yy + 5} l6,-10 h-12 z`, fill: css('--ink') }, g);
+        else if (m.shape === 'owner') n = s('circle', { cx: x, cy: yy, r: 5, fill: css('--ink') }, g);
+        else if (m.shape === 'cause') n = s('path', { d: `M${x},${yy - 6} l6,6 l-6,6 l-6,-6 z`, fill: css('--ink') }, g);
+        else n = s('rect', { x: x - 5, y: yy - 5, width: 10, height: 10, fill: css('--ink') }, g);
+        tipOn(n, m.tip || m.shape); }); });
+    legend(p, b.legend || [['open', 'crit'], ['flagged, no owner', 'blind']]); const k = h('div', 'legend', p); k.textContent = '▲ detected   ● owner   ◆ cause   ■ fix shipped'; if (b.note) R.callout(p, { html: b.note }); };
+
+  R.steps = (parent, b) => { const p = panel(parent, b); (b.items || []).forEach((x, i) => { const st = h('div', 'step ' + (x.state === 'done' ? '' : x.state || ''), p);
+    h('span', 'dot', st, x.state === 'done' ? '✓' : x.state === 'block' ? '!' : String(i + 1)); const w = h('div', 'what', st, x.title); if (x.text) h('span', '', w, x.text); h('span', 'when', st, x.when || ''); }); };
+
+  R.table = (parent, b) => { const p = panel(parent, b), sc = h('div', 'scroll', p), t = h('table', '', sc), hr = h('tr', '', h('thead', '', t)); (b.head || []).forEach(c => h('th', '', hr, c));
+    const tb = h('tbody', '', t); (b.rows || []).forEach(r => { const tr = h('tr', '', tb); r.forEach(c => html('td', '', tr, c)); }); if (b.note) R.callout(p, { html: b.note }); };
+
+  R.bets = (parent, b) => { const g = h('div', 'bets', parent); (b.items || []).forEach(x => { const p = h('div', 'panel bet' + (x.lead ? ' lead' : ''), g);
+    if (x.tag) h('span', 'tag', p, x.tag); h('h3', '', p, x.title); [['Evidence', x.why], ['Build', x.build], ['Pre-mortem', x.premortem]].forEach(([k, v]) => { if (!v) return; const kv = h('div', 'kv', p); h('b', '', kv, k); h('span', '', kv, v); });
+    if (x.target) h('div', 'target', p, x.target); }); };
+
+  R.decisions = (parent, b) => { const g = h('div', 'board', parent); (b.items || []).forEach((x, i) => { const p = h('div', 'panel dec', g); h('span', 'n', p, i + 1); h('h3', '', p, x.title); if (x.text) h('p', '', p, x.text); if (x.rec) html('p', 'rec', p, x.rec); }); };
+
+  (S.sections || []).forEach(sec => { const el = h('section', '', root); if (sec.id) el.id = sec.id; const sh = h('div', 'sh', el); h('span', 'k', sh, sec.key || ''); h('h2', '', sh, sec.title); if (sec.lede) h('p', '', sh, sec.lede); (sec.blocks || []).forEach(b => block(el, b)); });
+  if (S.method || S.caveats) { const f = h('footer', 'foot', root); if (S.method) html('p', '', f, '<b>Method.</b> ' + S.method); if (S.caveats) html('p', '', f, '<b>Caveats.</b> ' + S.caveats); }
+
+  const tip = document.getElementById('tip');
+  document.addEventListener('pointermove', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (!t) { tip.hidden = true; return; } tip.textContent = t.getAttribute('data-tip'); tip.hidden = false; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px'; });
+  document.addEventListener('focusin', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (!t) return; const r = t.getBoundingClientRect(); tip.textContent = t.getAttribute('data-tip'); tip.hidden = false; tip.style.left = r.right + 'px'; tip.style.top = r.top + 'px'; });
+})();
+</script>

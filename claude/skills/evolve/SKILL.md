@@ -13,6 +13,7 @@ Keep the user outcome, required behavior, and resource limits fixed unless autho
 1. Read `.agent/current.json`, `.agent/progress.md`, recent `.agent/experiments.jsonl`, and the improvement specification when present.
    Resume active work and retain prior results and rejected approaches; use adopted state locations when they differ.
 2. Identify the outcome, completion criteria, and regression limits.
+   When the outcome recurs, register it as a [hill](../../../docs/processes/hillclimb.md#hills) so later work starts from its measured series.
    Record how each metric relates to the user outcome in `metricClaims`; correct unsupported proxies before optimizing them.
 3. Exercise the existing measurement on the real execution path.
    Verify its inputs, evidence, tested identity, and error handling.
