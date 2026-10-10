@@ -72,7 +72,7 @@ Match depth to the ask:
 2. **Evidence:** numbers with value, unit, baseline and source; tables where facts are parallel.
 3. **Visuals built from data:**
    - in the terminal, [`viz`](../../claude/tools/README.md#viz) charts (bars, grouped bars, sparklines, pass/fail strips, stacks, waterfalls, timelines, tables), never typed by hand;
-   - for depth, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and published as an artifact; `viz brief` prints the same spec as the terminal status, and the [operator review](https://claude.ai/artifact/LDsG9LBZzVny7k9acpRoa8) shows the bar.
+   - for depth, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and published as an artifact; `viz brief` prints the same spec as the terminal status, and the [operator review](https://github.com/tangle-network/discovery-lab/blob/master/reports/climb/operator-review-20261010.html) shows the bar.
 4. **Scoreboard:** every registered prediction as PASS, FAIL or PENDING beside its measured value.
 5. **Proposals:** each states today's number, the number to beat, the test, the owner and the first step, ranked by impact for the effort.
 6. **One link** to the full page, and one line naming the next action.
