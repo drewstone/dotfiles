@@ -722,22 +722,31 @@ class IgnoredClassifierTest(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'the storage_lifecycle handoff is Linux-only')
+# Linux only: on macOS the installer would boot out and replace the live com.drew.wt-reaper agent.
+@unittest.skipUnless(sys.platform.startswith('linux'), 'runs the installer, which on macOS touches the live LaunchAgent')
 class InstallerDefersToStorageLifecycleTest(unittest.TestCase):
     def test_install_skips_timer_where_storage_lifecycle_is_deployed(self):
         # tangle-tools#239: the dotfiles installer re-enabled wt-reaper.timer on
-        # the GTR, beside the salvaging lifecycle that owns deletion there.
+        # the GTR, beside the salvaging lifecycle that owns deletion there. GTR's
+        # host config lists no tiers, so the lifecycle runs its default tiers,
+        # worktrees included.
         installer = os.path.join(HERE, '..', 'git', 'worktree-reaper', 'install.sh')
         with tempfile.TemporaryDirectory() as home:
-            os.makedirs(os.path.join(home, '.local/share/tangle-tools/storage_lifecycle'))
-            proc = subprocess.run(['bash', installer], env=dict(os.environ, HOME=home),
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hosts = os.path.join(home, '.local/share/tangle-tools/storage_lifecycle/hosts')
+            os.makedirs(hosts)
+            with open(os.path.join(hosts, 'testhost.json'), 'w') as fh:
+                json.dump({'docker_cache_bytes': 1}, fh)
+            shim = os.path.join(home, 'bin')
+            os.makedirs(shim)
+            with open(os.path.join(shim, 'hostname'), 'w') as fh:
+                fh.write('#!/bin/sh\necho testhost\n')
+            os.chmod(os.path.join(shim, 'hostname'), 0o755)
+            env = dict(os.environ, HOME=home, PATH=shim + os.pathsep + os.environ['PATH'])
+            proc = subprocess.run(['bash', installer], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertIn(b'storage_lifecycle owns worktree removal', proc.stdout)
+            self.assertIn(b'storage_lifecycle runs the worktrees tier', proc.stdout)
             self.assertFalse(os.path.exists(os.path.join(home, '.local/bin/wt-reaper')))
             self.assertFalse(os.path.exists(os.path.join(home, '.config/systemd/user/wt-reaper.timer')))
-
-if __name__ == '__main__':
-    unittest.main()
 
 
 class InstallOwnershipTest(unittest.TestCase):
@@ -777,3 +786,7 @@ class InstallOwnershipTest(unittest.TestCase):
 
     def test_no_host_config_keeps_wt_reaper(self):
         self.assertFalse(self.owns(None))
+
+
+if __name__ == '__main__':
+    unittest.main()
