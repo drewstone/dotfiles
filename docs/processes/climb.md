@@ -128,8 +128,9 @@ Waiting for someone to rate later does not work: on 2026-10-10, 421 logged skill
 
 Guard each reward against gaming and leaks:
 - **Proxies:** fewer status pulls count only when push volume did not rise; fewer corrections count only beside outcomes, so hedged output cannot win.
-- **Privacy:** transcripts and the person's messages go only to Claude seats through the CLI bridge, never to third-party model APIs.
-- **Spend:** judges, labelers and red teams run on subscription surfaces, never on per-token APIs.
+- **Privacy:** agent-runtime AgentProfiles and trace analysts may read transcripts and the person's messages on any model, as Drew decided on 2026-10-10.
+  Before transcript content reaches a non-Claude model, the analyst pipeline removes `~/.config/privacy/denylist` entries, phone and card numbers, and secrets; if redaction cannot run, the step fails closed.
+- **Spend:** judges, labelers and red teams prefer subscription surfaces; trace analysts may use per-token Router models within a logged budget cap.
 
 ## Corrections are data
 
