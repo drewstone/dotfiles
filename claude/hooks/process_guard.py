@@ -926,9 +926,9 @@ def rule_mac_build(cmd):
     shown = " ".join(cmd.argv)[:80]
     return ("mac-build", f"{kind} on the Mac",
             f"`{shown}` is a {kind}, and this is the Mac: 10 cores, and agents' installs, builds and full test runs drove "
-            "its load to 120. Run it on gtr or a Beelink: `ssh gtr 'cd ~/code/<repo> && <command>'` "
-            "(or ssh beelink1-wsl / beelink2-wsl), or after pushing, "
-            "`ssh gtr 'beelink-gate beelink2 <repo-url> <full-sha> -- <command>'`. Single test files stay local: "
+            "its load to 120. Run it on a Beelink: push, then `ssh gtr 'beelink-gate beelink2 <repo-url> <full-sha> -- "
+            "<command>'` (the gate does the frozen install; gtr itself refuses installs into its worktrees), or "
+            "`ssh beelink1-wsl 'cd ~/code/<repo> && <command>'` (beelink2-wsl when beelink1 is busy). Single test files stay local: "
             f"`pnpm exec vitest run path/to/file.test.ts` (up to {MAX_TEST_FILES} files). "
             "Set CC_ALLOW_MAC_BUILD=1 only with Drew's authorization for this run.", "CC_ALLOW_MAC_BUILD")
 
