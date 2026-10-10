@@ -62,6 +62,7 @@ Migration is optional: check tracked files, compare collisions, and verify every
 
 Each skill includes `## Log the run` with its invocation of [skill-run-log](../tools/skill-run-log).
 The helper appends to `skill-runs.jsonl` in the repository's state directory; `skill-run-log --dir` prints it.
+It prints the row id; keep that id with the output, and pass `--pr <url>` when the run produced or worked on a pull request, so the outcome joiner can attach what happened to it.
 Rows written before 2026-10-05 remain in each repository's `.agent/` or `.evolve/` log.
 
 ```bash
