@@ -10,16 +10,17 @@
   --accent: #2a78d6; --accent-ink: #184f95; --accent-wash: #e3eefb;
   --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --crit: #d03b3b; --blind: #9aa3ad;
   --good-ink: #0a7d0a; --crit-ink: #b42f2f; --warn-ink: #946700;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
   --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0b0e11; --surface: #13171b; --ink: #f1f3f5; --ink-2: #b6bec7; --muted: #8a929b; --rule: #242a31; --rule-2: #313840;
-  --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a; --good-ink: #3fcf3f; --crit-ink: #ff7b7b; --warn-ink: #fab219; --blind: #5d6670; color-scheme: dark; } }
+  --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a; --good-ink: #3fcf3f; --crit-ink: #ff7b7b; --warn-ink: #fab219; --blind: #5d6670; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; color-scheme: dark; } }
 :root[data-theme="dark"] {
   --bg: #0b0e11; --surface: #13171b; --ink: #f1f3f5; --ink-2: #b6bec7; --muted: #8a929b; --rule: #242a31; --rule-2: #313840;
-  --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a; --good-ink: #3fcf3f; --crit-ink: #ff7b7b; --warn-ink: #fab219; --blind: #5d6670; color-scheme: dark; }
+  --accent: #3987e5; --accent-ink: #86b6ef; --accent-wash: #15253a; --good-ink: #3fcf3f; --crit-ink: #ff7b7b; --warn-ink: #fab219; --blind: #5d6670; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; color-scheme: dark; }
 * { box-sizing: border-box; }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .wrap { max-width: 1160px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 80px; }
@@ -107,6 +108,39 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: t
 .dec .rec b { color: var(--good-ink); }
 .foot { margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--rule-2); font-size: 13px; color: var(--muted); display: grid; gap: 8px; }
 .foot p { max-width: 100ch; }
+/* One grid for all rows, so every track has the same length and the bars share one scale. */
+.hb, .wf { display: grid; grid-template-columns: minmax(0, min(230px, 38%)) minmax(0, 1fr) auto; gap: 7px 10px; align-items: center; font-size: 13.5px; }
+.hb.sh, .wf { grid-template-columns: minmax(0, min(230px, 38%)) minmax(0, 1fr) auto auto; }
+.hb .r, .wf .r { display: contents; }
+.hb .lb, .wf .lb { overflow-wrap: anywhere; line-height: 1.3; }
+@media (max-width: 560px) { .hb, .hb.sh, .wf { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 3px; } .hb:not(.sh) { grid-template-columns: minmax(0, 1fr) auto; } .hb .lb, .wf .lb { grid-column: 1 / -1; margin-top: 6px; } }
+.wf .lb small { display: block; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.hb .rem .lb, .wf .rem .lb { color: var(--muted); font-style: italic; }
+.hb .tr { position: relative; height: 14px; background: var(--rule); border-radius: 3px; }
+.wf .tr { position: relative; height: 16px; border-bottom: 1px solid var(--rule); }
+.hb .fl, .wf .sg { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.hb .fl { left: 0; }
+.wf .sg { min-width: 3px; }
+.hb .in { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--ink); }
+.hb .tg { position: absolute; top: -4px; bottom: -4px; border-left: 1.5px dashed var(--crit-ink); }
+.hb .v, .wf .v { font-family: var(--mono); font-size: 12.5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stk { display: flex; gap: 2px; height: 30px; border-radius: 6px; overflow: hidden; }
+.stk > i { display: block; }
+.lg { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto auto; gap: 5px 10px; font-size: 13px; margin-top: 12px; align-items: center; }
+.lg i { width: 10px; height: 10px; border-radius: 2px; }
+.lg .n { font-family: var(--mono); font-size: 12.5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sum { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); margin-top: 10px; overflow-wrap: anywhere; }
+.glyph { fill: var(--surface); font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.evs { display: grid; border-left: 2px solid var(--rule); margin-left: 6px; align-content: start; }
+.evs .e { display: grid; grid-template-columns: 50px 56px minmax(0, 1fr); gap: 10px; padding: 6px 0 6px 14px; position: relative; font-size: 14px; }
+.evs .e::before { content: ""; position: absolute; left: -7px; top: 11px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--blind); }
+.evs .e.good::before { border-color: var(--good); } .evs .e.crit::before { border-color: var(--crit); } .evs .e.warn::before, .evs .e.serious::before { border-color: var(--warn); } .evs .e.accent::before { border-color: var(--accent); }
+.evs .tm { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.evs .gp { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; }
+@media (max-width: 520px) { .evs .e { grid-template-columns: 46px minmax(0, 1fr); } .evs .gp { grid-column: 1; grid-row: 2; text-align: left; } .evs .tx { grid-column: 2; grid-row: 1 / span 2; } }
+details.data { margin-top: 10px; }
+details.data summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+details.data table { margin-top: 6px; font-size: 13px; }
 .wrap.wide { max-width: none; padding-inline: clamp(16px, 2.2vw, 44px); }
 .hills { display: grid; }
 .hl { display: grid; grid-template-columns: minmax(170px, 1.25fr) minmax(150px, 1fr) minmax(76px, .5fr) minmax(90px, .7fr) minmax(110px, .8fr) minmax(200px, 2fr) minmax(96px, .7fr); gap: 0 16px; align-items: center; padding: 10px 4px 10px 12px; border-bottom: 1px solid var(--rule); border-left: 4px solid var(--sev, transparent); }
@@ -140,33 +174,38 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: t
 <script>
 (function () {
   'use strict';
+  // `viz brief` checks the spec and attaches each chart's model (values, scale fractions,
+  // formatted text); this script lays them out. Charts are drawn at the panel's real
+  // pixel width and redrawn on resize, so their text stays legible on a phone, and every
+  // color is a CSS variable, so a theme switch repaints them.
   const S = JSON.parse(document.getElementById('brief').textContent);
   const NS = 'http://www.w3.org/2000/svg';
-  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const css = (v) => `var(${v})`;
   const TONE = { good: '--good', warn: '--warn', serious: '--serious', crit: '--crit', blind: '--blind', accent: '--accent' };
   const tone = (t) => css(TONE[t] || '--accent');
+  const series = (i) => css(`--s${(i % 8) + 1}`);
+  const partColor = (pt, i) => (pt.tone ? tone(pt.tone) : series(pt.groupIndex != null ? pt.groupIndex : i));
   function h(tag, cls, parent, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; if (parent) parent.appendChild(n); return n; }
   function html(tag, cls, parent, markup) { const n = h(tag, cls, parent); n.innerHTML = markup || ''; return n; }
-  function s(tag, attrs, parent, text) { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; if (parent) parent.appendChild(n); return n; }
-  function svg(parent, w, hgt, label) { return s('svg', { viewBox: `0 0 ${w} ${hgt}`, role: 'img', 'aria-label': label || '' }, parent); }
+  // Presentation attributes cannot hold var(); colors go through style so they follow the theme.
+  function s(tag, attrs, parent, text) { const n = document.createElementNS(NS, tag); for (const k in attrs) { const v = attrs[k]; if ((k === 'fill' || k === 'stroke') && String(v).startsWith('var(')) n.style.setProperty(k, v); else n.setAttribute(k, v); } if (text != null) n.textContent = text; if (parent) parent.appendChild(n); return n; }
+  function svg(parent, w, hgt, label) { return s('svg', { viewBox: `0 0 ${w} ${hgt}`, width: w, height: hgt, role: 'img', 'aria-label': label || '' }, parent); }
+  function chartW(p) { const cs = getComputedStyle(p); return Math.max(260, Math.floor(p.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight))); }
   function tipOn(n, t) { if (t) { n.setAttribute('data-tip', t); n.setAttribute('tabindex', '0'); } return n; }
-  function legend(parent, items) { const l = h('div', 'legend', parent); items.forEach(([label, t]) => { const sp = h('span', '', l); const i = h('i', '', sp); i.style.background = `var(${TONE[t] || '--accent'})`; sp.append(label); }); }
+  function legend(parent, items) { const l = h('div', 'legend', parent); items.forEach(([label, t]) => { const sp = h('span', '', l); const i = h('i', '', sp); i.style.background = String(t).startsWith('var(') ? t : `var(${TONE[t] || '--accent'})`; sp.append(label); }); }
+  function sum(parent, lines) { lines.filter(Boolean).forEach((line) => h('div', 'sum', parent, line)); }
+  function twin(parent, head, rows) { const d = h('details', 'data', parent); h('summary', '', d, 'Data'); const sc = h('div', 'scroll', d), t = h('table', '', sc), hr = h('tr', '', h('thead', '', t)); head.forEach((c) => h('th', '', hr, c)); const tb = h('tbody', '', t); rows.forEach((r) => { const tr = h('tr', '', tb); r.forEach((c) => h('td', '', tr, c)); }); }
+  // Evenly spaced axis labels that never overlap; the last one is always shown.
+  function axisIdx(n, cell, label) { const every = Math.max(1, Math.ceil((label + 6) / cell)), out = []; for (let i = 0; i < n; i += every) out.push(i); const last = n - 1; if (n && out[out.length - 1] !== last) { while (out.length && (last - out[out.length - 1]) * cell < label + 6) out.pop(); out.push(last); } return out; }
+  const textW = (t) => String(t).length * 6.4;
+  function colPath(x, y, w, hh) { if (hh <= 0) return ''; const r = Math.min(4, w / 2, hh); return `M${x},${y + hh}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hh}Z`; }
   const T = (iso) => new Date(iso).getTime();
 
   const root = document.getElementById('root');
-  // Options for a page that lives on a screen: a fixed theme, the full width, and a reload when its data may change.
-  if (S.theme === 'dark' || S.theme === 'light') document.documentElement.setAttribute('data-theme', S.theme);
-  if (S.wide) root.classList.add('wide');
-  if (S.refresh > 0) setTimeout(() => location.reload(), S.refresh * 1000);
-  const mast = h('header', 'mast', root);
-  const eb = h('div', 'eyebrow', mast); (S.eyebrow || []).forEach(x => h('span', '', eb, x));
-  const th = h('h1', 'thesis', mast, S.thesis || ''); if (S.thesisAlert) h('span', 'alert', th, S.thesisAlert);
-  if (S.dek) h('p', 'dek', mast, S.dek);
-  if (S.stats && S.stats.length) { const st = h('div', 'strip', mast); st.style.setProperty('--n', Math.min(S.stats.length, 5)); S.stats.forEach(x => { const d = h('div', '', st); h('span', 'v' + (x.tone ? ' tone-' + x.tone : ''), d, x.v); h('span', 'l', d, x.l); }); }
-
   const R = {};
   function panel(parent, b) { const p = h('div', 'panel', parent); if (b.title) h('h3', '', p, b.title); if (b.sub) h('p', 'sub', p, b.sub); return p; }
   function block(parent, b) { (R[b.type] || R.text)(parent, b); }
+  const note = (p, b) => { if (b.note) R.callout(p, { html: b.note }); };
 
   R.text = (parent, b) => html('div', 'panel', parent, b.html || '');
   R.callout = (parent, b) => html('p', 'callout', parent, b.html || '');
@@ -183,67 +222,120 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: t
     if (x.tiers) { const tr = h('div', 'tiers', p); x.tiers.forEach((name, i) => h('span', i === x.on ? 'on' : '', tr, name)); }
     if (x.fine) h('span', 'fine', p, x.fine); }); };
 
-  R.hist = (parent, b) => { const p = panel(parent, b), v = b.values, W = 980, H = 220, L = 38, B = 30, Tp = 14;
-    // Round the axis up to 1, 2 or 5 × 10^k so every tick names a readable value.
-    const nice = (m) => { const p = Math.pow(10, Math.floor(Math.log10(m))), f = m / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
+  R.hist = (parent, b) => { const p = panel(parent, b), m = b.model, v = b.values, W = chartW(p), H = 220, L = 40, B = 30, Tp = 14;
+    const nice = (x) => { const e = Math.pow(10, Math.floor(Math.log10(x))), f = x / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e; };
     const max = b.max || nice(Math.max(...v) || 1), bw = (W - L - 8) / v.length, g = svg(p, W, H, b.title);
     const ticks = b.ticks || [0, max / 4, max / 2, (3 * max) / 4, max].filter(Number.isInteger);
     ticks.forEach(t => { const y = H - B - (t / max) * (H - B - Tp); s('line', { x1: L, x2: W, y1: y, y2: y, stroke: css('--rule') }, g); s('text', { x: L - 6, y: y + 3.5, 'text-anchor': 'end', class: 'ax' }, g, t); });
-    const peak = Math.max(...v);
+    const peak = Math.max(...v), labels = b.labels || [];
+    const shown = new Set(b.every ? labels.map((_, i) => i).filter(i => i % b.every === 0) : axisIdx(v.length, bw, Math.max(0, ...labels.map(textW))));
     v.forEach((val, i) => { const bh = (val / max) * (H - B - Tp), x = L + i * bw + 2;
-      tipOn(s('rect', { x, y: H - B - bh, width: Math.max(bw - 4, 1), height: Math.max(bh, 1), rx: 3, fill: (b.highlightMax && val === peak) || (b.hot || []).includes(i) ? tone('crit') : tone(b.tone || 'accent') }, g), `${(b.labels || [])[i] || i} · ${val}${b.unit ? ' ' + b.unit : ''}`);
-      if (b.labels && i % (b.every || 1) === 0) s('text', { x: x + bw / 2 - 2, y: H - 10, 'text-anchor': 'middle', class: 'ax' }, g, b.labels[i]); });
-    s('line', { x1: L, x2: W, y1: H - B, y2: H - B, stroke: css('--rule-2') }, g); if (b.note) R.callout(p, { html: b.note }); };
+      tipOn(s('rect', { x, y: H - B - bh, width: Math.max(bw - 4, 1), height: Math.max(bh, val > 0 ? 1 : 0), rx: 3, fill: (b.highlightMax && val === peak) || (b.hot || []).includes(i) ? tone('crit') : tone(b.tone || 'accent') }, g), `${labels[i] || i + 1} · ${m.rows[i].valueText}`);
+      if (labels.length && shown.has(i)) s('text', { x: x + bw / 2 - 2, y: H - 10, 'text-anchor': 'middle', class: 'ax' }, g, labels[i]); });
+    s('line', { x1: L, x2: W, y1: H - B, y2: H - B, stroke: css('--rule-2') }, g);
+    twin(p, ['bucket', 'value'], m.rows.map(r => [r.label, r.valueText])); note(p, b); };
 
-  R.hbars = (parent, b) => { const p = panel(parent, b), rows = b.rows, W = b.width || 480, L = b.left || 150, rh = b.rowH || 28, Rr = 50;
-    const max = b.max || Math.max(...rows.map(r => r[1])) || 1, g = svg(p, W, rows.length * rh + 8, b.title);
-    rows.forEach((r, i) => { const y = 4 + i * rh, bw = Math.max(2, (r[1] / max) * (W - L - Rr));
-      s('text', { x: L - 10, y: y + rh / 2 + 4, 'text-anchor': 'end', class: 'lbl' }, g, r[0]);
-      tipOn(s('rect', { x: L, y: y + 5, width: bw, height: rh - 12, rx: 3, fill: (b.hot || []).includes(r[0]) ? tone('crit') : tone(b.tone || 'accent') }, g), r[3] || `${r[0]} · ${r[1]}${b.unit ? ' ' + b.unit : ''}`);
-      if (r[2] != null) { const ix = L + (r[2] / max) * (W - L - Rr); s('line', { x1: ix, x2: ix, y1: y + 5, y2: y + rh - 7, stroke: css('--ink'), 'stroke-width': 2 }, g); }
-      s('text', { x: L + bw + 6, y: y + rh / 2 + 4, class: 'lbl-b' }, g, (b.fmt === 'fixed0' ? Number(r[1]).toFixed(0) : r[1]) + (b.suffix || '')); });
-    s('line', { x1: L, x2: L, y1: 4, y2: 4 + rows.length * rh, stroke: css('--rule-2') }, g); if (b.note) R.callout(p, { html: b.note }); };
+  R.hbars = (parent, b) => { const p = panel(parent, b), m = b.model, share = m.rows.some(r => r.shareText), w = h('div', 'hb' + (share ? ' sh' : ''), p);
+    m.rows.forEach(r => { const row = h('div', 'r' + (r.remainder ? ' rem' : ''), w); h('span', 'lb', row, r.label); const tr = h('span', 'tr', row);
+      const f = h('i', 'fl', tr); f.style.width = `${r.frac == null ? 0 : Math.min(1, r.frac) * 100}%`; f.style.background = r.tone ? tone(r.tone) : tone(b.tone || 'accent');
+      if (r.innerFrac != null) h('i', 'in', tr).style.left = `${r.innerFrac * 100}%`;
+      if (m.targetFrac != null) h('i', 'tg', tr).style.left = `${m.targetFrac * 100}%`;
+      tipOn(tr, r.tip || `${r.label} · ${r.valueText}${r.shareText ? ' · ' + r.shareText : ''}`);
+      h('span', 'v', row, r.valueText); if (share) h('span', 'v', row, r.shareText || ''); });
+    sum(p, [[m.scaleText, m.targetText ? '┆ ' + m.targetText : null].filter(Boolean).join(' · ')]); note(p, b); };
 
-  R.stack = (parent, b) => { const p = panel(parent, b), W = 980, g = svg(p, W, 80, b.title), tot = b.parts.reduce((a, x) => a + x[1], 0); let x = 0;
-    b.parts.forEach(([label, val, t]) => { const w = (val / tot) * W; tipOn(s('rect', { x: x + 1, y: 6, width: Math.max(w - 2, 1), height: 42, rx: 4, fill: tone(t) }, g), `${label}: ${val} (${(100 * val / tot).toFixed(1)}%)`);
-      if (w > 70) s('text', { x: x + 10, y: 68, class: 'lbl-b' }, g, `${label} ${(100 * val / tot).toFixed(0)}%`); x += w; });
-    legend(p, b.parts.map(([l, v, t]) => [`${l} ${v}`, t])); if (b.note) R.callout(p, { html: b.note }); };
+  R.stack = (parent, b) => { const p = panel(parent, b), m = b.model, bar = h('div', 'stk', p);
+    m.parts.forEach((pt, i) => { const seg = h('i', '', bar); seg.style.flex = `${pt.value} 1 0`; seg.style.minWidth = pt.value > 0 ? '2px' : '0'; seg.style.background = partColor(pt, i); tipOn(seg, `${pt.label}: ${pt.valueText} (${pt.shareText})`); });
+    const lg = h('div', 'lg', p); m.parts.forEach((pt, i) => { h('i', '', lg).style.background = partColor(pt, i); h('span', '', lg, pt.label); h('span', 'n', lg, pt.valueText); h('span', 'n', lg, pt.shareText); });
+    sum(p, [m.summary, m.groupSummary]); note(p, b); };
+
+  R.waterfall = (parent, b) => { const p = panel(parent, b), m = b.model, w = h('div', 'wf', p);
+    m.parts.forEach((pt, i) => { const row = h('div', 'r' + (pt.remainder ? ' rem' : ''), w); const lb = h('span', 'lb', row, pt.label); if (pt.range) h('small', '', lb, pt.range);
+      const tr = h('span', 'tr', row), sg = h('i', 'sg', tr); sg.style.left = `${pt.startFrac * 100}%`; sg.style.width = `${(pt.endFrac - pt.startFrac) * 100}%`; sg.style.background = partColor(pt, i);
+      tipOn(tr, `${pt.label}: ${pt.valueText} (${pt.shareText})${pt.range ? ' · ' + pt.range : ''}`);
+      h('span', 'v', row, pt.valueText); h('span', 'v', row, pt.shareText); });
+    sum(p, [m.summary, m.groupSummary]); note(p, b); };
+
+  R.grouped = (parent, b) => { const p = panel(parent, b), m = b.model, W = chartW(p), L = 46, Rr = 8, Tp = 22, PH = 170;
+    const notes = m.categories.some(c => c.note), H = Tp + PH + (notes ? 38 : 24), base = Tp + PH, g = svg(p, W, H, b.title);
+    const nC = m.categories.length, nS = m.series.length, band = (W - L - Rr) / nC;
+    const bw = Math.min(24, Math.max(2, (band * 0.78 - 2 * (nS - 1)) / nS)), gw = nS * bw + 2 * (nS - 1), y = (f) => base - f * PH;
+    const color = (sr) => (sr.tone ? tone(sr.tone) : series(sr.index));
+    m.ticks.forEach(t => { s('line', { x1: L, x2: W - Rr, y1: y(t.frac), y2: y(t.frac), stroke: css('--rule') }, g); s('text', { x: L - 6, y: y(t.frac) + 3.5, 'text-anchor': 'end', class: 'ax' }, g, t.text); });
+    const shown = new Set(axisIdx(nC, band, Math.max(...m.categories.map(c => textW(c.label)), ...m.categories.map(c => textW(c.note || '')))));
+    m.categories.forEach((c, ci) => { const x0 = L + ci * band + (band - gw) / 2, placed = [];
+      m.series.forEach((sr, si) => { const cell = m.cells[ci][si], x = x0 + si * (bw + 2), tip = `${c.label} · ${sr.label} · ${cell.text}`;
+        if (cell.frac == null) { tipOn(s('text', { x: x + bw / 2, y: base - 4, 'text-anchor': 'middle', class: 'ax' }, g, '–'), tip); return; }
+        const hh = cell.frac > 0 ? Math.max(1, cell.frac * PH) : 0;
+        if (hh) tipOn(s('path', { d: colPath(x, base - hh, bw, hh), fill: color(sr) }, g), tip);
+        else tipOn(s('rect', { x, y: base - 1, width: bw, height: 1, fill: css('--muted') }, g), tip);
+        const lab = cell.of != null ? cell.text.split(' ').pop() : cell.text;
+        // A value label that would overlap a neighbor's moves up a line instead of colliding.
+        if (m.labels === 'all' && textW(lab) <= band / nS + 2) { const cx = x + bw / 2, half = textW(lab) / 2; let ly = base - hh - 5;
+          while (ly > 10 && placed.some(q => Math.abs(q.y - ly) < 12 && cx - half < q.x2 && cx + half > q.x1)) ly -= 12;
+          placed.push({ x1: cx - half, x2: cx + half, y: ly }); s('text', { x: cx, y: ly, 'text-anchor': 'middle', class: 'lbl-b' }, g, lab); } });
+      if (shown.has(ci)) { s('text', { x: L + ci * band + band / 2, y: base + 15, 'text-anchor': 'middle', class: 'ax' }, g, c.label); if (c.note) s('text', { x: L + ci * band + band / 2, y: base + 29, 'text-anchor': 'middle', class: 'ax' }, g, c.note); } });
+    s('line', { x1: L, x2: W - Rr, y1: base, y2: base, stroke: css('--rule-2') }, g);
+    if (m.targetFrac != null) { const ty = y(m.targetFrac); s('line', { x1: L, x2: W - Rr, y1: ty, y2: ty, stroke: css('--crit-ink'), 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, g); s('text', { x: W - Rr, y: ty - 5, 'text-anchor': 'end', class: 'lbl-b' }, g, m.targetText); }
+    legend(p, m.series.map(sr => [sr.label, color(sr)]));
+    twin(p, ['', ...m.series.map(sr => sr.label)], m.categories.map((c, ci) => [c.label + (c.note ? ` (${c.note})` : ''), ...m.cells[ci].map(x => x.text)]));
+    note(p, b); };
+
+  R.strip = (parent, b) => { const p = panel(parent, b), m = b.model, W = chartW(p), n = m.cells.length, cw = Math.min(42, W / n), top = m.notes.length ? 18 : 4, ch = 30, H = top + ch + 22, g = svg(p, W, H, b.title);
+    const fill = { ok: '--good', fail: '--crit', warn: '--warn', skip: '--blind', unknown: '--blind' };
+    let free = -Infinity;
+    m.cells.forEach((c, i) => { const x = i * cw;
+      tipOn(s('rect', { x: x + 1.5, y: top, width: Math.max(1, cw - 3), height: ch, rx: 4, fill: css(fill[c.status]), opacity: c.status === 'unknown' ? 0.45 : 1 }, g), `${c.t} · ${c.status}${c.note ? ' · ' + c.note : ''}`);
+      if (cw >= 14) s('text', { x: x + cw / 2, y: top + ch / 2 + 4.5, 'text-anchor': 'middle', class: 'glyph' }, g, c.glyph);
+      if (c.note) { const half = textW(c.note) / 2, nx = Math.max(half, Math.min(W - half, x + cw / 2)); if (nx - half >= free) { s('text', { x: nx, y: top - 5, 'text-anchor': 'middle', class: 'ax' }, g, c.note); free = nx + half + 4; } } });
+    const lw = Math.max(...m.cells.map(c => textW(c.t)));
+    axisIdx(n, cw, lw).forEach(i => { const cx = i * cw + cw / 2, end = cx + lw / 2 > W; s('text', { x: end ? W : cx, y: top + ch + 16, 'text-anchor': end ? 'end' : 'middle', class: 'ax' }, g, m.cells[i].t); });
+    sum(p, [m.summary, m.notes.length ? 'notes: ' + m.notes.join(' · ') : null]);
+    twin(p, ['time', 'status', 'note'], m.cells.map(c => [c.t, c.status, c.note || '']));
+    note(p, b); };
+
+  R.events = (parent, b) => { const p = panel(parent, b), m = b.model, k = Math.max(1, m.columns || 1), host = k > 1 ? h('div', 'cols', p) : p, per = Math.ceil(m.events.length / k);
+    if (k > 1) host.style.setProperty('--c', k);
+    for (let c = 0; c < k; c++) { const list = h('div', 'evs', host); m.events.slice(c * per, (c + 1) * per).forEach(e => { const row = h('div', 'e ' + e.status, list); h('span', 'tm', row, e.t); h('span', 'gp', row, e.gapText); html('span', 'tx', row, e.text); }); }
+    sum(p, [m.summary]); note(p, b); };
 
   function timeAxis(g, x0, x1, y, a, z, ticks) { s('line', { x1: x0, x2: x1, y1: y, y2: y, stroke: css('--rule-2') }, g);
     (ticks || []).forEach(t => { const x = x0 + ((T(t.at) - a) / (z - a)) * (x1 - x0); s('line', { x1: x, x2: x, y1: y, y2: y + 4, stroke: css('--rule-2') }, g); s('text', { x, y: y + 16, 'text-anchor': 'middle', class: 'ax' }, g, t.label); }); }
 
-  R.dots = (parent, b) => { const p = panel(parent, b), W = 480, L = 40, Rr = 14, H = b.yMax ? 160 : 110, B = H - 30, a = T(b.start), z = T(b.end), g = svg(p, W, H, b.title);
+  R.dots = (parent, b) => { const p = panel(parent, b), W = chartW(p), L = 40, Rr = 14, H = b.yMax ? 160 : 110, B = H - 30, a = T(b.start), z = T(b.end), g = svg(p, W, H, b.title);
     const X = t => L + ((T(t) - a) / (z - a)) * (W - L - Rr);
     if (b.yMax) [0, b.yMax / 2, b.yMax].forEach(v => { const y = B - (v / b.yMax) * (B - 10); s('line', { x1: L, x2: W - Rr, y1: y, y2: y, stroke: css('--rule') }, g); s('text', { x: L - 6, y: y + 3.5, 'text-anchor': 'end', class: 'ax' }, g, v + (b.yUnit || '')); });
     timeAxis(g, L, W - Rr, B, a, z, b.ticks);
     b.points.forEach((pt, i) => { const x = X(pt.t), y = b.yMax ? B - (Math.min(pt.y, b.yMax) / b.yMax) * (B - 10) : 22 + (i % 3) * 18;
       if (b.yMax) s('line', { x1: x, x2: x, y1: B, y2: y, stroke: tone(pt.tone), 'stroke-width': 2 }, g);
       tipOn(s('circle', { cx: x, cy: y, r: 5.5, fill: tone(pt.tone), stroke: css('--surface'), 'stroke-width': 2 }, g), pt.tip); });
-    if (b.legend) legend(p, b.legend); if (b.note) R.callout(p, { html: b.note }); };
+    if (b.legend) legend(p, b.legend); note(p, b); };
 
-  R.heatmap = (parent, b) => { const p = panel(parent, b), W = 980, L = b.left || 240, rh = 40, cols = b.cols, cw = (W - L - 6) / cols, g = svg(p, W, b.rows.length * rh + 46, b.title);
-    const defs = s('defs', {}, g), pat = s('pattern', { id: 'hatch', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+  let hatch = 0;
+  // Below 560 px the row labels sit above their cells instead of beside them.
+  R.heatmap = (parent, b) => { const p = panel(parent, b), W = chartW(p), stacked = W < 560, L = stacked ? 0 : Math.min(b.left || 240, Math.round(W * 0.34)), rh = stacked ? 58 : 40, top = stacked ? 22 : 2, cols = b.cols, cw = (W - L - 6) / cols, g = svg(p, W, b.rows.length * rh + 46, b.title);
+    const id = `hatch${++hatch}`, defs = s('defs', {}, g), pat = s('pattern', { id, width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
     s('rect', { width: 6, height: 6, fill: css('--rule') }, pat); s('line', { x1: 0, y1: 0, x2: 0, y2: 6, stroke: css('--blind'), 'stroke-width': 2.5 }, pat);
-    b.rows.forEach((r, i) => { const y = 6 + i * rh; s('text', { x: 0, y: y + 16, class: 'lbl-b' }, g, r.label); if (r.sub) s('text', { x: 0, y: y + 31, class: 'ax' }, g, r.sub);
-      r.cells.forEach((c, j) => { if (!c) return; tipOn(s('rect', { x: L + j * cw + 1, y: y + 2, width: cw - 2, height: rh - 8, rx: 3, fill: c.state === 'blind' ? 'url(#hatch)' : tone(c.state) }, g), c.tip); }); });
+    b.rows.forEach((r, i) => { const y = 6 + i * rh; s('text', { x: 0, y: y + 16, class: 'lbl-b' }, g, stacked && r.sub ? `${r.label} · ${r.sub}` : r.label); if (r.sub && !stacked) s('text', { x: 0, y: y + 31, class: 'ax' }, g, r.sub);
+      r.cells.forEach((c, j) => { if (!c) return; tipOn(s('rect', { x: L + j * cw + 1, y: y + top, width: Math.max(1, cw - 2), height: 32, rx: 3, fill: c.state === 'blind' ? `url(#${id})` : tone(c.state) }, g), c.tip); }); });
     const yb = 6 + b.rows.length * rh + 4; Object.entries(b.colLabels || {}).forEach(([j, label]) => s('text', { x: L + j * cw + cw / 2, y: yb + 12, 'text-anchor': 'middle', class: 'ax' }, g, label));
     if (b.marker) { const x = L + b.marker.at * cw; s('line', { x1: x, x2: x, y1: 0, y2: yb, stroke: css('--ink'), 'stroke-dasharray': '3 3' }, g); s('text', { x: x - 6, y: yb + 30, 'text-anchor': 'end', class: 'lbl-b' }, g, b.marker.label); }
-    if (b.legend) legend(p, b.legend); if (b.note) R.callout(p, { html: b.note }); };
+    if (b.legend) legend(p, b.legend); note(p, b); };
 
-  R.timeline = (parent, b) => { const p = panel(parent, b), W = 980, L = b.left || 210, Rr = 20, lh = 50, a = T(b.start), z = T(b.end), H = 36 + b.lanes.length * lh + 30, g = svg(p, W, H, b.title);
-    const X = t => L + ((T(t) - a) / (z - a)) * (W - L - Rr), base = 26 + b.lanes.length * lh;
+  R.timeline = (parent, b) => { const p = panel(parent, b), W = chartW(p), stacked = W < 560, L = stacked ? 4 : Math.min(b.left || 210, Math.round(W * 0.3)), Rr = 20, lh = stacked ? 66 : 50, top = stacked ? 40 : 30, a = T(b.start), z = T(b.end), H = top + 6 + b.lanes.length * lh + 30, g = svg(p, W, H, b.title);
+    const X = t => L + ((T(t) - a) / (z - a)) * (W - L - Rr), base = top - 4 + b.lanes.length * lh;
     (b.ticks || []).forEach(t => { const x = X(t.at); s('line', { x1: x, x2: x, y1: 18, y2: base, stroke: css('--rule') }, g); s('text', { x, y: base + 16, 'text-anchor': 'middle', class: 'ax' }, g, t.label); });
     if (b.now) { const x = X(b.now); s('line', { x1: x, x2: x, y1: 14, y2: base + 4, stroke: css('--ink'), 'stroke-width': 1.5 }, g); s('text', { x, y: base + 30, 'text-anchor': 'middle', class: 'lbl-b' }, g, 'now'); }
-    b.lanes.forEach((ln, i) => { const y = 30 + i * lh; s('text', { x: 0, y: y + 17, class: 'lbl-b' }, g, ln.label);
+    b.lanes.forEach((ln, i) => { const y = top + i * lh; s('text', { x: 0, y: stacked ? y - 24 : y + 17, class: 'lbl-b' }, g, ln.label);
       (ln.segments || []).forEach(sg => tipOn(s('rect', { x: X(sg.from), y, width: Math.max(2, X(sg.to) - X(sg.from)), height: 26, rx: 4, fill: tone(sg.tone), opacity: sg.tone === 'blind' ? 0.6 : 1 }, g), sg.tip));
       if (ln.note) s('text', { x: X(ln.note.at), y: y + 17, 'text-anchor': 'middle', class: 'lbl-b' }, g, ln.note.text);
-      (ln.marks || []).forEach(m => { const x = X(m.at), yy = y - 12; let n;
-        if (m.shape === 'detect') n = s('path', { d: `M${x},${yy + 5} l6,-10 h-12 z`, fill: css('--ink') }, g);
-        else if (m.shape === 'owner') n = s('circle', { cx: x, cy: yy, r: 5, fill: css('--ink') }, g);
-        else if (m.shape === 'cause') n = s('path', { d: `M${x},${yy - 6} l6,6 l-6,6 l-6,-6 z`, fill: css('--ink') }, g);
+      (ln.marks || []).forEach(mk => { const x = X(mk.at), yy = y - 12; let n;
+        if (mk.shape === 'detect') n = s('path', { d: `M${x},${yy + 5} l6,-10 h-12 z`, fill: css('--ink') }, g);
+        else if (mk.shape === 'owner') n = s('circle', { cx: x, cy: yy, r: 5, fill: css('--ink') }, g);
+        else if (mk.shape === 'cause') n = s('path', { d: `M${x},${yy - 6} l6,6 l-6,6 l-6,-6 z`, fill: css('--ink') }, g);
         else n = s('rect', { x: x - 5, y: yy - 5, width: 10, height: 10, fill: css('--ink') }, g);
-        tipOn(n, m.tip || m.shape); }); });
-    legend(p, b.legend || [['open', 'crit'], ['flagged, no owner', 'blind']]); const k = h('div', 'legend', p); k.textContent = '▲ detected   ● owner   ◆ cause   ■ fix shipped'; if (b.note) R.callout(p, { html: b.note }); };
+        tipOn(n, mk.tip || mk.shape); }); });
+    legend(p, b.legend || [['open', 'crit'], ['flagged, no owner', 'blind']]); const k = h('div', 'legend', p); k.textContent = '▲ detected   ● owner   ◆ cause   ■ fix shipped'; note(p, b); };
 
   // A small trend of one hill: every reading as a mark with its tip, joined oldest to newest, over a dashed target.
   function spark(parent, r) { const pts = (r.points || []).filter(p => Number.isFinite(p[1]));
@@ -277,7 +369,7 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: t
     if (b.note) R.callout(p, { html: b.note }); };
 
   // Values per labelled step (a week, a day) as lines on one axis that includes zero; a null value breaks the line.
-  R.lines = (parent, b) => { const p = panel(parent, b), labels = b.labels || [], W = 980, H = 220, L = 46, B = 30, Tp = 14, Rr = 14;
+  R.lines = (parent, b) => { const p = panel(parent, b), labels = b.labels || [], W = chartW(p), H = 220, L = 46, B = 30, Tp = 14, Rr = 14;
     const all = (b.series || []).flatMap(x => x.values).filter(Number.isFinite);
     if (!all.length) { h('p', 'sub', p, 'No values yet.'); if (b.note) R.callout(p, { html: b.note }); return; }
     const nice = (m) => { const q = Math.pow(10, Math.floor(Math.log10(m))), f = m / q; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * q; };
@@ -296,7 +388,7 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: t
     h('span', 'dot', st, x.state === 'done' ? '✓' : x.state === 'block' ? '!' : String(i + 1)); const w = h('div', 'what', st, x.title); if (x.text) h('span', '', w, x.text); h('span', 'when', st, x.when || ''); }); };
 
   R.table = (parent, b) => { const p = panel(parent, b), sc = h('div', 'scroll', p), t = h('table', '', sc), hr = h('tr', '', h('thead', '', t)); (b.head || []).forEach(c => h('th', '', hr, c));
-    const tb = h('tbody', '', t); (b.rows || []).forEach(r => { const tr = h('tr', '', tb); r.forEach(c => html('td', '', tr, c)); }); if (b.note) R.callout(p, { html: b.note }); };
+    const tb = h('tbody', '', t); (b.rows || []).forEach(r => { const tr = h('tr', '', tb); r.forEach(c => html('td', '', tr, c)); }); note(p, b); };
 
   R.bets = (parent, b) => { const g = h('div', 'bets', parent); (b.items || []).forEach(x => { const p = h('div', 'panel bet' + (x.lead ? ' lead' : ''), g);
     if (x.tag) h('span', 'tag', p, x.tag); h('h3', '', p, x.title); [['Evidence', x.why], ['Build', x.build], ['Pre-mortem', x.premortem]].forEach(([k, v]) => { if (!v) return; const kv = h('div', 'kv', p); h('b', '', kv, k); h('span', '', kv, v); });
@@ -304,8 +396,25 @@ td { padding: 11px 10px; border-bottom: 1px solid var(--rule); vertical-align: t
 
   R.decisions = (parent, b) => { const g = h('div', 'board', parent); (b.items || []).forEach((x, i) => { const p = h('div', 'panel dec', g); h('span', 'n', p, i + 1); h('h3', '', p, x.title); if (x.text) h('p', '', p, x.text); if (x.rec) html('p', 'rec', p, x.rec); }); };
 
-  (S.sections || []).forEach(sec => { const el = h('section', '', root); if (sec.id) el.id = sec.id; const sh = h('div', 'sh', el); h('span', 'k', sh, sec.key || ''); h('h2', '', sh, sec.title); if (sec.lede) h('p', '', sh, sec.lede); (sec.blocks || []).forEach(b => block(el, b)); });
-  if (S.method || S.caveats) { const f = h('footer', 'foot', root); if (S.method) html('p', '', f, '<b>Method.</b> ' + S.method); if (S.caveats) html('p', '', f, '<b>Caveats.</b> ' + S.caveats); }
+  // Options for a page that lives on a screen: a fixed theme, the full width, and a reload when its data may change.
+  if (S.theme === 'dark' || S.theme === 'light') document.documentElement.setAttribute('data-theme', S.theme);
+  if (S.wide) root.classList.add('wide');
+  if (S.refresh > 0) setTimeout(() => location.reload(), S.refresh * 1000);
+  let drawnAt = 0;
+  function draw() {
+    drawnAt = window.innerWidth; hatch = 0; root.textContent = '';
+    const mast = h('header', 'mast', root);
+    const eb = h('div', 'eyebrow', mast); (S.eyebrow || []).forEach(x => h('span', '', eb, x));
+    const th = h('h1', 'thesis', mast, S.thesis || ''); if (S.thesisAlert) h('span', 'alert', th, S.thesisAlert);
+    if (S.dek) h('p', 'dek', mast, S.dek);
+    if (S.hill) h('p', 'dek', mast, `Hill: ${S.hill.metric} · ${S.hill.baseline} → ${S.hill.target}${S.hill.owner ? ' · owner ' + S.hill.owner : ''}`);
+    if (S.stats && S.stats.length) { const st = h('div', 'strip', mast); st.style.setProperty('--n', Math.min(S.stats.length, 5)); S.stats.forEach(x => { const d = h('div', '', st); h('span', 'v' + (x.tone ? ' tone-' + x.tone : ''), d, x.v); h('span', 'l', d, x.l); }); }
+    (S.sections || []).forEach(sec => { const el = h('section', '', root); if (sec.id) el.id = sec.id; const sh = h('div', 'sh', el); h('span', 'k', sh, sec.key || ''); h('h2', '', sh, sec.title); if (sec.lede) h('p', '', sh, sec.lede); (sec.blocks || []).forEach(b => block(el, b)); });
+    if (S.method || S.caveats) { const f = h('footer', 'foot', root); if (S.method) html('p', '', f, '<b>Method.</b> ' + S.method); if (S.caveats) html('p', '', f, '<b>Caveats.</b> ' + S.caveats); }
+  }
+  draw();
+  let pending;
+  window.addEventListener('resize', () => { clearTimeout(pending); pending = setTimeout(() => { if (Math.abs(window.innerWidth - drawnAt) > 24) draw(); }, 150); });
 
   const tip = document.getElementById('tip');
   document.addEventListener('pointermove', e => { const t = e.target.closest && e.target.closest('[data-tip]'); if (!t) { tip.hidden = true; return; } tip.textContent = t.getAttribute('data-tip'); tip.hidden = false; tip.style.left = e.clientX + 'px'; tip.style.top = e.clientY + 'px'; });

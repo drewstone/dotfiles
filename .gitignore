@@ -9,3 +9,6 @@ __pycache__/
 # Claude Code writes machine-local project settings here; never shared.
 .claude/settings.local.json
 .worktrees/
+
+# wt-new writes a per-session ownership marker into each worktree; it is never shared.
+.wt-owner

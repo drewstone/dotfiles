@@ -11,6 +11,31 @@ Send updates when a decision, blocking dependency, ownership conflict, finding, 
 Include the change, evidence pointer, and required action; use the existing task record for unchanged status.
 Delegate independently useful deliverables; keep dependent fragments and routine heartbeats with their owner.
 
+### Brief template
+
+Every delegated task carries this brief, and the worker's report answers it field by field.
+Early briefs without the constraints led to a force-push, an `--admin` merge, keys printed into a session, builds that overloaded the Mac, and an affected-tests gate that turned master red.
+
+```text
+Outcome:  <the user-visible result, in the requester's words>
+Metric:   <name>: baseline <value, source, date> → target <value>
+Scope:    <repo and worktree>; files you own: <...>; out of scope: <...>
+Constraints, all binding:
+  [ ] no force-push, no `gh pr merge --admin`, no `--no-verify`, no change to Git identity
+  [ ] no installs, builds or test suites on the Mac; run them on a Beelink or gtr
+  [ ] never print, log or paste a secret; read keys from their vault
+  [ ] a chat or prompt change runs the full suite before merge, not only affected tests
+  [ ] <this task's limits: spend, production state, who approves what>
+Done when: <observable condition>, proven by <command and output, URL, receipt or SHA>
+Report back:
+  status:      done | partial | blocked
+  outcome:     <metric before → after, with source and date>
+  evidence:    <commands with exit codes, SHAs, PR URLs, receipts>
+  changed:     <files and PRs>
+  constraints: <each box above: kept, or what broke and when>
+  open:        <what remains, its owner and the next check>
+```
+
 ## Choose the host and checkout
 
 Use the Mac for lightweight work and pushes; prefer beelink1-wsl or beelink2-wsl for full installs, builds, types, and tests.
