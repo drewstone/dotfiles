@@ -186,19 +186,21 @@ test('a stream that drops early is followed by polling until the thread has no r
 })
 
 test('checks between streams back off exponentially to the cap instead of polling at a fixed interval', async () => {
-  const times = []
+  let checks = 0
   const api = await startApi({
     chat: [{ type: 'turn', turnId: 'x' }],
-    running: () => { times.push(Date.now()); return times.length < 7 ? ['x'] : [] },
+    running: () => (++checks < 7 ? ['x'] : []),
     reply: reply('th-1'),
   })
+  // The CLI records each wait it asks for; wall-clock gaps would also hold each request's time.
+  const log = join(mkdtempSync(join(tmpdir(), 'gtm-ask-sleeps-')), 'sleeps')
   try {
-    const result = await run(api, ['--workspace', 'ws1', 'Draft the plan'])
+    const result = await run(api, ['--workspace', 'ws1', 'Draft the plan'], { env: { GTM_ASK_SLEEP_LOG: log } })
     assert.equal(result.code, 0, result.stderr)
-    const gaps = times.slice(1).map((time, index) => time - times[index])
-    assert.ok(gaps[1] >= gaps[0] * 1.5 && gaps[2] >= gaps[1] * 1.5, `gaps grow: ${gaps.join(', ')}`)
-    assert.ok(gaps.at(-1) >= 150 && gaps.at(-1) < 400, `the last gaps sit at the 160 ms cap: ${gaps.join(', ')}`)
+    const waits = readFileSync(log, 'utf8').trim().split('\n').map(Number)
+    assert.deepEqual(waits.slice(0, 7), [20, 40, 80, 160, 160, 160, 160], `waits: ${waits.join(', ')}`)
   } finally {
+    rmSync(dirname(log), { recursive: true, force: true })
     await api.close()
   }
 })

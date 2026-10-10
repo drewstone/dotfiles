@@ -8,7 +8,7 @@
 // carries the wait, and checks between them back off exponentially.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -176,7 +176,13 @@ async function* ndjson(response) {
   if (tail) { try { yield JSON.parse(tail) } catch { /* ignore */ } }
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// GTM_ASK_SLEEP_LOG names a file each requested wait is appended to, so a test
+// checks the schedule itself rather than wall-clock gaps that also hold request time.
+const SLEEP_LOG = process.env.GTM_ASK_SLEEP_LOG
+const sleep = (ms) => {
+  if (SLEEP_LOG) appendFileSync(SLEEP_LOG, `${Math.round(ms)}\n`)
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 function object(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null
