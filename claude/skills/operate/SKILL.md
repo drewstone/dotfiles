@@ -55,6 +55,7 @@ Start from the class's best template and save the finished list with its grades 
 
 On a stall alarm (the best release tag flat for two hours), diagnose before steering: read the later tags' failing checks and the agents' recent work against the goal, then name the blocker.
 Report the goal score and the best tag's checks; tags written, pull requests merged and agents started are activity.
+A lead tick measures from execution records, not lane STATUS, and reports each open problem with its owner and the time since its first alarm.
 
 If the fleet is idle, report that fact and its cause.
 Continue the next authorized action that advances the objective, subject to shared leases and resource limits.
@@ -83,6 +84,14 @@ A mechanism's execution alone establishes no quality advantage.
 Hand over useful artifacts with their assessment status attached.
 
 For the failures behind these distinctions, read the [continuation postmortem](references/2026-09-29-continuation.md).
+
+## Climb
+
+Run this skill as a hill-climb ([the climb](../../../docs/processes/climb.md)).
+- **Every checkpoint is a measurement.** Read the run's goal ruler and system scorecard, never activity alone, and compare them with the ledger's best for this play.
+- **Every steer is a move.** Write the change you expect in the next scored version before you send it; score it when the version lands.
+- **Operator SLOs:** detect a stopped or failing run within 10 minutes and recover within 30. Remove a failing dependency before asking anyone for money or access.
+- **Report each checkpoint in the full form:** the answer with its number, the goal ruler, a lifeline and attempts chart, the prediction scoreboard, and the next move. Build it from the run's data.
 
 ## Log the run
 

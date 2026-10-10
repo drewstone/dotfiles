@@ -69,7 +69,7 @@ Distinguish observed results from causal interpretation and projected benefits.
 A correlation alone does not establish a mechanism, and an unavailable number is not permission to invent one.
 
 Use tables for comparable rows and dimensions.
-Use a chart when its shape clarifies the decision; use the project's existing rendering path when suitable.
+For an answer with more than one dimension, build it with the [brief kit](references/brief-kit.md) and publish it as an artifact; use the project's existing rendering path when it has one.
 Keep all measured fields available in the report or its complete linked results, rather than presenting only favorable columns.
 Explain necessary technical terms through their effect on the decision, and keep internal identifiers in evidence links unless the identity itself answers the question.
 
@@ -78,11 +78,24 @@ When a bad result needs diagnosis, perform the available check within scope befo
 Mention material risks or unanswered questions that could change the decision.
 Do not add hypothetical warnings or a forced action list to an already answered status question.
 
+## Climb
+
+A report is a version on the communication hill ([the climb](../../../docs/processes/climb.md)).
+- Run the level-up passes, from framing to cutting, before anything reaches the reader.
+- Use the full form for analysis, status and proposals: the answer first with its number, the evidence, visuals built from data, the prediction scoreboard, ranked and tested proposals, and one link to the full page.
+- Thin bullets fail: parallel facts go in a table, and quantities go in a chart.
+
 ## Log the run
 
+For a substantial deliverable (a brief, report, analysis or multi-dimension status), score it with the independent judge before logging; a one-fact answer skips the judge.
+
 ```bash
-skill-run-log /report --target "<question and evidence scope>" --verdict <VERDICT> --next /<next-skill-or-stop>
+~/.claude/skills/report/scripts/brief-judge <deliverable.html|.md|.txt> --context "<what the reader asked>"
+skill-run-log /report --target "<question and evidence scope>" --verdict <VERDICT> --score <total> --next /<next-skill-or-stop>
 ```
+
+`brief-judge` scores the ten rubric dimensions of [judging a deliverable](../../../docs/processes/climb.md#judging-a-deliverable) on a subscription account, prints the total out of 30 and the three weakest dimensions with fixes, and appends an operator row to the project's [ledger](../../../docs/processes/climb.md#the-ledger).
+Fix the weakest dimensions before the reader sees the deliverable when the fix is cheap, and judge again.
 
 ## Then consider
 

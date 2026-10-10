@@ -48,3 +48,12 @@ style, the directive applies it, the engine re-measures.
 to start splitting traffic. Each variant should encode a *distinct hypothesis* about what
 makes a response better (structure vs. density, more vs. less proactive checkpointing, etc.),
 not a cosmetic tweak — otherwise the measurement can't separate them.
+
+## Measurement status (2026-10-10)
+
+`terse-ops-v1` was the single active variant from 2026-10-04 to 2026-10-10, across 4,010 logged sessions.
+The `trace-insights` join that should have scored it was never built: its README still describes the analyze stage in the future tense.
+So no variant has a measured result.
+On 2026-10-10 Drew rejected terse output for analysis ("These bullet points just aint cutting it"), and `evidence-lead-v1` became active.
+Until the join exists, the measurement is the corrections ledger in [the climb](../../docs/processes/climb.md#corrections-are-data): Drew's corrections per session, by theme, under each variant.
+Do not start a rotation until the join scores variants; until then, a rotation only adds noise.

@@ -50,6 +50,12 @@ For unattended execution, read [durable unattended runs](references/unattended-r
 Report before/after results, sample coverage, uncertainty, regressions, resource use, and decision evidence.
 Label projections and unsupported assumptions separately from measurements.
 
+## Climb
+
+This skill runs one hill; [the climb](../../../docs/processes/climb.md) runs all of them with one ledger.
+- Append each experiment row there with `layer`, `hill`, `prediction` and `outcome`.
+- Before optimizing, check the metric's calibration against the goal: one that has saturated or diverged gets fixed first.
+
 ## Log the run
 
 ```bash

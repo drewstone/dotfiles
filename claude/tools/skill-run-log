@@ -3,7 +3,7 @@
 #
 # Usage:
 #   skill-run-log <skill> [--target X] [--prompt "..."] [--duration MIN] [--verdict V] [--next /SKILL]
-#                         [--project NAME] [--transcript PATH] [--trace-dir PATH]
+#                         [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH]
 #   skill-run-log --dir    print the state directory for the current repository
 #   skill-run-log -h|--help
 # Use --option=-literal when a value starts with '-' (for example, --prompt=--help).
@@ -21,7 +21,11 @@
 # Creates the directory and file if missing. Append-only; never rewrites prior lines.
 #
 # Schema (see ~/dotfiles/claude/skills/_common.md):
-#   { skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride }
+#   { skill, ts, project, target, operatorPrompt, durationMin, verdict, dispatchedTo, operatorOverride,
+#     transcriptPath, traceDir, score }
+#
+# `score` is an independent judge's score of the deliverable (brief-judge totals out of 30),
+# null when the run was not judged. Rows written before it existed simply lack the field.
 #
 # `operatorOverride` is left null by this script. Later findings can link an
 # observed correction to this row without rewriting the original record.
@@ -30,7 +34,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--project NAME] [--transcript PATH] [--trace-dir PATH]
+usage: skill-run-log <skill> [--target X] [--prompt TEXT] [--duration MIN] [--verdict V] [--next /SKILL] [--score N] [--project NAME] [--transcript PATH] [--trace-dir PATH]
        skill-run-log --dir
        skill-run-log -h|--help
 Use --option=-literal for a value beginning with '-'.
@@ -72,6 +76,7 @@ skill="$1"; shift
 target=""
 prompt=""
 duration="null"
+score="null"
 verdict="n/a"
 next_skill="stop"
 project=""
@@ -81,7 +86,7 @@ trace_dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --target|--prompt|--duration|--verdict|--next|--project|--transcript|--trace-dir)
+    --target|--prompt|--duration|--verdict|--next|--score|--project|--transcript|--trace-dir)
       option="$1"
       shift
       [ $# -ge 1 ] || invalid_args "$option requires a value"
@@ -92,7 +97,7 @@ while [ $# -gt 0 ]; do
       value="$1"
       shift
       ;;
-    --target=*|--prompt=*|--duration=*|--verdict=*|--next=*|--project=*|--transcript=*|--trace-dir=*)
+    --target=*|--prompt=*|--duration=*|--verdict=*|--next=*|--score=*|--project=*|--transcript=*|--trace-dir=*)
       option="${1%%=*}"
       value="${1#*=}"
       shift
@@ -105,6 +110,7 @@ while [ $# -gt 0 ]; do
     --duration) duration="$value" ;;
     --verdict) verdict="$value" ;;
     --next) next_skill="$value" ;;
+    --score) score="$value" ;;
     --project) project="$value" ;;
     --transcript) transcript="$value" ;;
     --trace-dir) trace_dir="$value" ;;
@@ -113,6 +119,9 @@ done
 
 if [ "$duration" != null ] && ! [[ "$duration" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
   invalid_args 'duration must be a nonnegative JSON number'
+fi
+if [ "$score" != null ] && ! [[ "$score" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]]; then
+  invalid_args 'score must be a nonnegative number'
 fi
 
 if [ -z "$project" ]; then
@@ -142,7 +151,7 @@ next_j="$(esc "$next_skill")"
 if [ -z "$transcript" ]; then transcript_j="null"; else transcript_j="$(esc "$transcript")"; fi
 if [ -z "$trace_dir" ];  then trace_j="null";       else trace_j="$(esc "$trace_dir")"; fi
 
-printf '{"skill":%s,"ts":"%s","project":%s,"target":%s,"operatorPrompt":%s,"durationMin":%s,"verdict":%s,"dispatchedTo":%s,"operatorOverride":null,"transcriptPath":%s,"traceDir":%s}\n' \
-  "$skill_j" "$ts" "$project_j" "$target_j" "$prompt_j" "$duration" "$verdict_j" "$next_j" "$transcript_j" "$trace_j" >> "$log"
+printf '{"skill":%s,"ts":"%s","project":%s,"target":%s,"operatorPrompt":%s,"durationMin":%s,"verdict":%s,"dispatchedTo":%s,"operatorOverride":null,"transcriptPath":%s,"traceDir":%s,"score":%s}\n' \
+  "$skill_j" "$ts" "$project_j" "$target_j" "$prompt_j" "$duration" "$verdict_j" "$next_j" "$transcript_j" "$trace_j" "$score" >> "$log"
 
 echo "logged: $skill -> $next_skill ($verdict) [$log]"

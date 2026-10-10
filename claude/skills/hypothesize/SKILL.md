@@ -82,6 +82,15 @@ A temporary regression is neither required nor evidence of architectural progres
 A single supported candidate, or no justified change, is a valid result.
 This skill selects experiments; subsequent execution follows the completed analysis and the task's existing authority.
 
+## Climb
+
+Before ranking candidates, run the red-team, bigger and unasked-question passes of [the climb](../../../docs/processes/climb.md).
+- **Pre-mortem:** for the leading candidate, say why it failed two weeks from now.
+- **Ten times:** ask what would make the result ten times better, then ask again from that answer.
+- **The question nobody asked:** name the most important one.
+
+Each candidate leaves with the number to beat and the deciding test.
+
 ## Log the run
 
 ```bash
