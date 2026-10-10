@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""The lead's operating metrics per local day: the climb's "operator" layer.
+
+Usage:
+  lead-scorecard [--days 7] [--hosts gtr,...] [--local] [--no-github] [--json]
+  lead-scorecard --climb [--append PATH] [same filters]
+  lead-scorecard incident open ID --started TIME --detected TIME --summary TEXT [--severity S] [--link URL]
+  lead-scorecard incident recover ID [--at TIME] [--note TEXT]
+  lead-scorecard decision ask ID --question TEXT [--asked TIME] [--blocks TEXT] [--link URL]
+  lead-scorecard decision resolve ID [--at TIME] [--answer TEXT]
+TIME is ISO 8601 (2026-10-10T08:15:00Z) or "now".
+
+Per day it reports:
+  corrections   operator corrections of skill runs / runs judged, from the skill-run ledgers
+  violations    guard and secret-scanner refusals, from the guard ledgers
+  reverts       merged PRs by drewstone titled revert or rollback (GitHub, through gh-drew)
+  incidents     opened that day, time to detect (detected - started), time to recover
+                (recovered - detected), and incidents still open at the day's end
+  Drew queue    decisions waiting on Drew at the day's end, the oldest one's age, and the median
+                wait of decisions he resolved that day
+
+Records, append-only events in ${XDG_STATE_HOME:-~/.local/state}/agent-work/ on any host:
+  _lead/incidents.jsonl   {"id","event":"open","startedAt","detectedAt","summary",...} then {"id","event":"recover","recoveredAt"}
+  _lead/decisions.jsonl   {"id","event":"ask","askedAt","question",...} then {"id","event":"resolve","resolvedAt"}
+  _guards/*.jsonl         one row per guard decision: ts, guard (or hook/rule), decision; LEAD_GUARD_GLOBS adds globs
+The latest event per id wins. Keep personal details out of summaries and questions.
+"""
+
+from __future__ import annotations
+
+import collections
+import datetime as dt
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from skill_ledger import core as L  # noqa: E402
+from skill_ledger import outcomes as O  # noqa: E402
+
+LEAD = "_lead"
+INCIDENTS = f"{LEAD}/incidents.jsonl"
+DECISIONS = f"{LEAD}/decisions.jsonl"
+GUARD_GLOBS = ("_guards/*.jsonl",)
+# The PR's action is the revert or rollback ("revert: x", "fix: ... (revert #12)", "rollback(api): x"),
+# not a feature about rollback machinery ("guard host-agent rollback"), which a title search also matches.
+REVERT_TITLE = re.compile(r"^\s*(revert|roll\s*back|rollback)\b|^\w+(\([^)]*\))?!?:\s*(revert|roll\s*back|rollback)\b"
+                          r"|\brevert(s|ing)?\s+#\d+", re.I)
+DENY = {"deny", "denied", "block", "blocked", "refuse", "refused", "violation", "fail", "failed", "reject", "rejected"}
+
+
+def fail(message: str, code: int = 2):
+    print(f"lead-scorecard: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def parse_flags(argv, value_flags, bool_flags=()):
+    values, flags, positional = {}, set(), []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        index += 1
+        if arg in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        if arg in bool_flags:
+            flags.add(arg)
+            continue
+        name = arg.split("=", 1)[0]
+        if name in value_flags:
+            if "=" in arg:
+                values[name] = arg.split("=", 1)[1]
+            else:
+                if index >= len(argv):
+                    fail(f"{arg} requires a value")
+                values[name] = argv[index]
+                index += 1
+            continue
+        if arg.startswith("-"):
+            fail(f"unknown argument: {arg}")
+        positional.append(arg)
+    return values, flags, positional
+
+
+def when(text: str | None, default_now: bool = True):
+    if text is None:
+        return L.iso(L.now()) if default_now else None
+    if text == "now":
+        return L.iso(L.now())
+    parsed = L.parse_ts(text)
+    if parsed is None:
+        fail(f"time must be ISO 8601 or 'now', not {text!r}")
+    return L.iso(parsed)
+
+
+def record(kind: str, argv):
+    path = L.state_root() / (INCIDENTS if kind == "incident" else DECISIONS)
+    values, _, positional = parse_flags(argv, {"--started", "--detected", "--summary", "--severity", "--link", "--at",
+                                               "--note", "--question", "--asked", "--blocks", "--answer"})
+    if len(positional) != 2:
+        fail(f"usage: lead-scorecard {kind} {'open|recover' if kind == 'incident' else 'ask|resolve'} ID [flags]")
+    action, ident = positional
+    base = {"schema": 1, "id": ident, "ts": L.iso(L.now()), "host": L.host_name()}
+    if kind == "incident" and action == "open":
+        for flag in ("--started", "--detected", "--summary"):
+            if flag not in values:
+                fail(f"incident open requires {flag}")
+        row = {**base, "event": "open", "startedAt": when(values["--started"]), "detectedAt": when(values["--detected"]),
+               "summary": values["--summary"], "severity": values.get("--severity"), "link": values.get("--link")}
+    elif kind == "incident" and action == "recover":
+        row = {**base, "event": "recover", "recoveredAt": when(values.get("--at")), "note": values.get("--note")}
+    elif kind == "decision" and action == "ask":
+        if "--question" not in values:
+            fail("decision ask requires --question")
+        row = {**base, "event": "ask", "askedAt": when(values.get("--asked")), "question": values["--question"],
+               "blocks": values.get("--blocks"), "link": values.get("--link")}
+    elif kind == "decision" and action == "resolve":
+        row = {**base, "event": "resolve", "resolvedAt": when(values.get("--at")), "answer": values.get("--answer")}
+    else:
+        fail(f"unknown {kind} action: {action}")
+    L.append_jsonl(path, row)
+    print(f"{kind} {action}: {ident} [{path}]")
+
+
+# ---------------------------------------------------------------------------------------------
+
+
+def fold(texts) -> dict:
+    """{id: merged record} from event rows across hosts; later events update earlier fields."""
+    items: dict[str, dict] = {}
+    rows = []
+    for text in texts:
+        rows.extend(obj for _, _, obj in L.read_jsonl(text or "") if obj.get("id"))
+    for obj in sorted(rows, key=lambda o: o.get("ts") or ""):
+        merged = items.setdefault(obj["id"], {"id": obj["id"]})
+        merged.update({k: v for k, v in obj.items() if v is not None and k not in ("event", "schema")})
+        merged.setdefault("events", []).append(obj.get("event"))
+    return items
+
+
+def guard_events(texts) -> list[dict]:
+    out = []
+    for text in texts:
+        for _, _, obj in L.read_jsonl(text or ""):
+            ts = L.parse_ts(obj.get("ts") or obj.get("timestamp") or obj.get("time"))
+            if ts is None:
+                continue
+            decision = str(obj.get("decision") or obj.get("action") or obj.get("outcome") or obj.get("verdict") or "").lower()
+            if decision and decision not in DENY:
+                continue
+            out.append({"ts": ts, "guard": obj.get("guard") or obj.get("hook") or obj.get("scanner") or obj.get("rule") or "unknown"})
+    return out
+
+
+def github_reverts(start: dt.datetime, end: dt.datetime):
+    """Merged PRs by drewstone titled revert or rollback in [start, end]; None when GitHub is unreachable."""
+    found = {}
+    for word in ("revert", "rollback"):
+        query = f"author:drewstone is:pr is:merged merged:{start.date().isoformat()}..{end.date().isoformat()} {word} in:title"
+        cursor = None
+        for _ in range(5):
+            after = f", after: {json.dumps(cursor)}" if cursor else ""
+            data, error = O.gh_graphql(
+                f"query {{ search(query: {json.dumps(query)}, type: ISSUE, first: 100{after}) {{ pageInfo {{ hasNextPage endCursor }} "
+                "nodes { ... on PullRequest { number title mergedAt repository { nameWithOwner } } } } }")
+            if error:
+                return None, error
+            search = (data or {}).get("search") or {}
+            for node in search.get("nodes") or []:
+                if node and node.get("mergedAt") and REVERT_TITLE.search(node.get("title") or ""):
+                    found[(node["repository"]["nameWithOwner"], node["number"])] = node
+            if not (search.get("pageInfo") or {}).get("hasNextPage"):
+                break
+            cursor = search["pageInfo"]["endCursor"]
+    return list(found.values()), None
+
+
+def day_of(ts: dt.datetime) -> str:
+    return ts.astimezone().strftime("%Y-%m-%d")
+
+
+def end_of(day: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(day).astimezone() + dt.timedelta(days=1)
+
+
+def hours(delta: dt.timedelta | None):
+    return None if delta is None else round(delta.total_seconds() / 3600, 2)
+
+
+def build(opts, at):
+    hosts = [] if opts["local"] else ([h for h in re.split(r"[\s,]+", opts["hosts"]) if h] if opts["hosts"] is not None else L.default_hosts())
+    extra = tuple(g for g in re.split(r"[\s,]+", os.environ.get("LEAD_GUARD_GLOBS", "")) if g)
+    globs = L.LEDGER_GLOBS + (INCIDENTS, DECISIONS) + GUARD_GLOBS + extra
+    reads = L.gather(hosts, globs)
+    rows, incidents_t, decisions_t, guards_t = [], [], [], []
+    for read in reads:
+        if not read.get("ok"):
+            continue
+        label = read.get("hostname") or read["host"]
+        rows.extend(L.rows_from_files(read["files"], label))
+        for rel, text in read["files"].items():
+            if rel == INCIDENTS:
+                incidents_t.append(text)
+            elif rel == DECISIONS:
+                decisions_t.append(text)
+            elif rel.startswith("_guards/") or any(re.fullmatch(g.replace("*", "[^/]*"), rel) for g in extra):
+                guards_t.append(text)
+    days = [(at.astimezone().date() - dt.timedelta(days=n)).isoformat() for n in range(opts["days"] - 1, -1, -1)]
+    start = dt.datetime.fromisoformat(days[0]).astimezone()
+    incidents = fold(incidents_t)
+    decisions = fold(decisions_t)
+    guards = guard_events(guards_t)
+    reverts, revert_error = (None, "skipped (--no-github)") if not opts["github"] else github_reverts(start, at)
+
+    out_days = []
+    for day in days:
+        day_end = min(end_of(day), at)
+        day_rows = [r for r in rows if (ts := L.parse_ts(r.get("ts"))) and day_of(ts) == day]
+        judged = [r for r in day_rows if r.get("operatorOverride") is not None]
+        corrected = sum(1 for r in judged if r.get("operatorOverride") is True)
+        day_guards = [g for g in guards if day_of(g["ts"]) == day]
+        opened, ttd, ttr = [], [], []
+        open_at_end = 0
+        for item in incidents.values():
+            detected = L.parse_ts(item.get("detectedAt"))
+            started = L.parse_ts(item.get("startedAt"))
+            recovered = L.parse_ts(item.get("recoveredAt"))
+            if detected and day_of(detected) == day:
+                opened.append(item["id"])
+                if started:
+                    ttd.append(hours(detected - started))
+                if recovered:
+                    ttr.append(hours(recovered - detected))
+            if detected and detected < day_end and (recovered is None or recovered >= day_end):
+                open_at_end += 1
+        waiting, waits = [], []
+        for item in decisions.values():
+            asked = L.parse_ts(item.get("askedAt"))
+            resolved = L.parse_ts(item.get("resolvedAt"))
+            if asked and asked < day_end and (resolved is None or resolved >= day_end):
+                waiting.append(hours(day_end - asked))
+            if asked and resolved and day_of(resolved) == day:
+                waits.append(hours(resolved - asked))
+        day_reverts = None if reverts is None else [r for r in reverts if day_of(L.parse_ts(r["mergedAt"])) == day]
+        out_days.append({
+            "day": day,
+            "skillRuns": len(day_rows),
+            "corrected": corrected, "judged": len(judged),
+            "violations": len(day_guards),
+            "violationsByGuard": dict(collections.Counter(g["guard"] for g in day_guards).most_common()),
+            "reverts": None if day_reverts is None else len(day_reverts),
+            "revertPRs": None if day_reverts is None else [f"{r['repository']['nameWithOwner']}#{r['number']}" for r in day_reverts],
+            "incidentsOpened": len(opened), "ttdHoursP50": L.percentile(ttd, 0.5), "ttrHoursP50": L.percentile(ttr, 0.5),
+            "incidentsOpenAtEnd": open_at_end,
+            "queueOpenAtEnd": len(waiting), "queueOldestHours": max(waiting) if waiting else None,
+            "queueResolved": len(waits), "queueWaitHoursP50": L.percentile(waits, 0.5),
+        })
+    return {
+        "generatedAt": L.iso(at),
+        "days": out_days,
+        "sources": {
+            "hosts": [{"host": r["host"], "label": r.get("hostname"), "ok": r.get("ok"), "duplicateOf": r.get("duplicateOf")} for r in reads],
+            "guardLedgers": len(guards_t), "incidentRecords": len(incidents), "decisionRecords": len(decisions),
+            "github": revert_error or "ok",
+        },
+    }
+
+
+def show(value, digits=1):
+    if value is None:
+        return "—"
+    return f"{value:.{digits}f}" if isinstance(value, float) else str(value)
+
+
+def render(report) -> str:
+    src = report["sources"]
+    hosts = " · ".join(
+        f"{h['label'] or h['host']}" + (" (same as local)" if h.get("duplicateOf") else "" if h["ok"] else " unreachable")
+        for h in src["hosts"])
+    lines = [f"Lead scorecard · {report['days'][0]['day']} → {report['days'][-1]['day']} (local days)",
+             f"sources: {hosts}; guard ledgers {src['guardLedgers'] or 'none yet'}; incidents {src['incidentRecords']}; "
+             f"decisions {src['decisionRecords']}; GitHub {src['github']}", ""]
+    rows = []
+    for d in report["days"]:
+        rows.append([d["day"], d["skillRuns"], f"{d['corrected']}/{d['judged']}",
+                     show(d["violations"]) if src["guardLedgers"] else "—", show(d["reverts"]),
+                     d["incidentsOpened"], show(d["ttdHoursP50"]), show(d["ttrHoursP50"]), d["incidentsOpenAtEnd"],
+                     d["queueOpenAtEnd"], show(d["queueOldestHours"]), show(d["queueWaitHoursP50"])])
+    lines.append(L.render_table(
+        ["day", "skill runs", "corrected", "violations", "reverts", "incidents", "TTD h", "TTR h", "open",
+         "Drew queue", "oldest h", "wait h"], rows))
+    lines.append("")
+    lines.append("corrected = operator corrections / runs judged; TTD and TTR are medians of incidents opened that day; "
+                 "Drew queue = decisions open at the day's end")
+    if not src["guardLedgers"]:
+        lines.append("violations: no guard ledger under _guards/ yet; the guard hooks own that record")
+    return "\n".join(lines)
+
+
+def climb_rows(report) -> list[dict]:
+    """Climb-ledger positions for the operator layer, one per hill and day."""
+    out = []
+    stamp = report["generatedAt"]
+    hills = {
+        "operator:corrections": lambda d: {"value": d["corrected"], "n": d["judged"], "unit": "corrections"},
+        "operator:rule-violations": lambda d: {"value": d["violations"], "unit": "refusals"},
+        "operator:reverts": lambda d: {"value": d["reverts"], "unit": "PRs"},
+        "operator:time-to-detect": lambda d: {"value": d["ttdHoursP50"], "n": d["incidentsOpened"], "unit": "h"},
+        "operator:time-to-recover": lambda d: {"value": d["ttrHoursP50"], "n": d["incidentsOpened"], "unit": "h"},
+        "operator:drew-queue": lambda d: {"value": d["queueOpenAtEnd"], "oldestHours": d["queueOldestHours"], "unit": "decisions"},
+    }
+    for d in report["days"]:
+        for hill, measure in hills.items():
+            value = measure(d)
+            if value["value"] is None:
+                continue
+            out.append({"id": f"climb-lead-{d['day']}-{hill.split(':')[1]}", "timestamp": stamp, "date": d["day"],
+                        "layer": L.LAYER_OPERATOR, "hill": hill, "lever": "baseline", "prediction": None,
+                        "result": value, "outcome": {"status": None, "value": value["value"]},
+                        "reasoning": "lead-scorecard: skill-run ledgers, guard ledgers, _lead records, GitHub"})
+    return out
+
+
+def main(argv):
+    if argv and argv[0] in ("incident", "decision"):
+        record(argv[0], argv[1:])
+        return
+    values, flags, positional = parse_flags(argv, {"--days", "--hosts", "--append"},
+                                            {"--local", "--no-github", "--json", "--climb"})
+    if positional:
+        fail(f"unexpected argument: {positional[0]}")
+    try:
+        days = int(values.get("--days", "7"))
+    except ValueError:
+        fail("--days must be a whole number")
+    opts = {"days": max(1, days), "hosts": values.get("--hosts"), "local": "--local" in flags,
+            "github": "--no-github" not in flags}
+    report = build(opts, L.now())
+    if "--climb" in flags:
+        rows = climb_rows(report)
+        if values.get("--append"):
+            path = values["--append"]
+            existing = set()
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    existing = {obj.get("id") for _, _, obj in L.read_jsonl(handle.read())}
+            except OSError:
+                pass
+            added = [r for r in rows if r["id"] not in existing]
+            for row in added:
+                L.append_jsonl(Path(path), row)
+            print(f"climb: appended {len(added)} of {len(rows)} rows to {path}")
+        else:
+            for row in rows:
+                print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+        return
+    print(json.dumps(report, indent=1, default=str) if "--json" in flags else render(report))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
