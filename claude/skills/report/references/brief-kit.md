@@ -33,7 +33,7 @@ Status tones are `good`, `warn`, `serious`, `crit`, `blind` (no signal) and `acc
 | `table` | comparable rows | `head[]`, `rows[][]` (cells may hold inline HTML) |
 | `bets` | ranked improvements | `items[]`: `tag`, `title`, `why`, `build`, `premortem`, `target`, `lead` |
 | `decisions` | what only the reader can decide | `items[]`: `title`, `text`, `rec` |
-| `hills` | one row per hill: trend, position, target, gap, active move, last climb | `rows[]`: `title`, `sub`, `unitTip`, `tone`, `points[]` (`[iso, value, tip]`), `targetValue`, `now`, `unit`, `target`, `gap`, `open` (share of the first gap still open), `move` (`status` of `pending`/`kept`/`failed`, `title`, `prediction`, `more`), `since`, `sinceTone` |
+| `hills` | one row per hill: trend, position, target, gap, active move, last climb | `rows[]`: `title`, `sub`, `unitTip`, `tone`, `points[]` (`[iso, value, tip]`), `targetValue`, `now`, `unit`, `target`, `gap`, `open` (share of the first gap still open), `move` (`status` of `pending`/`kept`/`failed`/`planned`, `title`, `prediction`, `more`), `since`, `sinceTone` |
 | `lines` | values per labelled step, on an axis that includes zero | `labels[]`, `series[]` (`name`, `tone`, `values[]` with `null` gaps, `tips[]`), `yUnit`, `every`, `note` |
 | `cols` | side-by-side panels | `cols`, `blocks[]` |
 | `text`, `callout` | prose or an emphasized finding | `html` |

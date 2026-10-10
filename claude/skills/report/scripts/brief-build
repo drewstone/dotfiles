@@ -46,7 +46,7 @@ def walk(blocks, where, errors, seen):
             for r in b.get("rows", []):
                 if not r.get("title"):
                     errors.append(f"{at}: every hills row needs a title")
-                if (r.get("move") or {}).get("status") not in (None, "pending", "kept", "failed"):
+                if (r.get("move") or {}).get("status") not in (None, "pending", "kept", "failed", "planned"):
                     errors.append(f"{at}: hills row {r.get('title')!r} has an unknown move status")
         if t in ("dots", "timeline") and not (b.get("start") and b.get("end")):
             errors.append(f"{at}: {t} needs ISO start and end")
@@ -85,7 +85,8 @@ def main():
     for w in warnings:
         print("warning: " + w, file=sys.stderr)
     page = KIT.read_text()
-    body = json.dumps(spec, ensure_ascii=False).replace("</", "<\\/")
+    # Every "<" is escaped, so no string in the spec can end the script element or open a comment inside it.
+    body = json.dumps(spec, ensure_ascii=False).replace("<", "\\u003c")
     title = spec["title"].replace("<", "&lt;")
     pathlib.Path(sys.argv[2]).write_text(page.replace("__TITLE__", title).replace("__SPEC__", body))
     print(f"wrote {sys.argv[2]} ({len(warnings)} warnings)")
