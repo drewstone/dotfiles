@@ -47,7 +47,7 @@ function fixture() {
   // Keep ordinary fixture gates far from the synthetic weekly update window.
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
-  const env = { ...process.env, HOME: home, TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -63,8 +63,9 @@ if [[ "$4" == reg ]]; then
   exit 0
 fi
 printf '%s\\n' "$3 $4 $5 $6" > '${join(f.root, "ssh-transport")}'
-shift 8
-exec bash -s -- "$@"
+printf '%s\\n' "\${*:6}" > '${join(f.root, "ssh-remote-command")}'
+shift 5
+exec "$@"
 `);
   chmodSync(fakeSsh, 0o755);
 }
@@ -379,5 +380,138 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
       assert.equal(existsSync(older), true);
       assert.equal(existsSync(newer), false);
     } finally { locker.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Rust output defaults into the gate cache without incremental state and counts toward the cap", () => {
+  const f = fixture();
+  try {
+    const checkout = join(f.cache, "local", "owner", "repo");
+    const shown = f.call(f.first, ["bash", "-c", 'printf "%s %s" "$CARGO_TARGET_DIR" "$CARGO_INCREMENTAL"']);
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.equal(shown.stdout, `${join(checkout, ".git", "beelink-gate-target")} 0`);
+    const kept = f.call(f.first, ["bash", "-c", 'printf "%s %s" "$CARGO_TARGET_DIR" "$CARGO_INCREMENTAL"'],
+      { env: { CARGO_TARGET_DIR: "/caller/target", CARGO_INCREMENTAL: "1" } });
+    assert.equal(kept.stdout, "/caller/target 1");
+    const result = f.call(f.first, ["node", "-e", 'const fs=require("fs"),p=require("path"),d=p.join(process.env.CARGO_TARGET_DIR,"debug");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(p.join(d,"big"),Buffer.alloc(750000))'],
+      { env: { BEELINK_GATE_CACHE_MAX_BYTES: "500000" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /evicted LRU cache .*local\/owner\/repo/);
+    assert.equal(existsSync(checkout), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a host slot cap serializes gates for different repos and reports the wait", async () => {
+  const f = fixture();
+  const other = join(f.root, "owner", "other.git");
+  f.git(["clone", "-q", "--bare", f.source, other], f.root);
+  const events = join(f.root, "events");
+  const launch = (url, id, delay) => new Promise((resolveDone) => setTimeout(() => {
+    const args = ["beelink2", url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.5; echo end-${id} >> '${events}'`].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_MAX_CONCURRENT: "1", BEELINK_GATE_SLOT_POLL_SECONDS: "0.1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveDone({ status, stderr }));
+  }, delay));
+  try {
+    const [a, b] = await Promise.all([launch(f.url, "a", 0), launch(`file://${other}`, "b", 150)]);
+    assert.equal(a.status, 0, a.stderr);
+    assert.equal(b.status, 0, b.stderr);
+    assert.equal(readFileSync(events, "utf8").trim().split("\n").join(","), "start-a,end-a,start-b,end-b");
+    assert.match(b.stderr, /waiting for a host gate slot \(1 running\)/);
+    const invalid = f.call(f.first, ["true"], { env: { BEELINK_GATE_MAX_CONCURRENT: "0" } });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /invalid concurrent gate cap/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the GTR entrypoint forwards a host slot cap to the remote gate", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), BEELINK_GATE_MAX_CONCURRENT: "2" };
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /^env BEELINK_GATE_MAX_CONCURRENT=2 bash -s -- --remote /);
+    const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CONCURRENT: "2;id" } });
+    assert.equal(invalid.status, 2);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+const CARGO_TAG = "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n";
+const DAY = 24 * 60 * 60;
+
+function buildDir(f, name, tag = CARGO_TAG) {
+  const target = join(f.home, ".cache", name);
+  const profile = join(target, "debug");
+  for (const dir of ["deps", ".fingerprint/engine-old", ".fingerprint/engine-new", "incremental/engine-old"]) mkdirSync(join(profile, dir), { recursive: true });
+  if (tag) writeFileSync(join(target, "CACHEDIR.TAG"), tag);
+  for (const lock of [".cargo-lock", ".cargo-build-lock"]) writeFileSync(join(profile, lock), "");
+  const old = Date.now() / 1000 - 2 * DAY;
+  const files = {
+    oldRlib: join(profile, "deps", "libengine-old.rlib"),
+    newRlib: join(profile, "deps", "libengine-new.rlib"),
+    oldFingerprint: join(profile, ".fingerprint", "engine-old", "lib-engine"),
+    newFingerprint: join(profile, ".fingerprint", "engine-new", "lib-engine"),
+    oldIncremental: join(profile, "incremental", "engine-old", "s-1"),
+  };
+  for (const file of Object.values(files)) writeFileSync(file, Buffer.alloc(4096));
+  for (const file of [files.oldRlib, files.oldFingerprint, files.oldIncremental]) utimesSync(file, old, old);
+  for (const dir of [".fingerprint/engine-old", "incremental/engine-old"]) utimesSync(join(profile, dir), old, old);
+  return { target, profile, ...files };
+}
+
+test("stale entries of tagged cargo target dirs under the user cache are pruned after a gate", () => {
+  const f = fixture();
+  try {
+    const engine = buildDir(f, "engine-build");
+    const untagged = buildDir(f, "other-build", null);
+    const result = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /pruned \d+ bytes of cargo output untouched for 86400s from .*engine-build/);
+    for (const gone of [engine.oldRlib, join(engine.profile, ".fingerprint", "engine-old"), join(engine.profile, "incremental", "engine-old")]) assert.equal(existsSync(gone), false, gone);
+    for (const kept of [engine.newRlib, engine.newFingerprint, join(engine.target, "CACHEDIR.TAG"), untagged.oldRlib, untagged.oldFingerprint]) assert.equal(existsSync(kept), true, kept);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the build sweep leaves a target alone while cargo or a gate for its repo holds a lock", async () => {
+  const f = fixture();
+  const hold = async (lockPath, marker) => {
+    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; sleep 5`]);
+    for (let i = 0; i < 100 && !existsSync(marker); i++) await new Promise((resolveDone) => setTimeout(resolveDone, 20));
+    assert.equal(existsSync(marker), true);
+    return locker;
+  };
+  try {
+    const engine = buildDir(f, "engine-build");
+    const cargo = await hold(join(engine.profile, ".cargo-build-lock"), join(f.root, "cargo-held"));
+    try {
+      const result = f.call(f.first, ["true"], { noInstall: true });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /skipped .*engine-build\/debug; cargo is building there/);
+      assert.equal(existsSync(engine.oldRlib), true);
+    } finally { cargo.kill(); }
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const gateLock = await hold(join(f.cache, ".locks", "github.com-tangle-network-engine.lock"), join(f.root, "gate-held"));
+    try {
+      const result = f.call(f.first, ["true"], { noInstall: true });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /skipped .*engine-build; a engine gate holds its lock/);
+      assert.equal(existsSync(engine.oldRlib), true);
+    } finally { gateLock.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a daemon left behind by a command holds neither the host slot nor the repo lock", () => {
+  const f = fixture();
+  try {
+    const env = { BEELINK_GATE_MAX_CONCURRENT: "1", BEELINK_GATE_SLOT_POLL_SECONDS: "0.1" };
+    const leaker = f.call(f.first, ["bash", "-c", "sleep 5 >/dev/null 2>&1 &"], { noInstall: true, env });
+    assert.equal(leaker.status, 0, leaker.stderr);
+    const started = Date.now();
+    const next = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(next.status, 0, next.stderr);
+    assert.doesNotMatch(next.stderr, /waiting for a host gate slot/);
+    assert.ok(Date.now() - started < 4000, "second gate waited for the leaked daemon");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
