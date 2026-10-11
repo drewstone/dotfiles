@@ -572,6 +572,11 @@ wait_for_load() {
   start_load=$(loadavg_now)
   start_pressure=""
   join_gate_cgroup
+  # Tell the command it already passed admission, so a repo script with its own
+  # load-average guard (ADC's signoff.sh waits for load <= 1.5x cores) does not
+  # wait again on a metric the gate replaced: on 2026-10-11 an admitted ADC
+  # signoff sat at load 34-52 while its priority cgroup had pressure 0.
+  export BEELINK_GATE_ADMITTED=1
   ! pressure_file >/dev/null || start_pressure=$load
 }
 
