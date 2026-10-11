@@ -26,7 +26,7 @@
 #
 # Usage: host/install.sh [--check|--git-guard-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
-#   --git-guard-only  install only the GTR Git PATH guard; leave other host settings alone.
+#   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -86,9 +86,38 @@ install_system_git_guard() {
   want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" /usr/local/bin/git
 }
 
-if [ "$GIT_GUARD_ONLY" = 1 ]; then
-  [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "GTR Git guard is GTR-only" >&2; exit 2; }
+# Beelinks run the same Git entrypoint with only its worktree cap: each fleet lane may hold
+# `cap` worktrees under _wt, and none are added below the free-space floor. On 2026-10-11 beelink1
+# held 261 _wt worktrees and gained 49 in 6 h; idle reapers cannot touch trees younger than 12 h.
+is_beelink() { case "$(hostname -s)" in beelink1|beelink2|DESKTOP-18IR33V) return 0 ;; *) return 1 ;; esac; }
+
+install_beelink_worktree_cap() {
   install_system_git_guard
+  want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" /usr/local/bin/git.worktree-cap.json
+  local before=$CHANGED
+  CHANGED=0
+  want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-accept.conf" /etc/ssh/sshd_config.d/20-fleet-lane-accept.conf
+  if [ "$CHANGED" = 1 ]; then
+    # A failed reload must stop here: the next run sees the file in place and would not retry.
+    $SUDO sshd -t && $SUDO systemctl reload ssh || { echo "sshd rejected or did not reload the fleet-lane drop-in" >&2; exit 1; }
+    note reloaded ssh
+  fi
+  [ "$before" = 1 ] && CHANGED=1
+  return 0
+}
+
+install_gtr_lane_send() {
+  want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-send.conf" /etc/ssh/ssh_config.d/20-fleet-lane-send.conf
+}
+
+if [ "$GIT_GUARD_ONLY" = 1 ]; then
+  if is_beelink; then
+    install_beelink_worktree_cap
+    exit 0
+  fi
+  [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "the Git guard runs on GTR and the Beelinks only" >&2; exit 2; }
+  install_system_git_guard
+  install_gtr_lane_send
   exit 0
 fi
 
@@ -114,7 +143,9 @@ if [ "$(hostname -s)" = drew-GTR-Pro ]; then
     python3 "$SCRIPT_DIR/gtr-install-guard/install.py"
   fi
   install_system_git_guard
+  install_gtr_lane_send
 fi
+is_beelink && install_beelink_worktree_cap
 
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh
