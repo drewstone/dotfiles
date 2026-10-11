@@ -49,7 +49,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, ...inherited } = process.env;
   const env = { ...inherited, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
@@ -187,7 +187,11 @@ test("Windows policy is required and a blocked start reports the next allowed ti
     assert.match(refused.stderr, /REFUSED beelink2 Windows Update is scheduled/);
     assert.match(refused.stderr, /next allowed .* UTC\)/);
     assert.equal(existsSync(f.cache), false);
-    const unreadable = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1" } });
+    // The refused start cached the policy; a failed read then uses it.
+    const cached = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1" } });
+    assert.equal(cached.status, 3, cached.stderr);
+    assert.match(cached.stderr, /using the cached Windows Update policy for beelink2/);
+    const unreadable = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1", BEELINK_GATE_STATE_DIR: join(f.root, "fresh-state") } });
     assert.equal(unreadable.status, 2);
     assert.match(unreadable.stderr, /cannot read Windows Update schedule.*refusing to start/);
     assert.equal(existsSync(f.cache), false);
@@ -685,5 +689,38 @@ test("a URL with or without .git reuses the same cache checkout", () => {
     const withoutSuffix = run("bash", [gate, "--remote", ...args], { env: f.env });
     assert.equal(withoutSuffix.status, 0, withoutSuffix.stderr);
     assert.doesNotMatch(withoutSuffix.stderr, /origin mismatch/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto prefers a beelink with a free host slot over one whose slots are full", async () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const prefix = join(f.root, "cache");
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_CACHE_PREFIX: prefix, BEELINK_GATE_MAX_CONCURRENT: "1" };
+    for (const host of ["beelink1", "beelink2"]) {
+      const warm = run(gate, ["--no-install", host, f.url, f.first, "--", "true"], { env });
+      assert.equal(warm.status, 0, warm.stderr);
+    }
+    const slot = join(`${prefix}-100.98.195.7`, ".locks", "slot-0.lock");
+    const marker = join(f.root, "b1-slot-held");
+    const locker = spawn("flock", ["-x", slot, "bash", "-c", `touch '${marker}'; sleep 5`], { stdio: "ignore" });
+    try {
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+      const chosen = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+      assert.equal(chosen.status, 0, chosen.stderr);
+      assert.match(chosen.stderr, /auto chose beelink2/);
+      assert.match(chosen.stderr, /beelink1: host=beelink1 state=free cache=warm slots=0/);
+    } finally { locker.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a command does not inherit the launcher's gate settings", () => {
+  const f = fixture();
+  try {
+    const shown = f.call(f.first, ["bash", "-c", 'printf "%s|%s|%s|%s|%s" "${BEELINK_GATE_HEARTBEAT-}" "${BEELINK_GATE_LAUNCHER-}" "${BEELINK_GATE_MAX_HOLD-}" "${BEELINK_GATE_SHIP_WORKERS-}" "${BEELINK_GATE_MAX_CONCURRENT-}"'],
+      { noInstall: true, env: { BEELINK_GATE_LAUNCHER: "mac", BEELINK_GATE_MAX_HOLD: "10m", BEELINK_GATE_SHIP_WORKERS: "3", BEELINK_GATE_MAX_CONCURRENT: "2" } });
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.equal(shown.stdout, "||||");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
