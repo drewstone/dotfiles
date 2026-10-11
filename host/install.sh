@@ -95,6 +95,8 @@ is_beelink() { case "$(hostname -s)" in beelink1|beelink2|DESKTOP-18IR33V) retur
 
 install_beelink_worktree_cap() {
   local cap=/usr/local/lib/beelink-worktree-cap
+  # want_link does not create parents; want_file's install -D does.
+  [ "$CHECK" = 1 ] || [ -d "$cap" ] || $SUDO install -d -m 0755 -o root -g root "$cap"
   want_link /usr/bin/git "$cap/git.gtr-original"
   want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" "$cap/git"
   want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" "$cap/git.worktree-cap.json"
