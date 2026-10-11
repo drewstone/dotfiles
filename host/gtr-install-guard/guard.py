@@ -17,7 +17,8 @@ checkouts (tool caches such as agent-record's renderers, a scratch directory pro
 uv keeps its narrower rule: refused only inside a `_wt` worktree, because GTR's own tools run
 through `uv run` from their checkouts.
 
-On a Beelink the same Git entrypoint carries `git.worktree-cap.json` beside it and applies only the
+On a Beelink, /usr/local/bin/git is a shell shim (beelink-git) that runs this file, with `git.worktree-cap.json` beside it,
+only for `worktree` commands. There it applies only the
 worktree cap: a `git worktree add` into `_wt` must name its fleet lane, and is refused while that lane
 already holds `cap` worktrees there or the filesystem has less than `floor_bytes` free. The refusal
 lists the longest-idle trees to release with wt-remove. Installs stay allowed: Beelinks are where they run.
@@ -322,9 +323,11 @@ def trees():
     return rows
 
 
-def release_list(rows, limit=5) -> str:
+def release_list(rows, lane, limit=5) -> str:
+    """The lane releases its own trees; another lane's tree goes through wt-remove's idle guard."""
     rows = sorted(rows, key=lambda row: -row[2])[:limit]
-    return "".join(f"\n  OWNER_RELEASED=1 wt-remove {tree}   # idle {idle / 3600:.1f} h" for tree, _, idle in rows)
+    return "".join(f"\n  {'OWNER_RELEASED=1 ' if owner == lane else ''}wt-remove {tree}   # idle {idle / 3600:.1f} h"
+                   for tree, owner, idle in rows)
 
 
 def free_bytes(path: Path):
@@ -350,14 +353,14 @@ def cap_refusal(config: dict, target, lane: str):
     mine = [row for row in rows if row[1] == lane]
     if len(mine) >= config["cap"]:
         return (f"beelink-worktree-cap: refused git worktree add for {lane}: it holds {len(mine)} of "
-                f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine)}")
+                f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine, lane)}")
     free = free_bytes(resolved(target[0], target[1])[0])
     if free is not None and free < config["floor_bytes"]:
         named = mine or rows
         whose = "this lane's" if mine else "the host's"
         return (f"beelink-worktree-cap: refused git worktree add for {lane}: {host} has "
                 f"{free / 2**30:.0f} GiB free, under its {config['floor_bytes'] / 2**30:.0f} GiB floor. "
-                f"Free space first; {whose} longest-idle trees:{release_list(named)}")
+                f"Free space first; {whose} longest-idle trees:{release_list(named, lane)}")
     return None
 
 

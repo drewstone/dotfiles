@@ -140,6 +140,8 @@ test("a Beelink worktree add into _wt needs a lane, records it, and stops at the
   assert.equal(third.status, 125);
   assert.match(third.err, /holds 2 of 2 worktrees/);
   assert.match(third.err, new RegExp(`OWNER_RELEASED=1 wt-remove ${join(home, "code/_wt/a1")}`));
+  const other = add("b0", { FLEET_LANE: "op-research:other" });
+  assert.equal(other.status, 0);
   assert.ok(!existsSync(join(home, "code/_wt/a3")));
 
   assert.equal(add("b1", { FLEET_LANE: "op-research:other" }).status, 0, "another lane has its own cap");
@@ -162,9 +164,21 @@ test("a Beelink counts nested _wt trees and records the lane when a post-checkou
 });
 
 test("a Beelink under its free-space floor refuses new _wt worktrees and names idle trees", () => {
-  const { home, git } = beelinkGit({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER });
+  const { home, git } = beelinkGit({ cap: 4, floor_bytes: 0 });
+  assert.equal(git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/x1")], { FLEET_LANE: "op-a:one" }).status, 0);
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER }));
   const r = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/f1")], { FLEET_LANE: "op-company:wt-cap" });
   assert.equal(r.status, 125);
   assert.match(r.err, /under its \d+ GiB floor/);
+  assert.match(r.err, new RegExp(`\\n  wt-remove ${join(home, "code/_wt/x1")}`), "another lane's tree keeps wt-remove's idle guard");
+  assert.doesNotMatch(r.err, /OWNER_RELEASED/);
   assert.ok(!existsSync(join(home, "code/_wt/f1")));
+});
+
+test("the Beelink shim sends only worktree commands to Python", () => {
+  const shim = readFileSync(resolve("host/gtr-install-guard/beelink-git"), "utf8");
+  assert.match(shim, /\*" worktree "\*\) exec \/usr\/bin\/python3 -I -S \/usr\/local\/lib\/beelink-worktree-cap\/git "\$@"/);
+  const r = spawnSync("sh", [resolve("host/gtr-install-guard/beelink-git"), "--version"], { encoding: "utf8" });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^git version/);
 });
