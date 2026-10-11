@@ -396,7 +396,7 @@ remote_gate() {
   fi
   if [ -e "$checkout/.git" ]; then
     origin=$(git -C "$checkout" remote get-url origin) || exit $?
-    [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+    [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
     # A blame or history check can otherwise fetch hundreds of missing blobs
     # one by one. The cache is disposable, and the repo lock is held here.
     if git -C "$checkout" config --get-regexp '^(remote\.origin\.(promisor|partialclonefilter)|extensions\.partialclone)$' >/dev/null; then
@@ -410,7 +410,7 @@ remote_gate() {
     git -C "$checkout" remote add origin "$repo_url" || exit $?
   fi
   origin=$(git -C "$checkout" remote get-url origin) || exit $?
-  [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+  [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
   remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*') || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()

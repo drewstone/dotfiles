@@ -517,3 +517,16 @@ test("a daemon left behind by a command holds neither the host slot nor the repo
     assert.ok(Date.now() - started < 4000, "second gate waited for the leaked daemon");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("a URL with or without .git reuses the same cache checkout", () => {
+  const f = fixture();
+  try {
+    const plain = f.url.replace(/\.git$/, "");
+    const withSuffix = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(withSuffix.status, 0, withSuffix.stderr);
+    const args = ["beelink2", plain, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const withoutSuffix = run("bash", [gate, "--remote", ...args], { env: f.env });
+    assert.equal(withoutSuffix.status, 0, withoutSuffix.stderr);
+    assert.doesNotMatch(withoutSuffix.stderr, /origin mismatch/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
