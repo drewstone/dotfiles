@@ -6,8 +6,12 @@
 #   beelink-gate [--no-install] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #
-# auto probes both beelinks and runs on a free one, preferring one that already
+# auto probes both beelinks and runs on a free one, preferring one under its
+# load limit (1-minute load at most 1.5x its cores), then one that already
 # caches the repo; when both are busy it waits for whichever frees first.
+# A named beelink over its load limit hands the gate to the other one when that
+# one is under its limit. On the beelink, a gate starts only under the load limit;
+# it waits up to BEELINK_GATE_LOAD_WAIT (default 30m), printing why, then refuses.
 # --ship runs exactly the repo's `scripts/ship.sh verify` (the release's own
 # verification) with the repo's .nvmrc Node and SHIP_MAX_WORKERS sized to the
 # host; ship verify does its own frozen install, so the gate does not.
@@ -322,6 +326,38 @@ acquire_slot() {
   done
 }
 
+# Load beyond 1.5x the cores turns timing-sensitive tests red for reasons that
+# have nothing to do with the change under test.
+load_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
+load_limit() { echo $(( $(nproc) * 3 / 2 )); }
+# gawk reserves the name `load`; any awk failure counts as over the limit, so a
+# broken comparison holds gates instead of admitting them.
+over_limit() {
+  awk -v cur="$1" -v cap="$2" 'BEGIN { exit !(cur + 0 > cap + 0) }'
+  [ "$?" -ne 1 ]
+}
+
+# Holds a gate that has its lock and slot until the host is under its load
+# limit, the way the disk floor refuses: bounded, with the reason printed.
+wait_for_load() {
+  local beelink=$1 budget limit load since=$SECONDS reported=-60
+  budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die "invalid BEELINK_GATE_LOAD_WAIT: ${BEELINK_GATE_LOAD_WAIT:-}"
+  limit=$(load_limit)
+  while load=$(load_now) && over_limit "$load" "$limit"; do
+    if (( SECONDS - since >= budget )); then
+      printf 'beelink-gate: REFUSED %s load %s stayed over its limit of %s (1.5x %s cores) for %ss; use the other beelink or retry later\n' \
+        "$beelink" "$load" "$limit" "$(nproc)" "$((SECONDS - since))" >&2
+      return 3
+    fi
+    if (( SECONDS - reported >= 60 )); then
+      echo "beelink-gate: waiting $((SECONDS - since))s of ${budget}s: $beelink load $load is over its limit of $limit (1.5x $(nproc) cores)" >&2
+      reported=$SECONDS
+    fi
+    sleep "${BEELINK_GATE_LOAD_POLL_SECONDS:-15}" & wait $!
+  done
+  start_load=$load
+}
+
 declare -A BEELINK_IPS=([beelink1]=100.98.195.7 [beelink2]=100.127.22.51)
 REG_EXE=${BEELINK_GATE_REG:-/mnt/c/Windows/System32/reg.exe}
 STATE_DIR="${BEELINK_GATE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/beelink-gate}"
@@ -447,8 +483,8 @@ remote_probe() {
     flock -n -s "$fd" && free_slots=$((free_slots + 1))
     exec {fd}<&-
   done
-  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$free_slots" "$(cut -d' ' -f1 /proc/loadavg)" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$(load_now)" "$(load_limit)" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 }
 
 # After a green --ship run, sign what ran and on which tree with this beelink's
@@ -509,7 +545,7 @@ remote_gate() {
 
   # The launcher holds stdin open for the gate's whole life. EOF means it died
   # (a killed session, a lost SSH connection), so the gate stops itself.
-  watchdog=0 timed_out=0 current="" waited=0
+  watchdog=0 timed_out=0 current="" waited=0 start_load=""
   stop() {
     trap - TERM INT HUP
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
@@ -582,8 +618,10 @@ remote_gate() {
   printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
     $$ "$(ps -o sid= -p $$ | tr -d ' ')" "$(date +%s)" "$sha" "$launcher" > "$lock.holder" || die "cannot write lock metadata"
   acquire_slot "$cache_root/.locks" "$max_concurrent"
+  wait_for_load "$beelink" || exit $?
+  unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since))
-  echo "beelink-gate: lock and host slot acquired on $beelink after ${waited}s" >&2
+  echo "beelink-gate: lock, host slot and load ($start_load, limit $(load_limit)) admitted on $beelink after ${waited}s" >&2
   check_floor "$beelink" || exit $?
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
 
@@ -606,15 +644,16 @@ remote_gate() {
   }
   receipt() {
     local status="$1" ran=$((SECONDS - started))
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s\n' \
-      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" >&2
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s\n' \
+      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" <<'PY' || true
 import json, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
-       "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher}
+       "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
+       "start_load": float(load) if load else None}
 with open(path, "a") as out:
     out.write(json.dumps(row) + "\n")
 PY
@@ -774,6 +813,7 @@ on_beelink() {
   local target=$1; shift
   local -a envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
+  [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
   [ -z "${BEELINK_GATE_REPO_CHECKOUTS:-}" ] || envs+=("BEELINK_GATE_REPO_CHECKOUTS=$BEELINK_GATE_REPO_CHECKOUTS")
@@ -835,30 +875,61 @@ update_window_of() {
 
 encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
+# One probe line for a beelink, or nothing when it cannot be read.
+probe_of() {
+  local target=$1
+  update_window_of "$target" 2>/dev/null || return 1
+  heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" 2>/dev/null \
+    | grep '^beelink-gate-probe ' | tail -1
+}
+field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
+overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1"); [ -n "$load" ] && [ -n "$limit" ] && over_limit "$load" "$limit"; }
+
+# A named beelink over its load limit hands the gate to the other one when that
+# one can start it under its own limit; otherwise the gate stays and waits there.
+place_named() {
+  local named=$1 other line other_line
+  other=$([ "$named" = beelink1 ] && echo beelink2 || echo beelink1)
+  line=$(probe_of "$named") || line=""
+  if [ -z "$line" ] || ! overloaded "$line"; then echo "$named"; return 0; fi
+  other_line=$(probe_of "$other") || other_line=""
+  if [ -n "$other_line" ] && [ "$(field state "$other_line")" != refused ] && ! overloaded "$other_line"; then
+    echo "beelink-gate: $named load $(field load "$line") is over its limit of $(field limit "$line"); running on $other (load $(field load "$other_line"), limit $(field limit "$other_line"))" >&2
+    echo "$other"; return 0
+  fi
+  echo "$named"
+}
+
 # Probes both beelinks and prints the one to use; waits while both are busy.
 choose_beelink() {
-  local target line state cache load slots best="" best_rank=9 best_load rank waited=0 reported=-60
+  local target line state cache load slots best="" best_rank=9 best_load rank waited=0 reported=-60 light_busy
   local -A seen=()
+  local auto_started=$SECONDS
   while :; do
-    best="" best_rank=9 best_load=""
+    best="" best_rank=9 best_load="" light_busy=""
     for target in beelink1 beelink2; do
-      if ! update_window_of "$target" 2>/dev/null; then
-        seen[$target]="unreachable"; continue
-      fi
-      line=$(heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" 2>/dev/null | grep '^beelink-gate-probe ' | tail -1)
+      line=$(probe_of "$target") || line=""
       [ -n "$line" ] || { seen[$target]="unreachable"; continue; }
       seen[$target]=${line#beelink-gate-probe }
       state=$(sed -n 's/.* state=\([a-z]*\).*/\1/p' <<<"$line"); cache=$(sed -n 's/.* cache=\([a-z]*\).*/\1/p' <<<"$line")
       load=$(sed -n 's/.* load=\([0-9.]*\).*/\1/p' <<<"$line")
       slots=$(sed -n 's/.* slots=\([0-9]*\).*/\1/p' <<<"$line")
+      if [ "$state" = busy ] && ! overloaded "$line"; then light_busy=$target; fi
       # A free repo lock with no free host slot still queues, behind any gate.
       case "$state:$cache:$([ "${slots:-1}" -gt 0 ] && echo slot || echo full)" in
         free:warm:slot) rank=0 ;; free:cold:slot) rank=1 ;; free:*:full) rank=2 ;; *) continue ;;
       esac
+      # Any host under its load limit beats one over it; the gate on an
+      # overloaded host would only wait for the load to fall.
+      ! overloaded "$line" || rank=$((rank + 3))
       if (( rank < best_rank )) || { (( rank == best_rank )) && awk -v a="${load:-0}" -v b="${best_load:-1e9}" 'BEGIN{exit !(a < b)}'; }; then
         best=$target best_rank=$rank best_load=$load
       fi
     done
+    # A repo lock frees in minutes; load over the limit can last the whole
+    # load wait. Keep probing rather than queue on an overloaded host while
+    # the other one is under its limit and only busy with this repo.
+    if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     if [ -n "$best" ]; then
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       echo "$best"; return 0
@@ -870,10 +941,10 @@ choose_beelink() {
       echo "beelink-gate: no beelink can start this gate (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2; return 3
     fi
     if (( waited - reported >= 60 )); then
-      echo "beelink-gate: both beelinks busy for this repo after ${waited}s; waiting (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
+      echo "beelink-gate: no beelink is both free for this repo and under its load limit after ${waited}s; waiting (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       reported=$waited
     fi
-    sleep 20; waited=$((waited + 20))
+    sleep "${BEELINK_GATE_AUTO_POLL_SECONDS:-20}"; waited=$((SECONDS - auto_started))
   done
 }
 
@@ -899,11 +970,14 @@ shift 4
 if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
   [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
 fi
+if [ -n "${BEELINK_GATE_LOAD_WAIT:-}" ]; then
+  seconds_of "$BEELINK_GATE_LOAD_WAIT" >/dev/null || die "invalid BEELINK_GATE_LOAD_WAIT: $BEELINK_GATE_LOAD_WAIT"
+fi
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
 case "$target" in
-  beelink1|100.98.195.7) target=beelink1 ;;
-  beelink2|100.127.22.51) target=beelink2 ;;
+  beelink1|100.98.195.7) target=$(place_named beelink1) ;;
+  beelink2|100.127.22.51) target=$(place_named beelink2) ;;
   auto) target=$(choose_beelink) || exit $? ;;
   *) die "unknown beelink: $target" ;;
 esac

@@ -50,7 +50,10 @@ function fixture() {
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
   const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, ...inherited } = process.env;
-  const env = { ...inherited, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  // Fixture gates see a light host unless a test sets the load.
+  const loadavg = join(root, "loadavg");
+  writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -71,6 +74,7 @@ fi
 printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
 printf '%s\\n' "\${rest[*]:2}" > '${join(f.root, "ssh-remote-command")}'
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
+[[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
 exec "\${rest[@]:2}"
 `);
   chmodSync(fakeSsh, 0o755);
@@ -831,5 +835,122 @@ test("two gates of one repo run at once in separate checkouts, and a third waits
       assert.equal(f.git(["-C", join(f.cache, "local", "owner", dir), "rev-parse", "HEAD"], f.root), f.first);
       assert.equal(spawnSync("git", ["-C", join(f.cache, "local", "owner", dir), "fsck", "--no-progress"], { encoding: "utf8" }).status, 0);
     }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+const coreCount = Number(spawnSync("nproc", { encoding: "utf8" }).stdout.trim());
+const loadLimit = Math.floor(coreCount * 3 / 2);
+const loadLine = (load) => `${load.toFixed(2)} ${load.toFixed(2)} ${load.toFixed(2)} 1/100 1\n`;
+
+test("a gate waits while its host is over the load limit, then starts and records the load", async () => {
+  const f = fixture();
+  const loadavg = join(f.root, "busy-loadavg");
+  writeFileSync(loadavg, loadLine(loadLimit * 2));
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 100 && !/is over its limit/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, new RegExp(`beelink2 load ${(loadLimit * 2).toFixed(2)} is over its limit of ${loadLimit} \\(1\\.5x ${coreCount} cores\\)`));
+    writeFileSync(loadavg, loadLine(1));
+    assert.equal(await done, 0, stderr);
+    assert.match(stderr, /receipt: .*load=1\.00/);
+    const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
+    assert.equal(row.start_load, 1);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a gate refuses after its bounded load wait without running the command", () => {
+  const f = fixture();
+  const loadavg = join(f.root, "busy-loadavg");
+  writeFileSync(loadavg, loadLine(loadLimit + 1));
+  try {
+    const marker = join(f.root, "ran");
+    const result = f.call(f.first, ["touch", marker], { noInstall: true, env: { BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    assert.equal(result.status, 3, result.stderr);
+    assert.match(result.stderr, /REFUSED beelink2 load .* stayed over its limit .*use the other beelink or retry later/);
+    assert.equal(existsSync(marker), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+function loadedHosts(f, b1, b2) {
+  installFakeSsh(f);
+  const prefix = join(f.root, "load");
+  writeFileSync(`${prefix}-100.98.195.7`, loadLine(b1));
+  writeFileSync(`${prefix}-100.127.22.51`, loadLine(b2));
+  return { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_CACHE_PREFIX: join(f.root, "cache"), FAKE_LOAD_PREFIX: prefix, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" };
+}
+
+test("auto lands on the beelink under its load limit even when the loaded one has the warm cache", () => {
+  const f = fixture();
+  try {
+    const env = loadedHosts(f, 0.5, 0.5);
+    const warm = run(gate, ["--no-install", "beelink1", f.url, f.first, "--", "true"], { env });
+    assert.equal(warm.status, 0, warm.stderr);
+    writeFileSync(join(f.root, "load-100.98.195.7"), loadLine(loadLimit * 2));
+    writeFileSync(join(f.root, "load-100.127.22.51"), loadLine(loadLimit - 1));
+    const chosen = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(chosen.status, 0, chosen.stderr);
+    assert.match(chosen.stderr, /auto chose beelink2/);
+    assert.match(chosen.stderr, /receipt: .*host=beelink2/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a named beelink over its load limit hands the gate to the lighter one, and keeps it when both are loaded", () => {
+  const f = fixture();
+  try {
+    const env = loadedHosts(f, loadLimit * 2, 1);
+    const moved = run(gate, ["--no-install", "beelink1", f.url, f.first, "--", "true"], { env });
+    assert.equal(moved.status, 0, moved.stderr);
+    assert.match(moved.stderr, new RegExp(`beelink1 load ${(loadLimit * 2).toFixed(2)} is over its limit of ${loadLimit}; running on beelink2 \\(load 1\\.00`));
+    assert.match(moved.stderr, /receipt: .*host=beelink2/);
+    const light = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(light.status, 0, light.stderr);
+    assert.doesNotMatch(light.stderr, /running on beelink1/);
+    writeFileSync(join(f.root, "load-100.127.22.51"), loadLine(loadLimit * 2));
+    const stuck = run(gate, ["--no-install", "beelink1", f.url, f.first, "--", "true"], { env });
+    assert.equal(stuck.status, 3, stuck.stderr);
+    assert.match(stuck.stderr, /REFUSED beelink1 load .* stayed over its limit/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto waits for the light beelink's repo lock instead of queueing on an overloaded one", async () => {
+  const f = fixture();
+  try {
+    // One checkout per host, so one held lock makes the light host busy.
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_AUTO_POLL_SECONDS: "0.5", BEELINK_GATE_REPO_CHECKOUTS: "1" };
+    for (const host of ["beelink1", "beelink2"]) {
+      const warm = run(gate, ["--no-install", host, f.url, f.first, "--", "true"], { env });
+      assert.equal(warm.status, 0, warm.stderr);
+    }
+    writeFileSync(join(f.root, "load-100.98.195.7"), loadLine(loadLimit * 2));
+    const lock = join(`${env.FAKE_CACHE_PREFIX}-100.127.22.51`, ".locks", "local-owner-repo.lock");
+    const marker = join(f.root, "b2-lock-held");
+    const locker = spawn("flock", ["-x", lock, "bash", "-c", `touch '${marker}'; sleep 2`], { stdio: "ignore" });
+    for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+    const child = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const status = await new Promise((resolveDone) => child.on("close", resolveDone));
+    locker.kill();
+    assert.equal(status, 0, stderr);
+    assert.match(stderr, /no beelink is both free for this repo and under its load limit/);
+    assert.match(stderr, /auto chose beelink2/);
+    assert.match(stderr, /receipt: .*host=beelink2/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the launcher forwards a validated load wait", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_LOAD_WAIT: "2h" };
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_LOAD_WAIT=2h /);
+    const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_LOAD_WAIT: "2h;id" } });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /invalid BEELINK_GATE_LOAD_WAIT/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
