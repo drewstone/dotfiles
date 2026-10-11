@@ -6,6 +6,7 @@ A one-fact answer stays a sentence.
 
 ```bash
 viz brief spec.json                  # the terminal status: every block as text, with the page's numbers
+viz brief spec.json --color emoji    # the chat status (the default under VIZ_COLOR=emoji, as in Claude Code)
 viz brief spec.json -o brief.html    # the page; spec errors exit 2 and missing climb parts warn
 viz brief spec.json --section 3      # one section, by number or by words in its key or title
 ```
@@ -17,7 +18,8 @@ It draws each chart at its panel's real width, so labels stay legible on a phone
 
 ## Spec
 
-Top level: `title` (a name, two to four words), `eyebrow` (window, owner, freshness), `thesis` and optional `thesisAlert` (the sentence the data supports, and its sharpest consequence), `dek`, `hill` (`metric`, `baseline`, `target`, `owner`), `stats` (`v`, `l`, `tone` of `bad`/`ok`/`warn`), `sections`, `method`, `caveats`.
+Top level: `title` (a name, two to four words), `eyebrow` (window, owner, freshness), `thesis` and optional `thesisAlert` (the sentence the data supports, and its sharpest consequence), `decision` (the call the brief makes, in one plain sentence), `dek`, `hill` (`metric`, `baseline`, `now`, `target`, `owner`), `stats` (`v`, `l`, `tone` of `bad`/`ok`/`warn`), `learned` (findings as plain text: strings, or `text` with a status `tone`), `sections`, `method`, `caveats`.
+Any block may set `evidence: true` to lead the chat status's Evidence.
 A page that lives on a screen (a wall) may also set `theme` (`dark` or `light`), `wide` (the full window width instead of one reading column) and `refresh` (seconds until it reloads itself).
 
 Each section has `key`, `title`, `lede` and `blocks`.
@@ -45,6 +47,23 @@ Status tones are `good`, `warn`, `serious`, `crit`, `blind` (no signal) and `acc
 | `lines` | values per labelled step, on an axis that includes zero | `labels[]`, `series[]` (`name`, `tone`, `values[]` with `null` gaps, `tips[]`), `yUnit`, `every`, `note` |
 | `cols` | side-by-side panels | `cols`, `blocks[]` |
 | `text`, `callout` | prose or an emphasized finding | `html` |
+
+## Chat status
+
+In emoji mode (`--color emoji`, or `VIZ_COLOR=emoji`, which Claude Code sessions set), `viz brief spec.json` prints the status as markdown to paste into chat as it is.
+Every line comes from the spec; a part the spec lacks prints `none in the spec` instead of being made up.
+
+| Part | Drawn from |
+|---|---|
+| bold headline | `decision` (else `thesis`), then `hill`: metric, `now` against `target`, from `baseline` |
+| 🎯 Focus | `hill` and its owner, then `thesis` and `thesisAlert` |
+| 📊 Evidence | `stats` with status dots, then each block with `evidence: true` (else the first chart) in a text fence with its note, then `method` and `caveats` |
+| 🛠️ Doing | open `board` rows, each `steps` path in one line, and `hills` moves that are `pending` |
+| 🧠 Learned | `learned`, `board` rows with tone `good`, and `hills` moves that were `kept` or `failed` |
+| ⏭️ Next | `decisions` items, then `hills` moves that are `planned` |
+
+Write the spec first and paste its status; never retype the numbers.
+The [tools README](../../../tools/README.md#color-in-a-markdown-chat) shows the colors and how a square keeps the scale.
 
 ## Rules that keep a brief honest
 

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as core from '../claude/tools/viz-kit/core.mjs'
-import { briefHtml, briefText, prepareBrief } from '../claude/tools/viz-kit/brief.mjs'
+import { briefHtml, briefStatus, briefText, prepareBrief } from '../claude/tools/viz-kit/brief.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const viz = join(repoRoot, 'claude', 'tools', 'viz')
@@ -14,8 +14,19 @@ const example = join(repoRoot, 'claude', 'skills', 'report', 'assets', 'brief-ex
 const kit = join(repoRoot, 'claude', 'skills', 'report', 'assets', 'brief-kit.html')
 const update = process.env.VIZ_UPDATE_GOLDEN === '1'
 
-function run(args, input) {
-  return spawnSync(process.execPath, [viz, ...args], { encoding: 'utf8', input, env: { ...process.env, COLUMNS: '80' } })
+// The operator's environment sets VIZ_COLOR; each run states its own so goldens stay fixed.
+function run(args, input, color) {
+  const env = { ...process.env, COLUMNS: '80' }
+  delete env.VIZ_COLOR
+  if (color) env.VIZ_COLOR = color
+  return spawnSync(process.execPath, [viz, ...args], { encoding: 'utf8', input, env })
+}
+const local = (args) => args.map((a) => (a.includes('.') && existsSync(join(fixtures, a)) ? join(fixtures, a) : a))
+function golden(name, out) {
+  assert.equal(out.status, 0, out.stderr)
+  const file = join(fixtures, `${name}.txt`)
+  if (update || !existsSync(file)) writeFileSync(file, out.stdout)
+  assert.equal(out.stdout, readFileSync(file, 'utf8'))
 }
 
 // Each case renders a fixture and compares it byte for byte with its golden file.
@@ -33,37 +44,87 @@ const CASES = [
   ['timeline', ['timeline', 'events.tsv', '--width', '64', '-q']],
   ['table', ['table', 'repos.tsv', '--sum', '--width', '50', '-q']],
 ]
+// Emoji mode: the same charts in colored squares, dots and ✅/❌/⚠️, plus a table of toned cells.
+const EMOJI_CASES = [...CASES, ['table-checks', ['table', 'checks.json', '--width', '50', '-q']]]
 
-for (const [name, args] of CASES) {
-  test(`golden: ${name}`, () => {
-    const out = run(args.map((a) => (a.includes('.') && existsSync(join(fixtures, a)) ? join(fixtures, a) : a)))
-    assert.equal(out.status, 0, out.stderr)
-    const golden = join(fixtures, `${name}.txt`)
-    if (update || !existsSync(golden)) writeFileSync(golden, out.stdout)
-    assert.equal(out.stdout, readFileSync(golden, 'utf8'))
-  })
-}
+for (const [name, args] of CASES) test(`golden: ${name}`, () => golden(name, run(local(args))))
+for (const [name, args] of EMOJI_CASES) test(`golden: ${name} in emoji mode`, () => golden(`${name}.emoji`, run(local(args), undefined, 'emoji')))
 
-test('golden: the brief kit example in the terminal', () => {
-  const out = run(['brief', example, '--width', '100'])
-  assert.equal(out.status, 0, out.stderr)
-  const golden = join(fixtures, 'brief-example.txt')
-  if (update || !existsSync(golden)) writeFileSync(golden, out.stdout)
-  assert.equal(out.stdout, readFileSync(golden, 'utf8'))
+test('golden: the brief kit example in the terminal', () => golden('brief-example', run(['brief', example, '--width', '100'])))
+test('golden: the brief kit example as the emoji chat status', () => golden('brief-example.emoji', run(['brief', example, '--width', '80'], undefined, 'emoji')))
+
+test('--color overrides VIZ_COLOR, and an unknown mode exits 2', () => {
+  const [, args] = CASES[0]
+  assert.equal(run([...local(args), '--color', 'plain'], undefined, 'emoji').stdout, readFileSync(join(fixtures, 'bars-total.txt'), 'utf8'))
+  assert.equal(run([...local(args), '--color', 'emoji']).stdout, readFileSync(join(fixtures, 'bars-total.emoji.txt'), 'utf8'))
+  const bad = run([...local(args), '--color', 'rainbow'])
+  assert.equal(bad.status, 2)
+  assert.match(bad.stderr, /unknown color mode "rainbow"; use plain or emoji/)
 })
 
-test('every chart stays inside the width it was given', () => {
-  for (const [name, args] of CASES) {
-    for (const cols of [40, 72, 120]) {
-      const widened = args.map((a) => (a.includes('.') && existsSync(join(fixtures, a)) ? join(fixtures, a) : a))
-      const at = widened.indexOf('--width')
-      if (at >= 0) widened[at + 1] = String(cols)
-      else widened.push('--width', String(cols))
-      const out = run(widened)
-      assert.equal(out.status, 0, `${name} at ${cols}: ${out.stderr}`)
-      for (const line of out.stdout.trimEnd().split('\n')) assert.ok(core.width(line) <= cols, `${name} at ${cols}: ${JSON.stringify(line)} is ${core.width(line)} wide`)
+test('every chart stays inside the width it was given, in both modes', () => {
+  for (const [name, args] of EMOJI_CASES) {
+    for (const color of ['plain', 'emoji']) {
+      for (const cols of [40, 72, 120]) {
+        const widened = local(args)
+        const at = widened.indexOf('--width')
+        if (at >= 0) widened[at + 1] = String(cols)
+        else widened.push('--width', String(cols))
+        const out = run(widened, undefined, color)
+        assert.equal(out.status, 0, `${name} ${color} at ${cols}: ${out.stderr}`)
+        for (const line of out.stdout.trimEnd().split('\n')) assert.ok(core.width(line) <= cols, `${name} ${color} at ${cols}: ${JSON.stringify(line)} is ${core.width(line)} wide`)
+      }
     }
   }
+})
+
+test('width counts emoji and wide characters as two columns', () => {
+  assert.equal(core.width('abc'), 3)
+  assert.equal(core.width('✓ ✗ █ ┆ ·'), 9, 'the plain glyphs stay one column')
+  for (const e of ['🟩', '🟦', '⬜', '🟢', '⚪', '🔴', '✅', '❌', '⚠️', '➖', '🏁', '🛠️', '⏭️', '👉', '表']) assert.equal(core.width(e), 2, e)
+  assert.equal(core.padEnd('🟩', 4), '🟩  ')
+})
+
+test('emoji bars are drawn to scale in whole squares of a stated round unit', () => {
+  const sq = core.squareScale(100, 42)
+  assert.deepEqual(sq, { slots: 21, unit: 5 })
+  assert.equal(core.squareBar(50, sq, '🟩', 42), '🟩'.repeat(10) + ' '.repeat(22))
+  assert.equal(core.squareBar(0.1, sq, '🟩', 6 * 2).startsWith('🟩'), true, 'a nonzero value never draws as zero')
+  assert.equal(core.squareBar(null, core.squareScale(100, 8), '🟩', 8, 50), '    🏁  ', 'a missing value keeps the target flag')
+  assert.equal(core.squareBar(100, core.squareScale(100, 8), '🟩', 8, 50), '🟩'.repeat(4), 'a bar past the target covers it')
+  assert.equal(core.squareText(0.25, 's'), '1 square = 0.25s')
+  // Within half a square of the value, and never more than the squares that fit.
+  for (const max of [1, 3, 7.5, 60, 171, 406, 1196520]) {
+    for (const cols of [8, 21, 42, 80]) {
+      const s = core.squareScale(max, cols)
+      assert.ok(max / s.unit <= s.slots + 1e-9, `${max} in ${cols} columns: ${max / s.unit} squares > ${s.slots}`)
+      assert.ok(max / s.unit > s.slots / 2 - 1e-9 || s.slots < 2, `${max} in ${cols} columns uses under half the width (${max / s.unit} of ${s.slots})`)
+      for (const v of [0, max * 0.13, max * 0.5, max]) {
+        const n = core.squareCount(v, s.unit)
+        assert.ok(Math.abs(n * s.unit - v) <= s.unit / 2 + 1e-9 || (v > 0 && n === 1), `${v} of ${max} drew ${n} squares of ${s.unit}`)
+      }
+    }
+  }
+})
+
+test('the emoji chat status draws every block from the spec', () => {
+  const spec = JSON.parse(readFileSync(example, 'utf8'))
+  const { spec: prepared, warnings } = prepareBrief(spec)
+  assert.ok(!warnings.some((w) => /no decision/.test(w)), 'the example states its decision')
+  const text = briefStatus(prepared, 80)
+  const lines = text.split('\n')
+  assert.equal(lines[0], `**${spec.decision} · ${spec.hill.metric} ${spec.hill.now} vs target ${spec.hill.target} (from ${spec.hill.baseline})**`)
+  const heads = ['🎯 **Focus**', '📊 **Evidence**', '🛠️ **Doing**', '🧠 **Learned**', '⏭️ **Next**'].map((h) => lines.findIndex((l) => l.startsWith(h)))
+  assert.ok(heads.every((i, k) => i > 0 && (k === 0 || i > heads[k - 1])), `the five blocks appear in order: ${heads}`)
+  for (const x of spec.learned) assert.ok(text.includes(x.text), x.text)
+  for (const title of ['Where the cart outage', 'Payment success by day', 'Apple Pay declines at the gateway', 'Autopilot pages the owner', 'Renew the fraud vendor']) assert.ok(text.includes(title), title)
+  assert.equal((text.match(/^```text$/gm) ?? []).length, 3, 'stats and the two evidence charts sit in text fences')
+  // A bare spec still prints the whole shape, saying what it lacks instead of inventing it.
+  const bare = prepareBrief({ title: 'Bare', thesis: 'Nothing measured yet.', sections: [{ title: 's', blocks: [] }] })
+  assert.ok(bare.warnings.some((w) => /no decision/.test(w)))
+  const status = briefStatus(bare.spec, 80)
+  assert.ok(status.startsWith('**Nothing measured yet.**'))
+  assert.equal((status.match(/_none in the spec_/g) ?? []).length, 4)
 })
 
 test('bars are drawn to scale with eighth-cell ends and the target behind them', () => {

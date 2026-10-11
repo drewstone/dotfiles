@@ -134,6 +134,9 @@ export function prepareBrief(input) {
     walk(sec.blocks ?? [], `sections[${i}].blocks`, errors, warnings, seen)
   })
   for (const x of spec.stats ?? []) if (!toneOk(x.tone, TEXT_TONES)) errors.push(`stats: unknown tone ${JSON.stringify(x.tone)}`)
+  if (spec.learned != null && !Array.isArray(spec.learned)) errors.push('learned must be a list')
+  for (const x of Array.isArray(spec.learned) ? spec.learned : []) if (x && typeof x === 'object' && !toneOk(x.tone, TONES)) errors.push(`learned: unknown tone ${JSON.stringify(x.tone)}`)
+  if (!spec.decision) warnings.push('no decision: the chat status headline falls back to the thesis; state the call this brief makes')
   if (!spec.hill) warnings.push('no hill: name the metric, baseline, target and owner this brief moves')
   if (!spec.method) warnings.push('no method: state each source, query, window and denominator')
   if (![...seen].some((t) => CHARTS.has(t))) warnings.push('no chart: a brief with more than one dimension shows its shape')
@@ -153,6 +156,9 @@ export function briefHtml(prepared) {
 // ---------- terminal view ----------
 
 const STATE_GLYPH = { good: '✓', done: '✓', ok: '✓', crit: '✗', block: '✗', serious: '!', warn: '!', wait: '…', you: '→', blind: '·', accent: '•' }
+const glyphOf = (state, style, fallback = '•') => (style.emoji ? core.DOT[state] ?? '🔵' : STATE_GLYPH[state] ?? fallback)
+// Stats color their numbers bad/ok/warn; in emoji mode the number carries the matching dot.
+const STAT_TONE = { bad: 'crit', ok: 'good', warn: 'warn' }
 const rule = (label, cols) => {
   const head = `── ${label} `
   return head + '─'.repeat(Math.max(3, cols - core.width(head)))
@@ -162,17 +168,18 @@ const indented = (text, cols, indent = '  ') => core.wrap(text, cols - indent.le
 const titled = (b, cols) => [...(b.title ? core.wrap(htmlText(b.title), cols) : []), ...(b.sub ? para(b.sub, cols) : [])]
 const noted = (b, cols) => (b.note ? para(b.note, cols) : [])
 
-function blockText(b, cols) {
+function blockText(b, cols, style = core.STYLES.plain) {
   const m = b.model
   const out = []
   const chart = (text) => text.split('\n')
+  const glyph = (state, fallback) => glyphOf(state, style, fallback)
   switch (b.type) {
     case 'text': out.push(...para(b.html, cols)); break
     case 'callout': out.push(...para(b.html, cols, '│ ')); break
-    case 'cols': for (const x of b.blocks ?? []) { out.push(...blockText(x, cols), ''); } out.pop(); break
+    case 'cols': for (const x of b.blocks ?? []) { out.push(...blockText(x, cols, style), ''); } out.pop(); break
     case 'board':
       for (const r of b.rows ?? []) {
-        out.push(...core.wrap(`${STATE_GLYPH[r.tone] ?? '•'} [${r.chip ?? r.tone ?? ''}] ${r.title}${r.when ? ` (${r.when})` : ''}`, cols))
+        out.push(...core.wrap(`${glyph(r.tone)} [${r.chip ?? r.tone ?? ''}] ${r.title}${r.when ? ` (${r.when})` : ''}`, cols))
         if (r.text) out.push(...para(r.text, cols, '  '))
         if (r.owner || r.next) out.push(...indented(`owner ${r.owner ?? 'none'}${r.next ? ` · next: ${htmlText(r.next)}` : ''}`, cols))
       }
@@ -180,12 +187,12 @@ function blockText(b, cols) {
     case 'tiles': {
       const rows = (b.items ?? []).map((x) => ({ name: x.name, value: `${x.value}${x.unit ? ' ' + x.unit : ''}`, tier: x.tiers ? x.tiers.map((t, i) => (i === x.on ? `[${t}]` : t)).join(' ') : '', note: htmlText(x.fine ?? '') }))
       const cols4 = ['name', 'value', 'tier', 'note'].filter((k) => rows.some((r) => r[k]))
-      out.push(...chart(core.tableText(core.tableModel({ rows, columns: cols4 }, { header: false }), cols)))
+      out.push(...chart(core.tableText(core.tableModel({ rows, columns: cols4 }, { header: false }), cols, style)))
       break
     }
-    case 'hist': out.push(...titled(b, cols), ...chart(core.barsText({ ...m, title: null }, cols)), ...noted(b, cols)); break
+    case 'hist': out.push(...titled(b, cols), ...chart(core.barsText({ ...m, title: null }, cols, style)), ...noted(b, cols)); break
     case 'hbars': {
-      out.push(...titled(b, cols), ...chart(core.barsText({ ...m, title: null }, cols)))
+      out.push(...titled(b, cols), ...chart(core.barsText({ ...m, title: null }, cols, style)))
       const tips = m.rows.filter((r) => r.tip).map((r) => `${r.label}: ${htmlText(r.tip)}`)
       if (tips.length) out.push(...core.wrap(tips.join(' · '), cols))
       const inner = (b.rows ?? []).filter((r) => r[2] != null).map((r) => `${r[0]} ${core.fmtNum(r[2], core.decimalsOf([r[2]]))}`)
@@ -193,15 +200,15 @@ function blockText(b, cols) {
       out.push(...noted(b, cols))
       break
     }
-    case 'stack': out.push(...titled(b, cols), ...chart(core.stackText({ ...m, title: null }, cols)), ...noted(b, cols)); break
-    case 'grouped': out.push(...titled(b, cols), ...chart(core.groupedText({ ...m, title: null, note: null }, cols)), ...noted(b, cols)); break
-    case 'strip': out.push(...titled(b, cols), ...chart(core.stripText({ ...m, title: null, note: null }, cols)), ...noted(b, cols)); break
-    case 'waterfall': out.push(...titled(b, cols), ...chart(core.waterfallText({ ...m, title: null, note: null }, cols)), ...noted(b, cols)); break
-    case 'events': out.push(...titled(b, cols), ...chart(core.timelineText({ ...m, title: null, note: null, events: m.events.map((e) => ({ ...e, text: htmlText(e.text) })) }, cols)), ...noted(b, cols)); break
+    case 'stack': out.push(...titled(b, cols), ...chart(core.stackText({ ...m, title: null }, cols, style)), ...noted(b, cols)); break
+    case 'grouped': out.push(...titled(b, cols), ...chart(core.groupedText({ ...m, title: null, note: null }, cols, style)), ...noted(b, cols)); break
+    case 'strip': out.push(...titled(b, cols), ...chart(core.stripText({ ...m, title: null, note: null }, cols, style)), ...noted(b, cols)); break
+    case 'waterfall': out.push(...titled(b, cols), ...chart(core.waterfallText({ ...m, title: null, note: null }, cols, style)), ...noted(b, cols)); break
+    case 'events': out.push(...titled(b, cols), ...chart(core.timelineText({ ...m, title: null, note: null, events: m.events.map((e) => ({ ...e, text: htmlText(e.text) })) }, cols, style)), ...noted(b, cols)); break
     case 'dots': {
       out.push(...titled(b, cols))
-      const rows = (b.points ?? []).map((p) => ({ t: p.t, y: p.y ?? null, state: p.tone ?? '', tip: htmlText(p.tip ?? '') }))
-      out.push(...chart(core.tableText(core.tableModel({ rows, columns: ['t', 'y', 'state', 'tip'] }, {}), cols)), ...noted(b, cols))
+      const rows = (b.points ?? []).map((p) => ({ t: p.t, y: p.y ?? null, state: p.tone ? { text: p.tone, tone: p.tone } : '', tip: htmlText(p.tip ?? '') }))
+      out.push(...chart(core.tableText(core.tableModel({ rows, columns: ['t', 'y', 'state', 'tip'] }, {}), cols, style)), ...noted(b, cols))
       break
     }
     case 'heatmap': {
@@ -210,7 +217,7 @@ function blockText(b, cols) {
       for (const r of b.rows ?? []) {
         const cells = Array.from({ length: b.cols ?? 0 }, (_, j) => r.cells?.[j])
         out.push(`${r.label}${r.sub ? ` (${r.sub})` : ''}`)
-        out.push('  ' + cells.map((c) => (c ? STATE_GLYPH[c.state] ?? '•' : ' ')).join(' '))
+        out.push('  ' + (style.emoji ? cells.map((c) => (c ? glyph(c.state) : '  ')).join('') : cells.map((c) => (c ? glyph(c.state) : ' ')).join(' ')))
         const tips = cells.map((c, j) => (c?.tip ? `${j + 1}: ${htmlText(c.tip)}` : null)).filter(Boolean)
         if (tips.length) out.push(...indented(tips.join(' · '), cols))
       }
@@ -223,7 +230,7 @@ function blockText(b, cols) {
       out.push(...titled(b, cols))
       for (const ln of b.lanes ?? []) {
         out.push(ln.label)
-        for (const sg of ln.segments ?? []) out.push(...indented(`${STATE_GLYPH[sg.tone] ?? '•'} ${sg.from} → ${sg.to}${sg.tip ? ` · ${htmlText(sg.tip)}` : ''}`, cols))
+        for (const sg of ln.segments ?? []) out.push(...indented(`${glyph(sg.tone)} ${sg.from} → ${sg.to}${sg.tip ? ` · ${htmlText(sg.tip)}` : ''}`, cols))
         for (const mk of ln.marks ?? []) out.push(...indented(`${mk.shape} at ${mk.at}${mk.tip ? ` · ${htmlText(mk.tip)}` : ''}`, cols))
       }
       if (b.now) out.push(`now ${b.now}`)
@@ -233,9 +240,9 @@ function blockText(b, cols) {
     case 'hills':
       out.push(...titled(b, cols))
       for (const r of b.rows ?? []) {
-        out.push(...core.wrap(`${STATE_GLYPH[r.tone] ?? '•'} ${r.title}${r.sub ? ` (${r.sub})` : ''}: now ${r.now ?? '—'}${r.unit ? ' ' + r.unit : ''} · target ${r.target ?? '—'} · gap ${r.gap ?? '—'}${Number.isFinite(r.open) ? ` · ${Math.round(r.open * 100)}% of the first gap open` : ''} · last climbed ${r.since ?? '—'}`, cols))
+        out.push(...core.wrap(`${glyph(r.tone)} ${r.title}${r.sub ? ` (${r.sub})` : ''}: now ${r.now ?? '—'}${r.unit ? ' ' + r.unit : ''} · target ${r.target ?? '—'} · gap ${r.gap ?? '—'}${Number.isFinite(r.open) ? ` · ${Math.round(r.open * 100)}% of the first gap open` : ''} · last climbed ${r.since ?? '—'}`, cols))
         const pts = (r.points ?? []).filter((x) => Number.isFinite(x[1]))
-        if (pts.length) out.push(...indented(core.sparkText({ ...core.sparkModel({ values: pts.map((x) => x[1]) }, { unit: r.unit === '%' ? '%' : '' }), title: null }, cols - 2).replace(/^\s+/, ''), cols))
+        if (pts.length) out.push(...indented(core.sparkText({ ...core.sparkModel({ values: pts.map((x) => x[1]) }, { unit: r.unit === '%' ? '%' : '' }), title: null }, cols - 2, style).replace(/^\s+/, ''), cols))
         if (pts.length) out.push(...indented(`readings: ${pts.map((x) => (x[2] ? htmlText(x[2]) : `${x[0]} ${x[1]}`)).join(' · ')}`, cols))
         out.push(...indented(r.move ? `move [${r.move.status}] ${r.move.title}${r.move.prediction ? `; predicts ${r.move.prediction}` : ''}${r.move.more ? `; +${r.move.more} more pending` : ''}` : 'no move registered', cols))
       }
@@ -245,7 +252,7 @@ function blockText(b, cols) {
       out.push(...titled(b, cols))
       const labels = b.labels ?? []
       const rows = labels.map((label, i) => Object.fromEntries([['step', label], ...(b.series ?? []).map((x) => [x.name, x.values?.[i] ?? null])]))
-      out.push(...chart(core.tableText(core.tableModel({ rows, columns: ['step', ...(b.series ?? []).map((x) => x.name)] }, {}), cols)))
+      out.push(...chart(core.tableText(core.tableModel({ rows, columns: ['step', ...(b.series ?? []).map((x) => x.name)] }, {}), cols, style)))
       const tips = (b.series ?? []).flatMap((x) => (x.tips ?? []).filter(Boolean).map(htmlText))
       if (tips.length) out.push(...core.wrap(tips.join(' · '), cols))
       out.push(...noted(b, cols))
@@ -254,7 +261,7 @@ function blockText(b, cols) {
     case 'steps':
       out.push(...titled(b, cols))
       ;(b.items ?? []).forEach((x, i) => {
-        out.push(...core.wrap(`${STATE_GLYPH[x.state] ?? String(i + 1)} ${x.title}${x.when ? ` (${x.when})` : ''}`, cols))
+        out.push(...core.wrap(`${glyph(x.state, String(i + 1))} ${x.title}${x.when ? ` (${x.when})` : ''}`, cols))
         if (x.text) out.push(...para(x.text, cols, '  '))
       })
       break
@@ -262,7 +269,7 @@ function blockText(b, cols) {
       out.push(...titled(b, cols))
       const head = b.head ?? []
       const rows = (b.rows ?? []).map((r) => Object.fromEntries(r.map((c, i) => [head[i] ?? `col${i + 1}`, typeof c === 'string' ? htmlText(c) : c])))
-      out.push(...chart(core.tableText(core.tableModel({ rows, columns: head.length ? head : undefined }, {}), cols)), ...noted(b, cols))
+      out.push(...chart(core.tableText(core.tableModel({ rows, columns: head.length ? head : undefined }, {}), cols, style)), ...noted(b, cols))
       break
     }
     case 'bets':
@@ -283,19 +290,23 @@ function blockText(b, cols) {
   return out
 }
 
-export function briefText(prepared, cols = 100, only = null) {
+const statsTable = (s, cols, style) => core.tableText(core.tableModel({
+  rows: s.stats.map((x) => ({ v: style.emoji ? { text: x.v, tone: STAT_TONE[x.tone] ?? 'accent' } : x.v, l: x.l })), columns: ['v', 'l'],
+}, { header: false }), cols, style)
+
+export function briefText(prepared, cols = 100, only = null, style = core.STYLES.plain) {
   const out = []
   const s = prepared
   if (s.eyebrow?.length) out.push(...core.wrap(s.eyebrow.join(' · '), cols))
   out.push(...core.wrap(`${s.thesis ?? ''}${s.thesisAlert ? ' ' + s.thesisAlert : ''}`, cols))
   if (s.dek) out.push(...para(s.dek, cols))
   if (s.hill) out.push(...core.wrap(`hill: ${s.hill.metric} · ${s.hill.baseline} → ${s.hill.target}${s.hill.owner ? ` · owner ${s.hill.owner}` : ''}`, cols))
-  if (s.stats?.length) out.push(...core.tableText(core.tableModel({ rows: s.stats.map((x) => ({ v: x.v, l: x.l })), columns: ['v', 'l'] }, { header: false }), cols).split('\n'))
+  if (s.stats?.length) out.push(...statsTable(s, cols, style).split('\n'))
   ;(s.sections ?? []).forEach((sec, i) => {
     if (only && !only.some((o) => String(i + 1) === o || `${sec.key ?? ''} ${sec.title}`.toLowerCase().includes(o.toLowerCase()))) return
     out.push('', rule(`${sec.key ? sec.key + ' · ' : ''}${sec.title}`, cols))
     if (sec.lede) out.push(...para(sec.lede, cols))
-    for (const b of sec.blocks ?? []) out.push('', ...blockText(b, cols))
+    for (const b of sec.blocks ?? []) out.push('', ...blockText(b, cols, style))
   })
   if (!only) {
     if (s.method) out.push('', ...para(`Method. ${s.method}`, cols))
@@ -304,3 +315,90 @@ export function briefText(prepared, cols = 100, only = null) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
+// ---------- chat status ----------
+
+// One markdown line from inline HTML: bold, italics, code and links survive, other tags drop.
+function mdText(s) {
+  const marked = String(s ?? '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<(b|strong)>(.*?)<\/\1>/gi, '**$2**')
+    .replace(/<(i|em)>(.*?)<\/\1>/gi, '_$2_')
+    .replace(/<code>(.*?)<\/code>/gi, '`$1`')
+    .replace(/<a\s[^>]*href="(https:[^"]+)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)')
+  return htmlText(marked).replace(/\s+/g, ' ').trim()
+}
+const flat = (s) => htmlText(s).replace(/\s+/g, ' ').trim()
+const joined = (...parts) => parts.filter(Boolean).join(' · ')
+
+function* blocksOf(spec) {
+  function* visit(blocks) { for (const b of blocks ?? []) { yield b; if (b.type === 'cols') yield* visit(b.blocks) } }
+  for (const sec of spec.sections ?? []) yield* visit(sec.blocks)
+}
+
+// The hill as the headline's number: where it is now against its target.
+function hillNumber(h) {
+  if (!h) return null
+  return h.now != null ? `${h.metric} ${h.now} vs target ${h.target} (from ${h.baseline})` : `${h.metric} ${h.baseline} → target ${h.target}`
+}
+
+const fence = (lines) => ['```text', ...lines, '```']
+const NONE = '_none in the spec_'
+
+// The chat status, for a markdown chat such as Claude Code's: a bold headline with the
+// decision and the hill's number, then Focus, Evidence, Doing, Learned and Next. Every line
+// is drawn from the spec. Prose stays one markdown line each, so the chat wraps it; charts sit
+// in text fences, where columns hold and the emoji carry the color.
+export function briefStatus(prepared, cols = 100) {
+  const style = core.STYLES.emoji
+  const s = prepared
+  const dot = (tone) => glyphOf(tone, style)
+  const out = [`**${joined(flat(s.decision ?? s.thesis ?? ''), hillNumber(s.hill))}**`]
+  if (s.eyebrow?.length) out.push(`_${s.eyebrow.map(flat).join(' · ')}_`)
+
+  out.push('', `🎯 **Focus**${s.hill ? ` · ${joined(`${s.hill.metric}: ${s.hill.baseline} → ${s.hill.target}`, s.hill.owner && `owner ${s.hill.owner}`)}` : ''}`)
+  if (s.thesis) out.push(`${mdText(s.thesis)}${s.thesisAlert ? ` **${flat(s.thesisAlert)}**` : ''}`)
+
+  out.push('', '📊 **Evidence**')
+  if (s.stats?.length) out.push(...fence(statsTable(s, cols, style).split('\n')))
+  const all = [...blocksOf(s)]
+  const marked = all.filter((b) => b.evidence === true)
+  const shown = marked.length ? marked : all.filter((b) => CHARTS.has(b.type)).slice(0, 1)
+  for (const b of shown) {
+    if (b.title || b.sub) out.push(`**${flat(b.title ?? '')}**${b.sub ? ` · ${mdText(b.sub)}` : ''}`)
+    out.push(...fence(blockText({ ...b, title: null, sub: null, note: null }, cols, style)))
+    if (b.note) out.push(mdText(b.note))
+  }
+  if (!s.stats?.length && !shown.length) out.push(NONE)
+  if (s.method) out.push(`_Method: ${mdText(s.method)}_`)
+  if (s.caveats) out.push(`⚠️ ${mdText(s.caveats)}`)
+
+  const doing = []
+  const learned = []
+  const decide = []
+  const planned = []
+  for (const x of s.learned ?? []) learned.push(typeof x === 'string' ? `${dot('accent')} ${mdText(x)}` : `${dot(x.tone ?? 'accent')} ${mdText(x.text)}`)
+  for (const b of all) {
+    if (b.type === 'board') for (const r of b.rows ?? []) {
+      const line = `${dot(r.tone)} ${joined(`**${flat(r.title)}**`, [r.chip, r.when].filter(Boolean).join(' '), mdText(r.text))}`
+      if (r.tone === 'good') learned.push(line)
+      else doing.push(`${line}${r.owner || r.next ? ` · ${joined(r.owner && `owner ${r.owner}`, r.next && `next: ${mdText(r.next)}`)}` : ''}`)
+    }
+    if (b.type === 'steps' && b.items?.length) doing.push(`**${flat(b.title ?? 'Path')}** ${b.items.map((x) => `${dot(x.state)} ${flat(x.title)}${x.when ? ` (${x.when})` : ''}`).join(' → ')}`)
+    if (b.type === 'hills') for (const r of b.rows ?? []) {
+      const mv = r.move
+      if (!mv) continue
+      const reading = `${r.title} now ${r.now ?? '—'}${r.unit ? ' ' + r.unit : ''} vs target ${r.target ?? '—'}`
+      const predicts = mv.prediction && `predicts ${mdText(mv.prediction)}`
+      if (mv.status === 'pending') doing.push(`${dot('wait')} ${joined(`**${flat(mv.title)}**`, r.title, predicts, mv.more && `+${mv.more} more pending`)}`)
+      else if (mv.status === 'kept' || mv.status === 'failed') learned.push(`${mv.status === 'kept' ? '✅' : '❌'} ${joined(`**${flat(mv.title)}** ${mv.status}`, reading)}`)
+      else if (mv.status === 'planned') planned.push(`${dot('accent')} ${joined(`**${flat(mv.title)}**`, r.title, predicts)}`)
+    }
+    if (b.type === 'decisions') for (const x of b.items ?? []) decide.push(`${dot('you')} ${joined(`**${decide.length + 1}. ${flat(x.title)}**`, mdText(x.text), mdText(x.rec))}`)
+  }
+  // The reader's decisions first, then the moves already planned.
+  const next = [...decide, ...planned]
+  out.push('', '🛠️ **Doing**', ...(doing.length ? doing : [NONE]))
+  out.push('', '🧠 **Learned**', ...(learned.length ? learned : [NONE]))
+  out.push('', '⏭️ **Next**', ...(next.length ? next : [NONE]))
+  return out.join('\n')
+}
