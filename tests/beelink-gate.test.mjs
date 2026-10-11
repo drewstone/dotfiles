@@ -1105,13 +1105,16 @@ test("auto waits for the light beelink's repo lock instead of queueing on an ove
     writeFileSync(join(f.root, "load-100.98.195.7"), loadLine(loadLimit * 2));
     const lock = join(`${env.FAKE_CACHE_PREFIX}-100.127.22.51`, ".locks", "local-owner-repo.lock");
     const marker = join(f.root, "b2-lock-held");
-    const locker = spawn("flock", ["-x", lock, "bash", "-c", `touch '${marker}'; sleep 2`], { stdio: "ignore" });
+    const locker = spawn("flock", ["-x", lock, "bash", "-c", `touch '${marker}'; sleep 60`], { stdio: "ignore" });
     for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
     const child = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const status = await new Promise((resolveDone) => child.on("close", resolveDone));
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    // Release the light host's lock only once auto has said it is waiting: a fixed 2 s hold lost on a loaded host.
+    for (let i = 0; i < 600 && !/no beelink is both free/.test(stderr); i++) await sleepMs(50);
     locker.kill();
+    const status = await closed;
     assert.equal(status, 0, stderr);
     assert.match(stderr, /no beelink is both free for this repo and under its load limit/);
     assert.match(stderr, /auto chose beelink2/);
