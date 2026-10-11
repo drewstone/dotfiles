@@ -1,0 +1,27 @@
+cd /private/tmp/claude-501/-Users-drew-webb-discovery-lab/f9529cbf-2a00-4db3-a51f-d47ad878958f/scratchpad/pk/model && python3 - <<'EOF'
+s=open('reproduce.py').read()
+old='''    H("api_model_id",P.API_MODEL)''' 
+assert s.count("H('api_model_id',P.API_MODEL)")==1
+old="    H('api_model_id',P.API_MODEL)"
+new='''    # every register input (base, low, high) and the ladder's own assumptions, so pages tag the inputs they quote
+    for k_, row_ in P.REGISTER.items():
+        b_, lo_, hi_, unit_ = row_[:4]
+        if all(isinstance(x_, (int, float)) for x_ in (b_, lo_, hi_)):
+            H(f"input_{k_}", b_, str(unit_))
+            H(f"input_{k_}_low", lo_, str(unit_))
+            H(f"input_{k_}_high", hi_, str(unit_))
+        H(f"input_{k_}_scenario_axis", bool(row_[4]))
+        H(f"input_{k_}_sources", ",".join(row_[5]) if len(row_) > 5 else "")
+    for k_, (b_, lo_, hi_, unit_, note_) in L.ASSUMPTIONS.items():
+        H(f"input_ladder_{k_}", b_, unit_)
+        H(f"input_ladder_{k_}_low", lo_, unit_)
+        H(f"input_ladder_{k_}_high", hi_, unit_)
+    H("register_rows", len(P.REGISTER), "inputs")
+    H("register_scenario_axes", sum(1 for v_ in P.REGISTER.values() if v_[4]), "inputs")
+    H("register_placeholder_only", sum(1 for v_ in P.REGISTER.values() if v_[5] and all(str(x_).startswith(("A_", "T")) for x_ in v_[5])), "inputs")
+    H('api_model_id',P.API_MODEL)'''
+s=s.replace(old,new)
+open('reproduce.py','w').write(s)
+print('ok')
+EOF
+ssh gtr 'pkill -f "python3 reproduce.py" ; sleep 1; pgrep -fa "reproduce.py" | head -3' ; rsync -a ./ gtr:.local/state/agent-work/discovery-lab/terraform-final/final/run/ --exclude output.txt --exclude output.stderr.txt --exclude README.md --exclude checks && ssh gtr 'cd ~/.local/state/agent-work/discovery-lab/terraform-final/final/run && rm -f reproduce.status && (nohup ./run.sh >/dev/null 2>&1 &) ; echo started'
