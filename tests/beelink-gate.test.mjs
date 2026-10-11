@@ -699,11 +699,13 @@ test("another spelling of the same repo adopts the cache, and a different repo i
     const first = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(first.status, 0, first.stderr);
     // Same host/owner/repo key in another spelling, as git@ and https are for GitHub.
-    f.git(["-C", checkout, "remote", "set-url", "origin", "file:///elsewhere/owner/repo"], f.root);
+    const spelling = f.url.replace("/owner/", "/./owner/");
+    f.git(["-C", checkout, "remote", "set-url", "origin", spelling], f.root);
     const adopted = f.call(f.second, ["cat", "value.txt"], { noInstall: true });
     assert.equal(adopted.status, 0, adopted.stderr);
     assert.equal(adopted.stdout, "second\n");
-    assert.equal(f.git(["-C", checkout, "remote", "get-url", "origin"], f.root), f.url);
+    // The transport that already fetched on this host stays; the caller's may need credentials.
+    assert.equal(f.git(["-C", checkout, "remote", "get-url", "origin"], f.root), spelling);
     f.git(["-C", checkout, "remote", "set-url", "origin", "file:///elsewhere/owner/other.git"], f.root);
     const refused = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(refused.status, 2);
@@ -772,5 +774,33 @@ test("--ship sizes the test pool to the host's spare cores", () => {
     const ship = (load) => run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)], { env: { ...f.env, BEELINK_GATE_LOAD: load } });
     assert.equal(ship("0.00").stdout.trim(), `workers=${Math.max(4, Math.floor(cores / 2))}`);
     assert.equal(ship(String(cores * 4)).stdout.trim(), "workers=4");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Git never prompts in a gate, and a hung ls-remote stops when the launcher dies", async () => {
+  const f = fixture();
+  try {
+    const shown = f.call(f.first, ["bash", "-c", 'printf "%s|%s" "$GIT_TERMINAL_PROMPT" "$GIT_SSH_COMMAND"'], { noInstall: true });
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.equal(shown.stdout, "0|ssh -o BatchMode=yes");
+    const realGit = spawnSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    const hangBin = join(f.root, "hang-bin");
+    mkdirSync(hangBin);
+    writeFileSync(join(hangBin, "git"), `#!/usr/bin/env bash\n[[ " $* " == *" ls-remote "* ]] && exec sleep 60\nexec ${realGit} "$@"\n`);
+    chmodSync(join(hangBin, "git"), 0o755);
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const started = Date.now();
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, PATH: `${hangBin}:${f.env.PATH}`, BEELINK_GATE_HEARTBEAT: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 200 && !/admitted|acquired/.test(stderr); i++) await sleepMs(50);
+    await sleepMs(500);
+    child.stdin.end();
+    const status = await done;
+    assert.equal(status, 143, stderr);
+    assert.ok(Date.now() - started < 20_000, `took ${Date.now() - started}ms`);
+    const next = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(next.status, 0, next.stderr);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
