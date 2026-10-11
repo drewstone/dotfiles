@@ -19,14 +19,17 @@
 #   /etc/docker/daemon.json               containers join the capped user.slice; live-restore
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
+#   /etc/systemd/system/ci.slice.d/50-gate-priority.conf, beelink-gate-cgroup.service
+#                                          Beelinks: CI yields CPU to merge gates (weights 25 vs 400)
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
 #                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
 #                                          systemd-resolved's stub)
 #
-# Usage: host/install.sh [--check|--git-guard-only]
+# Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
 #   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
+#   --gate-priority-only  Beelinks: install only the merge-gate CPU priority.
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -35,9 +38,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$(uname -s)" = Linux ] || { echo "host/install.sh is Linux-only"; exit 0; }
 CHECK=0
 GIT_GUARD_ONLY=0
+GATE_PRIORITY_ONLY=0
 case "${1:-}" in
   --check) CHECK=1 ;;
   --git-guard-only) GIT_GUARD_ONLY=1 ;;
+  --gate-priority-only) GATE_PRIORITY_ONLY=1 ;;
   '') ;;
   *) echo "usage: host/install.sh [--check|--git-guard-only]" >&2; exit 2 ;;
 esac
@@ -122,10 +127,41 @@ install_beelink_worktree_cap() {
   return 0
 }
 
+# Beelinks: merge gates win the CPU over CI runner jobs. Never stops a runner:
+# the weight applies live through set-property, and only under contention.
+install_beelink_gate_priority() {
+  local before=$CHANGED
+  CHANGED=0
+  want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
+  want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
+  if [ "$CHECK" = 1 ]; then
+    [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = 25 ] || drift "ci.slice cpu.weight is not 25"
+    [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" = 400 ] || drift "beelink-gate cgroup cpu.weight is not 400"
+  else
+    [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
+    if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != 25 ]; then
+      $SUDO systemctl set-property --runtime ci.slice CPUWeight=25
+      note changed "ci.slice CPUWeight=25"
+    fi
+    if [ "$CHANGED" = 1 ] || [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" != 400 ]; then
+      $SUDO systemctl enable --quiet beelink-gate-cgroup.service
+      $SUDO systemctl restart beelink-gate-cgroup.service
+      note changed "beelink-gate cgroup cpu.weight=$(cat /sys/fs/cgroup/beelink-gate/cpu.weight)"
+    fi
+  fi
+  [ "$before" = 1 ] && CHANGED=1
+  return 0
+}
+
 install_gtr_lane_send() {
   want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-send.conf" /etc/ssh/ssh_config.d/20-fleet-lane-send.conf
 }
 
+if [ "$GATE_PRIORITY_ONLY" = 1 ]; then
+  is_beelink || { echo "the gate CPU priority runs on the Beelinks only" >&2; exit 2; }
+  install_beelink_gate_priority
+  exit 0
+fi
 if [ "$GIT_GUARD_ONLY" = 1 ]; then
   if is_beelink; then
     install_beelink_worktree_cap
@@ -162,6 +198,7 @@ if [ "$(hostname -s)" = drew-GTR-Pro ]; then
   install_gtr_lane_send
 fi
 is_beelink && install_beelink_worktree_cap
+is_beelink && install_beelink_gate_priority
 
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh

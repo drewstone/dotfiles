@@ -56,7 +56,7 @@ function fixture() {
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
   // No pressure file: the load tests cover the load-average fallback; pressure tests set one.
-  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -1494,5 +1494,45 @@ test("the launcher validates BEELINK_GATE_MAX_CPU_PRESSURE and forwards it to th
     const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CPU_PRESSURE: "50;id" } });
     assert.equal(invalid.status, 2);
     assert.match(invalid.stderr, /BEELINK_GATE_MAX_CPU_PRESSURE must be 0-100/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a gate starved past BEELINK_GATE_STARVE_AFTER is admitted over the pressure limit, halves ship workers and says so", () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(60));
+    const env = { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LOAD_POLL_SECONDS: "0.2", BEELINK_GATE_STARVE_AFTER: "1s", BEELINK_GATE_PLACED_WAIT: "0" };
+    const result = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /STARVED: admitting on beelink2 after \d+s with CPU pressure 60\.00 over its limit of 20; SHIP_MAX_WORKERS is halved/);
+    assert.match(result.stderr, /receipt: .*starved=1/);
+    assert.equal(receipts(f).at(-1).starved, true);
+    // Time already spent waiting on other hosts counts: the launcher passes it as BEELINK_GATE_PLACED_WAIT.
+    const placed = f.call(f.first, ["true"], { noInstall: true, env: { ...env, BEELINK_GATE_STARVE_AFTER: "10m", BEELINK_GATE_PLACED_WAIT: "600" } });
+    assert.equal(placed.status, 0, placed.stderr);
+    assert.match(placed.stderr, /STARVED: admitting on beelink2 after 60\ds/);
+    writeFileSync(pressure, pressureLine(5));
+    const calm = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.match(calm.stderr, /receipt: .*starved=0/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an admitted gate moves itself into the gate cgroup through sudo and records it", () => {
+  const f = fixture();
+  try {
+    const cg = join(f.root, "beelink-gate");
+    mkdirSync(cg);
+    writeFileSync(join(cg, "cgroup.procs"), "");
+    writeFileSync(join(cg, "cpu.pressure"), pressureLine(3));
+    writeFileSync(join(f.root, "bin", "sudo"), '#!/usr/bin/env bash\n[ "$1" = -n ] && shift\nexec "$@"\n');
+    chmodSync(join(f.root, "bin", "sudo"), 0o755);
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CGROUP: cg, BEELINK_GATE_CPU_PRESSURE: "" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(cg, "cgroup.procs"), "utf8"), /^\d+\n$/);
+    assert.match(result.stderr, /CPU pressure \(3\.00, limit 20\) admitted/);
+    assert.match(result.stderr, /receipt: .*cgroup=beelink-gate/);
+    const without = f.call(f.first, ["true"], { noInstall: true });
+    assert.match(without.stderr, /receipt: .*cgroup=none/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
