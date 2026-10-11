@@ -11,6 +11,14 @@ const hooksPath = resolve("git/hooks");
 const env = { ...process.env, AI_AGENT_HOOKS_GLOBAL_BASELINE: "1", GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH: "" };
 delete env.GITHUB_ACTIONS;
 
+// Fixture setup and commits run with no hooks, so the host's own hooks (identity, this guard)
+// never decide them; only the pushes under test go through git/hooks.
+const noHooks = mkdtempSync(join(tmpdir(), "cross-name-nohooks-"));
+
+function bare(cwd, args) {
+  return git(cwd, ["-c", `core.hooksPath=${noHooks}`, ...args]);
+}
+
 function git(cwd, args, extraEnv = {}) {
   return spawnSync("git", args, { cwd, encoding: "utf8", env: { ...env, ...extraEnv } });
 }
@@ -22,18 +30,18 @@ function ok(result) {
 
 function setup() {
   const remote = mkdtempSync(join(tmpdir(), "cross-name-remote-"));
-  ok(git(remote, ["init", "--bare", "-q", "-b", "main"]));
+  ok(bare(remote, ["init", "--bare", "-q", "-b", "main"]));
   const repo = mkdtempSync(join(tmpdir(), "cross-name-repo-"));
-  ok(git(repo, ["init", "-q", "-b", "main"]));
+  ok(bare(repo, ["init", "-q", "-b", "main"]));
   for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.invalid"], ["commit.gpgsign", "false"]]) {
     ok(git(repo, ["config", k, v]));
   }
   ok(git(repo, ["remote", "add", "origin", remote]));
   writeFileSync(join(repo, "a.txt"), "a\n");
   ok(git(repo, ["add", "a.txt"]));
-  ok(git(repo, ["commit", "-q", "-m", "a"]));
-  ok(git(repo, ["push", "-q", "origin", "main"]));
-  ok(git(repo, ["push", "-q", "origin", "main:refs/heads/develop"]));
+  ok(bare(repo, ["commit", "-q", "-m", "a"]));
+  ok(bare(repo, ["push", "-q", "origin", "main"]));
+  ok(bare(repo, ["push", "-q", "origin", "main:refs/heads/develop"]));
   ok(git(repo, ["config", "core.hooksPath", hooksPath]));
   return repo;
 }
@@ -42,7 +50,7 @@ function commitOn(repo, branch, startPoint) {
   ok(git(repo, ["switch", "-q", "-c", branch, ...(startPoint ? [startPoint] : [])]));
   writeFileSync(join(repo, `${branch.replaceAll("/", "-")}.txt`), "x\n");
   ok(git(repo, ["add", "."]));
-  ok(git(repo, ["commit", "-q", "-m", branch]));
+  ok(bare(repo, ["commit", "-q", "-m", branch]));
 }
 
 test("a feature branch tracking origin/develop cannot update develop under push.default=upstream", () => {
@@ -75,11 +83,11 @@ test("main pushes to main, by name and as HEAD", () => {
   const repo = setup();
   writeFileSync(join(repo, "b.txt"), "b\n");
   ok(git(repo, ["add", "b.txt"]));
-  ok(git(repo, ["commit", "-q", "-m", "b"]));
+  ok(bare(repo, ["commit", "-q", "-m", "b"]));
   ok(git(repo, ["push", "-q", "origin", "main"]));
   writeFileSync(join(repo, "c.txt"), "c\n");
   ok(git(repo, ["add", "c.txt"]));
-  ok(git(repo, ["commit", "-q", "-m", "c"]));
+  ok(bare(repo, ["commit", "-q", "-m", "c"]));
   ok(git(repo, ["push", "-q", "origin", "HEAD:main"]));
 });
 
