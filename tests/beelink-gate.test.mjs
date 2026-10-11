@@ -297,6 +297,63 @@ test("pnpm lockfile selects frozen install with one shared store", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("installs and runs with the repo's .nvmrc Node and rebuilds addons built for another ABI, sparing the store copy", () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.source, "package-lock.json"));
+    writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    writeFileSync(join(f.source, ".nvmrc"), "99.0.0\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "pnpm lock and nvmrc"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    // nvm selects a Node 99 whose NODE_MODULE_VERSION is 999.
+    const nvmBin = join(f.root, "nvm-bin");
+    mkdirSync(nvmBin);
+    writeFileSync(join(nvmBin, "node"), `#!/usr/bin/env bash\ncase "$*" in\n  -v) echo v99.0.0 ;;\n  "-p process.versions.modules") echo 999 ;;\n  *) exec '${process.execPath}' "$@" ;;\nesac\n`);
+    chmodSync(join(nvmBin, "node"), 0o755);
+    mkdirSync(join(f.home, ".nvm"));
+    writeFileSync(join(f.home, ".nvm", "nvm.sh"), `nvm() { [ "$1" = use ] && export PATH='${nvmBin}':"$PATH"; }\n`);
+    // The store's copy of an addon built for ABI 1, which install links into node_modules.
+    const storeCopy = join(f.root, "store-fake.node");
+    writeFileSync(storeCopy, "node_register_module_v1");
+    const pnpm = `#!/usr/bin/env bash
+printf "%s\\n" "$*" >> "$PNPM_LOG"
+p=node_modules/.pnpm
+case "$1" in
+  install)
+    mkdir -p $p/fake-native@1.0.0/node_modules/fake-native/build/Release $p/fake-skipped@1.0.0/node_modules/fake-skipped $p/@scope+fake-missing@1.0.0/node_modules/@scope/fake-missing
+    touch $p/fake-native@1.0.0/node_modules/fake-native/binding.gyp $p/fake-skipped@1.0.0/node_modules/fake-skipped/binding.gyp $p/@scope+fake-missing@1.0.0/node_modules/@scope/fake-missing/binding.gyp
+    ln -f '${storeCopy}' $p/fake-native@1.0.0/node_modules/fake-native/build/Release/fake.node
+    printf '{"allowBuilds":{"fake-native":true,"fake-skipped":false,"@scope/fake-missing":true},"ignoredBuilds":[]}' > node_modules/.modules.yaml ;;
+  rebuild)
+    shift; [ "$1" = --store-dir ] && shift 2
+    for n in "$@"; do d=$(echo $p/*/node_modules/$n); mkdir -p $d/build/Release; printf 'node_register_module_v%s' "$(node -p process.versions.modules)" > $d/build/Release/addon.node; done ;;
+esac
+`;
+    writeFileSync(join(f.root, "bin", "pnpm"), pnpm);
+    const result = f.call(sha, ["bash", "-c", "node -v"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "v99.0.0\n", "the command runs with the .nvmrc Node");
+    const calls = readFileSync(f.pnpmLog, "utf8").trim().split("\n");
+    assert.deepEqual(calls, [
+      `install --frozen-lockfile --store-dir ${f.home}/.local/share/pnpm/store`,
+      `rebuild --store-dir ${f.home}/.local/share/pnpm/store @scope/fake-missing fake-native`,
+    ]);
+    assert.equal(readFileSync(storeCopy, "utf8"), "node_register_module_v1", "the store copy is untouched");
+    assert.match(result.stderr, /rebuilding native addons for node v99\.0\.0: @scope\/fake-missing missing addon fake-native abi 1->999/);
+    assert.match(result.stderr, /node=v99\.0\.0 rebuild=@scope\/fake-missing missing addon fake-native abi 1->999/);
+    const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
+    assert.equal(row.node, "v99.0.0");
+    assert.equal(row.rebuild, "@scope/fake-missing missing addon fake-native abi 1->999");
+    // The next gate installs again; its addons match the Node, so nothing rebuilds.
+    writeFileSync(storeCopy, "node_register_module_v999");
+    const again = f.call(sha, ["true"]);
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(readFileSync(f.pnpmLog, "utf8").trim().split("\n").filter((line) => line.startsWith("rebuild")).length, 2, "a missing addon still rebuilds; a matching ABI does not");
+    assert.match(again.stderr, /rebuild=@scope\/fake-missing missing addon/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("docs-only gate verifies the requested SHA without installing dependencies", () => {
   const f = fixture();
   try {
