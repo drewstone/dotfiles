@@ -325,6 +325,8 @@ test("pattern-kill: refuses pkill and killall in any form, locally, over ssh and
     "timeout 10 pkill -f x",
     "echo start; pkill -f foo; echo done",
     "if true; then pkill -f foo; fi",
+    "pgrep -f cli-bridge | xargs kill",
+    "pgrep -f cli-bridge | xargs -r kill -9",
     "ssh gtr \"pkill -f 'python3 reproduce.py'\"",
     "ssh -o BatchMode=yes beelink2-wsl 'pkill -f vitest'",
     "bash -c 'pkill -f x'",
