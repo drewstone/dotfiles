@@ -206,7 +206,7 @@ exec /bin/sleep "$@"
     assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
     assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
     assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
-    assert.equal(readFileSync(dfCount, "utf8").trim(), "3", "the floor changed only after the admission checks");
+    assert.equal(readFileSync(dfCount, "utf8").trim(), "4", "the floor changed after the cache-recovery check and admission checks");
     assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=75`));
     const [receipt] = receipts(f);
     assert.equal(receipt.exit, 75);
@@ -1243,8 +1243,7 @@ test("a light gate does not wait for a normal host slot", async () => {
 test("a light gate over its declared CPU budget fails loudly, and the budget is capped at two core-minutes", () => {
   const f = fixture();
   try {
-    // Spin on the process's own CPU time: a wall-clock spin gets under one core-second on a loaded host.
-    const spin = ["python3", "-c", "import time\nwhile time.process_time() < 2: pass"];
+    const spin = ["node", "-e", "const start = process.cpuUsage(); while (true) { const cpu = process.cpuUsage(start); if (cpu.user + cpu.system >= 2_000_000) break; }"];
     const over = lightGate(f, f.first, spin, { BEELINK_GATE_LIGHT_CPU: "1" });
     assert.equal(over.status, 1, over.stderr);
     assert.match(over.stderr, /LIGHT GATE OVER BUDGET: the command used \d+\.\d core-seconds of the 1 it declared; run it as a normal gate/);
