@@ -606,9 +606,12 @@ test("a lock left by a dead gate's leftover process is reclaimed; a live holder 
     mkdirSync(join(f.cache, ".locks"), { recursive: true });
     const dead = spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
     // detached makes the child a session leader, like a gate started over SSH.
-    const leftover = spawn("bash", ["-c", `exec 9>'${lockPath}'; flock -x 9; exec sleep 120`], { stdio: "ignore", detached: true });
+    const locked = join(f.root, "leftover-locked");
+    const leftover = spawn("bash", ["-c", `exec 9>'${lockPath}'; flock -x 9; touch '${locked}'; exec sleep 120`], { stdio: "ignore", detached: true });
     const exited = new Promise((resolveDone) => leftover.on("exit", (code, signal) => resolveDone(signal)));
-    await sleepMs(500);
+    // Wait for the lock itself, not a fixed time: under load 500 ms was too short and the gate took a free lock.
+    for (let i = 0; i < 200 && !existsSync(locked); i++) await sleepMs(50);
+    assert.equal(existsSync(locked), true, "leftover never took the lock");
     const sid = spawnSync("ps", ["-o", "sid=", "-p", String(leftover.pid)], { encoding: "utf8" }).stdout.trim();
     writeFileSync(`${lockPath}.holder`, `pid=${dead}\nsid=${sid}\nstarted=1\nsha=${f.first}\nlauncher=test\n`);
     const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1" } });
