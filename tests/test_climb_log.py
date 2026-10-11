@@ -62,9 +62,18 @@ class Ledger(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def git_env(self):
+        # The host's Git configuration stays out of the fixture: its global config, the system config, and
+        # $XDG_CONFIG_HOME/git/attributes, which git/install.sh links to the global attributes file and Git
+        # reads even when no config names it. The fixture's own gitconfig starts empty.
+        config = Path(self.tmp.name) / 'gitconfig'
+        config.touch()
+        return {**os.environ, 'GIT_CEILING_DIRECTORIES': self.tmp.name, 'GIT_CONFIG_GLOBAL': str(config),
+                'GIT_CONFIG_NOSYSTEM': '1', 'XDG_CONFIG_HOME': str(Path(self.tmp.name) / 'xdg')}
+
     def run_tool(self, *args, stdin=None):
         return subprocess.run([str(TOOL), *args], input=stdin, capture_output=True, text=True, cwd=self.root,
-                              env={**os.environ, 'GIT_CEILING_DIRECTORIES': self.tmp.name})
+                              env=self.git_env())
 
     def append(self, row):
         return self.run_tool('append', '--project', str(self.root), stdin=json.dumps(row))
@@ -237,12 +246,8 @@ class UnionMerge(Ledger):
     """Two PRs that each append rows merge cleanly under merge=union, and check rejects what a union gets wrong."""
 
     def git(self, *args, check=True):
-        # The host's own global config (which may name the global attributes file) stays out of the fixture.
-        config = Path(self.tmp.name) / 'gitconfig'
-        config.touch()
-        env = {**os.environ, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.com', 'GIT_COMMITTER_NAME': 't',
-               'GIT_COMMITTER_EMAIL': 't@example.com', 'GIT_CEILING_DIRECTORIES': self.tmp.name,
-               'GIT_CONFIG_GLOBAL': str(config), 'GIT_CONFIG_NOSYSTEM': '1'}
+        env = {**self.git_env(), 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.com',
+               'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@example.com'}
         # A throwaway fixture repo: the machine's global hooks guard real commits, not these.
         return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-C', str(self.root),
                                *args], capture_output=True, text=True, env=env, check=check)
