@@ -5,6 +5,10 @@
 // model out for a terminal. The page kit (page.mjs) draws HTML from the same
 // models, so the terminal view and the page cannot disagree about a number.
 // No network, no dependencies, no clock: the same input always gives the same bytes.
+//
+// Every text function takes a style. `plain` draws monochrome block glyphs; `emoji` draws
+// colored squares and dots, the one kind of color that survives a markdown chat such as
+// Claude Code's, where ANSI escapes do not render.
 
 export class VizError extends Error {}
 
@@ -15,10 +19,68 @@ const TARGET_MARK = '┆'
 export const GLYPHS = { ok: '✓', fail: '✗', warn: '!', skip: '-', unknown: '·' }
 const EPS = 1e-9
 
+// ---------- styles ----------
+
+// A bar's color says its tone; rows without one draw in the first series color.
+const SQUARE = { good: '🟩', ok: '🟩', warn: '🟨', serious: '🟧', bad: '🟥', crit: '🟥', fail: '🟥', accent: '🟦', info: '🟦', dim: '⬜', blind: '⬜' }
+// Series and groups without a tone: blue and purple first, status hues only past three.
+const SERIES = ['🟦', '🟪', '🟫', '🟧', '🟨', '🟩']
+export const DOT = { good: '🟢', ok: '🟢', done: '🟢', warn: '🟡', wait: '🟡', serious: '🟠', bad: '🔴', crit: '🔴', fail: '🔴', block: '🔴', blind: '⚪', dim: '⚪', skip: '⚪', unknown: '⚪', accent: '🔵', info: '🔵', you: '👉' }
+
+export const STYLES = {
+  plain: { name: 'plain', emoji: false, target: TARGET_MARK, strip: GLYPHS },
+  emoji: { name: 'emoji', emoji: true, target: '🏁', strip: { ok: '✅', fail: '❌', warn: '⚠️', skip: '➖', unknown: '⚪' } },
+}
+
+// The style named by --color, else $VIZ_COLOR, else plain.
+export function styleOf(name) {
+  const key = String(name ?? '').trim().toLowerCase() || 'plain'
+  if (!STYLES[key]) throw new VizError(`unknown color mode ${JSON.stringify(name)}; use plain or emoji`)
+  return STYLES[key]
+}
+
+const squareOf = (tone, i = 0) => SQUARE[tone] ?? SERIES[i % SERIES.length]
+
 // ---------- text layout ----------
 
-// Every glyph viz prints is one terminal column wide, so code points measure width.
-export const width = (s) => [...String(s)].length
+// Terminal columns: wide East Asian characters and emoji take two. Variation selector 16
+// turns the character before it into a two-column emoji (⚠️, ⏭️); joiners, other
+// selectors and combining marks take none.
+const WIDE = [
+  [0x1100, 0x115f], [0x231a, 0x231b], [0x23e9, 0x23ec], [0x23f0, 0x23f0], [0x23f3, 0x23f3], [0x25fd, 0x25fe],
+  [0x2614, 0x2615], [0x2648, 0x2653], [0x267f, 0x267f], [0x2693, 0x2693], [0x26a1, 0x26a1], [0x26aa, 0x26ab],
+  [0x26bd, 0x26be], [0x26c4, 0x26c5], [0x26ce, 0x26ce], [0x26d4, 0x26d4], [0x26ea, 0x26ea], [0x26f2, 0x26f3],
+  [0x26f5, 0x26f5], [0x26fa, 0x26fa], [0x26fd, 0x26fd], [0x2705, 0x2705], [0x270a, 0x270b], [0x2728, 0x2728],
+  [0x274c, 0x274c], [0x274e, 0x274e], [0x2753, 0x2755], [0x2757, 0x2757], [0x2795, 0x2797], [0x27b0, 0x27b0],
+  [0x27bf, 0x27bf], [0x2b1b, 0x2b1c], [0x2b50, 0x2b50], [0x2b55, 0x2b55], [0x2e80, 0x303e], [0x3041, 0xa4cf],
+  [0xac00, 0xd7a3], [0xf900, 0xfaff], [0xfe30, 0xfe4f], [0xff00, 0xff60], [0xffe0, 0xffe6],
+  [0x1f004, 0x1f004], [0x1f0cf, 0x1f0cf], [0x1f18e, 0x1f18e], [0x1f191, 0x1f19a], [0x1f300, 0x1f64f],
+  [0x1f680, 0x1f6ff], [0x1f7e0, 0x1f7eb], [0x1f900, 0x1faff], [0x20000, 0x3fffd],
+]
+const isWide = (cp) => cp >= 0x1100 && WIDE.some(([a, b]) => cp >= a && cp <= b)
+const isZeroWidth = (cp) => cp === 0x200d || (cp >= 0x200b && cp <= 0x200f) || (cp >= 0xfe00 && cp <= 0xfe0e) || (cp >= 0x300 && cp <= 0x36f)
+
+export function width(s) {
+  let w = 0
+  let last = 0
+  for (const ch of String(s)) {
+    const cp = ch.codePointAt(0)
+    if (cp === 0xfe0f) { if (last === 1) { w += 1; last = 2 } continue }
+    if (isZeroWidth(cp)) continue
+    last = isWide(cp) ? 2 : 1
+    w += last
+  }
+  return w
+}
+
+// The longest prefix of s that fits in `cols` columns, and the rest.
+function cut(s, cols) {
+  const chars = [...String(s)]
+  let i = 0
+  while (i < chars.length && width(chars.slice(0, i + 1).join('')) <= cols) i++
+  if (!i) i = 1
+  return [chars.slice(0, i).join(''), chars.slice(i).join('')]
+}
 export const padEnd = (s, w) => String(s) + ' '.repeat(Math.max(0, w - width(s)))
 export const padStart = (s, w) => ' '.repeat(Math.max(0, w - width(s))) + String(s)
 const widest = (items) => items.reduce((m, s) => Math.max(m, width(s ?? '')), 0)
@@ -31,8 +93,9 @@ export function wrap(text, cols) {
     for (let word of para.split(/\s+/).filter(Boolean)) {
       while (width(word) > limit) {
         if (line) { out.push(line); line = '' }
-        out.push([...word].slice(0, limit).join(''))
-        word = [...word].slice(limit).join('')
+        const [head, rest] = cut(word, limit)
+        out.push(head)
+        word = rest
       }
       if (!word) continue
       if (!line) line = word
@@ -247,10 +310,11 @@ const options = (data, cli) => ({
   ...Object.fromEntries(Object.entries(cli ?? {}).filter(([, v]) => v !== undefined)),
 })
 
-function footerParts(m) {
+function footerParts(m, style, square) {
   const parts = []
   if (m.scaleText) parts.push(m.scaleText)
-  if (m.targetText) parts.push(`${TARGET_MARK} ${m.targetText}`)
+  if (square) parts.push(square)
+  if (m.targetText) parts.push(`${style.target} ${m.targetText}`)
   if (m.source) parts.push(`source: ${plain(m.source)}`)
   if (m.asof) parts.push(`as of ${m.asof}`)
   return parts
@@ -260,10 +324,10 @@ function header(m, cols) {
   return m.title ? wrap(plain(m.title), cols) : []
 }
 
-function footer(m, cols) {
+function footer(m, cols, style = STYLES.plain, square = null) {
   const lines = []
   if (m.note) lines.push(...wrap(plain(m.note), cols))
-  const parts = footerParts(m)
+  const parts = footerParts(m, style, square)
   if (parts.length) lines.push(...wrap(parts.join(' · '), cols))
   return lines
 }
@@ -287,6 +351,44 @@ export function barCells(frac, cols, targetFrac = null) {
     if (cells[c] === ' ') cells[c] = TARGET_MARK
   }
   return cells.join('')
+}
+
+// Emoji squares are two columns wide, so an emoji bar has half as many steps as a block
+// bar has cells. Each square stands for one round unit: the scale over the squares that
+// fit, rounded up to 1, 1.5, 2, 2.5, 3, 4, 5, 6 or 8 times a power of ten, which loses at
+// most a third of the width. A bar is its value in units rounded to the nearest whole
+// square, and a nonzero value keeps at least one. The footer states the unit, so every
+// bar still reads to scale, within half a square.
+const SQUARE_STEPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
+export function squareScale(max, cols) {
+  const slots = Math.max(1, Math.floor(cols / 2))
+  const x = max > 0 ? max / slots : 1
+  const e = 10 ** Math.floor(Math.log10(x))
+  const m = SQUARE_STEPS.find((k) => k * e >= x * (1 - EPS)) ?? 10
+  return { slots, unit: Number((m * e).toPrecision(12)) }
+}
+
+export function squareCount(value, unit) {
+  if (value == null) return 0
+  const n = Math.round(Number((value / unit).toFixed(9)))
+  return value > 0 && n === 0 ? 1 : n
+}
+
+// `cols` columns of squares; the target flag sits in the first empty square past the target.
+export function squareBar(value, scale, glyph, cols, target = null, mark = STYLES.emoji.target) {
+  const cells = Array(scale.slots).fill('  ')
+  const n = Math.min(scale.slots, squareCount(value, scale.unit))
+  for (let i = 0; i < n; i++) cells[i] = glyph
+  if (target != null) {
+    const t = Math.min(scale.slots - 1, Math.max(0, Math.floor(target / scale.unit + EPS)))
+    if (cells[t] === '  ') cells[t] = mark
+  }
+  return padEnd(cells.join(''), cols)
+}
+
+export function squareText(unit, valueUnit) {
+  const d = (String(unit).split('.')[1] ?? '').length
+  return `1 square = ${fmtValue(unit, valueUnit, d)}`
 }
 
 // ---------- bars: one value per row ----------
@@ -334,7 +436,7 @@ export function barsModel(data, cli = {}) {
   }
 }
 
-export function barsText(m, cols) {
+export function barsText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
   const valueW = widest(m.rows.map((r) => r.valueText))
   const shareW = widest(m.rows.map((r) => r.shareText))
@@ -342,14 +444,15 @@ export function barsText(m, cols) {
   let labelW = Math.min(widest(m.rows.map((r) => r.label)), Math.max(8, Math.floor(cols * 0.4)))
   let barW = cols - labelW - 2 - tail
   if (barW < 10) { labelW = Math.max(6, labelW - (10 - barW)); barW = Math.max(4, cols - labelW - 2 - tail) }
+  const sq = style.emoji ? squareScale(m.max, barW) : null
   for (const r of m.rows) {
     const label = wrap(r.label, labelW)
-    const bar = barCells(r.frac, barW, m.targetFrac)
+    const bar = sq ? squareBar(r.value, sq, squareOf(r.tone), barW, m.target, style.target) : barCells(r.frac, barW, m.targetFrac)
     const share = shareW ? '  ' + padStart(r.shareText ?? '', shareW) : ''
     lines.push(`${padEnd(label[0], labelW)}  ${bar} ${padStart(r.valueText, valueW)}${share}`.trimEnd())
     for (const more of label.slice(1)) lines.push(more)
   }
-  return [...lines, ...footer(m, cols)].join('\n')
+  return [...lines, ...footer(m, cols, style, sq && squareText(sq.unit, m.unit))].join('\n')
 }
 
 // ---------- grouped: several series per category ----------
@@ -388,23 +491,25 @@ export function groupedModel(data, cli = {}) {
   }
 }
 
-export function groupedText(m, cols) {
+export function groupedText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
   const catW = widest(m.categories.flatMap((c) => [c.label, c.note]))
   const serW = widest(m.series.map((s) => s.key))
   const valW = widest(m.cells.flat().map((c) => c.text))
   const barW = Math.max(6, cols - catW - 2 - serW - 2 - 1 - valW)
+  const sq = style.emoji ? squareScale(m.domain.max, barW) : null
   m.categories.forEach((cat, c) => {
     const side = [cat.label, ...(cat.note ? wrap(cat.note, Math.max(catW, 1)) : [])]
     m.series.forEach((s, i) => {
       const cell = m.cells[c][i]
-      lines.push(`${padEnd(side[i] ?? '', catW)}  ${padEnd(s.key, serW)}  ${barCells(cell.frac, barW, m.targetFrac)} ${padStart(cell.text, valW)}`.trimEnd())
+      const bar = sq ? squareBar(cell.value, sq, squareOf(s.tone, i), barW, m.target, style.target) : barCells(cell.frac, barW, m.targetFrac)
+      lines.push(`${padEnd(side[i] ?? '', catW)}  ${padEnd(s.key, serW)}  ${bar} ${padStart(cell.text, valW)}`.trimEnd())
     })
     for (const extra of side.slice(m.series.length)) lines.push(extra)
   })
   const named = m.series.filter((s) => s.label !== s.key)
   if (named.length) lines.push(...wrap(named.map((s) => `${s.key} = ${plain(s.label)}`).join(' · '), cols))
-  return [...lines, ...footer(m, cols)].join('\n')
+  return [...lines, ...footer(m, cols, style, sq && squareText(sq.unit, m.unit))].join('\n')
 }
 
 // ---------- spark: one line per series ----------
@@ -451,22 +556,25 @@ export function sparkModel(data, cli = {}) {
   }
 }
 
-export function sparkText(m, cols) {
+export function sparkText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
-  const labelW = widest(m.series.map((s) => s.label))
-  for (const s of m.series) {
+  // In emoji mode several lines each lead with their series square, as grouped bars do.
+  const lead = style.emoji && m.series.length > 1
+  const labelW = widest(m.series.map((s) => s.label)) + (lead ? 3 : 0)
+  m.series.forEach((s, i) => {
+    const label = lead ? `${squareOf(null, i)} ${s.label}` : s.label
     // The summary shares the spark's line when both fit; otherwise it wraps underneath.
     const inline = cols - labelW - 4 - width(s.summary) >= Math.min(s.levels.length, 8)
     const room = Math.max(4, inline ? cols - labelW - 4 - width(s.summary) : cols - labelW - 2)
     let glyphs = s.levels.map((l) => (l == null ? ' ' : SPARKS[l]))
     let clipped = ''
     if (glyphs.length > room) { clipped = ` (last ${room - 1} of ${glyphs.length})`; glyphs = ['…', ...glyphs.slice(-(room - 1))] }
-    if (inline && !clipped) lines.push(`${padEnd(s.label, labelW)}  ${glyphs.join('')}  ${s.summary}`.trimEnd())
+    if (inline && !clipped) lines.push(`${padEnd(label, labelW)}  ${glyphs.join('')}  ${s.summary}`.trimEnd())
     else {
-      lines.push(`${padEnd(s.label, labelW)}  ${glyphs.join('')}`.trimEnd())
+      lines.push(`${padEnd(label, labelW)}  ${glyphs.join('')}`.trimEnd())
       for (const l of wrap(s.summary + clipped, Math.max(10, cols - labelW - 2))) lines.push(`${padEnd('', labelW)}  ${l}`)
     }
-  }
+  })
   if (m.categories?.length) lines.push(`${padEnd('', labelW)}  ${m.categories[0]} → ${m.categories.at(-1)}`.trimEnd())
   return [...lines, ...footer(m, cols)].join('\n')
 }
@@ -533,13 +641,16 @@ export function stripModel(data, cli = {}) {
   return { kind: 'strip', title: o.title ?? null, note: o.note ?? null, source: o.source ?? null, asof: o.asof ?? null, cells, run: best, summary: parts.join(' · '), notes }
 }
 
-export function stripText(m, cols) {
+export function stripText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
   const labelW = widest(m.cells.map((c) => c.t))
-  const perLine = Math.max(4, Math.floor((cols - labelW) / 2) + 1)
+  // Every cell takes two columns: a glyph and a space, or one two-column emoji.
+  const perLine = style.emoji
+    ? Math.max(4, Math.min(Math.floor(cols / 2), Math.floor((cols - labelW) / 2) + 1))
+    : Math.max(4, Math.floor((cols - labelW) / 2) + 1)
   for (let start = 0; start < m.cells.length; start += perLine) {
     const chunk = m.cells.slice(start, start + perLine)
-    lines.push(chunk.map((c) => c.glyph).join(' '))
+    lines.push(chunk.map((c) => style.strip[c.status]).join(style.emoji ? '' : ' '))
     const axis = []
     for (const i of axisIndices(chunk.length, 2, labelW)) {
       const label = [...chunk[i].t]
@@ -550,7 +661,7 @@ export function stripText(m, cols) {
   }
   lines.push(...wrap(m.summary, cols))
   if (m.notes.length) lines.push(...wrap(`notes: ${m.notes.join(' · ')}`, cols))
-  return [...lines, ...footer(m, cols)].join('\n')
+  return [...lines, ...footer(m, cols, style)].join('\n')
 }
 
 // ---------- stack and waterfall: parts of a whole, in order ----------
@@ -624,27 +735,32 @@ function partLines(m, cols, glyphFor) {
   return { labelW, valW, shareW, rangeW, tail: (r) => `${padStart(r.valueText, valW)}  ${padStart(r.shareText, shareW)}${rangeW ? '  ' + padEnd(r.range ?? '', rangeW) : ''}`, glyphFor }
 }
 
-export function stackText(m, cols) {
+export function stackText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
-  const cells = Array(cols).fill(' ')
-  const glyph = (p, i) => FILLS[(p.groupIndex ?? i) % FILLS.length]
-  m.parts.forEach((p, i) => { const [a, b] = spanCells(p, cols); for (let c = a; c < b; c++) cells[c] = glyph(p, i) })
+  // Emoji parts take a tone's color when they have one, else their group's or their own.
+  const glyph = style.emoji ? (p, i) => squareOf(p.tone, p.groupIndex ?? i) : (p, i) => FILLS[(p.groupIndex ?? i) % FILLS.length]
+  const sq = style.emoji ? squareScale(m.total, cols) : null
+  const n = sq ? squareCount(m.total, sq.unit) : cols
+  const cells = Array(n).fill(sq ? '  ' : ' ')
+  m.parts.forEach((p, i) => { const [a, b] = spanCells(p, n); for (let c = a; c < b; c++) cells[c] = glyph(p, i) })
   lines.push(cells.join('').trimEnd())
   const L = partLines(m, cols)
   const tailW = width(L.tail(m.parts[0]))
-  const stacked = 2 + L.labelW + 2 + tailW > cols
+  const gw = width(glyph(m.parts[0], 0))
+  const ind = ' '.repeat(gw + 1)
+  const stacked = gw + 1 + L.labelW + 2 + tailW > cols
   m.parts.forEach((p, i) => {
-    const label = wrap(p.label, stacked ? cols - 2 : L.labelW)
+    const label = wrap(p.label, stacked ? cols - gw - 1 : L.labelW)
     lines.push(`${glyph(p, i)} ${stacked ? label[0] : padEnd(label[0], L.labelW) + '  ' + L.tail(p)}`.trimEnd())
-    for (const more of label.slice(1)) lines.push(`  ${more}`)
-    if (stacked) for (const l of wrap(L.tail(p).trim().replace(/\s{2,}/g, ' · '), cols - 2)) lines.push(`  ${l}`)
+    for (const more of label.slice(1)) lines.push(`${ind}${more}`)
+    if (stacked) for (const l of wrap(L.tail(p).trim().replace(/\s{2,}/g, ' · '), cols - gw - 1)) lines.push(`${ind}${l}`)
   })
   lines.push(...wrap(m.summary, cols))
   if (m.groupSummary) lines.push(...wrap(m.groupSummary, cols))
-  return [...lines, ...footer(m, cols)].join('\n')
+  return [...lines, ...footer(m, cols, style, sq && squareText(sq.unit, m.unit))].join('\n')
 }
 
-export function waterfallText(m, cols) {
+export function waterfallText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
   const L = partLines(m, cols)
   const tailW = width(L.tail(m.parts[0]))
@@ -652,9 +768,13 @@ export function waterfallText(m, cols) {
   const stacked = cols - L.labelW - 4 - tailW < 12
   const labelW = stacked ? Math.min(L.labelW, Math.max(6, Math.floor(cols * 0.35))) : L.labelW
   const barW = stacked ? Math.max(6, cols - labelW - 2) : cols - labelW - 4 - tailW
+  const sq = style.emoji ? squareScale(m.total, barW) : null
+  const n = sq ? squareCount(m.total, sq.unit) : barW
   for (const p of m.parts) {
-    const [a, b] = spanCells(p, barW)
-    const bar = ' '.repeat(a) + '█'.repeat(b - a) + ' '.repeat(barW - b)
+    const [a, b] = spanCells(p, n)
+    const bar = sq
+      ? padEnd('  '.repeat(a) + squareOf(p.tone, p.groupIndex ?? 0).repeat(b - a), barW)
+      : ' '.repeat(a) + '█'.repeat(b - a) + ' '.repeat(barW - b)
     const label = wrap(p.label, labelW)
     lines.push(`${padEnd(label[0], labelW)}  ${bar}${stacked ? '' : '  ' + L.tail(p)}`.trimEnd())
     for (const more of label.slice(1)) lines.push(more)
@@ -662,7 +782,7 @@ export function waterfallText(m, cols) {
   }
   lines.push(...wrap(m.summary, cols))
   if (m.groupSummary) lines.push(...wrap(m.groupSummary, cols))
-  return [...lines, ...footer(m, cols)].join('\n')
+  return [...lines, ...footer(m, cols, style, sq && squareText(sq.unit, m.unit))].join('\n')
 }
 
 // ---------- timeline: events with the gap since the previous one ----------
@@ -701,23 +821,33 @@ export function timelineModel(data, cli = {}) {
   return { kind: 'timeline', title: o.title ?? null, note: o.note ?? null, source: o.source ?? null, asof: o.asof ?? null, events, summary, columns: o.columns ?? 1 }
 }
 
-export function timelineText(m, cols) {
+export function timelineText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
   const tW = widest(m.events.map((e) => e.t))
   const gW = widest(m.events.map((e) => e.gapText))
-  const indent = tW + 2 + (gW ? gW + 2 : 0) + 2
+  const glyph = (e) => (style.emoji ? DOT[e.status] ?? '⚪' : e.glyph)
+  const indent = tW + 2 + (gW ? gW + 2 : 0) + (style.emoji ? 3 : 2)
   for (const e of m.events) {
     const body = wrap(plain(e.text), Math.max(10, cols - indent))
-    lines.push(`${padEnd(e.t, tW)}  ${gW ? padStart(e.gapText, gW) + '  ' : ''}${e.glyph} ${body[0]}`.trimEnd())
+    lines.push(`${padEnd(e.t, tW)}  ${gW ? padStart(e.gapText, gW) + '  ' : ''}${glyph(e)} ${body[0]}`.trimEnd())
     for (const more of body.slice(1)) lines.push(' '.repeat(indent) + more)
   }
   lines.push(m.summary)
-  return [...lines, ...footer(m, cols)].join('\n')
+  return [...lines, ...footer(m, cols, style)].join('\n')
 }
 
 // ---------- table ----------
 
 // A cell is text, a number, a boolean, null, {pill, tone}, {text, tone} or a list of those.
+// Emoji mode draws booleans as ✅/❌ and a toned cell with its status dot; null keeps the text.
+function emojiCell(v) {
+  if (v === true) return '✅'
+  if (v === false) return '❌'
+  if (Array.isArray(v)) return v.map((x) => emojiCell(x) ?? cellText(x)).join(' ')
+  if (v && typeof v === 'object' && DOT[v.tone]) return `${DOT[v.tone]} ${v.pill != null ? plain(v.pill) : plain(v.text ?? '')}`
+  return null
+}
+
 export function cellText(v) {
   if (v === null || v === undefined) return '—'
   if (v === true) return '✓'
@@ -753,15 +883,16 @@ export function tableModel(data, cli = {}) {
   return { kind: 'table', title: o.title ?? null, note: o.note ?? null, source: o.source ?? null, asof: o.asof ?? null, columns, rows: body, sum, header: o.header !== false }
 }
 
-export function tableText(m, cols) {
+export function tableText(m, cols, style = STYLES.plain) {
   const lines = header(m, cols)
-  const all = [...m.rows, ...(m.sum ? [m.sum] : [])]
+  const rows = style.emoji ? m.rows.map((r) => r.map((c) => ({ ...c, text: emojiCell(c.raw) ?? c.text }))) : m.rows
+  const all = [...rows, ...(m.sum ? [m.sum] : [])]
   const widths = m.columns.map((c, i) => Math.max(m.header ? width(c.label) : 0, ...all.map((r) => width(r[i].text))))
   const gap = 2
   const fit = () => widths.reduce((s, w) => s + w, 0) + gap * (widths.length - 1)
   while (fit() > cols) {
     let k = -1
-    widths.forEach((w, i) => { if (!m.columns[i].numeric && w > 12 && (k < 0 || w > widths[k])) k = i })
+    widths.forEach((w, i) => { if (!m.columns[i].numeric && w > 6 && (k < 0 || w > widths[k])) k = i })
     if (k < 0) break
     widths[k] -= 1
   }
@@ -778,7 +909,7 @@ export function tableText(m, cols) {
     lines.push(...line(m.columns.map((c) => c.label)))
     lines.push(widths.map((w) => '─'.repeat(w)).join(' '.repeat(gap)))
   }
-  for (const r of m.rows) lines.push(...line(r.map((c) => c.text)))
+  for (const r of rows) lines.push(...line(r.map((c) => c.text)))
   if (m.sum) {
     lines.push(widths.map((w) => '─'.repeat(w)).join(' '.repeat(gap)))
     lines.push(...line(m.sum.map((c) => c.text)))
@@ -799,8 +930,8 @@ export const KINDS = {
   table: [tableModel, tableText],
 }
 
-export function render(kind, data, opts = {}, cols = 80) {
+export function render(kind, data, opts = {}, cols = 80, style = STYLES.plain) {
   const entry = KINDS[kind]
   if (!entry) throw new VizError(`unknown chart kind ${kind}`)
-  return entry[1](entry[0](data, opts), Math.max(30, cols))
+  return entry[1](entry[0](data, opts), Math.max(30, cols), style)
 }
