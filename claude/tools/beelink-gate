@@ -5,6 +5,7 @@
 # Usage:
 #   beelink-gate [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --light [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#   beelink-gate --dev [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   Any form also takes --urgent.
 #   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #
@@ -23,6 +24,12 @@
 # holds for at most 10 minutes. A light command that uses more CPU than it
 # declared fails the gate (exit 1, "LIGHT GATE OVER BUDGET"). Every other gate's
 # admission is unchanged.
+#
+# --dev marks an iterative "does it pass yet" run (affected tests, not the
+# merge gate). It never takes a merge gate's checkout or slot: it has its own
+# <repo>@dev checkout and host slots (BEELINK_GATE_DEV_SLOTS, default 2), runs
+# in the weight-25 beelink-gate-dev cgroup, so merge gates (weight 400) and CI
+# win the CPU, and gets no starvation backstop. Run the final head without it.
 #
 # auto probes both beelinks and runs on a free one, preferring one under its
 # load limit (1-minute load at most 1.5x its cores), then one that already
@@ -443,7 +450,10 @@ loadavg_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
 # A top-level cgroup with a high CPU weight (400 against ci.slice's 25), created
 # on the beelinks by host/install.sh --gate-priority-only. The gate moves itself
 # there once admitted, so its command wins CPU over CI runners and lane work.
-gate_cgroup() { echo "${BEELINK_GATE_CGROUP:-/sys/fs/cgroup/beelink-gate}"; }
+gate_cgroup() {
+  if [ "${dev:-0}" = 1 ]; then echo "${BEELINK_GATE_DEV_CGROUP:-/sys/fs/cgroup/beelink-gate-dev}"
+  else echo "${BEELINK_GATE_CGROUP:-/sys/fs/cgroup/beelink-gate}"; fi
+}
 join_gate_cgroup() {
   local cg; cg=$(gate_cgroup)
   [ -w "$cg/cgroup.procs" ] || [ -e "$cg/cgroup.procs" ] || return 0
@@ -537,6 +547,7 @@ over_limit() {
 # Starvation backstop clock: everything this gate has waited, across
 # re-placements (BEELINK_GATE_PLACED_WAIT) and on this host since its first wait.
 starving() {
+  [ "${dev:-0}" = 0 ] || return 1  # a dev run waits; only merge gates get the backstop
   local after
   after=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
   (( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} >= after ))
@@ -830,7 +841,8 @@ remote_probe() {
   [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || die "invalid probe request"
   local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err
   beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
-  light=0; [ "$#" -eq 5 ] && [ "$(decode "$5")" = light ] && light=1
+  light=0 dev=0; [ "$#" -eq 5 ] && [ "$(decode "$5")" = light ] && light=1
+  [ "$#" -eq 5 ] && [ "$(decode "$5")" = dev ] && dev=1
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   reason=$(check_floor "$beelink" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
@@ -845,10 +857,11 @@ remote_probe() {
   local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix free_copy=""
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || copies=2
   [ "$light" = 1 ] && copies=1
+  [ "$dev" = 1 ] && copies=1
   if [ "$state" = free ]; then
     state=busy
     for ((k = 0; k < copies; k++)); do
-      suffix=$([ "$k" = 0 ] || echo "@$k"); [ "$light" = 1 ] && suffix=@light
+      suffix=$([ "$k" = 0 ] || echo "@$k"); [ "$light" = 1 ] && suffix=@light; [ "$dev" = 1 ] && suffix=@dev
       lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
       if [ ! -e "$lock" ]; then state=free free_copy=$suffix; break; fi
       exec {fd}<"$lock" || die "cannot open lock"
@@ -861,6 +874,7 @@ remote_probe() {
   [ -d "$cache_root/$host/$owner/$repo$free_copy/.git" ] && cache=warm
   local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-6} pool=slot free_slots=0 i slot
   [ "$light" = 1 ] && { max_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}; pool="light-slot"; }
+  [ "$dev" = 1 ] && { max_slots=${BEELINK_GATE_DEV_SLOTS:-2}; pool="dev-slot"; }
   for ((i = 0; i < max_slots; i++)); do
     slot="$cache_root/.locks/$pool-$i.lock"
     if [ ! -e "$slot" ]; then free_slots=$((free_slots + 1)); continue; fi
@@ -962,6 +976,12 @@ remote_gate() {
       || die "BEELINK_GATE_LIGHT_CPU must be 1-120 core-seconds, not ${light_cpu}; a larger check is a normal gate"
   fi
   unset BEELINK_GATE_LIGHT_CPU
+  dev=0
+  if [ "${BEELINK_GATE_CLASS:-}" = dev ]; then
+    case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
+    dev=1
+  fi
+  unset BEELINK_GATE_CLASS
   urgent=0; [ "${BEELINK_GATE_URGENT:-0}" = 1 ] && urgent=1
   urgent_markers=()
   admit_wait=${BEELINK_GATE_ADMIT_WAIT:-} admit_by=""
@@ -1050,6 +1070,8 @@ remote_gate() {
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
   # A light gate waits behind no normal gate: it has its own <repo>@light checkout.
   (( light == 0 )) || copies=1
+  # A dev run never takes a merge gate's checkout: it has its own <repo>@dev.
+  (( dev == 0 )) || copies=1
   unset BEELINK_GATE_REPO_CHECKOUTS
   mkdir -p "$cache_root/.locks" "$cache_root/$host/$owner" || die "cannot create cache"
   lock=""
@@ -1057,6 +1079,7 @@ remote_gate() {
   checkout=""
   local urgent_marker="$cache_root/.locks/urgent-$host-$owner-$repo"
   (( light == 0 )) || urgent_marker+=@light
+  (( dev == 0 )) || urgent_marker+=@dev
   if (( urgent )); then : > "$urgent_marker.$$"; urgent_markers+=("$urgent_marker.$$"); fi
   # Wait for load before taking a checkout: a gate that only waits for load must
   # not hold the repo's checkout. On 2026-10-11 one ADC gate held it for 1766s of
@@ -1065,7 +1088,7 @@ remote_gate() {
   while [ -z "$lock" ]; do
     for ((k = 0; k < copies; k++)); do
       (( urgent )) || ! urgent_ahead "$urgent_marker" || break
-      suffix=$([ "$k" = 0 ] || echo "@$k"); (( light == 0 )) || suffix=@light
+      suffix=$([ "$k" = 0 ] || echo "@$k"); (( light == 0 )) || suffix=@light; (( dev == 0 )) || suffix=@dev
       candidate="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
       [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
       exec {fd}>"$candidate" || die "cannot open lock"
@@ -1093,10 +1116,14 @@ remote_gate() {
     local light_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}
     [[ "$light_slots" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_LIGHT_SLOTS: $light_slots"
     acquire_slot "$cache_root/.locks" "$light_slots" light-slot
+  elif (( dev )); then
+    local dev_slots=${BEELINK_GATE_DEV_SLOTS:-2}
+    [[ "$dev_slots" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_DEV_SLOTS: $dev_slots"
+    acquire_slot "$cache_root/.locks" "$dev_slots" dev-slot
   else
     acquire_slot "$cache_root/.locks" "$max_concurrent"
   fi
-  unset BEELINK_GATE_LIGHT_SLOTS
+  unset BEELINK_GATE_LIGHT_SLOTS BEELINK_GATE_DEV_SLOTS
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since + placed_wait))
@@ -1127,18 +1154,18 @@ remote_gate() {
     preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
     printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s\n' \
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
-      "$([ "${light:-0}" = 1 ] && echo light || echo normal)" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" >&2
+      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" <<'PY' || true
 import json, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
        "start_load": float(load) if load else None,
        "start_cpu_pressure": float(pressure) if pressure else None,
        "starved": starved == "1", "cgroup": cgroup or None, "cache_unpruned": cache_note == "unpruned",
-       "class": "light" if mode == "light" else "normal", "cpu_s": float(cpu) if cpu else None,
+       "class": gate_class, "cpu_s": float(cpu) if cpu else None,
        "node": node or None, "rebuild": rebuild or None}
 if preview:
     try:
@@ -1362,6 +1389,11 @@ if [ "${1:-}" = --probe ]; then
   remote_probe "$@"
   exit $?
 fi
+# The beelink's receipts, for --report.
+if [ "${1:-}" = --receipts ]; then
+  cat "$STATE_DIR/receipts.jsonl" 2>/dev/null
+  exit 0
+fi
 
 # ---- launcher: runs on the Mac, GTR or a beelink ----
 
@@ -1385,6 +1417,7 @@ on_beelink() {
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
   [ -z "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ] || envs+=("BEELINK_GATE_MAX_CPU_PRESSURE=$BEELINK_GATE_MAX_CPU_PRESSURE")
   [ -z "${BEELINK_GATE_STARVE_AFTER:-}" ] || envs+=("BEELINK_GATE_STARVE_AFTER=$BEELINK_GATE_STARVE_AFTER")
+  [ "${gate_class:-}" != dev ] || envs+=("BEELINK_GATE_CLASS=dev")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [[ "${BEELINK_GATE_PR:-}" =~ ^[0-9]+$ ]] && envs+=("BEELINK_GATE_PR=$BEELINK_GATE_PR")
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
@@ -1481,7 +1514,7 @@ encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
 probe_of() {
   local target=$1
   update_window_of "$target" 2>/dev/null || return 1
-  heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$install_mode")" 2>/dev/null \
+  heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" 2>/dev/null \
     | grep '^beelink-gate-probe ' | tail -1
 }
 field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
@@ -1553,12 +1586,74 @@ choose_beelink() {
   done
 }
 
-install_mode=install gate_branch=""
+# --report [hours]: gate runs per merged PR by repo, from both beelinks' receipts
+# and GitHub's merged-PR counts, with each repo's modes, exit classes and
+# exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
+if [ "${1:-}" = --report ]; then
+  hours=${2:-24}
+  [[ "$hours" =~ ^[1-9][0-9]*$ ]] || die "usage: beelink-gate --report [hours]"
+  launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+  receipts_file=$(mktemp)
+  for host in beelink1 beelink2; do
+    heartbeat=0 on_beelink "$host" --receipts 2>/dev/null | sed "s/^{/{\"from\": \"$host\", /" >> "$receipts_file" \
+      || echo "beelink-gate: --report could not read $host's receipts" >&2
+  done
+  merged_lookup=$(command -v gh-drew || command -v gh || true)
+  python3 - "$receipts_file" "$hours" "$merged_lookup" <<'PY'
+import collections, datetime as dt, json, subprocess, sys
+path, hours, gh = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+now = dt.datetime.now(dt.timezone.utc)
+since = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+rows = []
+for line in open(path):
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    if r.get("at", "") >= since:
+        rows.append(r)
+def exit_class(code):
+    return {0: "pass", 1: "fail", 2: "usage", 3: "refused", 75: "tempfail", 76: "replaced", 124: "timeout", 143: "stopped"}.get(code, "other")
+by_repo = collections.defaultdict(list)
+for r in rows:
+    by_repo[r.get("repo", "?")].append(r)
+def merged(repo):
+    if not gh or not repo.startswith("github.com/"):
+        return None
+    q = f"repo:{repo[len('github.com/'):]} is:pr is:merged merged:>={since}"
+    out = subprocess.run([gh, "api", "-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"],
+                         capture_output=True, text=True)
+    return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
+print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
+print(f"{'repo':38} {'runs':>5} {'merged':>6} {'runs/PR':>7} {'p50 wait':>8} {'repeats':>7}  modes / exits")
+total_runs = total_merged = 0
+for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
+    m = merged(repo)
+    waits = sorted(r.get("waited_s", 0) for r in rs)
+    keys = collections.Counter((r.get("sha"), r.get("mode"), r.get("command")) for r in rs)
+    repeats = sum(n - 1 for n in keys.values())
+    modes = collections.Counter(r.get("class") if r.get("class") in ("dev", "light") else r.get("mode") for r in rs)
+    exits = collections.Counter(exit_class(r.get("exit")) for r in rs)
+    ratio = f"{len(rs) / m:.1f}" if m else "-"
+    total_runs += len(rs)
+    total_merged += m or 0
+    print(f"{repo[len('github.com/'):] if repo.startswith('github.com/') else repo:38} {len(rs):5} {m if m is not None else '?':>6} {ratio:>7} {waits[len(waits) // 2]:7}s {repeats:7}  "
+          + " ".join(f"{k}={v}" for k, v in modes.most_common()) + " / " + " ".join(f"{k}={v}" for k, v in exits.most_common()))
+if total_merged:
+    print(f"TOTAL {total_runs} runs / {total_merged} merged PRs = {total_runs / total_merged:.1f} runs per merged PR (target <= 1.5)")
+PY
+  status=$?
+  rm -f "$receipts_file"
+  exit "$status"
+fi
+
+install_mode=install gate_branch="" gate_class=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --urgent) export BEELINK_GATE_URGENT=1; shift ;;
     --no-install) [ "$install_mode" = light ] || install_mode=no-install; shift ;;
     --light) [ "$install_mode" != ship ] || die "--light cannot be combined with --ship"; install_mode=light; shift ;;
+    --dev) gate_class=dev; shift ;;
     --ship) [ "$install_mode" != light ] || die "--light cannot be combined with --ship"; install_mode=ship; shift ;;
     --branch) [ "$#" -ge 2 ] || die "--branch needs a branch name"
       valid_branch_name "$2" || die "invalid --branch: $2"
@@ -1566,8 +1661,11 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light] [--urgent] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>"
+if [ "$gate_class" = dev ]; then
+  case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
+fi
 if [ "$install_mode" = ship ]; then
   [ "$#" -eq 3 ] || die "$usage"
   set -- "$1" "$2" "$3" -- bash scripts/ship.sh verify

@@ -5,7 +5,7 @@
 # command, which is why /non-systemd itself keeps its weight.
 # Rollback: sudo systemctl disable --now beelink-gate-cgroup.service &&
 #   sudo rm /etc/systemd/system/beelink-gate-cgroup.service && sudo systemctl daemon-reload;
-#   the cgroup empties as running gates finish (rmdir /sys/fs/cgroup/beelink-gate then).
+#   the cgroups empty as running gates finish (rmdir /sys/fs/cgroup/beelink-gate{,-dev} then).
 [Unit]
 Description=High-CPU-weight cgroup for beelink merge gates
 
@@ -13,6 +13,8 @@ Description=High-CPU-weight cgroup for beelink merge gates
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'mkdir -p /sys/fs/cgroup/beelink-gate && echo 400 > /sys/fs/cgroup/beelink-gate/cpu.weight'
+# Iterative --dev runs: lowest priority, below CI.
+ExecStart=/bin/sh -c 'mkdir -p /sys/fs/cgroup/beelink-gate-dev && echo 25 > /sys/fs/cgroup/beelink-gate-dev/cpu.weight'
 
 [Install]
 WantedBy=multi-user.target
