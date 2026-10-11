@@ -770,7 +770,7 @@ test("--ship sizes the test pool to the host's spare cores", () => {
     f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
     const cores = Number(spawnSync("nproc", { encoding: "utf8" }).stdout.trim());
     const ship = (load) => run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)], { env: { ...f.env, BEELINK_GATE_LOAD: load } });
-    assert.equal(ship("0.00").stdout.trim(), `workers=${Math.max(2, Math.floor(cores / 2))}`);
-    assert.equal(ship(String(cores * 4)).stdout.trim(), "workers=2");
+    assert.equal(ship("0.00").stdout.trim(), `workers=${Math.max(4, Math.floor(cores / 2))}`);
+    assert.equal(ship(String(cores * 4)).stdout.trim(), "workers=4");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

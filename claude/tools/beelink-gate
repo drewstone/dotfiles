@@ -678,7 +678,9 @@ PY
     spare=$(( cores - ${load%.*} ))
     workers=${ship_workers:-$spare}
     (( workers <= cores / 2 )) || workers=$(( cores / 2 ))
-    (( workers >= 2 )) || workers=2
+    # Two workers stretched a GTM verify to 15 min at load 23; four keeps most of
+    # the relief now that the real-browser test has a budget sized to load.
+    (( workers >= 4 )) || workers=4
     export SHIP_MAX_WORKERS=$workers
     echo "beelink-gate: --ship runs scripts/ship.sh verify with node $(node -v 2>/dev/null) and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
   elif [ "$install_mode" = no-install ]; then
