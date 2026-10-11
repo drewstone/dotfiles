@@ -401,6 +401,15 @@ acquire_slot() {
       echo "beelink-gate: waiting for a host gate slot ($max running$([ "$pool" = slot ] || echo " $pool"))" >&2
       announced=1
     fi
+    # The backstop covers slots too: with pressure admission, a full slot pool is
+    # now the usual wait (4/4 on both beelinks at 22:15Z with gate pressure 5-16%).
+    if starving; then
+      exec {slot_fd}>"$slots_dir/$pool-overflow.lock" || die "cannot open host slot"
+      starved=1
+      echo "beelink-gate: STARVED: running past the $max-slot cap on $beelink after $(( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} ))s; SHIP_MAX_WORKERS is halved" >&2
+      rm -f "$marker.$$"
+      return 0
+    fi
     admission_expired && not_admitted "no free host slot"
     if [ "${urgent:-0}" = 1 ]; then sleep 0.5; else sleep "${BEELINK_GATE_SLOT_POLL_SECONDS:-2}"; fi
   done
@@ -515,19 +524,26 @@ over_limit() {
 
 # Holds a gate that has its lock and slot until the host is under its load
 # limit, the way the disk floor refuses: bounded, with the reason printed.
+# Starvation backstop clock: everything this gate has waited, across
+# re-placements (BEELINK_GATE_PLACED_WAIT) and on this host since its first wait.
+starving() {
+  local after
+  after=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
+  (( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} >= after ))
+}
+
 wait_for_load() {
   # One budget across both calls: before the checkout lock and after the slot.
   : "${load_wait_started:=$SECONDS}"
-  local beelink=$1 budget limit load since=$load_wait_started reported=-60 starve_after
+  local beelink=$1 budget limit load since=$load_wait_started reported=-60
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die "invalid BEELINK_GATE_LOAD_WAIT: ${BEELINK_GATE_LOAD_WAIT:-}"
-  starve_after=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
   limit=$(load_limit)
   while load=$(load_now) && over_limit "$load" "$limit"; do
     # Starvation backstop: a gate that has waited this long in total, across
     # re-placements, runs now on the host auto ranked lowest, with fewer test
     # workers. On 2026-10-11 the L1 ship gate for gtm-agent #1527 was re-placed
     # 56 times in 2 h without admission.
-    if (( ${placed_wait:-0} + SECONDS - since >= starve_after )); then
+    if starving; then
       starved=1
       echo "beelink-gate: STARVED: admitting on $beelink after $(( ${placed_wait:-0} + SECONDS - since ))s with $(metric_name) $load over its limit of $limit; SHIP_MAX_WORKERS is halved" >&2
       break
@@ -829,7 +845,7 @@ remote_probe() {
     [ "$state" = busy ] || reason=""
   fi
   [ -d "$cache_root/$host/$owner/$repo$free_copy/.git" ] && cache=warm
-  local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-4} pool=slot free_slots=0 i slot
+  local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-6} pool=slot free_slots=0 i slot
   [ "$light" = 1 ] && { max_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}; pool="light-slot"; }
   for ((i = 0; i < max_slots; i++)); do
     slot="$cache_root/.locks/$pool-$i.lock"
@@ -998,7 +1014,7 @@ remote_gate() {
   export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
-  local max_concurrent="${BEELINK_GATE_MAX_CONCURRENT:-4}"
+  local max_concurrent="${BEELINK_GATE_MAX_CONCURRENT:-6}"
   build_root="${XDG_CACHE_HOME:-$HOME/.cache}"
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"

@@ -1536,3 +1536,19 @@ test("an admitted gate moves itself into the gate cgroup through sudo and record
     assert.match(without.stderr, /receipt: .*cgroup=none/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("the starvation backstop also runs a gate past a full slot pool", async () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const marker = join(f.root, "slot-held");
+    const holder = spawn("flock", ["-x", join(f.cache, ".locks", "slot-0.lock"), "bash", "-c", `touch '${marker}'; sleep 20`], { stdio: "ignore" });
+    try {
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+      const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_MAX_CONCURRENT: "1", BEELINK_GATE_SLOT_POLL_SECONDS: "0.2", BEELINK_GATE_STARVE_AFTER: "1s" } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /STARVED: running past the 1-slot cap on beelink2 after \d+s/);
+      assert.match(result.stderr, /receipt: .*starved=1/);
+    } finally { holder.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
