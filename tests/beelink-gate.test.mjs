@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -206,7 +206,7 @@ exec /bin/sleep "$@"
     assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
     assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
     assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
-    assert.equal(readFileSync(dfCount, "utf8").trim(), "3", "the floor changed only after the admission checks");
+    assert.equal(readFileSync(dfCount, "utf8").trim(), "4", "the floor changed after the cache-recovery check and admission checks");
     assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=75`));
     const [receipt] = receipts(f);
     assert.equal(receipt.exit, 75);
@@ -1178,5 +1178,176 @@ test("the launcher validates --branch and forwards it to the beelink", () => {
       assert.equal(refused.status, 2, bad);
       assert.match(refused.stderr, /invalid --branch/);
     }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a gated command finds the dotfiles tools in ~/bin and ~/.local/bin", () => {
+  const f = fixture();
+  try {
+    for (const dir of ["bin", ".local/bin"]) {
+      mkdirSync(join(f.home, dir), { recursive: true });
+      const tool = join(f.home, dir, dir === "bin" ? "gh-drew" : "local-tool");
+      writeFileSync(tool, `#!/usr/bin/env bash\necho ${dir}\n`);
+      chmodSync(tool, 0o755);
+    }
+    const result = f.call(f.first, ["bash", "-c", "gh-drew; local-tool"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "bin\n.local/bin\n");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// A light gate: a small, dependency-free check with a declared CPU budget.
+const lightGate = (f, sha, command, env = {}) => run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "light", f.windowDay, f.windowHour, ...command].map(encode)], { env: { ...f.env, ...env } });
+
+test("a light gate is admitted between 1.5x and 2.5x the cores where a normal gate waits, without an install or a browser", () => {
+  const f = fixture();
+  const loadavg = join(f.root, "light-loadavg");
+  writeFileSync(loadavg, loadLine(loadLimit + 1));
+  try {
+    const env = { BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" };
+    const normal = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(normal.status, 75, normal.stderr);
+    const light = lightGate(f, f.first, ["bash", "-c", 'echo "browsers=$PLAYWRIGHT_BROWSERS_PATH"; cat value.txt'], env);
+    assert.equal(light.status, 0, light.stderr);
+    assert.match(light.stderr, new RegExp(`load \\(${(loadLimit + 1).toFixed(2)}, limit ${Math.floor(coreCount * 5 / 2)}\\) admitted on beelink2`));
+    assert.match(light.stdout, /browsers=.*beelink-gate-no-browsers/);
+    assert.match(light.stdout, /first/);
+    assert.equal(existsSync(f.npmLog), false, "a light gate installs nothing");
+    assert.equal(existsSync(join(f.cache, "local", "owner", "repo@light", ".git")), true, "a light gate uses its own checkout");
+    assert.match(light.stderr, /receipt: .* class=light cpu_s=\d+\.\d/);
+    const row = receipts(f).at(-1);
+    assert.equal(row.class, "light");
+    assert.equal(row.exit, 0);
+    assert.ok(row.cpu_s !== null && row.cpu_s < 120, JSON.stringify(row));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a light gate does not wait for a normal host slot", async () => {
+  const f = fixture();
+  const held = join(f.root, "held");
+  try {
+    // A normal gate holds the only normal slot while its command runs.
+    const normal = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `touch '${held}'; sleep 6`].map(encode)],
+      { env: { ...f.env, BEELINK_GATE_MAX_CONCURRENT: "1" } });
+    for (let i = 0; i < 400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), "the normal gate started");
+    const started = Date.now();
+    const light = lightGate(f, f.first, ["true"], { BEELINK_GATE_MAX_CONCURRENT: "1" });
+    assert.equal(light.status, 0, light.stderr);
+    assert.doesNotMatch(light.stderr, /waiting for a host gate slot/);
+    assert.ok(Date.now() - started < 5000, "the light gate ran while the normal slot was held");
+    await new Promise((resolveDone) => normal.on("close", resolveDone));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a light gate over its declared CPU budget fails loudly, and the budget is capped at two core-minutes", () => {
+  const f = fixture();
+  try {
+    const spin = ["node", "-e", "const start = process.cpuUsage(); while (true) { const cpu = process.cpuUsage(start); if (cpu.user + cpu.system >= 2_000_000) break; }"];
+    const over = lightGate(f, f.first, spin, { BEELINK_GATE_LIGHT_CPU: "1" });
+    assert.equal(over.status, 1, over.stderr);
+    assert.match(over.stderr, /LIGHT GATE OVER BUDGET: the command used \d+\.\d core-seconds of the 1 it declared; run it as a normal gate/);
+    const row = receipts(f).at(-1);
+    assert.equal(row.class, "light");
+    assert.ok(row.cpu_s > 1, JSON.stringify(row));
+    const tooLarge = lightGate(f, f.first, ["true"], { BEELINK_GATE_LIGHT_CPU: "121" });
+    assert.equal(tooLarge.status, 2);
+    assert.match(tooLarge.stderr, /BEELINK_GATE_LIGHT_CPU must be 1-120 core-seconds/);
+    const combined = run(gate, ["--light", "--ship", "beelink2", f.url, f.first], { env: f.env });
+    assert.equal(combined.status, 2);
+    assert.match(combined.stderr, /--light cannot be combined with --ship/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// 2026-10-11: gtm-agent #1565, the fix for a red master, waited 1,501 s on beelink2's two busy checkouts
+// (load 44.5) while beelink1 sat at load 15: auto chose a host, then waited on that host's lock for good.
+test("auto gives back a host whose checkouts were taken after it chose it, and runs on the other one", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPLACE_WAIT: "2s", BEELINK_GATE_AUTO_POLL_SECONDS: "0.5" };
+    // A warm cache on beelink2 makes auto choose it first.
+    assert.equal(run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env }).status, 0);
+    // Between the probe and the remote gate's admission, another gate takes both of beelink2's checkouts.
+    const ssh = join(f.root, "bin", "ssh");
+    renameSync(ssh, join(f.root, "bin", "ssh-real"));
+    const locks = `${join(f.root, "cache")}-100.127.22.51/.locks`;
+    writeFileSync(ssh, `#!/usr/bin/env bash
+if [[ " $* " == *" --remote "* && " $* " == *" 100.127.22.51 "* && -e '${join(f.root, "take-b2")}' ]]; then
+  rm -f '${join(f.root, "take-b2")}'
+  python3 -c 'import fcntl,os,sys,time; fs=[open(p,"w") for p in sys.argv[1:3]]; [fcntl.flock(x, fcntl.LOCK_EX) for x in fs]; open(sys.argv[3],"w").close(); time.sleep(60)' \\
+    '${locks}/local-owner-repo.lock' '${locks}/local-owner-repo@1.lock' '${join(f.root, "b2-held")}' </dev/null >/dev/null 2>&1 &
+  echo $! > '${join(f.root, "holder.pid")}'
+  while [ ! -e '${join(f.root, "b2-held")}' ]; do sleep 0.05; done
+fi
+exec '${join(f.root, "bin", "ssh-real")}' "$@"
+`);
+    chmodSync(ssh, 0o755);
+    writeFileSync(join(f.root, "take-b2"), "");
+    const moved = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(moved.status, 0, moved.stderr);
+    assert.match(moved.stderr, /auto chose beelink2/);
+    assert.match(moved.stderr, /not admitted on beelink2 within 2s \(both local\/owner\/repo checkouts busy\); placing the gate again/);
+    assert.match(moved.stderr, /placement 1 on beelink2 gave the host back after waiting; probing both again/);
+    assert.match(moved.stderr, /auto chose beelink1/);
+    assert.match(moved.stderr, /receipt: .*host=beelink1/);
+    const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
+    assert.ok(row.waited_s >= 2, `the whole wait is in the receipt: ${row.waited_s}`);
+  } finally {
+    try { process.kill(Number(readFileSync(join(f.root, "holder.pid"), "utf8")), "SIGKILL"); } catch {}
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("an urgent gate takes the next free checkout ahead of a gate that waited longer", async () => {
+  const f = fixture();
+  const events = join(f.root, "events");
+  const lockDir = join(f.cache, ".locks");
+  mkdirSync(lockDir, { recursive: true });
+  const holder = spawn("python3", ["-c", 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
+    join(lockDir, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+  const launch = (id, extra) => new Promise((resolveDone) => {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo ${id} >> '${events}'`].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1", ...extra } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveDone({ status, stderr }));
+  });
+  try {
+    await new Promise((ok) => holder.stdout.once("data", ok));
+    const normal = launch("normal", {});
+    await sleepMs(1500);
+    const urgent = launch("urgent", { BEELINK_GATE_URGENT: "1" });
+    for (let i = 0; i < 200 && !readdirSync(lockDir).some((n) => n.startsWith("urgent-local-owner-repo.")); i++) await sleepMs(25);
+    holder.kill("SIGKILL");
+    const [n, u] = await Promise.all([normal, urgent]);
+    assert.equal(n.status, 0, n.stderr);
+    assert.equal(u.status, 0, u.stderr);
+    assert.equal(readFileSync(events, "utf8").trim().split("\n").join(","), "urgent,normal");
+    assert.match(u.stderr, /admitted on beelink2 after \d+s \(urgent\)/);
+    assert.deepEqual(readdirSync(lockDir).filter((n) => n.startsWith("urgent-")), [], "no urgent marker is left behind");
+  } finally {
+    holder.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a gate waiting for load holds no checkout, so the repo lock stays free until it is admitted", async () => {
+  const f = fixture();
+  const loadavg = join(f.root, "busy-loadavg");
+  const limit = Math.floor(Number(spawnSync("nproc", { encoding: "utf8" }).stdout.trim()) * 3 / 2);
+  writeFileSync(loadavg, `${limit * 2}.00 1 1 1/100 1\n`);
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_POLL_SECONDS: "0.2", BEELINK_GATE_REPO_CHECKOUTS: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 100 && !/is over its limit/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /is over its limit/);
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const probe = run("flock", ["-n", join(f.cache, ".locks", "local-owner-repo.lock"), "true"]);
+    assert.equal(probe.status, 0, "the waiting gate holds the checkout lock");
+    writeFileSync(loadavg, "1.00 1 1 1/100 1\n");
+    assert.equal(await done, 0, stderr);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

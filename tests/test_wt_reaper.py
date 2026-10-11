@@ -43,10 +43,12 @@ def parse(stdout):
     return rows
 
 
-def run_reaper(root, *extra):
+def run_reaper(root, *extra, derived=False):
     env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+    # The derived passes default to this host's journey state and gate cache; a test names its own.
+    extra = list(extra) if derived else ['--no-derived'] + list(extra)
     proc = subprocess.run([sys.executable, REAPER, '--root', root, '--no-log-file',
-                           '--idle-hours', str(IDLE_HOURS)] + list(extra),
+                           '--idle-hours', str(IDLE_HOURS)] + extra,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     assert proc.returncode == 0, proc.stderr.decode()
     return parse(proc.stdout.decode())
@@ -786,6 +788,121 @@ class InstallOwnershipTest(unittest.TestCase):
 
     def test_no_host_config_keeps_wt_reaper(self):
         self.assertFalse(self.owns(None))
+
+
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class DerivedFilesTest(unittest.TestCase):
+    """node_modules of merged, idle worktrees and journey raw recordings with outputs are derived."""
+
+    @classmethod
+    def setUpClass(cls):
+        f = cls.f = Fixture()
+        p = cls.paths = {}
+        # Merged (HEAD is main) but dirty, so the tree itself stays and only node_modules may go.
+        p['merged_dirty'] = f.add('merged_dirty')
+        f.write(p['merged_dirty'], 'node_modules/x/index.js', 'x\n')
+        f.write(p['merged_dirty'], 'packages/core/node_modules/y/index.js', 'y\n')
+        f.write(p['merged_dirty'], 'a.txt', 'work in progress\n')
+        # Not merged anywhere: its node_modules stays.
+        p['unmerged'] = f.add('unmerged')
+        f.write(p['unmerged'], 'c.txt', 'c\n')
+        git(['add', 'c.txt'], p['unmerged'])
+        git(['commit', '-qm', 'local only'], p['unmerged'])
+        f.write(p['unmerged'], 'node_modules/x/index.js', 'x\n')
+        # A journey run whose outputs exist, and an older run of the same journey whose outputs were replaced.
+        state = cls.state = os.path.join(f.tmp, 'journeys-state')
+        out = cls.out = os.path.join(f.tmp, 'code', '_wt', 'jw', 'journeys', 'out')
+        cls.done_run = os.path.join(state, 'raw', 'j1-new-customer-2026-10-11T08-31-08-644Z', 'founder')
+        cls.old_run = os.path.join(state, 'raw', 'j1-new-customer-2026-10-11T07-00-00-000Z', 'founder')
+        for run in (cls.done_run, cls.old_run):
+            for name in ('founder.webm', 'page@ab12.webm', 'trace.raw.zip', 'founder.clean.mp4', 'founder.highlights.srt'):
+                f.write(run, name, 'v\n')
+        f.write(out, 'j1-new-customer/timings.json', json.dumps({'journey': 'j1-new-customer', 'startedAt': '2026-10-11T08:31:08.644Z'}))
+        f.write(out, 'j1-new-customer/video/founder-full.mp4', 'mp4\n')
+        f.write(out, 'j1-new-customer/video/founder-trace.zip', 'scrubbed\n')
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        cls.rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--journey-state', state,
+                              '--journey-out', out, '--gate-cache', os.path.join(f.tmp, 'no-gate-cache'), derived=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.f.cleanup()
+
+    def test_merged_idle_worktree_loses_only_its_ignored_node_modules(self):
+        wt = self.paths['merged_dirty']
+        self.assertFalse(os.path.exists(os.path.join(wt, 'node_modules')))
+        self.assertFalse(os.path.exists(os.path.join(wt, 'packages', 'core', 'node_modules')))
+        with open(os.path.join(wt, 'a.txt')) as fh:
+            self.assertEqual(fh.read(), 'work in progress\n')
+        self.assertTrue(os.path.isfile(os.path.join(wt, 'packages', 'core', 'index.js')))
+        removed = [r for r in self.rows if r.get('decision') == 'remove-derived' and r.get('rule') == 'node_modules']
+        self.assertEqual(sorted(r['path'] for r in removed),
+                         sorted([os.path.join(wt, 'node_modules'), os.path.join(wt, 'packages', 'core', 'node_modules')]))
+
+    def test_unmerged_worktree_keeps_node_modules(self):
+        self.assertTrue(os.path.isfile(os.path.join(self.paths['unmerged'], 'node_modules', 'x', 'index.js')))
+
+    def test_journey_raw_goes_only_when_its_own_outputs_exist(self):
+        for name in ('founder.webm', 'page@ab12.webm', 'trace.raw.zip'):
+            self.assertFalse(os.path.exists(os.path.join(self.done_run, name)), name)
+        for name in ('founder.clean.mp4', 'founder.highlights.srt'):
+            self.assertTrue(os.path.isfile(os.path.join(self.done_run, name)), name)
+        for name in ('founder.webm', 'page@ab12.webm', 'trace.raw.zip', 'founder.clean.mp4'):
+            self.assertTrue(os.path.isfile(os.path.join(self.old_run, name)), name)
+
+
+class GateCheckoutTest(unittest.TestCase):
+    """A beelink-gate checkout beyond the configured count goes only while its lock is free."""
+
+    def test_stale_gate_checkout_is_removed_and_a_locked_one_stays(self):
+        f = Fixture()
+        try:
+            cache = os.path.join(f.tmp, 'gate')
+            for name in ('repo', 'repo@1', 'repo@2', 'repo@3', 'repo@light'):
+                f.write(os.path.join(cache, 'github.com', 'owner', name), 'file.txt', 'x\n')
+            locks = os.path.join(cache, '.locks')
+            os.makedirs(locks)
+            held = os.path.join(locks, 'github.com-owner-repo@3.lock')
+            holder = subprocess.Popen(
+                [sys.executable, '-c', 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); '
+                 'print("held", flush=True); time.sleep(60)', held], stdout=subprocess.PIPE)
+            f.procs.append(holder)
+            self.assertEqual(holder.stdout.readline().strip(), b'held')
+            rows = run_reaper(f.root, '--gate-cache', cache, '--gate-checkouts', '2', '--journey-state',
+                              os.path.join(f.tmp, 'none'), '--dependency-idle-hours', '1000', derived=True)
+            base = os.path.join(cache, 'github.com', 'owner')
+            self.assertFalse(os.path.exists(os.path.join(base, 'repo@2')))
+            for name in ('repo', 'repo@1', 'repo@3', 'repo@light'):
+                self.assertTrue(os.path.isdir(os.path.join(base, name)), name)
+            kept = [r for r in rows if r.get('rule') == 'gate-checkout' and r.get('decision') == 'keep-derived']
+            self.assertEqual([r['path'] for r in kept], [os.path.join(base, 'repo@3')])
+        finally:
+            f.cleanup()
+
+
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class KeptPathTest(unittest.TestCase):
+    """Nothing under a --keep path is touched: Discovery's run roots are retired through the Lab."""
+
+    def test_a_worktree_under_a_kept_path_is_neither_removed_nor_stripped(self):
+        f = Fixture()
+        try:
+            control = f.add('control')
+            kept = os.path.join(f.root, '_runs', 'trace-coverage-20261004', 'tree')
+            os.makedirs(os.path.dirname(kept))
+            git(['worktree', 'add', '-q', '-b', 'kept', kept, 'main'], f.repo)
+            for wt in (control, kept):
+                f.write(wt, 'node_modules/x/index.js', 'x\n')
+            time.sleep(IDLE_HOURS * 3600 + 1.0)
+            rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--keep', os.path.join(f.root, '_runs'),
+                              '--journey-state', os.path.join(f.tmp, 'none'), '--gate-cache', os.path.join(f.tmp, 'none'),
+                              derived=True)
+            self.assertFalse(os.path.exists(control), 'the control tree is reaped as usual')
+            self.assertTrue(os.path.isfile(os.path.join(kept, 'node_modules', 'x', 'index.js')))
+            skip = [r for r in rows if r.get('decision') == 'skip' and r.get('path') == kept]
+            self.assertTrue(skip and 'which its owner retires' in skip[0]['reason'], skip)
+        finally:
+            f.cleanup()
 
 
 if __name__ == '__main__':
