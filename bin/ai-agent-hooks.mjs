@@ -18,7 +18,14 @@ const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 const HOOK_TEMPLATES_DIR = join(PACKAGE_ROOT, "hooks");
 const CONFIG_TEMPLATE_PATH = join(PACKAGE_ROOT, "templates", "ai-agent-hooks.mjs");
 
-const BUILTIN_IDS = new Set(["merge-conflict-markers", "suspicious-secrets", "mergeable-with-base"]);
+const BUILTIN_IDS = new Set([
+  "merge-conflict-markers",
+  "suspicious-secrets",
+  "mergeable-with-base",
+  "no-cross-name-default-push",
+]);
+const CROSS_NAME_GUARD = { id: "no-cross-name-default-push", builtin: "no-cross-name-default-push", required: true };
+const DEFAULT_BRANCH_NAMES = new Set(["develop", "main", "master"]);
 const FINDING_SEVERITIES = ["low", "medium", "high", "critical"];
 const DEFAULT_FAIL_ON_SEVERITIES = ["high", "critical"];
 const DEFAULT_AUDIT_PROMPT =
@@ -369,6 +376,52 @@ function pushedReleaseLine(refUpdates) {
   return line;
 }
 
+/**
+ * A default branch is updated only from the local branch of the same name. A worktree whose
+ * branch tracks origin/develop under push.default=upstream turns a plain `git push` into an
+ * update of develop from a feature branch; three such pushes landed on agent-dev-container's
+ * develop on 2026-10-11 with no pull request. A receipted merge lands through the GitHub API,
+ * not git push, so this never sees it.
+ */
+function checkNoCrossNameDefaultPush(repoRoot, refUpdates = []) {
+  if (process.env.GITHUB_ACTIONS) {
+    return { ok: true, status: 0, output: "Inside GitHub Actions — workflows own their pushes." };
+  }
+  const refused = [];
+  for (const u of refUpdates) {
+    const name = /^refs\/heads\/(.+)$/.exec((u && u.remoteRef) || "")?.[1];
+    if (!name || !DEFAULT_BRANCH_NAMES.has(name)) continue;
+    let localRef = u.localRef || "";
+    if (localRef === "HEAD") {
+      const symbolic = runGit(repoRoot, ["symbolic-ref", "-q", "HEAD"], true);
+      localRef = symbolic.ok ? symbolic.stdout.trim() : "HEAD (detached)";
+    }
+    if (zeroOid.test(u.localSha || "")) {
+      refused.push(`deleting ${u.remoteRef}`);
+    } else if (localRef !== `refs/heads/${name}`) {
+      refused.push(`${localRef || u.localSha} -> ${u.remoteRef}`);
+    }
+  }
+  if (refused.length === 0) {
+    return { ok: true, status: 0, output: "No default branch is updated from another ref." };
+  }
+  if (process.env.GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH === "1") {
+    const line = `no-cross-name-default-push: allowed by GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH=1: ${refused.join("; ")}`;
+    console.error(line);
+    return { ok: true, status: 0, output: line };
+  }
+  return {
+    ok: false,
+    status: 1,
+    output:
+      `Refused: a default branch is updated from a different ref: ${refused.join("; ")}.\n` +
+      "Push your branch to its own name and open a pull request:\n" +
+      "  git push origin HEAD:refs/heads/<your-branch>\n" +
+      "A tracked default branch plus push.default=upstream causes this; create worktrees with --no-track.\n" +
+      "Deliberate override (logged): GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH=1",
+  };
+}
+
 function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
   const remote = typeof check.remote === "string" && check.remote.trim()
     ? check.remote.trim()
@@ -478,6 +531,10 @@ function runBuiltin(builtin, context) {
 
   if (builtin === "mergeable-with-base") {
     return checkMergeableWithBase(context.repoRoot, context.check, context.pushRefUpdates);
+  }
+
+  if (builtin === "no-cross-name-default-push") {
+    return checkNoCrossNameDefaultPush(context.repoRoot, context.pushRefUpdates);
   }
 
   return { ok: false, status: 1, output: `Unknown builtin check: ${builtin}` };
@@ -1037,6 +1094,7 @@ function defaultConfig() {
       },
       "pre-push": {
         checks: [
+          CROSS_NAME_GUARD,
           { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
           { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
           {
@@ -1068,6 +1126,7 @@ function globalBaselineConfig() {
       },
       "pre-push": {
         checks: [
+          CROSS_NAME_GUARD,
           { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
           { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
           { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
@@ -1129,6 +1188,16 @@ async function runHookCommand(rawArgs) {
   const config = await loadConfig(repoRoot);
   const hookConfig = config?.hooks?.[hookName];
   const checks = normalizeChecks(hookConfig);
+  // A repository's own config chooses its checks, but it cannot drop this guard.
+  if (hookName === "pre-push") {
+    const guard = checks.find((c) => c.builtin === CROSS_NAME_GUARD.builtin);
+    if (guard) {
+      guard.required = true;
+      guard.group = "sequential";
+    } else {
+      checks.unshift(...normalizeChecks({ checks: [CROSS_NAME_GUARD] }));
+    }
+  }
 
   if (checks.length === 0) {
     console.log(`No checks configured for ${hookName}`);
@@ -1182,6 +1251,7 @@ async function runHookCommand(rawArgs) {
       outcome = runBuiltin(check.builtin, { ...context, check });
       writeFileSync(logPath, outcome.output || "", "utf8");
       outcome.elapsedMs = Date.now() - started;
+      if (!outcome.ok && outcome.output) console.error(outcome.output);
     } else if (check.kind === "audit") {
       outcome = await runAudit(check, context, logPath, runDir);
     } else {
