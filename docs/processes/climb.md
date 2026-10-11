@@ -113,6 +113,7 @@ A row is an [`evolve` experiment record](../../claude/skills/evolve/schema.md) p
 A hill's current position is a row with `lever: "baseline"`.
 Write rows with [`climb-log append`](../../claude/tools/README.md#climb-log); process-guard refuses shell writes into a ledger.
 Each repository that keeps a ledger marks it `merge=union` in `.gitattributes`, so a local merge of two branches that each append rows keeps every row.
+Git reads attributes from the checked-out branch, so [`git/install.sh`](../../git/install.sh) also points `core.attributesFile` at [`git/gitattributes_global`](../../git/gitattributes_global) on every host, and a branch cut before its repository named the ledger merges the same way.
 GitHub's server merge ignores the attribute and reports a conflict; update the branch locally with `git merge origin/<base>` and push.
 `climb-log check` rejects what a union can get wrong, at any date: a row split across lines, two rows interleaved, or a repeated row.
 
