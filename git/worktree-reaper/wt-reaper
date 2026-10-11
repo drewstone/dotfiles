@@ -906,7 +906,9 @@ def main(argv=None):
     parser.add_argument('--dry-run', action='store_true', help='decide and log, remove nothing')
     parser.add_argument('--root', action='append', help='scan root (repeatable); default ~/code, ~/company and ~/webb')
     parser.add_argument('--depth', type=int, default=3, help='directory depth searched for repositories')
-    parser.add_argument('--idle-hours', type=float, default=24.0)
+    # 12 h matches wt-remove's activity guard; at 24 h lane worktree churn on the beelinks
+    # (about 90 new trees in 6 h on 2026-10-11) outran the hourly reap and filled the disk.
+    parser.add_argument('--idle-hours', type=float, default=12.0)
     parser.add_argument('--log-file', default=os.path.expanduser('~/.local/state/wt-reaper/wt-reaper.log'))
     parser.add_argument('--no-log-file', action='store_true')
     parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the process scan')
