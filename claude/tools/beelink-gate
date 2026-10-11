@@ -3,8 +3,8 @@
 # Gate one commit in a reusable, locked checkout on a beelink.
 #
 # Usage:
-#   beelink-gate [--no-install] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
-#   beelink-gate --light <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#   beelink-gate [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#   beelink-gate --light [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #
 # --light declares a small check: no dependency install, no browser, and at most
@@ -22,6 +22,9 @@
 # A named beelink over its load limit hands the gate to the other one when that
 # one is under its limit. On the beelink, a gate starts only under the load limit;
 # it waits up to BEELINK_GATE_LOAD_WAIT (default 30m), printing why, then refuses.
+# --branch <name> checks out that branch at <sha> with origin/<name> as its
+# upstream instead of a detached HEAD, and refuses unless origin's <name> is at
+# <sha>; merge gates such as ADC's `pnpm signoff` need HEAD == @{push}.
 # --ship runs exactly the repo's `scripts/ship.sh verify` (the release's own
 # verification) with the repo's .nvmrc Node and SHIP_MAX_WORKERS sized to the
 # host; ship verify does its own frozen install, so the gate does not.
@@ -454,6 +457,11 @@ adopt_origin() {
   [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
 }
 
+# A branch name the gate may check out: Git's own rules, plus no leading dash.
+valid_branch_name() {
+  [[ "$1" =~ ^[A-Za-z0-9._/-]{1,200}$ && "$1" != -* ]] && git check-ref-format --branch "$1" >/dev/null 2>&1
+}
+
 # The pnpm version the repo's own CI installs with: package.json packageManager
 # (what corepack and pnpm/action-setup read), else the version pinned on
 # pnpm/action-setup in a workflow. Only an exact x.y.z is used.
@@ -691,6 +699,13 @@ remote_gate() {
   [[ "$gate_pr" =~ ^[0-9]*$ ]] || gate_pr=""
   unset BEELINK_GATE_PR
   preview_result="" default_branch=""
+  # --branch: check the named branch out at the SHA with its upstream set, for
+  # merge gates such as ADC's `pnpm signoff` that require HEAD == @{push}.
+  local gate_branch=${BEELINK_GATE_BRANCH:-} branch_head=""
+  if [ -n "$gate_branch" ]; then
+    valid_branch_name "$gate_branch" || die "invalid --branch: $gate_branch"
+  fi
+  unset BEELINK_GATE_BRANCH
   unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
   export PATH="$HOME/.local/bin:$PATH"
@@ -862,7 +877,8 @@ PY
       branch=${left#ref: refs/heads/}
       default_branch=$branch
     elif [[ "$ref" == refs/heads/* ]]; then
-      if [[ "$ref" == refs/heads/main || "$ref" == refs/heads/develop || "${left,,}" == "${sha,,}" ]]; then
+      [ "$ref" != "refs/heads/$gate_branch" ] || branch_head=$left
+      if [[ "$ref" == "refs/heads/$gate_branch" || "$ref" == refs/heads/main || "$ref" == refs/heads/develop || "${left,,}" == "${sha,,}" ]]; then
         branch=${ref#refs/heads/}
       fi
     fi
@@ -871,9 +887,19 @@ PY
       seen_branches[$branch]=1
     fi
   done <<< "$remote_refs"
+  if [ -n "$gate_branch" ] && [ "${branch_head,,}" != "${sha,,}" ]; then
+    die "--branch $gate_branch: origin has it at ${branch_head:-no such branch}, not $sha; push the branch or gate its head"
+  fi
   echo "beelink-gate: fetching $sha and ${#tracking_refspecs[@]} tracking branch(es) into $checkout" >&2
   step timeout 1200 git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}" || exit $?
-  git -C "$checkout" checkout --detach --force "$sha" || exit $?
+  if [ -n "$gate_branch" ]; then
+    git -C "$checkout" checkout --force -B "$gate_branch" "$sha" || exit $?
+    git -C "$checkout" branch --set-upstream-to="origin/$gate_branch" "$gate_branch" >/dev/null || exit $?
+    git -C "$checkout" config push.default current || exit $?
+    echo "beelink-gate: checked out $gate_branch at ${sha:0:12} tracking origin/$gate_branch" >&2
+  else
+    git -C "$checkout" checkout --detach --force "$sha" || exit $?
+  fi
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
@@ -996,6 +1022,7 @@ on_beelink() {
   local target=$1; shift
   local -a envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
+  [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [[ "${BEELINK_GATE_PR:-}" =~ ^[0-9]+$ ]] && envs+=("BEELINK_GATE_PR=$BEELINK_GATE_PR")
@@ -1163,16 +1190,19 @@ choose_beelink() {
   done
 }
 
-install_mode=install
+install_mode=install gate_branch=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --no-install) [ "$install_mode" = light ] || install_mode=no-install; shift ;;
     --light) [ "$install_mode" != ship ] || die "--light cannot be combined with --ship"; install_mode=light; shift ;;
     --ship) [ "$install_mode" != light ] || die "--light cannot be combined with --ship"; install_mode=ship; shift ;;
+    --branch) [ "$#" -ge 2 ] || die "--branch needs a branch name"
+      valid_branch_name "$2" || die "invalid --branch: $2"
+      gate_branch=$2; shift 2 ;;
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$install_mode" = ship ]; then
   [ "$#" -eq 3 ] || die "$usage"
