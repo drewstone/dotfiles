@@ -10,7 +10,7 @@ Specs, canaries and green CI are evidence about code; this skill produces eviden
 On 2026-10-11 it found that GTM proved 2 of its 4 minimum-customer-path checks, and that its first harness had scored 6 of 6 failed turns "completed".
 
 The recorder, the turn scorer and the report are agent-app's `journeys` kit (`@tangle-network/agent-app/journeys`, CLI `agent-app-journeys`); its [guide](https://github.com/tangle-network/agent-app/blob/main/docs/journeys.md) owns the config, the script API and the scoring rule.
-The saved workflow `prove-journeys` runs steps 1 to 4 for a list of flows: `Workflow({ name: 'prove-journeys', args: { app, url, repo, host, checkout, identities, flows, outRoot, stamp } })`, with `flowsSource` in place of `flows` to have it plan them; the script's header documents each argument.
+The saved workflow `prove-journeys` runs steps 1 to 4 for a list of flows: `Workflow({ name: 'prove-journeys', args: { app, url, repo, host, checkout, identities, flows, outRoot, stamp } })`, with `flowsSource` in place of `flows` to have it plan them and a `stamp` unique to the run (date and time, e.g. `20261011T2231Z`; a repeated stamp mixes two runs' evidence); the script's header documents each argument.
 `journeys-env` loads the identities' credentials from the host vault.
 
 ## Inputs

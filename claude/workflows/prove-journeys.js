@@ -20,11 +20,13 @@ export const meta = {
 //   identities [{name, role, workspaces}] test identities by config name; never credentials
 //   flows      [{id, title, brief}]; or flowsSource: the file and section that define what must work
 //   outRoot    folder on this machine the journey folders are copied into
-//   stamp      date stamp for folder names, e.g. "20261011"
+//   stamp      unique to this run: date and time, e.g. "20261011T2231Z". It names the output folders, so a stamp used
+//              twice would mix the second run's flows with the first's and overwrite the evidence to compare against
 //   maxTurns   chat turns per journey (number, default 6); budgetUsd per journey (number, default 3)
 //   bar        optional: the quality bar in the owner's words, added to the defaults below
 
 const A = args || {}
+if (!/^\d{8}T\d{4,6}Z?[A-Za-z0-9._-]*$/.test(A.stamp || '')) return { error: 'stamp must be unique to this run: date and time, e.g. 20261011T2231Z' }
 const OUT = `${A.outRoot}/journeys-${A.app}-${A.stamp}`
 // This run's own output folder on the host, so the index covers this run only.
 const HOST_OUT = `$HOME/.local/state/agent-app-journeys/${A.app}/runs/${A.stamp}`
@@ -216,9 +218,10 @@ if (!flows.length) return { error: 'no flows to record' }
 phase('Prepare')
 const prep = await agent(`${RULES}
 YOUR TASK: make the host ready for ${flows.length} journeys.
-1. On ${A.host} in ${A.checkout}: check it is on the app's default branch, that journeys.config.mjs exists and resolves, and that the installed agent-app exports ./journeys (report its version). If the config is missing, write one from the guide's example with the identities above, and say so.
-2. Run \`journeys-env -- pnpm exec agent-app-journeys signin <identity>\` for every identity.
-3. Write and run journeys/prepare/run.ts: open a chat page as one identity, call j.checkChatContract(page), take one shot, finish. Look at the screenshot.
+1. Before anything is written, check ${HOST_OUT} (expanded) on ${A.host}: if it already holds journeys from an earlier run, stop with that as the blocker, because a stamp is used once.
+2. On ${A.host} in ${A.checkout}: check it is on the app's default branch, that journeys.config.mjs exists and resolves, and that the installed agent-app exports ./journeys (report its version). If the config is missing, write one from the guide's example with the identities above, and say so.
+3. Run \`journeys-env -- pnpm exec agent-app-journeys signin <identity>\` for every identity.
+4. Write and run journeys/prepare/run.ts: open a chat page as one identity, call j.checkChatContract(page), take one shot, finish. Look at the screenshot.
 Return what is ready, the output folder (${HOST_OUT}, expanded), and any blocker.`, { label: 'prepare', phase: 'Prepare', schema: PREP_SCHEMA })
 if (!prep || !prep.ready) return { error: 'host not ready', prep }
 log(`host ready: ${prep.signedIn.join('; ')}`)

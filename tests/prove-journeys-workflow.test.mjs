@@ -32,7 +32,7 @@ const ARGS = {
   app: 'tax', url: 'https://taxes.example.com', repo: 'tangle-network/tax-agent', host: 'beelink2-wsl', checkout: '~/code/_wt/tax-journeys',
   identities: [{ name: 'member', role: 'a household filer', workspaces: 'its personal workspace' }],
   flows: ['public-page', 'sign-in', 'first-question'].map((id) => ({ id, title: id, brief: `Prove ${id}.` })),
-  outRoot: '/tmp/flows', stamp: '20261011',
+  outRoot: '/tmp/flows', stamp: '20261011T2231Z',
 }
 
 const ANSWERS = (label) => {
@@ -47,9 +47,9 @@ test('records given flows two at a time, then reviews and indexes them', async (
   assert.deepEqual(calls.map((c) => c.label), ['prepare', 'public-page', 'sign-in', 'first-question', 'critic', 'index'])
   assert.deepEqual(phases, ['Prepare', 'Journeys', 'Critic', 'Index'])
   assert.equal(peak, 2)
-  assert.equal(result.out, '/tmp/flows/journeys-tax-20261011')
+  assert.equal(result.out, '/tmp/flows/journeys-tax-20261011T2231Z')
   const journey = calls.find((c) => c.label === 'sign-in').prompt
-  assert.match(journey, /cd ~\/code\/_wt\/tax-journeys && JOURNEYS_OUT=\$HOME\/\.local\/state\/agent-app-journeys\/tax\/runs\/20261011 nice -n 10 journeys-env -- pnpm exec agent-app-journeys run/)
+  assert.match(journey, /cd ~\/code\/_wt\/tax-journeys && JOURNEYS_OUT=\$HOME\/\.local\/state\/agent-app-journeys\/tax\/runs\/20261011T2231Z nice -n 10 journeys-env -- pnpm exec agent-app-journeys run/)
   assert.match(journey, /At most 6 chat turns/)
   assert.match(calls.find((c) => c.label === 'critic').prompt, /"journey": "first-question"/)
 })
@@ -63,4 +63,12 @@ test('plans the flows from the app\'s own definition when none are given, and st
   })
   assert.deepEqual(calls.map((c) => c.label), ['plan', 'prepare'])
   assert.equal(result.error, 'host not ready')
+})
+
+test('refuses a stamp that cannot tell two runs on the same day apart', async () => {
+  for (const stamp of [undefined, '20261011', 'today']) {
+    const { result, calls } = await runWorkflow({ ...ARGS, stamp }, ANSWERS)
+    assert.match(result.error, /stamp must be unique/)
+    assert.equal(calls.length, 0)
+  }
 })
