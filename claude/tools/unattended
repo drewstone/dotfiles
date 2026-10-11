@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Run long unattended work (chains, watchers, measurements, mirrors) below
+# interactive sessions and gates, and cap how many run on one host.
+#
+# usage: unattended [--name NAME] [--max N] -- <command> [args...]
+#
+# On 2026-10-11 GTR ran at load 87-114 on 32 cores and dropped off the network:
+# 55 Claude processes shared it with mirrors, archive extraction, a local model
+# server, watchers polling every second and a `find /`. The command runs in its
+# own systemd user scope with CPUWeight 20 (interactive work keeps 100) and nice
+# 10, so it yields under contention instead of starving sessions and gates.
+# Without a systemd user manager it falls back to nice 10. When N unattended
+# jobs already run on this host (UNATTENDED_MAX, default 12), it waits for one to
+# finish and says so; it never kills anything. ionice is not used: these disks
+# run the none and mq-deadline schedulers, which ignore I/O priority, so I/O
+# heavy jobs need their own limits (rsync --bwlimit, restic --limit-*).
+set -uo pipefail
+name=job max=${UNATTENDED_MAX:-12}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --name) name=$2; shift 2 ;;
+    --max) max=$2; shift 2 ;;
+    --) shift; break ;;
+    *) echo "unattended: usage: unattended [--name NAME] [--max N] -- <command> [args...]" >&2; exit 2 ;;
+  esac
+done
+[ "$#" -gt 0 ] || { echo "unattended: no command" >&2; exit 2; }
+[[ "$max" =~ ^[1-9][0-9]*$ ]] || { echo "unattended: --max must be a positive integer" >&2; exit 2; }
+[[ "$name" =~ ^[A-Za-z0-9_.-]{1,40}$ ]] || { echo "unattended: --name must be letters, digits, . _ or -" >&2; exit 2; }
+state="${XDG_STATE_HOME:-$HOME/.local/state}/unattended"
+mkdir -p "$state" || exit 2
+
+# One pid file per running job; a pid file whose process is gone is stale.
+running() {
+  local f n=0 pid
+  for f in "$state"/*.pid; do
+    [ -e "$f" ] || continue
+    pid=$(cat "$f" 2>/dev/null)
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then n=$((n + 1)); else rm -f "$f"; fi
+  done
+  echo "$n"
+}
+waited=0
+exec {lock}>"$state/.admit.lock"
+while :; do
+  flock -x "$lock"
+  if [ "$(running)" -lt "$max" ]; then
+    echo $$ > "$state/$name.$$.pid"
+    flock -u "$lock"
+    break
+  fi
+  flock -u "$lock"
+  [ $((waited % 300)) -eq 0 ] && echo "unattended: $max jobs already run on $(hostname); $name waits (${waited}s)" >&2
+  sleep 15; waited=$((waited + 15))
+done
+exec {lock}>&-
+trap 'rm -f "$state/$name.$$.pid"' EXIT
+if command -v systemd-run >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+  systemd-run --user --scope --quiet --collect --unit "unattended-$name-$$" -p CPUWeight=20 --nice=10 -- "$@"
+else
+  nice -n 10 "$@"
+fi
