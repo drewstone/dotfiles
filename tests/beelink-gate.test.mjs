@@ -954,3 +954,34 @@ test("the launcher forwards a validated load wait", () => {
     assert.match(invalid.stderr, /invalid BEELINK_GATE_LOAD_WAIT/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("--ship runs the repo's preview after verify and records it, never printing its version ID", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.source, "scripts"));
+    writeFileSync(join(f.source, "scripts", "ship.sh"), [
+      'case "$1" in',
+      '  verify) echo verified ;;',
+      '  preview) printf \'{"kind":"preview","verdict":"%s","version":"secret-version-id"}\\n\' "$FAKE_PREVIEW" > "$SHIP_PREVIEW_RECEIPT"',
+      '    case "$FAKE_PREVIEW" in passed) exit 0 ;; refused) exit 2 ;; preempted) exit 3 ;; *) exit 1 ;; esac ;;',
+      'esac', ''].join("\n"));
+    writeFileSync(join(f.source, "scripts", "ship-preview.vault"), "# vault files\ntest.env\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "ship with preview"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    mkdirSync(join(f.home, "company", "devops", "secrets"), { recursive: true });
+    writeFileSync(join(f.home, "company", "devops", "secrets", "test.env"), "X=1\n");
+    writeFileSync(join(f.root, "bin", "npx"), '#!/usr/bin/env bash\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n');
+    chmodSync(join(f.root, "bin", "npx"), 0o755);
+    const ship = (verdict) => run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)],
+      { env: { ...f.env, FAKE_PREVIEW: verdict } });
+    const passed = ship("passed");
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.match(passed.stderr, /preview=passed/);
+    assert.doesNotMatch(`${passed.stdout}${passed.stderr}`, /secret-version-id/);
+    assert.equal(receipts(f).at(-1).preview.version, "secret-version-id");
+    assert.equal(ship("failed").status, 1);
+    assert.equal(ship("refused").status, 0);
+    assert.equal(ship("preempted").status, 75);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
