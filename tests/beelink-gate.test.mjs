@@ -1243,7 +1243,8 @@ test("a light gate does not wait for a normal host slot", async () => {
 test("a light gate over its declared CPU budget fails loudly, and the budget is capped at two core-minutes", () => {
   const f = fixture();
   try {
-    const spin = ["bash", "-c", "end=$((SECONDS + 3)); while (( SECONDS < end )); do :; done"];
+    // Spin on the process's own CPU time: a wall-clock spin gets under one core-second on a loaded host.
+    const spin = ["python3", "-c", "import time\nwhile time.process_time() < 2: pass"];
     const over = lightGate(f, f.first, spin, { BEELINK_GATE_LIGHT_CPU: "1" });
     assert.equal(over.status, 1, over.stderr);
     assert.match(over.stderr, /LIGHT GATE OVER BUDGET: the command used \d+\.\d core-seconds of the 1 it declared; run it as a normal gate/);
