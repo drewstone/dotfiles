@@ -462,13 +462,15 @@ test("a lock left by a dead gate's leftover process is reclaimed; a live holder 
     const dead = spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
     // detached makes the child a session leader, like a gate started over SSH.
     const leftover = spawn("bash", ["-c", `exec 9>'${lockPath}'; flock -x 9; exec sleep 120`], { stdio: "ignore", detached: true });
+    const exited = new Promise((resolveDone) => leftover.on("exit", (code, signal) => resolveDone(signal)));
     await sleepMs(500);
     const sid = spawnSync("ps", ["-o", "sid=", "-p", String(leftover.pid)], { encoding: "utf8" }).stdout.trim();
     writeFileSync(`${lockPath}.holder`, `pid=${dead}\nsid=${sid}\nstarted=1\nsha=${f.first}\nlauncher=test\n`);
     const result = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, new RegExp(`reclaiming lock from dead gate ${dead}: killing leftover pid ${leftover.pid}`));
-    assert.equal(alive(leftover.pid), false);
+    // The leftover is this test's child, so it stays a zombie until node reaps it.
+    assert.equal(await exited, "SIGTERM");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
