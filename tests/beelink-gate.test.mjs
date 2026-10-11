@@ -1598,3 +1598,22 @@ test("the launcher forwards --dev and refuses it with --ship or --light", () => 
     }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("--report gives runs per merged PR by repo, with modes, exit classes and exact-input repeats", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    const row = (sha, mode, exit) => JSON.stringify({ at, repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30 });
+    // The fake ssh runs the remote side locally, so both beelinks read this one state dir.
+    mkdirSync(join(f.root, "state"), { recursive: true });
+    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1), row("a", "install", 1), row("b", "ship", 0)].join("\n") + "\n");
+    writeFileSync(join(f.root, "bin", "gh-drew"), "#!/usr/bin/env bash\necho 2\n");
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    const result = run(gate, ["--report", "24"], { env: { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) } });
+    assert.equal(result.status, 0, result.stderr);
+    // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
+    assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
+    assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});

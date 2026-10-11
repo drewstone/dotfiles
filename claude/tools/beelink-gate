@@ -1365,6 +1365,11 @@ if [ "${1:-}" = --probe ]; then
   remote_probe "$@"
   exit $?
 fi
+# The beelink's receipts, for --report.
+if [ "${1:-}" = --receipts ]; then
+  cat "$STATE_DIR/receipts.jsonl" 2>/dev/null
+  exit 0
+fi
 
 # ---- launcher: runs on the Mac, GTR or a beelink ----
 
@@ -1556,6 +1561,67 @@ choose_beelink() {
     sleep "${BEELINK_GATE_AUTO_POLL_SECONDS:-20}"; waited=$((SECONDS - auto_started))
   done
 }
+
+# --report [hours]: gate runs per merged PR by repo, from both beelinks' receipts
+# and GitHub's merged-PR counts, with each repo's modes, exit classes and
+# exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
+if [ "${1:-}" = --report ]; then
+  hours=${2:-24}
+  [[ "$hours" =~ ^[1-9][0-9]*$ ]] || die "usage: beelink-gate --report [hours]"
+  launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+  receipts_file=$(mktemp)
+  for host in beelink1 beelink2; do
+    heartbeat=0 on_beelink "$host" --receipts 2>/dev/null | sed "s/^{/{\"from\": \"$host\", /" >> "$receipts_file" \
+      || echo "beelink-gate: --report could not read $host's receipts" >&2
+  done
+  merged_lookup=$(command -v gh-drew || command -v gh || true)
+  python3 - "$receipts_file" "$hours" "$merged_lookup" <<'PY'
+import collections, datetime as dt, json, subprocess, sys
+path, hours, gh = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+now = dt.datetime.now(dt.timezone.utc)
+since = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+rows = []
+for line in open(path):
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    if r.get("at", "") >= since:
+        rows.append(r)
+def exit_class(code):
+    return {0: "pass", 1: "fail", 2: "usage", 3: "refused", 75: "tempfail", 76: "replaced", 124: "timeout", 143: "stopped"}.get(code, "other")
+by_repo = collections.defaultdict(list)
+for r in rows:
+    by_repo[r.get("repo", "?")].append(r)
+def merged(repo):
+    if not gh or not repo.startswith("github.com/"):
+        return None
+    q = f"repo:{repo[len('github.com/'):]} is:pr is:merged merged:>={since}"
+    out = subprocess.run([gh, "api", "-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"],
+                         capture_output=True, text=True)
+    return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
+print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
+print(f"{'repo':38} {'runs':>5} {'merged':>6} {'runs/PR':>7} {'p50 wait':>8} {'repeats':>7}  modes / exits")
+total_runs = total_merged = 0
+for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
+    m = merged(repo)
+    waits = sorted(r.get("waited_s", 0) for r in rs)
+    keys = collections.Counter((r.get("sha"), r.get("mode"), r.get("command")) for r in rs)
+    repeats = sum(n - 1 for n in keys.values())
+    modes = collections.Counter(r.get("class") if r.get("class") in ("dev", "light") else r.get("mode") for r in rs)
+    exits = collections.Counter(exit_class(r.get("exit")) for r in rs)
+    ratio = f"{len(rs) / m:.1f}" if m else "-"
+    total_runs += len(rs)
+    total_merged += m or 0
+    print(f"{repo[len('github.com/'):] if repo.startswith('github.com/') else repo:38} {len(rs):5} {m if m is not None else '?':>6} {ratio:>7} {waits[len(waits) // 2]:7}s {repeats:7}  "
+          + " ".join(f"{k}={v}" for k, v in modes.most_common()) + " / " + " ".join(f"{k}={v}" for k, v in exits.most_common()))
+if total_merged:
+    print(f"TOTAL {total_runs} runs / {total_merged} merged PRs = {total_runs / total_merged:.1f} runs per merged PR (target <= 1.5)")
+PY
+  status=$?
+  rm -f "$receipts_file"
+  exit "$status"
+fi
 
 install_mode=install gate_branch="" gate_class=""
 while [ "$#" -gt 0 ]; do
