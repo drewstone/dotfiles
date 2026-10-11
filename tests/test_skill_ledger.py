@@ -417,6 +417,12 @@ class LeadScorecardTest(Sandbox):
         climb = run("--local", "--no-github", "--climb", "--days", "1", m=180).stdout.splitlines()
         hills = {json.loads(line)["hill"] for line in climb}
         self.assertIn("operator:time-to-recover", hills)
+        ledger = self.work / "lead-climb.jsonl"
+        ledger.write_text("\n".join(climb) + "\n")
+        tool = Path(__file__).resolve().parent.parent / "claude" / "tools" / "climb-log"
+        lint = subprocess.run([str(tool), "check", "--ledger", str(ledger), "--since", "2000-01-01"],
+                              capture_output=True, text=True)
+        self.assertEqual(lint.returncode, 0, lint.stdout)
 
 
 if __name__ == "__main__":
