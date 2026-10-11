@@ -724,3 +724,19 @@ test("a command does not inherit the launcher's gate settings", () => {
     assert.equal(shown.stdout, "||||");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("--ship publishes no proof outside GitHub and never changes the gate's result", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.source, "scripts"));
+    writeFileSync(join(f.source, "scripts", "ship.sh"), 'echo "ship $1"\n');
+    writeFileSync(join(f.source, "scripts", "ship-proof-signers"), "# pinned signers\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "ship with signers"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    const result = run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)], { env: f.env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "ship verify");
+    assert.match(result.stderr, /no proof published: local is not GitHub/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
