@@ -669,10 +669,18 @@ PY
       . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
       nvm use >/dev/null 2>&1 || nvm install >/dev/null 2>&1 || die "--ship: cannot select Node $(cat .nvmrc)"
     fi
-    local workers=${ship_workers:-$(( $(nproc) / 2 ))}
+    # Size the test pool to the cores the host has spare: other gates and lanes
+    # share it, and a real-browser test starved beside eight workers on a host
+    # at load 50 timed out at 120 s.
+    local cores load spare workers
+    cores=$(nproc)
+    load=${BEELINK_GATE_LOAD:-$(cut -d' ' -f1 /proc/loadavg)}
+    spare=$(( cores - ${load%.*} ))
+    workers=${ship_workers:-$spare}
+    (( workers <= cores / 2 )) || workers=$(( cores / 2 ))
     (( workers >= 2 )) || workers=2
     export SHIP_MAX_WORKERS=$workers
-    echo "beelink-gate: --ship runs scripts/ship.sh verify with node $(node -v 2>/dev/null) and SHIP_MAX_WORKERS=$workers" >&2
+    echo "beelink-gate: --ship runs scripts/ship.sh verify with node $(node -v 2>/dev/null) and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
   elif [ "$install_mode" = no-install ]; then
     echo "beelink-gate: skipping dependency install for this check" >&2
   elif [ -f pnpm-lock.yaml ]; then
