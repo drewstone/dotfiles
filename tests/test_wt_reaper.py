@@ -7,6 +7,7 @@ One live run then checks every decision and the filesystem result.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -918,13 +919,23 @@ class PnpmStorePruneTest(unittest.TestCase):
         self.f.write(self.releases, '10.33.4/dist/pnpm.cjs', '// fake pnpm\n')
         self.calls = os.path.join(t, 'node-calls')
         bindir = os.path.join(t, 'bin')
-        self.f.write(bindir, 'node', '#!/bin/sh\necho "$@" >> %s\n' % self.calls)
+        # The fake prune records its arguments, then tries the slots a gate would create next: none may be free.
+        self.f.write(bindir, 'node', '#!/bin/sh\necho "$@" >> %s\n%s -c %s %s >> %s\n' % (
+            self.calls, sys.executable, shlex.quote(
+                'import fcntl,os,sys\n'
+                'for n in ("slot-2.lock", "slot-9.lock", "light-slot-1.lock"):\n'
+                '    fd = os.open(os.path.join(sys.argv[1], n), os.O_RDWR | os.O_CREAT)\n'
+                '    try:\n'
+                '        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); print("FREE", n)\n'
+                '    except OSError:\n'
+                '        pass\n'), os.path.join(t, 'gate', '.locks'), self.calls))
         os.chmod(os.path.join(bindir, 'node'), 0o755)
         self.proc = os.path.join(t, 'proc')
         os.makedirs(self.proc)
         self.locks = os.path.join(t, 'gate', '.locks')
         os.makedirs(self.locks)
-        for name in ('slot-0.lock', 'slot-1.lock', 'light-slot-0.lock', 'github.com-owner-repo.lock'):
+        # Only slot-0 and light-slot-0 exist, as on a host where one gate of each class has run.
+        for name in ('slot-0.lock', 'light-slot-0.lock', 'github.com-owner-repo.lock'):
             open(os.path.join(self.locks, name), 'w').close()
         self.age_locks()
         self.env_path = bindir + os.pathsep + os.environ['PATH']

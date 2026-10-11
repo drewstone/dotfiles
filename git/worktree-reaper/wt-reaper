@@ -995,6 +995,27 @@ def free_bytes(path):
     return st.f_bavail * st.f_frsize
 
 
+# A gate takes the first free slot-<i>.lock (or light-slot-<i>.lock) below its
+# configured count, creating the file as it goes, and a launcher may set that
+# count. Holding every existing file is not enough: a gate could create the next
+# one. The prune holds at least this many of each pool, and one past any index
+# already on disk, so a gate configured for up to this many slots cannot start.
+GATE_SLOTS_HELD = 16
+
+
+def gate_slots(locks):
+    """The slot lock files the store prune must hold; none when this host has no gate cache."""
+    if not os.path.isdir(locks):
+        return []
+    names = os.listdir(locks)
+    paths = []
+    for pool in ('slot', 'light-slot'):
+        seen = [int(m.group(1)) for m in (re.match(r'^%s-(\d+)\.lock$' % pool, n) for n in names) if m]
+        count = max([GATE_SLOTS_HELD] + [i + 2 for i in seen])
+        paths += [os.path.join(locks, '%s-%d.lock' % (pool, i)) for i in range(count)]
+    return paths
+
+
 def newest(paths):
     def key(p):
         return [int(x) if x.isdigit() else 0 for x in re.split(r'[./]', p.split('/')[-3].lstrip('v'))]
@@ -1220,12 +1241,16 @@ class DerivedPass:
             self.log.write(decision='keep-derived', rule='pnpm-store', path=store,
                            reason='not quiet: load %.1f on %d cores, last gate lock %s ago' % (load1, cores, ago(recent)))
             return
-        slots = sorted(set(glob.glob(os.path.join(glob.escape(locks), 'slot-*.lock'))
-                           + glob.glob(os.path.join(glob.escape(locks), 'light-slot-*.lock'))))
         held = []
         try:
-            for slot in slots:
-                fd = os.open(slot, os.O_RDWR)
+            for slot in gate_slots(locks):
+                try:
+                    fd = os.open(slot, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                    # A slot file this pass creates was never touched by a gate; dated at the epoch, it
+                    # leaves the next run's quiet check to the gates' own touches.
+                    os.utime(fd, (0, 0))
+                except FileExistsError:
+                    fd = os.open(slot, os.O_RDWR | os.O_NOFOLLOW)
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError:
@@ -1245,7 +1270,7 @@ class DerivedPass:
                     self.log.write(decision='keep-derived', rule='pnpm-store', path=os.path.join(store, version),
                                    reason='no node or no pnpm release for this store version')
                     continue
-                before = free_bytes('/')
+                before = free_bytes(store)
                 if self.args.dry_run:
                     self.done('pnpm-store', os.path.join(store, version), 0, 'quiet window; every gate slot held')
                     continue
@@ -1259,7 +1284,7 @@ class DerivedPass:
                     self.log.write(decision='keep-derived', rule='pnpm-store', path=os.path.join(store, version),
                                    reason='pnpm store prune exited %d' % proc.returncode)
                     continue
-                self.done('pnpm-store', os.path.join(store, version), max(0, free_bytes('/') - before),
+                self.done('pnpm-store', os.path.join(store, version), max(0, free_bytes(store) - before),
                           'quiet window; every gate slot held')
             if not self.args.dry_run:
                 os.makedirs(os.path.dirname(stamp), exist_ok=True)
