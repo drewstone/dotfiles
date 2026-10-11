@@ -187,7 +187,11 @@ test("Windows policy is required and a blocked start reports the next allowed ti
     assert.match(refused.stderr, /REFUSED beelink2 Windows Update is scheduled/);
     assert.match(refused.stderr, /next allowed .* UTC\)/);
     assert.equal(existsSync(f.cache), false);
-    const unreadable = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1" } });
+    // The refused start cached the policy; a failed read then uses it.
+    const cached = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1" } });
+    assert.equal(cached.status, 3, cached.stderr);
+    assert.match(cached.stderr, /using the cached Windows Update policy for beelink2/);
+    const unreadable = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1", BEELINK_GATE_STATE_DIR: join(f.root, "fresh-state") } });
     assert.equal(unreadable.status, 2);
     assert.match(unreadable.stderr, /cannot read Windows Update schedule.*refusing to start/);
     assert.equal(existsSync(f.cache), false);
@@ -685,5 +689,28 @@ test("a URL with or without .git reuses the same cache checkout", () => {
     const withoutSuffix = run("bash", [gate, "--remote", ...args], { env: f.env });
     assert.equal(withoutSuffix.status, 0, withoutSuffix.stderr);
     assert.doesNotMatch(withoutSuffix.stderr, /origin mismatch/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto prefers a beelink with a free host slot over one whose slots are full", async () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const prefix = join(f.root, "cache");
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_CACHE_PREFIX: prefix, BEELINK_GATE_MAX_CONCURRENT: "1" };
+    for (const host of ["beelink1", "beelink2"]) {
+      const warm = run(gate, ["--no-install", host, f.url, f.first, "--", "true"], { env });
+      assert.equal(warm.status, 0, warm.stderr);
+    }
+    const slot = join(`${prefix}-100.98.195.7`, ".locks", "slot-0.lock");
+    const marker = join(f.root, "b1-slot-held");
+    const locker = spawn("flock", ["-x", slot, "bash", "-c", `touch '${marker}'; sleep 5`], { stdio: "ignore" });
+    try {
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+      const chosen = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+      assert.equal(chosen.status, 0, chosen.stderr);
+      assert.match(chosen.stderr, /auto chose beelink2/);
+      assert.match(chosen.stderr, /beelink1: host=beelink1 state=free cache=warm slots=0/);
+    } finally { locker.kill(); }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

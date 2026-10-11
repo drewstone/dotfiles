@@ -417,8 +417,16 @@ remote_probe() {
     flock -n -s "$fd" || { state=busy; reason=$(holder_line "$lock"); }
     exec {fd}<&-
   fi
-  printf 'beelink-gate-probe host=%s state=%s cache=%s load=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$(cut -d' ' -f1 /proc/loadavg)" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+  local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-4} free_slots=0 i slot
+  for ((i = 0; i < max_slots; i++)); do
+    slot="$cache_root/.locks/slot-$i.lock"
+    if [ ! -e "$slot" ]; then free_slots=$((free_slots + 1)); continue; fi
+    exec {fd}<"$slot" || continue
+    flock -n -s "$fd" && free_slots=$((free_slots + 1))
+    exec {fd}<&-
+  done
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$(cut -d' ' -f1 /proc/loadavg)" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 }
 
 remote_gate() {
@@ -690,13 +698,29 @@ on_beelink() {
   return "$rc"
 }
 
+# The policy rarely changes, so the last good read is kept per host. WSL interop
+# (reg.exe) fails under load, and SSH can time out; a read up to seven days old
+# still keeps gates out of the update window.
 read_policy() {
-  local target=$1
+  local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache
+  cache="$STATE_DIR/policy-$target"
   if [ "$target" = "$SELF" ]; then
-    "$REG_EXE" query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
-  else
-    ssh -o BatchMode=yes -o ConnectTimeout=15 "${BEELINK_IPS[$target]}" reg query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+    policy=$(timeout 20 "$REG_EXE" query "$key" 2>/dev/null) || policy=""
   fi
+  if ! grep -q ScheduledInstallDay <<<"$policy"; then
+    policy=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "${BEELINK_IPS[$target]}" reg query "$key" 2>/dev/null) || policy=""
+  fi
+  if grep -q ScheduledInstallDay <<<"$policy"; then
+    mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
+    printf '%s\n' "$policy"
+    return 0
+  fi
+  if [ -f "$cache" ] && [ -n "$(find "$cache" -mmin -10080 2>/dev/null)" ]; then
+    echo "beelink-gate: using the cached Windows Update policy for $target" >&2
+    cat "$cache"
+    return 0
+  fi
+  return 1
 }
 
 # Sets window_day and window_hour from the beelink's Windows Update policy.
@@ -718,7 +742,7 @@ encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
 # Probes both beelinks and prints the one to use; waits while both are busy.
 choose_beelink() {
-  local target line state cache load best="" best_rank=9 best_load rank waited=0 reported=-60
+  local target line state cache load slots best="" best_rank=9 best_load rank waited=0 reported=-60
   local -A seen=()
   while :; do
     best="" best_rank=9 best_load=""
@@ -731,8 +755,10 @@ choose_beelink() {
       seen[$target]=${line#beelink-gate-probe }
       state=$(sed -n 's/.* state=\([a-z]*\).*/\1/p' <<<"$line"); cache=$(sed -n 's/.* cache=\([a-z]*\).*/\1/p' <<<"$line")
       load=$(sed -n 's/.* load=\([0-9.]*\).*/\1/p' <<<"$line")
-      case "$state:$cache" in
-        free:warm) rank=0 ;; free:cold) rank=1 ;; *) continue ;;
+      slots=$(sed -n 's/.* slots=\([0-9]*\).*/\1/p' <<<"$line")
+      # A free repo lock with no free host slot still queues, behind any gate.
+      case "$state:$cache:$([ "${slots:-1}" -gt 0 ] && echo slot || echo full)" in
+        free:warm:slot) rank=0 ;; free:cold:slot) rank=1 ;; free:*:full) rank=2 ;; *) continue ;;
       esac
       if (( rank < best_rank )) || { (( rank == best_rank )) && awk -v a="${load:-0}" -v b="${best_load:-1e9}" 'BEGIN{exit !(a < b)}'; }; then
         best=$target best_rank=$rank best_load=$load
