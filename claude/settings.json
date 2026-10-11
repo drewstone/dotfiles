@@ -98,6 +98,19 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/audit-freshness-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
           }
         ]
       },
