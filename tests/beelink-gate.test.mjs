@@ -56,7 +56,7 @@ function fixture() {
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
   // No pressure file: the load tests cover the load-average fallback; pressure tests set one.
-  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -1105,13 +1105,16 @@ test("auto waits for the light beelink's repo lock instead of queueing on an ove
     writeFileSync(join(f.root, "load-100.98.195.7"), loadLine(loadLimit * 2));
     const lock = join(`${env.FAKE_CACHE_PREFIX}-100.127.22.51`, ".locks", "local-owner-repo.lock");
     const marker = join(f.root, "b2-lock-held");
-    const locker = spawn("flock", ["-x", lock, "bash", "-c", `touch '${marker}'; sleep 2`], { stdio: "ignore" });
+    const locker = spawn("flock", ["-x", lock, "bash", "-c", `touch '${marker}'; sleep 60`], { stdio: "ignore" });
     for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
     const child = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const status = await new Promise((resolveDone) => child.on("close", resolveDone));
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    // Release the light host's lock only once auto has said it is waiting: a fixed 2 s hold lost on a loaded host.
+    for (let i = 0; i < 600 && !/no beelink is both free/.test(stderr); i++) await sleepMs(50);
     locker.kill();
+    const status = await closed;
     assert.equal(status, 0, stderr);
     assert.match(stderr, /no beelink is both free for this repo and under its load limit/);
     assert.match(stderr, /auto chose beelink2/);
@@ -1550,5 +1553,31 @@ test("the starvation backstop also runs a gate past a full slot pool", async () 
       assert.match(result.stderr, /STARVED: running past the 1-slot cap on beelink2 after \d+s/);
       assert.match(result.stderr, /receipt: .*starved=1/);
     } finally { holder.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the host limits file sets the pressure limit and reaches a gate that is already waiting", async () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    const limits = join(f.root, "limits");
+    writeFileSync(pressure, pressureLine(60));
+    writeFileSync(limits, "max_cpu_pressure=50\n");
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 100 && !/over its limit of 50/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /CPU pressure 60\.00 is over its limit of 50/);
+    writeFileSync(limits, "# raised after train a2\nmax_cpu_pressure=70\n");
+    assert.equal(await done, 0, stderr);
+    assert.match(stderr, /CPU pressure \(60\.00, limit 70\) admitted/);
+    // A caller's explicit limit still wins over the file.
+    const explicit = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_MAX_CPU_PRESSURE: "100" } });
+    assert.match(explicit.stderr, /limit 100\) admitted/);
+    writeFileSync(limits, "max_cpu_pressure=banana\n");
+    const invalid = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    assert.match(invalid.stderr, /over its limit of 20/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
