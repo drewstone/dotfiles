@@ -35,6 +35,7 @@ import datetime as dt
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -320,26 +321,48 @@ def render(report) -> str:
     return "\n".join(lines)
 
 
+CLIMB_LOG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "climb-log")
+# hill -> (value, n, unit, metric, selectBy, how the day's items were chosen)
+HILLS = {
+    "operator:corrections": lambda d: (d["corrected"], d["judged"], "corrections", "operator corrections", "event",
+                                       "every judged skill run settled during the local day"),
+    "operator:rule-violations": lambda d: (d["violations"], d["violations"], "refusals", "guard refusals", "event",
+                                           "every guard refusal logged during the local day"),
+    "operator:reverts": lambda d: (d["reverts"], d["reverts"], "PRs", "revert and rollback PRs", "event",
+                                   "every revert or rollback PR by drewstone merged during the local day"),
+    "operator:time-to-detect": lambda d: (d["ttdHoursP50"], d["incidentsOpened"], "h", "time to detect p50", "start",
+                                          "every incident whose start falls in the local day"),
+    "operator:time-to-recover": lambda d: (d["ttrHoursP50"], d["incidentsOpened"], "h", "time to recover p50", "start",
+                                           "every incident whose start falls in the local day"),
+    "operator:drew-queue": lambda d: (d["queueOpenAtEnd"], d["queueOpenAtEnd"], "decisions", "decisions waiting on Drew",
+                                      "all", "every decision still open at the end of the local day"),
+}
+
+
 def climb_rows(report) -> list[dict]:
-    """Climb-ledger positions for the operator layer, one per hill and day."""
+    """Climb-ledger positions for the operator layer, one per hill and day, in climb-log's measurement contract."""
     out = []
     stamp = report["generatedAt"]
-    hills = {
-        "operator:corrections": lambda d: {"value": d["corrected"], "n": d["judged"], "unit": "corrections"},
-        "operator:rule-violations": lambda d: {"value": d["violations"], "unit": "refusals"},
-        "operator:reverts": lambda d: {"value": d["reverts"], "unit": "PRs"},
-        "operator:time-to-detect": lambda d: {"value": d["ttdHoursP50"], "n": d["incidentsOpened"], "unit": "h"},
-        "operator:time-to-recover": lambda d: {"value": d["ttrHoursP50"], "n": d["incidentsOpened"], "unit": "h"},
-        "operator:drew-queue": lambda d: {"value": d["queueOpenAtEnd"], "oldestHours": d["queueOldestHours"], "unit": "decisions"},
-    }
+    generated = L.parse_ts(stamp)
     for d in report["days"]:
-        for hill, measure in hills.items():
-            value = measure(d)
-            if value["value"] is None:
+        start = dt.datetime.fromisoformat(d["day"]).astimezone()
+        end = min(start + dt.timedelta(days=1), generated) if generated else start + dt.timedelta(days=1)
+        for hill, measure in HILLS.items():
+            value, n, unit, metric, select_by, selection = measure(d)
+            if value is None:
                 continue
-            out.append({"id": f"climb-lead-{d['day']}-{hill.split(':')[1]}", "timestamp": stamp, "date": d["day"],
-                        "layer": L.LAYER_OPERATOR, "hill": hill, "lever": "baseline", "prediction": None,
-                        "result": value, "outcome": {"status": None, "value": value["value"]},
+            baseline = {"value": value, "unit": unit, "measurement": {
+                "metric": metric, "unit": unit, "selection": selection, "selectBy": select_by, "n": n or 0,
+                "basis": "measured", "window": {"from": L.iso(start), "to": L.iso(end)},
+                "instrument": "lead-scorecard --climb",
+                "calibration": {"verdict": "UNCALIBRATED",
+                                "next": "recount one day by hand from the guard logs, _lead records and GitHub"}}}
+            if hill == "operator:drew-queue":
+                baseline["oldestHours"] = d["queueOldestHours"]
+            out.append({"id": f"climb-lead-{d['day']}-{hill.split(':')[1]}", "project": "dotfiles", "timestamp": stamp,
+                        "date": d["day"], "layer": L.LAYER_OPERATOR, "hill": hill, "lever": "baseline",
+                        "prediction": None, "baseline": baseline, "result": None,
+                        "outcome": {"status": None, "value": value},
                         "reasoning": "lead-scorecard: skill-run ledgers, guard ledgers, _lead records, GitHub"})
     return out
 
@@ -363,16 +386,12 @@ def main(argv):
         rows = climb_rows(report)
         if values.get("--append"):
             path = values["--append"]
-            existing = set()
-            try:
-                with open(path, encoding="utf-8") as handle:
-                    existing = {obj.get("id") for _, _, obj in L.read_jsonl(handle.read())}
-            except OSError:
-                pass
-            added = [r for r in rows if r["id"] not in existing]
-            for row in added:
-                L.append_jsonl(Path(path), row)
-            print(f"climb: appended {len(added)} of {len(rows)} rows to {path}")
+            proc = subprocess.run([sys.executable, CLIMB_LOG, "append", "--ledger", path, "--skip-existing"],
+                                  input="".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                                  capture_output=True, text=True)
+            if proc.returncode != 0:
+                fail(f"climb-log refused the rows:\n{proc.stderr.strip()}")
+            print(f"climb: appended {len(proc.stdout.split())} of {len(rows)} rows to {path}")
         else:
             for row in rows:
                 print(json.dumps(row, ensure_ascii=False, separators=(",", ":")))

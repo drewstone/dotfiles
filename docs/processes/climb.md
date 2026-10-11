@@ -111,6 +111,25 @@ A row is an [`evolve` experiment record](../../claude/skills/evolve/schema.md) p
 - `outcome` (`PASS`, `FAIL` or `PENDING`, with the measured value).
 
 A hill's current position is a row with `lever: "baseline"`.
+Write rows with [`climb-log append`](../../claude/tools/README.md#climb-log); process-guard refuses shell writes into a ledger.
+
+### Every number names its sample
+
+On 2026-10-10, 5 reported numbers were retracted.
+"Coalescing p50 32,401" chose streams by finish time across two releases, a failure time was measured from its notice, and a disk reclaim was an estimate.
+So each baseline or result that reports a number carries a `measurement` block, and `climb-log append` refuses the row without one:
+- `metric`, `unit`, `n`, and `basis` (measured, computed or judged; an estimate belongs in `prediction`);
+- `selection`, the rule that chose the sample in words, and `selectBy`: `start`, `finish`, `notice`, `event`, `sample` or `all`;
+- `window` {from, to} for a selection by time.
+  A duration selects by start or is a fixed sample.
+- for a per-release number, one `codeVersion`, and `deployedAt` at or before `window.from` when the selection is live traffic.
+  Per-release covers a compared code, config, infra, model or prompt change, and product, agents and system positions unless `perRelease: false` declares a multi-release window.
+- on a baseline row, the `instrument` and its `calibration`: PASS or FAIL with the `check` that compared the instrument with a known answer and that answer (`against`), or UNCALIBRATED with what would calibrate it (`next`).
+
+`climb-log check` lints the rows written since 2026-10-11, and `climb-log hills` counts the hills whose instrument has a passing calibration check.
+`climb-log schema` prints the contract with an example.
+The [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md) list the incidents behind these checks and the checks every agent app inherits.
+
 The skills that analyze or operate (`operate`, `report`, `reflect`, `evolve`, `hypothesize`, and Lab's `deep-review`) read the ledger before starting and append to it before finishing.
 
 ### Rewards, strongest first

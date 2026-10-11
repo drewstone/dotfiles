@@ -36,6 +36,7 @@ Before repository changes, delegation, or host work, read the relevant [work pro
 Before verification, reporting, writing, UI, or skill changes, read its evidence or owning-guidance section.
 When progress stalls or work repeats, use [session efficiency](skills/reflect/references/session-efficiency.md).
 Before any analysis, review, plan, proposal, or run status, use [the climb](../docs/processes/climb.md): name the hill and the number to beat, run the level-up passes, show data as visuals, and record the move.
+Before building or changing an agent app, read the [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md); record ledger numbers with `climb-log append`.
 
 ## Preserve
 
