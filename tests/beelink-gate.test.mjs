@@ -51,7 +51,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -506,8 +506,10 @@ exit "$status"
     const vanished = f.call(f.first, ["true"], { env: { DU_FAULT: "No such file or directory" } });
     assert.equal(vanished.status, 0, vanished.stderr);
     const denied = f.call(f.first, ["true"], { env: { DU_FAULT: "Permission denied" } });
-    assert.equal(denied.status, 3, denied.stderr);
+    // Cache accounting never decides the gate: the command's own exit stands, and the receipt says so.
+    assert.equal(denied.status, 0, denied.stderr);
     assert.match(denied.stderr, /cache prune failed/);
+    assert.match(denied.stderr, /receipt: .*cache=unpruned/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1579,5 +1581,28 @@ test("the host limits file sets the pressure limit and reaches a gate that is al
     writeFileSync(limits, "max_cpu_pressure=banana\n");
     const invalid = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
     assert.match(invalid.stderr, /over its limit of 20/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a green command stays green when the cache is over its cap with only active checkouts", () => {
+  const f = fixture();
+  try {
+    // A cap below one checkout: every prune ends over the cap with nothing idle to evict.
+    const result = f.call(f.first, ["bash", "-c", "exit 0"], { noInstall: true, env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /WARNING cache over its cap/);
+    assert.match(result.stderr, /receipt: .*exit=0 .*cache=unpruned/);
+    assert.equal(receipts(f).at(-1).cache_unpruned, true);
+    const red = f.call(f.first, ["bash", "-c", "exit 7"], { noInstall: true, env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000" } });
+    assert.equal(red.status, 7, red.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an admitted gate tells its command so through BEELINK_GATE_ADMITTED", () => {
+  const f = fixture();
+  try {
+    const result = f.call(f.first, ["bash", "-c", 'printf "%s" "${BEELINK_GATE_ADMITTED:-unset}"'], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "1");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

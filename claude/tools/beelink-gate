@@ -572,6 +572,11 @@ wait_for_load() {
   start_load=$(loadavg_now)
   start_pressure=""
   join_gate_cgroup
+  # Tell the command it already passed admission, so a repo script with its own
+  # load-average guard (ADC's signoff.sh waits for load <= 1.5x cores) does not
+  # wait again on a metric the gate replaced: on 2026-10-11 an admitted ADC
+  # signoff sat at load 34-52 while its priority cgroup had pressure 0.
+  export BEELINK_GATE_ADMITTED=1
   ! pressure_file >/dev/null || start_pressure=$load
 }
 
@@ -983,7 +988,7 @@ remote_gate() {
 
   # The launcher holds stdin open for the gate's whole life. EOF means it died
   # (a killed session, a lost SSH connection), so the gate stops itself.
-  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined=""
+  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note=""
   stop() {
     trap - TERM INT HUP
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
@@ -1120,19 +1125,19 @@ remote_gate() {
     local status="$1" ran=$((SECONDS - started))
     local preview_verdict
     preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s\n' \
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s\n' \
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
-      "$([ "${light:-0}" = 1 ] && echo light || echo normal)" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" >&2
+      "$([ "${light:-0}" = 1 ] && echo light || echo normal)" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" <<'PY' || true
 import json, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
        "start_load": float(load) if load else None,
        "start_cpu_pressure": float(pressure) if pressure else None,
-       "starved": starved == "1", "cgroup": cgroup or None,
+       "starved": starved == "1", "cgroup": cgroup or None, "cache_unpruned": cache_note == "unpruned",
        "class": "light" if mode == "light" else "normal", "cpu_s": float(cpu) if cpu else None,
        "node": node or None, "rebuild": rebuild or None}
 if preview:
@@ -1156,7 +1161,14 @@ PY
     if [ "$watchdog" = 1 ]; then
       :
     elif cd "$cache_root"; then
-      if ! prune_cache "$cache_root" "$checkout" "$cache_max" && [ "$status" -eq 0 ]; then status=3; fi
+      # The cache cap is a capacity condition, not the command's result: on
+      # 2026-10-11 a Hospitality train passed pnpm check (780 tests) and was
+      # reported as exit 3 because the cache stood 66 MB over its cap with only
+      # active checkouts left. The disk floor guards real disk shortage.
+      if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
+        cache_note=unpruned
+        echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
+      fi
       prune_build_dirs "$build_root" "$cache_root/.locks" "$lock" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
     elif [ "$status" -eq 0 ]; then
       status=3
@@ -1171,7 +1183,10 @@ PY
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   admit_window "$beelink" "$window_day" "$window_hour"
-  prune_cache "$cache_root" "$checkout" "$cache_max" || exit $?
+  if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
+    cache_note=unpruned
+    echo "beelink-gate: WARNING cache over its cap with only active checkouts left; running anyway (the disk floor guards disk space)" >&2
+  fi
 
   if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
     die "cache path is not an owned checkout: $checkout"
