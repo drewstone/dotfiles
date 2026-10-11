@@ -40,13 +40,13 @@ The last column is the rubric dimension whose `3:` line carries it.
 
 ## In the terminal
 
-Claude Code shows a reply as Markdown in about two text colors.
-ANSI color codes do not render there; emoji do.
+Claude Code shows a reply as Markdown in about two text colors, and ANSI color codes do not render.
+The [evidence-lead directive](../../../directives/variants/evidence-lead-v1.md) sets the blocks of a reply (a bold headline, then Focus, Evidence, Doing, Learned and Next) and where its color comes from; this standard sets what those blocks must hold.
 
 - **Charts:** draw each one with [`viz`](../../../tools/README.md#viz) and paste its output in a code fence directly under the sentence it supports. Never type bars by hand.
-- **Color:** carry status with emoji: 🟢 passed or on track, 🟡 at risk or open, 🔴 failed or blocked, ⚪ no signal or waiting on the reader. Put one on the verdict line and one in the first column of each status row. `viz` does not color its bars by their tone in the terminal yet, so put the emoji in the label.
-- **Length:** the first screen, about 40 lines, holds the verdict, a chart, the actions and the decision. Depth goes on a [brief kit](brief-kit.md) page published as an artifact, behind one link.
-- **Order:** the verdict, the evidence and its chart, the tested claim and the cause, the owned mistake, the actions, the decision, the bet, then `Next:`. One topic per reply; a second topic gets its own reply.
+- **Color:** use text the terminal highlights: inline code for key numbers and terms, and `diff` fences for contrasts, whose `+` lines show green and `-` lines red. Use at most two emoji in a reply; Drew, 2026-10-11: "cut the emojis, i want depth, not toys".
+- **Length:** the first screen, about 40 lines, holds the headline, a chart, the actions and the decision. Depth goes on a [brief kit](brief-kit.md) page published as an artifact, behind one link.
+- **Focus:** one topic per reply; a second topic gets its own reply.
 
 ## Worked examples
 
@@ -59,73 +59,77 @@ Its 66 lines and 4,421 characters covered five topics: the sourcing pipeline, pe
 
 | # | Feature | In the reply |
 |---|---|---|
-| 1 | Verdict first | 🔴 It opens on an apology and a process step, with no number |
-| 2 | Numbers as changes | 🟡 "10 of 92 won (10.9%)" has its count; "34 sources" and "7 generic lines" have no baseline |
-| 3 | The hopeful claim tested | 🟢 Peer runs against the others: 10.9% against 11.2% |
-| 4 | An outside benchmark | 🔴 Its only comparisons are with our own past runs |
-| 5 | Whole history | 🔴 Totals only |
-| 6 | Cause apart from trigger | 🔴 Nothing says why the best problems were "chartered ... and then never pressed" |
-| 7 | Actions owned | 🔴 The plays table has no owner, link or state |
-| 8 | Mistakes owned | 🟡 "I was winging it", but the mistake is not sized |
-| 9 | Bold bets, scoped | 🟡 Four 24-hour plays with "my guesses" of 12–30%, no pre-mortem, no effort stated |
-| 10 | Decisions framed | 🔴 Nothing is left for Drew to decide |
-| 11 | Graphics in the sentence | 🔴 Two hand-typed bar blocks, no `viz` and no target |
-| 12 | One reader, in prose | 🔴 Five topics, no emoji, so the two text colors are all there is |
+| 1 | Verdict first | No: It opens on an apology and a process step, with no number |
+| 2 | Numbers as changes | Partly: "10 of 92 won (10.9%)" has its count; "34 sources" and "7 generic lines" have no baseline |
+| 3 | The hopeful claim tested | Yes: Peer runs against the others: 10.9% against 11.2% |
+| 4 | An outside benchmark | No: Its only comparisons are with our own past runs |
+| 5 | Whole history | No: Totals only |
+| 6 | Cause apart from trigger | No: Nothing says why the best problems were "chartered ... and then never pressed" |
+| 7 | Actions owned | No: The plays table has no owner, link or state |
+| 8 | Mistakes owned | Partly: "I was winging it", but the mistake is not sized |
+| 9 | Bold bets, scoped | Partly: Four 24-hour plays with "my guesses" of 12–30%, no pre-mortem, no effort stated |
+| 10 | Decisions framed | No: Nothing is left for Drew to decide |
+| 11 | Graphics in the sentence | No: Two hand-typed bar blocks, no `viz` and no target |
+| 12 | One reader, in prose | No: Five topics, and nothing highlighted beyond two bold lines, so two text colors are all there is |
 
-`brief-judge` scored it 14, 15 and 15 under the earlier rubric, and 15, 16 and 15 under the `3:` lines.
+`brief-judge` scored it 14, 15 and 15 under the earlier rubric, and 16, 15 and 16 under the `3:` lines.
 The judge rates it closer to a praised brief than Drew does; the good example below reports that gap.
 
 ### Good: the judge's calibration, written to the standard
 
-This reply answers Drew's question of 2026-10-11, "HOW DO I KNOW YOU ARE AWARE OF THOSE MISTAKES AND ARE IMPROVING?", with data measured that day; its chart is `viz` output.
+This reply answers Drew's question of 2026-10-11, "HOW DO I KNOW YOU ARE AWARE OF THOSE MISTAKES AND ARE IMPROVING?", with data measured that day, in the directive's blocks; its chart is `viz` output.
 
 ---
 
-**🔴 You asked how you can know I am improving. Today the instrument that should show it does not see your verdict: it scores the reply you rejected today 15.3/30, only 4.7 points under the brief you praised on 10-10 (20.0), against a bar of 12.**
-It does still clear the status reply you rejected on 10-10, by 13.0. Under the new top level, drawn from five public exemplars, nothing we have written reaches 3 on any dimension: the praised brief scores 2 on all ten, down from 21.
+**The judge that should show you I am improving does not yet see your verdict: it scores the reply you rejected today `15.7/30`, only `5.0` points under the brief you praised on 10-10 (`20.7`), against a bar of `12`.**
 
+**Focus:** you asked how you can know I am improving. That needs an instrument that agrees with you, so I measured whether it does before claiming anything.
+
+**Evidence:** the new top level, drawn from five public exemplars, leaves headroom: the praised brief reaches 3 only on Shape, in two of three runs.
 ```
-🟢 vs status rejected 10-10  base rubric      ██████████████████ 15.0 pts
-                            score-3 anchors  ███████████████▋   13.0 pts
-🔴 vs reply rejected 10-11   base rubric      ███████▌      ┆     6.3 pts
-                            score-3 anchors  █████▋        ┆     4.7 pts
+vs status rejected 10-10  base rubric      ████████████████████ 15.0 pts
+                          score-3 anchors  █████████████████▍   13.0 pts
+vs reply rejected 10-11   base rubric      ████████▍       ┆     6.3 pts
+                          score-3 anchors  ██████▋         ┆     5.0 pts
 scale 0–15 pts · ┆ bar 12 pts · source: brief-judge --no-ledger,
 claude-opus-5-5, 3-5 runs per anchor · as of 2026-10-11
 ```
-
-Every run, earlier rubric → new top level: praised brief 21 21 21 21 21 → 20 20 20 · today's reply 15 14 15 → 15 16 15 · the 10-10 status 5 7 5 7 6 → 5 9 7.
-
+```diff
++ clears the status you rejected on 10-10 by 13.0 points (bar 12)
+- clears the reply you rejected today by only 5.0 points (bar 12)
+```
+Every run, earlier rubric → new top level: praised `21 21 21 21 21 → 20 21 21`; today's reply `15 14 15 → 16 15 16`; the 10-10 status `5 7 5 7 6 → 6 9 8`.
 The claim tested is #296's "brief-judge calibrates at a 15.3-point gap (bar: 12)". It holds for the 10-10 status, which had no sources, owners or targets, and fails for today's reply, which had some of each.
 The cause, not yet tested: the level-2 lines pay for having those parts, and no dimension pays for arranging them around one decision. The trigger was the first rejected reply with real content.
 
-My mistake: today I typed every chart by hand and never ran `viz` or `brief-judge`, both shipped on 10-10 in #296. Running them takes about 26 s per reply (median of 18 judge calls today, 15–31 s); skipping them cost a 66-line reply you rejected. That reply is now the rejected anchor.
+**Doing:**
 
-| | Action | Type | Owner | Link | State |
-|---|---|---|---|---|---|
-| 🟢 | Top level drawn from five exemplars; `brief-judge` reads it | prevent | operator | #349 | merged |
-| 🟡 | Level-2 lines for Answer, Ambition and Craft from the same teardown; passes when today's reply scores 8 or less and the praised brief 20 or more, three runs each | prevent | operator | next PR | open |
-| 🟡 | `viz` prints each bar's tone as a status emoji, so color needs no hand-placed marks | mitigate | operator | next PR | open |
-| ⚪ | Five more replies you mark good or bad, so agreement rests on more than three anchors | process | Drew | — | waiting on you |
+| Action | Type | Owner | Link | State |
+|---|---|---|---|---|
+| Top level drawn from five exemplars; `brief-judge` reads it | prevent | operator | #PRNUM | merged |
+| Level-2 lines for Answer, Ambition and Craft from the same teardown; passes when today's reply scores `8` or less and the praised brief `20` or more, three runs each | prevent | operator | next PR | open |
+| Five more replies you mark good or bad, so agreement rests on more than three anchors | process | Drew | — | waiting on you |
 
-**Your decision: should my replies pass the judge before they reach you?** I recommend yes, at 18/30. That blocks both rejections (15.3 and 7.0) and passes the praised brief (20.0). It costs about 26 s and one subscription call per reply, and one flag reverses it. Keep it while it matches at least 8 of your next 10 verdicts.
+Your decision: should my replies pass the judge before they reach you? I recommend yes, at `18/30`: it blocks both rejections (`15.7` and `7.7`) and passes the praised brief (`20.7`). It costs about `26 s` and one subscription call per reply (median of 18 judge calls today, 15–31 s), and one flag reverses it. Keep it while it matches at least 8 of your next 10 verdicts.
 
-The bet: the median reply you read moves from 13.5/30 (6 replies judged today under the earlier rubric) to 20 after the level-2 PR and to 24 within a week. It takes the two PRs above. Pre-mortem: the judge learns to reward emoji and tables over substance; the guard is that exact outcomes outrank the judge in the climb's reward order.
+The bet: the median reply you read moves from `13.5/30` (6 replies judged today under the earlier rubric) to `20` after the level-2 PR and `24` within a week. Pre-mortem: the judge learns to reward tables and highlighting over substance; the guard is that exact outcomes outrank the judge in the climb's reward order.
 
-Next: the level-2 PR, judged on all three anchors before it merges.
+**Learned:** I typed every chart by hand today and never ran `viz` or `brief-judge`, both shipped on 10-10 in #296. Running them costs about 26 s a reply; skipping them cost a 66-line reply you rejected. Fix: `brief-judge` now scores against the exemplars (#PRNUM), with that reply as its rejected anchor. Status: merged, and the judge still falls 7.0 points short of the bar on it.
+
+**Next:** the level-2 PR, judged on all three anchors before it merges.
 
 ---
 
 | # | Feature | Where it is |
 |---|---|---|
-| 1, 4 | Verdict first, against an outside bar | The bold opening: 15.3 against 20.0 and the bar of 12, with the exemplars' top level as the outside benchmark |
-| 2, 5 | Numbers as changes, every point | Base → anchors for every run, the worst kept |
-| 3, 6 | Hopeful claim tested, cause apart from trigger | #296's 15.3-point claim against today's anchor; cause labeled untested |
-| 7, 8 | Actions and the mistake owned | The table with owner, type, link and state; "My mistake" |
-| 9, 10 | Bet and decision | 24/30 in a week with its scope and pre-mortem; the 18/30 gate with tradeoff, reversal and rule |
-| 11, 12 | Graphics and one reader | A `viz` chart under the sentence it supports, status emoji, one topic in under 40 lines |
+| 1, 4 | Verdict first, against an outside bar | The bold headline: 15.7 against 20.7 and the bar of 12, with the exemplars' top level as the outside benchmark |
+| 2, 5 | Numbers as changes, every point | Earlier rubric → new top level for every run, the worst kept |
+| 3, 6 | Hopeful claim tested, cause apart from trigger | #296's 15.3-point claim against today's anchor; the cause labeled untested |
+| 7, 8 | Actions and the mistake owned | The Doing table with owner, type, link and state; Learned |
+| 9, 10 | Bet and decision | 24/30 in a week with its scope and pre-mortem; the 18/30 gate with its cost, reversal and rule |
+| 11, 12 | Graphics and one reader | A `viz` chart under the sentence it supports, a `diff` fence for the contrast, no emoji, one topic in about 40 lines |
 
-`brief-judge` scored this reply 23, 23 and 25 under the `3:` lines, against 20 for the praised brief, with every quote found in the text.
-Its weakest dimensions show what level 3 still asks for: the opening answers with the judge rather than with the Terraform mistakes Drew asked about, the 13.5 median does not list its six replies, and no exemplar was scored beside it.
+JUDGED
 
 [amzn-2016]: https://www.sec.gov/Archives/edgar/data/1018724/000119312517120198/d373368dex991.htm
 [amzn-2017]: https://www.sec.gov/Archives/edgar/data/1018724/000119312518121161/d456916dex991.htm
