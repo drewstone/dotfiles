@@ -183,7 +183,8 @@ install consumed the reserve.
 
 Writes and lints a project's climb ledger (`reports/climb/ledger.jsonl` in Discovery Lab, else `.agent/climb.jsonl`; [climb.md](../../docs/processes/climb.md#every-number-names-its-sample)).
 A baseline or result that reports a number needs a `measurement` block naming its metric, unit, selection rule, `selectBy`, `n`, basis and window; a per-release number also names one `codeVersion` and its `deployedAt`, and a baseline row names its instrument and calibration.
-`brief-judge` and `skill-scoreboard --climb` append through it, and process-guard refuses shell writes into a ledger.
+`brief-judge`, `skill-scoreboard --climb` and `lead-scorecard --climb` append through it, and process-guard refuses shell writes into a ledger.
+`check` also rejects, at any date, what a `merge=union` merge can get wrong: a split or interleaved line and a repeated row; `append` names a ledger that lacks the attribute.
 
 ```bash
 climb-log schema                                   # the contract, with an example row
