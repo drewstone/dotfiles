@@ -9,17 +9,16 @@ Keep the registered acceptance criteria fixed while investigating stronger claim
 - [Review cadence and coverage](#review-cadence-and-coverage)
 - [Verify the actual reviewer](#verify-the-actual-reviewer)
 - [Question records](#question-records)
-- [Core questions: every 15 minutes](#core-questions-every-15-minutes)
+- [Core questions: every review](#core-questions-every-review)
 - [Deeper questions: selected reviews](#deeper-questions-selected-reviews)
 
 ## Review cadence and coverage
 
-Review C01–C12 every 15 minutes for the current fleet.
-Select deeper questions hourly and when findings expose a consequential uncertainty.
-Cover the relevant deeper categories across successive hourly reviews.
+Answer C01–C12 at every fleet review.
+Select deeper questions when findings expose a consequential uncertainty, and cover the relevant deeper categories across successive reviews.
 Keep unchanged answers short; retain the previous evidence and update its observation time only after rechecking.
 Report changes, exceptions, and decisions prominently.
-The 64 questions are a register, not 64 required essays each quarter-hour.
+The 64 questions are a register, not 64 required essays per review.
 
 Fix the current cohort from immutable registrations and recorded launches before counting work.
 Group continuation versions under their pursuit; preserve each version's events and outcomes.
@@ -47,17 +46,7 @@ Retain the command and source identity with the review evidence.
 Map answered question IDs to the retained projection and resulting answers.
 A skill file's presence does not prove that a scheduled process loaded it.
 
-The inspected 2026-09-29 Fleet installation used `fleet-research-review.timer` and `fleet-research-review.service`.
-The service executed `~/.local/share/tangle-tools/fleet/research_review.py` every 15 minutes.
-Its bounded, tool-free prompt allowed six findings and two actions.
-It projected four fields per run and five root-stream excerpts of at most 4,096 characters each.
-Its Fleet target allowlist was empty; a separate configured native-root route delivered advisory findings.
-That inspection did not establish automatic loading of this register or complete question coverage.
-Reinspect the actual installation when any of those facts affect a current claim.
-
-Until a retained scheduled cycle proves the integration, the current root operator audits core coverage directly.
-Identify that review as manual and distinguish it from the scheduled report.
-Installing or merging this reference alone does not integrate the timer.
+Installing or merging this reference alone does not make a scheduled reviewer load it.
 An integration claim requires the loaded register identity, answered question IDs, their evidence, and the served review artifact.
 Keep observation, advice, and execution authority in their existing owners.
 
@@ -87,7 +76,7 @@ Count observed, unavailable, and not-applicable questions against the selected s
 Show the run denominator and unexamined branches beside those counts.
 Keep delivery, acknowledgment, consumption, and subsequent action as distinct observations.
 
-## Core questions: every 15 minutes
+## Core questions: every review
 
 | ID | Question | Minimum evidence |
 |---|---|---|

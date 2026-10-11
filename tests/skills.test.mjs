@@ -316,6 +316,8 @@ test('installer skips and prunes directories without SKILL.md', () => {
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /invalid skill symlink/)
     if (retired) assert.match(result.stdout, /retired managed skill/)
+    // An underscore directory such as _probes holds material for authors, not a skill: no link and no warning.
+    assert.doesNotMatch(result.stdout, /skill '_[^']*' skipped/)
 
     for (const harness of ['.claude', '.codex']) {
       const root = join(home, harness, 'skills')
@@ -399,4 +401,37 @@ test('no skill keeps the obsolete Dispatch section', () => {
     .map((path) => path.slice(skillsDir.length + 1))
 
   assert.deepEqual(obsolete, [], `replace Dispatch with the final Then consider footer: ${obsolete.join(', ')}`)
+})
+
+// The operator scenarios are the behavioral test for operator guidance; reflect makes passing them the merge condition.
+// Each row names the rule that directs its expected action. Deleting or rewording that rule fails here, which is the
+// moment to rerun the scenarios and point the row at the rule that now owns the action.
+test('operator scenarios keep every question, expected action and owning rule', () => {
+  const owners = {
+    'AGENTS.md': 'claude/AGENTS.md',
+    operate: 'claude/skills/operate/SKILL.md',
+    report: 'claude/skills/report/SKILL.md',
+    reflect: 'claude/skills/reflect/SKILL.md',
+    evolve: 'claude/skills/evolve/SKILL.md',
+    hypothesize: 'claude/skills/hypothesize/SKILL.md',
+    climb: 'docs/processes/climb.md',
+  }
+  const source = readFileSync(join(repoRoot, 'claude', 'skills', '_probes', 'operator-scenarios.md'), 'utf8')
+  const rows = source.split('\n')
+    .filter((line) => /^\| S\d+ \|/.test(line))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+  assert.ok(rows.length >= 12, `expected at least 12 scenarios, found ${rows.length}`)
+  assert.deepEqual(rows.map(([id]) => id), rows.map((_, index) => `S${index + 1}`))
+  const incomplete = rows.filter((cells) => cells.length !== 5 || cells.some((cell) => !cell)).map(([id]) => id)
+  assert.deepEqual(incomplete, [], `scenarios missing a question, action, owning rule or guard: ${incomplete.join(', ')}`)
+
+  const missing = rows.flatMap(([id, , , rule]) => {
+    const quoted = [...rule.matchAll(/\b(AGENTS\.md|operate|report|reflect|evolve|hypothesize|climb)\b[^:"]*: "([^"]+)"/g)]
+    if (quoted.length === 0) return [`${id}: names no quoted rule`]
+    return quoted
+      .map(([, owner, text]) => [owner, text.replace(/…$/, '')])
+      .filter(([owner, text]) => !readFileSync(join(repoRoot, owners[owner]), 'utf8').includes(text))
+      .map(([owner, text]) => `${id}: "${text}" is no longer in ${owners[owner]}`)
+  })
+  assert.deepEqual(missing, [], `rerun the operator scenarios, then point each row at its current rule:\n${missing.join('\n')}`)
 })

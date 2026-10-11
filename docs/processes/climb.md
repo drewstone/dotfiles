@@ -162,7 +162,7 @@ Record each one as a ledger row:
 - the theme: communication, rigor, scope, cost, autonomy or safety;
 - the change that answers it.
 
-A theme that recurs after its change has failed and needs a change at a higher level: architecture, then a check, then a test, then a rule.
+A theme that recurs after its change has failed and needs a change at a higher level, in the order [reflect](../../claude/skills/reflect/SKILL.md#choose-what-should-change) gives.
 
 ## The engine: what makes the climb run without us
 
@@ -180,7 +180,7 @@ On 2026-10-09 the daily meta-analyst (`trace-mine`) read 3 of 32,093 sessions an
 
 **Never stop climbing.**
 - **Plateau breaker:** a hill flat for three measurements changes approach, not effort. Run `hypothesize`, and the search ledger's landscape lens drafts a new direction.
-- **Ratchet:** a hill that reaches its target gets a new one: the best exemplar known anywhere, or twice the old target.
+- **Ratchet:** a hill that reaches its target gets a new one for the next move: the best exemplar known anywhere, or twice the old target. The run that reached it settles; it does not keep spending.
 - **Climb the climber:** the climb is itself a hill (hills improved per week, predictions passed), and agent-eval's meta-search lens tunes it.
 
 ## Be the best practitioner, then beat them
@@ -195,8 +195,7 @@ For every output class we make (a financial model, research report, workbook, ch
 
 The Manhattan Project ran parallel approaches to the uncertain parts: three enrichment methods and two bomb designs. It had central technical direction, measurement before scale (Fermi's pile before Hanford), and relentless integration.
 For a fleet, that means:
-- **Parallel arms** on any uncertain approach, selected by verified results.
+- **Parallel approaches** on any uncertain part, chosen by the team that holds the goal and selected by verified results; in Discovery, a play's topology and its roots choose them ([operate](../../claude/skills/operate/SKILL.md#before-launch-or-resume)).
 - **One technical director** holding the goal.
 - **Instruments before spend.**
 - **Integration** into one deliverable on a fixed cadence.
-- **No idle capacity:** every free seat runs the next most valuable move.

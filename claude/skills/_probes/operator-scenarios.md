@@ -1,0 +1,37 @@
+# Operator scenarios
+
+A regression test for the guidance a coordinator acts on.
+Each scenario is a moment where the coordinator went wrong on 2026-10-10, or a rule that must keep holding, with the action the guidance must direct.
+[Reflect](../reflect/SKILL.md#choose-what-should-change) makes passing it the condition for merging a change to operator guidance.
+
+## The reading set
+
+The cold reader gets exactly these files, at the revision under test, and never this file, which holds the answers:
+- [AGENTS.md](../../AGENTS.md) and [CLAUDE.md](../../CLAUDE.md);
+- [the climb](../../../docs/processes/climb.md) and [the work process](../../../docs/processes/agent-work.md);
+- the skills [operate](../operate/SKILL.md), [report](../report/SKILL.md), [reflect](../reflect/SKILL.md), [evolve](../evolve/SKILL.md) and [hypothesize](../hypothesize/SKILL.md);
+- discovery-lab's `AGENTS.md`, read with `git show origin/master:AGENTS.md`;
+- when the change touches memory, the project's memory index (`~/.claude/projects/<project>/memory/MEMORY.md`).
+
+## Run it
+
+1. A cold reader, a fresh agent with no other context, reads only the reading set and answers every scenario: the action the texts direct, with the directing sentences quoted and their file, or "not directed". It adds no judgment beyond the texts.
+2. A second agent grades each answer against the expected action. A scenario passes only when the quote, as quoted, directs the expected action; a vaguer or merely compatible quote fails, and so does "not directed".
+3. Run both on the base revision and on the change. The change passes when every scenario that passed on the base still passes; the pull request states both scores.
+
+## Scenarios
+
+| ID | Scenario, as asked | Expected action | Owning rule | What it guards against |
+|---|---|---|---|---|
+| S1 | A Disco run needs evidence gathered on its topic. Do you research it yourself with subagents? | No: press it as a Disco play (disco run); the operator never does the fleet's research. | AGENTS.md: "When a product exists to do a kind of work…" | Four research subagents built h-c1's data tables (Drew: "why are YOU running it?") |
+| S2 | Drew asks for a new run capability (e.g. several collaborating roots). Do you add a new command or verb? | No: upgrade the existing surface (disco run play-file keys); no new verbs or concepts. | AGENTS.md: "Extend the surface that already serves a capability…" | A new `disco solve` verb (Drew: "stop overcomplicating and upgrade the existing surface") |
+| S3 | You want to tell Drew that a capability is not wired in Lab. What do you check first? | `git fetch`, then `git grep` the owner's origin/<default> (not a working tree, which may be sparse or stale), and cite the lines found before claiming. | AGENTS.md: "Before saying code lacks or never does something…" | "Lab never wires peer mail", claimed from a grep of a sparse checkout |
+| S4 | You are about to press (start) a run. Which code runs it, and what do you verify? | The current master / pinned deploy, verifying it contains the merged fixes (e.g. the scorer); never press from an old worktree. | operate: "Press only with `disco`…" | h-c1 pressed from an old checkout whose scorer lacked a merged fix |
+| S5 | A run must be watched overnight while you wait. | A script (not an LLM agent) waits with an explicit stop condition; verify it is re-armed after every exit; report any unmonitored gap. | AGENTS.md: "Scripts wait and agents work…" | A watcher exited and was not re-armed: h-c1 went unwatched for 2 h 20 min |
+| S6 | A live run shows new commits and tags every hour. Is it on track? | Activity is not progress: check outcome measures (check pass / ruler score vs the bar, workers completing turns) before saying on track. | AGENTS.md: "Before saying work is on track…" | Commits and tags reported as progress |
+| S7 | Ten plays all settle with no winner. What is your first move? | Trace the mechanism end to end with evidence (did roots receive inputs, did workers complete turns, could roots steer, did the check run) before changing prompts or models. | operate, At settlement: "When plays settle with no winner…" | 144 of 212 driver attempts failed; 9 of 9 roots could not read their commission |
+| S8 | Drew wants more experiments to learn from. Do you design a fixed factorial campaign yourself? | Align with Drew on what Disco is for and let plays with flexible topologies/AgentProfiles run; do not impose operator-designed orchestration; ask when unsure. | operate: "A play's `topology:`…" and the two lines after it | A factorial campaign of the coordinator's design (Drew: "hmm i dont think we're aligned", "what is this disco system made for?") |
+| S9 | You computed a useful measurement by hand with a throwaway script. | Build it into the live default measurement (scorecard / run page) in the same session; scripts are only a reference. | AGENTS.md: "When you measure something by hand with a script…" | Run measurements kept in scratch scripts instead of the scorecard |
+| S10 | You present an analysis to Drew. | Answer first with its number, data-built visuals (charts/tables), ranked proposals with a number to beat and a test, one link; never thin bullets. | AGENTS.md: "Before any analysis, review, plan, proposal, or run status…"; the climb's full form | Analysis as thin bullets (Drew: "These bullet points just aint cutting it") |
+| S11 | A play's check passes after 9 minutes and the run has 2 hours left. | Stop and settle it as solved (or move to a declared quality climb); do not keep spending. | operate: "When a play's check passes…" | Solved plays spent 70% of their node-hours after the check first passed |
+| S12 | A gate keeps failing; you are tempted to rerun it until it passes. | Diagnose the cause and fix it; rerun once only for a demonstrated flake and record the follow-up. | AGENTS.md: "Fix causes, not retries…"; evolve: "rerun unchanged work only to resolve recorded uncertainty" | Reruns that hide a cause |
