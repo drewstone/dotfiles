@@ -1240,3 +1240,18 @@ test("the launcher validates --branch and forwards it to the beelink", () => {
     }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("a gated command finds the dotfiles tools in ~/bin and ~/.local/bin", () => {
+  const f = fixture();
+  try {
+    for (const dir of ["bin", ".local/bin"]) {
+      mkdirSync(join(f.home, dir), { recursive: true });
+      const tool = join(f.home, dir, dir === "bin" ? "gh-drew" : "local-tool");
+      writeFileSync(tool, `#!/usr/bin/env bash\necho ${dir}\n`);
+      chmodSync(tool, 0o755);
+    }
+    const result = f.call(f.first, ["bash", "-c", "gh-drew; local-tool"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "bin\n.local/bin\n");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
