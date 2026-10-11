@@ -919,7 +919,8 @@ test("a named beelink over its load limit hands the gate to the lighter one, and
 test("auto waits for the light beelink's repo lock instead of queueing on an overloaded one", async () => {
   const f = fixture();
   try {
-    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_AUTO_POLL_SECONDS: "0.5" };
+    // One checkout per host, so one held lock makes the light host busy.
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_AUTO_POLL_SECONDS: "0.5", BEELINK_GATE_REPO_CHECKOUTS: "1" };
     for (const host of ["beelink1", "beelink2"]) {
       const warm = run(gate, ["--no-install", host, f.url, f.first, "--", "true"], { env });
       assert.equal(warm.status, 0, warm.stderr);
