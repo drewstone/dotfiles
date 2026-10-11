@@ -425,7 +425,8 @@ parse_repo_url() {
 # beelink does not have (an https URL without a token prompts and hangs).
 adopt_origin() {
   local checkout=$1 url=$2 origin origin_key
-  origin=$(git -C "$checkout" remote get-url origin) || return $?
+  # The recorded URL, not `remote get-url`, which applies url.*.insteadOf rewrites.
+  origin=$(git -C "$checkout" config --get remote.origin.url) || return $?
   origin_key=$(parse_repo_url "$origin" 2>/dev/null && printf '%s/%s/%s' "$host" "$owner" "$repo")
   [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
 }

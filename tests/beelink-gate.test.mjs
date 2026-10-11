@@ -202,13 +202,14 @@ exec /bin/sleep "$@"
     const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), HEARTBEAT_SLEEP_PIDS: sleepPids };
     const result = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env, timeout: 10_000 });
     assert.equal(result.error, undefined, result.error?.message);
-    assert.equal(result.status, 3, result.stderr);
+    assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
     assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
     assert.equal(readFileSync(dfCount, "utf8").trim(), "3", "the floor changed only after the admission checks");
-    assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=3`));
+    assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=75`));
     const [receipt] = receipts(f);
-    assert.equal(receipt.exit, 3);
+    assert.equal(receipt.exit, 75);
     assert.equal(existsSync(join(f.cache, ".locks", "local-owner-repo.lock.holder")), false);
     const heartbeatPids = readFileSync(sleepPids, "utf8").trim().split("\n").map(Number);
     assert.ok(heartbeatPids.length > 0, "the launcher started its heartbeat poller");
