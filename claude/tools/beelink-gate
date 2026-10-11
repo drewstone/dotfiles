@@ -1,9 +1,25 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2317 # receipt and finish run through the EXIT trap.
+# shellcheck disable=SC2317 # receipt, finish and signal handlers run through traps.
 # Gate one commit in a reusable, locked checkout on a beelink.
-# Usage: beelink-gate [--no-install] <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]
+#
+# Usage:
+#   beelink-gate [--no-install] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
+#
+# auto probes both beelinks and runs on a free one, preferring one that already
+# caches the repo; when both are busy it waits for whichever frees first.
+# --ship runs exactly the repo's `scripts/ship.sh verify` (the release's own
+# verification) with the repo's .nvmrc Node and SHIP_MAX_WORKERS sized to the
+# host; ship verify does its own frozen install, so the gate does not.
+#
+# Runs from any host: the Mac, GTR or either beelink. On the target beelink
+# itself it runs locally; elsewhere it pipes itself over SSH into WSL.
+# The launcher keeps the gate's stdin open; when the launcher dies the gate sees
+# EOF and kills its own process groups, so a lost session never holds the lock.
+# Every step runs under one hold budget (BEELINK_GATE_MAX_HOLD, default 45m).
+# Each gate appends a JSON line to ~/.local/state/beelink-gate/receipts.jsonl
+# on the beelink: host, repo, sha, waited_s, ran_s, exit, timed_out, watchdog.
 set -uo pipefail
-
 die() { echo "beelink-gate: $*" >&2; exit 2; }
 
 decode() { printf '%s' "$1" | base64 --decode; }
@@ -306,33 +322,30 @@ acquire_slot() {
   done
 }
 
-remote_gate() {
-  [ "$#" -ge 7 ] || die "invalid remote request"
-  local beelink repo_url sha install_mode key host owner repo cache_root checkout origin actual cache_max
-  local remote_refs left ref branch window_day window_hour
-  local -a command=()
-  beelink=$(decode "$1") || die "invalid beelink encoding"
-  repo_url=$(decode "$2") || die "invalid repository encoding"
-  sha=$(decode "$3") || die "invalid SHA encoding"
-  install_mode=$(decode "$4") || die "invalid install mode encoding"
-  window_day=$(decode "$5") || die "invalid update day encoding"
-  window_hour=$(decode "$6") || die "invalid update hour encoding"
-  case "$install_mode" in install|no-install) ;; *) die "unknown install mode: $install_mode" ;; esac
-  shift 6
-  while [ "$#" -gt 0 ]; do
-    command+=("$(decode "$1")") || die "invalid command encoding"
-    shift
-  done
-  if [ "${#command[@]}" -eq 0 ] || [ -z "${command[0]}" ]; then die "empty command"; fi
-  [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+declare -A BEELINK_IPS=([beelink1]=100.98.195.7 [beelink2]=100.127.22.51)
+REG_EXE=${BEELINK_GATE_REG:-/mnt/c/Windows/System32/reg.exe}
+STATE_DIR="${BEELINK_GATE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/beelink-gate}"
 
-  # URL components are used only as cache path components; reject traversal and
-  # keep the host in the key so two Git services cannot share one checkout.
-  if [[ "$repo_url" =~ ^git@([A-Za-z0-9.-]+):([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
+# Durations such as 45m, 90s, 2h or plain seconds.
+seconds_of() {
+  local value=$1
+  case "$value" in
+    *h) value=$(( ${value%h} * 3600 )) ;;
+    *m) value=$(( ${value%m} * 60 )) ;;
+    *s) value=${value%s} ;;
+  esac
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+  echo "$value"
+}
+
+# Sets host, owner and repo from a Git URL; they are cache path components.
+parse_repo_url() {
+  local url=$1 key
+  if [[ "$url" =~ ^git@([A-Za-z0-9.-]+):([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
     host="${BASH_REMATCH[1]}"; owner="${BASH_REMATCH[2]}"; repo="${BASH_REMATCH[3]}"
-  elif [[ "$repo_url" =~ ^(https|ssh)://(git@)?([A-Za-z0-9.-]+)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
+  elif [[ "$url" =~ ^(https|ssh)://(git@)?([A-Za-z0-9.-]+)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
     host="${BASH_REMATCH[3]}"; owner="${BASH_REMATCH[4]}"; repo="${BASH_REMATCH[5]}"
-  elif [[ "$repo_url" =~ ^file:///([A-Za-z0-9_./-]+)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
+  elif [[ "$url" =~ ^file:///([A-Za-z0-9_./-]+)/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)(\.git)?$ ]]; then
     host=local; owner="${BASH_REMATCH[2]}"; repo="${BASH_REMATCH[3]}"
   else
     die "expected a Git URL ending in owner/repo[.git]"
@@ -341,6 +354,115 @@ remote_gate() {
   for key in "$host" "$owner" "$repo"; do
     if [ "$key" = . ] || [ "$key" = .. ] || [[ "$key" = -* ]]; then die "unsafe repository path"; fi
   done
+}
+
+# One line describing the holder of a lock, from the metadata its gate wrote.
+holder_line() {
+  local info="$1.holder" pid started sha launcher
+  [ -f "$info" ] && [ ! -L "$info" ] || { echo "holder unknown (no metadata; an older gate version)"; return; }
+  pid=$(sed -n 's/^pid=//p' "$info"); started=$(sed -n 's/^started=//p' "$info")
+  sha=$(sed -n 's/^sha=//p' "$info"); launcher=$(sed -n 's/^launcher=//p' "$info")
+  local state=dead
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && state=alive
+  echo "holder pid=$pid ($state) sha=${sha:0:12} launcher=${launcher:-unknown} held=$(( $(date +%s) - ${started:-0} ))s"
+}
+
+# A gate whose main process is gone can leave children that inherited the lock
+# descriptor (gates before this version passed it to the command). Kill only
+# processes that hold this lock file open, are in the dead holder's session and
+# are not themselves gates. A live holder is never touched.
+reclaim_dead_holder() {
+  local lock=$1 info="$1.holder" pid sid p fd target self_sid candidates=()
+  [ -f "$info" ] && [ ! -L "$info" ] || return 0
+  pid=$(sed -n 's/^pid=//p' "$info"); sid=$(sed -n 's/^sid=//p' "$info")
+  [[ "$pid" =~ ^[0-9]+$ && "$sid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null && return 0
+  self_sid=$(ps -o sid= -p $$ | tr -d ' ')
+  [ "$sid" != "$self_sid" ] || return 0
+  for p in /proc/[0-9]*; do
+    p=${p#/proc/}
+    [ "$p" != $$ ] || continue
+    [ "$(ps -o sid= -p "$p" 2>/dev/null | tr -d ' ')" = "$sid" ] || continue
+    for fd in /proc/"$p"/fd/*; do
+      target=$(readlink "$fd" 2>/dev/null) || continue
+      if [ "$target" = "$lock" ]; then
+        case "$(tr '\0' ' ' < /proc/"$p"/cmdline 2>/dev/null)" in *--remote*|*beelink-gate*) ;; *) candidates+=("$p") ;; esac
+        break
+      fi
+    done
+  done
+  [ "${#candidates[@]}" -gt 0 ] || return 0
+  for p in "${candidates[@]}"; do
+    echo "beelink-gate: reclaiming lock from dead gate $pid: killing leftover pid $p ($(tr '\0' ' ' < /proc/"$p"/cmdline 2>/dev/null | cut -c1-120))" >&2
+    kill -TERM "$p" 2>/dev/null
+  done
+  sleep 5
+  for p in "${candidates[@]}"; do kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null; done
+  return 0
+}
+
+# Prints one line for `auto`: state=free|busy|refused, cache=warm|cold, load.
+remote_probe() {
+  [ "$#" -eq 4 ] || die "invalid probe request"
+  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason=""
+  beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
+  parse_repo_url "$repo_url"
+  cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  reason=$(check_floor "$beelink" 2>&1) || state=refused
+  [ "$state" = refused ] || { reason=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>&1) || state=refused; }
+  [ -d "$cache_root/$host/$owner/$repo/.git" ] && cache=warm
+  lock="$cache_root/.locks/$host-$owner-$repo.lock"
+  if [ "$state" = free ] && [ -e "$lock" ]; then
+    exec {fd}<"$lock" || die "cannot open lock"
+    flock -n -s "$fd" || { state=busy; reason=$(holder_line "$lock"); }
+    exec {fd}<&-
+  fi
+  printf 'beelink-gate-probe host=%s state=%s cache=%s load=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$(cut -d' ' -f1 /proc/loadavg)" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+}
+
+remote_gate() {
+  [ "$#" -ge 7 ] || die "invalid remote request"
+  local beelink repo_url sha install_mode key host owner repo cache_root checkout origin actual cache_max
+  local remote_refs left ref branch window_day window_hour max_hold launcher
+  local -a command=()
+  beelink=$(decode "$1") || die "invalid beelink encoding"
+  repo_url=$(decode "$2") || die "invalid repository encoding"
+  sha=$(decode "$3") || die "invalid SHA encoding"
+  install_mode=$(decode "$4") || die "invalid install mode encoding"
+  window_day=$(decode "$5") || die "invalid update day encoding"
+  window_hour=$(decode "$6") || die "invalid update hour encoding"
+  case "$install_mode" in install|no-install|ship) ;; *) die "unknown install mode: $install_mode" ;; esac
+  shift 6
+  while [ "$#" -gt 0 ]; do
+    command+=("$(decode "$1")") || die "invalid command encoding"
+    shift
+  done
+  if [ "${#command[@]}" -eq 0 ] || [ -z "${command[0]}" ]; then die "empty command"; fi
+  [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+  max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD: ${BEELINK_GATE_MAX_HOLD:-}"
+  launcher=${BEELINK_GATE_LAUNCHER:-unknown}
+  [[ "$launcher" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || launcher=unknown
+  parse_repo_url "$repo_url"
+
+  # The launcher holds stdin open for the gate's whole life. EOF means it died
+  # (a killed session, a lost SSH connection), so the gate stops itself.
+  watchdog=0 timed_out=0 current="" waited=0
+  stop() {
+    trap - TERM INT HUP
+    [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
+    exit 143
+  }
+  # Nobody reads the output of a gate whose launcher is gone; writing to the
+  # closed channel would end this shell before it stops the step's group.
+  trap 'watchdog=1; exec >/dev/null 2>&1; stop' USR1
+  trap stop TERM INT HUP
+  if [ "${BEELINK_GATE_HEARTBEAT:-0}" = 1 ]; then
+    # A background job's stdin defaults to /dev/null, so pass the heartbeat
+    # through its own descriptor.
+    exec {heartbeat_fd}<&0
+    ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
+  fi
 
   export PATH="$HOME/.local/bin:$PATH"
   check_floor "$beelink" || exit $?
@@ -358,33 +480,75 @@ remote_gate() {
     die "cache path contains a symlink"
   fi
   mkdir -p "$cache_root/.locks" "$(dirname "$checkout")" || die "cannot create cache"
-  local lock="$cache_root/.locks/$host-$owner-$repo.lock"
+  local lock="$cache_root/.locks/$host-$owner-$repo.lock" waiting_since=$SECONDS last_report=-60
+  [ ! -L "$lock.holder" ] || die "lock metadata is a symlink"
   exec {lock_fd}>"$lock" || die "cannot open lock"
-  echo "beelink-gate: waiting for $host/$owner/$repo lock" >&2
-  flock -x "$lock_fd" || die "cannot lock checkout"
+  while ! flock -n -x "$lock_fd"; do
+    reclaim_dead_holder "$lock"
+    if (( SECONDS - last_report >= 60 )); then
+      echo "beelink-gate: waiting $((SECONDS - waiting_since))s for $host/$owner/$repo lock on $beelink; $(holder_line "$lock")" >&2
+      last_report=$SECONDS
+    fi
+    sleep 5 & wait $!
+  done
+  printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
+    $$ "$(ps -o sid= -p $$ | tr -d ' ')" "$(date +%s)" "$sha" "$launcher" > "$lock.holder" || die "cannot write lock metadata"
   acquire_slot "$cache_root/.locks" "$max_concurrent"
+  waited=$((SECONDS - waiting_since))
+  echo "beelink-gate: lock and host slot acquired on $beelink after ${waited}s" >&2
   check_floor "$beelink" || exit $?
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
 
-  local started=$SECONDS display
+  local started=$SECONDS deadline=$((SECONDS + max_hold)) display
   printf -v display '%q ' "${command[@]}"
+  # Each step is its own process group (timeout's), bounded by the remaining
+  # hold budget, without the lock descriptor and without the launcher's stdin.
+  step() {
+    local left=$((deadline - SECONDS)) rc
+    if (( left <= 0 )); then timed_out=1; return 124; fi
+    timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
+    current=$!
+    wait "$current"; rc=$?
+    current=""
+    if [ "$rc" = 124 ] && (( SECONDS >= deadline )); then
+      timed_out=1
+      echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
+    fi
+    return "$rc"
+  }
   receipt() {
-    local status="$1"
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss\n' \
-      "$sha" "$install_mode" "${display% }" "$status" "$((SECONDS - started))" >&2
+    local status="$1" ran=$((SECONDS - started))
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s\n' \
+      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" >&2
+    mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" <<'PY' || true
+import json, sys, time
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher = sys.argv[1:]
+row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
+       "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
+       "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher}
+with open(path, "a") as out:
+    out.write(json.dumps(row) + "\n")
+PY
   }
   finish() {
     local status=$?
     trap - EXIT
+    [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
-    if cd "$cache_root"; then
+    # A gate whose launcher is gone frees its lock now; the next gate prunes
+    # before it fetches.
+    if [ "$watchdog" = 1 ]; then
+      :
+    elif cd "$cache_root"; then
       if ! prune_cache "$cache_root" "$checkout" "$cache_max" && [ "$status" -eq 0 ]; then status=3; fi
       prune_build_dirs "$build_root" "$cache_root/.locks" "$lock" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
     elif [ "$status" -eq 0 ]; then
       status=3
     fi
+    rm -f "$lock.holder"
     receipt "$status"
     exit "$status"
   }
@@ -429,7 +593,7 @@ remote_gate() {
     fi
   done <<< "$remote_refs"
   echo "beelink-gate: fetching $sha and ${#tracking_refspecs[@]} tracking branch(es) into $checkout" >&2
-  git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}" || exit $?
+  step git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}" || exit $?
   git -C "$checkout" checkout --detach --force "$sha" || exit $?
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
@@ -442,14 +606,26 @@ remote_gate() {
   # Incremental state is a third of a debug target and gates rarely reuse it.
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
   cd "$checkout" || exit $?
-  if [ "$install_mode" = no-install ]; then
+  if [ "$install_mode" = ship ]; then
+    [ -f scripts/ship.sh ] || die "--ship: $owner/$repo at ${sha:0:12} has no scripts/ship.sh"
+    if [ -s .nvmrc ]; then
+      [ -s "$HOME/.nvm/nvm.sh" ] || die "--ship: .nvmrc needs nvm on $beelink"
+      # shellcheck disable=SC1091
+      . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
+      nvm use >/dev/null 2>&1 || nvm install >/dev/null 2>&1 || die "--ship: cannot select Node $(cat .nvmrc)"
+    fi
+    local workers=${BEELINK_GATE_SHIP_WORKERS:-$(( $(nproc) / 2 ))}
+    (( workers >= 2 )) || workers=2
+    export SHIP_MAX_WORKERS=$workers
+    echo "beelink-gate: --ship runs scripts/ship.sh verify with node $(node -v 2>/dev/null) and SHIP_MAX_WORKERS=$workers" >&2
+  elif [ "$install_mode" = no-install ]; then
     echo "beelink-gate: skipping dependency install for this check" >&2
   elif [ -f pnpm-lock.yaml ]; then
     command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
-    pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
+    step pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
   elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
     command -v npm >/dev/null || die "npm unavailable on beelink"
-    npm ci --cache "$HOME/.npm" || exit $?
+    step npm ci --cache "$HOME/.npm" || exit $?
   elif [ -f package.json ]; then
     # A dependency-free package needs no install. A package with dependencies
     # and no lock cannot have a frozen install, so fail the gate.
@@ -459,7 +635,7 @@ remote_gate() {
   fi
   check_floor "$beelink" || exit $?
   echo "beelink-gate: running ${display% }" >&2
-  "${command[@]}" {slot_fd}>&- {lock_fd}>&-
+  step "${command[@]}"
   exit $?
 }
 
@@ -472,41 +648,147 @@ if [ "${1:-}" = --remote ]; then
   shift
   remote_gate "$@"
 fi
+if [ "${1:-}" = --probe ]; then
+  shift
+  remote_probe "$@"
+  exit $?
+fi
+
+# ---- launcher: runs on the Mac, GTR or a beelink ----
+
+# The beelink this launcher runs on, if any.
+self_beelink() {
+  [ -x "$REG_EXE" ] || return 0
+  case "${BEELINK_GATE_SELF:-$(hostname)}" in
+    beelink1|DESKTOP-18IR33V) echo beelink1 ;;
+    beelink2) echo beelink2 ;;
+  esac
+}
+SELF=$(self_beelink)
+
+# Runs this script with arguments on a beelink: locally on itself, else in WSL
+# over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
+on_beelink() {
+  local target=$1; shift
+  local -a envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
+  [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
+  [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
+  [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
+  [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
+  local me=$$ rc
+  if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
+    env "${envs[@]}" bash "$0" "$@" < <(while kill -0 "$me" 2>/dev/null; do sleep 5; done)
+    rc=$?
+  elif [ "$target" = "$SELF" ]; then
+    env "${envs[@]}" bash "$0" "$@" </dev/null
+    rc=$?
+  else
+    ssh -o BatchMode=yes -o ConnectTimeout=15 "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "$@" \
+      < <(cat "$0"; [ "${heartbeat:-0}" = 1 ] && while kill -0 "$me" 2>/dev/null; do sleep 5; done)
+    rc=$?
+  fi
+  return "$rc"
+}
+
+read_policy() {
+  local target=$1
+  if [ "$target" = "$SELF" ]; then
+    "$REG_EXE" query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+  else
+    ssh -o BatchMode=yes -o ConnectTimeout=15 "${BEELINK_IPS[$target]}" reg query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+  fi
+}
+
+# Sets window_day and window_hour from the beelink's Windows Update policy.
+update_window_of() {
+  local target=$1 policy day_hex hour_hex
+  policy=$(read_policy "$target") || { echo "beelink-gate: cannot read Windows Update schedule from $target; refusing to start" >&2; return 2; }
+  policy=$(printf '%s' "$policy" | tr -d '\r')
+  day_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallDay" && $2 == "REG_DWORD" {print $3}')
+  hour_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallTime" && $2 == "REG_DWORD" {print $3}')
+  [[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] \
+    || { echo "beelink-gate: invalid Windows Update schedule from $target; refusing to start" >&2; return 2; }
+  window_day=$((16#${day_hex#0x}))
+  window_hour=$((16#${hour_hex#0x}))
+  (( window_day <= 7 && window_hour <= 23 )) \
+    || { echo "beelink-gate: invalid Windows Update day/hour from $target; refusing to start" >&2; return 2; }
+}
+
+encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
+
+# Probes both beelinks and prints the one to use; waits while both are busy.
+choose_beelink() {
+  local target line state cache load best="" best_rank=9 best_load rank waited=0 reported=-60
+  local -A seen=()
+  while :; do
+    best="" best_rank=9 best_load=""
+    for target in beelink1 beelink2; do
+      if ! update_window_of "$target" 2>/dev/null; then
+        seen[$target]="unreachable"; continue
+      fi
+      line=$(heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" 2>/dev/null | grep '^beelink-gate-probe ' | tail -1)
+      [ -n "$line" ] || { seen[$target]="unreachable"; continue; }
+      seen[$target]=${line#beelink-gate-probe }
+      state=$(sed -n 's/.* state=\([a-z]*\).*/\1/p' <<<"$line"); cache=$(sed -n 's/.* cache=\([a-z]*\).*/\1/p' <<<"$line")
+      load=$(sed -n 's/.* load=\([0-9.]*\).*/\1/p' <<<"$line")
+      case "$state:$cache" in
+        free:warm) rank=0 ;; free:cold) rank=1 ;; *) continue ;;
+      esac
+      if (( rank < best_rank )) || { (( rank == best_rank )) && awk -v a="${load:-0}" -v b="${best_load:-1e9}" 'BEGIN{exit !(a < b)}'; }; then
+        best=$target best_rank=$rank best_load=$load
+      fi
+    done
+    if [ -n "$best" ]; then
+      echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
+      echo "$best"; return 0
+    fi
+    if [ "${seen[beelink1]:-}" = unreachable ] && [ "${seen[beelink2]:-}" = unreachable ]; then
+      echo "beelink-gate: no beelink is reachable from $(hostname)" >&2; return 2
+    fi
+    if [[ "${seen[beelink1]:-}" != *state=busy* && "${seen[beelink2]:-}" != *state=busy* ]]; then
+      echo "beelink-gate: no beelink can start this gate (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2; return 3
+    fi
+    if (( waited - reported >= 60 )); then
+      echo "beelink-gate: both beelinks busy for this repo after ${waited}s; waiting (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
+      reported=$waited
+    fi
+    sleep 20; waited=$((waited + 20))
+  done
+}
 
 install_mode=install
-if [ "${1:-}" = --no-install ]; then
-  install_mode=no-install
-  shift
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-install) install_mode=no-install; shift ;;
+    --ship) install_mode=ship; shift ;;
+    *) break ;;
+  esac
+done
+usage="usage: beelink-gate [--no-install] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+       beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>"
+if [ "$install_mode" = ship ]; then
+  [ "$#" -eq 3 ] || die "$usage"
+  set -- "$1" "$2" "$3" -- bash scripts/ship.sh verify
 fi
 if [ "$#" -lt 5 ] || [ "$4" != -- ]; then
-  die "usage: beelink-gate [--no-install] <beelink1|beelink2> <repo-url> <sha> -- <command> [args...]"
+  die "$usage"
 fi
-case "$1" in
-  beelink1|100.98.195.7) beelink_ip=100.98.195.7; beelink=beelink1 ;;
-  beelink2|100.127.22.51) beelink_ip=100.127.22.51; beelink=beelink2 ;;
-  *) die "unknown beelink: $1" ;;
-esac
-shift
-repo_url="$1"; sha="$2"; shift 3
-[[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
-policy=$(ssh -o BatchMode=yes "$beelink_ip" reg query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU') \
-  || die "cannot read Windows Update schedule from $beelink; refusing to start"
-policy=$(printf '%s' "$policy" | tr -d '\r')
-day_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallDay" && $2 == "REG_DWORD" {print $3}')
-hour_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallTime" && $2 == "REG_DWORD" {print $3}')
-[[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] \
-  || die "invalid Windows Update schedule from $beelink; refusing to start"
-window_day=$((16#${day_hex#0x}))
-window_hour=$((16#${hour_hex#0x}))
-(( window_day <= 7 && window_hour <= 23 )) \
-  || die "invalid Windows Update day/hour from $beelink; refusing to start"
-encoded=()
-for arg in "$beelink" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
-  encoded+=("$(printf '%s' "$arg" | base64 -w0)")
-done
-remote_env=()
+target=$1 repo_url=$2 sha=$3
+shift 4
 if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
   [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
-  remote_env=(env "BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
 fi
-ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- "${remote_env[@]}" bash -s -- --remote "${encoded[@]}" < "$0"
+[[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+case "$target" in
+  beelink1|100.98.195.7) target=beelink1 ;;
+  beelink2|100.127.22.51) target=beelink2 ;;
+  auto) target=$(choose_beelink) || exit $? ;;
+  *) die "unknown beelink: $target" ;;
+esac
+update_window_of "$target" || exit 2
+encoded=()
+for arg in "$target" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
+  encoded+=("$(encode "$arg")")
+done
+heartbeat=1 on_beelink "$target" --remote "${encoded[@]}"
