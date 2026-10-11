@@ -177,6 +177,42 @@ test("the GTR entrypoint sends the script and encoded arguments through WSL SSH"
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a post-admission disk refusal receipts cleanup and closes the launcher heartbeat", async () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const dfCount = join(f.root, "df-count");
+    writeFileSync(join(f.root, "bin", "df"), `#!/usr/bin/env bash
+count=0
+[[ -r '${dfCount}' ]] && read -r count < '${dfCount}'
+count=$((count + 1))
+printf '%s\\n' "$count" > '${dfCount}'
+if (( count == 1 )); then available=1099511627776; else available=128849018880; fi
+printf 'Avail\\n%s\\n' "$available"
+`);
+    chmodSync(join(f.root, "bin", "df"), 0o755);
+    const sleepPids = join(f.root, "heartbeat-sleep-pids");
+    writeFileSync(join(f.root, "bin", "sleep"), `#!/usr/bin/env bash
+printf '%s\\n' "$$" >> "$HEARTBEAT_SLEEP_PIDS"
+exec /bin/sleep "$@"
+`);
+    chmodSync(join(f.root, "bin", "sleep"), 0o755);
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), HEARTBEAT_SLEEP_PIDS: sleepPids };
+    const result = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env, timeout: 10_000 });
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 3, result.stderr);
+    assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=3`));
+    const [receipt] = receipts(f);
+    assert.equal(receipt.exit, 3);
+    assert.equal(existsSync(join(f.cache, ".locks", "local-owner-repo.lock.holder")), false);
+    const heartbeatPids = readFileSync(sleepPids, "utf8").trim().split("\n").map(Number);
+    assert.ok(heartbeatPids.length > 0, "the launcher started its heartbeat poller");
+    await sleepMs(100);
+    assert.ok(heartbeatPids.every((pid) => !alive(pid)), `heartbeat pollers still alive: ${heartbeatPids.filter(alive)}`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("Windows policy is required and a blocked start reports the next allowed time", () => {
   const f = fixture();
   try {
