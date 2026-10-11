@@ -1,0 +1,18 @@
+# Beelinks only. A top-level cgroup with a high CPU weight for beelink-gate:
+# an admitted gate moves itself here (claude/tools/beelink-gate,
+# join_gate_cgroup), so its command wins CPU over CI (ci.slice, 25) and lane
+# work (user.slice and /non-systemd, 100). Only gates move here, not every SSH
+# command, which is why /non-systemd itself keeps its weight.
+# Rollback: sudo systemctl disable --now beelink-gate-cgroup.service &&
+#   sudo rm /etc/systemd/system/beelink-gate-cgroup.service && sudo systemctl daemon-reload;
+#   the cgroup empties as running gates finish (rmdir /sys/fs/cgroup/beelink-gate then).
+[Unit]
+Description=High-CPU-weight cgroup for beelink merge gates
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'mkdir -p /sys/fs/cgroup/beelink-gate && echo 400 > /sys/fs/cgroup/beelink-gate/cpu.weight'
+
+[Install]
+WantedBy=multi-user.target

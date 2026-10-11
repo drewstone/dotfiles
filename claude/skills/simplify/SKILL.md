@@ -67,5 +67,5 @@ A no-change result needs concrete findings about the candidates inspected; stop 
 ## Log the run
 
 ```bash
-skill-run-log /simplify --target "<scope>: <N> files" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /simplify --target "<scope>: <N> files" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```

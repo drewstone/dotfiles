@@ -134,6 +134,8 @@ class MainCheckoutFfTest(unittest.TestCase):
         self.advance_origin()
         holder = subprocess.Popen(["bash", str(repo / "run.sh")], cwd=self.tmp.name)
         try:
+            # The skip names what holds the checkout, so a repeated skip can be traced to its process.
+            self.assertIn(f"in use by {repo}/run.sh", self.run_ff("--dry-run").stdout)
             self.run_ff()
         finally:
             holder.kill()

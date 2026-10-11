@@ -39,7 +39,7 @@ A test that breaks during a refactor without a behavior change is coupled to the
 ## Log the run
 
 ```bash
-skill-run-log /tdd --target "<behavior>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /tdd --target "<behavior>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

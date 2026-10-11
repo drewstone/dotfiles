@@ -57,7 +57,7 @@ For continuing work, update the repository's existing security record or `.agent
 ## Log the run
 
 ```bash
-skill-run-log /harden --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /harden --target "<what this run targeted>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

@@ -1,0 +1,10 @@
+detect                            ████                                       50m  12.3%  00:45–01:35
+fix                                   █                                      17m   4.2%  01:35–01:52
+open the PR                            █                                     14m   3.4%  01:52–02:06
+develop red, agents rate-limited        ██████████                  116m (1h56m)  28.6%  02:06–04:02
+merge develop, re-prove                           █                          11m   2.7%  04:02–04:13
+flaky timing tests                                ████                       44m  10.8%  04:13–04:57
+version-PR coupling                                   ████████      108m (1h48m)  26.6%  04:57–06:45
+cut, promote, deploy                                          ████           46m  11.3%  06:45–07:31
+total 406m (6h46m) · 8 parts · 00:45→07:31
+by group: detect 50m 12.3% · fix 17m 4.2% · ship 339m (5h39m) 83.5%

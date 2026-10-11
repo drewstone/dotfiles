@@ -7,6 +7,7 @@ One live run then checks every decision and the filesystem result.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -43,10 +44,12 @@ def parse(stdout):
     return rows
 
 
-def run_reaper(root, *extra):
+def run_reaper(root, *extra, derived=False):
     env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+    # The derived passes default to this host's journey state and gate cache; a test names its own.
+    extra = list(extra) if derived else ['--no-derived'] + list(extra)
     proc = subprocess.run([sys.executable, REAPER, '--root', root, '--no-log-file',
-                           '--idle-hours', str(IDLE_HOURS)] + list(extra),
+                           '--idle-hours', str(IDLE_HOURS)] + extra,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     assert proc.returncode == 0, proc.stderr.decode()
     return parse(proc.stdout.decode())
@@ -98,8 +101,9 @@ class Fixture:
         os.makedirs(self.wt_dir)
         git(['init', '--bare', '-q', self.remote], self.tmp)
         git(['clone', '-q', self.remote, self.repo], self.tmp)
-        self.write(self.repo, '.gitignore', 'node_modules/\n.env\n')
+        self.write(self.repo, '.gitignore', 'node_modules/\n.env\ngenerated/\n.react-router/\npackages/sdk-email/\n')
         self.write(self.repo, 'a.txt', 'a\n')
+        self.write(self.repo, 'packages/core/index.js', 'x\n')
         git(['add', '.'], self.repo)
         git(['commit', '-qm', 'init'], self.repo)
         self.write(self.repo, 'a.txt', 'a2\n')
@@ -147,6 +151,19 @@ class ReaperTest(unittest.TestCase):
 
         p['build_output'] = f.add('build_output')
         f.write(p['build_output'], 'node_modules/x/index.js', 'x\n')
+
+        # Generated sources, and an ignored package directory left holding only build output.
+        p['generated'] = f.add('generated')
+        f.write(p['generated'], 'src/generated/build-stamp.ts', 'export const stamp = 1\n')
+        f.write(p['generated'], '.react-router/types/app.ts', 'export {}\n')
+        f.write(p['generated'], 'packages/sdk-email/node_modules/x/index.js', 'x\n')
+        f.write(p['generated'], 'packages/sdk-email/dist/index.js', 'x\n')
+        f.write(p['generated'], 'packages/sdk-email/.turbo/turbo-build.log', 'x\n')
+
+        # The same ignored package directory with one evidence file in it stays.
+        p['package_evidence'] = f.add('package_evidence')
+        f.write(p['package_evidence'], 'packages/sdk-email/node_modules/x/index.js', 'x\n')
+        f.write(p['package_evidence'], 'packages/sdk-email/notes.md', 'mine\n')
 
         p['env'] = f.add('env')
         f.write(p['env'], '.env', 'SECRET=1\n')
@@ -211,7 +228,26 @@ class ReaperTest(unittest.TestCase):
         # A dry-run fixture that would be removed.
         p['dry'] = f.add('dry')
 
+        # node_modules files hardlinked to a shared pnpm-style store outside the worktree.
+        store = os.path.join(f.tmp, 'pnpm-store')
+        os.makedirs(store)
+        for name in ('hardlinked', 'hardlinked_written'):
+            p[name] = f.add(name)
+            f.write(store, name + '.js', 'module.exports = 1\n')
+            os.makedirs(os.path.join(p[name], 'node_modules', 'pkg'))
+            os.link(os.path.join(store, name + '.js'), os.path.join(p[name], 'node_modules', 'pkg', 'index.js'))
+
         time.sleep(IDLE_HOURS * 3600 + 1.0)
+
+        # Another checkout's install links the same store files: their ctime moves, this tree is untouched.
+        for name in ('hardlinked', 'hardlinked_written'):
+            os.link(os.path.join(store, name + '.js'), os.path.join(store, name + '.other-install.js'))
+        # A real write through the link moves its mtime (an hour ahead, as for 'recent').
+        written = os.path.join(p['hardlinked_written'], 'node_modules', 'pkg', 'index.js')
+        with open(written, 'a') as fh:
+            fh.write('// patched\n')
+        ahead = time.time() + 3600
+        os.utime(written, (ahead, ahead))
 
         # Same content, so the tree stays clean. The mtime is an hour ahead so the
         # file stays inside the idle window however long the lsof scans take.
@@ -255,6 +291,19 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(self.dry[self.paths['dry']]['decision'], 'would-remove')
         self.assertEqual(self.dry[self.paths['env']]['decision'], 'skip')
         self.assertTrue(self.dry_exists)
+
+    def test_generated_and_build_only_directories_are_build_output(self):
+        self.assertRemoved('generated')
+
+    def test_ignored_directory_with_other_files_keeps_the_tree(self):
+        self.assertSkipped('package_evidence', 'ignored non-build files: packages/sdk-email')
+
+    def test_hardlink_ctime_is_not_activity(self):
+        # 2026-10-10: pnpm store links kept every worktree on beelink2 "modified 0.1h ago".
+        self.assertRemoved('hardlinked')
+
+    def test_write_through_a_hardlink_is_activity(self):
+        self.assertSkipped('hardlinked_written', 'modified')
 
     def test_removes_clean_pushed_idle_worktrees(self):
         for name in ('merged', 'detached', 'pushed_unmerged', 'build_output', 'dry'):
@@ -322,7 +371,7 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         s = summaries[0]
         self.assertEqual(s['mode'], 'live')
-        self.assertEqual(int(s['removed']), 5)
+        self.assertEqual(int(s['removed']), 7)  # merged, detached, pushed_unmerged, build_output, dry, hardlinked, generated
         self.assertEqual(int(s['scanned']), int(s['removed']) + int(s['skipped']))
 
 
@@ -676,19 +725,284 @@ class IgnoredClassifierTest(unittest.TestCase):
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'the storage_lifecycle handoff is Linux-only')
+# Linux only: on macOS the installer would boot out and replace the live com.drew.wt-reaper agent.
+@unittest.skipUnless(sys.platform.startswith('linux'), 'runs the installer, which on macOS touches the live LaunchAgent')
 class InstallerDefersToStorageLifecycleTest(unittest.TestCase):
     def test_install_skips_timer_where_storage_lifecycle_is_deployed(self):
         # tangle-tools#239: the dotfiles installer re-enabled wt-reaper.timer on
-        # the GTR, beside the salvaging lifecycle that owns deletion there.
+        # the GTR, beside the salvaging lifecycle that owns deletion there. GTR's
+        # host config lists no tiers, so the lifecycle runs its default tiers,
+        # worktrees included.
         installer = os.path.join(HERE, '..', 'git', 'worktree-reaper', 'install.sh')
         with tempfile.TemporaryDirectory() as home:
-            os.makedirs(os.path.join(home, '.local/share/tangle-tools/storage_lifecycle'))
-            proc = subprocess.run(['bash', installer], env=dict(os.environ, HOME=home),
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            hosts = os.path.join(home, '.local/share/tangle-tools/storage_lifecycle/hosts')
+            os.makedirs(hosts)
+            with open(os.path.join(hosts, 'testhost.json'), 'w') as fh:
+                json.dump({'docker_cache_bytes': 1}, fh)
+            shim = os.path.join(home, 'bin')
+            os.makedirs(shim)
+            with open(os.path.join(shim, 'hostname'), 'w') as fh:
+                fh.write('#!/bin/sh\necho testhost\n')
+            os.chmod(os.path.join(shim, 'hostname'), 0o755)
+            env = dict(os.environ, HOME=home, PATH=shim + os.pathsep + os.environ['PATH'])
+            proc = subprocess.run(['bash', installer], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertIn(b'storage_lifecycle owns worktree removal', proc.stdout)
+            self.assertIn(b'storage_lifecycle runs the worktrees tier', proc.stdout)
             self.assertFalse(os.path.exists(os.path.join(home, '.local/bin/wt-reaper')))
             self.assertFalse(os.path.exists(os.path.join(home, '.config/systemd/user/wt-reaper.timer')))
+
+
+class InstallOwnershipTest(unittest.TestCase):
+    """install.sh leaves worktree removal to tangle-tools storage_lifecycle only where that host runs its
+    worktrees tier; on the archive-less beelinks wt-reaper is the reaper (tangle-tools #948)."""
+
+    INSTALL = os.path.join(HERE, '..', 'git', 'worktree-reaper', 'install.sh')
+
+    def owns(self, config):
+        home = tempfile.mkdtemp(prefix='wt-reaper-install-')
+        self.addCleanup(shutil.rmtree, home, True)
+        hosts = os.path.join(home, '.local', 'share', 'tangle-tools', 'storage_lifecycle', 'hosts')
+        os.makedirs(hosts)
+        if config is not None:
+            with open(os.path.join(hosts, 'testhost.json'), 'w') as fh:
+                json.dump(config, fh)
+        shim = os.path.join(home, 'bin')
+        os.makedirs(shim)
+        with open(os.path.join(shim, 'hostname'), 'w') as fh:
+            fh.write('#!/bin/sh\necho testhost\n')
+        os.chmod(os.path.join(shim, 'hostname'), 0o755)
+        with open(self.INSTALL) as fh:
+            source = fh.read()
+        func = source[source.index('lifecycle_owns_worktrees() {'):]
+        func = func[:func.index('\n}\n') + 3]
+        env = dict(os.environ, HOME=home, PATH=shim + os.pathsep + os.environ['PATH'])
+        return subprocess.run(['bash', '-c', func + 'lifecycle_owns_worktrees'], env=env).returncode == 0
+
+    def test_beelink_config_without_worktrees_tier_keeps_wt_reaper(self):
+        self.assertFalse(self.owns({'tiers': ['docker-cache', 'docker-images', 'tmp'], 'floor_bytes': 1}))
+
+    def test_default_tiers_include_worktrees(self):
+        self.assertTrue(self.owns({'docker_cache_bytes': 1}))
+
+    def test_explicit_worktrees_tier(self):
+        self.assertTrue(self.owns({'tiers': ['worktrees', 'tmp']}))
+
+    def test_no_host_config_keeps_wt_reaper(self):
+        self.assertFalse(self.owns(None))
+
+
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class DerivedFilesTest(unittest.TestCase):
+    """node_modules of merged, idle worktrees and journey raw recordings with outputs are derived."""
+
+    @classmethod
+    def setUpClass(cls):
+        f = cls.f = Fixture()
+        p = cls.paths = {}
+        # Merged (HEAD is main) but dirty, so the tree itself stays and only node_modules may go.
+        p['merged_dirty'] = f.add('merged_dirty')
+        f.write(p['merged_dirty'], 'node_modules/x/index.js', 'x\n')
+        f.write(p['merged_dirty'], 'packages/core/node_modules/y/index.js', 'y\n')
+        f.write(p['merged_dirty'], 'a.txt', 'work in progress\n')
+        # Not merged anywhere: its node_modules stays.
+        p['unmerged'] = f.add('unmerged')
+        f.write(p['unmerged'], 'c.txt', 'c\n')
+        git(['add', 'c.txt'], p['unmerged'])
+        git(['commit', '-qm', 'local only'], p['unmerged'])
+        f.write(p['unmerged'], 'node_modules/x/index.js', 'x\n')
+        # A journey run whose outputs exist, and an older run of the same journey whose outputs were replaced.
+        state = cls.state = os.path.join(f.tmp, 'journeys-state')
+        out = cls.out = os.path.join(f.tmp, 'code', '_wt', 'jw', 'journeys', 'out')
+        cls.done_run = os.path.join(state, 'raw', 'j1-new-customer-2026-10-11T08-31-08-644Z', 'founder')
+        cls.old_run = os.path.join(state, 'raw', 'j1-new-customer-2026-10-11T07-00-00-000Z', 'founder')
+        for run in (cls.done_run, cls.old_run):
+            for name in ('founder.webm', 'page@ab12.webm', 'trace.raw.zip', 'founder.clean.mp4', 'founder.highlights.srt'):
+                f.write(run, name, 'v\n')
+        f.write(out, 'j1-new-customer/timings.json', json.dumps({'journey': 'j1-new-customer', 'startedAt': '2026-10-11T08:31:08.644Z'}))
+        f.write(out, 'j1-new-customer/video/founder-full.mp4', 'mp4\n')
+        f.write(out, 'j1-new-customer/video/founder-trace.zip', 'scrubbed\n')
+        time.sleep(IDLE_HOURS * 3600 + 1.0)
+        cls.rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--journey-state', state,
+                              '--journey-out', out, '--gate-cache', os.path.join(f.tmp, 'no-gate-cache'), derived=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.f.cleanup()
+
+    def test_merged_idle_worktree_loses_only_its_ignored_node_modules(self):
+        wt = self.paths['merged_dirty']
+        self.assertFalse(os.path.exists(os.path.join(wt, 'node_modules')))
+        self.assertFalse(os.path.exists(os.path.join(wt, 'packages', 'core', 'node_modules')))
+        with open(os.path.join(wt, 'a.txt')) as fh:
+            self.assertEqual(fh.read(), 'work in progress\n')
+        self.assertTrue(os.path.isfile(os.path.join(wt, 'packages', 'core', 'index.js')))
+        removed = [r for r in self.rows if r.get('decision') == 'remove-derived' and r.get('rule') == 'node_modules']
+        self.assertEqual(sorted(r['path'] for r in removed),
+                         sorted([os.path.join(wt, 'node_modules'), os.path.join(wt, 'packages', 'core', 'node_modules')]))
+
+    def test_unmerged_worktree_keeps_node_modules(self):
+        self.assertTrue(os.path.isfile(os.path.join(self.paths['unmerged'], 'node_modules', 'x', 'index.js')))
+
+    def test_journey_raw_goes_only_when_its_own_outputs_exist(self):
+        for name in ('founder.webm', 'page@ab12.webm', 'trace.raw.zip'):
+            self.assertFalse(os.path.exists(os.path.join(self.done_run, name)), name)
+        for name in ('founder.clean.mp4', 'founder.highlights.srt'):
+            self.assertTrue(os.path.isfile(os.path.join(self.done_run, name)), name)
+        for name in ('founder.webm', 'page@ab12.webm', 'trace.raw.zip', 'founder.clean.mp4'):
+            self.assertTrue(os.path.isfile(os.path.join(self.old_run, name)), name)
+
+
+class GateCheckoutTest(unittest.TestCase):
+    """A beelink-gate checkout beyond the configured count goes only while its lock is free."""
+
+    def test_stale_gate_checkout_is_removed_and_a_locked_one_stays(self):
+        f = Fixture()
+        try:
+            cache = os.path.join(f.tmp, 'gate')
+            for name in ('repo', 'repo@1', 'repo@2', 'repo@3', 'repo@light'):
+                f.write(os.path.join(cache, 'github.com', 'owner', name), 'file.txt', 'x\n')
+            locks = os.path.join(cache, '.locks')
+            os.makedirs(locks)
+            held = os.path.join(locks, 'github.com-owner-repo@3.lock')
+            holder = subprocess.Popen(
+                [sys.executable, '-c', 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); '
+                 'print("held", flush=True); time.sleep(60)', held], stdout=subprocess.PIPE)
+            f.procs.append(holder)
+            self.assertEqual(holder.stdout.readline().strip(), b'held')
+            rows = run_reaper(f.root, '--gate-cache', cache, '--gate-checkouts', '2', '--journey-state',
+                              os.path.join(f.tmp, 'none'), '--dependency-idle-hours', '1000', derived=True)
+            base = os.path.join(cache, 'github.com', 'owner')
+            self.assertFalse(os.path.exists(os.path.join(base, 'repo@2')))
+            for name in ('repo', 'repo@1', 'repo@3', 'repo@light'):
+                self.assertTrue(os.path.isdir(os.path.join(base, name)), name)
+            kept = [r for r in rows if r.get('rule') == 'gate-checkout' and r.get('decision') == 'keep-derived']
+            self.assertEqual([r['path'] for r in kept], [os.path.join(base, 'repo@3')])
+        finally:
+            f.cleanup()
+
+
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class KeptPathTest(unittest.TestCase):
+    """Nothing under a --keep path is touched: Discovery's run roots are retired through the Lab."""
+
+    def test_a_worktree_under_a_kept_path_is_neither_removed_nor_stripped(self):
+        f = Fixture()
+        try:
+            control = f.add('control')
+            kept = os.path.join(f.root, '_runs', 'trace-coverage-20261004', 'tree')
+            os.makedirs(os.path.dirname(kept))
+            git(['worktree', 'add', '-q', '-b', 'kept', kept, 'main'], f.repo)
+            for wt in (control, kept):
+                f.write(wt, 'node_modules/x/index.js', 'x\n')
+            time.sleep(IDLE_HOURS * 3600 + 1.0)
+            rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--keep', os.path.join(f.root, '_runs'),
+                              '--journey-state', os.path.join(f.tmp, 'none'), '--gate-cache', os.path.join(f.tmp, 'none'),
+                              derived=True)
+            self.assertFalse(os.path.exists(control), 'the control tree is reaped as usual')
+            self.assertTrue(os.path.isfile(os.path.join(kept, 'node_modules', 'x', 'index.js')))
+            skip = [r for r in rows if r.get('decision') == 'skip' and r.get('path') == kept]
+            self.assertTrue(skip and 'which its owner retires' in skip[0]['reason'], skip)
+        finally:
+            f.cleanup()
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'the store prune runs on Linux hosts only')
+class PnpmStorePruneTest(unittest.TestCase):
+    """The store prune runs only in a quiet window while it holds every gate slot, and never waits for one."""
+
+    def setUp(self):
+        self.f = Fixture()
+        t = self.f.tmp
+        self.store = os.path.join(t, 'store')
+        os.makedirs(os.path.join(self.store, 'v10', 'files'))
+        self.releases = os.path.join(t, 'corepack')
+        self.f.write(self.releases, '10.33.4/dist/pnpm.cjs', '// fake pnpm\n')
+        self.calls = os.path.join(t, 'node-calls')
+        bindir = os.path.join(t, 'bin')
+        # The fake prune records its arguments, then tries the slots a gate would create next: none may be free.
+        self.f.write(bindir, 'node', '#!/bin/sh\necho "$@" >> %s\n%s -c %s %s >> %s\n' % (
+            self.calls, sys.executable, shlex.quote(
+                'import fcntl,os,sys\n'
+                'for n in ("slot-2.lock", "slot-9.lock", "light-slot-1.lock"):\n'
+                '    fd = os.open(os.path.join(sys.argv[1], n), os.O_RDWR | os.O_CREAT)\n'
+                '    try:\n'
+                '        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); print("FREE", n)\n'
+                '    except OSError:\n'
+                '        pass\n'), os.path.join(t, 'gate', '.locks'), self.calls))
+        os.chmod(os.path.join(bindir, 'node'), 0o755)
+        self.proc = os.path.join(t, 'proc')
+        os.makedirs(self.proc)
+        self.locks = os.path.join(t, 'gate', '.locks')
+        os.makedirs(self.locks)
+        # Only slot-0 and light-slot-0 exist, as on a host where one gate of each class has run.
+        for name in ('slot-0.lock', 'light-slot-0.lock', 'github.com-owner-repo.lock'):
+            open(os.path.join(self.locks, name), 'w').close()
+        self.age_locks()
+        self.env_path = bindir + os.pathsep + os.environ['PATH']
+
+    def tearDown(self):
+        self.f.cleanup()
+
+    def age_locks(self, seconds=3600):
+        for name in os.listdir(self.locks):
+            os.utime(os.path.join(self.locks, name), (time.time() - seconds, time.time() - seconds))
+
+    def reap(self, hour=12, quiet_load=100000):
+        # POSIX TZ "TST<n>" is UTC minus n hours (the name needs three letters), so this fixes the reaper's local hour.
+        tz = 'TST%d' % (time.gmtime().tm_hour - hour)
+        env = dict(os.environ, PATH=self.env_path, TZ=tz, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        proc = subprocess.run([sys.executable, REAPER, '--root', self.f.root, '--no-log-file', '--idle-hours', '1000',
+                               '--dependency-idle-hours', '1000', '--journey-state', os.path.join(self.f.tmp, 'none'),
+                               '--gate-cache', os.path.join(self.f.tmp, 'gate'), '--pnpm-store', self.store,
+                               '--pnpm-releases', self.releases, '--pnpm-stamp', os.path.join(self.f.tmp, 'stamp'),
+                               '--quiet-load', str(quiet_load), '--proc', self.proc],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        return [r for r in parse(proc.stdout.decode()) if r.get('rule') == 'pnpm-store']
+
+    def pruned(self):
+        if not os.path.exists(self.calls):
+            return False
+        with open(self.calls) as fh:
+            self.assertEqual(fh.read().split(), [os.path.join(self.releases, '10.33.4', 'dist', 'pnpm.cjs'),
+                                                 'store', 'prune', '--store-dir', self.store])
+        os.remove(self.calls)
+        return True
+
+    def test_prunes_only_with_every_slot_free_and_at_most_once_a_day(self):
+        holder = subprocess.Popen(
+            [sys.executable, '-c', 'import fcntl,sys,time; fh=open(sys.argv[1],"a"); fcntl.flock(fh, fcntl.LOCK_EX); '
+             'print("held", flush=True); time.sleep(60)', os.path.join(self.locks, 'light-slot-0.lock')], stdout=subprocess.PIPE)
+        self.f.procs.append(holder)
+        self.assertEqual(holder.stdout.readline().strip(), b'held')
+        rows = self.reap()
+        self.assertFalse(self.pruned(), 'no prune while a gate holds a slot')
+        self.assertIn('a gate holds light-slot-0.lock', rows[0]['reason'])
+        holder.kill()
+        holder.wait()
+        rows = self.reap()
+        self.assertTrue(self.pruned())
+        self.assertEqual(rows[0]['decision'], 'remove-derived')
+        self.reap()
+        self.assertFalse(self.pruned(), 'at most once a day')
+
+    def test_a_gate_that_started_recently_or_a_running_install_keeps_the_store_until_overnight(self):
+        self.age_locks(5 * 60)
+        rows = self.reap()
+        self.assertFalse(self.pruned(), 'a gate lock touched 5 minutes ago')
+        self.assertIn('not quiet', rows[0]['reason'])
+        self.age_locks()
+        rows = self.reap(quiet_load=0.0001)
+        self.assertFalse(self.pruned(), 'load over the limit')
+        self.assertIn('not quiet', rows[0]['reason'])
+        self.f.write(self.proc, '4242/cmdline', '\0'.join(['node', '/x/pnpm/dist/pnpm.cjs', 'install', '--frozen-lockfile']) + '\0')
+        self.assertIn('pnpm install running', self.reap()[0]['reason'])
+        self.assertFalse(self.pruned())
+        os.remove(os.path.join(self.proc, '4242', 'cmdline'))
+        self.age_locks(60)
+        self.reap(hour=2, quiet_load=0.0001)
+        self.assertTrue(self.pruned(), 'overnight is quiet whatever the load and the last gate')
+
 
 if __name__ == '__main__':
     unittest.main()

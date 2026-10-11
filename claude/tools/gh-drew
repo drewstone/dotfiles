@@ -203,7 +203,8 @@ find_caller() {
       comm="${comm##*/}"
     fi
     case "$comm" in
-      bash|sh|dash|zsh|fish|python*|node|bun|deno|ruby|perl|uv|npx|tsx)
+      # Node 24 names its main thread, and so the process, MainThread.
+      bash|sh|dash|zsh|fish|python*|node|MainThread|bun|deno|ruby|perl|uv|npx|tsx)
         read_argv "$pid"
         script_of "${argv[@]:1}"
         if [[ -n "$script" && "$script" != gh-drew ]]; then
@@ -303,11 +304,10 @@ call_shape() {
   return 0
 }
 
-write_call() {
-  local outcome="$1" stamp='' epoch hour file line where caller session shape
-  shift
-  printf -v stamp '%(%s %Y%m%d%H)T' -1 2>/dev/null || stamp="$(date '+%s %Y%m%d%H')"
-  epoch="${stamp% *}"; hour="${stamp#* }"
+# Sets caller, session, shape and where once per call; the cap and the log both read them.
+identified=''
+identify() {
+  [[ -z "$identified" ]] || return 0
   find_caller
   find_session
   call_shape "$@"
@@ -315,6 +315,15 @@ write_call() {
   if [[ "$where" == "$HOME" || "$where" == "$HOME"/* ]]; then
     where="~${where#"$HOME"}"
   fi
+  identified=1
+}
+
+write_call() {
+  local outcome="$1" stamp='' epoch hour file line
+  shift
+  printf -v stamp '%(%s %Y%m%d%H)T' -1 2>/dev/null || stamp="$(date '+%s %Y%m%d%H')"
+  epoch="${stamp% *}"; hour="${stamp#* }"
+  identify "$@"
   printf -v line '%s\t%s\t%s\t%s\t%s\t%s' "$epoch" "$outcome" "${caller//[$'\t\n\r']/ }" \
     "${session//[$'\t\n\r']/ }" "${where//[$'\t\n\r']/ }" "${shape//[$'\t\n\r']/ }"
   file="$log_dir/calls-$hour.tsv"
@@ -382,6 +391,77 @@ Resets: $( [[ "$reset" =~ ^[0-9]+$ ]] && date -u -d "@$reset" 2>/dev/null || ech
 
 Watch the live service instead of polling CI (curl the deployed endpoint) — that
 costs no quota. Override with GH_DREW_MIN_CORE=0 if this read is load-bearing.
+EOF
+    exit 3
+  fi
+}
+
+# One caller may not drain the quota every agent shares. Each quota breach from 2026-10-09 to 10-11 was
+# one script reading in a loop (per-run jobs, per-PR pulls: 530 to 7,857 core reads an hour from one
+# caller), while the busiest legitimate caller peaked at 270 in ten minutes and 630 in an hour.
+# A caller (the same caller and session, or directory without one, as the fleet's quota item counts)
+# gets GH_DREW_CALLER_10M core reads in any ten minutes and GH_DREW_CALLER_1H in any hour, counted
+# from this host's own log, so concurrent callers need no lock. Writes and free reads (GraphQL,
+# search, /rate_limit) never count and are never refused. 0 turns a limit off.
+cap_10m="${GH_DREW_CALLER_10M:-300}"
+cap_1h="${GH_DREW_CALLER_1H:-600}"
+
+hour_of() {
+  printf -v hour '%(%Y%m%d%H)T' "$1" 2>/dev/null ||
+    hour="$(date -d "@$1" +%Y%m%d%H 2>/dev/null || date -r "$1" +%Y%m%d%H)"
+}
+
+# Whether a logged shape draws on the core quota as a read; the fleet's draws_core, less writes.
+core_read_awk='
+function core_read(s,  w, n, i, p, m) {
+  n = split(s, w, " ")
+  if (w[1] == "api") {
+    for (i = 2; i <= 3 && i <= n; i++) {
+      m = toupper(w[i])
+      if (m ~ /^(GET|HEAD|POST|PUT|PATCH|DELETE)$/) { if (m != "GET" && m != "HEAD") return 0; continue }
+      if (p == "") p = w[i]
+    }
+    sub(/^\//, "", p)
+    return p != "" && p !~ /^(rate_limit|graphql)([?]|$)/ && p !~ /^search\//
+  }
+  if (w[1] ~ /^(run|workflow|release|cache)$/) return w[2] ~ /^(list|view|status|checks|diff|download|watch)$/
+  return w[1] == "pr" && w[2] == "diff"
+}'
+
+cap_reads() {
+  local now hour key n10=0 n60=0 a
+  local -a files=()
+  [[ "$cap_10m" =~ ^[0-9]+$ && "$cap_1h" =~ ^[0-9]+$ ]] && (( cap_10m + cap_1h > 0 )) || return 0
+  case "${1-}" in
+    api)
+      # gh api sends a POST when it is given fields or a body and no method.
+      for a in "$@"; do
+        case "$a" in -f|-F|--field|--raw-field|--input|-f?*|-F?*|--field=*|--raw-field=*|--input=*) return 0 ;; esac
+      done
+      ;;
+    run|workflow|release|cache|pr) ;;
+    *) return 0 ;;
+  esac
+  identify "$@"
+  awk -v shape="$shape" "$core_read_awk"' BEGIN { exit !core_read(shape) }' </dev/null 2>/dev/null || return 0
+  printf -v now '%(%s)T' -1 2>/dev/null || now="$(date +%s)"
+  hour_of $((now - 3600)); [[ -f "$log_dir/calls-$hour.tsv" ]] && files+=("$log_dir/calls-$hour.tsv")
+  hour_of "$now"; [[ -f "$log_dir/calls-$hour.tsv" ]] && files+=("$log_dir/calls-$hour.tsv")
+  (( ${#files[@]} )) || return 0
+  key="${session:-$where}"
+  read -r n10 n60 < <(awk -F '\t' -v caller="$caller" -v key="$key" -v now="$now" "$core_read_awk"'
+    $2 == "called" && $3 == caller && ($4 != "" ? $4 : $5) == key && $1 > now - 3600 && core_read($6) {
+      n60++; if ($1 > now - 600) n10++
+    }
+    END { print n10 + 0, n60 + 0 }' "${files[@]}" 2>/dev/null) || return 0
+  if (( (cap_10m > 0 && n10 >= cap_10m) || (cap_1h > 0 && n60 >= cap_1h) )); then
+    log_call refused "$@"
+    cat >&2 <<EOF
+gh-drew: refusing a read — $caller ($key) made $n10 core reads in the last 10 minutes
+(cap $cap_10m) and $n60 in the last hour (cap $cap_1h). Every agent shares one 5,000/h quota.
+Stop the loop and batch the reads: one GraphQL query for many pulls or runs, git fetch and
+local git for refs and ancestry, the newest run per workflow instead of every run's jobs.
+Reads come back as this caller's older reads leave the window.
 EOF
     exit 3
   fi
@@ -487,6 +567,7 @@ for key in "${token_keys[@]}"; do
   login="$(try_token "$token" || true)"
 
   if [[ "$login" == "$expected_login" ]]; then
+    cap_reads "$@"
     guard_reads "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
@@ -500,6 +581,7 @@ for key in "${token_keys[@]}"; do
   login="$(try_token "$token" || true)"
 
   if [[ "$login" == "$expected_login" ]]; then
+    cap_reads "$@"
     guard_reads "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"

@@ -88,6 +88,7 @@ link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 mkdir -p "$CLAUDE_DIR/skills" "$CODEX_DIR/skills"
 for skill_dir in "$SCRIPT_DIR/skills"/*/; do
   skill="$(basename "$skill_dir")"
+  case "$skill" in _*) continue ;; esac   # shared material for authors (_probes), not a skill
   if [ ! -f "$skill_dir/SKILL.md" ]; then
     if [ -L "${skill_dir%/}" ]; then
       echo "  WARN skill '$skill' skipped: link target missing ($(readlink "${skill_dir%/}"))"
@@ -135,6 +136,15 @@ if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/nul
   done
 fi
 
+# Saved workflows (Claude-only): the Workflow tool resolves a name from ~/.claude/workflows/<name>.js.
+if [ -d "$SCRIPT_DIR/workflows" ] && [ "$(ls -A "$SCRIPT_DIR/workflows" 2>/dev/null)" ]; then
+  mkdir -p "$CLAUDE_DIR/workflows"
+  for wf in "$SCRIPT_DIR/workflows"/*.js; do
+    [ -f "$wf" ] || continue
+    link "$wf" "$CLAUDE_DIR/workflows/$(basename "$wf")"
+  done
+fi
+
 # Output styles (Claude-only: Codex and OpenCode have no equivalent)
 if [ -d "$SCRIPT_DIR/output-styles" ] && [ "$(ls -A "$SCRIPT_DIR/output-styles" 2>/dev/null)" ]; then
   mkdir -p "$CLAUDE_DIR/output-styles"
@@ -164,6 +174,32 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
     chmod +x "$tool"
   done
 fi
+
+# Codex runs the shared search guard as a PreToolUse hook too: on 2026-10-11 a
+# Codex session's `find /` walked the archive drive for 35+ min because only
+# Claude ran it. Merge one entry into ~/.codex/hooks.json, keeping the rest.
+python3 - "$CODEX_DIR/hooks.json" "$CLAUDE_DIR/hooks/scan-guard.sh" <<'PY_CODEX'
+import json, os, sys
+path, guard = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        config = json.load(f)
+except FileNotFoundError:
+    config = {}
+except ValueError:
+    print(f"  SKIP {path}: not valid JSON; the Codex search guard is not installed")
+    sys.exit(0)
+hooks = config.setdefault("hooks", {})
+entries = hooks.setdefault("PreToolUse", [])
+if not any(h.get("command") == guard for e in entries for h in e.get("hooks", [])):
+    entries.append({"hooks": [{"type": "command", "command": guard, "timeout": 10}]})
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    print(f"  CODEX {path}: PreToolUse scan-guard")
+PY_CODEX
 
 # The sweep crons redirect into $HOME/attic/sweep.log. A missing directory makes
 # the redirect fail before the script runs, so the sweeps go silently inert.
@@ -432,7 +468,7 @@ for m in json.load(sys.stdin):
 sync_plugins
 
 # Summary
-skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills | wc -l | tr -d ' ')
+skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills ! -name '_*' | wc -l | tr -d ' ')
 cmd_count=$(find "$SCRIPT_DIR/commands" -type f 2>/dev/null | wc -l | tr -d ' ')
 hook_count=$(find "$SCRIPT_DIR/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
 tool_count=$(find "$SCRIPT_DIR/tools" -type f ! -name README.md 2>/dev/null | wc -l | tr -d ' ')

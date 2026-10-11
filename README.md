@@ -37,8 +37,11 @@ Run `./host/install.sh --check` to report drift without a change.
   PID 1 is pinned to a hardware timer (`/dev/watchdog-hw`), so a `RuntimeWatchdogSec` setting never takes the softdog.
 - `claude/hooks/host-blast-guard.sh` blocks the same verbs inside Claude Code before sudo sees them.
   It also blocks `host/bin/format-traces-drive`, which erases a disk.
-- `claude/hooks/kill-guard.sh` refuses broad process signals from Claude Bash commands.
-  If `jq` is unavailable, it refuses every matched Bash command because it cannot inspect the input.
+- `claude/hooks/process_guard.py` refuses, in Claude Bash commands, the `ssh`, `bash -c` and heredoc scripts inside them, and the ad-hoc script files they run (written in the same command or under a temp directory): `gh pr merge --admin` and branch-protection writes; force pushes unless the command sets `CC_ALLOW_FORCE_PUSH=1` with Drew's authorization; `core.hooksPath` overrides and `--no-verify` commits outside throwaway fixture repos; bare `git stash pop`/`apply`, and named ones outside a `_wt` worktree this session created; `pkill` and `killall`, `kill` of 0, -1 or a process group, and kills fed by `pgrep <pattern>` or `pidof` through `$(...)`, a variable, a loop or `xargs` (resolve the exact pid and `kill <pid>`; `CC_ALLOW_BROADCAST_KILL=1` in Drew's session overrides); shell tracing (`bash -x`, `set -x`, `BASH_XTRACEFD`) while the traced command or script, local or remote, loads or expands a secret; and, on the Mac only, whole-repo installs, builds, test runs, turbo runs, image builds and signoff (single test files pass; `CC_ALLOW_MAC_BUILD=1` overrides).
+  Denials and overrides go to `~/.claude/logs/process-guard.log`.
+  Before `gh pr merge` it warns, without blocking, when a merged PR's head commit has a red or pending check run or commit status (`claude/hooks/merge_check.py`).
+- `claude/hooks/secret_scan.py` runs after Bash, Read and Grep calls and warns when their output or command holds a live-looking credential (`sk-tan-`, `gak_`, `lak_`, `plabs_`, `whsec_`, Stripe, GitHub, OpenAI, Anthropic shapes), with that key type's rotation steps.
+  It records only the kind, length and SHA-256 in `~/.claude/logs/secret-exposures.jsonl`.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
 
 The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.
@@ -47,12 +50,12 @@ Run `./host/install-cli-bridge-slice.sh` alone to install only the slice; it nee
 
 ## Worktree reaper
 
-`git/install.sh` installs `wt-reaper`: a systemd user timer on Linux and a launchd agent on macOS, both at 04:15 daily.
+`git/install.sh` installs `wt-reaper`: an hourly systemd user timer on Linux and a launchd agent at 04:15 daily on macOS.
 It covers every linked worktree registered with a repository under `~/code`, `~/company`, or `~/webb`, wherever that worktree lives (for example `~/webb/_wt/*`, `~/worktrees/*`, or `/tmp`).
 It removes one only when every check passes:
 
 - The worktree is not locked and has no merge, rebase, bisect, cherry-pick, or revert in progress.
-- Nothing in it, its index, HEAD, or reflogs changed in the last 24 hours.
+- Nothing in it, its index, HEAD, or reflogs changed in the last 12 hours (`--idle-hours`).
 - `git status` is empty; only ignored build output such as `node_modules/` may remain. An ignored `.env` keeps the tree.
 - It holds no nested repository.
 - After `git fetch --all --prune`, every commit on its HEAD is on a remote-tracking ref.
@@ -65,6 +68,15 @@ Removal uses `git worktree remove` without `--force`.
 The local branch is deleted only when it is merged into the remote default branch.
 Run `wt-reaper --dry-run` to see the decisions without removing anything.
 Main checkouts are never candidates, and the reaper refuses to run as root.
+
+The same run then deletes derived files, and keeps them on any doubt (`--no-derived` turns this off):
+
+- **node_modules** in a worktree it did not remove. The worktree's HEAD must be in the remote default branch, or its pull request at that HEAD must be merged or closed. The tree must be untouched for `--dependency-idle-hours` (default 6), with no process inside, and pass the same lock, in-progress, mount and nested-repository checks. Only node_modules directories that git ignores are deleted; changes and untracked files stay.
+- **Journey raw recordings** under `~/.local/state/gtm-journeys/raw/<journey>-<start>/<label>`: the `.webm` files and `trace.raw.zip`. They go only once `journeys/out/<journey>/timings.json` names that same start, and `out/<journey>/video` holds `<label>-*.mp4` and, for a raw trace, the scrubbed `<label>-trace.zip`.
+- **beelink-gate checkouts beyond the configured count**: `<repo>@N` with N of at least `BEELINK_GATE_REPO_CHECKOUTS` (default 2). The reaper removes one only while it holds that checkout's gate lock itself.
+- **pnpm store files no project links** (Linux): `pnpm store prune` for each store version under `~/.local/share/pnpm/store`, with the matching pnpm release from corepack's cache, at most once every 20 hours. It runs only in a quiet window: 01:00 to 05:00 local, or a 1-minute load under the core count with no beelink-gate lock file touched in 15 minutes. It then takes every gate slot without waiting, including the slot files a gate has not created yet (at least 16 per class), so no gate can start an install while it prunes, and keeps the store if any slot is busy or any pnpm install is running.
+
+Each deletion is logged as `decision=remove-derived` with its rule and the bytes it freed.
 
 ## Tmux recovery
 

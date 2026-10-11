@@ -1,6 +1,6 @@
 ---
 name: agent-ask
-description: Delegate work to a production Tangle agent app (gtm, tax, legal, insurance, creative, hospitality, builder) through its standard operator API with agent-ask, follow the turn, and gate the result before showing Drew.
+description: Delegate work to a production Tangle agent app (gtm, tax, legal, insurance, creative, hospitality, builder, physim, super) through its standard operator API with agent-ask, follow the turn, and gate the result before showing Drew.
 ---
 
 # Agent ask
@@ -49,11 +49,13 @@ Show Drew only work that passed, with the conversation link and the gate evidenc
 
 ## Keys
 
-Each app has its own key: `<APP>_OPERATOR_API_KEY`, or that slot in `~/company/devops/secrets/agent-state.env`, from the app's API access page with `operator:read` and `operator:run`.
+Each app accepts its own key, `<APP>_OPERATOR_API_KEY`, from its API access page with `operator:read` and `operator:run`.
+One Tangle agent key, `TANGLE_AGENT_KEY`, works in every app its owner approved on id.tangle.tools; `agent-ask` uses it when the app has no key of its own.
+Either can live in the environment or in `~/company/devops/secrets/agent-state.env`.
 Never paste a key into a prompt, message, file, or command line.
 
 ## Log the run
 
 ```bash
-skill-run-log /agent-ask --target "<app, thread id and outcome>" --verdict <PASS|FAIL|WAITING> --next /<next-skill-or-stop>
+skill-run-log /agent-ask --target "<app, thread id and outcome>" --verdict <PASS|FAIL|PARTIAL> --next /<next-skill-or-stop>
 ```

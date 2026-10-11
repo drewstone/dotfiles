@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# journeys-env — run a command with an agent app's journey test identities loaded
+# from this host's dotenvx vault, and nothing else from it.
+#
+#   cd <app checkout>               # holds journeys.config.mjs
+#   journeys-env -- pnpm exec agent-app-journeys run journeys/core-path.ts
+#
+# The variable names come from `agent-app-journeys env-names` (the app's
+# journeys.config.mjs), or from JOURNEYS_ENV_NAMES. Each name is found in the
+# first vault file under $TANGLE_SECRETS_DIR (default ~/company/devops/secrets)
+# that defines it, decrypted with dotenvx, and exported into the command only.
+# A name already set in the environment is kept. Values are never printed.
+set -euo pipefail
+
+secrets="${TANGLE_SECRETS_DIR:-$HOME/company/devops/secrets}"
+keys="$secrets/.env.keys"
+die() { echo "journeys-env: $*" >&2; exit 2; }
+
+[ "${1:-}" = "--" ] && shift
+[ $# -ge 1 ] || die "usage: journeys-env -- <command> [args...]"
+
+if [ -n "${JOURNEYS_ENV_NAMES:-}" ]; then
+  names="$JOURNEYS_ENV_NAMES"
+else
+  # shellcheck disable=SC2086 # the CLI is a command line, e.g. "pnpm exec agent-app-journeys"
+  names="$(${JOURNEYS_CLI:-pnpm exec agent-app-journeys} env-names)" || die "could not read the credential names; run from the app checkout that holds journeys.config.mjs"
+fi
+
+for name in $names; do
+  [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || die "'$name' is not a variable name"
+  [ -n "${!name:-}" ] && continue
+  file=""
+  for candidate in "$secrets"/*.env; do
+    if grep -q -E "^${name}=" "$candidate" 2>/dev/null; then file="$candidate"; break; fi
+  done
+  [ -n "$file" ] || die "$name is in no vault file under $secrets"
+  value="$(dotenvx get "$name" -f "$file" --strict --env-keys-file "$keys" 2>/dev/null)" || die "could not decrypt $name from $(basename "$file")"
+  [ -n "$value" ] || die "$name is empty in $(basename "$file")"
+  export "$name=$value"
+done
+
+exec "$@"

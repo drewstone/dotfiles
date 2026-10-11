@@ -37,7 +37,7 @@ When implementation is requested, complete the justified changes and their check
 ## Log the run
 
 ```bash
-skill-run-log /product-innovation-audit --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /product-innovation-audit --target "<what this run targeted>" --verdict <PASS|PARTIAL|FAIL|BLOCKED> --detail <ship|narrow|rebuild|kill|insufficient evidence> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

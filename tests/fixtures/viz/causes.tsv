@@ -1,0 +1,7 @@
+label	value
+provider refused the key	60
+vault write failed	40
+dispatch refused	9
+quota exhausted	8
+worker out of memory	4
+unexplained	4

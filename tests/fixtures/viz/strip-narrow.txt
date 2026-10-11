@@ -1,0 +1,8 @@
+✓ ✗ ✗ ✗ ! ✓ · ✓ ✓ ✗ ✓ ✓
+09:00 10:30 12:00     14:30
+pass 6 of 12 (50.0%) · fail 4
+· warn 1 · unknown 1 · longest
+fail run 3: 09:30→10:30, next
+pass 11:30
+notes: 09:00 21s · 11:00 slow
+· 12:30 19s

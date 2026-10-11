@@ -26,7 +26,7 @@ Recommended: <answer and one-line reason>
 ## Log the run
 
 ```bash
-skill-run-log /grilling --target "<plan>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /grilling --target "<plan>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

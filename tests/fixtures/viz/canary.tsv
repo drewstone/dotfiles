@@ -1,0 +1,13 @@
+t	status	note
+09:00	ok	21s
+09:30	fail	
+10:00	fail	
+10:30	fail	
+11:00	warn	slow
+11:30	ok	
+12:00		
+12:30	ok	19s
+13:00	ok	
+13:30	fail	
+14:00	ok	
+14:30	ok	

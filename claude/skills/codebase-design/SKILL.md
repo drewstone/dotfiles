@@ -58,7 +58,7 @@ One paragraph with the context, decision, and reason is enough; add status, opti
 ## Log the run
 
 ```bash
-skill-run-log /codebase-design --target "<module or context>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /codebase-design --target "<module or context>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

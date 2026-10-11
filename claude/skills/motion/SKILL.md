@@ -72,7 +72,7 @@ For a codebase audit, find the motion library, tokens, and the most-used interac
 ## Log the run
 
 ```bash
-skill-run-log /motion --target "<component or diff>" --verdict <APPROVE|BLOCK|BUILT> --next /<next-skill-or-stop>
+skill-run-log /motion --target "<component or diff>" --verdict <PASS|FAIL> --detail <APPROVE|BLOCK|BUILT> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

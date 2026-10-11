@@ -1,0 +1,182 @@
+Example brief · synthetic data · Window 2026-10-05 00:00Z → 10-11 00:00Z · Owner: checkout on-call
+Checkout ships daily. One bad deploy cost 9 hours of revenue.
+Every number below is synthetic and shows the kit's blocks. A real brief states its population, its
+benchmark and the decision it serves.
+hill: time to restore checkout · 9.2 h → < 1 h · owner checkout on-call
+48      deploys
+99.71%  successful payments
+9.2 h   longest outage
+6.5 h   alarm → owner
+
+── §1 now · Live board ─────────────────────────────────────────────────────────────────────────────
+Open problems, worst first, each with an owner.
+
+✗ [Down] Apple Pay declines at the gateway (since 10-10 21:05Z)
+  Token format changed in SDK 4.2; 38% of Apple Pay attempts fail.
+  owner payments-lane · next: pin SDK 4.1, ship
+! [Needs you] Fraud vendor contract renewal (since 10-09)
+  The price rises 30% on Nov 1.
+  owner You · next: decision 1
+✓ [Fixed] Cart service out of memory (10-08 02:10Z → 11:22Z)
+  Session cache unbounded; capped at 50k entries.
+  owner cart-lane · next: recount on 10-15
+
+── §2 score · Delivery scorecard ───────────────────────────────────────────────────────────────────
+DORA metrics against the usual tier cut-offs.
+
+Deployment frequency  6.9 / day       [elite] high med low  48 deploys in 7 days.
+Change failure rate   21% of deploys  elite high [med] low  10 of 48 rolled back or hotfixed.
+Time to restore       9.2 h worst     elite high [med] low  Median 38 min.
+
+── §3 time · Where the outage time went ────────────────────────────────────────────────────────────
+Detection was fast; ownership was slow.
+
+Cart out of memory
+  · 2026-10-08T02:10:00Z → 2026-10-08T08:40:00Z · 6.5 h with no owner
+  ✓ 2026-10-08T08:40:00Z → 2026-10-08T11:22:00Z · owned 2.7 h, fixed
+  detect at 2026-10-08T02:12:00Z
+  owner at 2026-10-08T08:40:00Z
+  cause at 2026-10-08T09:05:00Z
+  fix at 2026-10-08T11:22:00Z
+Apple Pay declines
+  · 2026-10-10T21:05:00Z → 2026-10-10T21:20:00Z · 15 min with no owner
+  ✗ 2026-10-10T21:20:00Z → 2026-10-10T23:30:00Z · owned, open
+  detect at 2026-10-10T21:06:00Z
+  owner at 2026-10-10T21:20:00Z
+now 2026-10-10T23:30:00Z
+Time to an owner: 6.5 h, then 15 min. The autopilot shipped on 10-09 is the difference.
+
+Where the cart outage's 9.2 hours went
+until the alarm      █                                                        2m   0.4%  02:10–02:12
+flagged, no owner    ████████████████████████████████               388m (6h28m)  70.3%  02:12–08:40
+find the cause                                       ██                      25m   4.5%  08:40–09:05
+cap the cache, ship                                    ███████████  137m (2h17m)  24.8%  09:05–11:22
+total 552m (9h12m) · 4 parts · 02:10→11:22
+by group: detect 2m 0.4% · own 388m (6h28m) 70.3% · fix 162m (2h42m) 29.3%
+
+Cart outage, 10-08 UTC
+02:10          ✗ Cart pods start restarting on out-of-memory.
+02:12     +2m  ! The memory alarm fires; nobody owns it.
+08:40  +6h28m  ! cart-lane takes the incident.
+09:05    +25m  • Cause: the session cache is unbounded.
+11:22  +2h17m  ✓ Cache capped at 50k entries and shipped.
+5 events · 02:10→11:22 (9h12m)
+
+── §4 flow · Throughput and shape ──────────────────────────────────────────────────────────────────
+
+Payment success by day, card and Apple Pay
+10-08  card      ██████████████████████████████████████████████████████████████▊ 39,880/40,000 99.7%
+       applepay  ██████████████████████████████████████████████████████████████▊  9,970/10,000 99.7%
+10-09  card      ██████████████████████████████████████████████████████████████▉ 40,120/40,200 99.8%
+       applepay  ██████████████████████████████████████████████████████████████▊ 10,010/10,050 99.6%
+10-10  card      ██████████████████████████████████████████████████████████████▊ 39,950/40,100 99.6%
+       applepay  ███████████████████████████████████████▏                      ┆   6,170/9,950 62.0%
+card = Card · applepay = Apple Pay
+scale 0–100% · ┆ SLO 99.5%
+Apple Pay fell to 62.0% on 10-10 when SDK 4.2 changed the token format.
+
+Deploys per day
+48 total
+10-05  █████████████████████████████████████████                                           5 deploys
+10-06  █████████████████████████████████████████████████████████████████████████▊          9 deploys
+10-07  █████████████████████████████████████████████████████████████████▋                  8 deploys
+10-08  ████████████████████████████████▊                                                   4 deploys
+10-09  ██████████████████████████████████████████████████████████████████████████████████ 10 deploys
+10-10  █████████████████████████████████████████████████████████▍                          7 deploys
+10-11  █████████████████████████████████████████                                           5 deploys
+scale 0–10 deploys
+
+p99 latency by endpoint (ms)
+Darker tick is p50.
+/cart      ███████████████████▊                                                                210ms
+/checkout  ███████████████████████████████████████████████████████████████████████████████████ 880ms
+/payment   ████████████████████████████████████████████████████████████▍                       640ms
+/receipt   ████████▌                                                                            90ms
+scale 0–880ms
+inner marks: /cart 42 · /checkout 120 · /payment 95 · /receipt 20
+
+Payment attempts by outcome
+1.2M attempts
+███████████████████████████████████████████████████████████████████████████████████████████████████▒
+█ approved  1,196,520  99.7%
+▓ declined      2,800   0.2%
+▒ error           680   0.1%
+total 1,200,000 · 3 parts
+
+Deploy runs
+Height is duration.
+t                      y  state  tip
+────────────────────  ──  ─────  ─────────────
+2026-10-05T10:00:00Z  12  good   ok 12 min
+2026-10-07T15:00:00Z  41  crit   failed 41 min
+2026-10-09T09:00:00Z  14  good   ok 14 min
+
+── §5 signal · Canaries by day ─────────────────────────────────────────────────────────────────────
+
+Pass rate
+Checkout end to end (checkout-e2e)
+  ✓ ✓ ✓ ✗ ✓ ! ·
+  1: 48/48 · 2: 48/48 · 3: 48/48 · 4: 20/48 · 5: 48/48 · 6: 40/48 · 7: harness down
+columns 1=10-05 · 4=10-08 · 7=10-11
+
+Apple Pay canary, hourly, 10-10 UTC
+✓ ✓ ✓ ✓ ✓ ✗ ✗ ✗ ·
+16:00 19:00     23:30
+pass 5 of 9 (55.6%) · fail 3 · unknown 1 · longest fail run 3: 21:00→23:00, no pass since
+notes: 21:00 38%
+The 23:30 run had not reported when this brief was built, so it shows as unknown, not as a failure.
+
+── §6 path · Path to the fix ───────────────────────────────────────────────────────────────────────
+
+✓ Pin SDK 4.1 (21:40Z)
+… Canary passes 3 times
+  Running
+→ Approve the vendor renewal
+
+── §7 causes · Causes and fixes at the source ──────────────────────────────────────────────────────
+
+Class            Evidence                     Fix
+───────────────  ───────────────────────────  ──────────────────────────────────
+Unpinned SDK     4.2 auto-installed at build  Lockfile plus a schema check in CI
+Unbounded cache  RSS grew 4 GB/day            Cap, plus a memory alarm at 80%
+
+── §8 bets · Bets ──────────────────────────────────────────────────────────────────────────────────
+
+Bet 1 (lead): Progressive deploys with canary gates
+  evidence: Both outages hit 100% of traffic at once.
+  build: 1% → 10% → 100% with automatic rollback on canary red.
+  pre-mortem: Fails if canaries miss payment-specific paths; add Apple Pay to the canary first.
+  target: Worst outage < 1 h · change failure < 10%
+
+── §9 climb · Hills and velocity ───────────────────────────────────────────────────────────────────
+Each hill's trend against its target, and the share of the starting gap closed per week.
+
+✓ Time to restore checkout (system · checkout on-call): now 0.6 h · target 1 h · gap at target · 0%
+of the first gap open · last climbed 1.0 d ago
+  █▄▁ 9.2→0.6 · min 0.6 · max 9.2 · n=3
+  readings: 10-01 · 9.2 h · 10-05 · 4.1 h · 10-09 · 0.6 h
+  move [kept] Autopilot pages the owner; predicts restore under 1 h on the next outage
+✗ Change failure rate (system · release lane): now 21 % · target 5% · gap 16% · 123% open · 123% of
+the first gap open · last climbed no climb yet · first read 9 d ago
+  ▁█ 18%→21% · min 18% · max 21% · n=2
+  readings: 10-01 · 18% · 10-05 · 21%
+  move [pending] Canary every deploy for 10 min; predicts under 10% over the next 20 deploys
+
+Gap closed per week
+step   gap closed
+─────  ──────────
+09-21           —
+09-28        12.5
+10-05        31.0
+week of 09-21: no readings · week of 09-28: 12.5% of the starting gap · week of 10-05: 31% of the
+starting gap
+
+── §10 you · Your decisions ────────────────────────────────────────────────────────────────────────
+
+1. Renew the fraud vendor at +30%, or run a 2-week bake-off
+   Switching costs about 3 engineer-weeks.
+   Recommendation: run the bake-off; the renewal deadline allows it.
+
+Method. Synthetic example. A real brief lists each source, the exact query, the window, the
+population size and exclusions.
+Caveats. Synthetic numbers. In a real brief, name what was not inspected and why.

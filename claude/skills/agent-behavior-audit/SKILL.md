@@ -33,7 +33,7 @@ An audit request alone does not authorize changes to the audited product.
 ## Log the run
 
 ```bash
-skill-run-log /agent-behavior-audit --target "<behavior and runs>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /agent-behavior-audit --target "<behavior and runs>" --verdict <PASS|FAIL|PARTIAL|BLOCKED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

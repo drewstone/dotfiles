@@ -1,0 +1,6 @@
+t	status	text
+23:40	bad	A config change ships to every host.
+23:52	bad	New sessions fail at startup.
+00:31	warn	The on-call agent finds the cause in the harness log.
+00:48	good	A fix is written and checked against the real binary: red before, green after.
+03:10	good	The fix is served; the next canary passes.

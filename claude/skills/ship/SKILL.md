@@ -65,7 +65,7 @@ Update an existing release record or task when the project uses one, without exp
 ## Log the run
 
 ```bash
-skill-run-log /ship --target "<what this run targeted>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /ship --target "<what this run targeted>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --pr <released PR URL> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

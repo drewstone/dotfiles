@@ -63,7 +63,7 @@
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/kill-guard.sh"
+            "command": "$HOME/.claude/hooks/process_guard.py"
           },
           {
             "type": "command",
@@ -98,6 +98,19 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/audit-freshness-check.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
           }
         ]
       },
@@ -107,6 +120,17 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|BashOutput|TaskOutput|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/secret_scan.py"
           }
         ]
       }
@@ -124,6 +148,12 @@
             "type": "command",
             "command": "$HOME/.claude/hooks/halo-profile.sh",
             "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/skill-run-settle.sh",
+            "timeout": 300,
             "async": true
           }
         ]

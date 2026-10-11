@@ -19,13 +19,17 @@
 #   /etc/docker/daemon.json               containers join the capped user.slice; live-restore
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
+#   /etc/systemd/system/ci.slice.d/50-gate-priority.conf, beelink-gate-cgroup.service
+#                                          Beelinks: CI yields CPU to merge gates (weights 25 vs 400)
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
 #                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
 #                                          systemd-resolved's stub)
 #
-# Usage: host/install.sh [--check]
-#   --check   report drift and change nothing; exit 1 when anything differs.
+# Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only]
+#   --check           report drift and change nothing; exit 1 when anything differs.
+#   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
+#   --gate-priority-only  Beelinks: install only the merge-gate CPU priority.
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -33,10 +37,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$(uname -s)" = Linux ] || { echo "host/install.sh is Linux-only"; exit 0; }
 CHECK=0
+GIT_GUARD_ONLY=0
+GATE_PRIORITY_ONLY=0
 case "${1:-}" in
   --check) CHECK=1 ;;
+  --git-guard-only) GIT_GUARD_ONLY=1 ;;
+  --gate-priority-only) GATE_PRIORITY_ONLY=1 ;;
   '') ;;
-  *) echo "usage: host/install.sh [--check]" >&2; exit 2 ;;
+  *) echo "usage: host/install.sh [--check|--git-guard-only]" >&2; exit 2 ;;
 esac
 SUDO=sudo
 [ "$(id -u)" = 0 ] && SUDO=
@@ -71,10 +79,99 @@ want_file() {
 want_link() {
   [ "$(readlink "$2" 2>/dev/null)" = "$1" ] && return 0
   if [ "$CHECK" = 1 ]; then drift "$2 -> $1"; return 0; fi
+  # Like want_file's install -D: the Beelink cap directory does not exist before the first install.
+  $SUDO install -d -m 0755 -o root -g root "$(dirname "$2")"
   $SUDO ln -sfn "$1" "$2"
   note changed "$2 -> $1"
   CHANGED=1
 }
+
+install_system_git_guard() {
+  # Tailscale noninteractive SSH omits the user PATH but searches /usr/local/bin.
+  # Keep this copy root-owned because root can also run Git through this path.
+  want_link /usr/bin/git /usr/local/bin/git.gtr-original
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" /usr/local/bin/git
+}
+
+# Beelinks run the same Git entrypoint with only its worktree cap: each fleet lane may hold
+# `cap` worktrees under _wt, and none are added below the free-space floor. On 2026-10-11 beelink1
+# held 261 _wt worktrees and gained 49 in 6 h; idle reapers cannot touch trees younger than 12 h.
+is_beelink() { case "$(hostname -s)" in beelink1|beelink2|DESKTOP-18IR33V) return 0 ;; *) return 1 ;; esac; }
+
+install_beelink_worktree_cap() {
+  local cap=/usr/local/lib/beelink-worktree-cap
+  # want_link does not create parents; want_file's install -D does.
+  [ "$CHECK" = 1 ] || [ -d "$cap" ] || $SUDO install -d -m 0755 -o root -g root "$cap"
+  want_link /usr/bin/git "$cap/git.gtr-original"
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" "$cap/git"
+  want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" "$cap/git.worktree-cap.json"
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/beelink-git" /usr/local/bin/git
+  # The first install (2026-10-11) put the Python guard itself at /usr/local/bin/git.
+  local stale
+  for stale in /usr/local/bin/git.gtr-original /usr/local/bin/git.worktree-cap.json; do
+    if [ -e "$stale" ] || [ -L "$stale" ]; then
+      if [ "$CHECK" = 1 ]; then drift "$stale"; else $SUDO rm -f "$stale"; note removed "$stale"; fi
+    fi
+  done
+  local before=$CHANGED
+  CHANGED=0
+  want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-accept.conf" /etc/ssh/sshd_config.d/20-fleet-lane-accept.conf
+  if [ "$CHANGED" = 1 ]; then
+    # A failed reload must stop here: the next run sees the file in place and would not retry.
+    if ! { $SUDO sshd -t && $SUDO systemctl reload ssh; }; then
+      echo "sshd rejected or did not reload the fleet-lane drop-in" >&2; exit 1
+    fi
+    note reloaded ssh
+  fi
+  [ "$before" = 1 ] && CHANGED=1
+  return 0
+}
+
+# Beelinks: merge gates win the CPU over CI runner jobs. Never stops a runner:
+# the weight applies live through set-property, and only under contention.
+install_beelink_gate_priority() {
+  local before=$CHANGED
+  CHANGED=0
+  want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
+  want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
+  if [ "$CHECK" = 1 ]; then
+    [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = 25 ] || drift "ci.slice cpu.weight is not 25"
+    [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" = 400 ] || drift "beelink-gate cgroup cpu.weight is not 400"
+  else
+    [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
+    if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != 25 ]; then
+      $SUDO systemctl set-property --runtime ci.slice CPUWeight=25
+      note changed "ci.slice CPUWeight=25"
+    fi
+    if [ "$CHANGED" = 1 ] || [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" != 400 ]; then
+      $SUDO systemctl enable --quiet beelink-gate-cgroup.service
+      $SUDO systemctl restart beelink-gate-cgroup.service
+      note changed "beelink-gate cgroup cpu.weight=$(cat /sys/fs/cgroup/beelink-gate/cpu.weight)"
+    fi
+  fi
+  [ "$before" = 1 ] && CHANGED=1
+  return 0
+}
+
+install_gtr_lane_send() {
+  want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-send.conf" /etc/ssh/ssh_config.d/20-fleet-lane-send.conf
+}
+
+if [ "$GATE_PRIORITY_ONLY" = 1 ]; then
+  is_beelink || { echo "the gate CPU priority runs on the Beelinks only" >&2; exit 2; }
+  install_beelink_gate_priority
+  exit 0
+fi
+if [ "$GIT_GUARD_ONLY" = 1 ]; then
+  if is_beelink; then
+    install_beelink_worktree_cap
+    exit 0
+  fi
+  [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "the Git guard runs on GTR and the Beelinks only" >&2; exit 2; }
+  install_system_git_guard
+  install_gtr_lane_send
+  exit 0
+fi
 
 # softdog_holders: PIDs that hold the softdog open, space-separated.
 softdog_holders() {
@@ -90,6 +187,18 @@ daemon_holds_softdog() {
   case "$h" in '' | *' '*) return 1 ;; esac
   [ "$h" != 1 ] && [ "$(ps -o comm= -p "$h" 2>/dev/null)" = watchdog ]
 }
+
+if [ "$(hostname -s)" = drew-GTR-Pro ]; then
+  if [ "$CHECK" = 1 ]; then
+    python3 "$SCRIPT_DIR/gtr-install-guard/install.py" --check || DRIFT=1
+  else
+    python3 "$SCRIPT_DIR/gtr-install-guard/install.py"
+  fi
+  install_system_git_guard
+  install_gtr_lane_send
+fi
+is_beelink && install_beelink_worktree_cap
+is_beelink && install_beelink_gate_priority
 
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh

@@ -1,0 +1,1294 @@
+#!/usr/bin/env python3
+"""have: do we already have X?  Run it before saying something is missing.
+
+usage: have [options] TERMS...
+
+Each term is stemmed and expanded with synonyms ("eval harness" also looks for bench, perf,
+latency, canary, probe ...). Terms that name one idea share a concept; a hit that covers more
+concepts ranks higher. Five sweeps run, then one ranked report prints, with a "where to look
+first" header and an exact location for every hit.
+
+  paths      tracked file paths on each repository's default branch, grouped by directory
+  scripts    package.json scripts whose name or command matches
+  workflows  GitHub Actions workflows, with their state and latest run (needs the API)
+  content    `git grep -i` of the typed terms on the default branch: the top 20 files that hold
+             a word of every concept, by matching lines (HAVE_GREP_TIMEOUT per repository)
+  boards     task lists and note directories named in the config
+
+Repositories are read from `origin/<default branch>` after a `git fetch -q`, never from the
+working tree, so a stale or sparse checkout cannot hide a file. A fetch newer than
+HAVE_FETCH_TTL seconds (default 600) is reused. A checkout with no origin is read at its local
+default branch and said so. "No hits" holds only for what the `searched` lines list.
+
+options:
+  --config FILE   config file (default $HAVE_CONFIG, else ~/.config/have/config)
+  --root DIR      also scan the repositories under DIR (repeatable)
+  --in TEXT       only repositories whose name or path contains TEXT (repeatable): drill into one
+  --offline       no fetch and no GitHub API calls
+  --no-fetch      read the refs as they are
+  --refresh       ignore cached GitHub API answers
+  --only LIST     run only these sweeps: paths,scripts,workflows,content,boards
+  --skip LIST     skip these sweeps
+  --limit N       rows per section (default 10)
+  --jobs N        parallel repositories (default 6, or $HAVE_JOBS)
+  --timeout S     stop waiting for repositories after S seconds (default 240)
+
+config file: one `key = value` per line; `#` starts a comment at the start of a line.
+  root = ~/code               scan DIR and the repositories up to `depth` levels below it
+  repo = ~/src/one-repo       one checkout
+  github = owner/name         a repository with no checkout here: tree and workflows by API
+  gh = gh                     the GitHub CLI command (the GH environment variable wins)
+  depth = 2                   levels below a root (default 2)
+  exclude = */archive/*       skip checkouts whose path matches this glob
+  synonyms = soak, burn-in    words that stand for one another (repeatable)
+  tasks <label> = <command>   run with sh -c; prints JSON (a list of objects with id, title and
+                              state) or text in which each task starts at a line that begins
+                              with an id such as #12 or ABC-12
+  notes <label> = <dir>       grep the .md and .txt files below it
+
+environment: GH, HAVE_CONFIG, HAVE_FETCH_TTL, HAVE_GH_TTL (seconds a GitHub answer is reused,
+default 900; --refresh overrides), HAVE_GH_BUDGET (API calls per run, default 60),
+HAVE_GREP_TIMEOUT (seconds per repository for the content grep, default 25), HAVE_CACHE_DIR,
+HAVE_JOBS.
+Exit status: 0 with hits, 1 with none, 2 on a usage error.
+"""
+from __future__ import annotations
+
+import argparse
+import concurrent.futures as cf
+import fnmatch
+import hashlib
+import json
+import math
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+
+SWEEPS = ("paths", "scripts", "workflows", "content", "boards")
+
+STOP = frozenset(
+    "a an the do does did we have has had our us is are was there any exist exists existing "
+    "anything something for of to in on at and or with already yet".split()
+)
+
+# Words that stand for one idea. A member ending in $ matches the whole word (and its plural);
+# the rest match any word that starts with them. Add more with `synonyms =`.
+CLUSTERS = [
+    "eval bench harness perf latenc waterfall canary probe ratchet baseline scorecard "
+    "scoreboard speed loadtest regression",
+    "trace span$ telemetry otel opentelemetry metric monitor alert alarm uptime observab "
+    "dashboard health",
+    "deploy release ship$ publish rollout rollback",
+    "test spec$ e2e$ smoke integration",
+    "auth login oauth sso signin signup",
+    "billing invoice payment stripe pricing",
+    "cron schedul timer",
+    "backup snapshot restor recover",
+    "doc$ document readme runbook guide handbook",
+]
+
+SKIP_DIRS = frozenset({"node_modules", "vendor", "third_party", "dist", ".git"})
+WORKFLOW_RX = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$")
+GREP_EXCLUDES = ("*.lock", "*-lock.*", "*.min.*", "*.map", "*.svg", "*.snap")
+TEXT_EXTENSIONS = (".md", ".markdown", ".txt", ".org", ".rst")
+LOCAL_BRANCHES = ("main", "master", "develop", "trunk")
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+CAMEL_A = re.compile(r"([a-z0-9])([A-Z])")
+CAMEL_B = re.compile(r"([A-Z]+)([A-Z][a-z])")
+NONALNUM = re.compile(r"[^a-z0-9]+")
+GITHUB_SLUG = re.compile(r"github\.com[:/]+([^/]+)/([^/]+?)(?:\.git)?/?$")
+TASK_HEAD = re.compile(r"^\s*\W?\s*(#\d+|[A-Z][A-Z0-9]+-\d+)\b")
+ID_FIELDS = ("id", "key", "number", "identifier")
+TITLE_FIELDS = ("title", "display_title", "name", "summary", "subject")
+
+
+def clean(text: str) -> str:
+    """Repository text must not move the terminal cursor."""
+    return CONTROL.sub("?", text)
+
+
+def trunc(text: str, width: int) -> str:
+    text = clean(" ".join(str(text).split()))
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def tokenize(text: str) -> list[str]:
+    text = CAMEL_B.sub(r"\1 \2", CAMEL_A.sub(r"\1 \2", text))
+    return [t for t in NONALNUM.split(text.lower()) if t]
+
+
+def stem(word: str) -> str:
+    w = word.lower()
+    if len(w) > 4 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 4 and w.endswith(("sses", "xes", "ches", "shes")):
+        return w[:-2]
+    if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
+class Stem:
+    """One word to look for. Four or more letters match as a word prefix; shorter ones, or a
+    member written with $, match the whole word."""
+
+    __slots__ = ("value", "exact", "rx", "ere")
+
+    def __init__(self, value: str, exact: bool = False):
+        self.value = value
+        self.exact = exact or len(value) < 4
+        escaped = re.escape(value)
+        if self.exact:
+            self.rx = re.compile(r"(?<![a-z0-9])" + escaped + r"(?:s|es)?(?![a-z0-9])", re.I)
+            self.ere = "(^|[^[:alnum:]])" + escaped + "(s|es)?($|[^[:alnum:]])"
+        else:
+            self.rx = re.compile(r"(?<![a-z0-9])" + escaped, re.I)
+            self.ere = "(^|[^[:alnum:]])" + escaped
+
+    def hit(self, token: str) -> bool:
+        if self.exact:
+            return token in (self.value, self.value + "s", self.value + "es")
+        return token.startswith(self.value)
+
+    def shown(self) -> str:
+        return self.value if self.exact else self.value + "*"
+
+
+def parse_member(member: str) -> Stem:
+    return Stem(member.rstrip("$").lower(), member.endswith("$"))
+
+
+def in_cluster(word: str, members: list[Stem]) -> bool:
+    for m in members:
+        if m.hit(word) or (not m.exact and len(word) >= 4 and m.value.startswith(word)):
+            return True
+    return False
+
+
+class Concept:
+    def __init__(self, words: list[str], cluster: list[Stem]):
+        self.words = words
+        self.literals = [Stem(w) for w in words]
+        typed = {s.value for s in self.literals}
+        self.synonyms = [s for s in cluster if s.value not in typed]
+        self.label = "+".join(words)
+        self.ere = "(" + "|".join("(" + s.ere + ")" for s in self.literals) + ")"
+
+
+class Query:
+    """The terms folded into concepts, and the matching of text against them."""
+
+    def __init__(self, raw_terms: list[str], extra_clusters: list[list[str]]):
+        words: list[str] = []
+        for raw in raw_terms:
+            for part in raw.split():
+                w = stem(part.strip("\"'.,;:()"))
+                if w and w not in STOP and w not in words:
+                    words.append(w)
+        self.words = words
+        clusters = [[parse_member(m) for m in c.split()] for c in CLUSTERS]
+        clusters += [[parse_member(m) for m in c] for c in extra_clusters if c]
+        grouped: dict[int, list[str]] = {}
+        order: list[int] = []  # a cluster index, or -1 - n for the nth word with no cluster
+        for w in words:
+            idx = next((i for i, c in enumerate(clusters) if in_cluster(w, c)), -1)
+            if idx < 0:
+                order.append(-1 - len(order))
+                grouped[order[-1]] = [w]
+            else:
+                if idx not in grouped:
+                    order.append(idx)
+                grouped.setdefault(idx, []).append(w)
+        self.concepts = [Concept(grouped[k], clusters[k] if k >= 0 else []) for k in order]
+        stems = {s.value for c in self.concepts for s in c.literals + c.synonyms}
+        self.any_rx = re.compile("|".join(re.escape(s) for s in sorted(stems, key=lambda s: (-len(s), s))))
+        self._cache: dict[tuple[str, bool], dict[int, int]] = {}
+
+    def hits(self, text: str, primary: bool) -> dict[int, int]:
+        """Concepts whose words appear as tokens of `text`. Strength 4 for a typed word and 3 for
+        a synonym when `text` is a name; 2 and 1 when it is body text."""
+        key = (text, primary)
+        found = self._cache.get(key)
+        if found is None:
+            found = {}
+            for tok in tokenize(text):
+                for i, c in enumerate(self.concepts):
+                    if any(s.hit(tok) for s in c.literals):
+                        strength = 4 if primary else 2
+                    elif any(s.hit(tok) for s in c.synonyms):
+                        strength = 3 if primary else 1
+                    else:
+                        continue
+                    if strength > found.get(i, 0):
+                        found[i] = strength
+            if len(self._cache) < 300000:
+                self._cache[key] = found
+        return dict(found)
+
+    def matched_tokens(self, text: str) -> set[str]:
+        """The words of `text` that any concept matches, by literal or synonym."""
+        return {t for t in tokenize(text) if any(s.hit(t) for c in self.concepts for s in c.literals + c.synonyms)}
+
+    def typed_in(self, text: str) -> dict[int, int]:
+        """Concepts whose typed words appear anywhere in `text`, even inside a longer word."""
+        return {i: 2 for i, c in enumerate(self.concepts) if any(s.rx.search(text) for s in c.literals)}
+
+    def describe(self) -> str:
+        parts = []
+        for c in self.concepts:
+            also = [s.shown() for s in c.synonyms]
+            parts.append(c.label + (" (also " + ", ".join(also[:7]) + (", ..." if len(also) > 7 else "") + ")"
+                                    if also else ""))
+        return " | ".join(parts)
+
+
+def merge(into: dict[int, int], more: dict[int, int]) -> dict[int, int]:
+    for k, v in more.items():
+        if v > into.get(k, 0):
+            into[k] = v
+    return into
+
+
+def score(strengths: dict[int, int], count: int = 1, bonus: float = 0.0) -> float:
+    return 60 * len(strengths) + 10 * sum(strengths.values()) + bonus + 3 * math.log2(1 + count)
+
+
+# ---------------------------------------------------------------------------------------------
+# configuration
+
+
+@dataclass
+class Config:
+    roots: list = field(default_factory=list)
+    repos: list = field(default_factory=list)
+    github: list = field(default_factory=list)
+    gh: str = ""
+    depth: int = 2
+    exclude: list = field(default_factory=list)
+    synonyms: list = field(default_factory=list)
+    tasks: list = field(default_factory=list)
+    notes: list = field(default_factory=list)
+
+
+def expand(path: str) -> str:
+    return os.path.expanduser(os.path.expandvars(path))
+
+
+def parse_config(text: str, warn) -> Config:
+    cfg = Config()
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            warn(f"config line {n}: expected `key = value`")
+            continue
+        left, value = (s.strip() for s in line.split("=", 1))
+        parts = left.split(None, 1)
+        key, label = parts[0].lower(), (parts[1].strip() if len(parts) > 1 else "")
+        if not value:
+            warn(f"config line {n}: `{key}` has no value")
+        elif key == "root":
+            cfg.roots.append(expand(value))
+        elif key == "repo":
+            cfg.repos.append(expand(value))
+        elif key == "github":
+            cfg.github.append(value)
+        elif key == "gh":
+            cfg.gh = value
+        elif key == "depth" and value.isdigit():
+            cfg.depth = int(value)
+        elif key == "exclude":
+            cfg.exclude.append(expand(value))
+        elif key == "synonyms":
+            cfg.synonyms.append([w.strip() for w in value.replace(",", " ").split() if w.strip()])
+        elif key == "tasks":
+            cfg.tasks.append((label or f"tasks{len(cfg.tasks) + 1}", value))
+        elif key == "notes":
+            cfg.notes.append((label or f"notes{len(cfg.notes) + 1}", expand(value)))
+        else:
+            warn(f"config line {n}: unknown key `{key}`")
+    return cfg
+
+
+# ---------------------------------------------------------------------------------------------
+# processes
+
+
+LIVE: set[int] = set()  # process groups of running children, killed on an interrupt
+
+
+def run(cmd, cwd=None, timeout=30, data=None) -> tuple[int, bytes, bytes]:
+    """Run a command in its own session, so nothing can prompt on the terminal, and kill the
+    whole group on a timeout."""
+    env = dict(os.environ)
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"})
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        )
+    except OSError as exc:
+        return 127, b"", str(exc).encode()
+    LIVE.add(proc.pid)
+    try:
+        out, err = proc.communicate(data, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.communicate()
+        return 124, b"", b"timed out"
+    finally:
+        LIVE.discard(proc.pid)
+    return proc.returncode, out, err
+
+
+def git(path: str, *args: str, timeout: float = 30) -> tuple[int, str]:
+    rc, out, err = run(["git", "-C", path, *args], timeout=timeout)
+    return rc, (out if rc == 0 else err).decode("utf-8", "replace").strip()
+
+
+# ---------------------------------------------------------------------------------------------
+# repositories
+
+
+@dataclass
+class Repo:
+    path: str
+    common: str = ""
+    origin: str = ""
+    slug: str = ""
+    ref: str = ""
+    local_only: bool = False
+    partial: bool = False
+
+    @property
+    def label(self) -> str:
+        return self.slug or os.path.basename(self.path.rstrip("/"))
+
+
+def discover(cfg: Config, roots: list[str], depth: int) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def add(path: str) -> None:
+        real = os.path.realpath(path)
+        if real not in seen and not any(fnmatch.fnmatch(real, pat) for pat in cfg.exclude):
+            seen.add(real)
+            found.append(path)
+
+    def walk(path: str, level: int, is_root: bool) -> None:
+        if os.path.exists(os.path.join(path, ".git")):
+            add(path)
+            if not is_root:
+                return
+        if level >= depth:
+            return
+        try:
+            entries = sorted(os.scandir(path), key=lambda e: e.name)
+        except OSError:
+            return
+        for entry in entries:
+            if entry.name.startswith((".", "_")) or entry.name in SKIP_DIRS:
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    walk(entry.path, level + 1, False)
+            except OSError:
+                continue
+
+    for root in roots:
+        if os.path.isdir(root):
+            walk(root.rstrip("/") or "/", 0, True)
+    return found
+
+
+def pick_ref(refs: dict[str, str]) -> tuple[str, bool]:
+    """The default branch: origin/HEAD, else a conventional name under origin, else a local
+    branch (marked local-only)."""
+    head = refs.get("refs/remotes/origin/HEAD", "")
+    if head.startswith("refs/remotes/") and head in refs:
+        return head[len("refs/remotes/"):], False
+    for name in LOCAL_BRANCHES:
+        if f"refs/remotes/origin/{name}" in refs:
+            return f"origin/{name}", False
+    for name in LOCAL_BRANCHES:
+        if f"refs/heads/{name}" in refs:
+            return name, True
+    return "", True
+
+
+def read_refs(path: str) -> dict[str, str]:
+    """Every origin and local branch ref, with the target of a symbolic one (origin/HEAD)."""
+    rc, out = git(path, "for-each-ref", "--format=%(refname) %(symref)", "refs/remotes/origin", "refs/heads")
+    refs: dict[str, str] = {}
+    for line in out.splitlines() if rc == 0 else []:
+        name, _, target = line.partition(" ")
+        refs[name] = target
+    return refs
+
+
+def identify(path: str) -> Repo | None:
+    rc, common = git(path, "rev-parse", "--git-common-dir")
+    if rc != 0:
+        return None
+    repo = Repo(path=path, common=os.path.realpath(os.path.join(path, common)))
+    rc, cfg = git(path, "config", "--get-regexp", r"^remote\.origin\.(url|promisor)$")
+    for line in cfg.splitlines() if rc == 0 else []:
+        key, _, value = line.partition(" ")
+        if key.endswith(".url"):
+            repo.origin = value.strip()
+        elif key.endswith(".promisor"):
+            repo.partial = value.strip().lower() == "true"
+    m = GITHUB_SLUG.search(repo.origin)
+    repo.slug = f"{m.group(1)}/{m.group(2)}" if m else ""
+    repo.ref, repo.local_only = pick_ref(read_refs(path))
+    if not repo.origin:
+        repo.local_only = True
+    return repo
+
+
+def prefer(a: Repo, b: Repo) -> Repo:
+    """Of two clones of one repository, the one that reads fastest and fullest."""
+    return min((a, b), key=lambda r: (r.partial, r.local_only, not r.ref, r.path))
+
+
+@dataclass
+class Group:
+    anchor: str
+    anchor_strengths: dict
+    count: int = 0
+    best: dict = field(default_factory=dict)
+    best_score: float = -1
+    files: list = field(default_factory=list)
+
+
+@dataclass
+class Hit:
+    kind: str
+    loc: str
+    score: float
+    head: str
+    lines: list = field(default_factory=list)
+    repo: str = ""
+
+
+@dataclass
+class Workflow:
+    path: str
+    name: str
+    strengths: dict  # by concept; 3 or 4 when the file name or workflow name matched, 2 or less in its text
+    state: str = ""
+    wid: int = 0
+    run: str = ""
+
+    @property
+    def score(self) -> float:
+        named = any(v >= 3 for v in self.strengths.values())
+        return score(self.strengths, bonus=10 if named else -30)
+
+
+@dataclass
+class RepoResult:
+    repo: Repo
+    fetch: str = ""
+    note: str = ""
+    files: int = 0
+    groups: list = field(default_factory=list)
+    scripts: list = field(default_factory=list)
+    workflows: list = field(default_factory=list)
+    content: dict = field(default_factory=dict)
+    content_unread: str = ""
+    skipped: list = field(default_factory=list)
+
+
+def path_groups(paths: list[str], q: Query, skip_workflows: bool) -> list[Group]:
+    groups: dict[str, Group] = {}
+    for p in paths:
+        if not q.any_rx.search(p.lower()):
+            continue
+        if skip_workflows and WORKFLOW_RX.match(p):
+            continue
+        comps = p.split("/")
+        if any(c in SKIP_DIRS for c in comps[:-1]):
+            continue
+        strengths: dict[int, int] = {}
+        deepest, name_hits = -1, 0
+        for i, comp in enumerate(comps):
+            found = q.hits(comp, True)
+            if not found:
+                continue
+            merge(strengths, found)
+            if i < len(comps) - 1:
+                deepest = i
+            else:
+                name_hits = len(found)
+        if not strengths:
+            continue
+        anchor = "/".join(comps[: deepest + 1]) if deepest >= 0 else "/".join(comps[:-1])
+        g = groups.get(anchor)
+        if g is None:
+            anchor_strengths: dict[int, int] = {}
+            for comp in anchor.split("/") if anchor else []:
+                merge(anchor_strengths, q.hits(comp, True))
+            g = groups[anchor] = Group(anchor, anchor_strengths)
+        g.count += 1
+        s = score(strengths)
+        if s > g.best_score:
+            g.best, g.best_score = strengths, s
+        g.files.append((-name_hits, len(comps), p))
+    return list(groups.values())
+
+
+def cat_files(path: str, ref: str, names: list[str], cap: int = 200000) -> dict[str, str]:
+    names = [n for n in names if "\n" not in n]
+    if not names:
+        return {}
+    payload = "".join(f"{ref}:{n}\n" for n in names).encode()
+    rc, out, _ = run(["git", "-C", path, "cat-file", "--batch"], data=payload, timeout=60)
+    if rc != 0:
+        return {}
+    result: dict[str, str] = {}
+    pos = 0
+    for n in names:
+        nl = out.find(b"\n", pos)
+        if nl < 0:
+            break
+        head = out[pos:nl].split()
+        if len(head) == 3 and head[1] == b"blob":
+            size = int(head[2])
+            result[n] = out[nl + 1: nl + 1 + min(size, cap)].decode("utf-8", "replace")
+            pos = nl + 1 + size + 1
+        else:
+            pos = nl + 1
+    return result
+
+
+def script_hits(label: str, files: dict[str, str], q: Query) -> list[Hit]:
+    hits = []
+    for name, text in files.items():
+        try:
+            scripts = json.loads(text).get("scripts") or {}
+        except (ValueError, AttributeError):
+            continue
+        if not isinstance(scripts, dict):
+            continue
+        for key, command in scripts.items():
+            if not isinstance(command, str):
+                continue
+            strengths = merge(q.hits(key, True), q.hits(command, False))
+            if strengths:
+                hits.append(Hit("script", f"{label}:{name}", score(strengths),
+                                f"scripts.{clean(key)} = {trunc(command, 90)}", repo=label))
+    return hits
+
+
+def workflow_candidates(files: dict[str, str], q: Query) -> list[Workflow]:
+    found = []
+    for path, text in files.items():
+        m = re.search(r"^name:\s*(.+?)\s*$", text, re.M)
+        name = m.group(1).strip("\"'") if m else ""
+        strengths = merge(q.hits(path.rsplit("/", 1)[-1] + " " + name, True), q.typed_in(text))
+        if strengths:
+            found.append(Workflow(path, clean(name), strengths))
+    return found
+
+
+def content_grep(path: str, ref: str, q: Query, timeout: float) -> dict[str, int] | None:
+    """Files holding a word of every concept (`git grep -c --all-match`, one -e per concept),
+    with the number of matching lines. None when the grep did not finish."""
+    cmd = ["git", "-C", path, "grep", "--threads=2", "-c", "-z", "-i", "-I", "-E"]
+    if len(q.concepts) > 1:
+        cmd.append("--all-match")
+    for c in q.concepts:
+        cmd += ["-e", c.ere]
+    cmd += [ref, "--", "."] + [f":(exclude){pat}" for pat in GREP_EXCLUDES]
+    rc, out, _ = run(cmd, timeout=timeout)
+    if rc not in (0, 1):
+        return None
+    prefix = f"{ref}:".encode()
+    found: dict[str, int] = {}
+    for line in out.split(b"\n"):
+        name, sep, count = line.rpartition(b"\0")
+        if sep and name.startswith(prefix) and count.isdigit():
+            found[name[len(prefix):].decode("utf-8", "replace")] = int(count)
+    return found
+
+
+def fetch_repo(repo: Repo, res: RepoResult, ttl: float, cache_dir: str, enabled: bool) -> None:
+    if repo.local_only:
+        res.fetch = "local branch, no origin"
+        return
+    if not enabled:
+        res.fetch = "not refreshed"
+        return
+    marker = os.path.join(cache_dir, "fetched", hashlib.sha1(repo.common.encode()).hexdigest())
+    try:
+        if repo.ref and time.time() - os.path.getmtime(marker) < ttl:
+            res.fetch = "fetched recently"
+            return
+    except OSError:
+        pass
+    cmd = ["fetch", "-q", "--no-tags", "origin"]
+    if repo.ref:
+        branch = repo.ref.split("/", 1)[1]
+        cmd.append(f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+    rc, msg = git(repo.path, *cmd, timeout=45)
+    if rc != 0:
+        res.fetch = "fetch failed"
+        res.note = trunc(msg.splitlines()[-1] if msg else "unknown error", 70)
+        return
+    res.fetch = "fetched"
+    try:
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w"):
+            pass
+    except OSError:
+        pass
+    if not repo.ref:
+        repo.ref, _ = pick_ref(read_refs(repo.path))
+
+
+def sweep_repo(repo: Repo, q: Query, args, sweeps: set[str], ttl: float, cache_dir: str) -> RepoResult:
+    res = RepoResult(repo)
+    fetch_repo(repo, res, ttl, cache_dir, not (args.offline or args.no_fetch))
+    if not repo.ref:
+        res.skipped.append("no default branch")
+        return res
+    rc, out, _ = run(["git", "-C", repo.path, "ls-tree", "-r", "-z", "--name-only", repo.ref], timeout=60)
+    if rc != 0:
+        res.skipped.append("ls-tree failed")
+        return res
+    tree = [p for p in out.decode("utf-8", "replace").split("\0") if p]
+    res.files = len(tree)
+    if "paths" in sweeps:
+        res.groups = path_groups(tree, q, "workflows" in sweeps)
+    if repo.partial:
+        # A blob read in a partial clone is a network fetch per file; names alone are searched.
+        res.skipped.append("partial clone: package.json, workflow text and content not read")
+        if "workflows" in sweeps:
+            for p in tree:
+                if WORKFLOW_RX.match(p):
+                    s = q.hits(p.rsplit("/", 1)[-1], True)
+                    if s:
+                        res.workflows.append(Workflow(p, "", s))
+        return res
+    want_scripts = "scripts" in sweeps
+    want_flows = "workflows" in sweeps
+    names = []
+    if want_scripts:
+        names += [p for p in tree if (p == "package.json" or p.endswith("/package.json")) and "node_modules/" not in p][:300]
+    if want_flows:
+        names += [p for p in tree if WORKFLOW_RX.match(p)]
+    texts = cat_files(repo.path, repo.ref, names)
+    if want_scripts:
+        res.scripts = script_hits(repo.label, {n: t for n, t in texts.items() if n.endswith("package.json")}, q)
+    if want_flows:
+        res.workflows = workflow_candidates({n: t for n, t in texts.items() if WORKFLOW_RX.match(n)}, q)
+    return res
+
+
+# ---------------------------------------------------------------------------------------------
+# GitHub
+
+
+class GH:
+    def __init__(self, cmd: list[str], cache_dir: str, ttl: float, budget: int, refresh: bool):
+        self.cmd, self.ttl, self.budget, self.refresh = cmd, ttl, budget, refresh
+        self.dir = os.path.join(cache_dir, "gh")
+        self.calls = 0
+        self.cached = 0
+        self.stopped = ""
+
+    def api(self, path: str):
+        """One API read, answered from the cache when it is younger than the TTL."""
+        if self.stopped:
+            return None, self.stopped
+        key = hashlib.sha1("\0".join([*self.cmd, path]).encode()).hexdigest()
+        cache = os.path.join(self.dir, key + ".json")
+        try:
+            if not self.refresh and time.time() - os.path.getmtime(cache) < self.ttl:
+                with open(cache, encoding="utf-8") as f:
+                    data = json.load(f)
+                self.cached += 1
+                return data, ""
+        except (OSError, ValueError):
+            pass
+        if self.calls >= self.budget:
+            self.stopped = f"call budget of {self.budget} used (HAVE_GH_BUDGET)"
+            return None, self.stopped
+        self.calls += 1
+        rc, out, err = run([*self.cmd, "api", path], timeout=60)
+        if rc != 0:
+            msg = trunc((err or out).decode("utf-8", "replace") or "failed", 110)
+            if re.search(r"rate limit|refus|quota|abuse|secondary", msg, re.I):
+                self.stopped = msg
+            return None, msg
+        try:
+            data = json.loads(out)
+        except ValueError:
+            return None, "unreadable answer"
+        try:
+            os.makedirs(self.dir, mode=0o700, exist_ok=True)
+            tmp = f"{cache}.{os.getpid()}"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, cache)
+        except OSError:
+            pass
+        return data, ""
+
+
+def list_workflows(gh: GH, slug: str, wanted: set[str] | None, max_pages: int = 5):
+    """The repository's workflows, one call per 100. With `wanted` (workflow paths already known
+    from the tree) it stops at the page that holds the last of them, so most repositories cost
+    one call. Returns (path -> workflow, note)."""
+    found: dict[str, dict] = {}
+    note, page, total = "", 1, None
+    while page <= max_pages and (total is None or len(found) < total):
+        data, err = gh.api(f"repos/{slug}/actions/workflows?per_page=100&page={page}")
+        if data is None:
+            return found, err
+        total = data.get("total_count", 0)
+        for w in data.get("workflows", []):
+            found[w.get("path", "")] = w
+        page += 1
+        if wanted is not None and wanted <= set(found):
+            break
+    if wanted is not None and not wanted <= set(found):
+        note = f"{len(found)} of {total} workflows listed" if total else "listing unavailable"
+    elif wanted is None and total is not None and len(found) < total:
+        note = f"{len(found)} of {total} workflows listed"
+    return found, note
+
+
+def last_run(gh: GH, slug: str, wid: int) -> str:
+    data, err = gh.api(f"repos/{slug}/actions/workflows/{wid}/runs?per_page=1")
+    if data is None:
+        return f"last run unread ({err})"
+    runs = data.get("workflow_runs") or []
+    if not runs:
+        return "never run"
+    r = runs[0]
+    return f"last run {r.get('conclusion') or r.get('status') or '?'} {str(r.get('created_at') or '')[:10]}"
+
+
+def github_phase(gh: GH | None, results: list[RepoResult], remote: list[str], q: Query, sweeps: set[str],
+                 top: int) -> tuple[list[RepoResult], list[str]]:
+    """Read the repositories that have no checkout here, then attach each shown workflow's state
+    and latest run. Only the best `top` workflows cost run calls."""
+    notes: list[str] = []
+    extra: list[RepoResult] = []
+    have = {r.repo.slug for r in results if r.repo.slug}
+    wf_on = "workflows" in sweeps
+    for slug in remote:
+        if slug in have:
+            continue
+        res = RepoResult(Repo(path="", slug=slug), fetch="api only")
+        extra.append(res)
+        if gh is None:
+            res.skipped.append("offline: not read")
+            continue
+        data, err = gh.api(f"repos/{slug}/git/trees/HEAD?recursive=1")
+        if data is None:
+            res.skipped.append(f"tree not read ({err})")
+            continue
+        tree = [e["path"] for e in data.get("tree", []) if e.get("type") == "blob"]
+        res.files = len(tree)
+        if data.get("truncated"):
+            res.skipped.append("tree truncated by GitHub")
+        if "paths" in sweeps:
+            res.groups = path_groups(tree, q, wf_on)
+        if wf_on:
+            listed, note = list_workflows(gh, slug, None)
+            if note:
+                notes.append(f"{slug}: {note}")
+            for path, w in listed.items():
+                s = q.hits(os.path.basename(path) + " " + w.get("name", ""), True)
+                if s:
+                    res.workflows.append(Workflow(path, clean(w.get("name", "")), s, w.get("state", "?"), w.get("id", 0)))
+    if not wf_on:
+        return extra, notes
+    everyone = results + extra
+    ranked = sorted(((w.score, r.repo.label, w.path, r, w) for r in everyone for w in r.workflows),
+                    key=lambda t: (-t[0], t[1], t[2]))[:top]
+    if gh is None:
+        notes.append("workflow state and runs not read (offline)")
+        for *_, w in ranked:
+            w.state = w.state or "state unread"
+        return extra, notes
+    by_repo: dict[str, list] = {}
+    for item in ranked:
+        by_repo.setdefault(item[3].repo.slug or item[3].repo.label, []).append(item)
+    for slug, items in by_repo.items():
+        res = items[0][3]
+        need = {w.path for *_, w in items if not w.state}
+        if need and res.repo.slug:
+            listed, note = list_workflows(gh, res.repo.slug, need)
+            if note:
+                notes.append(f"{res.repo.slug}: {note}")
+            for *_, w in items:
+                api = listed.get(w.path)
+                if api and not w.state:
+                    w.state, w.wid = api.get("state", "?"), api.get("id", 0)
+                    if not w.name:
+                        w.name = clean(api.get("name", ""))
+                elif not w.state:
+                    w.state = "state unread"
+    for *_, r, w in ranked:
+        if w.wid and r.repo.slug:
+            w.run = last_run(gh, r.repo.slug, w.wid)
+        elif not w.state:
+            w.state = "state unread"
+    if gh.stopped:
+        notes.append(f"GitHub reads stopped: {gh.stopped}")
+    return extra, notes
+
+
+# ---------------------------------------------------------------------------------------------
+# boards
+
+
+def json_records(data) -> list[dict] | None:
+    if isinstance(data, dict):
+        data = next((v for v in data.values() if isinstance(v, list)), None)
+    if isinstance(data, list) and data and all(isinstance(x, dict) for x in data):
+        return data
+    return None
+
+
+def pick(rec: dict, names) -> str:
+    for n in names:
+        v = rec.get(n)
+        if v not in (None, "") and not isinstance(v, (dict, list)):
+            return str(v)
+    return ""
+
+
+def flatten(value) -> str:
+    if isinstance(value, dict):
+        return " ".join(flatten(v) for v in value.values())
+    if isinstance(value, list):
+        return " ".join(flatten(v) for v in value)
+    return "" if value is None or isinstance(value, (bool, int, float)) else str(value)
+
+
+def task_records(label: str, command: str, q: Query, notes: list[str]) -> list[Hit]:
+    rc, out, err = run(["sh", "-c", command], timeout=60)
+    if rc != 0:
+        notes.append(f"tasks {label}: `{trunc(command, 40)}` failed ({trunc(err.decode('utf-8', 'replace'), 60)})")
+        return []
+    text = out.decode("utf-8", "replace")
+    records: list[tuple[str, str, str]] = []  # id, head, body
+    try:
+        listing = json_records(json.loads(text))
+    except ValueError:
+        listing = None
+    if listing is not None:
+        for rec in listing:
+            ident = pick(rec, ID_FIELDS)
+            title = pick(rec, TITLE_FIELDS) or "(no title)"
+            state = pick(rec, ("state", "status"))
+            ident = f"#{ident}" if ident.isdigit() else ident or "?"
+            body = " ".join(flatten(v) for k, v in rec.items() if k not in ("title", "display_title", "name"))
+            records.append((ident, f"[{state}] {title}" if state else title, body))
+    else:
+        lines = [l for l in text.splitlines() if l.strip()]
+        indent_of = lambda l: len(l) - len(l.lstrip())
+        heads = [indent_of(l) for l in lines if TASK_HEAD.match(l)]
+        if heads:  # a task starts at a line that begins with an id, at the usual indent for those
+            usual = max(set(heads), key=heads.count)
+            starts = lambda l: bool(TASK_HEAD.match(l)) and indent_of(l) == usual
+        else:  # no ids: every line at the least indent starts a task
+            least = min((indent_of(l) for l in lines), default=0)
+            starts = lambda l: indent_of(l) <= least
+        for n, l in enumerate(lines, 1):
+            if starts(l):
+                m = TASK_HEAD.match(l)
+                records.append((m.group(1) if m else f"line {n}", l.strip(), ""))
+            elif records:
+                ident, head, body = records[-1]
+                records[-1] = (ident, head, body + "\n" + l)
+    if not records:
+        notes.append(f"tasks {label}: no tasks in the output")
+        return []
+    hits = []
+    for ident, head, body in records:
+        shown = re.sub(r"^\W*" + re.escape(ident) + r"\s*", "", head) if ident and ident in head else head
+        strengths = merge(q.hits(shown, True), merge(q.typed_in(body), {k: min(v, 2) for k, v in q.hits(body, False).items()}))
+        if strengths:
+            hits.append(Hit("task", f"tasks:{label} {ident}", score(strengths, bonus=10), trunc(shown, 120)))
+    return hits
+
+
+def note_hits(label: str, root: str, q: Query, notes: list[str]) -> list[Hit]:
+    if not os.path.isdir(root):
+        notes.append(f"notes {label}: {root} is not a directory")
+        return []
+    hits, scanned = [], 0
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in SKIP_DIRS)
+        for name in sorted(files):
+            if not name.lower().endswith(TEXT_EXTENSIONS):
+                continue
+            scanned += 1
+            if scanned > 5000:
+                break
+            full = os.path.join(base, name)
+            rel = os.path.relpath(full, root)
+            try:
+                if os.path.getsize(full) > 1 << 20:
+                    continue
+                with open(full, encoding="utf-8", errors="replace") as f:
+                    lines = f.read().splitlines()
+            except OSError:
+                continue
+            strengths = q.hits(rel, True)
+            best_line, best_n = 0, 0
+            for ln, text in enumerate(lines[:5000], 1):
+                found = q.typed_in(text)
+                merge(strengths, found)
+                if len(found) > best_n:
+                    best_line, best_n = ln, len(found)
+            if strengths:
+                shown = lines[best_line - 1] if best_line else (lines[0] if lines else "")
+                hits.append(Hit("note", f"notes:{label}:{rel}:{best_line or 1}", score(strengths), trunc(shown, 120)))
+    return hits
+
+
+# ---------------------------------------------------------------------------------------------
+# report
+
+
+def samples_for(g: Group, q: Query, count: int = 8) -> list[str]:
+    """Files that, together, show the most different matched words: a directory of 243 files
+    reads better as `perf-gate.ts, speed-board.ts, ratchet.json` than as five `sandbox-*` names."""
+    prefix = (g.anchor + "/") if g.anchor else ""
+    anchor_words = q.matched_tokens(g.anchor)
+    ranked = sorted(g.files)
+    chosen, covered = [], set(anchor_words)
+    for _ in range(count):
+        best, gain = None, 0
+        for item in ranked:
+            if item[2] in chosen:
+                continue
+            new = len(q.matched_tokens(item[2].rsplit("/", 1)[-1]) - covered)
+            if new > gain:
+                best, gain = item[2], new
+                if gain >= 2:
+                    break
+        if best is None:
+            break
+        chosen.append(best)
+        covered |= q.matched_tokens(best.rsplit("/", 1)[-1])
+    for item in ranked:  # fill with the files named for the most concepts
+        if len(chosen) >= count:
+            break
+        if item[2] not in chosen:
+            chosen.append(item[2])
+    names = [p.rsplit("/", 1)[-1] for p in chosen]
+    return [n if names.count(n) == 1 else (p[len(prefix):] if p.startswith(prefix) else p)
+            for n, p in zip(names, chosen)]
+
+
+def group_hit(res: RepoResult, g: Group, q: Query) -> Hit:
+    label = res.repo.label
+    where = (g.anchor + "/") if g.anchor else "(repo root)"
+    total = score(g.best) + 60 * len(g.anchor_strengths) + 3 * math.log2(1 + g.count)
+    noun = "file" if g.count == 1 else "files"
+    samples = samples_for(g, q)
+    more = [f"also {trunc(', '.join(samples[3:]), 150)}"] if len(samples) > 3 else []
+    return Hit("path", f"{label}:{where}", total, trunc(f"{g.count} {noun}; e.g. {', '.join(samples[:3])}", 120),
+               lines=more, repo=label)
+
+
+def workflow_hit(label: str, w: Workflow) -> Hit:
+    state = w.state or "state not read"
+    head = state + (f"; {w.run}" if w.run else "")
+    return Hit("workflow", f"{label}:{w.path}", w.score, head, lines=[f"name: {w.name}"] if w.name else [], repo=label)
+
+
+def spread(hits: list[Hit], per_parent: int = 2) -> tuple[list[Hit], str]:
+    """Keep the best `per_parent` directories under one parent, so a folder of 40 run
+    directories does not fill the list. Returns the kept hits and a note on what was folded."""
+    kept, seen, folded = [], {}, 0
+    for h in hits:
+        where = h.loc.split(":", 1)[1].rstrip("/")
+        if "/" not in where:  # top-level directories are not siblings of one kind
+            kept.append(h)
+            continue
+        key = (h.repo, where.rsplit("/", 1)[0])
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] <= per_parent:
+            kept.append(h)
+        else:
+            folded += 1
+    return kept, (f"; {folded} sibling directories folded" if folded else "")
+
+
+def build_report(q: Query, results: list[RepoResult], boards: list[Hit], notes: list[str], searched: list[str],
+                 limit: int) -> tuple[list[str], int]:
+    path_hits, script_list, wf_hits = [], [], []
+    for res in results:
+        label = res.repo.label
+        path_hits += [group_hit(res, g, q) for g in res.groups]
+        script_list += res.scripts
+        wf_hits += [workflow_hit(label, w) for w in res.workflows]
+    path_hits.sort(key=lambda h: (-h.score, h.loc))
+    wf_hits.sort(key=lambda h: (-h.score, h.loc))
+    script_list.sort(key=lambda h: (-h.score, h.loc, h.head))
+    path_hits, path_siblings = spread(path_hits)
+    shown_dirs = {(h.repo, h.loc.split(":", 1)[1].rstrip("/")) for h in path_hits[:limit]}
+    shown_wf = {h.loc for h in wf_hits[:limit]}
+    content = []
+    for res in results:
+        label = res.repo.label
+        for p, lines in res.content.items():
+            if f"{label}:{p}" in shown_wf:
+                continue
+            if any(r == label and a and p.startswith(a + "/") for r, a in shown_dirs):
+                continue
+            content.append((score(q.hits(p, True), lines), lines, label, p))
+    content.sort(key=lambda t: (-t[0], t[2], t[3]))
+    content_hits = [Hit("content", f"{l}:{p}", sc, f"{n} matching lines", repo=l) for sc, n, l, p in content[:20]]
+    tasks = sorted((h for h in boards if h.kind == "task"), key=lambda h: (-h.score, h.loc))
+    notes_list = sorted((h for h in boards if h.kind == "note"), key=lambda h: (-h.score, h.loc))
+
+    out = [f"have: {' '.join(q.words)}", f"concepts: {q.describe()}", *searched, ""]
+    total = len(path_hits) + len(wf_hits) + len(script_list) + len(content_hits) + len(tasks) + len(notes_list)
+    if not total:
+        out += ["NO HITS. This holds only for what the `searched` lines list; it is not proof of absence elsewhere.", ""]
+        return out + [f"note: {n}" for n in notes], 0
+
+    other = len(path_hits) + len(wf_hits) + len(tasks) + len(script_list)
+    quotas = ((path_hits, 3), (wf_hits, 3), (tasks, 3), (script_list, 1), (notes_list, 1),
+              (content_hits, 0 if other >= 4 else 2))  # one block per kind, each best first
+    first = [h for hits, n in quotas for h in hits[:n]]
+    out.append("WHERE TO LOOK FIRST")
+    for i, h in enumerate(first, 1):
+        out.append(f"{i:>3}  {h.kind:<8} {h.loc}   {h.head}")
+
+    def section(title: str, hits: list[Hit], extra: str = "") -> None:
+        if not hits:
+            return
+        out.extend(["", f"{title} ({len(hits)}{'; ' + extra if extra else ''})"])
+        for h in hits[:limit]:
+            out.append(f"  {h.loc}   {h.head}")
+            out.extend(f"      {line}" for line in h.lines)
+        if len(hits) > limit:
+            out.append(f"  ... {len(hits) - limit} more (--limit {len(hits)})")
+
+    section("PATHS", path_hits, "directories on each default branch, with file counts" + path_siblings)
+    section("WORKFLOWS", wf_hits, "state and latest run from the GitHub API; the top ones are read")
+    section("SCRIPTS", script_list, "package.json")
+    section("CONTENT", content_hits, "files with a typed word of every concept, by matching lines")
+    section("TASKS", tasks)
+    section("NOTES", notes_list)
+    return out + ["", *[f"note: {n}" for n in notes]], total
+
+
+def collapse(notes: list[str]) -> list[str]:
+    """One line for each kind of repeated note."""
+    kinds = {"local branch": [], "fetch failed": [], "no default": []}
+    rest = []
+    for n in notes:
+        for key in kinds:
+            if f": {key}" in n:
+                kinds[key].append(n.split(":", 1)[0])
+                break
+        else:
+            rest.append(n)
+    out = rest
+    for key, names in kinds.items():
+        if names:
+            more = f" and {len(names) - 5} more" if len(names) > 5 else ""
+            out.append(f"{len(names)} checkouts: {key}: {', '.join(names[:5])}{more}")
+    return out
+
+
+# ---------------------------------------------------------------------------------------------
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="have", add_help=False, usage="have [options] TERMS...")
+    parser.add_argument("terms", nargs="*")
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("--config")
+    parser.add_argument("--root", action="append", default=[])
+    parser.add_argument("--in", dest="within", action="append", default=[])
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--no-fetch", action="store_true")
+    parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--only")
+    parser.add_argument("--skip")
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--jobs", type=int, default=int(os.environ.get("HAVE_JOBS") or 6))
+    parser.add_argument("--timeout", type=float, default=240)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 2
+    if args.help:
+        print(__doc__.strip())
+        return 0
+
+    def warn(msg: str) -> None:
+        print(f"have: {msg}", file=sys.stderr)
+
+    sweeps = set(SWEEPS)
+    for flag, only in ((args.only, True), (args.skip, False)):
+        if flag:
+            names = {n.strip() for n in flag.split(",") if n.strip()}
+            if names - set(SWEEPS):
+                warn(f"unknown sweep {', '.join(sorted(names - set(SWEEPS)))}; choose from {', '.join(SWEEPS)}")
+                return 2
+            sweeps = names if only else sweeps - names
+
+    explicit = args.config or os.environ.get("HAVE_CONFIG")
+    config_path = explicit or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                                           "have", "config")
+    cfg = Config()
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            cfg = parse_config(f.read(), warn)
+    except FileNotFoundError:
+        if explicit:
+            warn(f"config {config_path} not found")
+            return 2
+    except OSError as exc:
+        warn(f"config {config_path}: {exc}")
+        return 2
+    q = Query(args.terms, cfg.synonyms)
+    if not q.concepts:
+        warn("usage: have [options] TERMS...   (have --help)")
+        return 2
+
+    cache_dir = os.environ.get("HAVE_CACHE_DIR") or os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "have")
+    ttl = float(os.environ.get("HAVE_FETCH_TTL") or 600)
+    roots = cfg.roots + [expand(r) for r in args.root]
+    candidates = list(cfg.repos)
+    notes: list[str] = []
+    searched: list[str] = []
+    if not (roots or candidates or cfg.github):
+        rc, top = git(os.getcwd(), "rev-parse", "--show-toplevel")
+        if rc == 0:
+            candidates.append(top)
+        notes.append(f"no config at {config_path}; searched {top if rc == 0 else 'no repository'} only "
+                     "(see `have --help` for the config format)")
+
+    results: list[RepoResult] = []
+    stragglers = False
+    if sweeps & {"paths", "scripts", "workflows", "content"}:
+        started = time.time()
+        paths = candidates + discover(cfg, roots, cfg.depth)
+        pool = cf.ThreadPoolExecutor(max_workers=max(1, args.jobs))
+        chosen: dict[str, Repo] = {}
+        for repo in pool.map(identify, paths):
+            if repo is None:
+                continue
+            key = repo.slug or repo.common  # clones of one repository count once
+            chosen[key] = prefer(chosen[key], repo) if key in chosen else repo
+        repos = [r for r in chosen.values()
+                 if not args.within or any(w.lower() in f"{r.label} {r.path}".lower() for w in args.within)]
+        if sys.stderr.isatty():
+            warn(f"reading {len(repos)} repositories...")
+        futures = {pool.submit(sweep_repo, r, q, args, sweeps, ttl, cache_dir): r for r in repos}
+        done, pending = cf.wait(futures, timeout=args.timeout)
+        for fut in pending:
+            fut.cancel()
+            notes.append(f"{futures[fut].label}: not finished in {args.timeout:g}s, not searched")
+        for fut in done:
+            try:
+                results.append(fut.result())
+            except Exception as exc:  # one repository must not hide the rest
+                notes.append(f"{futures[fut].label}: {trunc(str(exc), 80)}")
+        if "content" in sweeps:  # the slow sweep runs last, in what is left of the time
+            grep_timeout = float(os.environ.get("HAVE_GREP_TIMEOUT") or 25)
+            readable = [r for r in results if r.repo.ref and not r.repo.partial]
+            grep = {pool.submit(content_grep, r.repo.path, r.repo.ref, q, grep_timeout): r for r in readable}
+            finished, late = cf.wait(grep, timeout=max(1.0, args.timeout - (time.time() - started)))
+            for fut in finished:
+                grep[fut].content = fut.result() or {}
+                if fut.result() is None:
+                    grep[fut].content_unread = f"not finished in {grep_timeout:g}s"
+            for fut in late:
+                fut.cancel()
+                grep[fut].content_unread = "not started"
+            pending = pending | late
+        pool.shutdown(wait=not pending, cancel_futures=True)
+        stragglers = bool(pending)
+        results.sort(key=lambda r: r.repo.label)
+
+    gh_cmd = (os.environ.get("GH") or cfg.gh or "gh").split()
+    gh = None
+    if not args.offline and sweeps & {"workflows", "paths"}:
+        gh = GH(gh_cmd, cache_dir, float(os.environ.get("HAVE_GH_TTL") or 900),
+                int(os.environ.get("HAVE_GH_BUDGET") or 60), args.refresh)
+    extra, gh_notes = github_phase(gh, results, cfg.github if sweeps & {"workflows", "paths"} else [], q, sweeps,
+                                   max(1, args.limit))
+    notes += gh_notes
+    results += extra
+
+    boards: list[Hit] = []
+    board_names: list[str] = []
+    if "boards" in sweeps:
+        for label, command in cfg.tasks:
+            boards += task_records(label, command, q, notes)
+            board_names.append(f"tasks:{label}")
+        for label, root in cfg.notes:
+            boards += note_hits(label, root, q, notes)
+            board_names.append(f"notes:{label}")
+
+    if results:
+        states: dict[str, int] = {}
+        for res in results:
+            states[res.fetch or "?"] = states.get(res.fetch or "?", 0) + 1
+            if res.fetch == "fetch failed":
+                notes.append(f"{res.repo.label}: fetch failed ({res.note}); read at the last fetched state")
+            elif res.fetch.startswith("local branch"):
+                notes.append(f"{res.repo.label}: local branch, no origin")
+            for why in res.skipped:
+                notes.append(f"{res.repo.label}: {why}")
+            if res.content_unread:
+                notes.append(f"{res.repo.label}: content grep {res.content_unread}")
+        detail = ", ".join(f"{n} {s}" for s, n in sorted(states.items()))
+        searched.append(f"searched: {len(results)} repositories at their default branch ({detail}); "
+                        f"{sum(r.files for r in results)} tracked files")
+    if gh is not None:
+        searched.append(f"github: {gh.calls} API calls, {gh.cached} answered from cache ({' '.join(gh_cmd)})")
+    elif "workflows" in sweeps:
+        searched.append("github: not read (offline)")
+    if board_names:
+        searched.append("boards: " + ", ".join(board_names))
+
+    lines, total = build_report(q, results, boards, collapse(notes), searched, max(1, args.limit))
+    code = 0 if total else 1
+    try:
+        print("\n".join(lines))
+        sys.stdout.flush()
+    except BrokenPipeError:
+        code = 0
+    if stragglers:  # threads still waiting on a slow repository must not hold the exit
+        os._exit(code)
+    return code
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        for pid in list(LIVE):
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        os._exit(130)

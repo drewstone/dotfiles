@@ -40,7 +40,6 @@ Use the research tools available within scope; this skill does not implicitly re
 Read the relevant primary source, including the method or implementation supporting its conclusion; a summary or abstract alone may not establish the part being considered.
 Record the claim, actual evidence, mechanism, assumptions, and limitations, distinguishing causal evidence from a plausible mechanism and an observed correlation.
 Inspect the current system by behavior across relevant knowledge records, exports, implementations, and callers, and record the searched surfaces.
-If source locations disagree, resolve the implementation the current project uses before claiming a capability is absent.
 Do not adopt an idea because its terminology sounds new, or reject it solely because our implementation has a different name.
 
 Compare the external approach with what the system does now under the relevant scale, data, resources, operating conditions, and required behavior.
@@ -82,10 +81,19 @@ A temporary regression is neither required nor evidence of architectural progres
 A single supported candidate, or no justified change, is a valid result.
 This skill selects experiments; subsequent execution follows the completed analysis and the task's existing authority.
 
+## Climb
+
+Before ranking candidates, run the red-team, bigger and unasked-question passes of [the climb](../../../docs/processes/climb.md).
+- **Pre-mortem:** for the leading candidate, say why it failed two weeks from now.
+- **Ten times:** ask what would make the result ten times better, then ask again from that answer.
+- **The question nobody asked:** name the most important one.
+
+Each candidate leaves with the number to beat and the deciding test.
+
 ## Log the run
 
 ```bash
-skill-run-log /hypothesize --target "<outcome, constraint, or external claim>" --verdict <VERDICT|ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
+skill-run-log /hypothesize --target "<outcome, constraint, or external claim>" --verdict <PASS|BLOCKED> --detail <ADOPT|ADAPT|REJECT|DEFER> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

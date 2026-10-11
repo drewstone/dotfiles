@@ -31,6 +31,7 @@ Answer from primary sources: official documentation, source code, specifications
 Trace each claim to the source that owns it and cite it.
 When the user wants a durable note, write one Markdown file where the repository keeps such notes and say where.
 Delegate the reading to a background worker only when delegation is available and the user can keep working.
+Research that a product exists to do, such as the research a Discovery run needs, belongs to that product ([AGENTS.md](../../AGENTS.md)), not to this section.
 
 ## Questions about active research and fleets
 
@@ -64,12 +65,17 @@ Read [play reports](references/play.md) for the readout order and the rules that
 ## State what the evidence supports
 
 Lead with the answer or correction to the premise and the decision-relevant measurement when one exists.
+For a status or review, open with the scoreboard: the outcome metrics the goal names, each against its target.
+Every number carries its source, its denominator and the date it was read; a rate without its count is unfinished.
 Disclose material resource, sampling, execution, or termination differences before declaring a comparative winner.
 Distinguish observed results from causal interpretation and projected benefits.
 A correlation alone does not establish a mechanism, and an unavailable number is not permission to invent one.
 
 Use tables for comparable rows and dimensions.
-Use a chart when its shape clarifies the decision; use the project's existing rendering path when suitable.
+A claim resting on three or more data points or a time axis ships with a chart built from the data: [`viz`](../../tools/README.md#viz) `bars`, `grouped`, `spark`, `strip`, `stack`, `waterfall`, `timeline` or `table` in the terminal.
+Give parts their whole (`--total`, or `--start` and `--end`): `viz` refuses parts that exceed it and prints any shortfall, so a hidden or double-counted part shows before the reader finds it.
+For an answer with more than one dimension, build it with the [brief kit](references/brief-kit.md) and publish it as an artifact; `viz brief spec.json` prints the same numbers as the terminal status.
+Use the project's existing rendering path when it has one.
 Keep all measured fields available in the report or its complete linked results, rather than presenting only favorable columns.
 Explain necessary technical terms through their effect on the decision, and keep internal identifiers in evidence links unless the identity itself answers the question.
 
@@ -78,11 +84,22 @@ When a bad result needs diagnosis, perform the available check within scope befo
 Mention material risks or unanswered questions that could change the decision.
 Do not add hypothetical warnings or a forced action list to an already answered status question.
 
+## Climb
+
+A report is a version on the communication hill: run [the climb](../../../docs/processes/climb.md)'s level-up passes before anything reaches the reader, and give analysis, status and proposals its [full form](../../../docs/processes/climb.md#how-to-communicate).
+A status, analysis or plan for Drew meets the [operator review standard](references/operator-review.md): its twelve features, its terminal form, and a rejected and a good example.
+
 ## Log the run
 
+For a substantial deliverable (a brief, report, analysis or multi-dimension status), score it with the independent judge before logging; a one-fact answer skips the judge.
+
 ```bash
-skill-run-log /report --target "<question and evidence scope>" --verdict <VERDICT> --next /<next-skill-or-stop>
+~/.claude/skills/report/scripts/brief-judge <deliverable.html|.md|.txt> --context "<what the reader asked>"
+skill-run-log /report --target "<question and evidence scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --score <total> --next /<next-skill-or-stop>
 ```
+
+`brief-judge` scores the ten rubric dimensions of [judging a deliverable](../../../docs/processes/climb.md#judging-a-deliverable) on a subscription account, prints the total out of 30 and the three weakest dimensions with fixes, and appends an operator row to the project's [ledger](../../../docs/processes/climb.md#the-ledger).
+Fix the weakest dimensions before the reader sees the deliverable when the fix is cheap, and judge again.
 
 ## Then consider
 

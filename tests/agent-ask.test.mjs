@@ -27,6 +27,11 @@ async function startApi(script = {}) {
     calls.push(call)
     const json = (status, value) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)) }
     if (req.headers.authorization !== `Bearer ${KEY}`) return json(401, { error: 'Invalid API key', code: 'api_key.invalid' })
+    if ((script.refuse ?? 0) > calls.filter((item) => item.refused).length) {
+      call.refused = true
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': script.retryAfter ?? '1' })
+      return res.end(JSON.stringify({ error: 'API key request limit exceeded', code: 'api_key.request_limit_exceeded' }))
+    }
     const path = url.pathname.replace(/^\/api\/operator\/v1/, '')
     if (!url.pathname.startsWith('/api/operator/v1')) return json(404, { error: 'not found' })
     if (path === '' ) return json(200, { app: { app: 'tax', apiVersion: 'v1', capabilities: [] }, principal: { keyId: 'k', scopes: [], workspaces: script.restrictedTo ?? null } })
@@ -155,6 +160,19 @@ test('exits 4 with the approvals a turn waits on, and 3 when the wait ends first
   }
 })
 
+test('uses the Tangle agent key when the app has no key of its own', async () => {
+  const api = await startApi({ turn: (_reads, turnId) => baseTurn({ turnId, state: 'succeeded', reply: { content: 'ok', mediaType: 'text/markdown' } }) })
+  try {
+    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', 'Go'], { env: { TAX_OPERATOR_API_KEY: '', TANGLE_AGENT_KEY: KEY } })
+    assert.equal(result.code, 0, result.stderr)
+  } finally {
+    await api.close()
+  }
+  const missing = await run(null, ['--app', 'tax', '--workspace', 'ws1', 'Go'], { env: { TAX_OPERATOR_API_KEY: '' } })
+  assert.equal(missing.code, 2)
+  assert.match(missing.stderr, /set TAX_OPERATOR_API_KEY .* or TANGLE_AGENT_KEY/)
+})
+
 test('a failed turn exits 1 and prints its failure', async () => {
   const api = await startApi({ turn: (_reads, turnId) => baseTurn({ turnId, state: 'failed', failure: { code: 'sandbox_unavailable', message: 'The sandbox did not start' } }) })
   try {
@@ -241,5 +259,35 @@ test('refuses plaintext remote origins, unknown apps, and reports an app that do
     assert.match(result.stderr, /401 api_key\.invalid/)
   } finally {
     await wrongKey.close()
+  }
+})
+
+test('a request the per-minute limit refused is sent again after Retry-After', async () => {
+  const api = await startApi({
+    refuse: 1,
+    turn: (reads, turnId) => baseTurn({ turnId, state: 'succeeded', reply: { content: 'Done.', mediaType: 'text/markdown' } }),
+  })
+  try {
+    const started = Date.now()
+    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', 'Check the filing'])
+    assert.equal(result.code, 0, result.stderr)
+    assert.ok(Date.now() - started >= 1_000, 'waited out Retry-After')
+    assert.equal(api.calls.filter((call) => call.refused).length, 1)
+    assert.equal(api.calls.filter((call) => call.method === 'POST').length, 2)
+    assert.match(result.stdout, /Done\./)
+  } finally {
+    await api.close()
+  }
+})
+
+test('a refusal without a usable Retry-After is reported, not retried', async () => {
+  const api = await startApi({ refuse: 5, retryAfter: '3600' })
+  try {
+    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', 'Check the filing'])
+    assert.equal(result.code, 1)
+    assert.match(result.stderr, /429/)
+    assert.equal(api.calls.filter((call) => call.refused).length, 1)
+  } finally {
+    await api.close()
   }
 })

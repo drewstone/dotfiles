@@ -79,7 +79,8 @@ Do not substitute a proposal, number of edits, or self-grade for a built and tes
 ## Log the run
 
 ```bash
-skill-run-log /pursue --target "<goal and generation>" --verdict <ADVANCE|PARTIAL|REVERT> --next /<skill-or-stop>
+skill-run-log /pursue --target "<goal and generation>" --verdict <PASS|PARTIAL|FAIL> --detail <ADVANCE|PARTIAL|REVERT> \
+  --prediction "<number to beat>" --metric "<metric>" --unit <unit> --before <baseline> --after <result> --source <evidence> --next /<skill-or-stop>
 ```
 
 ## Then consider

@@ -1,0 +1,6 @@
+label	value	group
+queue wait	4.2	waiting
+lock	1.3	waiting
+harness boot	5.5	platform
+model first token	6.1	model
+tool calls	3.4	work

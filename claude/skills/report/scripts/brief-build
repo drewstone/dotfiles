@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Render a brief spec into an artifact-ready page; `viz brief` owns the checks and chart models.
+# tangle-tools' hillclimb page calls this path, so it stays.
+# usage: brief-build SPEC.json OUT.html   (spec errors exit 2; missing climb parts warn)
+set -euo pipefail
+[ $# -eq 2 ] || { sed -n '4p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+here="$(cd "$(dirname "$0")" && pwd -P)"
+exec node "$here/../../../tools/viz" brief "$1" -o "$2"

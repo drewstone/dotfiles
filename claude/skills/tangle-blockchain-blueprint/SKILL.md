@@ -43,7 +43,7 @@ Report source and deployment evidence, exact checks, retained domain boundaries,
 ## Log the run
 
 ```bash
-skill-run-log /tangle-blockchain-blueprint --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /tangle-blockchain-blueprint --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

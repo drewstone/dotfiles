@@ -61,7 +61,7 @@ Keep pending outside assessment separate from measured research progress.
 ## Log the run
 
 ```bash
-skill-run-log /session-continuity --target "<active goal>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /session-continuity --target "<active goal>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
@@ -69,5 +69,6 @@ skill-run-log /session-continuity --target "<active goal>" --verdict <VERDICT> -
 | Condition | Next skill | What to pass |
 |---|---|---|
 | A research run needs recovery or a successor | `/operate` | The checked brief and execution owner's records |
+| Two valid next actions compete | `/governor` | The brief and active objective |
 | A completion claim remains unproved | `/verify` | The claim and its consumer check |
 | Repeated continuity failures need assessment | `/reflect` | The handoffs and retained evidence |

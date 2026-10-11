@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Install the nightly worktree reaper. Idempotent. No sudo.
+# Install the worktree reaper. Idempotent. No sudo.
 #
-#   Linux: ~/.local/bin/wt-reaper + systemd user wt-reaper.{service,timer} (04:15 daily)
+#   Linux: ~/.local/bin/wt-reaper + systemd user wt-reaper.{service,timer} (hourly)
 #   macOS: ~/.local/bin/wt-reaper + ~/Library/LaunchAgents/com.drew.wt-reaper.plist (04:15 daily)
+#
+# Linux runs hourly: the beelinks gain worktrees by the hour, and a nightly pass let beelink2
+# fall below its gate floor between runs (2026-10-10).
 #
 # Files are copied, so the installed reaper does not depend on this checkout.
 # Before enabling on a new machine, run `wt-reaper --dry-run` and read the list.
@@ -12,11 +15,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$HOME/.local/bin/wt-reaper"
 
-# On a host where tangle-tools deploys storage_lifecycle, that package owns
-# every deletion and keeps wt-reaper.timer disabled until its owner accepts it.
-# A second, salvage-free reaper here would delete ignored files such as .env.
-if [ "$(uname -s)" = Linux ] && [ -d "$HOME/.local/share/tangle-tools/storage_lifecycle" ]; then
-  echo "wt-reaper: skipped; tangle-tools storage_lifecycle owns worktree removal on this host"
+# Where tangle-tools storage_lifecycle runs its worktrees tier, that package owns worktree removal
+# (with salvage archives) and wt-reaper stays off. Its tiers default to every archive tier, worktrees
+# included; a host without an archive drive (the beelinks) lists only Docker and /tmp tiers, and there
+# wt-reaper is what reaps worktrees (tangle-tools #948).
+lifecycle_owns_worktrees() {
+  local cfg="$HOME/.local/share/tangle-tools/storage_lifecycle/hosts/$(hostname).json"
+  [ -f "$cfg" ] || return 1
+  python3 -c 'import json, sys; t = json.load(open(sys.argv[1])).get("tiers"); sys.exit(0 if t is None or "worktrees" in t else 1)' "$cfg"
+}
+if [ "$(uname -s)" = Linux ] && lifecycle_owns_worktrees; then
+  echo "wt-reaper: skipped; tangle-tools storage_lifecycle runs the worktrees tier on this host"
   exit 0
 fi
 

@@ -62,11 +62,19 @@ Migration is optional: check tracked files, compare collisions, and verify every
 
 Each skill includes `## Log the run` with its invocation of [skill-run-log](../tools/skill-run-log).
 The helper appends to `skill-runs.jsonl` in the repository's state directory; `skill-run-log --dir` prints it.
+It prints the row id; keep that id with the output, and pass `--pr <url>` when the run produced or worked on a pull request, so the outcome joiner can attach what happened to it.
 Rows written before 2026-10-05 remain in each repository's `.agent/` or `.evolve/` log.
 
 ```bash
-skill-run-log /simplify --target "<scope>" --verdict <result> --next /stop
+skill-run-log /simplify --target "<scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /stop
 ```
+
+The verdict is one of five values: the target met the skill's bar, failed it, made partial progress, was blocked by something outside the run, or was abandoned.
+Put a skill's own label (`REQUEST_CHANGES`, `KEEP`) in `--detail`; the helper maps older labels and rejects free-text verdicts.
+Pass `--metric`, `--unit`, `--before`, `--after` and `--source` when the run moved a measured quantity, and `--prediction` with the number to beat.
+The helper also captures the session, transcript, duration, tokens, skill version and the pull requests the run opened or merged; GitHub outcomes and operator corrections attach afterwards.
+Run `skill-run-log --override --note "<what the operator changed>"` when the operator corrects a result the transcript cannot show.
+`skill-scoreboard` ranks skills across hosts and `lead-scorecard` reports the lead's operating metrics; both export [climb](../../docs/processes/climb.md) ledger rows with `--climb`.
 
 The helper owns serialization, record fields, and the available command arguments.
 Leave unavailable measurements unknown.
@@ -77,6 +85,6 @@ Usage counts and document length do not establish task quality.
 
 1. Check descriptions, local references, and any executable examples affected by the edit.
 2. Run `node --test tests/skills.test.mjs` from the repository root.
-3. For substantial behavior changes, use realistic independent tasks in isolated workspaces and inspect the results.
+3. For substantial behavior changes, use realistic independent tasks in isolated workspaces and inspect the results; for operator guidance, those tasks are [the operator scenarios](_probes/operator-scenarios.md).
 4. Check that required behavior survived and unnecessary work was removed before using size reduction as supporting evidence.
 5. Commit, review, and install from the maintained source while preserving unrelated local settings and skills.

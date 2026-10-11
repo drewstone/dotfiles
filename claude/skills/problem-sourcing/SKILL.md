@@ -19,7 +19,6 @@ Hand the sourced material to the system as sources, recorded as an observer cont
 Do not hand it the problem, the decomposition, or the research method it should run.
 Capture the handed material as an immutable snapshot before the run reads it.
 Preserve executable sourcing when requested; prompt-only guidance does not replace that method.
-Do not substitute manual research for a project whose purpose is to run the research system.
 
 For an independent research request, read [source coverage and evidence](references/source-evidence.md) before collecting papers and proposing experiments.
 
@@ -42,10 +41,11 @@ A sourced candidate is a starting question with its evidence; it is not a verifi
 ## Log the run
 
 ```bash
-skill-run-log /problem-sourcing --target "<target>" --verdict <VERDICT> --next /<next-skill-or-stop>
+skill-run-log /problem-sourcing --target "<target>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 - `verify` when a source makes an executable reproducibility claim relevant to the selected problem.
 - `operate` when the sourced material is handed over and the project needs a research run started or watched.
+- discovery-lab's [play-authoring](https://github.com/tangle-network/discovery-lab/blob/master/skills/play-authoring/SKILL.md) when a sourced candidate should become a play with a check proven before the press.

@@ -1,0 +1,4 @@
+p50  █ ▆▁▂  31.0s→24.0s · min 22.5s · max 31.0s · n=4 (1 missing)
+p95  █ ▄▁▂  120.4s→41.7s · min 30.1s · max 120.4s · n=4 (1 missing)
+     mon → fri
+each line scaled to its own min–max

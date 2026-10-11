@@ -34,6 +34,7 @@ Derived from cursor/plugins correct (MIT).
 Leave sound work unchanged.
 
 Carry authorized corrections through verification; for analysis-only work, report the correction and evidence.
+A change to operator guidance (AGENTS.md, CLAUDE.md, a skill, `docs/processes/`, or project memory) must pass [the operator scenarios](../_probes/operator-scenarios.md) before it merges: every scenario that passed before the change still passes, and the pull request states both scores.
 
 ## Preserve the findings
 
@@ -42,10 +43,20 @@ Add a concise link to `~/.claude/reflections/INDEX.md`, this machine's index out
 To share a reflection across machines, commit it to dotfiles `claude/reflections/` through a pull request.
 Record scope, sources, outcomes, repeated causes, changes, verification, and unresolved decisions.
 Use counts and denominators for frequency claims; retain unknowns and sampling limits.
-A reflection needs neither a grade, a fixed section list, nor a forced next action.
+
+## Climb
+
+A reflection measures the operator and its tools ([the climb](../../../docs/processes/climb.md)).
+- Score every prediction made in the period: give PASS, FAIL or PENDING, plus calibration.
+- Record each correction from the person served as a ledger row with its theme. Count recurrences after a change; a recurring theme escalates to a check or architecture.
+- Measure the period with [`scripts/self-audit`](scripts/self-audit) over its session files, and keep its counts in the reflection: guardrail matches, rework (repeated commands, rollbacks, revert commits with `--repo`) and stall minutes. A match is a lead: read it in the transcript before calling it a violation. [The self-audit reference](references/self-audit.md) says where the files and incident times live.
+- For each incident, state the time to detect and to recover from journal or alert times, compare them with the operator SLOs (10 and 30 minutes), and draw where the time went with `viz waterfall --start --end`.
+- Show every count with a time axis or three or more values as a [`viz`](../../tools/README.md#viz) chart, per the [report evidence rule](../report/SKILL.md#state-what-the-evidence-supports).
+- Keep two one-line outcomes from [the level-up passes](../../../docs/processes/climb.md#how-to-think-the-level-up-passes): the red team (how this conclusion is wrong, and the evidence that would change it) and bigger (the ten-times version, and what it would take).
+- Name the operator-tool versions in force (directive, skills, hooks) and their measured effect, or that none was measured.
 
 ## Log the run
 
 ```bash
-skill-run-log /reflect --target "<scope and period>" --verdict <VERDICT> --next /<skill-or-stop>
+skill-run-log /reflect --target "<scope and period>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<skill-or-stop>
 ```
