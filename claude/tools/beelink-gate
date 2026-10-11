@@ -530,11 +530,14 @@ valid_branch_name() {
 }
 
 # Native addons under node_modules/.pnpm that the gate's Node cannot load, one
-# "<name>\t<package dir>\t<reason>" line each: an addon built for another
-# NODE_MODULE_VERSION (process.versions.modules), or a package with a
-# binding.gyp that pnpm builds but that holds no .node file. Packages the repo
-# keeps from building (allowBuilds false, ignoredBuilds) are skipped, and
-# N-API addons load under any Node.
+# "<name>\t<package dir>\t<reason>" line each: an addon under build/ made for
+# another NODE_MODULE_VERSION (process.versions.modules), or a package with a
+# binding.gyp and no .node file that the repo allows to build. The build policy
+# comes from the repo (pnpm-workspace.yaml, package.json "pnpm") and from
+# node_modules/.modules.yaml: allowBuilds, onlyBuiltDependencies,
+# neverBuiltDependencies, ignoredBuiltDependencies and ignoredBuilds. A package
+# the repo keeps from building is never reported, and N-API addons load under
+# any Node.
 stale_native_addons() {
   local abi
   abi=$(node -p process.versions.modules 2>/dev/null) || return 0
@@ -542,24 +545,54 @@ stale_native_addons() {
 import json, os, re, sys
 abi = sys.argv[1]
 root = "node_modules/.pnpm"
-skip = set()
-try:
-    text = open("node_modules/.modules.yaml").read()
-except OSError:
-    text = ""
-try:
-    meta = json.loads(text)
-    skip |= {name for name, allowed in (meta.get("allowBuilds") or {}).items() if allowed is False}
-    skip |= {re.sub(r"@[^@]*$", "", n) if n.rfind("@") > 0 else n for n in meta.get("ignoredBuilds") or []}
-except ValueError:
-    section = None
+allowed, denied = set(), set()
+
+def bare(name):
+    name = str(name).strip().strip("'\"")
+    return re.sub(r"@[^@/]*$", "", name) if name.rfind("@") > 0 else name
+
+def policy(config):
+    if not isinstance(config, dict):
+        return
+    for name, value in (config.get("allowBuilds") or {}).items():
+        (allowed if value is True or str(value).lower() == "true" else denied).add(bare(name))
+    allowed.update(bare(n) for n in config.get("onlyBuiltDependencies") or [])
+    for key in ("neverBuiltDependencies", "ignoredBuiltDependencies", "ignoredBuilds"):
+        denied.update(bare(n) for n in config.get(key) or [])
+
+def read_yaml(path):
+    """The top-level lists and flat mappings of a pnpm YAML file; enough for its build policy."""
+    try:
+        text = open(path).read()
+    except OSError:
+        return {}
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    config, section = {}, None
     for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
         if re.match(r"^\S", line):
-            section = line.split(":")[0].strip()
-        elif section == "ignoredBuilds" and line.strip().startswith("- "):
-            skip.add(line.strip()[2:].strip("'\""))
-        elif section == "allowBuilds" and line.strip().endswith(": false"):
-            skip.add(line.strip()[:-len(": false")].strip("'\""))
+            section = line.split(":", 1)[0].strip()
+            config.setdefault(section, None)
+        elif section and line.strip().startswith("- "):
+            config[section] = (config[section] if isinstance(config[section], list) else []) + [line.strip()[2:]]
+        elif section and ":" in line:
+            key, _, value = line.strip().rpartition(":")
+            if not isinstance(config[section], dict):
+                config[section] = {}
+            config[section][key.strip().strip("'\"")] = value.strip()
+    return config
+
+policy(read_yaml("node_modules/.modules.yaml"))
+policy(read_yaml("pnpm-workspace.yaml"))
+try:
+    policy(json.load(open("package.json")).get("pnpm") or {})
+except (OSError, ValueError, AttributeError):
+    pass
+allowed -= denied
 
 def addons(top, depth=0):
     try:
@@ -584,11 +617,12 @@ for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
         candidates = [os.path.join(name, s) for s in os.listdir(os.path.join(base, name))] if name.startswith("@") and os.path.isdir(os.path.join(base, name)) else [name]
         for pkg in candidates:
             path = os.path.join(base, pkg)
-            if os.path.islink(path) or not os.path.isfile(os.path.join(path, "binding.gyp")) or pkg in skip:
+            if os.path.islink(path) or not os.path.isfile(os.path.join(path, "binding.gyp")) or pkg in denied:
                 continue
             found = list(addons(path))
             if not found:
-                print(f"{pkg}\t{path}\tmissing addon")
+                if pkg in allowed:
+                    print(f"{pkg}\t{path}\tmissing addon")
                 continue
             for addon in found:
                 if os.sep + "build" + os.sep not in addon[len(path):] + os.sep:
@@ -618,10 +652,10 @@ rebuild_native_addons() {
   after=$(stale_native_addons)
   if [ -n "$after" ]; then
     native_rebuild="failed: ${reasons[*]}"
-    echo "beelink-gate: native addons still stale after the rebuild: ${after//$'\t'/ }" >&2
-  else
-    native_rebuild="${reasons[*]}"
+    echo "beelink-gate: NATIVE ADDONS STILL STALE after pnpm rebuild, so node $gate_node cannot load them: ${after//$'\t'/ }" >&2
+    return 1
   fi
+  native_rebuild="${reasons[*]}"
 }
 
 # The pnpm version the repo's own CI installs with: package.json packageManager
@@ -1113,10 +1147,8 @@ PY
       # shellcheck disable=SC1091
       . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
       nvm use >/dev/null 2>&1 || nvm install >/dev/null 2>&1 || die "cannot select Node $(cat .nvmrc) with nvm on $beelink"
-    elif [ "$install_mode" = ship ]; then
-      die "--ship: .nvmrc needs nvm on $beelink"
     else
-      echo "beelink-gate: .nvmrc asks for Node $(cat .nvmrc) but $beelink has no nvm; using $(node -v 2>/dev/null)" >&2
+      die ".nvmrc asks for Node $(cat .nvmrc) and $beelink has no nvm to select it"
     fi
   fi
   gate_node=$(node -v 2>/dev/null || true)
