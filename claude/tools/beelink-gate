@@ -1312,6 +1312,7 @@ on_beelink() {
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
   [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
+  [ -z "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ] || envs+=("BEELINK_GATE_MAX_CPU_PRESSURE=$BEELINK_GATE_MAX_CPU_PRESSURE")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [[ "${BEELINK_GATE_PR:-}" =~ ^[0-9]+$ ]] && envs+=("BEELINK_GATE_PR=$BEELINK_GATE_PR")
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
@@ -1506,6 +1507,9 @@ target=$1 repo_url=$2 sha=$3
 shift 4
 if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
   [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
+fi
+if [ -n "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ]; then
+  max_cpu_pressure >/dev/null
 fi
 if [ -n "${BEELINK_GATE_LOAD_WAIT:-}" ]; then
   seconds_of "$BEELINK_GATE_LOAD_WAIT" >/dev/null || die "invalid BEELINK_GATE_LOAD_WAIT: $BEELINK_GATE_LOAD_WAIT"

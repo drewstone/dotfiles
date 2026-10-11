@@ -1481,3 +1481,18 @@ test("without an override, admission reads the pressure of the gate's own top-le
   const result = run("bash", ["-c", script], { env });
   assert.equal(result.stdout.trim(), existsSync(expected) ? expected : "");
 });
+
+test("the launcher validates BEELINK_GATE_MAX_CPU_PRESSURE and forwards it to the beelink's probe and gate", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), FAKE_PRESSURE_PREFIX: join(f.root, "pressure"), BEELINK_GATE_MAX_CPU_PRESSURE: "50" };
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) writeFileSync(join(f.root, `pressure-${ip}`), pressureLine(35));
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /CPU pressure \(35\.00, limit 50\) admitted/);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_MAX_CPU_PRESSURE=50 /);
+    const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CPU_PRESSURE: "50;id" } });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /BEELINK_GATE_MAX_CPU_PRESSURE must be 0-100/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
