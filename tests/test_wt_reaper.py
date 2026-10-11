@@ -7,6 +7,7 @@ One live run then checks every decision and the filesystem result.
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -903,6 +904,104 @@ class KeptPathTest(unittest.TestCase):
             self.assertTrue(skip and 'which its owner retires' in skip[0]['reason'], skip)
         finally:
             f.cleanup()
+
+
+@unittest.skipUnless(sys.platform.startswith('linux'), 'the store prune runs on Linux hosts only')
+class PnpmStorePruneTest(unittest.TestCase):
+    """The store prune runs only in a quiet window while it holds every gate slot, and never waits for one."""
+
+    def setUp(self):
+        self.f = Fixture()
+        t = self.f.tmp
+        self.store = os.path.join(t, 'store')
+        os.makedirs(os.path.join(self.store, 'v10', 'files'))
+        self.releases = os.path.join(t, 'corepack')
+        self.f.write(self.releases, '10.33.4/dist/pnpm.cjs', '// fake pnpm\n')
+        self.calls = os.path.join(t, 'node-calls')
+        bindir = os.path.join(t, 'bin')
+        # The fake prune records its arguments, then tries the slots a gate would create next: none may be free.
+        self.f.write(bindir, 'node', '#!/bin/sh\necho "$@" >> %s\n%s -c %s %s >> %s\n' % (
+            self.calls, sys.executable, shlex.quote(
+                'import fcntl,os,sys\n'
+                'for n in ("slot-2.lock", "slot-9.lock", "light-slot-1.lock"):\n'
+                '    fd = os.open(os.path.join(sys.argv[1], n), os.O_RDWR | os.O_CREAT)\n'
+                '    try:\n'
+                '        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); print("FREE", n)\n'
+                '    except OSError:\n'
+                '        pass\n'), os.path.join(t, 'gate', '.locks'), self.calls))
+        os.chmod(os.path.join(bindir, 'node'), 0o755)
+        self.proc = os.path.join(t, 'proc')
+        os.makedirs(self.proc)
+        self.locks = os.path.join(t, 'gate', '.locks')
+        os.makedirs(self.locks)
+        # Only slot-0 and light-slot-0 exist, as on a host where one gate of each class has run.
+        for name in ('slot-0.lock', 'light-slot-0.lock', 'github.com-owner-repo.lock'):
+            open(os.path.join(self.locks, name), 'w').close()
+        self.age_locks()
+        self.env_path = bindir + os.pathsep + os.environ['PATH']
+
+    def tearDown(self):
+        self.f.cleanup()
+
+    def age_locks(self, seconds=3600):
+        for name in os.listdir(self.locks):
+            os.utime(os.path.join(self.locks, name), (time.time() - seconds, time.time() - seconds))
+
+    def reap(self, hour=12, quiet_load=100000):
+        # POSIX TZ "TST<n>" is UTC minus n hours (the name needs three letters), so this fixes the reaper's local hour.
+        tz = 'TST%d' % (time.gmtime().tm_hour - hour)
+        env = dict(os.environ, PATH=self.env_path, TZ=tz, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
+        proc = subprocess.run([sys.executable, REAPER, '--root', self.f.root, '--no-log-file', '--idle-hours', '1000',
+                               '--dependency-idle-hours', '1000', '--journey-state', os.path.join(self.f.tmp, 'none'),
+                               '--gate-cache', os.path.join(self.f.tmp, 'gate'), '--pnpm-store', self.store,
+                               '--pnpm-releases', self.releases, '--pnpm-stamp', os.path.join(self.f.tmp, 'stamp'),
+                               '--quiet-load', str(quiet_load), '--proc', self.proc],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        return [r for r in parse(proc.stdout.decode()) if r.get('rule') == 'pnpm-store']
+
+    def pruned(self):
+        if not os.path.exists(self.calls):
+            return False
+        with open(self.calls) as fh:
+            self.assertEqual(fh.read().split(), [os.path.join(self.releases, '10.33.4', 'dist', 'pnpm.cjs'),
+                                                 'store', 'prune', '--store-dir', self.store])
+        os.remove(self.calls)
+        return True
+
+    def test_prunes_only_with_every_slot_free_and_at_most_once_a_day(self):
+        holder = subprocess.Popen(
+            [sys.executable, '-c', 'import fcntl,sys,time; fh=open(sys.argv[1],"a"); fcntl.flock(fh, fcntl.LOCK_EX); '
+             'print("held", flush=True); time.sleep(60)', os.path.join(self.locks, 'light-slot-0.lock')], stdout=subprocess.PIPE)
+        self.f.procs.append(holder)
+        self.assertEqual(holder.stdout.readline().strip(), b'held')
+        rows = self.reap()
+        self.assertFalse(self.pruned(), 'no prune while a gate holds a slot')
+        self.assertIn('a gate holds light-slot-0.lock', rows[0]['reason'])
+        holder.kill()
+        holder.wait()
+        rows = self.reap()
+        self.assertTrue(self.pruned())
+        self.assertEqual(rows[0]['decision'], 'remove-derived')
+        self.reap()
+        self.assertFalse(self.pruned(), 'at most once a day')
+
+    def test_a_gate_that_started_recently_or_a_running_install_keeps_the_store_until_overnight(self):
+        self.age_locks(5 * 60)
+        rows = self.reap()
+        self.assertFalse(self.pruned(), 'a gate lock touched 5 minutes ago')
+        self.assertIn('not quiet', rows[0]['reason'])
+        self.age_locks()
+        rows = self.reap(quiet_load=0.0001)
+        self.assertFalse(self.pruned(), 'load over the limit')
+        self.assertIn('not quiet', rows[0]['reason'])
+        self.f.write(self.proc, '4242/cmdline', '\0'.join(['node', '/x/pnpm/dist/pnpm.cjs', 'install', '--frozen-lockfile']) + '\0')
+        self.assertIn('pnpm install running', self.reap()[0]['reason'])
+        self.assertFalse(self.pruned())
+        os.remove(os.path.join(self.proc, '4242', 'cmdline'))
+        self.age_locks(60)
+        self.reap(hour=2, quiet_load=0.0001)
+        self.assertTrue(self.pruned(), 'overnight is quiet whatever the load and the last gate')
 
 
 if __name__ == '__main__':
