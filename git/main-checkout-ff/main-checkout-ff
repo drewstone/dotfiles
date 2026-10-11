@@ -67,13 +67,16 @@ busy_cache=""
 busy_cached=0
 
 in_use() {
-  # True when any process uses the repo or a path below it ($1 real path, $2 path as listed).
+  # True when any process uses the repo or a path below it ($1 real path, $2 path as listed). Sets
+  # $holder to the first matching process path so a skip names it; a variable, not output, because a
+  # command substitution would run in a subshell and drop the process snapshot cache.
   # Linked worktrees kept inside the clone (agent-dev-container keeps them in .worktrees/) are separate
   # checkouts: a merge never touches them, so a lane working in one does not hold the main checkout.
   # The first check of each repo reuses one process snapshot per run: on macOS each lsof scan takes
   # about a minute, so a scan per repo made a pass outlast its 30-minute interval. Pass "fresh" as $3
   # to take a new snapshot, as the check right before a merge does.
   local busy
+  holder="processes not visible"
   if [ "${3:-}" = fresh ] || [ "$busy_cached" = 0 ]; then
     busy_cache="$(busy_paths)" || { busy_cached=0; return 0; }
     [ "${3:-}" = fresh ] || busy_cached=1
@@ -81,14 +84,14 @@ in_use() {
   busy="$busy_cache"
   local nested
   nested="$(git -C "$1" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | awk -v r="$1" 'index($0, r "/") == 1')"
-  printf '%s\n' "$busy" | NESTED="$nested" awk -v r="$1" -v s="$2" '
+  holder="$(printf '%s\n' "$busy" | NESTED="$nested" awk -v r="$1" -v s="$2" '
     function under(path, root) { return index(path, root) == 1 && (length(path) == length(root) || substr(path, length(root) + 1, 1) == "/") }
     BEGIN { n = split(ENVIRON["NESTED"], nested, "\n") }
     {
       for (i = 1; i <= n; i++) if (nested[i] != "" && under($0, nested[i])) next
-      if (under($0, r) || under($0, s)) found = 1
-    }
-    END { exit !found }'
+      if (under($0, r) || under($0, s)) { print; exit }
+    }')"
+  [ -n "$holder" ]
 }
 
 IFS=: read -r -a root_list <<< "$roots"
@@ -123,7 +126,7 @@ for root in "${root_list[@]}"; do
       continue
     fi
     if in_use "$real" "$repo"; then
-      say "skipped $repo: in use"
+      say "skipped $repo: in use by $holder"
       continue
     fi
     if ! err="$(git -C "$repo" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 fetch -q origin "$def" 2>&1)"; then
@@ -155,7 +158,7 @@ for root in "${root_list[@]}"; do
     fi
     # The fetch can take minutes; look for a new process again right before moving files.
     if in_use "$real" "$repo" fresh; then
-      note "skipped $repo: in use"
+      note "skipped $repo: in use by $holder"
       continue
     fi
     if out="$(git -C "$repo" -c core.hooksPath=/dev/null merge --ff-only -q "origin/$def" 2>&1)"; then
