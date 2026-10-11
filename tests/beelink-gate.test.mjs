@@ -856,3 +856,41 @@ test("a named beelink over its load limit hands the gate to the lighter one, and
     assert.match(stuck.stderr, /REFUSED beelink1 load .* stayed over its limit/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("auto waits for the light beelink's repo lock instead of queueing on an overloaded one", async () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_AUTO_POLL_SECONDS: "0.5" };
+    for (const host of ["beelink1", "beelink2"]) {
+      const warm = run(gate, ["--no-install", host, f.url, f.first, "--", "true"], { env });
+      assert.equal(warm.status, 0, warm.stderr);
+    }
+    writeFileSync(join(f.root, "load-100.98.195.7"), loadLine(loadLimit * 2));
+    const lock = join(`${env.FAKE_CACHE_PREFIX}-100.127.22.51`, ".locks", "local-owner-repo.lock");
+    const marker = join(f.root, "b2-lock-held");
+    const locker = spawn("flock", ["-x", lock, "bash", "-c", `touch '${marker}'; sleep 2`], { stdio: "ignore" });
+    for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+    const child = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const status = await new Promise((resolveDone) => child.on("close", resolveDone));
+    locker.kill();
+    assert.equal(status, 0, stderr);
+    assert.match(stderr, /no beelink is both free for this repo and under its load limit/);
+    assert.match(stderr, /auto chose beelink2/);
+    assert.match(stderr, /receipt: .*host=beelink2/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the launcher forwards a validated load wait", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_LOAD_WAIT: "2h" };
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_LOAD_WAIT=2h /);
+    const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_LOAD_WAIT: "2h;id" } });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /invalid BEELINK_GATE_LOAD_WAIT/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
