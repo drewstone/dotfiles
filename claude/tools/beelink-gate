@@ -63,15 +63,26 @@ utc_in_minutes() {
 
 decode() { printf '%s' "$1" | base64 --decode; }
 
-check_floor() {
-  local host="$1" floor_gib available
+floor_gib() {
+  local host="$1"
   case "$host" in
-    beelink1) floor_gib=100 ;;
-    beelink2) floor_gib=162 ;;
+    beelink1) echo 100 ;;
+    beelink2) echo 162 ;;
     *) die "unknown remote beelink: $host" ;;
   esac
+}
+
+free_bytes() {
+  local available
   available=$(df -B1 --output=avail "$HOME" | tail -n 1 | tr -d ' ') || die "cannot read free disk space"
   [[ "$available" =~ ^[0-9]+$ ]] || die "invalid free disk reading: $available"
+  echo "$available"
+}
+
+check_floor() {
+  local host="$1" floor_gib available
+  floor_gib=$(floor_gib "$host")
+  available=$(free_bytes)
   if (( available < floor_gib * 1024 * 1024 * 1024 )); then
     printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor; use the other beelink or ask the host owner to recover capacity\n' \
       "$host" "$available" "$floor_gib" >&2
@@ -151,7 +162,7 @@ admit_window() {
 # Cache directories are owned by this command. A global lock serializes size
 # decisions; per-repo locks keep active gates out of the eviction set.
 prune_cache() {
-  python3 - "$1" "$2" "$3" <<'PY'
+  python3 - "$1" "$2" "$3" "${4:-0}" <<'PY'
 import fcntl
 import os
 from pathlib import Path
@@ -159,7 +170,7 @@ import shutil
 import subprocess
 import sys
 
-root, current, cap = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
+root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 locks = root / ".locks"
 
 def size(path):
@@ -202,8 +213,9 @@ try:
                         stamp = git_dir
                     candidates.append((stamp.stat().st_mtime_ns, repo, size(repo), host.name, owner.name))
         total = size(root)
+        reclaimed = 0
         for _, repo, bytes_used, host, owner in sorted(candidates):
-            if total <= cap:
+            if total <= cap and reclaimed >= required_reclaim:
                 break
             lock_path = locks / f"{host}-{owner}-{repo.name}.lock"
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -215,6 +227,7 @@ try:
                         continue
                 shutil.rmtree(repo)
                 total -= bytes_used
+                reclaimed += bytes_used
                 print(f"beelink-gate: evicted LRU cache {repo} ({bytes_used} bytes)", file=sys.stderr)
             finally:
                 os.close(fd)
@@ -222,10 +235,25 @@ try:
         if total > cap:
             print(f"beelink-gate: cache cap exceeded: {total} > {cap} bytes; active checkouts cannot be evicted", file=sys.stderr)
             sys.exit(3)
+        if reclaimed < required_reclaim:
+            print(f"beelink-gate: cache reclaimed {reclaimed} of {required_reclaim} needed bytes; active checkouts or other disk users need the host owner", file=sys.stderr)
+            sys.exit(3)
 except (OSError, ValueError) as exc:
     print(f"beelink-gate: cache prune failed: {exc}", file=sys.stderr)
     sys.exit(3)
 PY
+}
+
+# Use only this command's locked, disposable checkouts to restore a host's disk
+# floor with 10 GiB headroom. A missing cache has nothing safe to evict.
+recover_floor_from_cache() {
+  local host="$1" root="$2" cap="$3" current="$4" available wanted
+  [ -d "$root/.locks" ] || return 0
+  available=$(free_bytes)
+  wanted=$(( $(floor_gib "$host") * 1024 * 1024 * 1024 + 10 * 1024 * 1024 * 1024 ))
+  (( available < wanted )) || return 0
+  echo "beelink-gate: disk reserve needs $((wanted - available)) bytes; pruning owned idle cache" >&2
+  prune_cache "$root" "$current" "$cap" "$((wanted - available))" || true
 }
 
 # Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
@@ -764,8 +792,6 @@ remote_gate() {
   # for a password or a host-key confirmation.
   export GIT_TERMINAL_PROMPT=0
   export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
-  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
-  admit_window "$beelink" "$window_day" "$window_hour"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
   local max_concurrent="${BEELINK_GATE_MAX_CONCURRENT:-4}"
@@ -773,6 +799,12 @@ remote_gate() {
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
   [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
+  if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
+    die "cache path contains a symlink"
+  fi
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
+  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  admit_window "$beelink" "$window_day" "$window_hour"
   unset BEELINK_GATE_MAX_CONCURRENT
   # Each repo gets BEELINK_GATE_REPO_CHECKOUTS checkouts per host (default 2):
   # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
@@ -783,9 +815,6 @@ remote_gate() {
   # A light gate waits behind no normal gate: it has its own <repo>@light checkout.
   (( light == 0 )) || copies=1
   unset BEELINK_GATE_REPO_CHECKOUTS
-  if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
-    die "cache path contains a symlink"
-  fi
   mkdir -p "$cache_root/.locks" "$cache_root/$host/$owner" || die "cannot create cache"
   lock=""
   local waiting_since=$SECONDS last_report=-60
@@ -899,6 +928,7 @@ PY
   trap finish EXIT
   # The final admission checks run after lock and slot acquisition so their
   # refusals need the same cleanup and receipt path as later failures.
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   admit_window "$beelink" "$window_day" "$window_hour"
   prune_cache "$cache_root" "$checkout" "$cache_max" || exit $?
@@ -960,6 +990,8 @@ PY
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
+  # Keep this gate's fetched checkout locked and intact; reclaim only other idle caches.
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it
@@ -1019,6 +1051,7 @@ PY
       || die "package.json has dependencies but no pnpm/npm lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
   fi
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   echo "beelink-gate: running ${display% }" >&2
   local tick cpu_before cpu_after
