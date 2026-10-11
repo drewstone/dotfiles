@@ -52,7 +52,11 @@ There it applies only the worktree cap; package installs are not refused, since 
   `host/ssh/20-fleet-lane-accept.conf`). The lane is recorded as `fleet-lane` in the new worktree's admin directory.
 - A lane holding `cap` (4) recorded worktrees is refused; so is any add while the filesystem has less than
   `floor_bytes` (200 GiB) free. The refusal lists the longest-idle trees as `OWNER_RELEASED=1 wt-remove <path>` lines.
-- Trees outside `_wt` (tool caches, `tangle-ops ship`, the adc-wt pool) and every other Git command pass through.
+- Counting, checkout and the lane record run under one per-lane lock, and the record is written whenever the tree exists,
+  so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
+- Trees outside `_wt` (tool caches, `tangle-ops ship`, the adc-wt pool, `~/company/_wt`) and every other Git command pass through.
+- This is a guardrail for cooperating agents, not a sandbox: a new `FLEET_LANE` value, a Git alias, or `worktree move`
+  into `_wt` gets past it. Trees made before installation carry no lane and are not counted.
 
 Measured 2026-10-11: beelink1 gained 49 `_wt` worktrees in 6 h and held 73 GB of `_wt` data unique beyond the pnpm store;
 the idle reapers cannot touch a tree younger than 12 h.

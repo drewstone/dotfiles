@@ -98,7 +98,9 @@ install_beelink_worktree_cap() {
   CHANGED=0
   want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-accept.conf" /etc/ssh/sshd_config.d/20-fleet-lane-accept.conf
   if [ "$CHANGED" = 1 ]; then
-    $SUDO sshd -t && $SUDO systemctl reload ssh && note reloaded ssh
+    # A failed reload must stop here: the next run sees the file in place and would not retry.
+    $SUDO sshd -t && $SUDO systemctl reload ssh || { echo "sshd rejected or did not reload the fleet-lane drop-in" >&2; exit 1; }
+    note reloaded ssh
   fi
   [ "$before" = 1 ] && CHANGED=1
   return 0

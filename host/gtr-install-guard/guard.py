@@ -22,12 +22,8 @@ worktree cap: a `git worktree add` into `_wt` must name its fleet lane, and is r
 already holds `cap` worktrees there or the filesystem has less than `floor_bytes` free. The refusal
 lists the longest-idle trees to release with wt-remove. Installs stay allowed: Beelinks are where they run.
 """
-import json
 import os
-import socket
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 HOME = Path.home()
@@ -41,7 +37,7 @@ MUTATING = {
 }
 COREPACK_MANAGERS = {"pnpm": "pnpm", "pnpx": "pnpm", "yarn": "yarn", "yarnpkg": "yarn", "npm": "npm", "npx": "npm"}
 NO_INSTALL = {"-g", "--global", "--location=global", "--lockfile-only", "--package-lock-only"}
-GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
+GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source"}
 WORKTREE_VALUE_FLAGS = {"-b", "-B", "--reason", "--orphan"}
 
 
@@ -253,7 +249,11 @@ def refusal(manager: str, argv: list[str], cwd: Path):
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 
 
+CAP_DEPTH = 3  # worktrees nested this deep under a _wt root still count against their lane
+
+
 def cap_config(entry: Path):
+    import json
     try:
         return json.loads(Path(str(entry) + ".worktree-cap.json").read_text())
     except (OSError, ValueError):
@@ -294,23 +294,31 @@ def idle_seconds(admin: Path, now: float) -> float:
 
 
 def trees():
-    """(path, lane or None, idle seconds) for each linked worktree directly under a _wt root."""
+    """(path, lane or None, idle seconds) for each linked worktree under a _wt root, CAP_DEPTH deep."""
+    import time
     now = time.time()
     rows = []
-    for root in ROOTS:
+
+    def visit(directory: Path, depth: int) -> None:
         try:
-            children = sorted(root.iterdir())
+            children = sorted(child for child in directory.iterdir() if child.is_dir() and not child.is_symlink())
         except OSError:
-            continue
+            return
         for tree in children:
-            admin = admin_dir(tree)
-            if admin is None:
-                continue
-            try:
-                lane = (admin / "fleet-lane").read_text().strip() or None
-            except OSError:
-                lane = None
-            rows.append((tree, lane, idle_seconds(admin, now)))
+            if (tree / ".git").exists():
+                admin = admin_dir(tree)
+                if admin is None:
+                    continue  # a full clone: not a linked worktree, and nothing below it is either
+                try:
+                    lane = (admin / "fleet-lane").read_text().strip() or None
+                except OSError:
+                    lane = None
+                rows.append((tree, lane, idle_seconds(admin, now)))
+            elif depth < CAP_DEPTH:
+                visit(tree, depth + 1)
+
+    for root in ROOTS:
+        visit(root, 1)
     return rows
 
 
@@ -319,50 +327,76 @@ def release_list(rows, limit=5) -> str:
     return "".join(f"\n  OWNER_RELEASED=1 wt-remove {tree}   # idle {idle / 3600:.1f} h" for tree, _, idle in rows)
 
 
-def cap_refusal(config: dict, argv: list[str], cwd: Path):
-    """On a Beelink: the refusal for a capped worktree add, or None; also the lane to record."""
-    target = git_worktree_add_target(argv, cwd)
-    if not target or not inside_worktree(target[0], target[1]):
-        return None, None
-    lane = fleet_lane()
+def free_bytes(path: Path):
+    while True:
+        try:
+            stat = os.statvfs(path)
+            return stat.f_bavail * stat.f_frsize
+        except OSError:
+            if path == path.parent:
+                return None
+            path = path.parent
+
+
+def cap_refusal(config: dict, target, lane: str):
+    """The refusal for a Beelink worktree add into _wt, or None when it may run."""
+    import socket
     host = socket.gethostname().split(".")[0]
     if not lane:
         return ("beelink-worktree-cap: refused git worktree add into _wt without a fleet lane. "
                 "Prefix the command with FLEET_LANE=<operator>:<lane> (your fleet STATUS file name, "
-                f"with '--' read as ':'); each lane may hold {config['cap']} worktrees on {host}."), None
+                f"with '--' read as ':'); each lane may hold {config['cap']} worktrees on {host}.")
     rows = trees()
     mine = [row for row in rows if row[1] == lane]
     if len(mine) >= config["cap"]:
         return (f"beelink-worktree-cap: refused git worktree add for {lane}: it holds {len(mine)} of "
-                f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine)}"), None
-    free = None
-    probe = resolved(target[0], target[1])[0]
-    while free is None:
-        try:
-            stat = os.statvfs(probe)
-            free = stat.f_bavail * stat.f_frsize
-        except OSError:
-            if probe == probe.parent:
-                break
-            probe = probe.parent
+                f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine)}")
+    free = free_bytes(resolved(target[0], target[1])[0])
     if free is not None and free < config["floor_bytes"]:
         named = mine or rows
         whose = "this lane's" if mine else "the host's"
         return (f"beelink-worktree-cap: refused git worktree add for {lane}: {host} has "
                 f"{free / 2**30:.0f} GiB free, under its {config['floor_bytes'] / 2**30:.0f} GiB floor. "
-                f"Free space first; {whose} longest-idle trees:{release_list(named)}"), None
-    return None, lane
+                f"Free space first; {whose} longest-idle trees:{release_list(named)}")
+    return None
 
 
-def record_lane(argv: list[str], cwd: Path, lane: str) -> None:
-    target, base = git_worktree_add_target(argv, cwd)
-    tree = resolved(target, base)[0]
-    admin = admin_dir(tree)
-    if admin is not None:
+def capped_add(real: str, argv: list[str], target, lane: str, config: dict) -> int:
+    """Count, create and record under one per-lane lock, so parallel adds cannot pass the count together."""
+    import fcntl
+    import re
+    import signal
+    import subprocess
+    if not lane:
+        print(cap_refusal(config, target, lane), file=sys.stderr)
+        return 125
+    locks = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "beelink-worktree-cap"
+    locks.mkdir(mode=0o700, exist_ok=True)
+    with open(locks / (re.sub(r"[^A-Za-z0-9_.-]", "_", lane) + ".lock"), "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        message = cap_refusal(config, target, lane)
+        if message:
+            print(message, file=sys.stderr)
+            return 125
+        # Git handles interrupts and cleans up its own half-made tree; the wrapper waits for it
+        # so the marker is still written, and reports a signal death as a shell would.
+        previous = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
-            (admin / "fleet-lane").write_text(lane + "\n")
-        except OSError as error:
-            print(f"beelink-worktree-cap: could not record lane for {tree}: {error}", file=sys.stderr)
+            child = subprocess.Popen([real, *argv], restore_signals=True,
+                                     preexec_fn=lambda: [signal.signal(sig, signal.SIG_DFL) for sig in previous])
+            code = child.wait()
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+        # Record the lane whenever the tree exists: a failing post-checkout hook (git-lfs, husky)
+        # makes git exit nonzero after the checkout is complete.
+        admin = admin_dir(resolved(target[0], target[1])[0])
+        if admin is not None and admin.is_dir():
+            try:
+                (admin / "fleet-lane").write_text(lane + "\n")
+            except OSError as error:
+                print(f"beelink-worktree-cap: could not record lane in {admin}: {error}", file=sys.stderr)
+    return 128 - code if code < 0 else code
 
 
 def main() -> None:
@@ -373,19 +407,17 @@ def main() -> None:
         print(f"gtr-install-guard: missing preserved executable for {entry}", file=sys.stderr)
         raise SystemExit(127)
     argv = sys.argv[1:]
-    config = cap_config(entry) if manager == "git" else None
-    if config is not None:
-        message, lane = cap_refusal(config, argv, Path.cwd())
-        if message:
-            print(message, file=sys.stderr)
-            raise SystemExit(125)
+    if manager == "git" and Path(str(entry) + ".worktree-cap.json").exists():
+        # A Beelink: only the worktree cap applies, and only to adds into _wt.
+        target = git_worktree_add_target(argv, Path.cwd())
         real = str(original.resolve(strict=True))
-        if lane is None:
-            os.execv(real, [real, *argv])
-        code = subprocess.call([real, *argv])
-        if code == 0:
-            record_lane(argv, Path.cwd(), lane)
-        raise SystemExit(code)
+        if target and inside_worktree(target[0], target[1]):
+            config = cap_config(entry)
+            if config is None:
+                print(f"beelink-worktree-cap: unreadable {entry}.worktree-cap.json; worktree add refused", file=sys.stderr)
+                raise SystemExit(125)
+            raise SystemExit(capped_add(real, argv, target, fleet_lane(), config))
+        os.execv(real, [real, *argv])
     message = refusal(manager, argv, Path.cwd())
     if message:
         print(message, file=sys.stderr)

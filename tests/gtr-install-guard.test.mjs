@@ -147,6 +147,20 @@ test("a Beelink worktree add into _wt needs a lane, records it, and stops at the
   assert.equal(git(["status", "--short"]).status, 0);
 });
 
+test("a Beelink counts nested _wt trees and records the lane when a post-checkout hook fails", () => {
+  const { home, repo, git } = beelinkGit({ cap: 2, floor_bytes: 0 });
+  const lane = { FLEET_LANE: "op-company:hooks" };
+  mkdirSync(join(repo, ".git/hooks"), { recursive: true });
+  writeFileSync(join(repo, ".git/hooks/post-checkout"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+  const hooked = git(["-c", "core.hooksPath=" + join(repo, ".git/hooks"), "worktree", "add", "-q", "--detach",
+    join(home, "code/_wt/grp/h1")], lane);
+  assert.equal(hooked.status, 3, "git's own exit code is kept");
+  assert.equal(git(["--attr-source", "HEAD", "worktree", "add", "-q", "--detach", join(home, "code/_wt/grp/deeper/h2")], lane).status, 3, "--attr-source does not hide the add");
+  const third = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/h3")], lane);
+  assert.equal(third.status, 125, "the hook-failed and nested trees both count");
+  assert.match(third.err, /holds 2 of 2/);
+});
+
 test("a Beelink under its free-space floor refuses new _wt worktrees and names idle trees", () => {
   const { home, git } = beelinkGit({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER });
   const r = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/f1")], { FLEET_LANE: "op-company:wt-cap" });
