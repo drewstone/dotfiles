@@ -337,6 +337,27 @@ class BriefJudge(Ledger):
         self.assertEqual((written[1]['outcome'], bj.last_score(self.ledger)), ('PASS 25/30', 25))
         self.assertEqual(self.run_tool('check', '--project', str(self.root), '--since', '2000-01-01').returncode, 0)
 
+    def test_level_three_is_read_from_the_climb_rubric(self):
+        bj = self.load()
+        anchors = bj.load_anchors()
+        self.assertEqual(sorted(anchors), sorted(key for key, *_ in bj.DIMENSIONS))
+        for key, text in anchors.items():
+            self.assertNotRegex(text, r'\]\(|\]\[|`', f'{key} keeps Markdown link syntax')
+        self.assertIn('Feynman', anchors['refutation'])
+        prompt = bj.build_prompt('Status: all good.', '[page structure] markdown', None, anchors)
+        for text in anchors.values():
+            self.assertIn(text, prompt)
+        self.assertNotIn(' 3: ', ' '.join(levels for *_, levels in bj.DIMENSIONS))
+
+    def test_a_rubric_missing_a_level_three_line_stops_the_judge(self):
+        bj = self.load()
+        text = bj.RUBRIC.read_text()
+        start = text.index('\n   **3:**', text.index('**Shape:**'))
+        rubric = self.root / 'climb.md'
+        rubric.write_text(text[:start] + text[text.index('\n', start + 1):])
+        with self.assertRaisesRegex(ValueError, r"no '3:' line for Shape$"):
+            bj.load_anchors(rubric)
+
 
 if __name__ == '__main__':
     unittest.main()
