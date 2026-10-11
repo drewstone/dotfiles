@@ -198,9 +198,10 @@ class Commands(Ledger):
         r = self.run_tool('check', '--project', str(self.root), '--json')
         self.assertEqual(r.returncode, 1)
         report = json.loads(r.stdout)
-        self.assertEqual(report['checked'], 3)
+        self.assertEqual(report['checked'], 2)  # the repeated row is an integrity failure, not a contract check
         self.assertEqual([f['id'] for f in report['rows']], ['new', 'coalesce-events-20261010', None])
-        self.assertEqual(report['rows'][1]['problems'], ['id repeats line 2'])
+        self.assertIn('id repeats line 2', report['rows'][1]['problems'][0])
+        self.assertEqual([f['kind'] for f in report['rows']], ['contract', 'integrity', 'integrity'])
         r = self.run_tool('check', '--project', str(self.root), '--since', '2026-10-01')
         self.assertIn(':1 old', r.stdout)
 
@@ -229,6 +230,70 @@ class Commands(Ledger):
         self.assertAccepted(comparison())
         self.assertTrue((self.root / 'reports' / 'climb' / 'ledger.jsonl').is_file())
         self.assertFalse(self.ledger.exists())
+
+
+class UnionMerge(Ledger):
+    """Two PRs that each append rows merge cleanly under merge=union, and check rejects what a union gets wrong."""
+
+    def git(self, *args, check=True):
+        env = {**os.environ, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.com', 'GIT_COMMITTER_NAME': 't',
+               'GIT_COMMITTER_EMAIL': 't@example.com', 'GIT_CEILING_DIRECTORIES': self.tmp.name}
+        # A throwaway fixture repo: the machine's global hooks guard real commits, not these.
+        return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-C', str(self.root),
+                               *args], capture_output=True, text=True, env=env, check=check)
+
+    def row(self, rid):
+        row = comparison()
+        row['id'] = rid
+        return row
+
+    def branches(self, attributes):
+        self.git('init', '-q', '-b', 'main')
+        if attributes:
+            (self.root / '.gitattributes').write_text('.agent/climb.jsonl merge=union\n')
+        self.ledger.write_text(json.dumps(self.row('base')) + '\n')
+        self.git('add', '-A')
+        self.git('commit', '-qm', 'base')
+        self.git('checkout', '-qb', 'a')
+        self.assertAccepted(self.row('from-a'))
+        self.git('commit', '-qam', 'a')
+        self.git('checkout', '-q', 'main')
+        self.git('checkout', '-qb', 'b')
+        self.assertAccepted(self.row('from-b'))
+        self.git('commit', '-qam', 'b')
+        return self.git('merge', '-q', '--no-edit', 'a', check=False)
+
+    def test_parallel_appends_merge_and_every_row_survives(self):
+        merged = self.branches(attributes=True)
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        ids = [json.loads(line)['id'] for line in self.ledger.read_text().splitlines()]
+        self.assertEqual(sorted(ids), ['base', 'from-a', 'from-b'])
+        check = self.run_tool('check', '--project', str(self.root), '--since', '2000-01-01')
+        self.assertEqual(check.returncode, 0, check.stdout)
+
+    def test_without_the_attribute_the_same_appends_conflict(self):
+        self.assertNotEqual(self.branches(attributes=False).returncode, 0)
+
+    def test_append_names_a_ledger_without_the_attribute(self):
+        self.git('init', '-q', '-b', 'main')
+        r = self.append(self.row('x'))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn('merge=union', r.stderr)
+        (self.root / '.gitattributes').write_text('.agent/climb.jsonl merge=union\n')
+        self.assertNotIn('merge=union', self.append(self.row('y')).stderr)
+
+    def test_check_rejects_what_a_union_merge_gets_wrong_at_any_date(self):
+        old = self.row('old')
+        old['timestamp'] = '2026-10-01T00:00:00Z'
+        edited = dict(old, outcome='PASS 1,904 events')
+        pretty = json.dumps(self.row('pretty'), indent=1)
+        self.ledger.write_text('\n'.join([json.dumps(old), json.dumps(edited), json.dumps(old), pretty]) + '\n')
+        report = json.loads(self.run_tool('check', '--project', str(self.root), '--json').stdout)
+        problems = {f['line']: ' '.join(f['problems']) for f in report['rows'] if f['kind'] == 'integrity'}
+        self.assertIn('id repeats line 1', problems[2])
+        self.assertIn('id repeats line 1', problems[3])
+        self.assertIn('not one whole JSON object', problems[4])
+        self.assertEqual(report['checked'], 0)
 
 
 class BriefJudge(Ledger):
