@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -124,6 +124,63 @@ test("a log directory that cannot be written never fails the call", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "gh ran");
     assert.equal(result.stderr, "");
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("one caller's core reads are capped per window, while other callers, writes and free reads pass", () => {
+  const s = sandbox();
+  try {
+    const env = { ...s.env, TZ: "UTC", TMUX_PANE: "%7", GH_DREW_CALLER_10M: "3", GH_DREW_CALLER_1H: "5" };
+    const run = (args, extra = {}) => spawnSync(s.loop, args, { cwd: s.work, env: { ...env, ...extra }, encoding: "utf8" });
+    for (let i = 0; i < 3; i++) assert.equal(run(["api", "repos/o/r/actions/runs/9/jobs"]).status, 0);
+    const capped = run(["run", "view", "9", "-R", "o/r"]);
+    assert.equal(capped.status, 3);
+    assert.match(capped.stderr, /pr-drive-watch \(tmux:%7\) made 3 core reads in the last 10 minutes/);
+    // GraphQL, /rate_limit, explicit and implicit writes, and another pane are not this caller's core reads.
+    for (const args of [["api", "graphql", "-f", "query=q"], ["api", "rate_limit"], ["pr", "view", "5"],
+      ["api", "-X", "POST", "repos/o/r/issues/5/comments"], ["api", "repos/o/r/issues/5/comments", "-f", "body=x"]]) {
+      assert.equal(run(args).status, 0, args.join(" "));
+    }
+    assert.equal(run(["api", "repos/o/r/pulls/5"], { TMUX_PANE: "%8" }).status, 0);
+    const rows = lines(s.logs).map(fields);
+    assert.deepEqual(rows.filter((r) => r.outcome === "refused").map((r) => r.shape), ["run view 9 o/r"]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("reads older than ten minutes still count toward the hourly cap", () => {
+  const s = sandbox();
+  try {
+    const then = Math.floor(Date.now() / 1000) - 1200;
+    const hour = new Date(then * 1000).toISOString().replace(/[-T:]/g, "").slice(0, 10);
+    mkdirSync(s.logs, { recursive: true });
+    writeFileSync(join(s.logs, `calls-${hour}.tsv`),
+      `${then}\tcalled\tpr-drive-watch\ttmux:%7\t~/code/lane\tapi repos/o/r/pulls/1\n`.repeat(5));
+    const env = { ...s.env, TZ: "UTC", TMUX_PANE: "%7", GH_DREW_CALLER_10M: "3", GH_DREW_CALLER_1H: "5" };
+    const capped = spawnSync(s.loop, ["api", "repos/o/r/pulls/2"], { cwd: s.work, env, encoding: "utf8" });
+    assert.equal(capped.status, 3);
+    assert.match(capped.stderr, /made 0 core reads in the last 10 minutes\n\(cap 3\) and 5 in the last hour \(cap 5\)/);
+    const off = spawnSync(s.loop, ["api", "repos/o/r/pulls/2"], { cwd: s.work, env: { ...env, GH_DREW_CALLER_1H: "0" }, encoding: "utf8" });
+    assert.equal(off.status, 0, off.stderr);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("a Node 24 caller, whose process is named MainThread, is named by its script", () => {
+  const s = sandbox();
+  try {
+    const node = join(s.root, "bin", "MainThread");
+    copyFileSync("/bin/bash", node);
+    chmodSync(node, 0o755);
+    const script = join(s.root, "bin", "revision-receipt.mjs");
+    writeFileSync(script, `"${ghDrew}" "$@"\n`);
+    const result = spawnSync(node, [script, "api", "repos/o/r/pulls/3"], { cwd: s.work, env: s.env, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(lines(s.logs).map(fields).map((r) => r.caller), ["revision-receipt"]);
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
