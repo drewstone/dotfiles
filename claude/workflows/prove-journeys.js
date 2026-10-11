@@ -36,7 +36,7 @@ const IDENTITIES = (A.identities || []).map((i) => `- ${i.name}: ${i.role}${i.wo
 const RULES = `
 CONTEXT
 You are part of a run that proves ${A.app} (${A.url}, repository ${A.repo}) works for real users, recorded on video so the founder can watch what a user sees.
-The recorder is agent-app's journeys kit: read its guide (agent-app docs/journeys.md, or node_modules/@tangle-network/agent-app/docs on the host) and \`agent-app-journeys --help\` before writing a script.
+The recorder is agent-app's journeys kit: read its guide (https://github.com/tangle-network/agent-app/blob/main/docs/journeys.md) and \`agent-app-journeys --help\` before writing a script.
 Recording host: ${A.host}, app checkout ${A.checkout} (journeys.config.mjs at its root). This run writes to ${HOST_OUT} on the host. Run every journey and kit command from that checkout with that folder set:
   ssh ${A.host} 'cd ${A.checkout} && ${ENV} nice -n 10 journeys-env -- pnpm exec agent-app-journeys run journeys/<flow-id>/run.ts'
   ssh ${A.host} 'cd ${A.checkout} && ${ENV} pnpm exec agent-app-journeys frames <flow-id> <label>'
