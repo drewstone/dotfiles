@@ -330,7 +330,12 @@ acquire_slot() {
 # have nothing to do with the change under test.
 load_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
 load_limit() { echo $(( $(nproc) * 3 / 2 )); }
-over_limit() { awk -v load="$1" -v limit="$2" 'BEGIN { exit !(load + 0 > limit + 0) }'; }
+# gawk reserves the name `load`; any awk failure counts as over the limit, so a
+# broken comparison holds gates instead of admitting them.
+over_limit() {
+  awk -v cur="$1" -v cap="$2" 'BEGIN { exit !(cur + 0 > cap + 0) }'
+  [ "$?" -ne 1 ]
+}
 
 # Holds a gate that has its lock and slot until the host is under its load
 # limit, the way the disk floor refuses: bounded, with the reason printed.
@@ -608,8 +613,8 @@ remote_gate() {
   }
   receipt() {
     local status="$1" ran=$((SECONDS - started))
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s load=%s timed_out=%s watchdog=%s\n' \
-      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "${start_load:-?}" "$timed_out" "$watchdog" >&2
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s\n' \
+      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" <<'PY' || true
 import json, sys, time
