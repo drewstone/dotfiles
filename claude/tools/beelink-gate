@@ -412,7 +412,21 @@ acquire_slot() {
 # tasks blocked on disk and long-lived niced work: at 21:20Z on 2026-10-11
 # beelink2 sat at load 28 with CPU pressure 6.9%, and every gate waited. Where
 # the pressure file is missing, the load-average limit (1.5x the cores) applies.
-pressure_file() { local f=${BEELINK_GATE_CPU_PRESSURE:-/proc/pressure/cpu}; [ -r "$f" ] && echo "$f"; }
+# The pressure that counts is the one the gate's own tasks feel: the top-level
+# cgroup it runs in (/non-systemd for a gate reached over SSH into WSL), where
+# cgroup CPU weights already apply. At 21:40Z beelink1 showed 44% system-wide,
+# but 1.9% in /non-systemd; the rest was lane work in user.slice and CI in
+# ci.slice. Without cgroup pressure, the host-wide file is used.
+pressure_file() {
+  local f top
+  if [ -n "${BEELINK_GATE_CPU_PRESSURE:-}" ]; then f=$BEELINK_GATE_CPU_PRESSURE
+  else
+    top=$(sed -n 's|^0::/\([^/]*\).*|\1|p' /proc/self/cgroup 2>/dev/null)
+    f=/proc/pressure/cpu
+    [ -z "$top" ] || [ ! -r "/sys/fs/cgroup/$top/cpu.pressure" ] || f=/sys/fs/cgroup/$top/cpu.pressure
+  fi
+  [ -r "$f" ] && echo "$f"
+}
 loadavg_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
 load_now() {
   local f value
@@ -472,7 +486,7 @@ load_limit() {
   else echo $(( $(nproc) * 3 / 2 )); fi
 }
 limit_basis() {
-  if pressure_file >/dev/null; then echo "% some avg10 in /proc/pressure/cpu"
+  if pressure_file >/dev/null; then echo "% some avg10 in $(pressure_file)"
   elif [ "${light:-0}" = 1 ]; then echo "2.5x $(nproc) cores"
   else echo "1.5x $(nproc) cores"; fi
 }

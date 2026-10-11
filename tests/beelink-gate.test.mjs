@@ -1444,7 +1444,7 @@ test("admission uses CPU pressure where Linux reports it: high load with low pre
     writeFileSync(pressure, pressureLine(35));
     const held = f.call(f.first, ["true"], { noInstall: true, env });
     assert.equal(held.status, 75, held.stderr);
-    assert.match(held.stderr, /REFUSED beelink2 CPU pressure 35\.00 stayed over its limit of 20 \(% some avg10 in \/proc\/pressure\/cpu\)/);
+    assert.match(held.stderr, /REFUSED beelink2 CPU pressure 35\.00 stayed over its limit of 20 \(% some avg10 in \S*pressure\)/);
     const lifted = f.call(f.first, ["true"], { noInstall: true, env: { ...env, BEELINK_GATE_MAX_CPU_PRESSURE: "40" } });
     assert.equal(lifted.status, 0, lifted.stderr);
     writeFileSync(pressure, "garbage\n");
@@ -1467,4 +1467,14 @@ test("auto places by CPU pressure: equal load averages, the host with low pressu
     assert.match(chosen.stderr, /auto chose beelink2/);
     assert.match(chosen.stderr, /receipt: .*host=beelink2/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("without an override, admission reads the pressure of the gate's own top-level cgroup", () => {
+  const cgroup = readFileSync("/proc/self/cgroup", "utf8").match(/^0::\/([^/\n]+)/m)?.[1];
+  const expected = cgroup && existsSync(`/sys/fs/cgroup/${cgroup}/cpu.pressure`) ? `/sys/fs/cgroup/${cgroup}/cpu.pressure` : "/proc/pressure/cpu";
+  const script = `source <(sed -n '/^pressure_file() {/,/^}/p' '${gate}'); pressure_file`;
+  const env = { ...process.env };
+  delete env.BEELINK_GATE_CPU_PRESSURE;
+  const result = run("bash", ["-c", script], { env });
+  assert.equal(result.stdout.trim(), existsSync(expected) ? expected : "");
 });
