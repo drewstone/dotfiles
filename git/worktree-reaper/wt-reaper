@@ -31,14 +31,33 @@ Removal uses `git worktree remove` without --force, so git re-checks the tree,
 then `git worktree prune --expire=<idle>`. The local branch is deleted with
 `git branch -d` only when it is an ancestor of the remote default branch.
 
+Derived files (--no-derived turns these off). Each pass deletes only what is
+rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
+  - node_modules: in a linked worktree that was not removed, whose HEAD is in
+    the remote default branch or whose pull request at that HEAD is merged or
+    closed, untouched for --dependency-idle-hours (default 6), passing the same
+    locked, in-progress, mount, nested-repository and process checks. Only
+    node_modules directories that git ignores are deleted; changes, untracked
+    files and every other path stay.
+  - Journey raw recordings: under --journey-state/raw/<journey>-<start>/<label>,
+    the .webm files and trace.raw.zip, once journeys/out/<journey>/timings.json
+    in a --journey-out directory names that start and out/<journey>/video holds
+    <label>-*.mp4 and, for a raw trace, the scrubbed <label>-trace.zip.
+  - beelink-gate checkouts beyond the configured count: <repo>@N under
+    --gate-cache with N >= --gate-checkouts, removed only while this process
+    holds that checkout's gate lock.
+
 Python 3.9 compatible: macOS runs it with /usr/bin/python3.
 """
 
 import argparse
+import fcntl
+import glob
 import json
 import math
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -136,6 +155,16 @@ def git(args, cwd, check=True, timeout=300):
         err = proc.stderr.decode('utf-8', 'replace').strip().splitlines()
         raise Skip('git %s failed: %s' % (args[0], (err[-1] if err else 'exit %d' % proc.returncode)))
     return out
+
+
+def git_ok(args, cwd, timeout=120):
+    """True when the git command exits 0; the same read-only environment as git()."""
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', LC_ALL='C')
+    try:
+        return subprocess.run(['git'] + args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=timeout).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def real(path):
@@ -712,6 +741,7 @@ def evaluate(wt, main_path, common_dir, args, cutoff, fetched):
     for guard in [home, real(main_path)] + [real(r) for r in args.root]:
         if inside(guard, rpath):
             raise Skip('contains protected path %s' % guard)
+    check_kept(rpath, args)
     top = git(['rev-parse', '--path-format=absolute', '--show-toplevel'], rpath).strip()
     if real(top) != rpath:
         raise Skip('toplevel mismatch: %s' % top)
@@ -737,6 +767,13 @@ def evaluate(wt, main_path, common_dir, args, cutoff, fetched):
     return rpath, branch
 
 
+def check_kept(rpath, args):
+    """Paths another owner retires (Discovery run roots go through the Lab) are never this reaper's."""
+    for keep in args.keep:
+        if inside(rpath, real(os.path.expanduser(keep))):
+            raise Skip('under %s, which its owner retires' % keep)
+
+
 def ago(ts):
     delta = time.time() - ts
     if delta < 0:
@@ -753,6 +790,7 @@ def run(args):
     log.write(event='start', mode=mode, host=socket.gethostname(), roots=','.join(args.root),
               idle_hours=args.idle_hours)
     candidates = []
+    seen = []
     for common_dir in find_repos(args.root, args.depth):
         try:
             entries = list_worktrees(common_dir)
@@ -771,6 +809,7 @@ def run(args):
             log.write(event='fetch-failed', repo=common_dir, reason=str(exc))
         for wt in entries[1:]:
             counts['scanned'] += 1
+            seen.append((wt, main_path, common_dir))
             path = wt.get('worktree', '?')
             try:
                 rpath, branch = evaluate(wt, main_path, common_dir, args, cutoff, fetched)
@@ -796,6 +835,7 @@ def run(args):
             candidates = []
             counts['errors'] += 1
 
+    removed = set()
     for rpath, branch, main_path, common_dir in candidates:
         users = sorted(p for p in held if inside(p, rpath))
         if users:
@@ -822,6 +862,7 @@ def run(args):
             log.write(decision='skip', path=rpath, reason='worktree remove refused: %s' % exc)
             continue
         counts['removed'] += 1
+        removed.add(rpath)
         log.write(decision='remove', path=rpath, branch=branch or '(detached)')
         try:
             git(['-C', main_path, 'worktree', 'prune', '--expire=%d.seconds.ago' % int(args.idle_hours * 3600)], '/')
@@ -831,9 +872,311 @@ def run(args):
             if delete_branch(branch, main_path, common_dir, log):
                 counts['branches_deleted'] += 1
 
+    if not args.no_derived:
+        derived = DerivedPass(args, log)
+        derived.dependencies(seen, removed)
+        derived.journeys()
+        derived.gate_checkouts()
+        counts.update(derived.counts)
     log.write(event='summary', mode=mode, host=socket.gethostname(),
               **counts)
     return 0
+
+
+# ---------------------------------------------------------------- derived files
+# On 2026-10-11 both beelinks fell to their 200 GiB worktree floor and beelink2 toward its 162 GiB gate
+# floor, while merged, idle worktrees still held their node_modules and journey runs kept raw recordings
+# whose mp4 and scrubbed outputs already existed.
+
+DEPENDENCY_DIRS = ('node_modules',)
+
+
+def unique_bytes(path):
+    """Allocated bytes that deleting path frees: files with one link (pnpm's store keeps the others)."""
+    total = 0
+    for top, dirs, files in os.walk(path):
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(top, d))]:
+            try:
+                st = os.lstat(os.path.join(top, name))
+            except OSError:
+                continue
+            if st.st_nlink == 1:
+                total += st.st_blocks * 512
+    return total
+
+
+# Merged and closed are final; an open or absent pull request is asked again after an hour.
+PR_STATE_CACHE = os.path.expanduser('~/.local/state/wt-reaper/pr-state.json')
+PR_STATE_RECHECK_S = 3600
+
+
+def pr_state(slug, name, head):
+    """The state of the pull request for this branch at this exact HEAD (MERGED, CLOSED, OPEN) or ''."""
+    key = '%s %s %s' % (slug, name, head)
+    try:
+        with open(PR_STATE_CACHE, encoding='utf-8') as fh:
+            cache = json.load(fh)
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(key)
+    if hit and (hit['state'] in ('MERGED', 'CLOSED') or time.time() - hit['at'] < PR_STATE_RECHECK_S):
+        return hit['state']
+    gh = shutil.which('gh-drew') or shutil.which('gh')
+    if not gh:
+        return ''
+    try:
+        proc = subprocess.run([gh, 'pr', 'list', '--repo', slug, '--head', name, '--state', 'all',
+                               '--json', 'state,headRefOid'], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              timeout=60)
+        if proc.returncode != 0:
+            return ''
+        prs = json.loads(proc.stdout or b'[]')
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        return ''
+    state = next((pr.get('state', '') for pr in prs if pr.get('headRefOid') == head), '')
+    cache[key] = {'state': state, 'at': time.time()}
+    try:
+        os.makedirs(os.path.dirname(PR_STATE_CACHE), exist_ok=True)
+        with open(PR_STATE_CACHE + '.tmp', 'w', encoding='utf-8') as fh:
+            json.dump(cache, fh)
+        os.replace(PR_STATE_CACHE + '.tmp', PR_STATE_CACHE)
+    except OSError:
+        pass
+    return state
+
+
+def merged_reason(rpath, common_dir, branch):
+    """Why this worktree's HEAD is finished work, or None."""
+    head = git(['rev-parse', 'HEAD'], rpath).strip()
+    default = default_branch(common_dir)
+    for ref in [default] if default else ['refs/remotes/origin/main', 'refs/remotes/origin/master']:
+        if git_ok(['-C', rpath, 'merge-base', '--is-ancestor', head, ref], '/'):
+            return 'HEAD is in %s' % ref[len('refs/remotes/'):]
+    # A squash merge leaves HEAD outside the default branch; its pull request says it is done.
+    name = branch[len('refs/heads/'):] if branch and branch.startswith('refs/heads/') else None
+    if not name:
+        return None
+    url = git(['config', '--get', 'remote.origin.url'], rpath, check=False).strip()
+    match = re.match(r'^(?:git@github\.com:|https://github\.com/|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?$', url)
+    state = pr_state(match.group(1), name, head) if match else ''
+    return 'its pull request at this HEAD is %s' % state.lower() if state in ('MERGED', 'CLOSED') else None
+
+
+def dependency_dirs(rpath):
+    """Every node_modules directory in the tree (not below another, not inside .git) that git ignores."""
+    found = []
+    for top, dirs, _ in os.walk(rpath):
+        keep = []
+        for d in dirs:
+            full = os.path.join(top, d)
+            if d == '.git' or os.path.islink(full):
+                continue
+            (found if d in DEPENDENCY_DIRS else keep).append(full)
+        dirs[:] = [os.path.basename(k) for k in keep]
+    ignored = []
+    for full in found:
+        if git_ok(['-C', rpath, 'check-ignore', '-q', os.path.relpath(full, rpath)], '/'):
+            ignored.append(full)
+    return ignored
+
+
+class DerivedPass:
+    def __init__(self, args, log):
+        self.args, self.log = args, log
+        self.counts = {'derived_removed': 0, 'derived_would_remove': 0, 'derived_freed_bytes': 0}
+        self.held = None
+
+    def processes(self):
+        held = scan_processes(not self.args.no_sudo, self.log)
+        return ({real(p) for p in held} | held) if IS_MAC else held
+
+    def done(self, rule, path, freed, reason):
+        if self.args.dry_run:
+            self.counts['derived_would_remove'] += 1
+            self.log.write(decision='would-remove-derived', rule=rule, path=path, bytes=freed, reason=reason)
+        else:
+            self.counts['derived_removed'] += 1
+            self.counts['derived_freed_bytes'] += freed
+            self.log.write(decision='remove-derived', rule=rule, path=path, bytes=freed, reason=reason)
+
+    def dependency_check(self, wt, main_path, common_dir, cutoff):
+        path = wt['worktree']
+        rpath = real(path)
+        if wt.get('bare') or 'locked' in wt or 'prunable' in wt:
+            raise Skip('bare, locked or prunable')
+        if not os.path.isdir(rpath) or not os.path.isfile(os.path.join(rpath, '.git')):
+            raise Skip('not a linked worktree')
+        home = real(os.path.expanduser('~'))
+        for guard in [home, real(main_path)] + [real(r) for r in self.args.root]:
+            if inside(guard, rpath):
+                raise Skip('contains protected path %s' % guard)
+        check_kept(rpath, self.args)
+        gitdir = real(git(['rev-parse', '--path-format=absolute', '--git-dir'], rpath).strip())
+        check_in_progress(gitdir)
+        check_no_mounts(rpath)
+        branch = wt.get('branch') if isinstance(wt.get('branch'), str) else None
+        newest = newest_git_activity(gitdir, common_dir, branch)
+        if newest > cutoff:
+            raise Skip('git activity %s ago' % ago(newest))
+        if not os.path.isdir(os.path.join(rpath, 'node_modules')):
+            raise Skip('no node_modules')
+        why = merged_reason(rpath, common_dir, branch)
+        if not why:
+            raise Skip('HEAD is not in the default branch and no merged or closed pull request has it')
+        newest, nested = walk_tree(rpath, cutoff)
+        if nested:
+            raise Skip('nested git repository at %s' % nested)
+        if newest > cutoff:
+            raise Skip('modified %s ago' % ago(newest))
+        dirs = dependency_dirs(rpath)
+        if not dirs:
+            raise Skip('no ignored node_modules')
+        return rpath, why, dirs
+
+    def dependencies(self, seen, removed):
+        cutoff = time.time() - self.args.dependency_idle_hours * 3600
+        ready = []
+        for wt, main_path, common_dir in seen:
+            if real(wt.get('worktree', '')) in removed:
+                continue
+            try:
+                ready.append((wt, main_path, common_dir) + self.dependency_check(wt, main_path, common_dir, cutoff))
+            except Skip:
+                continue
+            except Exception as exc:  # any surprise keeps the files
+                self.log.write(decision='keep-derived', rule='node_modules', path=wt.get('worktree', '?'),
+                               reason='error: %r' % exc)
+        if not ready:
+            return
+        try:
+            held = self.processes()
+        except Exception as exc:
+            for item in ready:
+                self.log.write(decision='keep-derived', rule='node_modules', path=item[3], reason='process scan: %s' % exc)
+            return
+        for wt, main_path, common_dir, rpath, why, dirs in ready:
+            users = sorted(p for p in held if inside(p, rpath))
+            if users:
+                self.log.write(decision='keep-derived', rule='node_modules', path=rpath,
+                               reason='in use by a process: %s' % users[0])
+                continue
+            if not self.args.dry_run:
+                # Repeat the checks and the process scan immediately before deleting.
+                try:
+                    _, why, dirs = self.dependency_check(wt, main_path, common_dir,
+                                                         time.time() - self.args.dependency_idle_hours * 3600)
+                    users = sorted(p for p in self.processes() if inside(p, rpath))
+                    if users:
+                        raise Skip('in use by a process: %s' % users[0])
+                except Exception as exc:
+                    self.log.write(decision='keep-derived', rule='node_modules', path=rpath, reason='recheck: %s' % exc)
+                    continue
+            for full in dirs:
+                freed = unique_bytes(full)
+                if not self.args.dry_run:
+                    try:
+                        shutil.rmtree(full)
+                    except OSError as exc:
+                        self.log.write(decision='keep-derived', rule='node_modules', path=full, reason=str(exc))
+                        continue
+                self.done('node_modules', full, freed, why)
+
+    def journeys(self):
+        state = os.path.expanduser(self.args.journey_state)
+        raw = os.path.join(state, 'raw')
+        outs = [d for pattern in self.args.journey_out for d in glob.glob(os.path.expanduser(pattern)) if os.path.isdir(d)]
+        if not os.path.isdir(raw) or not outs:
+            return
+        stamp = re.compile(r'^(?P<journey>.+)-(?P<start>\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)$')
+        held = None
+        for run in sorted(os.listdir(raw)):
+            match = stamp.match(run)
+            if not match:
+                continue
+            journey, start = match.group('journey'), match.group('start')
+            out = None
+            for base in outs:
+                timings = os.path.join(base, journey, 'timings.json')
+                try:
+                    with open(timings, encoding='utf-8') as fh:
+                        started = json.load(fh).get('startedAt', '')
+                except (OSError, ValueError):
+                    continue
+                if started.replace(':', '-').replace('.', '-') == start:
+                    out = os.path.join(base, journey)
+            if not out:
+                continue
+            for label in sorted(os.listdir(os.path.join(raw, run))):
+                lab = os.path.join(raw, run, label)
+                if not os.path.isdir(lab) or os.path.islink(lab):
+                    continue
+                video = os.path.join(out, 'video')
+                if not glob.glob(os.path.join(glob.escape(video), glob.escape(label) + '-*.mp4')):
+                    continue
+                trace = os.path.join(lab, 'trace.raw.zip')
+                scrubbed = os.path.join(video, label + '-trace.zip')
+                if os.path.exists(trace) and not (os.path.isfile(scrubbed) and os.path.getsize(scrubbed) > 0):
+                    continue
+                files = sorted(glob.glob(os.path.join(glob.escape(lab), '*.webm')))
+                files += [trace] if os.path.isfile(trace) else []
+                if not files:
+                    continue
+                if held is None:
+                    try:
+                        held = self.processes()
+                    except Exception as exc:
+                        self.log.write(decision='keep-derived', rule='journey-raw', path=raw, reason='process scan: %s' % exc)
+                        return
+                for f in files:
+                    if any(inside(real(f), real(os.path.expanduser(k))) for k in self.args.keep):
+                        continue
+                    if any(p == real(f) or inside(p, real(f)) for p in held):
+                        self.log.write(decision='keep-derived', rule='journey-raw', path=f, reason='open in a process')
+                        continue
+                    freed = os.lstat(f).st_blocks * 512
+                    if not self.args.dry_run:
+                        try:
+                            os.remove(f)
+                        except OSError as exc:
+                            self.log.write(decision='keep-derived', rule='journey-raw', path=f, reason=str(exc))
+                            continue
+                    self.done('journey-raw', f, freed, 'mp4 and scrubbed trace are in %s' % out)
+
+    def gate_checkouts(self):
+        cache = os.path.expanduser(self.args.gate_cache)
+        locks = os.path.join(cache, '.locks')
+        if not os.path.isdir(locks):
+            return
+        suffix = re.compile(r'^(?P<repo>.+)@(?P<n>\d+)$')
+        for path in sorted(glob.glob(os.path.join(glob.escape(cache), '*', '*', '*'))):
+            match = suffix.match(os.path.basename(path))
+            if not match or int(match.group('n')) < self.args.gate_checkouts or not os.path.isdir(path) or os.path.islink(path):
+                continue
+            host, owner = path.split(os.sep)[-3:-1]
+            lock = os.path.join(locks, '%s-%s-%s.lock' % (host, owner, os.path.basename(path)))
+            try:
+                fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
+            except OSError as exc:
+                self.log.write(decision='keep-derived', rule='gate-checkout', path=path, reason=str(exc))
+                continue
+            try:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    self.log.write(decision='keep-derived', rule='gate-checkout', path=path, reason='a gate holds its lock')
+                    continue
+                freed = unique_bytes(path)
+                if not self.args.dry_run:
+                    try:
+                        shutil.rmtree(path)
+                        if os.path.exists(lock + '.holder'):
+                            os.remove(lock + '.holder')
+                    except OSError as exc:
+                        self.log.write(decision='keep-derived', rule='gate-checkout', path=path, reason=str(exc))
+                        continue
+                self.done('gate-checkout', path, freed, 'beyond the %d configured checkouts' % self.args.gate_checkouts)
+            finally:
+                os.close(fd)
 
 
 def recheck(rpath, main_path, common_dir, args, log):
@@ -913,6 +1256,17 @@ def main(argv=None):
     parser.add_argument('--no-log-file', action='store_true')
     parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the process scan')
     parser.add_argument('--proc-dump', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--no-derived', action='store_true', help='skip the derived-file passes')
+    # 2026-10-11: discovery-lab retires its beelink run roots through the Lab (archive, then sha256-checked
+    # removal), so nothing under ~/code/_runs is this reaper's, whole trees or derived files.
+    parser.add_argument('--keep', action='append', help='path no pass touches (repeatable); default ~/code/_runs')
+    parser.add_argument('--dependency-idle-hours', type=float, default=6.0,
+                        help='idle time before a merged worktree loses its node_modules')
+    parser.add_argument('--journey-state', default='~/.local/state/gtm-journeys')
+    parser.add_argument('--journey-out', action='append', help='journeys out directory glob (repeatable); '
+                        'default ~/code/_wt/*/journeys/out')
+    parser.add_argument('--gate-cache', default=os.environ.get('BEELINK_GATE_CACHE_ROOT', '~/.cache/beelink-gate'))
+    parser.add_argument('--gate-checkouts', type=int, default=int(os.environ.get('BEELINK_GATE_REPO_CHECKOUTS', '2')))
     args = parser.parse_args(argv)
     if args.proc_dump:
         paths, unreadable = proc_dump()
@@ -926,6 +1280,14 @@ def main(argv=None):
         args.root = [os.path.expanduser(r) for r in ('~/code', '~/company', '~/webb')]
     if not math.isfinite(args.idle_hours) or args.idle_hours <= 0:
         parser.error('--idle-hours must be a finite positive number')
+    if not math.isfinite(args.dependency_idle_hours) or args.dependency_idle_hours <= 0:
+        parser.error('--dependency-idle-hours must be a finite positive number')
+    if args.gate_checkouts < 1:
+        parser.error('--gate-checkouts must be at least 1')
+    if args.journey_out is None:
+        args.journey_out = ['~/code/_wt/*/journeys/out']
+    if args.keep is None:
+        args.keep = ['~/code/_runs']
     return run(args)
 
 

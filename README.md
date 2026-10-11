@@ -50,12 +50,12 @@ Run `./host/install-cli-bridge-slice.sh` alone to install only the slice; it nee
 
 ## Worktree reaper
 
-`git/install.sh` installs `wt-reaper`: a systemd user timer on Linux and a launchd agent on macOS, both at 04:15 daily.
+`git/install.sh` installs `wt-reaper`: an hourly systemd user timer on Linux and a launchd agent at 04:15 daily on macOS.
 It covers every linked worktree registered with a repository under `~/code`, `~/company`, or `~/webb`, wherever that worktree lives (for example `~/webb/_wt/*`, `~/worktrees/*`, or `/tmp`).
 It removes one only when every check passes:
 
 - The worktree is not locked and has no merge, rebase, bisect, cherry-pick, or revert in progress.
-- Nothing in it, its index, HEAD, or reflogs changed in the last 24 hours.
+- Nothing in it, its index, HEAD, or reflogs changed in the last 12 hours (`--idle-hours`).
 - `git status` is empty; only ignored build output such as `node_modules/` may remain. An ignored `.env` keeps the tree.
 - It holds no nested repository.
 - After `git fetch --all --prune`, every commit on its HEAD is on a remote-tracking ref.
@@ -68,6 +68,14 @@ Removal uses `git worktree remove` without `--force`.
 The local branch is deleted only when it is merged into the remote default branch.
 Run `wt-reaper --dry-run` to see the decisions without removing anything.
 Main checkouts are never candidates, and the reaper refuses to run as root.
+
+The same run then deletes derived files, and keeps them on any doubt (`--no-derived` turns this off):
+
+- **node_modules** in a worktree it did not remove. The worktree's HEAD must be in the remote default branch, or its pull request at that HEAD must be merged or closed. The tree must be untouched for `--dependency-idle-hours` (default 6), with no process inside, and pass the same lock, in-progress, mount and nested-repository checks. Only node_modules directories that git ignores are deleted; changes and untracked files stay.
+- **Journey raw recordings** under `~/.local/state/gtm-journeys/raw/<journey>-<start>/<label>`: the `.webm` files and `trace.raw.zip`. They go only once `journeys/out/<journey>/timings.json` names that same start, and `out/<journey>/video` holds `<label>-*.mp4` and, for a raw trace, the scrubbed `<label>-trace.zip`.
+- **beelink-gate checkouts beyond the configured count**: `<repo>@N` with N of at least `BEELINK_GATE_REPO_CHECKOUTS` (default 2). The reaper removes one only while it holds that checkout's gate lock itself.
+
+Each deletion is logged as `decision=remove-derived` with its rule and the bytes it freed.
 
 ## Tmux recovery
 
