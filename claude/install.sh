@@ -136,6 +136,15 @@ if [ -d "$SCRIPT_DIR/commands" ] && [ "$(ls -A "$SCRIPT_DIR/commands" 2>/dev/nul
   done
 fi
 
+# Saved workflows (Claude-only): the Workflow tool resolves a name from ~/.claude/workflows/<name>.js.
+if [ -d "$SCRIPT_DIR/workflows" ] && [ "$(ls -A "$SCRIPT_DIR/workflows" 2>/dev/null)" ]; then
+  mkdir -p "$CLAUDE_DIR/workflows"
+  for wf in "$SCRIPT_DIR/workflows"/*.js; do
+    [ -f "$wf" ] || continue
+    link "$wf" "$CLAUDE_DIR/workflows/$(basename "$wf")"
+  done
+fi
+
 # Output styles (Claude-only: Codex and OpenCode have no equivalent)
 if [ -d "$SCRIPT_DIR/output-styles" ] && [ "$(ls -A "$SCRIPT_DIR/output-styles" 2>/dev/null)" ]; then
   mkdir -p "$CLAUDE_DIR/output-styles"
