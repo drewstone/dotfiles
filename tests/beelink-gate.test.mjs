@@ -1144,6 +1144,58 @@ test("a repo that names no exact pnpm version keeps the beelink's pnpm", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("--branch checks out the branch at the SHA with @{push} at that SHA, and refuses a SHA that is not its head", () => {
+  const f = fixture();
+  try {
+    f.git(["--git-dir", f.bare, "branch", "fix/signoff", f.first], f.root);
+    const show = ["bash", "-c", 'git rev-parse --abbrev-ref HEAD; git rev-parse "@{push}"; git status --porcelain | wc -l']; 
+    const ok = f.call(f.first, show, { noInstall: true, env: { BEELINK_GATE_BRANCH: "fix/signoff" } });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(ok.stdout.trim().split("\n"), ["fix/signoff", f.first, "0"]);
+    assert.match(ok.stderr, /checked out fix\/signoff at .* tracking origin\/fix\/signoff/);
+    const stale = f.call(f.second, ["true"], { noInstall: true, env: { BEELINK_GATE_BRANCH: "fix/signoff" } });
+    assert.equal(stale.status, 2, stale.stderr);
+    assert.match(stale.stderr, new RegExp(`--branch fix/signoff: origin has it at ${f.first}, not ${f.second}`));
+    const missing = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_BRANCH: "no/such" } });
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /origin has it at no such branch/);
+    const detached = f.call(f.first, ["git", "rev-parse", "--abbrev-ref", "HEAD"], { noInstall: true });
+    assert.equal(detached.stdout.trim(), "HEAD");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the launcher validates --branch and forwards it to the beelink", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    f.git(["--git-dir", f.bare, "branch", "fix/signoff", f.first], f.root);
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) };
+    const ok = run(gate, ["--no-install", "--branch", "fix/signoff", "beelink2", f.url, f.first, "--", "git", "rev-parse", "--abbrev-ref", "HEAD"], { env });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout.trim(), "fix/signoff");
+    for (const bad of ["-x", "a..b", "a b", "x;id"]) {
+      const refused = run(gate, ["--branch", bad, "beelink2", f.url, f.first, "--", "true"], { env });
+      assert.equal(refused.status, 2, bad);
+      assert.match(refused.stderr, /invalid --branch/);
+    }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a gated command finds the dotfiles tools in ~/bin and ~/.local/bin", () => {
+  const f = fixture();
+  try {
+    for (const dir of ["bin", ".local/bin"]) {
+      mkdirSync(join(f.home, dir), { recursive: true });
+      const tool = join(f.home, dir, dir === "bin" ? "gh-drew" : "local-tool");
+      writeFileSync(tool, `#!/usr/bin/env bash\necho ${dir}\n`);
+      chmodSync(tool, 0o755);
+    }
+    const result = f.call(f.first, ["bash", "-c", "gh-drew; local-tool"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "bin\n.local/bin\n");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 // A light gate: a small, dependency-free check with a declared CPU budget.
 const lightGate = (f, sha, command, env = {}) => run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "light", f.windowDay, f.windowHour, ...command].map(encode)], { env: { ...f.env, ...env } });
 
@@ -1204,54 +1256,5 @@ test("a light gate over its declared CPU budget fails loudly, and the budget is 
     const combined = run(gate, ["--light", "--ship", "beelink2", f.url, f.first], { env: f.env });
     assert.equal(combined.status, 2);
     assert.match(combined.stderr, /--light cannot be combined with --ship/);
-test("--branch checks out the branch at the SHA with @{push} at that SHA, and refuses a SHA that is not its head", () => {
-  const f = fixture();
-  try {
-    f.git(["--git-dir", f.bare, "branch", "fix/signoff", f.first], f.root);
-    const show = ["bash", "-c", 'git rev-parse --abbrev-ref HEAD; git rev-parse "@{push}"; git status --porcelain | wc -l']; 
-    const ok = f.call(f.first, show, { noInstall: true, env: { BEELINK_GATE_BRANCH: "fix/signoff" } });
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.deepEqual(ok.stdout.trim().split("\n"), ["fix/signoff", f.first, "0"]);
-    assert.match(ok.stderr, /checked out fix\/signoff at .* tracking origin\/fix\/signoff/);
-    const stale = f.call(f.second, ["true"], { noInstall: true, env: { BEELINK_GATE_BRANCH: "fix/signoff" } });
-    assert.equal(stale.status, 2, stale.stderr);
-    assert.match(stale.stderr, new RegExp(`--branch fix/signoff: origin has it at ${f.first}, not ${f.second}`));
-    const missing = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_BRANCH: "no/such" } });
-    assert.equal(missing.status, 2);
-    assert.match(missing.stderr, /origin has it at no such branch/);
-    const detached = f.call(f.first, ["git", "rev-parse", "--abbrev-ref", "HEAD"], { noInstall: true });
-    assert.equal(detached.stdout.trim(), "HEAD");
-  } finally { rmSync(f.root, { recursive: true, force: true }); }
-});
-
-test("the launcher validates --branch and forwards it to the beelink", () => {
-  const f = fixture();
-  try {
-    installFakeSsh(f);
-    f.git(["--git-dir", f.bare, "branch", "fix/signoff", f.first], f.root);
-    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) };
-    const ok = run(gate, ["--no-install", "--branch", "fix/signoff", "beelink2", f.url, f.first, "--", "git", "rev-parse", "--abbrev-ref", "HEAD"], { env });
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(ok.stdout.trim(), "fix/signoff");
-    for (const bad of ["-x", "a..b", "a b", "x;id"]) {
-      const refused = run(gate, ["--branch", bad, "beelink2", f.url, f.first, "--", "true"], { env });
-      assert.equal(refused.status, 2, bad);
-      assert.match(refused.stderr, /invalid --branch/);
-    }
-  } finally { rmSync(f.root, { recursive: true, force: true }); }
-});
-
-test("a gated command finds the dotfiles tools in ~/bin and ~/.local/bin", () => {
-  const f = fixture();
-  try {
-    for (const dir of ["bin", ".local/bin"]) {
-      mkdirSync(join(f.home, dir), { recursive: true });
-      const tool = join(f.home, dir, dir === "bin" ? "gh-drew" : "local-tool");
-      writeFileSync(tool, `#!/usr/bin/env bash\necho ${dir}\n`);
-      chmodSync(tool, 0o755);
-    }
-    const result = f.call(f.first, ["bash", "-c", "gh-drew; local-tool"], { noInstall: true });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, "bin\n.local/bin\n");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
