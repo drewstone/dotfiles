@@ -30,3 +30,9 @@ for the fleet rule to run dependency installs and gates on a Beelink.
 `~/bin/git` also refuses direct `git worktree add` destinations under either GTR `_wt` root.
 The budgeted `storage-lifecycle create` path passes its scoped marker to Git; other Git
 commands and pinned checkouts outside `_wt` delegate to `/usr/bin/git`.
+
+GTR noninteractive SSH commands can omit `~/bin` and `~/.local/bin` from PATH.
+`host/install.sh` also installs a root-owned copy of the same Git wrapper at
+`/usr/local/bin/git`, with `/usr/local/bin/git.gtr-original` pointing to
+`/usr/bin/git`. This location precedes `/usr/bin` in the SSH command PATH;
+`host/install.sh --check` reports drift in either installed copy.

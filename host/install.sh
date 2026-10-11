@@ -97,6 +97,10 @@ if [ "$(hostname -s)" = drew-GTR-Pro ]; then
   else
     python3 "$SCRIPT_DIR/gtr-install-guard/install.py"
   fi
+  # Tailscale noninteractive SSH omits the user PATH but searches /usr/local/bin.
+  # Keep this copy root-owned because root can also run Git through this path.
+  want_link /usr/bin/git /usr/local/bin/git.gtr-original
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" /usr/local/bin/git
 fi
 
 echo "== wrappers"
