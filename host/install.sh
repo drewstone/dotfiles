@@ -74,6 +74,8 @@ want_file() {
 want_link() {
   [ "$(readlink "$2" 2>/dev/null)" = "$1" ] && return 0
   if [ "$CHECK" = 1 ]; then drift "$2 -> $1"; return 0; fi
+  # Like want_file's install -D: the Beelink cap directory does not exist before the first install.
+  $SUDO install -d -m 0755 -o root -g root "$(dirname "$2")"
   $SUDO ln -sfn "$1" "$2"
   note changed "$2 -> $1"
   CHANGED=1
