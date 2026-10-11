@@ -177,6 +177,151 @@ except (OSError, ValueError) as exc:
 PY
 }
 
+# Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
+# cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
+# 24 h. Each sweep holds every gate lock for <repo> and cargo's own profile
+# locks, so no gate or cargo build is using the files it removes; a removed
+# artifact only costs a rebuild. Failure is reported but never fails a gate.
+prune_build_dirs() {
+  python3 - "$@" <<'PY'
+import fcntl
+import os
+from pathlib import Path
+import shutil
+import sys
+import time
+
+build_root, locks, current_lock = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+max_age = int(sys.argv[4])
+cutoff = time.time() - max_age
+TAG = "Signature: 8a477f597d28d172789f06886806bc55"
+ARTIFACT_DIRS = ("deps", "build", ".fingerprint", "incremental", "examples")
+CARGO_LOCKS = (".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock")
+
+def try_lock(path, held):
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return True
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return False
+    held.append(fd)
+    return True
+
+def release(held):
+    while held:
+        os.close(held.pop())
+
+def newest(path):
+    # relatime refreshes atime on a read at most daily; cargo's locks, not
+    # this age, are what keep an active build's inputs safe.
+    st = path.lstat()
+    latest = max(st.st_atime, st.st_mtime)
+    if path.is_dir() and not path.is_symlink():
+        for parent, dirs, files in os.walk(path):
+            for name in dirs + files:
+                st = os.lstat(os.path.join(parent, name))
+                latest = max(latest, st.st_atime, st.st_mtime)
+    return latest
+
+def reclaimable(path):
+    if not path.is_dir() or path.is_symlink():
+        st = path.lstat()
+        return st.st_blocks * 512 if st.st_nlink == 1 else 0
+    total = 0
+    for parent, _, files in os.walk(path):
+        for name in files:
+            st = os.lstat(os.path.join(parent, name))
+            if st.st_nlink == 1:
+                total += st.st_blocks * 512
+    return total
+
+def profiles(target):
+    # <target>/<profile> and <target>/<triple>/<profile>
+    for child in target.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if (child / ".fingerprint").is_dir():
+            yield child
+            continue
+        for grandchild in child.iterdir():
+            if not grandchild.is_symlink() and (grandchild / ".fingerprint").is_dir():
+                yield grandchild
+
+try:
+    with (locks / ".build-prune.lock").open("a+") as sweep_lock:
+        try:
+            fcntl.flock(sweep_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit(0)
+        for target in sorted(build_root.glob("*-build")):
+            tag = target / "CACHEDIR.TAG"
+            if target.is_symlink() or not target.is_dir() or tag.is_symlink() or not tag.is_file():
+                continue
+            with tag.open() as tagfile:
+                if not tagfile.read(len(TAG)) == TAG:
+                    continue
+            repo = target.name[:-len("-build")]
+            held = []
+            try:
+                busy = [lock for lock in sorted(locks.glob(f"*-{repo}.lock"))
+                        if lock != current_lock and not try_lock(lock, held)]
+                if busy:
+                    print(f"beelink-gate: skipped {target}; a {repo} gate holds its lock", file=sys.stderr)
+                    continue
+                freed = 0
+                for profile in profiles(target):
+                    profile_held = []
+                    try:
+                        if not all(try_lock(profile / name, profile_held) for name in CARGO_LOCKS):
+                            print(f"beelink-gate: skipped {profile}; cargo is building there", file=sys.stderr)
+                            continue
+                        for name in ARTIFACT_DIRS:
+                            area = profile / name
+                            if area.is_symlink() or not area.is_dir():
+                                continue
+                            for entry in area.iterdir():
+                                if newest(entry) >= cutoff:
+                                    continue
+                                bytes_used = reclaimable(entry)
+                                if entry.is_dir() and not entry.is_symlink():
+                                    shutil.rmtree(entry)
+                                else:
+                                    entry.unlink()
+                                freed += bytes_used
+                    finally:
+                        release(profile_held)
+                if freed:
+                    print(f"beelink-gate: pruned {freed} bytes of cargo output untouched for {max_age}s from {target}", file=sys.stderr)
+            finally:
+                release(held)
+except OSError as exc:
+    print(f"beelink-gate: build cache sweep failed: {exc}", file=sys.stderr)
+PY
+}
+
+# Gates for different repos run in parallel; cap them per host with flock slots
+# so a burst of lanes cannot drive the load past the cores. The slot is taken
+# after the repo lock, so gates queued behind one repo hold no slot.
+acquire_slot() {
+  local slots_dir="$1" max="$2" i announced=
+  while :; do
+    for ((i = 0; i < max; i++)); do
+      exec {slot_fd}>"$slots_dir/slot-$i.lock" || die "cannot open host slot"
+      if flock -n -x "$slot_fd"; then return 0; fi
+      exec {slot_fd}>&-
+    done
+    if [ -z "$announced" ]; then
+      echo "beelink-gate: waiting for a host gate slot ($max running)" >&2
+      announced=1
+    fi
+    sleep "${BEELINK_GATE_SLOT_POLL_SECONDS:-2}"
+  done
+}
+
 declare -A BEELINK_IPS=([beelink1]=100.98.195.7 [beelink2]=100.127.22.51)
 REG_EXE=${BEELINK_GATE_REG:-/mnt/c/Windows/System32/reg.exe}
 STATE_DIR="${BEELINK_GATE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/beelink-gate}"
@@ -324,8 +469,11 @@ remote_gate() {
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
+  local max_concurrent="${BEELINK_GATE_MAX_CONCURRENT:-4}"
+  local build_root="${XDG_CACHE_HOME:-$HOME/.cache}"
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
+  [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
   checkout="$cache_root/$host/$owner/$repo"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] \
     || [ -L "$cache_root/$host/$owner" ] || [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then
@@ -343,10 +491,11 @@ remote_gate() {
     fi
     sleep 5 & wait $!
   done
-  waited=$((SECONDS - waiting_since))
-  echo "beelink-gate: lock acquired on $beelink after ${waited}s" >&2
   printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
     $$ "$(ps -o sid= -p $$ | tr -d ' ')" "$(date +%s)" "$sha" "$launcher" > "$lock.holder" || die "cannot write lock metadata"
+  acquire_slot "$cache_root/.locks" "$max_concurrent"
+  waited=$((SECONDS - waiting_since))
+  echo "beelink-gate: lock and host slot acquired on $beelink after ${waited}s" >&2
   check_floor "$beelink" || exit $?
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
 
@@ -357,7 +506,7 @@ remote_gate() {
   step() {
     local left=$((deadline - SECONDS)) rc
     if (( left <= 0 )); then timed_out=1; return 124; fi
-    timeout -k 30 "$left" "$@" {lock_fd}>&- </dev/null &
+    timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
     current=$!
     wait "$current"; rc=$?
     current=""
@@ -395,6 +544,7 @@ PY
       :
     elif cd "$cache_root"; then
       if ! prune_cache "$cache_root" "$checkout" "$cache_max" && [ "$status" -eq 0 ]; then status=3; fi
+      prune_build_dirs "$build_root" "$cache_root/.locks" "$lock" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
     elif [ "$status" -eq 0 ]; then
       status=3
     fi
@@ -410,7 +560,7 @@ PY
   fi
   if [ -e "$checkout/.git" ]; then
     origin=$(git -C "$checkout" remote get-url origin) || exit $?
-    [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+    [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
     # A blame or history check can otherwise fetch hundreds of missing blobs
     # one by one. The cache is disposable, and the repo lock is held here.
     if git -C "$checkout" config --get-regexp '^(remote\.origin\.(promisor|partialclonefilter)|extensions\.partialclone)$' >/dev/null; then
@@ -424,7 +574,7 @@ PY
     git -C "$checkout" remote add origin "$repo_url" || exit $?
   fi
   origin=$(git -C "$checkout" remote get-url origin) || exit $?
-  [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+  [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
   remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*') || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()
@@ -450,6 +600,11 @@ PY
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
   check_floor "$beelink" || exit $?
 
+  # Rust output lives inside .git, which checkout and clean leave alone, so it
+  # survives between gates and the LRU cap counts and evicts it with its repo.
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$checkout/.git/beelink-gate-target}"
+  # Incremental state is a third of a debug target and gates rarely reuse it.
+  export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
   cd "$checkout" || exit $?
   if [ "$install_mode" = ship ]; then
     [ -f scripts/ship.sh ] || die "--ship: $owner/$repo at ${sha:0:12} has no scripts/ship.sh"
@@ -518,6 +673,7 @@ on_beelink() {
   local -a envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
+  [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
   local me=$$ rc
   if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
@@ -619,6 +775,9 @@ if [ "$#" -lt 5 ] || [ "$4" != -- ]; then
 fi
 target=$1 repo_url=$2 sha=$3
 shift 4
+if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
+  [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
+fi
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
 case "$target" in
