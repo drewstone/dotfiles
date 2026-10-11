@@ -23,8 +23,22 @@
 # Every step runs under one hold budget (BEELINK_GATE_MAX_HOLD, default 45m).
 # Each gate appends a JSON line to ~/.local/state/beelink-gate/receipts.jsonl
 # on the beelink: host, repo, sha, waited_s, ran_s, exit, timed_out, watchdog.
+#
+# Exit codes: the command's own, 2 for a broken request or cache, and 75
+# (EX_TEMPFAIL) when the gate could not start or prove its result now: the
+# Windows Update window, load that stayed over the limit, a disk floor, no
+# beelink reachable or no readable update policy, or a preempted or
+# inconclusive preview. A 75 is never a red result. Its last line says when to
+# ask again, and callers retry then:
+#   beelink-gate: TEMPFAIL next_allowed=<UTC, ISO 8601> <reason>
 set -uo pipefail
 die() { echo "beelink-gate: $*" >&2; exit 2; }
+TEMPFAIL=75
+tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
+tempfail() { tempfail_line "$1" "$2"; exit "$TEMPFAIL"; }
+utc_in_minutes() {
+  python3 -c 'import datetime as d, sys; print((d.datetime.now(d.timezone.utc) + d.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"
+}
 
 decode() { printf '%s' "$1" | base64 --decode; }
 
@@ -97,8 +111,20 @@ for offset in range(-7, 8):
             f"({end:%Y-%m-%d %H:%M} UTC)",
             file=sys.stderr,
         )
+        print(f"{end:%Y-%m-%dT%H:%M:%SZ}")
         sys.exit(3)
 PY
+}
+
+# Starts only outside the update window; inside it, a TEMPFAIL until it ends.
+admit_window() {
+  local next rc
+  next=$(check_update_window "$@"); rc=$?
+  case "$rc" in
+    0) ;;
+    3) tempfail "$next" "$1 is in its Windows Update window" ;;
+    *) exit "$rc" ;;
+  esac
 }
 
 # Cache directories are owned by this command. A global lock serializes size
@@ -452,12 +478,17 @@ reclaim_dead_holder() {
 # Prints one line for `auto`: state=free|busy|refused, cache=warm|cold, load.
 remote_probe() {
   [ "$#" -eq 4 ] || die "invalid probe request"
-  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason=""
+  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err
   beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
-  reason=$(check_floor "$beelink" 2>&1) || state=refused
-  [ "$state" = refused ] || { reason=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>&1) || state=refused; }
+  reason=$(check_floor "$beelink" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
+  if [ "$state" != refused ]; then
+    err=$(mktemp)
+    next=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>"$err") || { state=refused; reason=$(cat "$err"); }
+    rm -f "$err"
+    if [ "$state" != refused ]; then next=""; elif [ -z "$next" ]; then next=$(utc_in_minutes 5); fi
+  fi
   # A repo has BEELINK_GATE_REPO_CHECKOUTS checkouts per host; one free is enough.
   local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix free_copy=""
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || copies=2
@@ -483,8 +514,8 @@ remote_probe() {
     flock -n -s "$fd" && free_slots=$((free_slots + 1))
     exec {fd}<&-
   done
-  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$free_slots" "$(load_now)" "$(load_limit)" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s next=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$(load_now)" "$(load_limit)" "${next:--}" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 }
 
 # After a green --ship run, sign what ran and on which tree with this beelink's
@@ -547,7 +578,7 @@ run_preview() {
   rm -f "$receipt_file"
   case "$rc" in
     0|2) return 0 ;;
-    3) return 75 ;;
+    3) tempfail_line "$(utc_in_minutes 5)" "the preview was preempted or inconclusive; ship verify passed"; return "$TEMPFAIL" ;;
     *) return 1 ;;
   esac
 }
@@ -606,8 +637,8 @@ remote_gate() {
   # for a password or a host-key confirmation.
   export GIT_TERMINAL_PROMPT=0
   export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
-  check_floor "$beelink" || exit $?
-  check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
+  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  admit_window "$beelink" "$window_day" "$window_hour"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
   local max_concurrent="${BEELINK_GATE_MAX_CONCURRENT:-4}"
@@ -654,12 +685,12 @@ remote_gate() {
   printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
     $$ "$(ps -o sid= -p $$ | tr -d ' ')" "$(date +%s)" "$sha" "$launcher" > "$lock.holder" || die "cannot write lock metadata"
   acquire_slot "$cache_root/.locks" "$max_concurrent"
-  wait_for_load "$beelink" || exit $?
+  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink load stayed over its limit"
   unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since))
   echo "beelink-gate: lock, host slot and load ($start_load, limit $(load_limit)) admitted on $beelink after ${waited}s" >&2
-  check_floor "$beelink" || exit $?
-  check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
+  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  admit_window "$beelink" "$window_day" "$window_hour"
 
   local started=$SECONDS deadline=$((SECONDS + max_hold)) display
   printf -v display '%q ' "${command[@]}"
@@ -951,7 +982,7 @@ place_named() {
 
 # Probes both beelinks and prints the one to use; waits while both are busy.
 choose_beelink() {
-  local target line state cache load slots best="" best_rank=9 best_load rank waited=0 reported=-60 light_busy
+  local target line state cache load slots best="" best_rank=9 best_load rank waited=0 reported=-60 light_busy next
   local -A seen=()
   local auto_started=$SECONDS
   while :; do
@@ -984,10 +1015,13 @@ choose_beelink() {
       echo "$best"; return 0
     fi
     if [ "${seen[beelink1]:-}" = unreachable ] && [ "${seen[beelink2]:-}" = unreachable ]; then
-      echo "beelink-gate: no beelink is reachable from $(hostname)" >&2; return 2
+      tempfail "$(utc_in_minutes 5)" "no beelink is reachable from $(hostname)"
     fi
     if [[ "${seen[beelink1]:-}" != *state=busy* && "${seen[beelink2]:-}" != *state=busy* ]]; then
-      echo "beelink-gate: no beelink can start this gate (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2; return 3
+      echo "beelink-gate: no beelink can start this gate (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
+      # The earliest time either refusing host names.
+      next=$(printf '%s\n' "$(field next "${seen[beelink1]:-}")" "$(field next "${seen[beelink2]:-}")" | grep -E '^[0-9]{4}-' | sort | head -1)
+      tempfail "${next:-$(utc_in_minutes 5)}" "no beelink can start this gate"
     fi
     if (( waited - reported >= 60 )); then
       echo "beelink-gate: no beelink is both free for this repo and under its load limit after ${waited}s; waiting (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
@@ -1030,7 +1064,7 @@ case "$target" in
   auto) target=$(choose_beelink) || exit $? ;;
   *) die "unknown beelink: $target" ;;
 esac
-update_window_of "$target" || exit 2
+update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
 encoded=()
 for arg in "$target" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
   encoded+=("$(encode "$arg")")
