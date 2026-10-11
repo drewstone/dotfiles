@@ -369,8 +369,8 @@ remote_gate() {
   }
   receipt() {
     local status="$1" ran=$((SECONDS - started))
-    printf 'beelink-gate receipt: host=%s sha=%s install=%s command=%s exit=%s waited=%ss duration=%ss timed_out=%s watchdog=%s\n' \
-      "$beelink" "$sha" "$install_mode" "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" >&2
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s\n' \
+      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" <<'PY' || true
 import json, sys, time

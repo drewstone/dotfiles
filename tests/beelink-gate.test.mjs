@@ -397,7 +397,7 @@ test("the hold limit stops a hung command, frees the lock and records the timeou
     assert.equal(hung.status, 124, hung.stderr);
     assert.ok(Date.now() - started < 20_000);
     assert.match(hung.stderr, /hold limit of 2s reached/);
-    assert.match(hung.stderr, /exit=124 waited=\d+s duration=\d+s timed_out=1 watchdog=0/);
+    assert.match(hung.stderr, /exit=124 duration=\d+s waited=\d+s host=beelink2 timed_out=1 watchdog=0/);
     const [row] = receipts(f);
     assert.equal(row.timed_out, true);
     assert.equal(row.exit, 124);
@@ -460,7 +460,8 @@ test("a lock left by a dead gate's leftover process is reclaimed; a live holder 
     const lockPath = join(f.cache, ".locks", "local-owner-repo.lock");
     mkdirSync(join(f.cache, ".locks"), { recursive: true });
     const dead = spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
-    const leftover = spawn("setsid", ["bash", "-c", `exec 9>'${lockPath}'; flock -x 9; exec sleep 120`], { stdio: "ignore", detached: true });
+    // detached makes the child a session leader, like a gate started over SSH.
+    const leftover = spawn("bash", ["-c", `exec 9>'${lockPath}'; flock -x 9; exec sleep 120`], { stdio: "ignore", detached: true });
     await sleepMs(500);
     const sid = spawnSync("ps", ["-o", "sid=", "-p", String(leftover.pid)], { encoding: "utf8" }).stdout.trim();
     writeFileSync(`${lockPath}.holder`, `pid=${dead}\nsid=${sid}\nstarted=1\nsha=${f.first}\nlauncher=test\n`);
