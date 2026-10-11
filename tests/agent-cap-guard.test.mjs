@@ -54,6 +54,16 @@ test("at the Opus cap, a sonnet agent is still admitted", () => {
   assert.equal(decision(run(session({ opus: 3 }), "Agent", { model: "sonnet" })), "allow");
 });
 
+test("one live Opus agent refuses a Workflow, which counts as three (2026-10-11: five ran)", () => {
+  const out = run(session({ opus: 1 }), "Workflow", { script: "export const meta = {}" });
+  assert.equal(decision(out), "deny");
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /1 Opus agents are live and the cap is 3/);
+});
+
+test("with no Opus agent live, a Workflow starts", () => {
+  assert.equal(decision(run(session({ sonnet: 2 }), "Workflow", { script: "x" })), "allow");
+});
+
 test("at the Opus cap, a Workflow launch or resume is refused", () => {
   assert.equal(decision(run(session({ opus: 3 }), "Workflow", { scriptPath: "/x.js", resumeFromRunId: "wf_x" })), "deny");
 });

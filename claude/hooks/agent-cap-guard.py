@@ -10,7 +10,9 @@ agents included) written within the last CC_AGENT_LIVE_SECS seconds (default 240
 classified by the last model it recorded. An Agent or Workflow call is denied when it
 would add an Opus agent beyond CC_OPUS_AGENT_CAP (default 3), or any agent beyond
 CC_AGENT_TOTAL_CAP (default 8). An Agent call with model sonnet or haiku adds no Opus
-agent; a Workflow call is counted as one Opus agent, since its script may spawn several.
+agent. A Workflow call adds CC_WORKFLOW_WEIGHT Opus agents (default 3): its script runs
+several agents at once, and on 2026-10-11 a workflow counted as one let 5 Opus agents run
+against the cap of 3. With the defaults a workflow starts only when no Opus agent is live.
 
 The session-level override CC_ALLOW_AGENT_OVERCAP=1 (set for the session, not on a
 command) allows the call and says so. Fail-open by contract: unparsable input, an
@@ -85,12 +87,13 @@ def main() -> None:
     opus_cap = int(env.get("CC_OPUS_AGENT_CAP", "3"))
     total_cap = int(env.get("CC_AGENT_TOTAL_CAP", "8"))
     live_secs = float(env.get("CC_AGENT_LIVE_SECS", "240"))
+    adds = int(env.get("CC_WORKFLOW_WEIGHT", "3")) if tool == "Workflow" else 1
     opus, other = live_agents(subagents, live_secs, float(env.get("CC_AGENT_NOW", time.time())))
 
     over = []
-    if adds_opus and opus + 1 > opus_cap:
-        over.append(f"{opus} Opus agents are live and the cap is {opus_cap}")
-    if opus + other + 1 > total_cap:
+    if adds_opus and opus + adds > opus_cap:
+        over.append(f"{opus} Opus agents are live and the cap is {opus_cap}" + (f" (a Workflow counts as {adds})" if tool == "Workflow" else ""))
+    if opus + other + adds > total_cap:
         over.append(f"{opus + other} agents are live and the total cap is {total_cap}")
     if not over:
         return
