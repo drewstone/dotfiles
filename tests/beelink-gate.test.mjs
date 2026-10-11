@@ -142,7 +142,7 @@ test("concurrent gates for one repo serialize the entire command", async () => {
   const events = join(f.root, "events");
   const launch = (id) => new Promise((resolveDone) => {
     const args = ["beelink2", f.url, f.first, "install", f.windowDay, f.windowHour, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.3; echo end-${id} >> '${events}'`].map(encode);
-    const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" } });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("close", (status) => resolveDone({ status, stderr }));
@@ -444,18 +444,18 @@ test("a waiting gate names the live holder and records how long it waited", asyn
   const marker = join(f.root, "holding");
   try {
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `touch '${marker}'; sleep 3`].map(encode);
-    const holder = spawn("bash", [gate, "--remote", ...args], { env: f.env, stdio: "ignore" });
+    const holder = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" }, stdio: "ignore" });
     const held = new Promise((resolveDone) => holder.on("close", resolveDone));
     for (let i = 0; i < 200 && !existsSync(marker); i++) await sleepMs(50);
     const waiter = await new Promise((resolveDone) => {
-      const child = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
+      const child = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode)], { env: { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" } });
       let stderr = "";
       child.stderr.on("data", (chunk) => { stderr += chunk; });
       child.on("close", (status) => resolveDone({ status, stderr }));
     });
     await held;
     assert.equal(waiter.status, 0, waiter.stderr);
-    assert.match(waiter.stderr, /waiting \d+s for local\/owner\/repo lock on beelink2; holder pid=\d+ \(alive\) sha=/);
+    assert.match(waiter.stderr, /waiting \d+s for one of 1 local\/owner\/repo checkouts on beelink2; holder pid=\d+ \(alive\) sha=/);
     const waited = receipts(f).find((row) => row.command === "true");
     assert.ok(waited.waited_s >= 1, JSON.stringify(waited));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -473,7 +473,7 @@ test("a lock left by a dead gate's leftover process is reclaimed; a live holder 
     await sleepMs(500);
     const sid = spawnSync("ps", ["-o", "sid=", "-p", String(leftover.pid)], { encoding: "utf8" }).stdout.trim();
     writeFileSync(`${lockPath}.holder`, `pid=${dead}\nsid=${sid}\nstarted=1\nsha=${f.first}\nlauncher=test\n`);
-    const result = f.call(f.first, ["true"], { noInstall: true });
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1" } });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, new RegExp(`reclaiming lock from dead gate ${dead}: killing leftover pid ${leftover.pid}`));
     // The leftover is this test's child, so it stays a zombie until node reaps it.
@@ -507,7 +507,7 @@ test("auto runs on the free beelink, preferring a warm cache", async () => {
   try {
     installFakeSsh(f);
     const prefix = join(f.root, "cache");
-    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_CACHE_PREFIX: prefix };
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_CACHE_PREFIX: prefix, BEELINK_GATE_REPO_CHECKOUTS: "1" };
     const warm = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
     assert.equal(warm.status, 0, warm.stderr);
     const preferWarm = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
@@ -802,5 +802,34 @@ test("Git never prompts in a gate, and a hung ls-remote stops when the launcher 
     assert.ok(Date.now() - started < 20_000, `took ${Date.now() - started}ms`);
     const next = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(next.status, 0, next.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("two gates of one repo run at once in separate checkouts, and a third waits for either", async () => {
+  const f = fixture();
+  const events = join(f.root, "events");
+  const launch = (id, hold) => new Promise((resolveDone) => {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo "start-${id} $PWD" >> '${events}'; sleep ${hold}; echo end-${id} >> '${events}'`].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveDone({ status, stderr }));
+  });
+  try {
+    const both = [launch("a", 2), launch("b", 2)];
+    for (let i = 0; i < 200 && !(existsSync(events) && readFileSync(events, "utf8").split("\n").filter((l) => l.startsWith("start-")).length === 2); i++) await sleepMs(50);
+    const third = launch("c", 0);
+    const results = await Promise.all([...both, third]);
+    assert.ok(results.every((r) => r.status === 0), JSON.stringify(results));
+    const lines = readFileSync(events, "utf8").trim().split("\n");
+    const starts = lines.filter((l) => l.startsWith("start-a") || l.startsWith("start-b"));
+    assert.equal(lines.indexOf(starts[1]) < lines.findIndex((l) => l.startsWith("end-")), true, lines.join(","));
+    assert.deepEqual(new Set(starts.map((l) => l.split(" ")[1].split("/").pop())), new Set(["repo", "repo@1"]));
+    assert.ok(lines.findIndex((l) => l.startsWith("start-c")) > lines.findIndex((l) => l.startsWith("end-")), lines.join(","));
+    assert.match(results[2].stderr, /waiting \d+s for one of 2 local\/owner\/repo checkouts/);
+    for (const dir of ["repo", "repo@1"]) {
+      assert.equal(f.git(["-C", join(f.cache, "local", "owner", dir), "rev-parse", "HEAD"], f.root), f.first);
+      assert.equal(spawnSync("git", ["-C", join(f.cache, "local", "owner", dir), "fsck", "--no-progress"], { encoding: "utf8" }).status, 0);
+    }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
