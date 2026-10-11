@@ -46,6 +46,9 @@ rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
   - beelink-gate checkouts beyond the configured count: <repo>@N under
     --gate-cache with N >= --gate-checkouts, removed only while this process
     holds that checkout's gate lock.
+  - pnpm store files no project links (Linux): `pnpm store prune` per store
+    version, at most once every 20 hours, only in a quiet window while it
+    holds every beelink-gate slot; see DerivedPass.pnpm_store.
 
 Python 3.9 compatible: macOS runs it with /usr/bin/python3.
 """
@@ -877,6 +880,7 @@ def run(args):
         derived.dependencies(seen, removed)
         derived.journeys()
         derived.gate_checkouts()
+        derived.pnpm_store()
         counts.update(derived.counts)
     log.write(event='summary', mode=mode, host=socket.gethostname(),
               **counts)
@@ -978,6 +982,50 @@ def dependency_dirs(rpath):
         if git_ok(['-C', rpath, 'check-ignore', '-q', os.path.relpath(full, rpath)], '/'):
             ignored.append(full)
     return ignored
+
+
+# Store layout version -> the pnpm major that writes it.
+PNPM_STORE_MAJOR = {'v3': '9', 'v10': '10', 'v11': '11'}
+PNPM_INSTALL_VERBS = {'install', 'i', 'add', 'fetch', 'update', 'up', 'upgrade', 'dlx', 'import', 'store',
+                      'deploy', 'link', 'remove', 'rm', 'uninstall'}
+
+
+def free_bytes(path):
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize
+
+
+def newest(paths):
+    def key(p):
+        return [int(x) if x.isdigit() else 0 for x in re.split(r'[./]', p.split('/')[-3].lstrip('v'))]
+    return sorted(paths, key=key)[-1] if paths else None
+
+
+def pnpm_release(root, major):
+    """The newest pnpm <major>.x in the corepack cache, or None."""
+    if not major:
+        return None
+    found = glob.glob(os.path.join(glob.escape(os.path.expanduser(root)), major + '.*', 'dist', 'pnpm.cjs'))
+    found.sort(key=lambda p: [int(x) for x in p.split('/')[-3].split('.') if x.isdigit()])
+    return found[-1] if found else None
+
+
+def pnpm_installs(proc='/proc'):
+    """Running pnpm commands that write the store (install, add, fetch, ...), as short descriptions."""
+    found = []
+    for cmdline in glob.glob(os.path.join(glob.escape(proc), '[0-9]*', 'cmdline')):
+        try:
+            with open(cmdline, 'rb') as fh:
+                args = [a.decode('utf-8', 'replace') for a in fh.read().split(b'\0') if a]
+        except OSError:
+            continue
+        for i, arg in enumerate(args):
+            if os.path.basename(arg) in ('pnpm', 'pnpm.cjs', 'pnpm.mjs', 'pnpm.js'):
+                rest = [a for a in args[i + 1:] if not a.startswith('-')]
+                if rest and rest[0] in PNPM_INSTALL_VERBS:
+                    found.append(' '.join(args)[:120])
+                break
+    return found
 
 
 class DerivedPass:
@@ -1142,6 +1190,85 @@ class DerivedPass:
                             continue
                     self.done('journey-raw', f, freed, 'mp4 and scrubbed trace are in %s' % out)
 
+    def pnpm_store(self):
+        """Prune each pnpm store version, at most once a day, only in a quiet window that no gate can enter.
+
+        Quiet: overnight (01:00-05:00 local), or 1-minute load under the core count with no gate lock file
+        touched in the last 15 minutes (a gate truncates its checkout lock and slot lock as it takes or polls
+        them, so a starting or waiting gate is never quiet). The pass then takes every beelink-gate host slot without waiting (a gate installs
+        only while it holds one), confirms no pnpm install runs, prunes, and releases. On 2026-10-11 the
+        unreferenced store files were 11.1 GiB on beelink2 and 5.6 GiB on beelink1; a window that waited
+        for slots held L1's queue behind it, so this one never waits.
+        """
+        store = os.path.expanduser(self.args.pnpm_store)
+        locks = os.path.join(os.path.expanduser(self.args.gate_cache), '.locks')
+        stamp = os.path.expanduser(self.args.pnpm_stamp)
+        if not IS_LINUX or not os.path.isdir(store):
+            return
+        try:
+            if time.time() - os.path.getmtime(stamp) < 20 * 3600:
+                return
+        except OSError:
+            pass
+        hour = time.localtime().tm_hour
+        load1, cores = os.getloadavg()[0], self.args.quiet_load or os.cpu_count() or 1
+        try:
+            recent = max([e.stat().st_mtime for e in os.scandir(locks) if e.is_file(follow_symlinks=False)] or [0])
+        except OSError:
+            recent = 0
+        if not (1 <= hour < 5) and not (load1 < cores and time.time() - recent >= 15 * 60):
+            self.log.write(decision='keep-derived', rule='pnpm-store', path=store,
+                           reason='not quiet: load %.1f on %d cores, last gate lock %s ago' % (load1, cores, ago(recent)))
+            return
+        slots = sorted(set(glob.glob(os.path.join(glob.escape(locks), 'slot-*.lock'))
+                           + glob.glob(os.path.join(glob.escape(locks), 'light-slot-*.lock'))))
+        held = []
+        try:
+            for slot in slots:
+                fd = os.open(slot, os.O_RDWR)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    os.close(fd)
+                    self.log.write(decision='keep-derived', rule='pnpm-store', path=store,
+                                   reason='a gate holds %s' % os.path.basename(slot))
+                    return
+                held.append(fd)
+            busy = pnpm_installs(self.args.proc)
+            if busy:
+                self.log.write(decision='keep-derived', rule='pnpm-store', path=store, reason='pnpm install running: %s' % busy[0])
+                return
+            node = shutil.which('node') or newest(glob.glob(os.path.expanduser('~/.nvm/versions/node/*/bin/node')))
+            for version in sorted(os.listdir(store)):
+                pnpm = pnpm_release(self.args.pnpm_releases, PNPM_STORE_MAJOR.get(version))
+                if not pnpm or not node:
+                    self.log.write(decision='keep-derived', rule='pnpm-store', path=os.path.join(store, version),
+                                   reason='no node or no pnpm release for this store version')
+                    continue
+                before = free_bytes('/')
+                if self.args.dry_run:
+                    self.done('pnpm-store', os.path.join(store, version), 0, 'quiet window; every gate slot held')
+                    continue
+                try:
+                    proc = subprocess.run([node, pnpm, 'store', 'prune', '--store-dir', store],
+                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800)
+                except subprocess.TimeoutExpired:
+                    self.log.write(decision='keep-derived', rule='pnpm-store', path=store, reason='prune timed out')
+                    return
+                if proc.returncode != 0:
+                    self.log.write(decision='keep-derived', rule='pnpm-store', path=os.path.join(store, version),
+                                   reason='pnpm store prune exited %d' % proc.returncode)
+                    continue
+                self.done('pnpm-store', os.path.join(store, version), max(0, free_bytes('/') - before),
+                          'quiet window; every gate slot held')
+            if not self.args.dry_run:
+                os.makedirs(os.path.dirname(stamp), exist_ok=True)
+                with open(stamp, 'w'):
+                    pass
+        finally:
+            for fd in held:
+                os.close(fd)
+
     def gate_checkouts(self):
         cache = os.path.expanduser(self.args.gate_cache)
         locks = os.path.join(cache, '.locks')
@@ -1267,6 +1394,11 @@ def main(argv=None):
                         'default ~/code/_wt/*/journeys/out')
     parser.add_argument('--gate-cache', default=os.environ.get('BEELINK_GATE_CACHE_ROOT', '~/.cache/beelink-gate'))
     parser.add_argument('--gate-checkouts', type=int, default=int(os.environ.get('BEELINK_GATE_REPO_CHECKOUTS', '2')))
+    parser.add_argument('--pnpm-store', default='~/.local/share/pnpm/store')
+    parser.add_argument('--pnpm-releases', default='~/.cache/node/corepack/v1/pnpm', help='corepack cache of pnpm releases')
+    parser.add_argument('--pnpm-stamp', default='~/.local/state/wt-reaper/pnpm-store-pruned')
+    parser.add_argument('--quiet-load', type=float, help='1-minute load below which a host is quiet; default its core count')
+    parser.add_argument('--proc', default='/proc', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.proc_dump:
         paths, unreadable = proc_dump()
