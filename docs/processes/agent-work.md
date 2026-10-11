@@ -117,6 +117,7 @@ Default security and data integrity to fail-closed.
 
 ## Protect the host
 
+Start unattended chains, watchers, measurements and mirrors through `unattended --name <lane> -- <command>`: CPUWeight 20 and nice 10 under interactive sessions and gates, and at most 12 per host (`UNATTENDED_MAX`). I/O heavy jobs also carry their own limits (`rsync --bwlimit`, restic `--limit-upload`), because the hosts' disk schedulers ignore `ionice`.
 Keep scratch, logs, and evidence outside repository checkouts, in `~/.local/state/agent-work/<repo>/` (`skill-run-log --dir`), the session scratch directory, or /tmp.
 A checkout holds only files its next pull request commits; a main checkout stays clean and on its default branch.
 For existing screenshots, check ~/.claude/image-cache/ and ~/.tmux/clipboard/images/.
