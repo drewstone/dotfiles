@@ -1023,3 +1023,57 @@ test("--ship runs the repo's preview after verify and records it, never printing
     assert.equal(ship("preempted").status, 75);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+function pnpmRepo(f, files) {
+  rmSync(join(f.source, "package-lock.json"));
+  writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  for (const [name, body] of Object.entries(files)) {
+    mkdirSync(join(f.source, name, ".."), { recursive: true });
+    writeFileSync(join(f.source, name), body);
+  }
+  f.git(["add", "-A"]); f.git(["commit", "-qm", "pnpm repo"]);
+  const sha = f.git(["rev-parse", "HEAD"]);
+  f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+  const npxLog = join(f.root, "npx.log");
+  writeFileSync(join(f.root, "bin", "npx"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> '${npxLog}'\n`);
+  chmodSync(join(f.root, "bin", "npx"), 0o755);
+  return { sha, npxLog };
+}
+
+test("the install and the command use the repo's pnpm from packageManager", () => {
+  const f = fixture();
+  try {
+    const { sha, npxLog } = pnpmRepo(f, { "package.json": '{"name":"gate-test","version":"1.0.0","packageManager":"pnpm@11.28.5+sha512.abc"}\n' });
+    const result = f.call(sha, ["pnpm", "check"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /using the repo's pnpm 11\.28\.5/);
+    assert.deepEqual(readFileSync(npxLog, "utf8").trim().split("\n"), [
+      `--yes pnpm@11.28.5 install --frozen-lockfile --store-dir ${f.home}/.local/share/pnpm/store`,
+      "--yes pnpm@11.28.5 check",
+    ]);
+    // The beelink's pnpm is only asked its version.
+    assert.equal(readFileSync(f.pnpmLog, "utf8").trim(), "--version");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("without packageManager the gate uses the pnpm version CI pins on pnpm/action-setup", () => {
+  const f = fixture();
+  try {
+    const workflow = "jobs:\n  verify:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: pnpm/action-setup@b906aff\n        with:\n          version: 12.3.4\n      - uses: actions/setup-node@v4\n        with:\n          version: 99.0.0\n";
+    const { sha, npxLog } = pnpmRepo(f, { ".github/workflows/verify-pr.yml": workflow });
+    const result = f.call(sha, ["true"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(npxLog, "utf8"), /^--yes pnpm@12\.3\.4 install --frozen-lockfile/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a repo that names no exact pnpm version keeps the beelink's pnpm", () => {
+  const f = fixture();
+  try {
+    const { sha, npxLog } = pnpmRepo(f, { "package.json": '{"name":"gate-test","version":"1.0.0","packageManager":"pnpm@latest;id"}\n' });
+    const result = f.call(sha, ["true"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(npxLog), false);
+    assert.match(readFileSync(f.pnpmLog, "utf8"), /^install --frozen-lockfile/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
