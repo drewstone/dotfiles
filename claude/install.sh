@@ -166,6 +166,32 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
   done
 fi
 
+# Codex runs the shared search guard as a PreToolUse hook too: on 2026-10-11 a
+# Codex session's `find /` walked the archive drive for 35+ min because only
+# Claude ran it. Merge one entry into ~/.codex/hooks.json, keeping the rest.
+python3 - "$CODEX_DIR/hooks.json" "$CLAUDE_DIR/hooks/scan-guard.sh" <<'PY_CODEX'
+import json, os, sys
+path, guard = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        config = json.load(f)
+except FileNotFoundError:
+    config = {}
+except ValueError:
+    print(f"  SKIP {path}: not valid JSON; the Codex search guard is not installed")
+    sys.exit(0)
+hooks = config.setdefault("hooks", {})
+entries = hooks.setdefault("PreToolUse", [])
+if not any(h.get("command") == guard for e in entries for h in e.get("hooks", [])):
+    entries.append({"hooks": [{"type": "command", "command": guard, "timeout": 10}]})
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    print(f"  CODEX {path}: PreToolUse scan-guard")
+PY_CODEX
+
 # The sweep crons redirect into $HOME/attic/sweep.log. A missing directory makes
 # the redirect fail before the script runs, so the sweeps go silently inert.
 mkdir -p "$HOME/attic"
