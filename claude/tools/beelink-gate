@@ -356,6 +356,19 @@ parse_repo_url() {
   done
 }
 
+# The cache is keyed by host/owner/repo, so any spelling of that repo (https or
+# SSH, with or without .git) owns it. The checkout then fetches with the URL
+# this gate was given; a different repo in that path is refused.
+adopt_origin() {
+  local checkout=$1 url=$2 origin origin_key
+  origin=$(git -C "$checkout" remote get-url origin) || return $?
+  origin_key=$(parse_repo_url "$origin" 2>/dev/null && printf '%s/%s/%s' "$host" "$owner" "$repo")
+  [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
+  if [ "$origin" != "$url" ]; then
+    git -C "$checkout" remote set-url origin "$url" || return $?
+  fi
+}
+
 # One line describing the holder of a lock, from the metadata its gate wrote.
 holder_line() {
   local info="$1.holder" pid started sha launcher
@@ -559,8 +572,7 @@ PY
     die "cache path is not an owned checkout: $checkout"
   fi
   if [ -e "$checkout/.git" ]; then
-    origin=$(git -C "$checkout" remote get-url origin) || exit $?
-    [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
+    adopt_origin "$checkout" "$repo_url" || exit $?
     # A blame or history check can otherwise fetch hundreds of missing blobs
     # one by one. The cache is disposable, and the repo lock is held here.
     if git -C "$checkout" config --get-regexp '^(remote\.origin\.(promisor|partialclonefilter)|extensions\.partialclone)$' >/dev/null; then
@@ -573,8 +585,7 @@ PY
     git init -q "$checkout" || exit $?
     git -C "$checkout" remote add origin "$repo_url" || exit $?
   fi
-  origin=$(git -C "$checkout" remote get-url origin) || exit $?
-  [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
+  adopt_origin "$checkout" "$repo_url" || exit $?
   remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*') || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()
