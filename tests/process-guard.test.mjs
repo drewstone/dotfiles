@@ -260,7 +260,7 @@ test("mac-build: single test files, remote runs and light commands pass on the M
     "pnpm exec tsc --noEmit -p .",
     "pnpm install --lockfile-only",
     "npm view @tangle-network/agent-app version",
-    "node --test tests/kill-guard.test.mjs",
+    "node --test tests/process-guard.test.mjs",
     "ssh gtr 'cd ~/code/gtm-agent && pnpm install --frozen-lockfile && pnpm test'",
     "timeout 900 ssh beelink2-wsl 'bash -lc \"cd ~/code/_wt-router && pnpm install --frozen-lockfile && npx vitest run tests/unit\"'",
     "ssh gtr 'beelink-gate beelink2 git@github.com:tangle-network/gtm-agent.git c1c1055fc12165bd9fdf0eb0cc64e16f3dd2b7a2 -- pnpm test'",
@@ -305,6 +305,71 @@ test("pattern-kill: exact pids, children of a literal pid, listings and liveness
     "pgrep -fl cli-bridge; ps -eo pid,args | grep cli-bridge",
   ], "allow");
   assert.equal(decide("kill $(pgrep -f foo)", { env: { CC_ALLOW_BROADCAST_KILL: "1" } }), "allow");
+});
+
+// The verbatim Bash commands two workflow agents ran on 2026-10-11 (UTC). pkill opened the quoted
+// ssh command, where the old kill-guard.sh regex saw no command position, so both ran.
+const fixture = (name) => readFileSync(resolve("tests/fixtures/process-guard", name), "utf8");
+
+test("pattern-kill: refuses pkill and killall in any form, locally, over ssh and in nested shells", () => {
+  check([
+    fixture("pkill-over-ssh-reproduce-2026-10-11.txt"),
+    fixture("pkill-over-ssh-arm-2026-10-11.txt"),
+    // 2026-09-14, the Mac: BSD pkill read `-P 1` as patterns and SIGTERMed every process matching "1".
+    "pkill -f 'cli-bridge-8921.*' -P 1",
+    "pkill -f monitor-armb.sh",
+    "sudo pkill node",
+    "/usr/bin/pkill -9 python",
+    "killall Slack",
+    "cd /tmp && killall -9 node",
+    "timeout 10 pkill -f x",
+    "echo start; pkill -f foo; echo done",
+    "if true; then pkill -f foo; fi",
+    "pgrep -f cli-bridge | xargs kill",
+    "pgrep -f cli-bridge | xargs -r kill -9",
+    "ssh gtr \"pkill -f 'python3 reproduce.py'\"",
+    "ssh -o BatchMode=yes beelink2-wsl 'pkill -f vitest'",
+    "bash -c 'pkill -f x'",
+    "ssh gtr bash -s <<'EOF'\npkill -f x\nEOF",
+    "eval 'killall node'",
+    "beelink-gate beelink1 git@github.com:o/r.git abc -- pkill -f x",
+  ], "deny");
+  assert.match(reason("ssh gtr 'pkill -f x'"), /kill <pid>/);
+});
+
+test("broadcast-kill: refuses kill of 0, -1 and process groups, locally and over ssh", () => {
+  check([
+    "kill -9 -1",
+    "kill -- -1",
+    "kill -TERM -12345",
+    "kill -s TERM -1",
+    "kill 0",
+    "ssh gtr 'kill -9 -1'",
+    "ssh gtr 'kill -TERM -- -$(ps -o pgid= -p 4242)'",
+  ], "deny");
+});
+
+test("kill rules: text about pkill, liveness checks and literal pids pass", () => {
+  check([
+    "kill -9 12345 67890",
+    "grep -n pkill ~/.claude/logs/process-guard.log",
+    "echo 'never use pkill'",
+    "git commit -m 'feat: process-guard refuses pkill and killall'",
+    "ps -eo pid,command | grep pkill",
+    "kill -0 12345",
+    "kill -0 $PID 2>/dev/null && echo alive",
+    "kill -l",
+    "ssh gtr 'kill 1600183'",
+  ], "allow");
+});
+
+test("kill rules: only Drew's session override lets one through, and it is logged", () => {
+  assert.equal(decide("CC_ALLOW_BROADCAST_KILL=1 pkill -f foo"), "deny");
+  assert.equal(decide("ssh gtr 'CC_ALLOW_BROADCAST_KILL=1 pkill -f foo'"), "deny");
+  const out = run("ssh gtr 'pkill -f foo'", { env: { CC_ALLOW_BROADCAST_KILL: "1" } });
+  assert.equal(out.hookSpecificOutput, undefined);
+  assert.match(out.systemMessage, /allowed pkill via CC_ALLOW_BROADCAST_KILL=1/);
+  assert.match(readFileSync(join(HOME, ".claude/logs/process-guard.log"), "utf8"), /BYPASS rule=pattern-kill/);
 });
 
 // ------------------------------------------------------------------------- xtrace-secrets

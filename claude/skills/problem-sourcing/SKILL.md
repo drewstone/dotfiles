@@ -48,3 +48,4 @@ skill-run-log /problem-sourcing --target "<target>" --verdict <PASS|FAIL|PARTIAL
 
 - `verify` when a source makes an executable reproducibility claim relevant to the selected problem.
 - `operate` when the sourced material is handed over and the project needs a research run started or watched.
+- discovery-lab's [play-authoring](https://github.com/tangle-network/discovery-lab/blob/master/skills/play-authoring/SKILL.md) when a sourced candidate should become a play with a check proven before the press.

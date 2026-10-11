@@ -1,0 +1,52 @@
+**Pin Apple Pay to SDK 4.1 tonight and gate every deploy on a canary · time to restore checkout 0.6 h vs target < 1 h (from 9.2 h)**
+_Example brief · synthetic data · Window 2026-10-05 00:00Z → 10-11 00:00Z · Owner: checkout on-call_
+
+🎯 **Focus** · time to restore checkout: 9.2 h → < 1 h · owner checkout on-call
+Checkout ships daily. **One bad deploy cost 9 hours of revenue.**
+
+📊 **Evidence**
+```text
+🔵 48      deploys
+🔵 99.71%  successful payments
+🔴 9.2 h   longest outage
+🔴 6.5 h   alarm → owner
+```
+**Where the cart outage's 9.2 hours went**
+```text
+until the alarm      🟨                                   2m   0.4%  02:10–02:12
+flagged, no owner    🟥🟥🟥🟥🟥🟥🟥🟥           388m (6h28m)  70.3%  02:12–08:40
+find the cause                       🟦                  25m   4.5%  08:40–09:05
+cap the cache, ship                  🟩🟩🟩     137m (2h17m)  24.8%  09:05–11:22
+total 552m (9h12m) · 4 parts · 02:10→11:22
+by group: detect 2m 0.4% · own 388m (6h28m) 70.3% · fix 162m (2h42m) 29.3%
+1 square = 50m
+```
+**Payment success by day, card and Apple Pay**
+```text
+10-08  card      🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦    39,880/40,000 99.7%
+       applepay  🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪     9,970/10,000 99.7%
+10-09  card      🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦    40,120/40,200 99.8%
+       applepay  🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪    10,010/10,050 99.6%
+10-10  card      🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦    39,950/40,100 99.6%
+       applepay  🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪              🏁      6,170/9,950 62.0%
+card = Card · applepay = Apple Pay
+scale 0–100% · 1 square = 5% · 🏁 SLO 99.5%
+```
+Apple Pay fell to 62.0% on 10-10 when SDK 4.2 changed the token format.
+_Method: Synthetic example. A real brief lists each source, the exact query, the window, the population size and exclusions._
+⚠️ Synthetic numbers. In a real brief, name what was not inspected and why.
+
+🛠️ **Doing**
+🔴 **Apple Pay declines at the gateway** · Down since 10-10 21:05Z · Token format changed in SDK 4.2; 38% of Apple Pay attempts fail. · owner payments-lane · next: pin SDK 4.1, ship
+🟡 **Fraud vendor contract renewal** · Needs you since 10-09 · The price rises 30% on Nov 1. · owner You · next: decision 1
+**Path** 🟢 Pin SDK 4.1 (21:40Z) → 🟡 Canary passes 3 times → 👉 Approve the vendor renewal
+🟡 **Canary every deploy for 10 min** · Change failure rate · predicts under 10% over the next 20 deploys
+
+🧠 **Learned**
+🟡 Detection was fast and ownership was slow: the alarm fired in 2 min, then the cart outage waited 6.5 h for an owner.
+🔴 An unpinned SDK reached production: 4.2 installed at build time and failed 38% of Apple Pay attempts.
+🟢 **Cart service out of memory** · Fixed 10-08 02:10Z → 11:22Z · Session cache unbounded; capped at 50k entries.
+✅ **Autopilot pages the owner** kept · Time to restore checkout now 0.6 h vs target 1 h
+
+⏭️ **Next**
+👉 **1. Renew the fraud vendor at +30%, or run a 2-week bake-off** · Switching costs about 3 engineer-weeks. · **Recommendation:** run the bake-off; the renewal deadline allows it.

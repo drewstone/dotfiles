@@ -47,7 +47,8 @@ LEAD = "_lead"
 INCIDENTS = f"{LEAD}/incidents.jsonl"
 DECISIONS = f"{LEAD}/decisions.jsonl"
 # The guard hooks' own records: process_guard.py (DENY and BYPASS lines), kill-guard.sh (DENY
-# lines) and secret_scan.py (one JSON row per exposed credential), plus any JSONL under _guards/.
+# lines until 2026-10-11, when process_guard.py took over its rules) and secret_scan.py (one JSON
+# row per exposed credential), plus any JSONL under _guards/.
 GUARD_GLOBS = ("~/.claude/logs/process-guard.log", "~/.claude/logs/kill-guard.log",
                "~/.claude/logs/secret-exposures.jsonl", "_guards/*.jsonl")
 _GUARD_LINE = re.compile(r"^(\S+)\s+(DENY|BYPASS|ALLOW|WARN)\b(?:.*?\brule=(\S+))?")

@@ -407,7 +407,9 @@ details.data table { margin-top: 6px; font-size: 13px; }
     const eb = h('div', 'eyebrow', mast); (S.eyebrow || []).forEach(x => h('span', '', eb, x));
     const th = h('h1', 'thesis', mast, S.thesis || ''); if (S.thesisAlert) h('span', 'alert', th, S.thesisAlert);
     if (S.dek) h('p', 'dek', mast, S.dek);
-    if (S.hill) h('p', 'dek', mast, `Hill: ${S.hill.metric} · ${S.hill.baseline} → ${S.hill.target}${S.hill.owner ? ' · owner ' + S.hill.owner : ''}`);
+    if (S.decision) { const d = h('p', 'dek', mast); h('b', '', d, 'Decision. '); d.append(S.decision); }
+    if (S.hill) h('p', 'dek', mast, `Hill: ${S.hill.metric} · ${S.hill.baseline} → ${S.hill.target}${S.hill.now != null ? ' · now ' + S.hill.now : ''}${S.hill.owner ? ' · owner ' + S.hill.owner : ''}`);
+    if (S.learned && S.learned.length) { const d = h('p', 'dek', mast); h('b', '', d, 'Learned. '); d.append(S.learned.map(x => (typeof x === 'string' ? x : x.text)).join(' ')); }
     if (S.stats && S.stats.length) { const st = h('div', 'strip', mast); st.style.setProperty('--n', Math.min(S.stats.length, 5)); S.stats.forEach(x => { const d = h('div', '', st); h('span', 'v' + (x.tone ? ' tone-' + x.tone : ''), d, x.v); h('span', 'l', d, x.l); }); }
     (S.sections || []).forEach(sec => { const el = h('section', '', root); if (sec.id) el.id = sec.id; const sh = h('div', 'sh', el); h('span', 'k', sh, sec.key || ''); h('h2', '', sh, sec.title); if (sec.lede) h('p', '', sh, sec.lede); (sec.blocks || []).forEach(b => block(el, b)); });
     if (S.method || S.caveats) { const f = h('footer', 'foot', root); if (S.method) html('p', '', f, '<b>Method.</b> ' + S.method); if (S.caveats) html('p', '', f, '<b>Caveats.</b> ' + S.caveats); }

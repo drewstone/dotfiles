@@ -22,13 +22,20 @@ while their briefs said not to:
   mac-build     whole-repo installs, builds, test runs, turbo runs, image builds and signoff
                 on the Mac (10 cores; agents drove its load to 120). Single test files stay
                 local. Allowed when the command sets CC_ALLOW_MAC_BUILD=1.
-  pattern-kill  `kill` fed by `pgrep <pattern>` or `pidof`: `kill $(pgrep -f X)`, `p=$(pgrep -f X);
-                kill $p`, `for p in $(pgrep -f X); do kill $p`, `pgrep -f X | while read p; do kill`
-                and `| xargs kill`. Over ssh the pattern also matches the ssh session's own command
-                line; on 2026-10-09 and 2026-10-10 agents killed their own sessions on gtr and
-                beelink2 this way. kill-guard.sh refuses pkill and killall; this covers the shapes
-                that reach kill through a substitution, a variable or a loop. `pgrep -P <pid>`
-                stays allowed. Override: CC_ALLOW_BROADCAST_KILL=1 in the session, as kill-guard.
+  pattern-kill  `pkill` and `killall` in any form, and `kill` fed by `pgrep <pattern>` or `pidof`:
+                `kill $(pgrep -f X)`, `p=$(pgrep -f X); kill $p`, `for p in $(pgrep -f X); do kill $p`,
+                `pgrep -f X | while read p; do kill` and `| xargs kill`. On 2026-09-14 a local
+                `pkill -f 'cli-bridge-8921.*' -P 1` (BSD pkill read `-P 1` as patterns) SIGTERMed other
+                Claude sessions, Slack and postgres. Over ssh the pattern also matches the ssh
+                session's own command line; on 2026-10-09 and 2026-10-10 agents killed their own
+                sessions on gtr and beelink2 this way, and on 2026-10-11 a workflow agent ran
+                `ssh gtr 'pkill -f "python3 reproduce.py" ; ...'`, which the old regex hook missed
+                because pkill opened the quoted remote command. `pgrep -P <pid>` stays allowed.
+  broadcast-kill  `kill 0`, `kill -1`, `kill -9 -1`, `kill -- -<pgid>`: a target of 0 or a
+                negative pid signals the caller's process group, a whole group or every process
+                the user owns.
+                Both kill rules: override CC_ALLOW_BROADCAST_KILL=1, set by Drew for the session
+                (a command-line assignment does not count).
   xtrace-secrets  shell tracing (`bash -x`, `sh -x`, `set -x`, `set -o xtrace`, BASH_XTRACEFD)
                 while the traced scope loads or expands a secret: dotenvx run/get, sourcing or
                 reading a .env, key, token or secrets file, a *_KEY/*_TOKEN variable set from an
@@ -811,8 +818,11 @@ def commands(src, cwd, remote=False, ctx=None):
 # ---------------------------------------------------------------------------------------
 # Rules. Each returns None, or (rule, summary, reason, override_variable or None).
 
+SESSION_ONLY = {"CC_ALLOW_BROADCAST_KILL"}  # Drew sets these for a session; an agent's command cannot
+
+
 def flag_on(cmd, name):
-    return cmd.env.get(name) == "1" or os.environ.get(name) == "1"
+    return (name not in SESSION_ONLY and cmd.env.get(name) == "1") or os.environ.get(name) == "1"
 
 
 def gh_positionals(args):
@@ -1131,11 +1141,18 @@ def rule_shared_stash(cmd, payload):
     return None
 
 
-def rule_pattern_kill(cmd):
-    """kill fed by pgrep <pattern> or pidof: through $(...), a variable, a for/while loop or xargs."""
-    if cmd.prog != "kill" or os.environ.get("CC_ALLOW_BROADCAST_KILL") == "1":
-        return None
-    targets, i, args = [], 0, cmd.argv[1:]
+KILL_OVERRIDE = "CC_ALLOW_BROADCAST_KILL"
+EXACT_PID = ("Resolve the exact pid first: list the candidates with their command lines, excluding this shell, its "
+             "parent and the ssh session, e.g. `pgrep -af '<pattern>' | grep -v -e \"^$$ \" -e \"^$PPID \"`; read them; "
+             "then run `kill <pid>` with the literal pid in a separate command. A pidfile, a launch receipt or "
+             "`lsof -tiTCP:<port> -sTCP:LISTEN` is better still. `pgrep -P <pid>` children of a literal pid stay allowed. "
+             f"User override: {KILL_OVERRIDE}=1 (session-wide, set by Drew).")
+
+
+def kill_targets(args):
+    """The targets of `kill <args>`, or None when it sends no signal (-l, -L, -0, -s 0, -n 0).
+    The first dash argument is the signal; a dash argument after it is a target (a negative pid)."""
+    signal, i = False, 0
     while i < len(args):
         a = args[i]
         if a in ("-l", "-L"):
@@ -1143,29 +1160,45 @@ def rule_pattern_kill(cmd):
         if a in ("-s", "-n"):
             if i + 1 < len(args) and args[i + 1] == "0":
                 return None
-            i += 2
+            signal, i = True, i + 2
             continue
         if a == "--":
-            targets += args[i + 1:]
-            break
-        if a.startswith("-") and not targets:
+            return args[i + 1:]
+        if a.startswith("-") and len(a) > 1 and not signal:
             if a == "-0":
                 return None  # a liveness check sends no signal
-            i += 1
+            signal, i = True, i + 1
             continue
-        targets.append(a)
-        i += 1
-    fed = any(pattern_source(t, cmd.tainted) for t in targets) or (not targets and cmd.stream_tainted)
-    if not fed:
+        return args[i:]
+    return []
+
+
+def rule_kill(cmd):
+    """pkill and killall; kill of 0, -1 or a process group; kill fed by pgrep <pattern> or pidof through
+    $(...), a variable, a for/while loop or xargs. Commands run over ssh or in nested shells are included."""
+    if cmd.prog in ("pkill", "killall"):
+        return ("pattern-kill", f"{cmd.prog}",
+                f"`{cmd.prog}` selects processes by name or pattern, and one misplaced argument widens it: on 2026-09-14 "
+                "`pkill -f 'cli-bridge-8921.*' -P 1` SIGTERMed other Claude sessions, Slack and postgres. Over ssh the "
+                "pattern also matches the ssh session's own command line; on 2026-10-11 a workflow agent ran "
+                "`ssh gtr 'pkill -f \"python3 reproduce.py\" ; ...'` on a shared host. " + EXACT_PID, KILL_OVERRIDE)
+    if cmd.prog != "kill":
         return None
-    return ("pattern-kill", "kill of pids from a pattern match",
-            "This kill takes its pids from `pgrep <pattern>` (or pidof). Over ssh the pattern also matches the ssh "
-            "session's own command line, so the kill takes down the caller: on 2026-10-09 and 2026-10-10 agents killed "
-            "their own sessions on gtr and beelink2 this way. Resolve the exact pid first: list the candidates with their "
-            "command lines, excluding this shell, its parent and the ssh session, e.g. "
-            "`pgrep -af '<pattern>' | grep -v -e \"^$$ \" -e \"^$PPID \"`; read them; then run `kill <pid>` with the "
-            "literal pid in a separate command. A pidfile or launch receipt is better still. `pgrep -P <pid>` children "
-            "of a literal pid stay allowed. User override: CC_ALLOW_BROADCAST_KILL=1 (session-wide, set by Drew).", None)
+    targets = kill_targets(cmd.argv[1:])
+    if targets is None:
+        return None
+    group = next((t for t in targets if t == "0" or re.match(r"^-[\d$]", t)), None)
+    if group is not None:
+        scope = {"0": "the caller's own process group", "-1": "every process the user owns"}.get(group, "a whole process group")
+        return ("broadcast-kill", "kill of a process group or every process",
+                f"`kill {group}` signals {scope}, which on a shared host includes other sessions and runs. " + EXACT_PID,
+                KILL_OVERRIDE)
+    if any(pattern_source(t, cmd.tainted) for t in targets) or (not targets and cmd.stream_tainted):
+        return ("pattern-kill", "kill of pids from a pattern match",
+                "This kill takes its pids from `pgrep <pattern>` (or pidof). Over ssh the pattern also matches the ssh "
+                "session's own command line, so the kill takes down the caller: on 2026-10-09 and 2026-10-10 agents "
+                "killed their own sessions on gtr and beelink2 this way. " + EXACT_PID, KILL_OVERRIDE)
+    return None
 
 
 LEDGER = re.compile(r"(?:^|/)(?:\.agent/climb\.jsonl|reports/climb/ledger\.jsonl)$")
@@ -1382,7 +1415,7 @@ def evaluate_full(payload):
     cmds = commands(command, cwd, False, root)
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
-                    rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_pattern_kill(cmd),
+                    rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_kill(cmd),
                     rule_ledger_write(cmd)):
             if not hit or hit[:2] in seen:
                 continue

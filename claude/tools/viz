@@ -6,13 +6,16 @@
 // report skill's brief kit, so a terminal status and a published page come from the
 // same numbers.
 import { readFileSync, writeFileSync } from 'node:fs'
-import { KINDS, VizError, parseInput, render } from './viz-kit/core.mjs'
-import { briefHtml, briefText, prepareBrief } from './viz-kit/brief.mjs'
+import { KINDS, VizError, parseInput, render, styleOf } from './viz-kit/core.mjs'
+import { briefHtml, briefStatus, briefText, prepareBrief } from './viz-kit/brief.mjs'
 
 const USAGE = `usage:
   viz <kind> [file|-] [options]     draw a chart from JSON or TSV (stdin when no file)
   viz brief <spec.json> [-o page.html] [--check] [--section <n|text>]...
-                                    check a brief spec; print it for the terminal, or write the page
+                                    check a brief spec; print it for the terminal, or write the page.
+                                    In emoji mode it prints the chat status: a bold headline with the
+                                    decision and the hill's number, then Focus, Evidence, Doing,
+                                    Learned and Next, as markdown with each chart in a text fence
 
 kinds:
   bars       one value per row: label, value [, of] [, tone]; --total reconciles parts with a whole
@@ -39,6 +42,10 @@ options:
   --label <col>  --value <col>  --of <col>  --t <col>  --status <col>  --text <col>   pick columns
   --cols <a,b,c>     table columns, in order     --sum   add a total row to a table
   --source <text>    where the numbers come from --asof <date>  when they were read
+  --color <mode>     plain (default): block glyphs, one color. emoji: colored squares by tone or
+                     series, status dots, ✅/❌/⚠️ strips, for markdown chats that drop ANSI color.
+                     Squares are two columns wide, so each stands for a round unit the footer
+                     states. Default from $VIZ_COLOR
   -q, --quiet        no warning about a missing source
 
 exit: 0 drawn, 2 bad usage, input or spec (the message names the row or block), 1 internal error`
@@ -93,6 +100,7 @@ function main() {
   const [kind, file] = positional
   if (opts.help || !kind) { process.stdout.write(USAGE + '\n'); return kind || opts.help ? 0 : 2 }
   const cols = columns(opts)
+  const style = styleOf(opts.color ?? process.env.VIZ_COLOR)
 
   if (kind === 'brief') {
     if (!file) throw new VizError('viz brief needs a spec file')
@@ -107,16 +115,17 @@ function main() {
       process.stdout.write(`wrote ${opts.out} (${warnings.length} warnings)\n`)
       return 0
     }
-    process.stdout.write(briefText(prepared, cols, sections.length ? sections : null) + '\n')
+    const text = style.emoji && !sections.length ? briefStatus(prepared, cols) : briefText(prepared, cols, sections.length ? sections : null, style)
+    process.stdout.write(text + '\n')
     return 0
   }
 
   if (!KINDS[kind]) throw new VizError(`unknown kind ${JSON.stringify(kind)}; run viz --help`)
   const data = parseInput(readSource(file))
   const chartOpts = { ...opts }
-  for (const k of ['width', 'quiet', 'out', 'check']) delete chartOpts[k]
+  for (const k of ['width', 'quiet', 'out', 'check', 'color']) delete chartOpts[k]
   if (!opts.quiet && !chartOpts.source && !data.source) process.stderr.write('viz: no --source; a reported number needs its source, denominator and date\n')
-  process.stdout.write(render(kind, data, chartOpts, cols) + '\n')
+  process.stdout.write(render(kind, data, chartOpts, cols, style) + '\n')
   return 0
 }
 

@@ -63,10 +63,6 @@
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/kill-guard.sh"
-          },
-          {
-            "type": "command",
             "command": "$HOME/.claude/hooks/process_guard.py"
           },
           {
