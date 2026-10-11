@@ -230,7 +230,7 @@ for (let i = 0; i < flows.length; i += 2) {
   const pair = flows.slice(i, i + 2)
   const done = await parallel(pair.map((f, k) => () => agent(`${RULES}
 HOST: ready; identities signed in (${prep.signedIn.join('; ')}); chat contract ${prep.chatContract}; output folder ${prep.outDir}.
-${k === 1 ? 'Start 30 seconds after your pair partner, so ffmpeg work does not overlap.\n' : ''}
+${k === 1 ? 'Your pair partner starts at the same time: begin your script with await j.pause(30_000) before opening a context, so the two ffmpeg passes do not overlap.\n' : ''}
 YOUR JOURNEY: ${f.id} — ${f.title}
 ${f.brief}
 
