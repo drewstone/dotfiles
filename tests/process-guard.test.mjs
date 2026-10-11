@@ -389,6 +389,31 @@ test("scripts: repository scripts and binaries are not read", () => {
   assert.equal(decide(bin), "allow");
 });
 
+// --------------------------------------------------------------------------- ledger-write
+
+test("ledger-write: refuses shell writes into a climb ledger, as agents ran them", () => {
+  check([
+    "cat >> .agent/climb.jsonl <<'EOF'\n{\"id\": \"baseline-x\", \"baseline\": {\"value\": \"p50 32,401\"}}\nEOF",
+    "echo '{\"id\":\"x\"}' >> .agent/climb.jsonl",
+    "printf '%s\\n' \"$ROW\" | tee -a reports/climb/ledger.jsonl >/dev/null",
+    "jq -c . row.json >> /Users/drew/webb/gtm-agent/.agent/climb.jsonl",
+    "jq -c 'select(.id != \"x\")' .agent/climb.jsonl > .agent/climb.jsonl",
+    "ssh beelink1-wsl 'cd ~/code/discovery-lab && echo {} >> reports/climb/ledger.jsonl'",
+  ], "deny");
+  assert.match(reason("echo '{}' >> .agent/climb.jsonl"), /climb-log append/);
+});
+
+test("ledger-write: reads, the checked append and an approved repair pass", () => {
+  check([
+    "tail -3 .agent/climb.jsonl | jq .",
+    "climb-log append --row \"$(cat row.json)\"",
+    "climb-log check --since 2026-10-11 > /tmp/climb-check.txt",
+    "jq -c . .agent/climb.jsonl > /tmp/climb-copy.jsonl",
+    "echo x >> .agent/experiments.jsonl",
+  ], "allow");
+  assert.equal(decide("CC_ALLOW_LEDGER_WRITE=1 sed -n 1,10p .agent/climb.jsonl > .agent/climb.jsonl"), "allow");
+});
+
 // -------------------------------------------------------------------------------- general
 
 test("logs never hold a key-shaped value from the command", () => {

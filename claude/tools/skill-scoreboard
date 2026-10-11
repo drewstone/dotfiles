@@ -250,6 +250,29 @@ def coverage(all_rows):
     return out
 
 
+CLIMB_LOG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "climb-log")
+
+
+def climb_measurement(skill, sha, summary, floor, at):
+    """How a skill hill's position was sampled, in the measurement block climb-log requires."""
+    block = {
+        "metric": "skill run outcomes, corrections and judge scores", "unit": "runs", "basis": "measured",
+        "n": summary["runs"], "window": {"from": L.iso(floor), "to": L.iso(at)},
+        "instrument": "skill-scoreboard --climb",
+        "calibration": {"verdict": "UNCALIBRATED",
+                        "next": "compare its outcome and correction counts with a hand audit of 20 runs "
+                                "read from their transcripts and pull requests"},
+    }
+    if sha:
+        block.update(selection=f"every logged run of {skill} whose SKILL.md sha256 is {sha}, on the scoreboard's "
+                               "hosts, within the window", selectBy="version",
+                     codeVersion=f"{skill} SKILL.md sha256:{sha}")
+    else:
+        block.update(selection=f"every logged run of {skill} without a recorded SKILL.md version that started in "
+                               "the window", selectBy="start", perRelease=False)
+    return block
+
+
 def climb_rows(groups, corrections, opts, at, floor):
     """Climb-ledger rows: a baseline position per skill hill and version, and each correction."""
     stamp = L.iso(at)
@@ -264,11 +287,12 @@ def climb_rows(groups, corrections, opts, at, floor):
             "goal": "Skills deliver merged, unreverted outcomes without operator corrections",
             "round": None, "hypothesis": None, "category": "prompt", "lever": "baseline",
             "targets": [f"claude/skills/{name}/SKILL.md"],
-            "baseline": None,
-            "result": {k: summary[k] for k in ("runs", "outcome", "outcomeFailPct", "outcomeClosed",
-                                               "outcomePassPctClosed", "failSignals", "corrected", "judged",
-                                               "judgeScoreP50", "judged30",
-                                               "correctedPct", "claimedPassPct", "durationP50", "durationP90")},
+            "baseline": {**{k: summary[k] for k in ("runs", "outcome", "outcomeFailPct", "outcomeClosed",
+                                                    "outcomePassPctClosed", "failSignals", "corrected", "judged",
+                                                    "judgeScoreP50", "judged30",
+                                                    "correctedPct", "claimedPassPct", "durationP50", "durationP90")},
+                         "measurement": climb_measurement(skill, sha, summary, floor, at)},
+            "result": None,
             "delta": None, "verdict": None, "durationMs": None, "timestamp": stamp,
             "reasoning": f"skill-scoreboard over {window}; outcome from GitHub via gh-drew, corrections by "
                          f"{L.OVERRIDE_METHOD} from transcripts, claimed = the author's own verdict",
@@ -296,18 +320,13 @@ def climb_rows(groups, corrections, opts, at, floor):
 
 
 def append_climb(path: str, rows: list) -> int:
-    existing = set()
-    try:
-        with open(path, encoding="utf-8") as handle:
-            existing = {obj.get("id") for _, _, obj in L.read_jsonl(handle.read())}
-    except OSError:
-        pass
-    added = [row for row in rows if row["id"] not in existing]
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as handle:
-        for row in added:
-            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
-    return len(added)
+    """Append through climb-log, which checks every row and skips ids the ledger already has."""
+    proc = subprocess.run([sys.executable, CLIMB_LOG, "append", "--ledger", path, "--skip-existing"],
+                          input="".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"skill-scoreboard: climb-log refused the rows:\n{proc.stderr.strip()}")
+    return len(proc.stdout.split())
 
 
 def render(report, opts):

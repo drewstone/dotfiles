@@ -10,24 +10,30 @@ Fix causes, not retries or manual workarounds.
 Ask what outcome matters, what can disappear, and what evidence would change the next decision.
 Use these questions for judgment, not a mandatory report or routine confirmation.
 Find existing owners and consumers; prefer deletion, simplification, optimization, then automation.
+Extend the surface that already serves a capability with a flag, key or field (Discovery: a play-file key or a `disco run` option); a new command, verb or concept needs Drew to ask for it by name.
+When a product exists to do a kind of work, operate it and judge its result; never do that work yourself or through subagents, which hides whether the product works (Discovery research is a play pressed with `disco run`; agent-app work goes through `agent-ask`).
+Before saying code lacks or never does something, `git fetch` and `git grep` for it in the owner's `origin/<default>`, and cite the command and the lines it found; a sparse, stale or deployed checkout proves nothing absent.
 Count live consumers before retaining compatibility; preserve required behavior and historical evidence.
 Prioritize correctness, simplicity, robustness, and maintainability over implementation effort.
 Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.
+When you measure something by hand with a script, build that measurement into its owner's live instrument in the same session (Discovery: the scorecard and the run page); the script is only a reference.
 
 For executable changes, merge the base and pass frozen install, typecheck, and affected tests on a Beelink.
 For documentation-only changes, use relevant content, link, or structural checks.
 When that local gate passes, merge or enable auto-merge immediately.
 Never watch PR CI; fix failures forward while preserving hooks, enforced protections, and release authority.
 Add CI or automated review gates only when requested; never request hosted Codex PR reviews.
-Private repos run workflows on `[self-hosted, beelink]`, never GitHub-hosted runners; public tangle-network repos use GitHub-hosted runners (free); one-off verification runs on a beelink, not in a pushed workflow.
 Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize subsequent task work within its resource limits.
 Under a deadline, launch with available capability and improve instrumentation while it runs.
 Use the user's named lever; keep acceptance criteria fixed and report stricter analysis separately.
+When Drew corrects you, record his words and the behavior they forbid, never a design of your own, and fix the cause at the highest level that works ([reflect](skills/reflect/SKILL.md#choose-what-should-change)).
 
 Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
 Parallelize independent deliverables with one owner each; finish minute-scale delivery and preserve longer work with its next completion check.
+Scripts wait and agents work: a script or timer with an explicit stop condition watches anything that must be watched; when it exits while that work is still live, re-arm it before ending the turn, and report every unwatched gap in minutes.
 Use plain technical English: checked outcome first, unknowns explicit, an openable artifact when showing a product.
+Before saying work is on track, read its outcome measure against the target (Discovery: check passes or goal score against the bar, and workers completing turns); commits, tags, merges and agents started are activity, not progress.
 When Drew must text or call, give numbered steps naming the exact number to send from, the exact number to send to as +1 (XXX) XXX-XXXX, and the exact message in quotes; never "the existing conversation", "the router", or a line ID.
 
 ## Read when relevant
@@ -36,6 +42,7 @@ Before repository changes, delegation, or host work, read the relevant [work pro
 Before verification, reporting, writing, UI, or skill changes, read its evidence or owning-guidance section.
 When progress stalls or work repeats, use [session efficiency](skills/reflect/references/session-efficiency.md).
 Before any analysis, review, plan, proposal, or run status, use [the climb](../docs/processes/climb.md): name the hill and the number to beat, run the level-up passes, show data as visuals, and record the move.
+Before building or changing an agent app, read the [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md); record ledger numbers with `climb-log append`.
 
 ## Preserve
 

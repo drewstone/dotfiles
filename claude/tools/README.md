@@ -179,6 +179,19 @@ root filesystem. A second floor
 check after installation keeps the requested command from starting if its
 install consumed the reserve.
 
+## climb-log
+
+Writes and lints a project's climb ledger (`reports/climb/ledger.jsonl` in Discovery Lab, else `.agent/climb.jsonl`; [climb.md](../../docs/processes/climb.md#every-number-names-its-sample)).
+A baseline or result that reports a number needs a `measurement` block naming its metric, unit, selection rule, `selectBy`, `n`, basis and window; a per-release number also names one `codeVersion` and its `deployedAt`, and a baseline row names its instrument and calibration.
+`brief-judge` and `skill-scoreboard --climb` append through it, and process-guard refuses shell writes into a ledger.
+
+```bash
+climb-log schema                                   # the contract, with an example row
+climb-log append --file row.json                   # check, then append; prints the id (refuses: nothing written)
+climb-log check                                    # lint rows written since 2026-10-11; exit 1 on a failing row
+climb-log hills --json                             # each hill's instrument and calibration verdict
+```
+
 ## skill-run-log, skill-scoreboard, lead-scorecard
 
 The instrument for the climb's "operator tools" and "operator" layers ([climb.md](../../docs/processes/climb.md)).

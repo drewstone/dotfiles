@@ -18,8 +18,8 @@ Append one JSON object per completed comparison.
 | `category` | enum | `prompt`, `config`, `code`, `infra`, `model`, or `criteria` |
 | `lever` | string | What changed |
 | `targets` | string[] | Affected agents, files, services, or other targets |
-| `baseline` | object | Before values with the chosen measurement summary |
-| `result` | object | After values with the same measurement summary |
+| `baseline` | object | Before values with the chosen measurement summary and a `measurement` block |
+| `result` | object | After values with the same measurement summary and a `measurement` block |
 | `delta` | number | Primary metric change, with units and direction stated in the analysis |
 | `verdict` | enum | `KEEP`, `ITERATE`, `ABANDON`, or `REGRESSION` |
 | `durationMs` | number | Observed experiment duration |
@@ -41,6 +41,9 @@ Append one JSON object per completed comparison.
 | `transcriptPath` | string | Path to the producing session transcript |
 | `traceDir` | string | Path to run-scoped evidence |
 | `rejected` | array | Objects with `hypothesis` and `reason` for rejected alternatives |
+
+A `measurement` block names how a number's sample was chosen: metric, unit, selection, selectBy, n, basis, its window, and for a per-release number one codeVersion and its deployedAt.
+`climb-log schema` prints the contract, and `climb-log append` writes a climb ledger row only when it holds; a row in `.agent/experiments.jsonl` carries the same block.
 
 Store raw observations, sample counts, analysis, and errors in the referenced evidence.
 Do not invent a numeric `delta` or duration to satisfy this schema.
