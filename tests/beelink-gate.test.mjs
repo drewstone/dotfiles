@@ -1143,3 +1143,66 @@ test("a repo that names no exact pnpm version keeps the beelink's pnpm", () => {
     assert.match(readFileSync(f.pnpmLog, "utf8"), /^install --frozen-lockfile/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+// A light gate: a small, dependency-free check with a declared CPU budget.
+const lightGate = (f, sha, command, env = {}) => run("bash", [gate, "--remote", ...["beelink2", f.url, sha, "light", f.windowDay, f.windowHour, ...command].map(encode)], { env: { ...f.env, ...env } });
+
+test("a light gate is admitted between 1.5x and 2.5x the cores where a normal gate waits, without an install or a browser", () => {
+  const f = fixture();
+  const loadavg = join(f.root, "light-loadavg");
+  writeFileSync(loadavg, loadLine(loadLimit + 1));
+  try {
+    const env = { BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" };
+    const normal = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(normal.status, 75, normal.stderr);
+    const light = lightGate(f, f.first, ["bash", "-c", 'echo "browsers=$PLAYWRIGHT_BROWSERS_PATH"; cat value.txt'], env);
+    assert.equal(light.status, 0, light.stderr);
+    assert.match(light.stderr, new RegExp(`load \\(${(loadLimit + 1).toFixed(2)}, limit ${Math.floor(coreCount * 5 / 2)}\\) admitted on beelink2`));
+    assert.match(light.stdout, /browsers=.*beelink-gate-no-browsers/);
+    assert.match(light.stdout, /first/);
+    assert.equal(existsSync(f.npmLog), false, "a light gate installs nothing");
+    assert.equal(existsSync(join(f.cache, "local", "owner", "repo@light", ".git")), true, "a light gate uses its own checkout");
+    assert.match(light.stderr, /receipt: .* class=light cpu_s=\d+\.\d/);
+    const row = receipts(f).at(-1);
+    assert.equal(row.class, "light");
+    assert.equal(row.exit, 0);
+    assert.ok(row.cpu_s !== null && row.cpu_s < 120, JSON.stringify(row));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a light gate does not wait for a normal host slot", async () => {
+  const f = fixture();
+  const held = join(f.root, "held");
+  try {
+    // A normal gate holds the only normal slot while its command runs.
+    const normal = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `touch '${held}'; sleep 6`].map(encode)],
+      { env: { ...f.env, BEELINK_GATE_MAX_CONCURRENT: "1" } });
+    for (let i = 0; i < 400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), "the normal gate started");
+    const started = Date.now();
+    const light = lightGate(f, f.first, ["true"], { BEELINK_GATE_MAX_CONCURRENT: "1" });
+    assert.equal(light.status, 0, light.stderr);
+    assert.doesNotMatch(light.stderr, /waiting for a host gate slot/);
+    assert.ok(Date.now() - started < 5000, "the light gate ran while the normal slot was held");
+    await new Promise((resolveDone) => normal.on("close", resolveDone));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a light gate over its declared CPU budget fails loudly, and the budget is capped at two core-minutes", () => {
+  const f = fixture();
+  try {
+    const spin = ["bash", "-c", "end=$((SECONDS + 3)); while (( SECONDS < end )); do :; done"];
+    const over = lightGate(f, f.first, spin, { BEELINK_GATE_LIGHT_CPU: "1" });
+    assert.equal(over.status, 1, over.stderr);
+    assert.match(over.stderr, /LIGHT GATE OVER BUDGET: the command used \d+\.\d core-seconds of the 1 it declared; run it as a normal gate/);
+    const row = receipts(f).at(-1);
+    assert.equal(row.class, "light");
+    assert.ok(row.cpu_s > 1, JSON.stringify(row));
+    const tooLarge = lightGate(f, f.first, ["true"], { BEELINK_GATE_LIGHT_CPU: "121" });
+    assert.equal(tooLarge.status, 2);
+    assert.match(tooLarge.stderr, /BEELINK_GATE_LIGHT_CPU must be 1-120 core-seconds/);
+    const combined = run(gate, ["--light", "--ship", "beelink2", f.url, f.first], { env: f.env });
+    assert.equal(combined.status, 2);
+    assert.match(combined.stderr, /--light cannot be combined with --ship/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
