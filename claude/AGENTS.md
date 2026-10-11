@@ -5,7 +5,7 @@ Resolve installed symlinks before following links.
 
 ## Own the outcome
 
-Deliver through the requested consumer; prove production claims through the shipped user flow before Drew tests it.
+Deliver through the requested consumer; prove production claims through the shipped user flow before Drew tests it, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)).
 Fix causes, not retries or manual workarounds.
 Ask what outcome matters, what can disappear, and what evidence would change the next decision.
 Use these questions for judgment, not a mandatory report or routine confirmation.
