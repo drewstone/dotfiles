@@ -36,3 +36,7 @@ GTR noninteractive SSH commands can omit `~/bin` and `~/.local/bin` from PATH.
 `/usr/local/bin/git`, with `/usr/local/bin/git.gtr-original` pointing to
 `/usr/bin/git`. This location precedes `/usr/bin` in the SSH command PATH;
 `host/install.sh --check` reports drift in either installed copy.
+
+When a full host install check also reports unrelated drift, use
+`host/install.sh --git-guard-only` to update just these two GTR Git files.
+The full installer continues to maintain them during normal provisioning.

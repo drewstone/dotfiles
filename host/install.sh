@@ -24,8 +24,9 @@
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
 #                                          systemd-resolved's stub)
 #
-# Usage: host/install.sh [--check]
-#   --check   report drift and change nothing; exit 1 when anything differs.
+# Usage: host/install.sh [--check|--git-guard-only]
+#   --check           report drift and change nothing; exit 1 when anything differs.
+#   --git-guard-only  install only the GTR Git PATH guard; leave other host settings alone.
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -33,10 +34,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$(uname -s)" = Linux ] || { echo "host/install.sh is Linux-only"; exit 0; }
 CHECK=0
+GIT_GUARD_ONLY=0
 case "${1:-}" in
   --check) CHECK=1 ;;
+  --git-guard-only) GIT_GUARD_ONLY=1 ;;
   '') ;;
-  *) echo "usage: host/install.sh [--check]" >&2; exit 2 ;;
+  *) echo "usage: host/install.sh [--check|--git-guard-only]" >&2; exit 2 ;;
 esac
 SUDO=sudo
 [ "$(id -u)" = 0 ] && SUDO=
@@ -76,6 +79,19 @@ want_link() {
   CHANGED=1
 }
 
+install_system_git_guard() {
+  # Tailscale noninteractive SSH omits the user PATH but searches /usr/local/bin.
+  # Keep this copy root-owned because root can also run Git through this path.
+  want_link /usr/bin/git /usr/local/bin/git.gtr-original
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" /usr/local/bin/git
+}
+
+if [ "$GIT_GUARD_ONLY" = 1 ]; then
+  [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "GTR Git guard is GTR-only" >&2; exit 2; }
+  install_system_git_guard
+  exit 0
+fi
+
 # softdog_holders: PIDs that hold the softdog open, space-separated.
 softdog_holders() {
   [ -e "$SOFTDOG" ] || return 0
@@ -97,10 +113,7 @@ if [ "$(hostname -s)" = drew-GTR-Pro ]; then
   else
     python3 "$SCRIPT_DIR/gtr-install-guard/install.py"
   fi
-  # Tailscale noninteractive SSH omits the user PATH but searches /usr/local/bin.
-  # Keep this copy root-owned because root can also run Git through this path.
-  want_link /usr/bin/git /usr/local/bin/git.gtr-original
-  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" /usr/local/bin/git
+  install_system_git_guard
 fi
 
 echo "== wrappers"
