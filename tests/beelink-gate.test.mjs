@@ -56,7 +56,7 @@ function fixture() {
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
   // No pressure file: the load tests cover the load-average fallback; pressure tests set one.
-  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), BEELINK_GATE_DEV_CGROUP: join(root, "no-dev-cgroup"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -1550,5 +1550,51 @@ test("the starvation backstop also runs a gate past a full slot pool", async () 
       assert.match(result.stderr, /STARVED: running past the 1-slot cap on beelink2 after \d+s/);
       assert.match(result.stderr, /receipt: .*starved=1/);
     } finally { holder.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a --dev run has its own checkout and slots, waits behind no merge gate, and gets no starvation backstop", async () => {
+  const f = fixture();
+  const holders = [];
+  try {
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    // Both merge checkouts and every merge slot are taken.
+    for (const name of ["local-owner-repo.lock", "local-owner-repo@1.lock", "slot-0.lock"]) {
+      const marker = join(f.root, `held-${name}`);
+      holders.push(spawn("flock", ["-x", join(f.cache, ".locks", name), "bash", "-c", `touch '${marker}'; sleep 20`], { stdio: "ignore" }));
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+    }
+    const env = { BEELINK_GATE_CLASS: "dev", BEELINK_GATE_MAX_CONCURRENT: "1" };
+    const dev = f.call(f.first, ["git", "rev-parse", "HEAD"], { noInstall: true, env });
+    assert.equal(dev.status, 0, dev.stderr);
+    assert.equal(dev.stdout.trim(), f.first);
+    assert.match(dev.stderr, /using second checkout repo@dev/);
+    assert.match(dev.stderr, /receipt: .*class=dev/);
+    assert.equal(receipts(f).at(-1).class, "dev");
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(60));
+    const starved = f.call(f.first, ["true"], { noInstall: true, env: { ...env, BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_STARVE_AFTER: "1s", BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    assert.equal(starved.status, 75, starved.stderr);
+    assert.doesNotMatch(starved.stderr, /STARVED/);
+  } finally {
+    for (const h of holders) h.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("the launcher forwards --dev and refuses it with --ship or --light", () => {
+  const f = fixture();
+  try {
+    const env = loadedHosts(f, 0.5, 0.5);
+    const ok = run(gate, ["--dev", "--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_CLASS=dev /);
+    assert.match(ok.stderr, /receipt: .*class=dev/);
+    for (const flag of ["--ship", "--light"]) {
+      const args = flag === "--ship" ? ["--dev", flag, "beelink2", f.url, f.first] : ["--dev", flag, "beelink2", f.url, f.first, "--", "true"];
+      const refused = run(gate, args, { env });
+      assert.equal(refused.status, 2, flag);
+      assert.match(refused.stderr, /--dev cannot be combined with/);
+    }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
