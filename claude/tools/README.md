@@ -289,6 +289,61 @@ lead-scorecard decision ask <id> --question "<what only Drew can decide>"
 - **Scoreboard:** reads only these ledger files on each host over ssh (`SKILL_SCOREBOARD_HOSTS` overrides the list) and orders signals as the climb ranks rewards: outcome, corrections, brief-judge score, then the author's claim. It draws its charts with `viz` and falls back to the small renderer in `skill_ledger/core.py` when node or viz is missing.
 - **Lead scorecard:** per local day, corrections, guard refusals from `agent-work/_guards/*.jsonl`, revert and rollback PRs by drewstone, incidents with time to detect and recover (`_lead/incidents.jsonl`), and decisions waiting on Drew (`_lead/decisions.jsonl`).
 
+## have
+
+Answers "do we already have X?" before anyone says something is missing.
+One grep for one spelling found nothing for a sandbox start-latency harness that existed as a directory of evals, two workflows disabled by hand and a task on the board.
+`have` sweeps all of those at once and prints one ranked report.
+
+```bash
+have sandbox eval harness            # paths, scripts, workflows with state, content and tasks, best first
+have --in widgets eval harness       # only repositories whose name or path contains "widgets"
+have --offline otel span             # no fetch, no GitHub API
+have --only workflows,boards canary  # run only these sweeps; --skip drops some
+```
+
+A term is stemmed and widened with synonyms, so `eval harness` also looks for bench, perf, latency, waterfall, canary, probe, ratchet and baseline.
+Terms that name one idea share a concept, and a hit that covers more concepts ranks higher.
+The report opens with `WHERE TO LOOK FIRST`, then lists each sweep; every hit carries its exact location:
+
+| Sweep | Reads | Location printed |
+|---|---|---|
+| paths | `git ls-tree -r` of `origin/<default>` in every repository under the roots, after a `git fetch -q` (reused for 10 minutes) | `repo:dir/` with a file count and sample names |
+| scripts | `package.json` scripts, by name or command | `repo:path/package.json   scripts.<name> = <command>` |
+| workflows | workflow files on the default branch, then the GitHub API for state and the latest run | `repo:.github/workflows/<file>   disabled_manually; last run failure 2026-09-08` |
+| content | `git grep -c --all-match -i` on the default branch: files with a word of every concept | `repo:path   N matching lines` |
+| boards | the task and note sources named in the config | `tasks:<label> #<id>`, `notes:<label>:<file>:<line>` |
+
+It never reads a working tree, so a stale or sparse checkout cannot hide a file.
+A checkout with no `origin` is read at its local default branch and the report says so.
+Clones of one repository count once.
+A `NO HITS` report holds only for what its `searched:` lines list.
+Exit status is 0 with hits, 1 with none, 2 on a usage error.
+
+GitHub reads use `$GH` (else the config's `gh`, else `gh`) and cost one call per 100 workflows of each repository that holds a shown workflow, plus one per shown workflow for its latest run.
+Answers are cached for 15 minutes under `~/.cache/have/` (`--refresh` rereads); `HAVE_GH_BUDGET` (default 60) caps the calls in one run, and a rate-limit or quota refusal stops them with the sweep marked unread.
+
+### Config
+
+`have` reads `~/.config/have/config` (or `--config FILE`, or `$HAVE_CONFIG`); with no config it searches the repository it is run in.
+The file is local and untracked: it names the machine's roots and task sources, so it never belongs in this repository.
+One `key = value` per line; a line that starts with `#` is a comment.
+
+```text
+root = ~/code                    scan this directory and the repositories up to `depth` levels below it
+repo = ~/src/one-repo            one checkout
+github = owner/name              a repository with no checkout here: tree and workflows by API
+gh = gh                          the GitHub CLI command
+depth = 2                        levels below a root (default 2)
+exclude = */archive/*            skip checkouts whose path matches this glob
+synonyms = soak, burn-in         words that stand for one another (repeatable)
+tasks board = my-tasks --json    run with sh -c; prints JSON (a list of objects with id, title, state) or text in which each task starts at a line that begins with an id such as #12 or ABC-12
+notes memory = ~/notes           search the .md and .txt files below this directory
+```
+
+`tasks` commands run as the user, so list only commands you would run by hand.
+Directories whose names start with `.` or `_` are not scanned for repositories.
+
 ## skills
 
 List installed skills or check the discovery catalog budget:

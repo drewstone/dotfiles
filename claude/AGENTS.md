@@ -13,6 +13,7 @@ Find existing owners and consumers; prefer deletion, simplification, optimizatio
 Extend the surface that already serves a capability with a flag, key or field (Discovery: a play-file key or a `disco run` option); a new command, verb or concept needs Drew to ask for it by name.
 When a product exists to do a kind of work, operate it and judge its result; never do that work yourself or through subagents, which hides whether the product works (Discovery research is a play pressed with `disco run`; agent-app work goes through `agent-ask`).
 Before saying code lacks or never does something, `git fetch` and `git grep` for it in the owner's `origin/<default>`, and cite the command and the lines it found; a sparse, stale or deployed checkout proves nothing absent.
+Before answering “do we have / does X exist” or saying something is missing, run `have <terms>` (default-branch paths, scripts, workflows with state, content, tasks) and cite what it found; one grep for one spelling proves nothing.
 Count live consumers before retaining compatibility; preserve required behavior and historical evidence.
 Prioritize correctness, simplicity, robustness, and maintainability over implementation effort.
 Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.
