@@ -658,9 +658,6 @@ remote_gate() {
   unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since))
   echo "beelink-gate: lock, host slot and load ($start_load, limit $(load_limit)) admitted on $beelink after ${waited}s" >&2
-  check_floor "$beelink" || exit $?
-  check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
-
   local started=$SECONDS deadline=$((SECONDS + max_hold)) display
   printf -v display '%q ' "${command[@]}"
   # Each step is its own process group (timeout's), bounded by the remaining
@@ -723,6 +720,10 @@ PY
     exit "$status"
   }
   trap finish EXIT
+  # The final admission checks run after lock and slot acquisition so their
+  # refusals need the same cleanup and receipt path as later failures.
+  check_floor "$beelink" || exit $?
+  check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
   prune_cache "$cache_root" "$checkout" "$cache_max" || exit $?
 
   if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
@@ -867,16 +868,42 @@ on_beelink() {
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
   [ -z "${BEELINK_GATE_REPO_CHECKOUTS:-}" ] || envs+=("BEELINK_GATE_REPO_CHECKOUTS=$BEELINK_GATE_REPO_CHECKOUTS")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
-  local me=$$ rc
+  local me=$$ rc heartbeat_fd heartbeat_pid command_pid
+  heartbeat_input() {
+    local sleeper="" include_script=${1:-0}
+    trap 'if [ -n "$sleeper" ]; then kill -TERM "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
+    [ "$include_script" = 1 ] && cat "$0"
+    while kill -0 "$me" 2>/dev/null; do
+      sleep 5 & sleeper=$!
+      wait "$sleeper" || true
+      sleeper=""
+    done
+  }
+  stop_heartbeat() {
+    kill -TERM "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+    exec {heartbeat_fd}<&-
+  }
   if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
-    env "${envs[@]}" bash "$0" "$@" < <(while kill -0 "$me" 2>/dev/null; do sleep 5; done)
-    rc=$?
+    exec {heartbeat_fd}< <(heartbeat_input)
+    heartbeat_pid=$!
+    env "${envs[@]}" bash "$0" "$@" <&"$heartbeat_fd" &
+    command_pid=$!
+    wait "$command_pid"; rc=$?
+    stop_heartbeat
   elif [ "$target" = "$SELF" ]; then
     env "${envs[@]}" bash "$0" "$@" </dev/null
     rc=$?
+  elif [ "${heartbeat:-0}" = 1 ]; then
+    exec {heartbeat_fd}< <(heartbeat_input 1)
+    heartbeat_pid=$!
+    ssh -o BatchMode=yes -o ConnectTimeout=15 "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "$@" <&"$heartbeat_fd" &
+    command_pid=$!
+    wait "$command_pid"; rc=$?
+    stop_heartbeat
   else
     ssh -o BatchMode=yes -o ConnectTimeout=15 "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "$@" \
-      < <(cat "$0"; [ "${heartbeat:-0}" = 1 ] && while kill -0 "$me" 2>/dev/null; do sleep 5; done)
+      < <(cat "$0")
     rc=$?
   fi
   return "$rc"
