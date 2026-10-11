@@ -51,7 +51,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -1669,5 +1669,14 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
     assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
     assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a command's own pnpm uses the gate's store and never stops on a modules purge prompt", () => {
+  const f = fixture();
+  try {
+    const result = f.call(f.first, ["bash", "-c", 'printf "%s|%s" "$npm_config_store_dir" "$npm_config_confirm_modules_purge"'], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${f.home}/.local/share/pnpm/store|false`);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });

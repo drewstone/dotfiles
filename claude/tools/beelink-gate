@@ -1281,6 +1281,13 @@ PY
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$checkout/.git/beelink-gate-target}"
   # Incremental state is a third of a debug target and gates rarely reuse it.
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+  # Every pnpm the command runs (a repo's own signoff install, say) uses the
+  # store the gate installed from, and never stops on a purge prompt: the
+  # checkout is a disposable cache with no TTY. On 2026-10-11 ADC's signoff.sh
+  # re-ran pnpm install, which aborted with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY
+  # after a green 18-minute run (ADC #10346, beelink1).
+  export npm_config_store_dir="${npm_config_store_dir:-$HOME/.local/share/pnpm/store}"
+  export npm_config_confirm_modules_purge=false
   cd "$checkout" || exit $?
   # Install and run with the repo's Node (.nvmrc), as its CI does, so the install
   # and the command load the same native addon ABI. pnpm keys a native package's
