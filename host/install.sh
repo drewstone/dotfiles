@@ -92,8 +92,18 @@ install_system_git_guard() {
 is_beelink() { case "$(hostname -s)" in beelink1|beelink2|DESKTOP-18IR33V) return 0 ;; *) return 1 ;; esac; }
 
 install_beelink_worktree_cap() {
-  install_system_git_guard
-  want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" /usr/local/bin/git.worktree-cap.json
+  local cap=/usr/local/lib/beelink-worktree-cap
+  want_link /usr/bin/git "$cap/git.gtr-original"
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" "$cap/git"
+  want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" "$cap/git.worktree-cap.json"
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/beelink-git" /usr/local/bin/git
+  # The first install (2026-10-11) put the Python guard itself at /usr/local/bin/git.
+  local stale
+  for stale in /usr/local/bin/git.gtr-original /usr/local/bin/git.worktree-cap.json; do
+    if [ -e "$stale" ] || [ -L "$stale" ]; then
+      if [ "$CHECK" = 1 ]; then drift "$stale"; else $SUDO rm -f "$stale"; note removed "$stale"; fi
+    fi
+  done
   local before=$CHANGED
   CHANGED=0
   want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-accept.conf" /etc/ssh/sshd_config.d/20-fleet-lane-accept.conf
