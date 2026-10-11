@@ -48,7 +48,8 @@ config file: one `key = value` per line; `#` starts a comment at the start of a 
 
 environment: GH, HAVE_CONFIG, HAVE_FETCH_TTL, HAVE_GH_TTL (seconds a GitHub answer is reused,
 default 900; --refresh overrides), HAVE_GH_BUDGET (API calls per run, default 60),
-HAVE_CACHE_DIR, HAVE_JOBS.
+HAVE_GREP_TIMEOUT (seconds per repository for the content grep, default 25), HAVE_CACHE_DIR,
+HAVE_JOBS.
 Exit status: 0 with hits, 1 with none, 2 on a usage error.
 """
 from __future__ import annotations
@@ -57,7 +58,6 @@ import argparse
 import concurrent.futures as cf
 import fnmatch
 import hashlib
-import heapq
 import json
 import math
 import os
