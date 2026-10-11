@@ -692,6 +692,25 @@ test("a URL with or without .git reuses the same cache checkout", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("another spelling of the same repo adopts the cache, and a different repo is refused", () => {
+  const f = fixture();
+  try {
+    const checkout = join(f.cache, "local", "owner", "repo");
+    const first = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(first.status, 0, first.stderr);
+    // Same host/owner/repo key in another spelling, as git@ and https are for GitHub.
+    f.git(["-C", checkout, "remote", "set-url", "origin", "file:///elsewhere/owner/repo"], f.root);
+    const adopted = f.call(f.second, ["cat", "value.txt"], { noInstall: true });
+    assert.equal(adopted.status, 0, adopted.stderr);
+    assert.equal(adopted.stdout, "second\n");
+    assert.equal(f.git(["-C", checkout, "remote", "get-url", "origin"], f.root), f.url);
+    f.git(["-C", checkout, "remote", "set-url", "origin", "file:///elsewhere/owner/other.git"], f.root);
+    const refused = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(refused.status, 2);
+    assert.match(refused.stderr, /cache origin mismatch at .*other\.git is not/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("auto prefers a beelink with a free host slot over one whose slots are full", async () => {
   const f = fixture();
   try {
