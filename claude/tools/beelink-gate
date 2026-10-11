@@ -673,7 +673,10 @@ remote_gate() {
   unset BEELINK_GATE_BRANCH
   unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
-  export PATH="$HOME/.local/bin:$PATH"
+  # WSL over SSH runs a non-login shell. ~/bin holds the dotfiles tools
+  # (claude/install.sh links gh-drew there), which merge gates such as ADC's
+  # signoff call to post their receipt; ~/.local/bin holds pnpm and friends.
+  export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
   # Nobody can answer a prompt in a gate: Git fails at once instead of waiting
   # for a password or a host-key confirmation.
   export GIT_TERMINAL_PROMPT=0
