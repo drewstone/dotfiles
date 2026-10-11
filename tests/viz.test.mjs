@@ -125,6 +125,10 @@ test('the emoji chat status draws every block from the spec', () => {
   const status = briefStatus(bare.spec, 80)
   assert.ok(status.startsWith('**Nothing measured yet.**'))
   assert.equal((status.match(/_none in the spec_/g) ?? []).length, 4)
+  // Next stays one line: the first decision, and a count of the rest.
+  const two = prepareBrief({ title: 'Two', thesis: 't', decision: 'd', sections: [{ title: 's', blocks: [{ type: 'decisions', items: [{ title: 'First call' }, { title: 'Second call' }] }] }] })
+  const tail = briefStatus(two.spec, 80).split('\n')
+  assert.deepEqual(tail.slice(tail.indexOf('⏭️ **Next**') + 1), ['👉 **1. First call** · _+1 more in the brief_'])
 })
 
 test('bars are drawn to scale with eighth-cell ends and the target behind them', () => {

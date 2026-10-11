@@ -18,7 +18,7 @@ It draws each chart at its panel's real width, so labels stay legible on a phone
 
 ## Spec
 
-Top level: `title` (a name, two to four words), `eyebrow` (window, owner, freshness), `thesis` and optional `thesisAlert` (the sentence the data supports, and its sharpest consequence), `decision` (the call the brief makes, in one plain sentence), `dek`, `hill` (`metric`, `baseline`, `now`, `target`, `owner`), `stats` (`v`, `l`, `tone` of `bad`/`ok`/`warn`), `learned` (findings as plain text: strings, or `text` with a status `tone`), `sections`, `method`, `caveats`.
+Top level: `title` (a name, two to four words), `eyebrow` (window, owner, freshness), `thesis` and optional `thesisAlert` (the sentence the data supports, and its sharpest consequence), `decision` (the call the brief makes, in one plain sentence), `dek`, `hill` (`metric`, `baseline`, `now`, `target`, `owner`), `stats` (`v`, `l`, `tone` of `bad`/`ok`/`warn`), `learned` (each a mistake, its durable fix with its PR, and its status, as plain text: strings, or `text` with a status `tone`), `sections`, `method`, `caveats`.
 Any block may set `evidence: true` to lead the chat status's Evidence.
 A page that lives on a screen (a wall) may also set `theme` (`dark` or `light`), `wide` (the full window width instead of one reading column) and `refresh` (seconds until it reloads itself).
 
@@ -60,7 +60,7 @@ Every line comes from the spec; a part the spec lacks prints `none in the spec` 
 | 📊 Evidence | `stats` with status dots, then each block with `evidence: true` (else the first chart) in a text fence with its note, then `method` and `caveats` |
 | 🛠️ Doing | open `board` rows, each `steps` path in one line, and `hills` moves that are `pending` |
 | 🧠 Learned | `learned`, `board` rows with tone `good`, and `hills` moves that were `kept` or `failed` |
-| ⏭️ Next | `decisions` items, then `hills` moves that are `planned` |
+| ⏭️ Next | one line: the first `decisions` item, else the first `hills` move that is `planned`, and a count of the rest |
 
 Write the spec first and paste its status; never retype the numbers.
 The [tools README](../../../tools/README.md#color-in-a-markdown-chat) shows the colors and how a square keeps the scale.

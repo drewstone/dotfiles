@@ -395,10 +395,11 @@ export function briefStatus(prepared, cols = 100) {
     }
     if (b.type === 'decisions') for (const x of b.items ?? []) decide.push(`${dot('you')} ${joined(`**${decide.length + 1}. ${flat(x.title)}**`, mdText(x.text), mdText(x.rec))}`)
   }
-  // The reader's decisions first, then the moves already planned.
+  // Next is one line, as the evidence-lead directive asks: the reader's first decision, else
+  // the first planned move, and a count of the rest.
   const next = [...decide, ...planned]
   out.push('', '🛠️ **Doing**', ...(doing.length ? doing : [NONE]))
   out.push('', '🧠 **Learned**', ...(learned.length ? learned : [NONE]))
-  out.push('', '⏭️ **Next**', ...(next.length ? next : [NONE]))
+  out.push('', '⏭️ **Next**', next.length ? `${next[0]}${next.length > 1 ? ` · _+${next.length - 1} more in the brief_` : ''}` : NONE)
   return out.join('\n')
 }
