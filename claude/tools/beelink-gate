@@ -472,6 +472,7 @@ remote_gate() {
     ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
   fi
   # The launcher's settings are this gate's; a gate the command starts gets its own.
+  local ship_workers=${BEELINK_GATE_SHIP_WORKERS:-}
   unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
   export PATH="$HOME/.local/bin:$PATH"
@@ -625,7 +626,7 @@ PY
       . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
       nvm use >/dev/null 2>&1 || nvm install >/dev/null 2>&1 || die "--ship: cannot select Node $(cat .nvmrc)"
     fi
-    local workers=${BEELINK_GATE_SHIP_WORKERS:-$(( $(nproc) / 2 ))}
+    local workers=${ship_workers:-$(( $(nproc) / 2 ))}
     (( workers >= 2 )) || workers=2
     export SHIP_MAX_WORKERS=$workers
     echo "beelink-gate: --ship runs scripts/ship.sh verify with node $(node -v 2>/dev/null) and SHIP_MAX_WORKERS=$workers" >&2
