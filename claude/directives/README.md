@@ -49,7 +49,7 @@ to start splitting traffic. Each variant should encode a *distinct hypothesis* a
 makes a response better (structure vs. density, more vs. less proactive checkpointing, etc.),
 not a cosmetic tweak — otherwise the measurement can't separate them.
 
-## Measurement status (2026-10-10)
+## Measurement status (2026-10-11)
 
 `terse-ops-v1` was the single active variant from 2026-09-20 to 2026-10-10, across 4,011 sessions in the Mac's assignment log.
 The `trace-insights` join that should have scored it was never built: its README still describes the analyze stage in the future tense.
@@ -58,3 +58,8 @@ On 2026-10-10 Drew rejected terse output for analysis ("These bullet points just
 The inactive variants (`terse-ops-v1`, `lead-checkpoint-v1`, `gate-checkpoint-v1`) were then deleted; git history keeps them.
 Until the join exists, the measurement is the corrections ledger in [the climb](../../docs/processes/climb.md#corrections-are-data): Drew's corrections per session, by theme, under each variant.
 Do not start a rotation until the join scores variants; until then, a rotation only adds noise.
+
+On 2026-10-11 Drew rejected the terminal output itself: two colors, no fixed order for what, why, how and focus, unambitious answers that lean on old records, and no visible sign of learning from a week of Terraform mistakes.
+`evidence-lead-v1` was rewritten in place, keeping its slug, with the same blocks in the same order every turn, emoji color for status and charts, the owner's voice, and a Learned block that shows each mistake, its durable fix and its status.
+The assignment log records the slug, not the text, so split its sessions at the merge time of the PR that made this rewrite (`git log --format='%cI %s' -- claude/directives/variants/evidence-lead-v1.md` lists it).
+The measure is the corrections ledger's communication theme after that time against before it.
