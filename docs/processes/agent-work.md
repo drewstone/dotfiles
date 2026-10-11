@@ -49,6 +49,7 @@ Gate a pushed revision from any host, including the Mac, GTR or either beelink, 
 ### GTR worktree rule
 
 - If hooks need installed dependencies, author in a Beelink worktree under `~/code/_wt`, install and commit there with hooks, push, gate the SHA with `beelink-gate`, then use `wt-remove` there after merge.
+  Run test suites only through `beelink-gate auto`, never raw in that worktree: the gate admits by host load so CI keeps moving, and on 2026-10-11 raw worktree tests held 9 of beelink1's 16 threads against CI's 4.
 - Otherwise create a sparse GTR worktree with `storage-lifecycle create`. Attach a named local branch through `--ref`, or run `git switch <branch>` or `git switch -c <branch>` before committing from a detached checkout. Confirm the branch with `git status -sb`.
 - When the 1 GiB lane quota is full, reuse the lane's worktree with `git switch -c` after pushing its previous branch, or use `OWNER_RELEASED=1 wt-remove <path>` after that work is pushed and merged or abandoned. Keep all owner-tool retention checks.
 - When GTR creation refuses for space below its 36 GiB admission floor, author in a Beelink worktree as above. Never bypass hooks through the GitHub git-data API or symlink another checkout's `node_modules` into a GTR worktree.
