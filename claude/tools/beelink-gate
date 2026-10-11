@@ -357,16 +357,15 @@ parse_repo_url() {
 }
 
 # The cache is keyed by host/owner/repo, so any spelling of that repo (https or
-# SSH, with or without .git) owns it. The checkout then fetches with the URL
-# this gate was given; a different repo in that path is refused.
+# SSH, with or without .git) owns it; a different repo in that path is refused.
+# The checkout keeps the origin it was created with: that transport has already
+# fetched on this host, while the caller's spelling may need credentials the
+# beelink does not have (an https URL without a token prompts and hangs).
 adopt_origin() {
   local checkout=$1 url=$2 origin origin_key
   origin=$(git -C "$checkout" remote get-url origin) || return $?
   origin_key=$(parse_repo_url "$origin" 2>/dev/null && printf '%s/%s/%s' "$host" "$owner" "$repo")
   [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
-  if [ "$origin" != "$url" ]; then
-    git -C "$checkout" remote set-url origin "$url" || return $?
-  fi
 }
 
 # One line describing the holder of a lock, from the metadata its gate wrote.
@@ -521,6 +520,10 @@ remote_gate() {
   unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
   export PATH="$HOME/.local/bin:$PATH"
+  # Nobody can answer a prompt in a gate: Git fails at once instead of waiting
+  # for a password or a host-key confirmation.
+  export GIT_TERMINAL_PROMPT=0
+  export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
   check_floor "$beelink" || exit $?
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
@@ -630,7 +633,11 @@ PY
     git -C "$checkout" remote add origin "$repo_url" || exit $?
   fi
   adopt_origin "$checkout" "$repo_url" || exit $?
-  remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*') || exit $?
+  # A step, not a command substitution: bash runs the launcher watchdog's trap
+  # only between commands, so a hung ls-remote in $(...) held the lock for 34m.
+  local refs_file="$checkout/.git/beelink-gate-remote-refs"
+  step timeout 120 git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*' > "$refs_file" || exit $?
+  remote_refs=$(cat "$refs_file") || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()
   while IFS=$'\t' read -r left ref; do
@@ -648,7 +655,7 @@ PY
     fi
   done <<< "$remote_refs"
   echo "beelink-gate: fetching $sha and ${#tracking_refspecs[@]} tracking branch(es) into $checkout" >&2
-  step git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}" || exit $?
+  step timeout 1200 git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}" || exit $?
   git -C "$checkout" checkout --detach --force "$sha" || exit $?
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
