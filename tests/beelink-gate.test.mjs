@@ -8,6 +8,7 @@ import test from "node:test";
 const gate = resolve("claude/tools/beelink-gate");
 const run = (bin, args, options = {}) => spawnSync(bin, args, { encoding: "utf8", ...options });
 const encode = (arg) => Buffer.from(String(arg)).toString("base64");
+const sleepMs = (ms) => new Promise((resolveDone) => setTimeout(resolveDone, ms));
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "beelink-gate-"));
@@ -389,7 +390,6 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
 });
 
 const receipts = (f) => readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-const sleepMs = (ms) => new Promise((resolveDone) => setTimeout(resolveDone, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 test("the hold limit stops a hung command, frees the lock and records the timeout", () => {
@@ -563,14 +563,17 @@ test("a host slot cap serializes gates for different repos and reports the wait"
   f.git(["clone", "-q", "--bare", f.source, other], f.root);
   const events = join(f.root, "events");
   const launch = (url, id, delay) => new Promise((resolveDone) => setTimeout(() => {
-    const args = ["beelink2", url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo start-${id} >> '${events}'; sleep 0.5; echo end-${id} >> '${events}'`].map(encode);
+    const args = ["beelink2", url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo start-${id} >> '${events}'; sleep 2; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_MAX_CONCURRENT: "1", BEELINK_GATE_SLOT_POLL_SECONDS: "0.1" } });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("close", (status) => resolveDone({ status, stderr }));
   }, delay));
   try {
-    const [a, b] = await Promise.all([launch(f.url, "a", 0), launch(`file://${other}`, "b", 150)]);
+    // Start b once a is running its command, so a holds the only slot on a loaded host too.
+    const first = launch(f.url, "a", 0);
+    for (let i = 0; i < 400 && !(existsSync(events) && readFileSync(events, "utf8").includes("start-a")); i++) await sleepMs(25);
+    const [a, b] = await Promise.all([first, launch(`file://${other}`, "b", 0)]);
     assert.equal(a.status, 0, a.stderr);
     assert.equal(b.status, 0, b.stderr);
     assert.equal(readFileSync(events, "utf8").trim().split("\n").join(","), "start-a,end-a,start-b,end-b");
