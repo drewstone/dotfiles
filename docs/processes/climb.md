@@ -111,6 +111,25 @@ A row is an [`evolve` experiment record](../../claude/skills/evolve/schema.md) p
 - `outcome` (`PASS`, `FAIL` or `PENDING`, with the measured value).
 
 A hill's current position is a row with `lever: "baseline"`.
+Write rows with [`climb-log append`](../../claude/tools/README.md#climb-log); process-guard refuses shell writes into a ledger.
+
+### Every number names its sample
+
+On 2026-10-10, 5 reported numbers were retracted.
+"Coalescing p50 32,401" chose streams by finish time across two releases, a failure time was measured from its notice, and a disk reclaim was an estimate.
+So each baseline or result that reports a number carries a `measurement` block, and `climb-log append` refuses the row without one:
+- `metric`, `unit`, `n`, and `basis` (measured, computed or judged; an estimate belongs in `prediction`);
+- `selection`, the rule that chose the sample in words, and `selectBy`: `start`, `finish`, `notice`, `event`, `sample` or `all`;
+- `window` {from, to} for a selection by time.
+  A duration selects by start or is a fixed sample.
+- for a per-release number, one `codeVersion`, and `deployedAt` at or before `window.from` when the selection is live traffic.
+  Per-release covers a compared code, config, infra, model or prompt change, and product, agents and system positions unless `perRelease: false` declares a multi-release window.
+- on a baseline row, the `instrument` and its `calibration`: PASS or FAIL with the `check` that compared the instrument with a known answer and that answer (`against`), or UNCALIBRATED with what would calibrate it (`next`).
+
+`climb-log check` lints the rows written since 2026-10-11, and `climb-log hills` counts the hills whose instrument has a passing calibration check.
+`climb-log schema` prints the contract with an example.
+The [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md) list the incidents behind these checks and the checks every agent app inherits.
+
 The skills that analyze or operate (`operate`, `report`, `reflect`, `evolve`, `hypothesize`, and Lab's `deep-review`) read the ledger before starting and append to it before finishing.
 
 ### Rewards, strongest first
@@ -143,7 +162,7 @@ Record each one as a ledger row:
 - the theme: communication, rigor, scope, cost, autonomy or safety;
 - the change that answers it.
 
-A theme that recurs after its change has failed and needs a change at a higher level: architecture, then a check, then a test, then a rule.
+A theme that recurs after its change has failed and needs a change at a higher level, in the order [reflect](../../claude/skills/reflect/SKILL.md#choose-what-should-change) gives.
 
 ## The engine: what makes the climb run without us
 
@@ -161,7 +180,7 @@ On 2026-10-09 the daily meta-analyst (`trace-mine`) read 3 of 32,093 sessions an
 
 **Never stop climbing.**
 - **Plateau breaker:** a hill flat for three measurements changes approach, not effort. Run `hypothesize`, and the search ledger's landscape lens drafts a new direction.
-- **Ratchet:** a hill that reaches its target gets a new one: the best exemplar known anywhere, or twice the old target.
+- **Ratchet:** a hill that reaches its target gets a new one for the next move: the best exemplar known anywhere, or twice the old target. The run that reached it settles; it does not keep spending.
 - **Climb the climber:** the climb is itself a hill (hills improved per week, predictions passed), and agent-eval's meta-search lens tunes it.
 
 ## Be the best practitioner, then beat them
@@ -176,8 +195,7 @@ For every output class we make (a financial model, research report, workbook, ch
 
 The Manhattan Project ran parallel approaches to the uncertain parts: three enrichment methods and two bomb designs. It had central technical direction, measurement before scale (Fermi's pile before Hanford), and relentless integration.
 For a fleet, that means:
-- **Parallel arms** on any uncertain approach, selected by verified results.
+- **Parallel approaches** on any uncertain part, chosen by the team that holds the goal and selected by verified results; in Discovery, a play's topology and its roots choose them ([operate](../../claude/skills/operate/SKILL.md#before-launch-or-resume)).
 - **One technical director** holding the goal.
 - **Instruments before spend.**
 - **Integration** into one deliverable on a fixed cadence.
-- **No idle capacity:** every free seat runs the next most valuable move.

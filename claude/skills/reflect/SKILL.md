@@ -34,6 +34,7 @@ Derived from cursor/plugins correct (MIT).
 Leave sound work unchanged.
 
 Carry authorized corrections through verification; for analysis-only work, report the correction and evidence.
+A change to operator guidance (AGENTS.md, CLAUDE.md, a skill, `docs/processes/`, or project memory) must pass [the operator scenarios](../_probes/operator-scenarios.md) before it merges: every scenario that passed before the change still passes, and the pull request states both scores.
 
 ## Preserve the findings
 
@@ -42,7 +43,6 @@ Add a concise link to `~/.claude/reflections/INDEX.md`, this machine's index out
 To share a reflection across machines, commit it to dotfiles `claude/reflections/` through a pull request.
 Record scope, sources, outcomes, repeated causes, changes, verification, and unresolved decisions.
 Use counts and denominators for frequency claims; retain unknowns and sampling limits.
-A reflection needs neither a grade, a fixed section list, nor a forced next action.
 
 ## Climb
 

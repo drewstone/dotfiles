@@ -19,7 +19,6 @@ Hand the sourced material to the system as sources, recorded as an observer cont
 Do not hand it the problem, the decomposition, or the research method it should run.
 Capture the handed material as an immutable snapshot before the run reads it.
 Preserve executable sourcing when requested; prompt-only guidance does not replace that method.
-Do not substitute manual research for a project whose purpose is to run the research system.
 
 For an independent research request, read [source coverage and evidence](references/source-evidence.md) before collecting papers and proposing experiments.
 

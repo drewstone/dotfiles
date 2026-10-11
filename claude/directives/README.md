@@ -7,8 +7,8 @@ governs voice, lead/ask behavior, and how a run is closed out. This is distinct 
 
 ## Files
 
-- `active` — single line. Either a variant slug (`lead-checkpoint-v1`) or a rotation spec
-  (`rotate:lead-checkpoint-v1,terse-ops-v1`) for randomized-by-session A/B.
+- `active` — single line. Either a variant slug (`evidence-lead-v1`) or a rotation spec
+  (`rotate:evidence-lead-v1,<new-slug>`) for randomized-by-session A/B.
 - `variants/<slug>.md` — one directive variant. Keep them tight; this is injected on every turn.
 
 ## How it reaches a response
@@ -37,7 +37,7 @@ Each new session's variant assignment is logged once to `~/.claude/directives-lo
     {"ts":"...","session":"<id>","variant":"<slug>","cwd":"..."}
 
 The `trace-insights` engine (offline, daily) joins these assignments against the session
-transcripts to score each variant — did runs under `terse-ops-v1` need fewer corrective
+transcripts to score each variant — did runs under a variant need fewer corrective
 turns, fewer re-asks, less back-and-forth? Winning variants get promoted into `active`;
 losers get retired or rewritten. That join is what closes the loop: the engine learns the
 style, the directive applies it, the engine re-measures.
@@ -51,9 +51,10 @@ not a cosmetic tweak — otherwise the measurement can't separate them.
 
 ## Measurement status (2026-10-10)
 
-`terse-ops-v1` was the single active variant from 2026-10-04 to 2026-10-10, across 4,010 logged sessions.
+`terse-ops-v1` was the single active variant from 2026-09-20 to 2026-10-10, across 4,011 sessions in the Mac's assignment log.
 The `trace-insights` join that should have scored it was never built: its README still describes the analyze stage in the future tense.
 So no variant has a measured result.
 On 2026-10-10 Drew rejected terse output for analysis ("These bullet points just aint cutting it"), and `evidence-lead-v1` became active.
+The inactive variants (`terse-ops-v1`, `lead-checkpoint-v1`, `gate-checkpoint-v1`) were then deleted; git history keeps them.
 Until the join exists, the measurement is the corrections ledger in [the climb](../../docs/processes/climb.md#corrections-are-data): Drew's corrections per session, by theme, under each variant.
 Do not start a rotation until the join scores variants; until then, a rotation only adds noise.
