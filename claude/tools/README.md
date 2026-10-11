@@ -220,6 +220,18 @@ root filesystem. A second floor
 check after installation keeps the requested command from starting if its
 install consumed the reserve.
 
+A gate that cannot start or prove its result now exits 75 (EX_TEMPFAIL), never
+a red exit. That covers the Windows Update window, load that stayed over its
+limit, a disk floor, no reachable beelink or readable update policy, and a
+preempted or inconclusive preview. Its last line says when to ask again:
+
+```text
+beelink-gate: TEMPFAIL next_allowed=2026-10-11T09:30:00Z no beelink can start this gate
+```
+
+Callers retry at `next_allowed`. Any other non-zero exit is the command's own
+failure or, with 2, a broken request.
+
 ## climb-log
 
 Writes and lints a project's climb ledger (`reports/climb/ledger.jsonl` in Discovery Lab, else `.agent/climb.jsonl`; [climb.md](../../docs/processes/climb.md#every-number-names-its-sample)).

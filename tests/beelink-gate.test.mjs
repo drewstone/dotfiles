@@ -9,6 +9,8 @@ const gate = resolve("claude/tools/beelink-gate");
 const run = (bin, args, options = {}) => spawnSync(bin, args, { encoding: "utf8", ...options });
 const encode = (arg) => Buffer.from(String(arg)).toString("base64");
 const sleepMs = (ms) => new Promise((resolveDone) => setTimeout(resolveDone, ms));
+// The UTC end of the update window scheduled at `at`'s hour: 30 minutes past it.
+const windowEnd = (at) => new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate(), at.getUTCHours(), 30)).toISOString().replace(".000Z", "Z");
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "beelink-gate-"));
@@ -200,13 +202,14 @@ exec /bin/sleep "$@"
     const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), HEARTBEAT_SLEEP_PIDS: sleepPids };
     const result = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env, timeout: 10_000 });
     assert.equal(result.error, undefined, result.error?.message);
-    assert.equal(result.status, 3, result.stderr);
+    assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
     assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
     assert.equal(readFileSync(dfCount, "utf8").trim(), "3", "the floor changed only after the admission checks");
-    assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=3`));
+    assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=75`));
     const [receipt] = receipts(f);
-    assert.equal(receipt.exit, 3);
+    assert.equal(receipt.exit, 75);
     assert.equal(existsSync(join(f.cache, ".locks", "local-owner-repo.lock.holder")), false);
     const heartbeatPids = readFileSync(sleepPids, "utf8").trim().split("\n").map(Number);
     assert.ok(heartbeatPids.length > 0, "the launcher started its heartbeat poller");
@@ -225,17 +228,36 @@ test("Windows policy is required and a blocked start reports the next allowed ti
     const hour = nextHour.getUTCHours();
     const env = { ...f.env, FAKE_WU_DAY: String(day), FAKE_WU_HOUR: String(hour) };
     const refused = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env });
-    assert.equal(refused.status, 3, refused.stderr);
+    assert.equal(refused.status, 75, refused.stderr);
     assert.match(refused.stderr, /REFUSED beelink2 Windows Update is scheduled/);
     assert.match(refused.stderr, /next allowed .* UTC\)/);
+    assert.match(refused.stderr.trim().split("\n").at(-1), new RegExp(`^beelink-gate: TEMPFAIL next_allowed=${windowEnd(nextHour)} beelink2 is in its Windows Update window$`));
     assert.equal(existsSync(f.cache), false);
     // The refused start cached the policy; a failed read then uses it.
     const cached = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1" } });
-    assert.equal(cached.status, 3, cached.stderr);
+    assert.equal(cached.status, 75, cached.stderr);
     assert.match(cached.stderr, /using the cached Windows Update policy for beelink2/);
     const unreadable = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_FAIL: "1", BEELINK_GATE_STATE_DIR: join(f.root, "fresh-state") } });
-    assert.equal(unreadable.status, 2);
+    assert.equal(unreadable.status, 75);
     assert.match(unreadable.stderr, /cannot read Windows Update schedule.*refusing to start/);
+    assert.match(unreadable.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ cannot read the Windows Update schedule of beelink2/);
+    assert.equal(existsSync(f.cache), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// 2026-10-11 08:00Z: both beelinks were in their update windows, auto printed
+// "no beelink can start this gate" with exit 3, and the landing chain recorded
+// "FAIL pre-gate red" (L1 queue.result, r1527 at 5980b3a8).
+test("auto exits TEMPFAIL with the earliest time either host allows when both refuse", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const nextHour = new Date(Date.now() + 60 * 60_000);
+    const env = { ...f.env, FAKE_WU_DAY: String(nextHour.getUTCDay() + 1), FAKE_WU_HOUR: String(nextHour.getUTCHours()) };
+    const refused = run(gate, ["--ship", "auto", f.url, f.first], { env });
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, /no beelink can start this gate \(beelink1: host=beelink1 state=refused .*REFUSED beelink1 Windows Update/);
+    assert.equal(refused.stderr.trim().split("\n").at(-1), `beelink-gate: TEMPFAIL next_allowed=${windowEnd(nextHour)} no beelink can start this gate`);
     assert.equal(existsSync(f.cache), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -245,6 +267,7 @@ test("the local update window follows Pacific DST and handles the missing spring
   const daylight = probe("2026-10-25T08:30:00Z");
   assert.equal(daylight.status, 3, daylight.stderr);
   assert.match(daylight.stderr, /next allowed 2026-10-25 02:30 PDT \(2026-10-25 09:30 UTC\)/);
+  assert.equal(daylight.stdout.trim(), "2026-10-25T09:30:00Z");
   const firstFallHour = probe("2026-11-01T08:30:00Z");
   assert.equal(firstFallHour.status, 0, firstFallHour.stderr);
   const repeatedFallHour = probe("2026-11-01T09:30:00Z");
@@ -317,8 +340,9 @@ test("refuses below the selected host's floor before creating a cache", () => {
   try {
     const available = 120 * 1024 ** 3;
     const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(available) } });
-    assert.equal(refused.status, 3);
+    assert.equal(refused.status, 75);
     assert.match(refused.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(refused.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ beelink2 is below its disk floor/);
     assert.equal(existsSync(f.cache), false);
     const allowed = f.call(f.first, ["true"], { host: "beelink1", env: { FAKE_AVAIL: String(available) } });
     assert.equal(allowed.status, 0, allowed.stderr);
@@ -804,6 +828,45 @@ test("--ship publishes no proof outside GitHub and never changes the gate's resu
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// 2026-10-11, L1's gate for gtm-agent 5980b3a8 on beelink2: at 10:42Z it was refused at
+// 166684823552 bytes free, below the 162 GiB floor. The retry passed ship verify, and then
+// GitHub failed one of the ship-proof calls. publish_proof read its never-assigned `status`
+// under set -u, the EXIT trap then read remote_gate's unwound `checkout`, and the gate died
+// with "status: unbound variable" and "checkout: unbound variable" instead of exiting 0.
+test("a disk-floor refusal, then a green --ship whose ship-proof publish GitHub refuses, exits 75 then 0", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.source, "scripts"));
+    writeFileSync(join(f.source, "scripts", "ship.sh"), 'echo "ship $1"\n');
+    writeFileSync(join(f.source, "scripts", "ship-proof-signers"), "# pinned signers\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "ship with signers"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    // A GitHub URL that Git serves from the fixture's bare repository.
+    const gitconfig = join(f.home, ".gitconfig");
+    writeFileSync(gitconfig, `[url "file://${join(f.root, "owner")}/"]\n\tinsteadOf = https://github.com/owner/\n`);
+    mkdirSync(join(f.home, ".config", "beelink-gate"), { recursive: true });
+    assert.equal(run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(f.home, ".config", "beelink-gate", "ship-proof-key")]).status, 0);
+    mkdirSync(join(f.home, "bin"), { recursive: true });
+    const ghLog = join(f.root, "gh.log");
+    writeFileSync(join(f.home, "bin", "gh-drew"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> '${ghLog}'\n[[ "$*" == *git/trees* ]] && exit 1\nexit 0\n`);
+    chmodSync(join(f.home, "bin", "gh-drew"), 0o755);
+    const ship = (avail) => run("bash", [gate, "--remote", ...["beelink2", "https://github.com/owner/repo.git", sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)],
+      { env: { ...f.env, GIT_CONFIG_GLOBAL: gitconfig, ...(avail ? { FAKE_AVAIL: avail } : {}) } });
+    const refused = ship("166684823552");
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, /REFUSED beelink2 has 166684823552 bytes free, below its 162 GiB disk floor/);
+    assert.match(refused.stderr.trim().split("\n").at(-1), /^beelink-gate: TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor$/);
+    const retried = ship();
+    assert.equal(retried.status, 0, retried.stderr);
+    assert.equal(retried.stdout.trim(), "ship verify");
+    assert.doesNotMatch(retried.stderr, /unbound variable/);
+    assert.match(retried.stderr, /no proof published: GitHub refused \(no response\)/);
+    assert.match(readFileSync(ghLog, "utf8"), /git\/trees/);
+    assert.equal(receipts(f).at(-1).exit, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("--ship sizes the test pool to the host's spare cores", () => {
   const f = fixture();
   try {
@@ -907,8 +970,9 @@ test("a gate refuses after its bounded load wait without running the command", (
   try {
     const marker = join(f.root, "ran");
     const result = f.call(f.first, ["touch", marker], { noInstall: true, env: { BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
-    assert.equal(result.status, 3, result.stderr);
+    assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /REFUSED beelink2 load .* stayed over its limit .*use the other beelink or retry later/);
+    assert.match(result.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ beelink2 load stayed over its limit/);
     assert.equal(existsSync(marker), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -949,7 +1013,7 @@ test("a named beelink over its load limit hands the gate to the lighter one, and
     assert.doesNotMatch(light.stderr, /running on beelink1/);
     writeFileSync(join(f.root, "load-100.127.22.51"), loadLine(loadLimit * 2));
     const stuck = run(gate, ["--no-install", "beelink1", f.url, f.first, "--", "true"], { env });
-    assert.equal(stuck.status, 3, stuck.stderr);
+    assert.equal(stuck.status, 75, stuck.stderr);
     assert.match(stuck.stderr, /REFUSED beelink1 load .* stayed over its limit/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -1020,7 +1084,9 @@ test("--ship runs the repo's preview after verify and records it, never printing
     assert.equal(receipts(f).at(-1).preview.version, "secret-version-id");
     assert.equal(ship("failed").status, 1);
     assert.equal(ship("refused").status, 0);
-    assert.equal(ship("preempted").status, 75);
+    const preempted = ship("preempted");
+    assert.equal(preempted.status, 75);
+    assert.match(preempted.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ the preview was preempted or inconclusive/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
