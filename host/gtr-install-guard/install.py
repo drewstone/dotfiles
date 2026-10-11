@@ -10,13 +10,14 @@ HERE = Path(__file__).resolve().parent
 HOME = Path.home()
 DEST = HOME / ".local/libexec/gtr-install-guard/guard.py"
 MANAGERS = ("pnpm", "npm", "yarn", "uv", "corepack")
+GIT_ENTRY = HOME / "bin/git"
 
 
 def entries():
     dirs = [HOME / ".local/bin", HOME / ".local/share/pnpm", HOME / "bin"]
     dirs.extend(sorted((HOME / ".nvm/versions/node").glob("*/bin")))
     paths = [directory / name for directory in dirs for name in MANAGERS]
-    return [path for path in paths if path.exists() or path.is_symlink() or Path(str(path) + ".gtr-original").exists()]
+    return [path for path in paths if path.exists() or path.is_symlink() or Path(str(path) + ".gtr-original").exists()] + [GIT_ENTRY]
 
 
 def guarded(path: Path) -> bool:
@@ -42,9 +43,13 @@ def install() -> int:
             if path.exists() or path.is_symlink():
                 raise RuntimeError(f"existing original conflicts with unguarded entry: {path}")
         else:
-            if not path.is_file():
-                raise RuntimeError(f"not a regular executable: {path}")
-            os.replace(path, original)
+            if path == GIT_ENTRY and not path.exists() and not path.is_symlink():
+                # Preserve the system Git as the delegation target; the guard owns only ~/bin/git.
+                original.symlink_to("/usr/bin/git")
+            else:
+                if not path.is_file():
+                    raise RuntimeError(f"not a regular executable: {path}")
+                os.replace(path, original)
         temporary = Path(str(path) + ".gtr-new")
         temporary.symlink_to(DEST)
         os.replace(temporary, path)
