@@ -129,6 +129,21 @@ The key is a `gak_` operator key with `operator:read`, `operator:write` and `ope
 Each request, reads included, spends the key's allowance of 60 a minute and 1,000 a day.
 The API itself is documented in gtm-agent's `docs/operator-api.md`.
 
+## journeys-env
+
+Run a command with an agent app's journey test identities loaded from the host's vault, and nothing else from it.
+The `prove-journeys` skill uses it to record journeys with agent-app's `agent-app-journeys`.
+
+```bash
+cd <app checkout>                                     # holds journeys.config.mjs
+journeys-env -- pnpm exec agent-app-journeys run journeys/core-path.ts
+JOURNEYS_ENV_NAMES="A_EMAIL A_PASSWORD" journeys-env -- <command>   # names without a config
+```
+
+The names come from `agent-app-journeys env-names`, or `JOURNEYS_ENV_NAMES`.
+Each is read from the first file under `~/company/devops/secrets` (`TANGLE_SECRETS_DIR`) that defines it, decrypted with `dotenvx get`, and exported into the command only; a name already set is kept.
+It never prints a value, and exits 2 when a name is missing, empty or not a variable name.
+
 ## wt-new, wt-save
 
 Scoped worktree lifecycle for parallel agent sessions sharing one Unix user.
