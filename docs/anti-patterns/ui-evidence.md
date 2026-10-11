@@ -36,5 +36,13 @@ A test count, build log, or deployment acknowledgement does not replace product 
 Resolve defects visible in the captures before merging.
 For a production claim, check the served artifact and affected user flow after deployment.
 
+## Production proof is a video
+
+A claim that a user flow works in production ships with an uncut screen recording of that flow on production, run as a real user: a signed-in browser, visible controls only, real data in a QA workspace.
+Captions name each step, its result and its measured time; sign-in and credentials stay out of the frame.
+Record every party the flow needs (owner, staff, guest) and every outcome the flow claims (the task exists, the message arrived, the export downloaded).
+A failed step stays in the video; the recording is evidence, not a highlight reel.
+Watch it before reporting, and link it where the reader will see it.
+
 Use [screenshots](https://playwright.dev/docs/screenshots) and [videos](https://playwright.dev/docs/videos) through maintained browser tools.
 The tool does not determine whether the evidence is useful; inspect the result.
