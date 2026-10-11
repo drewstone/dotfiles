@@ -26,3 +26,7 @@ Run `--uninstall` to restore every preserved original. New Node versions add
 new entrypoints; rerun the installer or provision check after installing one.
 This is a PATH guard for ordinary package manager commands, not a replacement
 for the fleet rule to run dependency installs and gates on a Beelink.
+
+`~/bin/git` also refuses direct `git worktree add` destinations under either GTR `_wt` root.
+The budgeted `storage-lifecycle create` path passes its scoped marker to Git; other Git
+commands and pinned checkouts outside `_wt` delegate to `/usr/bin/git`.

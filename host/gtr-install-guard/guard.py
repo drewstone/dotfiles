@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Refuse package installs into GTR checkouts; delegate every other invocation.
+"""Refuse package installs and direct GTR worktree creates; delegate all other invocations.
 
 Installs and gates belong on a Beelink (`beelink-gate beelink1|beelink2 <repo> <sha> -- <cmd>`).
 GTR is resource-constrained and shared by many agent sessions.
@@ -32,6 +32,8 @@ MUTATING = {
 }
 COREPACK_MANAGERS = {"pnpm": "pnpm", "pnpx": "pnpm", "yarn": "yarn", "yarnpkg": "yarn", "npm": "npm", "npx": "npm"}
 NO_INSTALL = {"-g", "--global", "--location=global", "--lockfile-only", "--package-lock-only"}
+GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
+WORKTREE_VALUE_FLAGS = {"-b", "-B", "--reason", "--orphan"}
 
 
 def resolved(value: str, cwd: Path) -> list[Path]:
@@ -161,8 +163,55 @@ def is_install(manager: str, argv: list[str]) -> tuple[bool, list[str]]:
     return True, targets
 
 
+def git_worktree_add_target(argv: list[str], cwd: Path):
+    """Return the add destination, respecting Git's chdir and option argument forms."""
+    i = 0
+    while i < len(argv):
+        word = argv[i]
+        if word == "-C" and i + 1 < len(argv):
+            cwd = Path(os.path.abspath(cwd / argv[i + 1]))
+            i += 2
+        elif word.startswith("-C") and len(word) > 2:
+            cwd = Path(os.path.abspath(cwd / word[2:]))
+            i += 1
+        elif word in GIT_VALUE_FLAGS:
+            i += 2
+        elif any(word.startswith(flag + "=") for flag in GIT_VALUE_FLAGS if flag.startswith("--")):
+            i += 1
+        elif word.startswith("-"):
+            i += 1
+        else:
+            break
+    if argv[i:i + 2] != ["worktree", "add"]:
+        return None
+    i += 2
+    while i < len(argv):
+        word = argv[i]
+        if word == "--":
+            i += 1
+            break
+        if word in WORKTREE_VALUE_FLAGS:
+            i += 2
+        elif any(word.startswith(flag + "=") for flag in WORKTREE_VALUE_FLAGS if flag.startswith("--")):
+            i += 1
+        elif word.startswith("-"):
+            i += 1
+        else:
+            break
+    return (argv[i], cwd) if i < len(argv) else None
+
+
 def refusal(manager: str, argv: list[str], cwd: Path):
     """The refusal message for this invocation, or None when it may run."""
+    if manager == "git":
+        target = git_worktree_add_target(argv, cwd)
+        if target and inside_worktree(target[0], target[1]):
+            if os.environ.get("TANGLE_STORAGE_LIFECYCLE_CREATE") == "1":
+                return None
+            return ("gtr-install-guard: refused direct git worktree add into GTR _wt. "
+                    "Use storage-lifecycle create with a sparse exclusion, budget and lane; "
+                    "author on a Beelink when its space admission refuses.")
+        return None
     if manager == "corepack":
         index = next((i for i, word in enumerate(argv) if not word.startswith("-")), None)
         if index is None or argv[index] not in COREPACK_MANAGERS:
@@ -199,7 +248,7 @@ def main() -> None:
     entry = Path(sys.argv[0]).absolute()
     manager = entry.name
     original = Path(str(entry) + ".gtr-original")
-    if (manager not in MUTATING and manager != "corepack") or not original.exists():
+    if (manager not in MUTATING and manager not in {"corepack", "git"}) or not original.exists():
         print(f"gtr-install-guard: missing preserved executable for {entry}", file=sys.stderr)
         raise SystemExit(127)
     argv = sys.argv[1:]
