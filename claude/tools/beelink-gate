@@ -428,7 +428,9 @@ over_limit() {
 # Holds a gate that has its lock and slot until the host is under its load
 # limit, the way the disk floor refuses: bounded, with the reason printed.
 wait_for_load() {
-  local beelink=$1 budget limit load since=$SECONDS reported=-60
+  # One budget across both calls: before the checkout lock and after the slot.
+  : "${load_wait_started:=$SECONDS}"
+  local beelink=$1 budget limit load since=$load_wait_started reported=-60
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die "invalid BEELINK_GATE_LOAD_WAIT: ${BEELINK_GATE_LOAD_WAIT:-}"
   limit=$(load_limit)
   while load=$(load_now) && over_limit "$load" "$limit"; do
@@ -793,6 +795,10 @@ remote_gate() {
   local urgent_marker="$cache_root/.locks/urgent-$host-$owner-$repo"
   (( light == 0 )) || urgent_marker+=@light
   if (( urgent )); then : > "$urgent_marker.$$"; urgent_markers+=("$urgent_marker.$$"); fi
+  # Wait for load before taking a checkout: a gate that only waits for load must
+  # not hold the repo's checkout. On 2026-10-11 one ADC gate held it for 1766s of
+  # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
+  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink load stayed over its limit"
   while [ -z "$lock" ]; do
     for ((k = 0; k < copies; k++)); do
       (( urgent )) || ! urgent_ahead "$urgent_marker" || break

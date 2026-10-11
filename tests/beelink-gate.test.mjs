@@ -1330,3 +1330,24 @@ test("an urgent gate takes the next free checkout ahead of a gate that waited lo
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+test("a gate waiting for load holds no checkout, so the repo lock stays free until it is admitted", async () => {
+  const f = fixture();
+  const loadavg = join(f.root, "busy-loadavg");
+  const limit = Math.floor(Number(spawnSync("nproc", { encoding: "utf8" }).stdout.trim()) * 3 / 2);
+  writeFileSync(loadavg, `${limit * 2}.00 1 1 1/100 1\n`);
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_LOAD_POLL_SECONDS: "0.2", BEELINK_GATE_REPO_CHECKOUTS: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 100 && !/is over its limit/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /is over its limit/);
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const probe = run("flock", ["-n", join(f.cache, ".locks", "local-owner-repo.lock"), "true"]);
+    assert.equal(probe.status, 0, "the waiting gate holds the checkout lock");
+    writeFileSync(loadavg, "1.00 1 1 1/100 1\n");
+    assert.equal(await done, 0, stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
