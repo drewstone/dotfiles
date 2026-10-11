@@ -887,6 +887,8 @@ PY
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
+  # Keep this gate's fetched checkout locked and intact; reclaim only other idle caches.
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it
@@ -946,6 +948,7 @@ PY
       || die "package.json has dependencies but no pnpm/npm lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
   fi
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   echo "beelink-gate: running ${display% }" >&2
   step "${command[@]}"
