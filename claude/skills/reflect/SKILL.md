@@ -43,7 +43,6 @@ Add a concise link to `~/.claude/reflections/INDEX.md`, this machine's index out
 To share a reflection across machines, commit it to dotfiles `claude/reflections/` through a pull request.
 Record scope, sources, outcomes, repeated causes, changes, verification, and unresolved decisions.
 Use counts and denominators for frequency claims; retain unknowns and sampling limits.
-A reflection needs neither a grade, a fixed section list, nor a forced next action.
 
 ## Climb
 

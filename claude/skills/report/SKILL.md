@@ -31,6 +31,7 @@ Answer from primary sources: official documentation, source code, specifications
 Trace each claim to the source that owns it and cite it.
 When the user wants a durable note, write one Markdown file where the repository keeps such notes and say where.
 Delegate the reading to a background worker only when delegation is available and the user can keep working.
+Research that a product exists to do, such as the research a Discovery run needs, belongs to that product ([AGENTS.md](../../AGENTS.md)), not to this section.
 
 ## Questions about active research and fleets
 
