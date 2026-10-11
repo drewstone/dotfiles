@@ -161,6 +161,151 @@ except (OSError, ValueError) as exc:
 PY
 }
 
+# Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
+# cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
+# 24 h. Each sweep holds every gate lock for <repo> and cargo's own profile
+# locks, so no gate or cargo build is using the files it removes; a removed
+# artifact only costs a rebuild. Failure is reported but never fails a gate.
+prune_build_dirs() {
+  python3 - "$@" <<'PY'
+import fcntl
+import os
+from pathlib import Path
+import shutil
+import sys
+import time
+
+build_root, locks, current_lock = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+max_age = int(sys.argv[4])
+cutoff = time.time() - max_age
+TAG = "Signature: 8a477f597d28d172789f06886806bc55"
+ARTIFACT_DIRS = ("deps", "build", ".fingerprint", "incremental", "examples")
+CARGO_LOCKS = (".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock")
+
+def try_lock(path, held):
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return True
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return False
+    held.append(fd)
+    return True
+
+def release(held):
+    while held:
+        os.close(held.pop())
+
+def newest(path):
+    # relatime refreshes atime on a read at most daily; cargo's locks, not
+    # this age, are what keep an active build's inputs safe.
+    st = path.lstat()
+    latest = max(st.st_atime, st.st_mtime)
+    if path.is_dir() and not path.is_symlink():
+        for parent, dirs, files in os.walk(path):
+            for name in dirs + files:
+                st = os.lstat(os.path.join(parent, name))
+                latest = max(latest, st.st_atime, st.st_mtime)
+    return latest
+
+def reclaimable(path):
+    if not path.is_dir() or path.is_symlink():
+        st = path.lstat()
+        return st.st_blocks * 512 if st.st_nlink == 1 else 0
+    total = 0
+    for parent, _, files in os.walk(path):
+        for name in files:
+            st = os.lstat(os.path.join(parent, name))
+            if st.st_nlink == 1:
+                total += st.st_blocks * 512
+    return total
+
+def profiles(target):
+    # <target>/<profile> and <target>/<triple>/<profile>
+    for child in target.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if (child / ".fingerprint").is_dir():
+            yield child
+            continue
+        for grandchild in child.iterdir():
+            if not grandchild.is_symlink() and (grandchild / ".fingerprint").is_dir():
+                yield grandchild
+
+try:
+    with (locks / ".build-prune.lock").open("a+") as sweep_lock:
+        try:
+            fcntl.flock(sweep_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit(0)
+        for target in sorted(build_root.glob("*-build")):
+            tag = target / "CACHEDIR.TAG"
+            if target.is_symlink() or not target.is_dir() or tag.is_symlink() or not tag.is_file():
+                continue
+            with tag.open() as tagfile:
+                if not tagfile.read(len(TAG)) == TAG:
+                    continue
+            repo = target.name[:-len("-build")]
+            held = []
+            try:
+                busy = [lock for lock in sorted(locks.glob(f"*-{repo}.lock"))
+                        if lock != current_lock and not try_lock(lock, held)]
+                if busy:
+                    print(f"beelink-gate: skipped {target}; a {repo} gate holds its lock", file=sys.stderr)
+                    continue
+                freed = 0
+                for profile in profiles(target):
+                    profile_held = []
+                    try:
+                        if not all(try_lock(profile / name, profile_held) for name in CARGO_LOCKS):
+                            print(f"beelink-gate: skipped {profile}; cargo is building there", file=sys.stderr)
+                            continue
+                        for name in ARTIFACT_DIRS:
+                            area = profile / name
+                            if area.is_symlink() or not area.is_dir():
+                                continue
+                            for entry in area.iterdir():
+                                if newest(entry) >= cutoff:
+                                    continue
+                                bytes_used = reclaimable(entry)
+                                if entry.is_dir() and not entry.is_symlink():
+                                    shutil.rmtree(entry)
+                                else:
+                                    entry.unlink()
+                                freed += bytes_used
+                    finally:
+                        release(profile_held)
+                if freed:
+                    print(f"beelink-gate: pruned {freed} bytes of cargo output untouched for {max_age}s from {target}", file=sys.stderr)
+            finally:
+                release(held)
+except OSError as exc:
+    print(f"beelink-gate: build cache sweep failed: {exc}", file=sys.stderr)
+PY
+}
+
+# Gates for different repos run in parallel; cap them per host with flock slots
+# so a burst of lanes cannot drive the load past the cores. The slot is taken
+# after the repo lock, so gates queued behind one repo hold no slot.
+acquire_slot() {
+  local slots_dir="$1" max="$2" i announced=
+  while :; do
+    for ((i = 0; i < max; i++)); do
+      exec {slot_fd}>"$slots_dir/slot-$i.lock" || die "cannot open host slot"
+      if flock -n -x "$slot_fd"; then return 0; fi
+      exec {slot_fd}>&-
+    done
+    if [ -z "$announced" ]; then
+      echo "beelink-gate: waiting for a host gate slot ($max running)" >&2
+      announced=1
+    fi
+    sleep "${BEELINK_GATE_SLOT_POLL_SECONDS:-2}"
+  done
+}
+
 remote_gate() {
   [ "$#" -ge 7 ] || die "invalid remote request"
   local beelink repo_url sha install_mode key host owner repo cache_root checkout origin actual cache_max
@@ -202,8 +347,11 @@ remote_gate() {
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   cache_max="${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}"
+  local max_concurrent="${BEELINK_GATE_MAX_CONCURRENT:-4}"
+  local build_root="${XDG_CACHE_HOME:-$HOME/.cache}"
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
+  [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
   checkout="$cache_root/$host/$owner/$repo"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] \
     || [ -L "$cache_root/$host/$owner" ] || [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then
@@ -214,6 +362,7 @@ remote_gate() {
   exec {lock_fd}>"$lock" || die "cannot open lock"
   echo "beelink-gate: waiting for $host/$owner/$repo lock" >&2
   flock -x "$lock_fd" || die "cannot lock checkout"
+  acquire_slot "$cache_root/.locks" "$max_concurrent"
   check_floor "$beelink" || exit $?
   check_update_window "$beelink" "$window_day" "$window_hour" || exit $?
 
@@ -232,6 +381,7 @@ remote_gate() {
     fi
     if cd "$cache_root"; then
       if ! prune_cache "$cache_root" "$checkout" "$cache_max" && [ "$status" -eq 0 ]; then status=3; fi
+      prune_build_dirs "$build_root" "$cache_root/.locks" "$lock" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
     elif [ "$status" -eq 0 ]; then
       status=3
     fi
@@ -246,7 +396,7 @@ remote_gate() {
   fi
   if [ -e "$checkout/.git" ]; then
     origin=$(git -C "$checkout" remote get-url origin) || exit $?
-    [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+    [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
     # A blame or history check can otherwise fetch hundreds of missing blobs
     # one by one. The cache is disposable, and the repo lock is held here.
     if git -C "$checkout" config --get-regexp '^(remote\.origin\.(promisor|partialclonefilter)|extensions\.partialclone)$' >/dev/null; then
@@ -260,7 +410,7 @@ remote_gate() {
     git -C "$checkout" remote add origin "$repo_url" || exit $?
   fi
   origin=$(git -C "$checkout" remote get-url origin) || exit $?
-  [ "$origin" = "$repo_url" ] || die "cache origin mismatch at $checkout"
+  [ "${origin%.git}" = "${repo_url%.git}" ] || die "cache origin mismatch at $checkout"
   remote_refs=$(git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*') || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()
@@ -286,6 +436,11 @@ remote_gate() {
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
   check_floor "$beelink" || exit $?
 
+  # Rust output lives inside .git, which checkout and clean leave alone, so it
+  # survives between gates and the LRU cap counts and evicts it with its repo.
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$checkout/.git/beelink-gate-target}"
+  # Incremental state is a third of a debug target and gates rarely reuse it.
+  export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
   cd "$checkout" || exit $?
   if [ "$install_mode" = no-install ]; then
     echo "beelink-gate: skipping dependency install for this check" >&2
@@ -304,7 +459,7 @@ remote_gate() {
   fi
   check_floor "$beelink" || exit $?
   echo "beelink-gate: running ${display% }" >&2
-  "${command[@]}"
+  "${command[@]}" {slot_fd}>&- {lock_fd}>&-
   exit $?
 }
 
@@ -349,4 +504,9 @@ encoded=()
 for arg in "$beelink" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
   encoded+=("$(printf '%s' "$arg" | base64 -w0)")
 done
-ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- bash -s -- --remote "${encoded[@]}" < "$0"
+remote_env=()
+if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
+  [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
+  remote_env=(env "BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
+fi
+ssh -o BatchMode=yes "$beelink_ip" wsl.exe -- "${remote_env[@]}" bash -s -- --remote "${encoded[@]}" < "$0"
