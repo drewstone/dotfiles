@@ -389,7 +389,11 @@ PY
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
-    if cd "$cache_root"; then
+    # A gate whose launcher is gone frees its lock now; the next gate prunes
+    # before it fetches.
+    if [ "$watchdog" = 1 ]; then
+      :
+    elif cd "$cache_root"; then
       if ! prune_cache "$cache_root" "$checkout" "$cache_max" && [ "$status" -eq 0 ]; then status=3; fi
     elif [ "$status" -eq 0 ]; then
       status=3
