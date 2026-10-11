@@ -9,9 +9,6 @@
     "defaultMode": "auto"
   },
   "model": "opus[1m]",
-  "env": {
-    "VIZ_COLOR": "emoji"
-  },
   "hooks": {
     "SessionStart": [
       {
