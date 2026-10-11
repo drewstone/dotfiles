@@ -87,6 +87,7 @@ Do not add hypothetical warnings or a forced action list to an already answered 
 ## Climb
 
 A report is a version on the communication hill: run [the climb](../../../docs/processes/climb.md)'s level-up passes before anything reaches the reader, and give analysis, status and proposals its [full form](../../../docs/processes/climb.md#how-to-communicate).
+A status, analysis or plan for Drew meets the [operator review standard](references/operator-review.md): its twelve features, its terminal form, and a rejected and a good example.
 
 ## Log the run
 
