@@ -4,7 +4,12 @@
   "thesis": "Checkout ships daily.",
   "thesisAlert": "One bad deploy cost 9 hours of revenue.",
   "dek": "Every number below is synthetic and shows the kit's blocks. A real brief states its population, its benchmark and the decision it serves.",
-  "hill": { "metric": "time to restore checkout", "baseline": "9.2 h", "target": "< 1 h", "owner": "checkout on-call" },
+  "decision": "Pin Apple Pay to SDK 4.1 tonight and gate every deploy on a canary",
+  "hill": { "metric": "time to restore checkout", "baseline": "9.2 h", "now": "0.6 h", "target": "< 1 h", "owner": "checkout on-call" },
+  "learned": [
+    { "tone": "warn", "text": "Detection was fast and ownership was slow: the alarm fired in 2 min, then the cart outage waited 6.5 h for an owner." },
+    { "tone": "crit", "text": "An unpinned SDK reached production: 4.2 installed at build time and failed 38% of Apple Pay attempts." }
+  ],
   "stats": [
     { "v": "48", "l": "deploys" },
     { "v": "99.71%", "l": "successful payments" },
@@ -31,7 +36,7 @@
           { "label": "Apple Pay declines", "segments": [ { "from": "2026-10-10T21:05:00Z", "to": "2026-10-10T21:20:00Z", "tone": "blind", "tip": "15 min with no owner" }, { "from": "2026-10-10T21:20:00Z", "to": "2026-10-10T23:30:00Z", "tone": "crit", "tip": "owned, open" } ],
             "marks": [ { "at": "2026-10-10T21:06:00Z", "shape": "detect" }, { "at": "2026-10-10T21:20:00Z", "shape": "owner" } ] } ],
         "note": "<b>Time to an owner:</b> 6.5 h, then 15 min. The autopilot shipped on 10-09 is the difference." },
-      { "type": "waterfall", "title": "Where the cart outage's 9.2 hours went", "unit": "m", "start": "02:10", "end": "11:22", "rows": [
+      { "type": "waterfall", "evidence": true, "title": "Where the cart outage's 9.2 hours went", "unit": "m", "start": "02:10", "end": "11:22", "rows": [
         { "label": "until the alarm", "value": 2, "group": "detect", "tone": "warn" }, { "label": "flagged, no owner", "value": 388, "group": "own", "tone": "bad" },
         { "label": "find the cause", "value": 25, "group": "fix", "tone": "info" }, { "label": "cap the cache, ship", "value": 137, "group": "fix", "tone": "good" } ] },
       { "type": "events", "title": "Cart outage, 10-08 UTC", "rows": [
@@ -40,7 +45,7 @@
         { "t": "11:22", "status": "good", "text": "Cache capped at 50k entries and shipped." } ] } ] },
     { "key": "§4 flow", "title": "Throughput and shape",
       "blocks": [
-        { "type": "grouped", "title": "Payment success by day, card and Apple Pay", "target": 99.5, "targetLabel": "SLO", "series": [{ "key": "card", "label": "Card" }, { "key": "applepay", "label": "Apple Pay" }],
+        { "type": "grouped", "evidence": true, "title": "Payment success by day, card and Apple Pay", "target": 99.5, "targetLabel": "SLO", "series": [{ "key": "card", "label": "Card" }, { "key": "applepay", "label": "Apple Pay" }],
           "rows": [ { "label": "10-08", "card": "39880/40000", "applepay": "9970/10000" }, { "label": "10-09", "card": "40120/40200", "applepay": "10010/10050" }, { "label": "10-10", "card": "39950/40100", "applepay": "6170/9950" } ],
           "note": "Apple Pay fell to 62.0% on 10-10 when SDK 4.2 changed the token format." },
         { "type": "hist", "title": "Deploys per day", "sub": "48 total", "labels": ["10-05", "10-06", "10-07", "10-08", "10-09", "10-10", "10-11"], "values": [5, 9, 8, 4, 10, 7, 5], "every": 1, "highlightMax": true, "unit": "deploys" },

@@ -40,3 +40,26 @@ GTR noninteractive SSH commands can omit `~/bin` and `~/.local/bin` from PATH.
 When a full host install check also reports unrelated drift, use
 `host/install.sh --git-guard-only` to update just these two GTR Git files.
 The full installer continues to maintain them during normal provisioning.
+
+## Beelink worktree cap
+
+On beelink1 and beelink2, `host/install.sh` installs [beelink-git](beelink-git) at `/usr/local/bin/git`: a shell shim that
+sends only `worktree` commands to this guard (`/usr/local/lib/beelink-worktree-cap/git`, with
+[beelink-worktree-cap.json](beelink-worktree-cap.json) beside it) and every other call straight to `/usr/bin/git`.
+Routing every call through Python cost 76 ms against 8 ms native on beelink2. The guard applies only the worktree cap there;
+package installs are not refused, since Beelinks are where they run.
+
+- A `git worktree add` into `~/code/_wt` or `~/webb/_wt` must name its fleet lane: `FLEET_LANE=<operator>:<lane>`,
+  or the `FLEET_STATUS_FILE` that GTR's ssh client sends (`host/ssh/20-fleet-lane-send.conf`, accepted by
+  `host/ssh/20-fleet-lane-accept.conf`). The lane is recorded as `fleet-lane` in the new worktree's admin directory.
+- A lane holding `cap` (4) recorded worktrees is refused; so is any add while the filesystem has less than
+  `floor_bytes` (200 GiB) free. The refusal lists the longest-idle trees: `OWNER_RELEASED=1 wt-remove <path>` for the lane's own,
+  plain `wt-remove <path>` (which keeps its idle guard) for another lane's.
+- Counting, checkout and the lane record run under one per-lane lock, and the record is written whenever the tree exists,
+  so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
+- Trees outside `_wt` (tool caches, `tangle-ops ship`, the adc-wt pool, `~/company/_wt`) and every other Git command pass through.
+- This is a guardrail for cooperating agents, not a sandbox: a new `FLEET_LANE` value, a Git alias, or `worktree move`
+  into `_wt` gets past it. Trees made before installation carry no lane and are not counted.
+
+Measured 2026-10-11: beelink1 gained 49 `_wt` worktrees in 6 h and held 73 GB of `_wt` data unique beyond the pnpm store;
+the idle reapers cannot touch a tree younger than 12 h.

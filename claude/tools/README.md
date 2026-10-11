@@ -32,6 +32,7 @@ viz bars causes.tsv --total 171 --source "reliability endpoint" --asof 2026-10-1
 viz grouped success.tsv --target 95                    # cells may be ratios like 33/36: the bar is the rate, the label keeps the denominator
 viz spark latency.tsv --unit s                         # one line per numeric column, with first→last, min, max and n
 viz strip canary.tsv                                   # ✓/✗ cells on a time axis, the pass rate and the longest failing run
+viz bars causes.tsv --total 171 --color emoji          # colored squares for a markdown chat; VIZ_COLOR=emoji sets the default
 viz stack turn.tsv --unit s                            # parts of one whole; a group column adds a rollup
 viz waterfall outage.tsv --unit m --start 00:45 --end 07:31   # offset rows with clock ranges; the span must equal the parts
 viz timeline events.tsv                                # events with the gap since the previous one
@@ -45,6 +46,46 @@ Parts that exceed their whole, ratios above their denominator and values past `-
 A chart without `--source` warns on stderr.
 The models live in `viz-kit/core.mjs`, and `viz-kit/brief.mjs` checks brief specs and fills the report skill's [brief kit](../skills/report/references/brief-kit.md).
 Run `viz --help` for every option.
+
+### Color in a markdown chat
+
+Claude Code renders chat as markdown with about two text colors and drops ANSI escapes, but emoji keep their color.
+`--color emoji`, or `VIZ_COLOR=emoji` in the environment, draws every chart with them; `--color plain` overrides the variable, and plain output is unchanged.
+Plain is the default everywhere. Drew, 2026-10-11: "cut the emojis, i want depth, not toys"; emoji squares are opt-in, for a chart that needs them.
+
+| Mark | Plain | Emoji |
+|---|---|---|
+| bar by tone | `█` | 🟩 good · 🟨 warn · 🟧 serious · 🟥 bad or crit · 🟦 accent or no tone · ⬜ remainder or unaccounted |
+| series and groups | `█ ▓ ▒ ░` | 🟦 first · 🟪 second · 🟫 third, then status hues |
+| status cell | `✓ ! ✗ ·` | 🟢 good · 🟡 warn · 🟠 serious · 🔴 bad · ⚪ no signal · 🔵 info · 👉 needs you |
+| strip cell | `✓ ✗ ! - ·` | ✅ pass · ❌ fail · ⚠️ warn · ➖ skip · ⚪ no report |
+| target | `┆` | 🏁 |
+
+An emoji is two columns wide, so a bar holds half as many squares as a block bar has cells.
+Each square stands for one round unit, the scale divided by the squares that fit and rounded up to 1, 1.5, 2, 2.5, 3, 4, 5, 6 or 8 times a power of ten, and the footer states it (`1 square = 5%`).
+A bar is its value in those units, rounded to the nearest whole square, so it reads to scale within half a square; a nonzero value keeps at least one square.
+Stacks and waterfalls tile the same squares from rounded running totals, as their block forms do.
+Paste a chart into chat inside a ```` ```text ```` fence, where its columns hold.
+
+In emoji mode, `viz brief spec.json` prints the chat status as markdown to paste as it is: a bold headline with the decision and the hill's number, then 🎯 Focus, 📊 Evidence, 🛠️ Doing, 🧠 Learned and ⏭️ Next, with each chart in its own text fence.
+The [brief kit](../skills/report/references/brief-kit.md#chat-status) lists the spec field behind each line; `--section` still prints whole sections.
+
+An excerpt of the [example spec](../skills/report/assets/brief-example.json)'s status, from the [golden file](../../tests/fixtures/viz/brief-example.emoji.txt):
+
+````markdown
+**Pin Apple Pay to SDK 4.1 tonight and gate every deploy on a canary · time to restore checkout 0.6 h vs target < 1 h (from 9.2 h)**
+
+📊 **Evidence**
+**Payment success by day, card and Apple Pay**
+```text
+10-10  card      🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦    39,950/40,100 99.6%
+       applepay  🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪              🏁      6,170/9,950 62.0%
+scale 0–100% · 1 square = 5% · 🏁 SLO 99.5%
+```
+
+🛠️ **Doing**
+🔴 **Apple Pay declines at the gateway** · Down since 10-10 21:05Z · Token format changed in SDK 4.2; 38% of Apple Pay attempts fail. · owner payments-lane · next: pin SDK 4.1, ship
+````
 
 ## agent-ask
 

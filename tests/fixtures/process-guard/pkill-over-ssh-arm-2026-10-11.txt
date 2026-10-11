@@ -1,0 +1,18 @@
+ssh gtr 'pkill -f "gfork-rc37/scripts/arm.sh"; sleep 1; pgrep -af "gfork-rc37/scripts" || echo killed' ; D=/private/tmp/claude-501/-Users-drew-webb-discovery-lab/f9529cbf-2a00-4db3-a51f-d47ad878958f/scratchpad/final; cat > $D/arm.sh <<'EOF'
+#!/bin/bash
+# Wait for the rc37 export, unwrap the tree's code pages, and verify them against the receipt zip the model ran from.
+W=$HOME/.local/state/agent-work/discovery-lab/terraform-final/gfork-rc37
+while pgrep -f "deliverables.git archive rc37" >/dev/null; do sleep 10; done
+echo "export done $(date -u +%FT%TZ) files=$(find $W/tree -type f | wc -l) expected=$(wc -l < $W/ls-tree.txt)" > $W/export.log
+mkdir -p $W/run-tree
+python3 -I $W/scripts/unwrap.py $W/tree pages/terraform/dc-tokens-20261006/ $W/run-tree > $W/unwrap-run-tree.json 2> $W/unwrap-run-tree.err
+SAME=0; DIFF=""
+for f in $(cd $W/zip && python3 -c 'import zipfile;print(" ".join(zipfile.ZipFile("model-code.zip").namelist()))'); do
+  if cmp -s $W/run-tree/$f $W/run-zip/$f.orig; then SAME=$((SAME+1)); else DIFF="$DIFF $f"; fi
+done
+EXTRA=$(cd $W/run-tree && ls *.py | while read f; do [ -f $W/run-zip/$f.orig ] || echo -n "$f "; done)
+echo "tree-vs-zip identical=$SAME differ=[$DIFF] tree-only=[$EXTRA]" > $W/verify.txt
+if [ -n "$DIFF" ]; then $W/scripts/pipeline.sh $W run-tree; fi
+echo "ARMED-RESULT $(cat $W/export.log $W/verify.txt | tr "\n" " ")" > $W/result-line.txt
+EOF
+scp -q $D/pipeline.sh $D/arm.sh gtr:.local/state/agent-work/discovery-lab/terraform-final/gfork-rc37/scripts/ && ssh gtr 'W=~/.local/state/agent-work/discovery-lab/terraform-final/gfork-rc37; chmod +x $W/scripts/*.sh; mkdir -p $W/run-zip; cd $W/run-zip; python3 -c "import zipfile;zipfile.ZipFile(\"../zip/model-code.zip\").extractall(\".\")"; for f in *.py; do cp -p $f $f.orig; done; ls; nohup $W/scripts/pipeline.sh $W run-zip > $W/pipeline-run-zip.nohup 2>&1 < /dev/null & nohup $W/scripts/arm.sh > $W/arm.log 2>&1 < /dev/null & sleep 2; pgrep -af "reproduce.py|arm.sh" | grep gfork -i; pgrep -af "python3 reproduce.py"'

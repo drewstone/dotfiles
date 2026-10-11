@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -97,4 +97,105 @@ test("deploy-managed service checkouts, the gate cache and non-installs still ru
 test("uv keeps its _wt-only rule", () => {
   assert.equal(run("uv", ["sync"], wt).status, 125);
   assert.equal(run("uv", ["sync"], gate).status, 0);
+});
+
+// On a Beelink the Git entrypoint has git.worktree-cap.json beside it: each fleet lane may hold
+// `cap` worktrees under _wt, nothing new lands under the free-space floor, and installs are not refused.
+function beelinkGit(config) {
+  const home = mkdtempSync(join(tmpdir(), "beelink-cap-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  copyFileSync(GUARD, join(bin, "git"));
+  symlinkSync("/usr/bin/git", join(bin, "git.gtr-original"));
+  writeFileSync(join(bin, "git.worktree-cap.json"), JSON.stringify(config));
+  const repo = join(home, "code/repo");
+  mkdirSync(join(home, "code/_wt"), { recursive: true });
+  const env = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  spawnSync("/usr/bin/git", ["init", "-q", "-b", "main", repo], { env });
+  spawnSync("/usr/bin/git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null",
+    "commit", "-q", "--allow-empty", "-m", "seed"], { env });
+  const git = (args, extra = {}) => {
+    const r = spawnSync("python3", [join(bin, "git"), ...args], { cwd: repo, encoding: "utf8", env: { ...env, ...extra } });
+    return { status: r.status, out: r.stdout, err: r.stderr };
+  };
+  return { home, repo, git };
+}
+
+test("a Beelink worktree add into _wt needs a lane, records it, and stops at the lane cap", () => {
+  const { home, repo, git } = beelinkGit({ cap: 2, floor_bytes: 0 });
+  const add = (name, env) => git(["worktree", "add", "-q", "--detach", join(home, "code/_wt", name)], env);
+
+  const anonymous = add("anon");
+  assert.equal(anonymous.status, 125);
+  assert.match(anonymous.err, /FLEET_LANE=/);
+  assert.ok(!existsSync(join(home, "code/_wt/anon")));
+
+  const viaStatus = { FLEET_STATUS_FILE: "/state/fleet/status/op-company--wt-cap.md" };
+  assert.equal(add("a1", viaStatus).status, 0);
+  const admin = readFileSync(join(home, "code/_wt/a1/.git"), "utf8").trim().slice("gitdir: ".length);
+  assert.equal(readFileSync(join(admin, "fleet-lane"), "utf8"), "op-company:wt-cap\n");
+  assert.equal(add("a2", { FLEET_LANE: "op-company:wt-cap" }).status, 0);
+
+  const third = add("a3", viaStatus);
+  assert.equal(third.status, 125);
+  assert.match(third.err, /holds 2 of 2 worktrees/);
+  assert.match(third.err, new RegExp(`OWNER_RELEASED=1 wt-remove ${join(home, "code/_wt/a1")}`));
+  const other = add("b0", { FLEET_LANE: "op-research:other" });
+  assert.equal(other.status, 0);
+  assert.ok(!existsSync(join(home, "code/_wt/a3")));
+
+  assert.equal(add("b1", { FLEET_LANE: "op-research:other" }).status, 0, "another lane has its own cap");
+  assert.equal(git(["worktree", "add", "-q", "--detach", join(home, "scratch/outside")]).status, 0, "outside _wt is not capped");
+  assert.equal(git(["status", "--short"]).status, 0);
+});
+
+test("a Beelink counts nested _wt trees and records the lane when a post-checkout hook fails", () => {
+  const { home, repo, git } = beelinkGit({ cap: 2, floor_bytes: 0 });
+  const lane = { FLEET_LANE: "op-company:hooks" };
+  mkdirSync(join(repo, ".git/hooks"), { recursive: true });
+  writeFileSync(join(repo, ".git/hooks/post-checkout"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+  const hooked = git(["-c", "core.hooksPath=" + join(repo, ".git/hooks"), "worktree", "add", "-q", "--detach",
+    join(home, "code/_wt/grp/h1")], lane);
+  assert.equal(hooked.status, 3, "git's own exit code is kept");
+  assert.equal(git(["--attr-source", "HEAD", "worktree", "add", "-q", "--detach", join(home, "code/_wt/grp/deeper/h2")], lane).status, 3, "--attr-source does not hide the add");
+  const third = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/h3")], lane);
+  assert.equal(third.status, 125, "the hook-failed and nested trees both count");
+  assert.match(third.err, /holds 2 of 2/);
+});
+
+test("a Beelink under its free-space floor refuses new _wt worktrees and names idle trees", () => {
+  const { home, git } = beelinkGit({ cap: 4, floor_bytes: 0 });
+  assert.equal(git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/x1")], { FLEET_LANE: "op-a:one" }).status, 0);
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER }));
+  const r = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/f1")], { FLEET_LANE: "op-company:wt-cap" });
+  assert.equal(r.status, 125);
+  assert.match(r.err, /under its \d+ GiB floor/);
+  assert.match(r.err, new RegExp(`\\n  wt-remove ${join(home, "code/_wt/x1")}`), "another lane's tree keeps wt-remove's idle guard");
+  assert.doesNotMatch(r.err, /OWNER_RELEASED/);
+  assert.ok(!existsSync(join(home, "code/_wt/f1")));
+});
+
+test("a symlink to the installed Git wrapper delegates through the wrapper's own preserved executable", () => {
+  // ADC's run-devtools.test.mjs links `which git` into a temporary bin; the alias has no
+  // git.gtr-original beside it, and every signoff failed with "missing preserved executable".
+  const { home, repo } = beelinkGit({ cap: 4, floor_bytes: 0 });
+  const stub = join(home, "stub-bin");
+  mkdirSync(stub);
+  symlinkSync(join(home, "bin/git"), join(stub, "git"));
+  const r = spawnSync("python3", [join(stub, "git"), "rev-parse", "--is-inside-work-tree"], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  assert.equal(r.stderr.includes("missing preserved executable"), false, r.stderr);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "true");
+});
+
+test("the Beelink shim sends only worktree commands to Python", () => {
+  const shim = readFileSync(resolve("host/gtr-install-guard/beelink-git"), "utf8");
+  assert.match(shim, /\*" worktree "\*\) exec \/usr\/bin\/python3 -I -S \/usr\/local\/lib\/beelink-worktree-cap\/git "\$@"/);
+  const r = spawnSync("sh", [resolve("host/gtr-install-guard/beelink-git"), "--version"], { encoding: "utf8" });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^git version/);
 });

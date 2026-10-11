@@ -26,7 +26,7 @@
 #
 # Usage: host/install.sh [--check|--git-guard-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
-#   --git-guard-only  install only the GTR Git PATH guard; leave other host settings alone.
+#   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -74,6 +74,8 @@ want_file() {
 want_link() {
   [ "$(readlink "$2" 2>/dev/null)" = "$1" ] && return 0
   if [ "$CHECK" = 1 ]; then drift "$2 -> $1"; return 0; fi
+  # Like want_file's install -D: the Beelink cap directory does not exist before the first install.
+  $SUDO install -d -m 0755 -o root -g root "$(dirname "$2")"
   $SUDO ln -sfn "$1" "$2"
   note changed "$2 -> $1"
   CHANGED=1
@@ -86,9 +88,52 @@ install_system_git_guard() {
   want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" /usr/local/bin/git
 }
 
+# Beelinks run the same Git entrypoint with only its worktree cap: each fleet lane may hold
+# `cap` worktrees under _wt, and none are added below the free-space floor. On 2026-10-11 beelink1
+# held 261 _wt worktrees and gained 49 in 6 h; idle reapers cannot touch trees younger than 12 h.
+is_beelink() { case "$(hostname -s)" in beelink1|beelink2|DESKTOP-18IR33V) return 0 ;; *) return 1 ;; esac; }
+
+install_beelink_worktree_cap() {
+  local cap=/usr/local/lib/beelink-worktree-cap
+  # want_link does not create parents; want_file's install -D does.
+  [ "$CHECK" = 1 ] || [ -d "$cap" ] || $SUDO install -d -m 0755 -o root -g root "$cap"
+  want_link /usr/bin/git "$cap/git.gtr-original"
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" "$cap/git"
+  want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" "$cap/git.worktree-cap.json"
+  want_file 0755 "$SCRIPT_DIR/gtr-install-guard/beelink-git" /usr/local/bin/git
+  # The first install (2026-10-11) put the Python guard itself at /usr/local/bin/git.
+  local stale
+  for stale in /usr/local/bin/git.gtr-original /usr/local/bin/git.worktree-cap.json; do
+    if [ -e "$stale" ] || [ -L "$stale" ]; then
+      if [ "$CHECK" = 1 ]; then drift "$stale"; else $SUDO rm -f "$stale"; note removed "$stale"; fi
+    fi
+  done
+  local before=$CHANGED
+  CHANGED=0
+  want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-accept.conf" /etc/ssh/sshd_config.d/20-fleet-lane-accept.conf
+  if [ "$CHANGED" = 1 ]; then
+    # A failed reload must stop here: the next run sees the file in place and would not retry.
+    if ! { $SUDO sshd -t && $SUDO systemctl reload ssh; }; then
+      echo "sshd rejected or did not reload the fleet-lane drop-in" >&2; exit 1
+    fi
+    note reloaded ssh
+  fi
+  [ "$before" = 1 ] && CHANGED=1
+  return 0
+}
+
+install_gtr_lane_send() {
+  want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-send.conf" /etc/ssh/ssh_config.d/20-fleet-lane-send.conf
+}
+
 if [ "$GIT_GUARD_ONLY" = 1 ]; then
-  [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "GTR Git guard is GTR-only" >&2; exit 2; }
+  if is_beelink; then
+    install_beelink_worktree_cap
+    exit 0
+  fi
+  [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "the Git guard runs on GTR and the Beelinks only" >&2; exit 2; }
   install_system_git_guard
+  install_gtr_lane_send
   exit 0
 fi
 
@@ -114,7 +159,9 @@ if [ "$(hostname -s)" = drew-GTR-Pro ]; then
     python3 "$SCRIPT_DIR/gtr-install-guard/install.py"
   fi
   install_system_git_guard
+  install_gtr_lane_send
 fi
+is_beelink && install_beelink_worktree_cap
 
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh
