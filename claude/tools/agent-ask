@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { retryAfterSeconds, takeSlot } from './operator-api/rate.mjs'
 
 // Production origins and defaults; --origin or <APP>_BASE_URL overrides the origin.
 const APPS = {
@@ -27,6 +28,8 @@ const BASE_PATH = '/api/operator/v1'
 const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
 const HOLD_SECONDS = Number(process.env.AGENT_ASK_HOLD_SECONDS ?? 25)
 const RETRY_MS = Number(process.env.AGENT_ASK_RETRY_MS ?? 5_000)
+// Requests the per-minute limit refused are sent again after Retry-After, this many times.
+const MINUTE_RETRIES = 3
 
 const USAGE = `usage:
   agent-ask --app <app> [options] "<outcome-level ask>"   start a turn and follow it to completion
@@ -172,10 +175,20 @@ function createClient({ origin, key, app }) {
     }
     const shown = `${BASE_PATH}${path.split('?')[0]}`
     let response
-    try {
-      response = await fetch(origin + BASE_PATH + path, init)
-    } catch (error) {
-      throw new ApiError(method, shown, 0, 'transport_failed', String(error?.cause?.code ?? error?.message ?? error).replaceAll(key, '<key>'))
+    for (let attempt = 0; ; attempt++) {
+      // One budget per key on this host, shared with every other operator-API client.
+      await takeSlot(key)
+      try {
+        response = await fetch(origin + BASE_PATH + path, init)
+      } catch (error) {
+        throw new ApiError(method, shown, 0, 'transport_failed', String(error?.cause?.code ?? error?.message ?? error).replaceAll(key, '<key>'))
+      }
+      // A refused request never reached the app, so waiting out the window and
+      // sending it again is safe. Without a usable Retry-After it is reported.
+      const wait = response.status === 429 ? retryAfterSeconds(response) : null
+      if (wait === null || attempt >= MINUTE_RETRIES) break
+      await response.body?.cancel().catch(() => {})
+      await sleep((wait + Math.random()) * 1000)
     }
     if (response.status >= 300 && response.status < 400) throw new ApiError(method, shown, response.status, 'redirect', 'redirects are refused')
     if (!response.ok) {

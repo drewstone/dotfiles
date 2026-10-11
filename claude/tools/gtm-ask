@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { takeSlot } from './operator-api/rate.mjs'
 
 const DEFAULT_BASE = 'https://gtm.tangle.tools'
 // Drew's operator workspace, "GTM Agent".
@@ -140,6 +141,8 @@ function createClient({ base, key }) {
     }
     let response
     for (let attempt = 0; ; attempt++) {
+      // One budget per key on this host, shared with every other operator-API client.
+      await takeSlot(key)
       response = await fetch(base + path, init)
       // A key shared by several clients can spend its per-minute allowance; the
       // refused request never reached the app, so waiting out the minute and
