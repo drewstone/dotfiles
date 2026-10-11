@@ -187,7 +187,7 @@ count=0
 [[ -r '${dfCount}' ]] && read -r count < '${dfCount}'
 count=$((count + 1))
 printf '%s\\n' "$count" > '${dfCount}'
-if (( count == 1 )); then available=1099511627776; else available=128849018880; fi
+if (( count < 3 )); then available=1099511627776; else available=128849018880; fi
 printf 'Avail\\n%s\\n' "$available"
 `);
     chmodSync(join(f.root, "bin", "df"), 0o755);
@@ -201,7 +201,9 @@ exec /bin/sleep "$@"
     const result = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env, timeout: 10_000 });
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 3, result.stderr);
+    assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
     assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.equal(readFileSync(dfCount, "utf8").trim(), "3", "the floor changed only after the admission checks");
     assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=3`));
     const [receipt] = receipts(f);
     assert.equal(receipt.exit, 3);
