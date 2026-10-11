@@ -11,8 +11,13 @@ GLOBAL_ATTRIBUTES_FILE="$SCRIPT_DIR/gitattributes_global"
 chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg"
 chmod +x "$TEMPLATE_DIR/hooks/pre-commit" "$TEMPLATE_DIR/hooks/pre-push"
 
-git config --global core.hooksPath "$GLOBAL_HOOKS_DIR"
-git config --global init.templateDir "$TEMPLATE_DIR"
+# Write a global setting only when it changes, so a host whose ~/.gitconfig is
+# locked (gtr's is immutable) reinstalls without touching it.
+set_global() {
+  [ "$(git config --global --get "$1" || true)" = "$2" ] || git config --global "$1" "$2"
+}
+set_global core.hooksPath "$GLOBAL_HOOKS_DIR"
+set_global init.templateDir "$TEMPLATE_DIR"
 
 # Agent artifact dirs show up in every repo we touch, so ignore them once here
 # rather than editing each repo's .gitignore. A repo's own .gitignore still
@@ -22,7 +27,7 @@ if [ -n "$existing_excludes" ] && [ "$existing_excludes" != "$GLOBAL_IGNORE_FILE
   echo "WARN core.excludesfile already set to $existing_excludes — leaving it alone."
   echo "     Merge $GLOBAL_IGNORE_FILE into it by hand, or unset and rerun."
 else
-  git config --global core.excludesfile "$GLOBAL_IGNORE_FILE"
+  set_global core.excludesfile "$GLOBAL_IGNORE_FILE"
 fi
 # Agent ledgers merge by union on every branch, including branches cut before a
 # repository's .gitattributes named them. A repo's own .gitattributes still wins.
@@ -30,8 +35,17 @@ existing_attributes="$(git config --global --get core.attributesFile || true)"
 if [ -n "$existing_attributes" ] && [ "$existing_attributes" != "$GLOBAL_ATTRIBUTES_FILE" ]; then
   echo "WARN core.attributesFile already set to $existing_attributes — leaving it alone."
   echo "     Merge $GLOBAL_ATTRIBUTES_FILE into it by hand, or unset and rerun."
-else
-  git config --global core.attributesFile "$GLOBAL_ATTRIBUTES_FILE"
+elif ! set_global core.attributesFile "$GLOBAL_ATTRIBUTES_FILE" 2>/dev/null; then
+  # A locked global config (gtr's ~/.gitconfig is immutable): Git reads the XDG
+  # attributes file by default while core.attributesFile is unset.
+  xdg_attributes="${XDG_CONFIG_HOME:-$HOME/.config}/git/attributes"
+  if [ -e "$xdg_attributes" ] && [ ! -L "$xdg_attributes" ]; then
+    echo "WARN $xdg_attributes exists and the global config is not writable — merge $GLOBAL_ATTRIBUTES_FILE into it by hand."
+  else
+    mkdir -p "$(dirname "$xdg_attributes")"
+    ln -sfn "$GLOBAL_ATTRIBUTES_FILE" "$xdg_attributes"
+    echo "  linked $xdg_attributes (the global config is not writable)"
+  fi
 fi
 echo "== worktree reaper"
 "$SCRIPT_DIR/worktree-reaper/install.sh"
