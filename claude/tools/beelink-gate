@@ -471,6 +471,8 @@ remote_gate() {
     exec {heartbeat_fd}<&0
     ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
   fi
+  # The launcher's settings are this gate's; a gate the command starts gets its own.
+  unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
   export PATH="$HOME/.local/bin:$PATH"
   check_floor "$beelink" || exit $?
@@ -482,6 +484,7 @@ remote_gate() {
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
   [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
+  unset BEELINK_GATE_MAX_CONCURRENT
   checkout="$cache_root/$host/$owner/$repo"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] \
     || [ -L "$cache_root/$host/$owner" ] || [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then

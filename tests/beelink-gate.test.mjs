@@ -49,7 +49,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, ...inherited } = process.env;
   const env = { ...inherited, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
@@ -712,5 +712,15 @@ test("auto prefers a beelink with a free host slot over one whose slots are full
       assert.match(chosen.stderr, /auto chose beelink2/);
       assert.match(chosen.stderr, /beelink1: host=beelink1 state=free cache=warm slots=0/);
     } finally { locker.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a command does not inherit the launcher's gate settings", () => {
+  const f = fixture();
+  try {
+    const shown = f.call(f.first, ["bash", "-c", 'printf "%s|%s|%s|%s|%s" "${BEELINK_GATE_HEARTBEAT-}" "${BEELINK_GATE_LAUNCHER-}" "${BEELINK_GATE_MAX_HOLD-}" "${BEELINK_GATE_SHIP_WORKERS-}" "${BEELINK_GATE_MAX_CONCURRENT-}"'],
+      { noInstall: true, env: { BEELINK_GATE_LAUNCHER: "mac", BEELINK_GATE_MAX_HOLD: "10m", BEELINK_GATE_SHIP_WORKERS: "3", BEELINK_GATE_MAX_CONCURRENT: "2" } });
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.equal(shown.stdout, "||||");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
