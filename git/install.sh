@@ -6,6 +6,7 @@ DOTFILES_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GLOBAL_HOOKS_DIR="$SCRIPT_DIR/hooks"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
 GLOBAL_IGNORE_FILE="$SCRIPT_DIR/gitignore_global"
+GLOBAL_ATTRIBUTES_FILE="$SCRIPT_DIR/gitattributes_global"
 
 chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg"
 chmod +x "$TEMPLATE_DIR/hooks/pre-commit" "$TEMPLATE_DIR/hooks/pre-push"
@@ -23,6 +24,15 @@ if [ -n "$existing_excludes" ] && [ "$existing_excludes" != "$GLOBAL_IGNORE_FILE
 else
   git config --global core.excludesfile "$GLOBAL_IGNORE_FILE"
 fi
+# Agent ledgers merge by union on every branch, including branches cut before a
+# repository's .gitattributes named them. A repo's own .gitattributes still wins.
+existing_attributes="$(git config --global --get core.attributesFile || true)"
+if [ -n "$existing_attributes" ] && [ "$existing_attributes" != "$GLOBAL_ATTRIBUTES_FILE" ]; then
+  echo "WARN core.attributesFile already set to $existing_attributes — leaving it alone."
+  echo "     Merge $GLOBAL_ATTRIBUTES_FILE into it by hand, or unset and rerun."
+else
+  git config --global core.attributesFile "$GLOBAL_ATTRIBUTES_FILE"
+fi
 echo "== worktree reaper"
 "$SCRIPT_DIR/worktree-reaper/install.sh"
 echo "== main checkout fast-forward"
@@ -33,6 +43,7 @@ echo "Configured global Git hooks:"
 echo "  core.hooksPath=$GLOBAL_HOOKS_DIR"
 echo "  init.templateDir=$TEMPLATE_DIR"
 echo "  core.excludesfile=$(git config --global --get core.excludesfile)"
+echo "  core.attributesFile=$(git config --global --get core.attributesFile)"
 echo
 echo "Global baseline checks:"
 echo "  pre-commit: conflict markers, suspicious secrets"

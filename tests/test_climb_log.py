@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 TOOL = Path(__file__).resolve().parent.parent / 'claude' / 'tools' / 'climb-log'
+GLOBAL_ATTRIBUTES = Path(__file__).resolve().parent.parent / 'git' / 'gitattributes_global'
 
 
 def measurement(**overrides):
@@ -236,8 +237,12 @@ class UnionMerge(Ledger):
     """Two PRs that each append rows merge cleanly under merge=union, and check rejects what a union gets wrong."""
 
     def git(self, *args, check=True):
+        # The host's own global config (which may name the global attributes file) stays out of the fixture.
+        config = Path(self.tmp.name) / 'gitconfig'
+        config.touch()
         env = {**os.environ, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.com', 'GIT_COMMITTER_NAME': 't',
-               'GIT_COMMITTER_EMAIL': 't@example.com', 'GIT_CEILING_DIRECTORIES': self.tmp.name}
+               'GIT_COMMITTER_EMAIL': 't@example.com', 'GIT_CEILING_DIRECTORIES': self.tmp.name,
+               'GIT_CONFIG_GLOBAL': str(config), 'GIT_CONFIG_NOSYSTEM': '1'}
         # A throwaway fixture repo: the machine's global hooks guard real commits, not these.
         return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', '-C', str(self.root),
                                *args], capture_output=True, text=True, env=env, check=check)
@@ -273,6 +278,14 @@ class UnionMerge(Ledger):
 
     def test_without_the_attribute_the_same_appends_conflict(self):
         self.assertNotEqual(self.branches(attributes=False).returncode, 0)
+
+    def test_the_global_attributes_file_merges_a_branch_cut_before_the_repo_named_its_ledger(self):
+        # git/install.sh points core.attributesFile at git/gitattributes_global on every host.
+        (Path(self.tmp.name) / 'gitconfig').write_text(f'[core]\n\tattributesFile = {GLOBAL_ATTRIBUTES}\n')
+        merged = self.branches(attributes=False)
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        ids = sorted(json.loads(line)['id'] for line in self.ledger.read_text().splitlines())
+        self.assertEqual(ids, ['base', 'from-a', 'from-b'])
 
     def test_append_names_a_ledger_without_the_attribute(self):
         self.git('init', '-q', '-b', 'main')
