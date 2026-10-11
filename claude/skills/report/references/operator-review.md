@@ -106,7 +106,7 @@ The cause, not yet tested: the level-2 lines pay for having those parts, and no 
 
 | Action | Type | Owner | Link | State |
 |---|---|---|---|---|
-| Top level drawn from five exemplars; `brief-judge` reads it | prevent | operator | #PRNUM | merged |
+| Top level drawn from five exemplars; `brief-judge` reads it | prevent | operator | #355 | merged |
 | Level-2 lines for Answer, Ambition and Craft from the same teardown; passes when today's reply scores `8` or less and the praised brief `20` or more, three runs each | prevent | operator | next PR | open |
 | Five more replies you mark good or bad, so agreement rests on more than three anchors | process | Drew | — | waiting on you |
 
@@ -114,7 +114,7 @@ Your decision: should my replies pass the judge before they reach you? I recomme
 
 The bet: the median reply you read moves from `13.5/30` (6 replies judged today under the earlier rubric) to `20` after the level-2 PR and `24` within a week. Pre-mortem: the judge learns to reward tables and highlighting over substance; the guard is that exact outcomes outrank the judge in the climb's reward order.
 
-**Learned:** I typed every chart by hand today and never ran `viz` or `brief-judge`, both shipped on 10-10 in #296. Running them costs about 26 s a reply; skipping them cost a 66-line reply you rejected. Fix: `brief-judge` now scores against the exemplars (#PRNUM), with that reply as its rejected anchor. Status: merged, and the judge still falls 7.0 points short of the bar on it.
+**Learned:** I typed every chart by hand today and never ran `viz` or `brief-judge`, both shipped on 10-10 in #296. Running them costs about 26 s a reply; skipping them cost a 66-line reply you rejected. Fix: `brief-judge` now scores against the exemplars (#355), with that reply as its rejected anchor. Status: merged, and the judge still falls 7.0 points short of the bar on it.
 
 **Next:** the level-2 PR, judged on all three anchors before it merges.
 
@@ -129,7 +129,9 @@ The bet: the median reply you read moves from `13.5/30` (6 replies judged today 
 | 9, 10 | Bet and decision | 24/30 in a week with its scope and pre-mortem; the 18/30 gate with its cost, reversal and rule |
 | 11, 12 | Graphics and one reader | A `viz` chart under the sentence it supports, a `diff` fence for the contrast, no emoji, one topic in about 40 lines |
 
-JUDGED
+`brief-judge` scored this reply 23, 23 and 24 under the `3:` lines, against 20.7 for the praised brief, with every quote found in the text.
+It reaches 3 on Refutation, Mechanism and Decisions.
+Its weakest dimensions show what level 3 still asks for: the headline answers with the judge rather than with the count of Terraform mistakes Drew asked about, the 13.5 median does not list its six replies, and nothing is set beside an outside benchmark.
 
 [amzn-2016]: https://www.sec.gov/Archives/edgar/data/1018724/000119312517120198/d373368dex991.htm
 [amzn-2017]: https://www.sec.gov/Archives/edgar/data/1018724/000119312518121161/d456916dex991.htm
