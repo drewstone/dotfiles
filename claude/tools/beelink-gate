@@ -404,6 +404,25 @@ adopt_origin() {
   [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
 }
 
+# The pnpm version the repo's own CI installs with: package.json packageManager
+# (what corepack and pnpm/action-setup read), else the version pinned on
+# pnpm/action-setup in a workflow. Only an exact x.y.z is used.
+repo_pnpm_version() {
+  local version
+  version=$(node -e 'const m = /^pnpm@([^+]+)/.exec(require("./package.json").packageManager || ""); if (m) console.log(m[1])' 2>/dev/null)
+  local -a workflows=()
+  local had_nullglob=0
+  shopt -q nullglob && had_nullglob=1
+  shopt -s nullglob; workflows=(.github/workflows/*.yml .github/workflows/*.yaml)
+  [ "$had_nullglob" = 1 ] || shopt -u nullglob
+  if [ -z "$version" ] && [ "${#workflows[@]}" -gt 0 ]; then
+    version=$(awk '/uses:[[:space:]]*pnpm\/action-setup/ { inside = 1; next }
+      inside && /^[[:space:]]*-[[:space:]]/ { inside = 0 }
+      inside && $1 == "version:" { gsub(/["\047]/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
+  fi
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] && echo "$version"
+}
+
 # One line describing the holder of a lock, from the metadata its gate wrote.
 holder_line() {
   local info="$1.holder" pid started sha launcher
@@ -780,6 +799,20 @@ PY
   # Incremental state is a third of a debug target and gates rarely reuse it.
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
   cd "$checkout" || exit $?
+  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces
+  # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
+  # that CI on 11 refused. The shim covers the install, the command and ship.sh.
+  local want_pnpm have_pnpm
+  if [ -f pnpm-lock.yaml ] && want_pnpm=$(repo_pnpm_version); then
+    have_pnpm=$(pnpm --version 2>/dev/null || true)
+    if [ "$want_pnpm" != "$have_pnpm" ]; then
+      mkdir -p "$checkout/.git/beelink-gate-bin" || exit $?
+      printf '#!/usr/bin/env bash\nexec npx --yes "pnpm@%s" "$@"\n' "$want_pnpm" > "$checkout/.git/beelink-gate-bin/pnpm" || exit $?
+      chmod +x "$checkout/.git/beelink-gate-bin/pnpm" || exit $?
+      export PATH="$checkout/.git/beelink-gate-bin:$PATH"
+      echo "beelink-gate: using the repo's pnpm $want_pnpm (beelink has ${have_pnpm:-none})" >&2
+    fi
+  fi
   if [ "$install_mode" = ship ]; then
     [ -f scripts/ship.sh ] || die "--ship: $owner/$repo at ${sha:0:12} has no scripts/ship.sh"
     if [ -s .nvmrc ]; then
