@@ -24,6 +24,8 @@ const APPS = {
   physim: { name: 'Physim', origin: 'https://hardware.tangle.tools' },
   super: { name: 'SUPER', origin: 'https://super.tangle.tools' },
 }
+// The repo is tangle-network/hardware-agent; the app id, keys and PHYSIM_* env names stay physim.
+const APP_ALIASES = { hardware: 'physim', 'hardware-agent': 'physim' }
 const BASE_PATH = '/api/operator/v1'
 const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
 const HOLD_SECONDS = Number(process.env.AGENT_ASK_HOLD_SECONDS ?? 25)
@@ -117,6 +119,7 @@ function parseArgs(argv) {
     throw new UsageError(`${command} takes no arguments`)
   }
   options.app = (options.app ?? process.env.AGENT_ASK_APP ?? 'gtm').toLowerCase()
+  options.app = APP_ALIASES[options.app] ?? options.app
   if (command !== 'apps' && !APPS[options.app]) throw new UsageError(`unknown app "${options.app}"; known apps: ${Object.keys(APPS).join(', ')}`)
   options.waitMs = parseDuration(options.wait ?? (command === 'status' ? '0' : '30m'))
   if (options.days !== undefined && !/^\d{1,2}$/.test(options.days)) throw new UsageError('--days takes a whole number from 1 to 90')
