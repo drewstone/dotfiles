@@ -267,7 +267,7 @@ try:
             repo = target.name[:-len("-build")]
             held = []
             try:
-                busy = [lock for lock in sorted(locks.glob(f"*-{repo}.lock"))
+                busy = [lock for lock in sorted([*locks.glob(f"*-{repo}.lock"), *locks.glob(f"*-{repo}@*.lock")])
                         if lock != current_lock and not try_lock(lock, held)]
                 if busy:
                     print(f"beelink-gate: skipped {target}; a {repo} gate holds its lock", file=sys.stderr)
@@ -422,13 +422,23 @@ remote_probe() {
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   reason=$(check_floor "$beelink" 2>&1) || state=refused
   [ "$state" = refused ] || { reason=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>&1) || state=refused; }
-  [ -d "$cache_root/$host/$owner/$repo/.git" ] && cache=warm
-  lock="$cache_root/.locks/$host-$owner-$repo.lock"
-  if [ "$state" = free ] && [ -e "$lock" ]; then
-    exec {fd}<"$lock" || die "cannot open lock"
-    flock -n -s "$fd" || { state=busy; reason=$(holder_line "$lock"); }
-    exec {fd}<&-
+  # A repo has BEELINK_GATE_REPO_CHECKOUTS checkouts per host; one free is enough.
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix free_copy=""
+  [[ "$copies" =~ ^[1-9][0-9]*$ ]] || copies=2
+  if [ "$state" = free ]; then
+    state=busy
+    for ((k = 0; k < copies; k++)); do
+      suffix=$([ "$k" = 0 ] || echo "@$k")
+      lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
+      if [ ! -e "$lock" ]; then state=free free_copy=$suffix; break; fi
+      exec {fd}<"$lock" || die "cannot open lock"
+      if flock -n -s "$fd"; then state=free free_copy=$suffix; exec {fd}<&-; break; fi
+      exec {fd}<&-
+      reason=$(holder_line "$lock")
+    done
+    [ "$state" = busy ] || reason=""
   fi
+  [ -d "$cache_root/$host/$owner/$repo$free_copy/.git" ] && cache=warm
   local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-4} free_slots=0 i slot
   for ((i = 0; i < max_slots; i++)); do
     slot="$cache_root/.locks/slot-$i.lock"
@@ -534,23 +544,41 @@ remote_gate() {
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
   [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
   unset BEELINK_GATE_MAX_CONCURRENT
-  checkout="$cache_root/$host/$owner/$repo"
-  if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] \
-    || [ -L "$cache_root/$host/$owner" ] || [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then
+  # Each repo gets BEELINK_GATE_REPO_CHECKOUTS checkouts per host (default 2):
+  # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
+  # not take both beelinks. On 2026-10-11, 38 gates of one repo from one lane
+  # waited 527 min in total behind a single checkout per host.
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd
+  [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
+  unset BEELINK_GATE_REPO_CHECKOUTS
+  if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi
-  mkdir -p "$cache_root/.locks" "$(dirname "$checkout")" || die "cannot create cache"
-  local lock="$cache_root/.locks/$host-$owner-$repo.lock" waiting_since=$SECONDS last_report=-60
-  [ ! -L "$lock.holder" ] || die "lock metadata is a symlink"
-  exec {lock_fd}>"$lock" || die "cannot open lock"
-  while ! flock -n -x "$lock_fd"; do
-    reclaim_dead_holder "$lock"
+  mkdir -p "$cache_root/.locks" "$cache_root/$host/$owner" || die "cannot create cache"
+  local lock="" waiting_since=$SECONDS last_report=-60
+  checkout=""
+  while [ -z "$lock" ]; do
+    for ((k = 0; k < copies; k++)); do
+      suffix=$([ "$k" = 0 ] || echo "@$k")
+      candidate="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
+      [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
+      exec {fd}>"$candidate" || die "cannot open lock"
+      if flock -n -x "$fd"; then
+        lock_fd=$fd lock=$candidate checkout="$cache_root/$host/$owner/$repo$suffix"
+        break
+      fi
+      exec {fd}>&-
+      reclaim_dead_holder "$candidate"
+    done
+    [ -z "$lock" ] || break
     if (( SECONDS - last_report >= 60 )); then
-      echo "beelink-gate: waiting $((SECONDS - waiting_since))s for $host/$owner/$repo lock on $beelink; $(holder_line "$lock")" >&2
+      echo "beelink-gate: waiting $((SECONDS - waiting_since))s for one of $copies $host/$owner/$repo checkouts on $beelink; $(holder_line "$cache_root/.locks/$host-$owner-$repo.lock")" >&2
       last_report=$SECONDS
     fi
     sleep 5 & wait $!
   done
+  if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
+  [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
   printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
     $$ "$(ps -o sid= -p $$ | tr -d ' ')" "$(date +%s)" "$sha" "$launcher" > "$lock.holder" || die "cannot write lock metadata"
   acquire_slot "$cache_root/.locks" "$max_concurrent"
@@ -748,6 +776,7 @@ on_beelink() {
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
+  [ -z "${BEELINK_GATE_REPO_CHECKOUTS:-}" ] || envs+=("BEELINK_GATE_REPO_CHECKOUTS=$BEELINK_GATE_REPO_CHECKOUTS")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
   local me=$$ rc
   if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
