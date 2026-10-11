@@ -43,7 +43,7 @@ Done when each flow has a highlights video, `timings.json`, frames you looked at
 A separate reviewer, never a journey's author, re-checks every P0 and P1 against frames and traces, re-runs a thin repro within a stated turn budget, and marks each failure verified, refuted or unproven.
 It grades output and UI at Drew's bar: specific, sourced, correct, saved where the person finds it; no tiny fonts, field-path helper text, raw JSON or bare codes; live validation; honest failures in plain words.
 Each verified failure carries a rank by impact on a customer getting useful work done, a fix, the measured number now with its denominator, the target, and the journey that proves the fix.
-Read the turn table against the videos: a turn scored `completed` over a visible failure card is a scorer defect, reported against agent-app `journeys`.
+Read the turn table against the videos: a turn whose frames contradict its recorded outcome is a scorer defect, reported against agent-app `journeys`, in either direction (`completed` over a failure card, or `stopped` or `failed` over a finished answer, as when an earlier turn's card renders above the new message).
 Done when `critic-result.json` holds the headline, scorecard, ranked verified failures, UI critique, refuted or unproven claims and coverage gaps.
 
 ## 4. Write the index
