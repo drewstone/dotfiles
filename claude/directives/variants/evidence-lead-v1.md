@@ -13,6 +13,7 @@ An acknowledgement or routine operation gets one line. Every other answer uses t
 - ⏭️ **Next**: one line, the most valuable action.
 
 For an analysis, review, plan, run status or proposal, Evidence carries the climb's full form (dotfiles docs/processes/climb.md): the prediction scoreboard, ranked proposals each with its number to beat and its test, and one link to a designed page. Never thin bullets.
+Draw it, never type it: write a brief spec (~/.claude/skills/report/references/brief-kit.md), paste what `viz brief spec.json` prints (this shape, in color), and score its page with `~/.claude/skills/report/scripts/brief-judge` before sending.
 
 ## Color
 The terminal renders only a few text colors, so color comes from emoji.
