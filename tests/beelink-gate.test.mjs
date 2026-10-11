@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -1257,4 +1257,76 @@ test("a light gate over its declared CPU budget fails loudly, and the budget is 
     assert.equal(combined.status, 2);
     assert.match(combined.stderr, /--light cannot be combined with --ship/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// 2026-10-11: gtm-agent #1565, the fix for a red master, waited 1,501 s on beelink2's two busy checkouts
+// (load 44.5) while beelink1 sat at load 15: auto chose a host, then waited on that host's lock for good.
+test("auto gives back a host whose checkouts were taken after it chose it, and runs on the other one", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPLACE_WAIT: "2s", BEELINK_GATE_AUTO_POLL_SECONDS: "0.5" };
+    // A warm cache on beelink2 makes auto choose it first.
+    assert.equal(run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env }).status, 0);
+    // Between the probe and the remote gate's admission, another gate takes both of beelink2's checkouts.
+    const ssh = join(f.root, "bin", "ssh");
+    renameSync(ssh, join(f.root, "bin", "ssh-real"));
+    const locks = `${join(f.root, "cache")}-100.127.22.51/.locks`;
+    writeFileSync(ssh, `#!/usr/bin/env bash
+if [[ " $* " == *" --remote "* && " $* " == *" 100.127.22.51 "* && -e '${join(f.root, "take-b2")}' ]]; then
+  rm -f '${join(f.root, "take-b2")}'
+  python3 -c 'import fcntl,os,sys,time; fs=[open(p,"w") for p in sys.argv[1:3]]; [fcntl.flock(x, fcntl.LOCK_EX) for x in fs]; open(sys.argv[3],"w").close(); time.sleep(60)' \\
+    '${locks}/local-owner-repo.lock' '${locks}/local-owner-repo@1.lock' '${join(f.root, "b2-held")}' </dev/null >/dev/null 2>&1 &
+  echo $! > '${join(f.root, "holder.pid")}'
+  while [ ! -e '${join(f.root, "b2-held")}' ]; do sleep 0.05; done
+fi
+exec '${join(f.root, "bin", "ssh-real")}' "$@"
+`);
+    chmodSync(ssh, 0o755);
+    writeFileSync(join(f.root, "take-b2"), "");
+    const moved = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(moved.status, 0, moved.stderr);
+    assert.match(moved.stderr, /auto chose beelink2/);
+    assert.match(moved.stderr, /not admitted on beelink2 within 2s \(both local\/owner\/repo checkouts busy\); placing the gate again/);
+    assert.match(moved.stderr, /placement 1 on beelink2 gave the host back after waiting; probing both again/);
+    assert.match(moved.stderr, /auto chose beelink1/);
+    assert.match(moved.stderr, /receipt: .*host=beelink1/);
+    const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
+    assert.ok(row.waited_s >= 2, `the whole wait is in the receipt: ${row.waited_s}`);
+  } finally {
+    try { process.kill(Number(readFileSync(join(f.root, "holder.pid"), "utf8")), "SIGKILL"); } catch {}
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("an urgent gate takes the next free checkout ahead of a gate that waited longer", async () => {
+  const f = fixture();
+  const events = join(f.root, "events");
+  const lockDir = join(f.cache, ".locks");
+  mkdirSync(lockDir, { recursive: true });
+  const holder = spawn("python3", ["-c", 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
+    join(lockDir, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+  const launch = (id, extra) => new Promise((resolveDone) => {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo ${id} >> '${events}'`].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1", ...extra } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveDone({ status, stderr }));
+  });
+  try {
+    await new Promise((ok) => holder.stdout.once("data", ok));
+    const normal = launch("normal", {});
+    await sleepMs(1500);
+    const urgent = launch("urgent", { BEELINK_GATE_URGENT: "1" });
+    for (let i = 0; i < 200 && !readdirSync(lockDir).some((n) => n.startsWith("urgent-local-owner-repo.")); i++) await sleepMs(25);
+    holder.kill("SIGKILL");
+    const [n, u] = await Promise.all([normal, urgent]);
+    assert.equal(n.status, 0, n.stderr);
+    assert.equal(u.status, 0, u.stderr);
+    assert.equal(readFileSync(events, "utf8").trim().split("\n").join(","), "urgent,normal");
+    assert.match(u.stderr, /admitted on beelink2 after \d+s \(urgent\)/);
+    assert.deepEqual(readdirSync(lockDir).filter((n) => n.startsWith("urgent-")), [], "no urgent marker is left behind");
+  } finally {
+    holder.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });

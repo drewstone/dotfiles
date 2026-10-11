@@ -242,6 +242,9 @@ at most 10 minutes. A light command that uses more CPU than it declared fails
 the gate with "LIGHT GATE OVER BUDGET"; run that check as a normal gate.
 Normal gates are admitted exactly as before.
 
+`auto` re-places a waiting gate. If the beelink it chose does not admit it (repo checkout, host slot and load) within `BEELINK_GATE_REPLACE_WAIT` (default 60s), the gate gives that host back before any checkout work. The launcher then probes both hosts again and goes to whichever admits it first, and the receipt's `waited_s` covers every placement. A named beelink keeps waiting where it is.
+`--urgent`, for a fix to a red default branch, goes ahead of every waiting gate for the next free checkout of its repo and the next free host slot. It polls faster, and other waiters step aside while its marker is live. It does not raise the load limit.
+
 ```bash
 beelink-gate --light auto git@github.com:owner/repo.git <full-sha> -- bash -c 'bash -n bin/tool && python3 -m pytest -q tests/test_tool.py'
 ```
