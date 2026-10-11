@@ -401,6 +401,14 @@ def capped_add(real: str, argv: list[str], target, lane: str, config: dict) -> i
 
 def main() -> None:
     entry = Path(sys.argv[0]).absolute()
+    if not Path(str(entry) + ".gtr-original").exists():
+        # Invoked through a symlink to the installed wrapper (a test's stub bin/git that links
+        # `which git`): the preserved executable and the worktree cap sit beside the wrapper's
+        # real path, not beside the alias. On 2026-10-11 the alias path refused every ADC script
+        # test that builds such a stub, so no signoff could pass on either Beelink.
+        installed = Path(__file__).resolve()
+        if Path(str(installed) + ".gtr-original").exists():
+            entry = installed
     manager = entry.name
     original = Path(str(entry) + ".gtr-original")
     if (manager not in MUTATING and manager not in {"corepack", "git"}) or not original.exists():
