@@ -1093,13 +1093,15 @@ remote_gate() {
   # Each step is its own process group (timeout's), bounded by the remaining
   # hold budget, without the lock descriptor and without the launcher's stdin.
   step() {
-    local left=$((deadline - SECONDS)) rc
+    local left=$((deadline - SECONDS)) rc step_started=$SECONDS
     if (( left <= 0 )); then timed_out=1; return 124; fi
     timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
     current=$!
     wait "$current"; rc=$?
     current=""
-    if [ "$rc" = 124 ] && (( SECONDS >= deadline )); then
+    # timeout ran for exactly $left real seconds, but SECONDS counts whole
+    # seconds and can still read deadline-1 here, which lost this message.
+    if [ "$rc" = 124 ] && (( SECONDS - step_started >= left - 1 )); then
       timed_out=1
       echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
     fi
