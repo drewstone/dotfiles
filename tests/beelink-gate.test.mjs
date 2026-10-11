@@ -299,6 +299,76 @@ test("pnpm lockfile selects frozen install with one shared store", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("installs and runs with the repo's .nvmrc Node and rebuilds addons built for another ABI, sparing the store copy", () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.source, "package-lock.json"));
+    writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    writeFileSync(join(f.source, ".nvmrc"), "99.0.0\n");
+    // The build policy lives in the repo, as pnpm keeps it; the generated .modules.yaml does not repeat it.
+    writeFileSync(join(f.source, "pnpm-workspace.yaml"), "allowBuilds:\n  fake-native: true\n  fake-skipped: false\n  '@scope/fake-missing': true\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "pnpm lock, build policy and nvmrc"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    // nvm selects a Node 99 whose NODE_MODULE_VERSION is 999.
+    const nvmBin = join(f.root, "nvm-bin");
+    mkdirSync(nvmBin);
+    writeFileSync(join(nvmBin, "node"), `#!/usr/bin/env bash\ncase "$*" in\n  -v) echo v99.0.0 ;;\n  "-p process.versions.modules") echo 999 ;;\n  *) exec '${process.execPath}' "$@" ;;\nesac\n`);
+    chmodSync(join(nvmBin, "node"), 0o755);
+    mkdirSync(join(f.home, ".nvm"));
+    writeFileSync(join(f.home, ".nvm", "nvm.sh"), `nvm() { [ "$1" = use ] && export PATH='${nvmBin}':"$PATH"; }\n`);
+    // The store's copy of an addon built for ABI 1, which install links into node_modules.
+    const storeCopy = join(f.root, "store-fake.node");
+    writeFileSync(storeCopy, "node_register_module_v1");
+    const pnpm = `#!/usr/bin/env bash
+printf "%s\\n" "$*" >> "$PNPM_LOG"
+p=node_modules/.pnpm
+case "$1" in
+  install)
+    for n in fake-native fake-skipped fake-unlisted @scope/fake-missing; do mkdir -p "$p/\${n/\\//+}@1.0.0/node_modules/$n"; touch "$p/\${n/\\//+}@1.0.0/node_modules/$n/binding.gyp"; done
+    mkdir -p $p/fake-native@1.0.0/node_modules/fake-native/build/Release
+    ln -f '${storeCopy}' $p/fake-native@1.0.0/node_modules/fake-native/build/Release/fake.node
+    printf '{"ignoredBuilds":[],"layoutVersion":5}' > node_modules/.modules.yaml ;;
+  rebuild)
+    shift; [ "$1" = --store-dir ] && shift 2
+    for n in "$@"; do [ "$n" = "\${FAKE_REBUILD_SKIPS:-}" ] && continue; d=$(echo $p/*/node_modules/$n); mkdir -p $d/build/Release; printf 'node_register_module_v%s' "$(node -p process.versions.modules)" > $d/build/Release/addon.node; done ;;
+esac
+`;
+    writeFileSync(join(f.root, "bin", "pnpm"), pnpm);
+    const result = f.call(sha, ["bash", "-c", "node -v"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "v99.0.0\n", "the command runs with the .nvmrc Node");
+    const calls = readFileSync(f.pnpmLog, "utf8").trim().split("\n");
+    assert.deepEqual(calls, [
+      `install --frozen-lockfile --store-dir ${f.home}/.local/share/pnpm/store`,
+      `rebuild --store-dir ${f.home}/.local/share/pnpm/store @scope/fake-missing fake-native`,
+    ]);
+    assert.equal(readFileSync(storeCopy, "utf8"), "node_register_module_v1", "the store copy is untouched");
+    assert.match(result.stderr, /rebuilding native addons for node v99\.0\.0: @scope\/fake-missing missing addon fake-native abi 1->999/);
+    assert.match(result.stderr, /node=v99\.0\.0 rebuild=@scope\/fake-missing missing addon fake-native abi 1->999/);
+    const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
+    assert.equal(row.node, "v99.0.0");
+    assert.equal(row.rebuild, "@scope/fake-missing missing addon fake-native abi 1->999");
+    // The next gate installs again; its addons match the Node, so nothing rebuilds.
+    writeFileSync(storeCopy, "node_register_module_v999");
+    const again = f.call(sha, ["true"]);
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(readFileSync(f.pnpmLog, "utf8").trim().split("\n").filter((line) => line.startsWith("rebuild")).length, 2, "a missing addon still rebuilds; a matching ABI does not");
+    assert.match(again.stderr, /rebuild=@scope\/fake-missing missing addon/);
+    // A rebuild that leaves an addon unloadable fails the gate before the command runs.
+    const stale = f.call(sha, ["bash", "-c", "echo command-ran"], { env: { FAKE_REBUILD_SKIPS: "@scope/fake-missing" } });
+    assert.equal(stale.status, 1, stale.stderr);
+    assert.doesNotMatch(stale.stdout, /command-ran/);
+    assert.match(stale.stderr, /NATIVE ADDONS STILL STALE after pnpm rebuild/);
+    assert.match(stale.stderr, /rebuild=failed: @scope\/fake-missing missing addon/);
+    // A .nvmrc the host cannot honor refuses the gate instead of running under another Node.
+    rmSync(join(f.home, ".nvm"), { recursive: true });
+    const noNvm = f.call(sha, ["true"]);
+    assert.equal(noNvm.status, 2, noNvm.stderr);
+    assert.match(noNvm.stderr, /\.nvmrc asks for Node 99\.0\.0 and beelink2 has no nvm/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("docs-only gate verifies the requested SHA without installing dependencies", () => {
   const f = fixture();
   try {
