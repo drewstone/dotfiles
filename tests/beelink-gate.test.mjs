@@ -49,7 +49,8 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, ...inherited } = process.env;
+  const inherited = Object.fromEntries(Object.entries(process.env)
+    .filter(([name]) => !name.startsWith("BEELINK_GATE_") && name !== "CARGO_TARGET_DIR" && name !== "CARGO_INCREMENTAL"));
   const env = { ...inherited, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });

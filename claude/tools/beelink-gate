@@ -476,6 +476,9 @@ remote_gate() {
     exec {heartbeat_fd}<&0
     ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
   fi
+  # The heartbeat describes this gate's stdin only; a gate the command starts
+  # (the gate's own tests) has its own stdin and must not inherit it.
+  unset BEELINK_GATE_HEARTBEAT
 
   export PATH="$HOME/.local/bin:$PATH"
   check_floor "$beelink" || exit $?
