@@ -55,7 +55,8 @@ function fixture() {
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
-  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  // No pressure file: the load tests cover the load-average fallback; pressure tests set one.
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -77,6 +78,7 @@ printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
 printf '%s\\n' "\${rest[*]:2}" > '${join(f.root, "ssh-remote-command")}'
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
+[[ -z "\${FAKE_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_CPU_PRESSURE="$FAKE_PRESSURE_PREFIX-$host"
 exec "\${rest[@]:2}"
 `);
   chmodSync(fakeSsh, 0o755);
@@ -604,9 +606,12 @@ test("a lock left by a dead gate's leftover process is reclaimed; a live holder 
     mkdirSync(join(f.cache, ".locks"), { recursive: true });
     const dead = spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
     // detached makes the child a session leader, like a gate started over SSH.
-    const leftover = spawn("bash", ["-c", `exec 9>'${lockPath}'; flock -x 9; exec sleep 120`], { stdio: "ignore", detached: true });
+    const locked = join(f.root, "leftover-locked");
+    const leftover = spawn("bash", ["-c", `exec 9>'${lockPath}'; flock -x 9; touch '${locked}'; exec sleep 120`], { stdio: "ignore", detached: true });
     const exited = new Promise((resolveDone) => leftover.on("exit", (code, signal) => resolveDone(signal)));
-    await sleepMs(500);
+    // Wait for the lock itself, not a fixed time: under load 500 ms was too short and the gate took a free lock.
+    for (let i = 0; i < 200 && !existsSync(locked); i++) await sleepMs(50);
+    assert.equal(existsSync(locked), true, "leftover never took the lock");
     const sid = spawnSync("ps", ["-o", "sid=", "-p", String(leftover.pid)], { encoding: "utf8" }).stdout.trim();
     writeFileSync(`${lockPath}.holder`, `pid=${dead}\nsid=${sid}\nstarted=1\nsha=${f.first}\nlauncher=test\n`);
     const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1" } });
@@ -1419,5 +1424,75 @@ test("a gate waiting for load holds no checkout, so the repo lock stays free unt
     assert.equal(probe.status, 0, "the waiting gate holds the checkout lock");
     writeFileSync(loadavg, "1.00 1 1 1/100 1\n");
     assert.equal(await done, 0, stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+const pressureLine = (avg10) => `some avg10=${avg10.toFixed(2)} avg60=1.00 avg300=1.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n`;
+
+test("admission uses CPU pressure where Linux reports it: high load with low pressure starts at once", () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    const busyLoad = join(f.root, "busy-loadavg");
+    writeFileSync(pressure, pressureLine(6.9));
+    writeFileSync(busyLoad, "28.12 32.60 34.13 1/100 1\n");
+    const env = { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LOADAVG: busyLoad, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" };
+    const ok = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stderr, /host slot and CPU pressure \(6\.90, limit 20\) admitted/);
+    assert.match(ok.stderr, /receipt: .* load=28\.12 .*cpu_pressure=6\.90/);
+    const row = receipts(f).at(-1);
+    assert.equal(row.start_cpu_pressure, 6.9);
+    assert.equal(row.start_load, 28.12);
+    writeFileSync(pressure, pressureLine(35));
+    const held = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(held.status, 75, held.stderr);
+    assert.match(held.stderr, /REFUSED beelink2 CPU pressure 35\.00 stayed over its limit of 20 \(% some avg10 in \S*pressure\)/);
+    const lifted = f.call(f.first, ["true"], { noInstall: true, env: { ...env, BEELINK_GATE_MAX_CPU_PRESSURE: "40" } });
+    assert.equal(lifted.status, 0, lifted.stderr);
+    writeFileSync(pressure, "garbage\n");
+    const unreadable = f.call(f.first, ["true"], { noInstall: true, env });
+    assert.equal(unreadable.status, 75, "an unreadable pressure file must hold the gate");
+    const invalid = f.call(f.first, ["true"], { noInstall: true, env: { ...env, BEELINK_GATE_MAX_CPU_PRESSURE: "101" } });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /BEELINK_GATE_MAX_CPU_PRESSURE must be 0-100/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto places by CPU pressure: equal load averages, the host with low pressure wins", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 28, 28), FAKE_PRESSURE_PREFIX: join(f.root, "pressure") };
+    writeFileSync(join(f.root, "pressure-100.98.195.7"), pressureLine(30.46));
+    writeFileSync(join(f.root, "pressure-100.127.22.51"), pressureLine(6.9));
+    const chosen = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(chosen.status, 0, chosen.stderr);
+    assert.match(chosen.stderr, /auto chose beelink2/);
+    assert.match(chosen.stderr, /receipt: .*host=beelink2/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("without an override, admission reads the pressure of the gate's own top-level cgroup", () => {
+  const cgroup = readFileSync("/proc/self/cgroup", "utf8").match(/^0::\/([^/\n]+)/m)?.[1];
+  const expected = cgroup && existsSync(`/sys/fs/cgroup/${cgroup}/cpu.pressure`) ? `/sys/fs/cgroup/${cgroup}/cpu.pressure` : "/proc/pressure/cpu";
+  const script = `source <(sed -n '/^pressure_file() {/,/^}/p' '${gate}'); pressure_file`;
+  const env = { ...process.env };
+  delete env.BEELINK_GATE_CPU_PRESSURE;
+  const result = run("bash", ["-c", script], { env });
+  assert.equal(result.stdout.trim(), existsSync(expected) ? expected : "");
+});
+
+test("the launcher validates BEELINK_GATE_MAX_CPU_PRESSURE and forwards it to the beelink's probe and gate", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), FAKE_PRESSURE_PREFIX: join(f.root, "pressure"), BEELINK_GATE_MAX_CPU_PRESSURE: "50" };
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) writeFileSync(join(f.root, `pressure-${ip}`), pressureLine(35));
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /CPU pressure \(35\.00, limit 50\) admitted/);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_MAX_CPU_PRESSURE=50 /);
+    const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CPU_PRESSURE: "50;id" } });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /BEELINK_GATE_MAX_CPU_PRESSURE must be 0-100/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
