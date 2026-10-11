@@ -880,5 +880,30 @@ class GateCheckoutTest(unittest.TestCase):
             f.cleanup()
 
 
+@unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
+class KeptPathTest(unittest.TestCase):
+    """Nothing under a --keep path is touched: Discovery's run roots are retired through the Lab."""
+
+    def test_a_worktree_under_a_kept_path_is_neither_removed_nor_stripped(self):
+        f = Fixture()
+        try:
+            control = f.add('control')
+            kept = os.path.join(f.root, '_runs', 'trace-coverage-20261004', 'tree')
+            os.makedirs(os.path.dirname(kept))
+            git(['worktree', 'add', '-q', '-b', 'kept', kept, 'main'], f.repo)
+            for wt in (control, kept):
+                f.write(wt, 'node_modules/x/index.js', 'x\n')
+            time.sleep(IDLE_HOURS * 3600 + 1.0)
+            rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--keep', os.path.join(f.root, '_runs'),
+                              '--journey-state', os.path.join(f.tmp, 'none'), '--gate-cache', os.path.join(f.tmp, 'none'),
+                              derived=True)
+            self.assertFalse(os.path.exists(control), 'the control tree is reaped as usual')
+            self.assertTrue(os.path.isfile(os.path.join(kept, 'node_modules', 'x', 'index.js')))
+            skip = [r for r in rows if r.get('decision') == 'skip' and r.get('path') == kept]
+            self.assertTrue(skip and 'which its owner retires' in skip[0]['reason'], skip)
+        finally:
+            f.cleanup()
+
+
 if __name__ == '__main__':
     unittest.main()
