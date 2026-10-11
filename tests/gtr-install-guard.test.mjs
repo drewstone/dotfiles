@@ -175,6 +175,23 @@ test("a Beelink under its free-space floor refuses new _wt worktrees and names i
   assert.ok(!existsSync(join(home, "code/_wt/f1")));
 });
 
+test("a symlink to the installed Git wrapper delegates through the wrapper's own preserved executable", () => {
+  // ADC's run-devtools.test.mjs links `which git` into a temporary bin; the alias has no
+  // git.gtr-original beside it, and every signoff failed with "missing preserved executable".
+  const { home, repo } = beelinkGit({ cap: 4, floor_bytes: 0 });
+  const stub = join(home, "stub-bin");
+  mkdirSync(stub);
+  symlinkSync(join(home, "bin/git"), join(stub, "git"));
+  const r = spawnSync("python3", [join(stub, "git"), "rev-parse", "--is-inside-work-tree"], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  assert.equal(r.stderr.includes("missing preserved executable"), false, r.stderr);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "true");
+});
+
 test("the Beelink shim sends only worktree commands to Python", () => {
   const shim = readFileSync(resolve("host/gtr-install-guard/beelink-git"), "utf8");
   assert.match(shim, /\*" worktree "\*\) exec \/usr\/bin\/python3 -I -S \/usr\/local\/lib\/beelink-worktree-cap\/git "\$@"/);
