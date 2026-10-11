@@ -243,6 +243,9 @@ test('refuses plaintext remote origins, unknown apps, and reports an app that do
   const unknown = await run(null, ['--app', 'nope', 'Go'])
   assert.equal(unknown.code, 2)
   assert.match(unknown.stderr, /unknown app "nope"/)
+  const alias = await run(null, ['--app', 'hardware', '--workspace', 'ws1', 'Go'], { env: { PHYSIM_BASE_URL: 'http://hardware.example.com' } })
+  assert.equal(alias.code, 2)
+  assert.match(alias.stderr, /refusing to send a key to http:\/\/hardware\.example\.com/)
   const legacy = createServer((_req, res) => { res.writeHead(404, { 'content-type': 'text/html' }); res.end('<html>Not Found</html>') })
   await new Promise((done) => legacy.listen(0, '127.0.0.1', done))
   try {
