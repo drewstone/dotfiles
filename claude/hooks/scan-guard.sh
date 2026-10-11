@@ -17,6 +17,13 @@
 # state/cache/config tree under it. Searches inside a repository or a named
 # subdirectory stay allowed.
 #
+# Bounded finds stay allowed on a broad root: `-maxdepth` up to 3, or `-xdev` on
+# /mnt (its own filesystem, without the archive drive). `-xdev` on / or the home
+# still walks every checkout. Codex runs this hook too (~/.codex/hooks.json,
+# installed by claude/install.sh); on 2026-10-11 a Codex session's
+# `find / -name ...` walked /mnt/traces for 35+ min on drew-gtr-pro because only
+# Claude ran the guard.
+#
 # Fail-open: any parse failure exits 0 so normal Bash use is never blocked.
 
 set -uo pipefail
@@ -34,6 +41,13 @@ try:
 except Exception:
     sys.exit(0)
 cmd = (d.get("tool_input") or {}).get("command") or ""
+# Codex can pass the command as argv; judge the script a shell is given.
+if isinstance(cmd, list):
+    words = [str(w) for w in cmd]
+    shell = len(words) >= 3 and os.path.basename(words[0]) in ("bash", "sh", "zsh") and words[1] in ("-c", "-lc", "-ilc")
+    cmd = words[2] if shell else shlex.join(words)
+if not isinstance(cmd, str):
+    sys.exit(0)
 home = os.path.expanduser("~")
 # Roots too broad to scan: the filesystem root, /home, /mnt and the archive drive, the home itself and its
 # sprawling hidden trees.
@@ -92,7 +106,14 @@ def broad_roots(seg, base):
     if not args:
         args = ["."]
     broad = {norm(b) for b in BROAD}
-    return [t for t in args if resolve(t, base) in broad]
+    hits = [t for t in args if resolve(t, base) in broad]
+    if prog == "find" and hits:
+        depth = next((toks[i + 1] for i, t in enumerate(toks[:-1]) if t == "-maxdepth"), None)
+        if depth is not None and depth.isdigit() and int(depth) <= 3:
+            return []
+        if "-xdev" in toks or "-mount" in toks:
+            hits = [t for t in hits if resolve(t, base) != "/mnt"]
+    return hits
 
 hits = []
 # Follow `cd` within the command, so `cd ~/code && grep -r x .` is judged from ~/code.
@@ -110,9 +131,9 @@ if hits:
         "permissionDecisionReason": (
             f"scan-guard: recursive search over a broad tree ({', '.join(sorted(set(hits)))}) is blocked. "
             "On the Mac these ran 4-10 min at full CPU while load was 50-110; on drew-gtr-pro `find /` "
-            "walked the archive drive for up to 75 min and stalled its trace capture. Search the owning repo, "
-            "a named subdirectory, the specific state file, or look up vault secrets by key name "
-            "(dotenvx get -f <file>)."
+            "walked the archive drive for up to 75 min and stalled its trace capture. Use `git grep` in the "
+            "owning repo, `fd <name> <path>` or `find <path> -maxdepth 3` on a named directory, `qmd` for the "
+            "markdown docs, the specific state file, or vault secrets by key name (dotenvx get -f <file>)."
         ),
     }}))
 sys.exit(0)
