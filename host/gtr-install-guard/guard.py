@@ -16,9 +16,18 @@ checkouts (tool caches such as agent-record's renderers, a scratch directory pro
 
 uv keeps its narrower rule: refused only inside a `_wt` worktree, because GTR's own tools run
 through `uv run` from their checkouts.
+
+On a Beelink the same Git entrypoint carries `git.worktree-cap.json` beside it and applies only the
+worktree cap: a `git worktree add` into `_wt` must name its fleet lane, and is refused while that lane
+already holds `cap` worktrees there or the filesystem has less than `floor_bytes` free. The refusal
+lists the longest-idle trees to release with wt-remove. Installs stay allowed: Beelinks are where they run.
 """
+import json
 import os
+import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 HOME = Path.home()
@@ -244,6 +253,118 @@ def refusal(manager: str, argv: list[str], cwd: Path):
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 
 
+def cap_config(entry: Path):
+    try:
+        return json.loads(Path(str(entry) + ".worktree-cap.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def fleet_lane():
+    """The lane creating this tree: FLEET_LANE, else the fleet STATUS file name (sent over ssh)."""
+    lane = os.environ.get("FLEET_LANE", "").strip()
+    if lane:
+        return lane
+    name = Path(os.environ.get("FLEET_STATUS_FILE", "")).name
+    if name.endswith(".md") and "--" in name:
+        operator, window = name[:-3].split("--", 1)
+        return f"{operator}:{window}"
+    return None
+
+
+def admin_dir(tree: Path):
+    try:
+        text = (tree / ".git").read_text(errors="replace").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    path = Path(text[len("gitdir:"):].strip())
+    return path if path.is_absolute() else (tree / path).resolve()
+
+
+def idle_seconds(admin: Path, now: float) -> float:
+    stamps = []
+    for name in ("HEAD", "index", "logs/HEAD"):
+        try:
+            stamps.append((admin / name).stat().st_mtime)
+        except OSError:
+            pass
+    return now - max(stamps) if stamps else 0.0
+
+
+def trees():
+    """(path, lane or None, idle seconds) for each linked worktree directly under a _wt root."""
+    now = time.time()
+    rows = []
+    for root in ROOTS:
+        try:
+            children = sorted(root.iterdir())
+        except OSError:
+            continue
+        for tree in children:
+            admin = admin_dir(tree)
+            if admin is None:
+                continue
+            try:
+                lane = (admin / "fleet-lane").read_text().strip() or None
+            except OSError:
+                lane = None
+            rows.append((tree, lane, idle_seconds(admin, now)))
+    return rows
+
+
+def release_list(rows, limit=5) -> str:
+    rows = sorted(rows, key=lambda row: -row[2])[:limit]
+    return "".join(f"\n  OWNER_RELEASED=1 wt-remove {tree}   # idle {idle / 3600:.1f} h" for tree, _, idle in rows)
+
+
+def cap_refusal(config: dict, argv: list[str], cwd: Path):
+    """On a Beelink: the refusal for a capped worktree add, or None; also the lane to record."""
+    target = git_worktree_add_target(argv, cwd)
+    if not target or not inside_worktree(target[0], target[1]):
+        return None, None
+    lane = fleet_lane()
+    host = socket.gethostname().split(".")[0]
+    if not lane:
+        return ("beelink-worktree-cap: refused git worktree add into _wt without a fleet lane. "
+                "Prefix the command with FLEET_LANE=<operator>:<lane> (your fleet STATUS file name, "
+                f"with '--' read as ':'); each lane may hold {config['cap']} worktrees on {host}."), None
+    rows = trees()
+    mine = [row for row in rows if row[1] == lane]
+    if len(mine) >= config["cap"]:
+        return (f"beelink-worktree-cap: refused git worktree add for {lane}: it holds {len(mine)} of "
+                f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine)}"), None
+    free = None
+    probe = resolved(target[0], target[1])[0]
+    while free is None:
+        try:
+            stat = os.statvfs(probe)
+            free = stat.f_bavail * stat.f_frsize
+        except OSError:
+            if probe == probe.parent:
+                break
+            probe = probe.parent
+    if free is not None and free < config["floor_bytes"]:
+        named = mine or rows
+        whose = "this lane's" if mine else "the host's"
+        return (f"beelink-worktree-cap: refused git worktree add for {lane}: {host} has "
+                f"{free / 2**30:.0f} GiB free, under its {config['floor_bytes'] / 2**30:.0f} GiB floor. "
+                f"Free space first; {whose} longest-idle trees:{release_list(named)}"), None
+    return None, lane
+
+
+def record_lane(argv: list[str], cwd: Path, lane: str) -> None:
+    target, base = git_worktree_add_target(argv, cwd)
+    tree = resolved(target, base)[0]
+    admin = admin_dir(tree)
+    if admin is not None:
+        try:
+            (admin / "fleet-lane").write_text(lane + "\n")
+        except OSError as error:
+            print(f"beelink-worktree-cap: could not record lane for {tree}: {error}", file=sys.stderr)
+
+
 def main() -> None:
     entry = Path(sys.argv[0]).absolute()
     manager = entry.name
@@ -252,6 +373,19 @@ def main() -> None:
         print(f"gtr-install-guard: missing preserved executable for {entry}", file=sys.stderr)
         raise SystemExit(127)
     argv = sys.argv[1:]
+    config = cap_config(entry) if manager == "git" else None
+    if config is not None:
+        message, lane = cap_refusal(config, argv, Path.cwd())
+        if message:
+            print(message, file=sys.stderr)
+            raise SystemExit(125)
+        real = str(original.resolve(strict=True))
+        if lane is None:
+            os.execv(real, [real, *argv])
+        code = subprocess.call([real, *argv])
+        if code == 0:
+            record_lane(argv, Path.cwd(), lane)
+        raise SystemExit(code)
     message = refusal(manager, argv, Path.cwd())
     if message:
         print(message, file=sys.stderr)
