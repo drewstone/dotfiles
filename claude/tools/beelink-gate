@@ -1519,10 +1519,20 @@ encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
 # One probe line for a beelink, or nothing when it cannot be read.
 probe_of() {
-  local target=$1
-  update_window_of "$target" 2>/dev/null || return 1
-  heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" 2>/dev/null \
-    | grep '^beelink-gate-probe ' | tail -1
+  local target=$1 attempt line
+  # A busy beelink's sshd drops some new connections (MaxStartups) while
+  # hundreds of lane sessions are open; one dropped probe made auto treat the
+  # host as unreachable for a whole placement round (ADC #10352, 2026-10-12
+  # 00:01Z, beelink2 at load 70 answering SSH in under a second).
+  for attempt in 1 2 3; do
+    if update_window_of "$target" 2>/dev/null; then
+      line=$(heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" 2>/dev/null \
+        | grep '^beelink-gate-probe ' | tail -1)
+      [ -z "$line" ] || { echo "$line"; return 0; }
+    fi
+    (( attempt == 3 )) || sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"
+  done
+  return 1
 }
 field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
 overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1"); [ -n "$load" ] && [ -n "$limit" ] && over_limit "$load" "$limit"; }
