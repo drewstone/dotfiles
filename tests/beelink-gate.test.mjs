@@ -1824,6 +1824,40 @@ test("a free checkout goes to the oldest waiting gate, not the first to poll", a
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a ticket whose pid now belongs to a later process does not hold the checkout", () => {
+  const f = fixture();
+  const reused = spawn("sleep", ["30"], { stdio: "ignore" });
+  try {
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    // A killed gate left this ticket an hour ago; its pid now names a process that started later.
+    const ticket = join(f.cache, ".locks", `queue-local-owner-repo.${Math.floor(Date.now() / 1000) - 3600}.${reused.pid}`);
+    writeFileSync(ticket, "");
+    const old = new Date(Date.now() - 3600_000);
+    utimesSync(ticket, old, old);
+    const started = Date.now();
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(Date.now() - started < 15_000, "the gate waited behind a stale ticket");
+    assert.equal(existsSync(ticket), false, "the stale ticket was kept");
+  } finally {
+    reused.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a gate that gives up while waiting leaves no queue ticket", () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(90));
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    assert.equal(result.status, 75, result.stderr);
+    const locks = join(f.cache, ".locks");
+    const left = existsSync(locks) ? readdirSync(locks).filter((n) => n.startsWith("queue-") || n.startsWith("urgent-")) : [];
+    assert.deepEqual(left, []);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a finished gate frees its checkout before the post-command cache prune", () => {
   const f = fixture();
   try {
