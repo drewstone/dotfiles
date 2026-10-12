@@ -857,6 +857,9 @@ test("the GTR entrypoint forwards a host slot cap to the remote gate", () => {
     assert.match(readFileSync(join(f.root, "ssh-remote-commands"), "utf8"), /^env (\S+ )*BEELINK_GATE_MAX_CONCURRENT=2 (\S+ )*bash -s -- --job-submit beelink2-[0-9a-f]{32} /m);
     assert.equal(receipts(f).at(-1).pr_number, 417);
     assert.equal(receipts(f).at(-1).lane, "op-company:beelink-gate-caps");
+    const invalidPr = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_PR: "417oops" } });
+    assert.equal(invalidPr.status, 2);
+    assert.match(invalidPr.stderr, /invalid BEELINK_GATE_PR/);
     const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CONCURRENT: "2;id" } });
     assert.equal(invalid.status, 2);
   } finally { rmSync(f.root, { recursive: true, force: true }); }

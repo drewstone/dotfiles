@@ -2288,6 +2288,7 @@ if [ -n "${BEELINK_GATE_LOAD_WAIT:-}" ]; then
   seconds_of "$BEELINK_GATE_LOAD_WAIT" >/dev/null || die "invalid BEELINK_GATE_LOAD_WAIT: $BEELINK_GATE_LOAD_WAIT"
 fi
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+[[ -z "${BEELINK_GATE_PR:-}" || "${BEELINK_GATE_PR:-}" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_PR"
 if [ -z "${BEELINK_GATE_LANE:-}" ]; then
   BEELINK_GATE_LANE=${FLEET_LANE:-}
   if [ -z "$BEELINK_GATE_LANE" ] && [[ "${FLEET_STATUS_FILE:-}" =~ /([^/]+)--([^/]+)\.md$ ]]; then
