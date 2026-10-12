@@ -1666,9 +1666,11 @@ on_beelink() {
     done
   }
   stop_heartbeat() {
+    # Close the pipe reader first so a feeder blocked writing the script body
+    # gets SIGPIPE before we wait for its shell to run the TERM trap.
+    exec {heartbeat_fd}<&-
     kill -TERM "$heartbeat_pid" 2>/dev/null || true
     wait "$heartbeat_pid" 2>/dev/null || true
-    exec {heartbeat_fd}<&-
   }
   if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
     exec {heartbeat_fd}< <(heartbeat_input)

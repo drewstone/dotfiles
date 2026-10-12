@@ -74,6 +74,10 @@ if [[ "\${rest[0]}" == reg ]]; then
   printf '    ScheduledInstallTime   REG_DWORD    0x%x\\r\\n' "$FAKE_WU_HOUR"
   exit 0
 fi
+if [[ "\${FAKE_EXEC_CHANNEL_FAIL:-0}" == 1 && "\${rest[0]}" == "wsl.exe" ]]; then
+  printf 'exec request failed on channel 0\\n' >&2
+  exit 255
+fi
 printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
 printf '%s\\n' "\${rest[*]:2}" > '${join(f.root, "ssh-remote-command")}'
 # FAKE_PROBE_DROPS names a file holding how many probe connections to drop, like a busy sshd.
@@ -224,6 +228,37 @@ exec /bin/sleep "$@"
     await sleepMs(100);
     assert.ok(heartbeatPids.every((pid) => !alive(pid)), `heartbeat pollers still alive: ${heartbeatPids.filter(alive)}`);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an SSH exec-channel refusal closes the feeder pipe and reaps its shell", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const child = spawn("bash", [gate, "beelink2", f.url, f.first, "--", "true"], {
+    env: { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_EXEC_CHANNEL_FAIL: "1" },
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const completed = new Promise((resolveDone) => child.once("close", (status, signal) => resolveDone({ status, signal })));
+  let timer;
+  try {
+    const outcome = await Promise.race([
+      completed,
+      new Promise((resolveDone) => { timer = setTimeout(() => resolveDone(undefined), 2500); }),
+    ]);
+    clearTimeout(timer);
+    assert.ok(outcome, `launcher did not exit after the transport failure: ${stderr}`);
+    assert.equal(outcome.status, 255, stderr);
+    assert.match(stderr, /exec request failed on channel 0/);
+    await sleepMs(50);
+    const survivors = run("pgrep", ["-g", String(child.pid)]);
+    assert.equal(survivors.status, 1, `feeder process group survived: ${survivors.stdout}`);
+  } finally {
+    clearTimeout(timer);
+    try { process.kill(-child.pid, "SIGKILL"); } catch {}
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 test("Windows policy is required and a blocked start reports the next allowed time", () => {
