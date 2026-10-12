@@ -1632,11 +1632,11 @@ test("an auto gate stops moving once it has waited past the starvation backstop,
   }
 });
 
-test("a --dev auto run keeps moving between hosts after the starvation time, since dev runs have no backstop", async () => {
+test("a --dev auto run keeps re-placing after the starvation time, since dev runs have no backstop", async () => {
   const f = fixture();
   const older = [];
   try {
-    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "2s", BEELINK_GATE_LOAD_WAIT: "60s" };
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "1s", BEELINK_GATE_LOAD_WAIT: "60s" };
     for (const ip of ["100.98.195.7", "100.127.22.51"]) {
       const locks = join(f.root, `cache-${ip}`, ".locks");
       mkdirSync(locks, { recursive: true });
@@ -1648,8 +1648,10 @@ test("a --dev auto run keeps moving between hosts after the starvation time, sin
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const closed = new Promise((resolveDone) => child.on("close", resolveDone));
-    for (let i = 0; i < 300 && (stderr.match(/not admitted on/g) ?? []).length < 3; i++) await sleepMs(50);
-    assert.ok((stderr.match(/not admitted on/g) ?? []).length >= 3, stderr);
+    // The second refusal proves a placement after STARVE_AFTER still has an
+    // admission deadline. A regular gate would stay on that placement.
+    for (let i = 0; i < 600 && (stderr.match(/not admitted on/g) ?? []).length < 2; i++) await sleepMs(50);
+    assert.ok((stderr.match(/not admitted on/g) ?? []).length >= 2, stderr);
     assert.doesNotMatch(stderr, /staying on beelink/);
     child.kill();
     await closed;
