@@ -1642,6 +1642,28 @@ test("an admitted gate tells its command so through BEELINK_GATE_ADMITTED", () =
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a finished gate stops every process its command left running, detached or not", () => {
+  const f = fixture();
+  const pids = join(f.root, "pids");
+  const running = (pid) => {
+    try { return readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1][0] !== "Z"; } catch { return false; }
+  };
+  let left = [];
+  try {
+    const script = `sleep 300 >/dev/null 2>&1 & echo $! >> '${pids}'; setsid sleep 300 >/dev/null 2>&1 < /dev/null & echo $! >> '${pids}'`;
+    const result = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    left = readFileSync(pids, "utf8").trim().split("\n").map(Number);
+    assert.equal(left.length, 2);
+    assert.deepEqual(left.filter(running), [], "a process outlived its gate");
+    assert.match(result.stderr, /receipt: .* reaped=2\n/);
+    assert.equal(receipts(f).at(-1).reaped, 2);
+  } finally {
+    for (const pid of left) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a --dev run has its own checkout and slots, waits behind no merge gate, and gets no starvation backstop", async () => {
   const f = fixture();
   const holders = [];
