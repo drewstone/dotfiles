@@ -87,6 +87,10 @@ else
   say "installed $TAG ($TARGET, sha256 $WANT)"
 fi
 
+# The deploy service runs with a minimal PATH that lacks ~/.local/bin, where the
+# native installer puts claude; without this fallback a deploy never registered
+# the wrapper (#408 reached GTR at 03:03 with the bare binary still registered).
+PATH="$PATH:$HOME/.local/bin"
 command -v claude >/dev/null 2>&1 || { say "claude CLI not on PATH; server not registered"; exit 0; }
 
 # --no-update-check: the server otherwise asks GitHub for a newer release at startup and
