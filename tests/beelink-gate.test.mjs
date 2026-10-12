@@ -1686,6 +1686,41 @@ test("a command's commits that never reached the remote are saved to a bundle be
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a branch-only commit is bundled under its branch once, and a later gate does not bundle it again", () => {
+  const f = fixture();
+  try {
+    const id = "-c user.name=t -c user.email=t@t";
+    const script = `git switch -qc side && git ${id} commit -q --allow-empty -m side && git rev-parse HEAD && git switch -q --detach ${f.first}`;
+    const first = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(first.status, 0, first.stderr);
+    const commit = first.stdout.trim().split("\n").at(-1);
+    const bundle = receipts(f).at(-1).bundle;
+    assert.ok(bundle && existsSync(bundle), first.stderr);
+    assert.match(first.stderr, /restore: git fetch \S+\.bundle refs\/heads\/side:refs\/gate-bundle\/side/);
+    assert.match(spawnSync("git", ["bundle", "list-heads", bundle], { encoding: "utf8" }).stdout, new RegExp(`^${commit} refs/heads/side$`, "m"));
+    const later = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(later.status, 0, later.stderr);
+    assert.equal(receipts(f).at(-1).bundle, null, later.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("when no bundle can be written, unpushed commits are kept as refs in the checkout", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.root, "state"), { recursive: true });
+    writeFileSync(join(f.root, "state", "bundles"), "not a directory");
+    const script = "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m kept && git rev-parse HEAD";
+    const result = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    const commit = result.stdout.trim().split("\n").at(-1);
+    const saved = receipts(f).at(-1).bundle;
+    assert.match(saved, /^refs\/beelink-gate-saved\/\S+$/);
+    assert.match(result.stderr, /WARNING could not write a bundle; 1 unpushed commit\(s\) kept as refs\/beelink-gate-saved/);
+    const checkout = join(f.cache, "local", "owner", "repo");
+    assert.equal(f.git(["-C", checkout, "rev-parse", `${saved}/HEAD`], f.root), commit);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a --dev run has its own checkout and slots, waits behind no merge gate, and gets no starvation backstop", async () => {
   const f = fixture();
   const holders = [];

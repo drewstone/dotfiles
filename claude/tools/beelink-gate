@@ -1073,7 +1073,7 @@ remote_gate() {
 
   # The launcher holds stdin open for the gate's whole life. EOF means it died
   # (a killed session, a lost SSH connection), so the gate stops itself.
-  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" reaped=0 bundle_note=""
+  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" reaped=0 bundle_note="" gate_refs_before="" gate_refs_taken=0
   # Every step's processes carry this token in their environment. A process
   # that leaves the step's group (setsid, a daemonizing dev server) keeps it,
   # so the gate can still find and stop it. Global: finish reads it from the EXIT trap.
@@ -1278,18 +1278,33 @@ PY
   # --dev observer's push hit 'closed by remote host' and its commit was gone
   # once the next gate took the checkout. Commits reachable from HEAD or a local
   # branch but not from the gated SHA or any remote ref go into a bundle first.
+  # Only commits this gate's command made count: refs the checkout already held
+  # when the command started (a branch an earlier --branch gate left behind)
+  # are excluded, so they are not bundled again by every later gate.
   save_unpushed() {
-    [ -d "$checkout/.git" ] || return 0
-    local new
-    new=$(git -C "$checkout" rev-list --count HEAD --branches --not --remotes "$sha" 2>/dev/null) || return 0
+    [ -d "$checkout/.git" ] && [ "$gate_refs_taken" = 1 ] || return 0
+    local new stamp heads h restore=""
+    local -a before=()
+    [ -z "$gate_refs_before" ] || read -ra before <<< "$gate_refs_before"
+    new=$(git -C "$checkout" rev-list --count HEAD --branches --not --remotes "$sha" "${before[@]}" 2>/dev/null) || return 0
     (( new > 0 )) || return 0
-    bundle_note="$STATE_DIR/bundles/$owner-$repo-${sha:0:12}-$(date -u +%Y%m%dT%H%M%SZ)-$$.bundle"
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    bundle_note="$STATE_DIR/bundles/$owner-$repo-${sha:0:12}-$stamp.bundle"
     if mkdir -p "${bundle_note%/*}" &&
-      git -C "$checkout" bundle create "$bundle_note" HEAD --branches --not --remotes "$sha" >/dev/null 2>&1; then
-      echo "beelink-gate: $new commit(s) not on the remote saved to $bundle_note; restore: git fetch $bundle_note HEAD" >&2
+      git -C "$checkout" bundle create "$bundle_note" HEAD --branches --not --remotes "$sha" "${before[@]}" >/dev/null 2>&1; then
+      # HEAD may hold nothing new when the commit is on a branch; name each saved head.
+      heads=$(git bundle list-heads "$bundle_note" 2>/dev/null | awk '{ print $2 }')
+      for h in $heads; do restore+=" $h:refs/gate-bundle/${h#refs/heads/}"; done
+      echo "beelink-gate: $new commit(s) not on the remote saved to $bundle_note; restore: git fetch $bundle_note$restore" >&2
     else
-      echo "beelink-gate: WARNING could not save $new unpushed commit(s) from $checkout" >&2
-      bundle_note=failed
+      # No bundle: keep the commits as refs inside the checkout, which the next
+      # gate's checkout and clean leave alone, rather than lose them.
+      bundle_note="refs/beelink-gate-saved/$stamp"
+      git -C "$checkout" update-ref "$bundle_note/HEAD" HEAD 2>/dev/null
+      for h in $(git -C "$checkout" for-each-ref --format='%(refname:short)' refs/heads); do
+        git -C "$checkout" update-ref "$bundle_note/$h" "refs/heads/$h" 2>/dev/null
+      done
+      echo "beelink-gate: WARNING could not write a bundle; $new unpushed commit(s) kept as $bundle_note/* in $checkout" >&2
     fi
   }
   finish() {
@@ -1402,6 +1417,8 @@ PY
   git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
+  gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads refs/beelink-gate-saved | sort -u | tr '\n' ' ')
+  gate_refs_taken=1
   # Keep this gate's fetched checkout locked and intact; reclaim only other idle caches.
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
