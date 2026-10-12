@@ -1768,3 +1768,34 @@ test("workers inside a gate are capped at cores per running gate, unless the cal
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+test("a GitHub cache fetches over SSH whatever URL spelling the caller passed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "beelink-gate-url-"));
+  try {
+    const fns = `source <(sed -n '/^parse_repo_url() {/,/^}/p;/^adopt_origin() {/,/^}/p;/^fetch_url() {/,/^}/p;/^die() {/p' '${gate}')`;
+    const map = run("bash", ["-c", `${fns}; for u in https://github.com/o/r https://github.com/o/r.git git@github.com:o/r.git file:///x/o/r.git; do parse_repo_url "$u"; fetch_url "$u"; done`]);
+    assert.equal(map.status, 0, map.stderr);
+    assert.deepEqual(map.stdout.trim().split("\n"), ["git@github.com:o/r.git", "git@github.com:o/r.git", "git@github.com:o/r.git", "file:///x/o/r.git"]);
+    // A cache an earlier gate created from the https spelling is moved to SSH.
+    const repo = join(dir, "r");
+    run("git", ["init", "-q", repo]);
+    run("git", ["-C", repo, "remote", "add", "origin", "https://github.com/o/r"]);
+    const adopt = run("bash", ["-c", `${fns}; parse_repo_url https://github.com/o/r; adopt_origin '${repo}' https://github.com/o/r && git -C '${repo}' config --get remote.origin.url`]);
+    assert.equal(adopt.status, 0, adopt.stderr);
+    assert.equal(adopt.stdout.trim(), "git@github.com:o/r.git");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a gate that cannot reach the origin exits 75, not as a failed change", () => {
+  const f = fixture();
+  try {
+    const realGit = spawnSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    const failBin = join(f.root, "fail-bin");
+    mkdirSync(failBin);
+    writeFileSync(join(failBin, "git"), `#!/usr/bin/env bash\n[[ " $* " == *" ls-remote "* ]] && { echo "fatal: could not read Username for 'https://github.com': terminal prompts disabled" >&2; exit 128; }\nexec ${realGit} "$@"\n`);
+    chmodSync(join(failBin, "git"), 0o755);
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { PATH: `${failBin}:${f.env.PATH}` } });
+    assert.equal(result.status, 75, result.stderr);
+    assert.match(result.stderr, /TEMPFAIL .*could not reach local\/owner\/repo/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
