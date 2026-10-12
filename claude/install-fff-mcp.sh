@@ -93,6 +93,11 @@ command -v claude >/dev/null 2>&1 || { say "claude CLI not on PATH; server not r
 # prints a curl-pipe-shell upgrade hint into the session. fff-mcp-scoped (claude/tools,
 # linked into ~/bin by install.sh) starts it only for one git work tree; see that file.
 WRAPPER="$HOME/bin/fff-mcp-scoped"
+# install.sh links it with every tool; this script can also run on its own.
+if [ ! -x "$WRAPPER" ]; then
+  mkdir -p "$HOME/bin" && ln -sfn "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tools/fff-mcp-scoped" "$WRAPPER" ||
+    { say "WARN could not link $WRAPPER; server not registered"; exit 0; }
+fi
 current="$(claude mcp get "$NAME" 2>/dev/null || true)"
 if printf '%s\n' "$current" | grep -qF -- "Command: $WRAPPER" && printf '%s\n' "$current" | grep -qF -- "Args: $BIN --no-update-check"; then
   say "registered for Claude Code"

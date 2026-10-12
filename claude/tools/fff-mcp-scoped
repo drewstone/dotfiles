@@ -26,10 +26,11 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "$PWD is not inside a
 case "$top" in "$HOME" | /) refuse "$top is the home or root directory" ;; esac
 
 max_nested=${FFF_MCP_MAX_NESTED_REPOS:-5}
-# fff skips ignored paths, so a gitignored .worktrees/ of the repo's own checkouts does not count.
-nested=$(find "$top" -mindepth 2 -maxdepth 3 -name .git -not -path "$top/.git" 2>/dev/null | head -n 200 |
+# fff skips ignored paths, so a gitignored .worktrees/ of the repo's own checkouts does not count;
+# ignored repos are dropped before counting, so many of them cannot hide the others.
+nested=$(find "$top" -mindepth 2 -maxdepth 3 -name .git -not -path "$top/.git" 2>/dev/null |
   sed 's|/\.git$||' | git -C "$top" check-ignore --stdin --verbose --non-matching 2>/dev/null |
-  awk -F'\t' '$1 == "::" { n++ } END { print n + 0 }')
+  awk -F'\t' -v max="$max_nested" '$1 == "::" && ++n > max { exit } END { print n + 0 }')
 [ "$nested" -le "$max_nested" ] || refuse "$top holds more than $max_nested other repos"
 
 max_files=${FFF_MCP_MAX_FILES:-100000}
