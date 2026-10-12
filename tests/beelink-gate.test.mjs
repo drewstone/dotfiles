@@ -1656,12 +1656,34 @@ test("a finished gate stops every process its command left running, detached or 
     left = readFileSync(pids, "utf8").trim().split("\n").map(Number);
     assert.equal(left.length, 2);
     assert.deepEqual(left.filter(running), [], "a process outlived its gate");
-    assert.match(result.stderr, /receipt: .* reaped=2\n/);
+    assert.match(result.stderr, /receipt: .* reaped=2 bundle=none\n/);
     assert.equal(receipts(f).at(-1).reaped, 2);
   } finally {
     for (const pid of left) { try { process.kill(pid, "SIGKILL"); } catch {} }
     rmSync(f.root, { recursive: true, force: true });
   }
+});
+
+test("a command's commits that never reached the remote are saved to a bundle before the checkout is released", () => {
+  const f = fixture();
+  try {
+    // The command commits, then its push fails.
+    const script = "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m observer && git rev-parse HEAD && exit 1";
+    const result = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(result.status, 1, result.stderr);
+    const commit = result.stdout.trim().split("\n").at(-1);
+    const bundle = receipts(f).at(-1).bundle;
+    assert.ok(bundle && existsSync(bundle), result.stderr);
+    assert.match(result.stderr, /1 commit\(s\) not on the remote saved to .*\.bundle/);
+    assert.match(result.stderr, new RegExp(`bundle=${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n`));
+    const heads = spawnSync("git", ["bundle", "list-heads", bundle], { encoding: "utf8" });
+    assert.match(heads.stdout, new RegExp(`^${commit} HEAD$`, "m"));
+    // A gate whose command commits nothing writes no bundle.
+    const clean = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.equal(receipts(f).at(-1).bundle, null);
+    assert.match(clean.stderr, /bundle=none\n/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("a --dev run has its own checkout and slots, waits behind no merge gate, and gets no starvation backstop", async () => {
