@@ -1785,6 +1785,12 @@ choose_beelink() {
   local -A seen=()
   local auto_started=$SECONDS
   while :; do
+    if [ -n "${urgent_reservation_dir:-}" ]; then
+      local reserve_pid
+      for reserve_pid in "${urgent_reservation_pids[@]}"; do
+        kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "urgent checkout reservation disconnected before admission"
+      done
+    fi
     best="" best_rank=9 best_load="" light_busy=""
     for target in beelink1 beelink2; do
       line=$(probe_of "$target") || line=""
@@ -1810,6 +1816,11 @@ choose_beelink() {
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     if [ -n "$best" ]; then
+      if [ -n "${urgent_reservation_dir:-}" ]; then
+        for reserve_pid in "${urgent_reservation_pids[@]}"; do
+          kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "urgent checkout reservation disconnected before admission"
+        done
+      fi
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       echo "$best"; return 0
     fi
