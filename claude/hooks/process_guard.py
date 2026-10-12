@@ -44,6 +44,15 @@ while their briefs said not to:
                 secret_scan.py warned, but only after the output existed. A traced script is read
                 (a remote one over ssh, once, 10 s timeout; unreadable means allowed).
 
+  env-dump      printing environment VALUES into the transcript: bare `env`/`printenv`/`export -p`/
+                `declare -x`/`set`, `env | grep X`, `printenv | ...`, reading /proc/<pid>/environ, `printenv KEY`
+                or `echo $X_TOKEN` for a secret-named variable, and env redirected into a file. Fleet lane
+                environments carry live credentials: on 2026-10-12 a subagent ran `env | grep TANGLE_` to find
+                its lane id and printed the lane's sk-tan- router key into the transcript, which forced a
+                production key rotation. Names only stay allowed (`env | cut -d= -f1`, `sed 's/=.*//'`,
+                `awk -F= '{print $1}'`, `wc`), as do `env VAR=x cmd` and `printenv` of non-secret names.
+                Override: CC_ALLOW_ENV_DUMP=1, set by Drew for the session.
+
   ledger-write  `echo '{...}' >> .agent/climb.jsonl`, `tee -a reports/climb/ledger.jsonl`: rows written
                 around `climb-log append`, which checks that every reported number names its selection
                 rule. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair Drew approved.
@@ -327,6 +336,7 @@ class Context:
         self.stream_tainted = False  # the previous pipeline stage emits such pids
         self.loops = {}  # loop variable -> ("words", words, cwd, vars) or ("chain", upstream argvs, cwd, vars)
         self.chain = []  # argvs of the pipeline so far, for what feeds `xargs` or `while read`
+        self.env_pending = None  # an env dump upstream in this pipeline, cleared by a names-only stage
 
 
 def strip_prefix(words):
@@ -658,6 +668,77 @@ def nested(text, cwd, remote, ctx, origin):
         ctx.origin = outer
 
 
+ENV_SECRET_VAR = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE|SESSION", re.I)
+PROC_ENVIRON = re.compile(r"/proc/[^\s/]+/environ\b")
+ENV_PASSTHROUGH = {"grep", "egrep", "fgrep", "rg", "sort", "uniq", "head", "tail", "tr", "cat", "column"}
+
+
+def env_dump(seg, argv):
+    """What in this pipeline stage prints environment values, or None."""
+    words = seg.words
+    for w in list(words) + list(getattr(seg, "inputs", [])):
+        if PROC_ENVIRON.search(w):
+            return f"read of {PROC_ENVIRON.search(w).group(0)}"
+    # env with no command: `env`, `env -0`, `env -u X`, `env A=1` print the whole environment.
+    for k, w in enumerate(words):
+        if w == "env" or w.endswith("/env"):
+            rest, j = words[k + 1:], 0
+            while j < len(rest):
+                if rest[j] in ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"):
+                    j += 2
+                elif rest[j].startswith("-") or ASSIGN.match(rest[j]):
+                    j += 1
+                else:
+                    break
+            if j >= len(rest):
+                return "env with no command"
+            break
+    if not argv:
+        return None
+    prog = os.path.basename(argv[0])
+    args = argv[1:]
+    names = [a for a in args if not a.startswith("-")]
+    if prog == "printenv":
+        if not names:
+            return "printenv"
+        secret = [n for n in names if ENV_SECRET_VAR.search(n)]
+        return f"printenv {secret[0]}" if secret else None
+    if prog in ("export", "declare", "typeset") and not names and all(
+            re.match(r"^-[a-zA-Z]*[px][a-zA-Z]*$", a) for a in args):
+        return f"{prog} {' '.join(args)}".strip()
+    if prog == "set" and not args:
+        return "set with no arguments"
+    if prog in ("echo", "printf", "print"):
+        for a in args:
+            for m in VAR.finditer(a):
+                name = m.group(1) or m.group(2)
+                if ENV_SECRET_VAR.search(name):
+                    return f"{prog} ${name}"
+    return None
+
+
+def env_names_only(argv):
+    """A pipeline stage that keeps only variable names (or counts), so values never print."""
+    prog = os.path.basename(argv[0]) if argv else ""
+    args = argv[1:]
+    if prog == "cut":
+        joined = " ".join(args)
+        return bool(re.search(r"-d\s*=|--delimiter[= ]=", joined)) and bool(re.search(r"(?:-f\s*|--fields[= ])1\b(?!\s*[-,])", joined))
+    if prog == "sed":
+        return any(re.match(r"^s(.)=\.\*\$?\1\1g?$", a) for a in args)
+    if prog == "awk":
+        return any(a in ("-F=", "-F", "=") for a in args) and any(re.search(r"print\s+\$1\b\s*}", a) for a in args)
+    if prog in ("wc", "sha256sum", "shasum", "sha1sum", "md5sum", "b2sum", "b3sum"):
+        return True  # a count or a fingerprint, never the value
+    return False
+
+
+def env_dump_flush(ctx):
+    if ctx.env_pending:
+        ctx.events.append(("env-dump", ctx.env_pending))
+        ctx.env_pending = None
+
+
 def commands(src, cwd, remote=False, ctx=None):
     """Flatten a shell command into Command objects, descending into nested shells."""
     ctx = ctx or Context(cwd, remote)
@@ -679,6 +760,17 @@ def commands(src, cwd, remote=False, ctx=None):
         if len(lead) >= 3 and lead[0] == "for" and lead[2] == "in":
             ctx.loops[lead[1]] = ("words", lead[3:], ctx.cwd, dict(ctx.vars))
         env, argv = strip_prefix(seg.words)
+        if ctx.env_pending:
+            if seg.pipe_in and argv and env_names_only(argv) and not seg.writes:
+                ctx.env_pending = None
+            elif not (seg.pipe_in and argv and os.path.basename(argv[0]) in ENV_PASSTHROUGH and not seg.writes):
+                env_dump_flush(ctx)
+        dumped = env_dump(seg, argv)
+        if dumped:
+            env_dump_flush(ctx)
+            ctx.env_pending = dumped + (" into " + seg.writes[0] if seg.writes else "")
+            if seg.writes:
+                env_dump_flush(ctx)
         piped_from = list(ctx.chain) if seg.pipe_in else []
         ctx.chain = (piped_from + [argv]) if argv else []
         for name, value in env.items():
@@ -812,6 +904,7 @@ def commands(src, cwd, remote=False, ctx=None):
             sub = Context(None, True, events=ctx.events)
             sub.vars.update(merged)
             result.extend(commands(shlex.join(argv[argv.index("--") + 1:]), None, True, sub))
+    env_dump_flush(ctx)
     return result
 
 
@@ -1428,6 +1521,9 @@ def evaluate_full(payload):
     hit = rule_xtrace_secrets(root.events)
     if hit:
         findings.append((*hit, False))
+    hit = rule_env_dump(root.events)
+    if hit:
+        findings.append((*hit, os.environ.get(hit[3]) == "1"))
     warnings = []
     if not findings and re.search(r"\bpr\s+merge\b", command):
         try:
@@ -1463,6 +1559,21 @@ def rule_xtrace_secrets(events):
             "transcript: on 2026-10-10 a `bash -x` run of a hosted-runner script over ssh printed the GTM operator key. "
             "Run it without -x, or wrap only the non-secret part: `set +x` before the line that reads the key and "
             "`set -x` after it. To check a key, print its length or a fingerprint, never the value.", None)
+
+
+def rule_env_dump(events):
+    """A command that prints environment values: fleet lane envs carry live keys, and the transcript keeps them."""
+    found = [e[1] for e in events if e[0] == "env-dump"]
+    if not found:
+        return None
+    return ("env-dump", "print of environment values",
+            f"This command prints environment values ({found[0]}). Fleet lane environments carry live credentials "
+            "(router keys, GitHub and sandbox tokens), and the transcript keeps whatever is printed: on 2026-10-12 a "
+            "subagent ran `env | grep TANGLE_` to find its lane id and printed the lane's sk-tan- router key, which "
+            "forced a production key rotation. Print names only (`env | cut -d= -f1 | grep TANGLE_`), or one named "
+            "non-secret variable (`printf '%s\\n' \"$TANGLE_RUN_ID\"`). To check a key, print its length "
+            "(`${#VAR}`) or a fingerprint (`printf %s \"$VAR\" | sha256sum`), never the value. Drew can allow it for a "
+            "session with CC_ALLOW_ENV_DUMP=1 (logged).", "CC_ALLOW_ENV_DUMP")
 
 
 def log(kind, rule, payload):
