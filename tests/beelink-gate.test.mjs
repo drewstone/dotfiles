@@ -1628,6 +1628,55 @@ test("an auto gate whose host falls below its disk floor while it queued gives t
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("an auto gate stops moving once it has waited past the starvation backstop, keeping its age", async () => {
+  const f = fixture();
+  const older = [];
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "2s", BEELINK_GATE_LOAD_WAIT: "60s" };
+    // Each host's one checkout is free, but an older gate is queued for it, so this gate
+    // waits there and, while it may move, gives the host back every second.
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const locks = join(f.root, `cache-${ip}`, ".locks");
+      mkdirSync(locks, { recursive: true });
+      const p = spawn("sleep", ["60"], { stdio: "ignore" });
+      older.push(p);
+      writeFileSync(join(locks, `queue-local-owner-repo.${Math.floor(Date.now() / 1000) - 3600}.${p.pid}`), "");
+    }
+    const child = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 400 && !/staying on beelink\d/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /not admitted on beelink\d within 1s/);
+    assert.match(stderr, /waited \d+s across placements; staying on beelink\d in its place in line/);
+    await sleepMs(2500);
+    // Once it stays, it does not give the host back again.
+    assert.doesNotMatch(stderr.split(/staying on beelink\d/)[1], /not admitted on/);
+    for (const p of older) p.kill();
+    assert.equal(await closed, 0, stderr);
+  } finally {
+    for (const p of older) p.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a --dev auto run keeps its admission deadline after the starvation time", () => {
+  const f = fixture();
+  try {
+    const drops = join(f.root, "probe-drops");
+    writeFileSync(drops, "2\n");
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "1s", FAKE_PROBE_DROPS: drops, BEELINK_GATE_PROBE_RETRY_SECONDS: "1" };
+    const result = run(gate, ["--dev", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    const sent = readFileSync(join(f.root, "ssh-remote-command"), "utf8");
+    assert.match(sent, /BEELINK_GATE_ADMIT_WAIT=1 /, "dev keeps the deadline needed to re-place");
+    assert.match(sent, /BEELINK_GATE_PLACED_WAIT=[1-9][0-9]* /, "the placement was past STARVE_AFTER");
+    assert.doesNotMatch(result.stderr, /staying on beelink/);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("without an override, admission reads the pressure of the gate's own top-level cgroup", () => {
   const cgroup = readFileSync("/proc/self/cgroup", "utf8").match(/^0::\/([^/\n]+)/m)?.[1];
   const expected = cgroup && existsSync(`/sys/fs/cgroup/${cgroup}/cpu.pressure`) ? `/sys/fs/cgroup/${cgroup}/cpu.pressure` : "/proc/pressure/cpu";
@@ -1939,6 +1988,106 @@ test("an --urgent auto gate is never given an admission deadline, so it keeps it
     assert.match(sent, /BEELINK_GATE_URGENT=1 /);
     assert.doesNotMatch(sent, /BEELINK_GATE_ADMIT_WAIT/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("urgent auto reserves both hosts before either checkout frees", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const cachePrefix = join(f.root, "host-cache");
+  const events = join(f.root, "events");
+  const holders = [];
+  const gates = [];
+  const launch = (priority, target) => new Promise((done) => {
+    const child = spawn("bash", [gate, ...(priority ? ["--urgent"] : []), "--no-install", target,
+      f.url, f.first, "--", "bash", "-c", `echo ${priority ? "urgent" : "normal"} >> '${events}'`],
+    { env: { ...f.env, FAKE_CACHE_PREFIX: cachePrefix, BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "0.2" } });
+    gates.push(child);
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => done({ status, stderr }));
+  });
+  try {
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const locks = join(`${cachePrefix}-${ip}`, ".locks");
+      mkdirSync(locks, { recursive: true });
+      const holder = spawn("python3", ["-c", 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
+        join(locks, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+      holders.push(holder);
+      await new Promise((ok) => holder.stdout.once("data", ok));
+    }
+    const urgent = launch(true, "auto");
+    for (let i = 0; i < 200; i++) {
+      if (["100.98.195.7", "100.127.22.51"].every((ip) =>
+        readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).some((n) => n.startsWith("urgent-local-owner-repo.")))) break;
+      await sleepMs(25);
+    }
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      assert.ok(readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).some((n) => n.startsWith("urgent-local-owner-repo.")), `${ip} reserved`);
+    }
+    const normal = launch(false, "beelink2");
+    await sleepMs(300);
+    holders[1].kill("SIGKILL");
+    const u = await urgent;
+    assert.equal(u.status, 0, u.stderr);
+    const n = await normal;
+    assert.equal(n.status, 0, n.stderr);
+    assert.equal(readFileSync(events, "utf8").trim().split("\n").join(","), "urgent,normal");
+    assert.match(u.stderr, /urgent priority reserved on both beelinks/);
+    for (let i = 0; i < 50 && ["100.98.195.7", "100.127.22.51"].some((ip) =>
+      readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).some((name) => name.startsWith("urgent-"))); i++) await sleepMs(100);
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      assert.deepEqual(readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).filter((n) => n.startsWith("urgent-")), [], `${ip} reservation removed`);
+    }
+  } finally {
+    for (const gateChild of gates) gateChild.kill("SIGKILL");
+    for (const holder of holders) holder.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("urgent auto returns the remote command failure after stopping its reservation monitor", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) };
+    const result = run(gate, ["--urgent", "--no-install", "auto", f.url, f.first, "--", "bash", "-c", "exit 7"], { env });
+    assert.equal(result.status, 7, result.stderr);
+    assert.match(result.stderr, /receipt: .*exit=7/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("urgent light auto reserves the light checkout pool on both hosts", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const cachePrefix = join(f.root, "host-cache");
+  const holders = [];
+  let gateChild;
+  try {
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const locks = join(`${cachePrefix}-${ip}`, ".locks");
+      mkdirSync(locks, { recursive: true });
+      const holder = spawn("python3", ["-c", 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
+        join(locks, "local-owner-repo@light.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+      holders.push(holder);
+      await new Promise((ok) => holder.stdout.once("data", ok));
+    }
+    gateChild = spawn("bash", [gate, "--urgent", "--light", "auto", f.url, f.first, "--", "true"],
+      { env: { ...f.env, FAKE_CACHE_PREFIX: cachePrefix, BEELINK_GATE_AUTO_POLL_SECONDS: "0.2" } });
+    for (let i = 0; i < 200; i++) {
+      if (["100.98.195.7", "100.127.22.51"].every((ip) =>
+        readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).some((n) => n.startsWith("urgent-local-owner-repo@light.")))) break;
+      await sleepMs(25);
+    }
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const markers = readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).filter((n) => n.startsWith("urgent-"));
+      assert.ok(markers.some((n) => n.startsWith("urgent-local-owner-repo@light.")), `${ip}: ${markers}`);
+      assert.ok(markers.every((n) => !n.startsWith("urgent-local-owner-repo.")), `${ip}: ${markers}`);
+    }
+  } finally {
+    gateChild?.kill("SIGTERM");
+    for (const holder of holders) holder.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 test("workers inside a gate are capped at cores per running gate, unless the caller chose", async () => {
