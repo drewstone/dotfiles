@@ -148,12 +148,17 @@ for root in "${root_list[@]}"; do
     # git replaces ignored files silently when origin starts tracking the same path. Ask only about
     # the paths the merge changes: listing every ignored file walked all of node_modules and
     # .worktrees, and on the Mac agent-dev-container that one listing hung a pass for over 2.5 h
-    # (2026-10-11), so no Mac checkout moved. Literal pathspecs keep a path like `a[1].ts` exact;
-    # the behind check above guarantees the pathspec list is not empty, which would list everything.
-    clobber="$(git -C "$repo" diff --name-only -z HEAD "origin/$def" \
-      | GIT_LITERAL_PATHSPECS=1 git -C "$repo" ls-files -z -o -i --exclude-standard \
-          --pathspec-from-file=- --pathspec-file-nul \
-      | tr '\0' '\n' | head -n 1)"
+    # (2026-10-11), so no Mac checkout moved. Literal pathspecs keep a path like `a[1].ts` exact, and
+    # xargs -r never runs ls-files without paths, which would list everything. ls-files has no
+    # --pathspec-from-file, and a failed check must skip the repo, not read as "nothing ignored":
+    # pipefail inside the substitution, and no `head`, whose early close would fail the pipe.
+    if ! ignored="$(set -o pipefail; git -C "$repo" diff --name-only -z HEAD "origin/$def" \
+        | GIT_LITERAL_PATHSPECS=1 xargs -0 -r git -C "$repo" ls-files -z -o -i --exclude-standard -- \
+        | tr '\0' '\n')"; then
+      say "skipped $repo: ignored-file check failed"
+      continue
+    fi
+    clobber="${ignored%%$'\n'*}"
     if [ -n "$clobber" ]; then
       say "skipped $repo: merge would replace ignored file $clobber"
       continue

@@ -112,6 +112,22 @@ class MainCheckoutFfTest(unittest.TestCase):
         self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
         self.assertEqual((repo / ".env").read_text(), "SECRET=local\n")
 
+    def test_never_replaces_a_file_inside_an_ignored_directory(self):
+        repo = self.clone("ignored-dir")
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "exclude").write_text("build/\n")
+        (repo / "build").mkdir()
+        (repo / "build" / "out.js").write_text("local\n")
+        before = git(repo, "rev-parse", "HEAD")
+        (self.seed / "build").mkdir()
+        (self.seed / "build" / "out.js").write_text("origin\n")
+        git(self.seed, "add", "build/out.js")
+        git(self.seed, "commit", "-q", "-m", "track build output")
+        git(self.seed, "push", "-q", "origin", "HEAD:main")
+        self.run_ff()
+        self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
+        self.assertEqual((repo / "build" / "out.js").read_text(), "local\n")
+
     def test_ignored_file_outside_the_merge_does_not_block(self):
         repo = self.clone("ignored-elsewhere")
         (repo / ".git" / "info").mkdir(exist_ok=True)
