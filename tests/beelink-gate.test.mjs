@@ -997,7 +997,10 @@ test("two gates of one repo run at once in separate checkouts, and a third waits
   const f = fixture();
   const events = join(f.root, "events");
   const launch = (id, hold) => new Promise((resolveDone) => {
-    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo "start-${id} $PWD" >> '${events}'; sleep ${hold}; echo end-${id} >> '${events}'`].map(encode);
+    // A holding gate ends only once both holders have started (or after 30 s), so the
+    // test measures overlap, not how fast a loaded host starts the second gate.
+    const wait = hold ? `for i in $(seq 300); do [ "$(grep -c '^start-[ab] ' '${events}')" -ge 2 ] && break; sleep 0.1; done` : "true";
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo "start-${id} $PWD" >> '${events}'; ${wait}; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
