@@ -124,9 +124,10 @@
 #     expand into anything, including a revision or another command. The walk
 #     cannot decide it, so the whole string is refused.
 #
-#   STDOUT. rtk answers only when its output comes back to the caller. When the
-#     git it would run writes to a file or into a pipe, a program reads the
-#     output, and rtk's compact display is not the format that program expects.
+#   STDOUT. rtk answers only when its output comes back to the caller. When a
+#     command it would run (git or any other) writes to a file or into a pipe, a
+#     program reads the output, and rtk's compact display is not the format that
+#     program expects.
 #
 # The cost of all four is output verbosity on commands that would otherwise
 # compact. That trade is not negotiable: an agent that reads a rewritten history
@@ -680,7 +681,7 @@ rtk_guard_args_name_revision() {
   return 1
 }
 
-# True when the stdout of the invocation starting at $1 goes somewhere other
+# True when the stdout of the command starting at token $1 goes somewhere other
 # than the caller: a file (`> x.patch`, `>> log`, `&> out`, `>&2`) or another
 # program (`| git apply`, `| tee x`). rtk's output is a compact DISPLAY for an
 # agent to read; it is not git's output format, and a file or a program that
@@ -826,8 +827,14 @@ rtk_guard_rewrite_is_provably_safe() {
       rtk_guard_debug "refuse: 'git $RTK_GUARD_SUBCOMMAND' names revision '$RTK_GUARD_REVISION'"
       return 1
     fi
-    if rtk_guard_stdout_leaves_caller "$RTK_GUARD_ARG_START"; then
-      rtk_guard_debug "refuse: 'git $RTK_GUARD_SUBCOMMAND' output goes to '$RTK_GUARD_STDOUT_SINK', not to the caller"
+  done
+
+  # Every rtk word here was inserted by the rewrite (an rtk the caller typed was
+  # refused above), so each one starts a command whose output rtk compacts.
+  for ((i = 0; i < ${#RTK_GUARD_TOK[@]}; i++)); do
+    rtk_guard_is_rtk_word "${RTK_GUARD_TOK[$i]}" || continue
+    if rtk_guard_stdout_leaves_caller "$((i + 1))"; then
+      rtk_guard_debug "refuse: output of the rtk command at token $i goes to '$RTK_GUARD_STDOUT_SINK', not to the caller"
       return 1
     fi
   done

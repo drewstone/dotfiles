@@ -713,13 +713,23 @@ test("rtk never answers when git's output goes to a file or a program", (t) => {
       "git diff -- a.txt>x.patch",
       "git diff 2>&1 > x.patch",
       "git diff 2>x>y",
+      // the same holds for every command rtk compacts, not only git
+      "cargo build > build.log",
+      "ls -la > listing.txt",
+      "cargo test 2>&1 | tail -5",
+      "git diff && cargo build > build.log",
     ];
     const leaks = sinks.filter((command) => guardVerdict(command, fixture.repo) !== "real");
     assert.deepEqual(leaks, [], "these send rtk's display to a file or a program");
 
+    // Control: without the sink the hook does hand this diff to rtk, so the
+    // byte comparison below is a real difference the guard prevents.
+    assert.ok(routesToRtk(finalCommand("git diff", fixture.repo), "diff"), "the hook no longer rewrites a bare git diff, so this test measures nothing");
+    const display = spawnSync("bash", ["-c", "rtk git diff"], { cwd: fixture.repo, env: fixture.env });
     const raw = spawnSync("git", ["diff"], { cwd: fixture.repo, env: fixture.env });
     assert.equal(raw.status, 0, String(raw.stderr));
     assert.ok(raw.stdout.length > 0, "fixture has no unstaged diff, so the comparison proves nothing");
+    assert.ok(!display.stdout.equals(raw.stdout), "rtk prints this diff byte-identically, so the comparison proves nothing");
     for (const [command, file] of [
       ["git diff > ../redirected.patch", "redirected.patch"],
       ["git diff | cat > ../piped.patch", "piped.patch"],
