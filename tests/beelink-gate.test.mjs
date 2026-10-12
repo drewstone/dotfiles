@@ -1632,6 +1632,33 @@ test("an auto gate stops moving once it has waited past the starvation backstop,
   }
 });
 
+test("a --dev auto run keeps moving between hosts after the starvation time, since dev runs have no backstop", async () => {
+  const f = fixture();
+  const older = [];
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "2s", BEELINK_GATE_LOAD_WAIT: "60s" };
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const locks = join(f.root, `cache-${ip}`, ".locks");
+      mkdirSync(locks, { recursive: true });
+      const p = spawn("sleep", ["60"], { stdio: "ignore" });
+      older.push(p);
+      writeFileSync(join(locks, `queue-local-owner-repo@dev.${Math.floor(Date.now() / 1000) - 3600}.${p.pid}`), "");
+    }
+    const child = spawn(gate, ["--dev", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 300 && (stderr.match(/not admitted on/g) ?? []).length < 3; i++) await sleepMs(50);
+    assert.ok((stderr.match(/not admitted on/g) ?? []).length >= 3, stderr);
+    assert.doesNotMatch(stderr, /staying on beelink/);
+    child.kill();
+    await closed;
+  } finally {
+    for (const p of older) p.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("without an override, admission reads the pressure of the gate's own top-level cgroup", () => {
   const cgroup = readFileSync("/proc/self/cgroup", "utf8").match(/^0::\/([^/\n]+)/m)?.[1];
   const expected = cgroup && existsSync(`/sys/fs/cgroup/${cgroup}/cpu.pressure`) ? `/sys/fs/cgroup/${cgroup}/cpu.pressure` : "/proc/pressure/cpu";

@@ -1971,7 +1971,8 @@ while :; do
   # dropped its queue ticket for a while, so a newer gate on the host it had just
   # left took the next free checkout (ADC #10424 waited 37 min on 2026-10-12
   # while newer gates went first). It now stays on this host, keeping its place.
-  if [ -n "$admit_wait_launch" ] && (( placed_wait_launch >= starve_after_launch )); then
+  # A --dev run has no starvation backstop, so it keeps moving to whichever host is free.
+  if [ -n "$admit_wait_launch" ] && [ "${gate_class:-}" != dev ] && (( placed_wait_launch >= starve_after_launch )); then
     admit_wait_launch=""
     echo "beelink-gate: waited ${placed_wait_launch}s across placements; staying on $target in its place in line" >&2
   fi
