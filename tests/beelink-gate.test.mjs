@@ -224,6 +224,22 @@ test("a submitted gate survives its launcher and --attach replays its result", a
   }
 });
 
+test("a command exit of 255 is not reported as a lost attach connection", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", "exit 255"], { env: f.env });
+    assert.equal(result.status, 255, result.stderr);
+    assert.match(result.stderr, /receipt: .*exit=255 .*watchdog=0/);
+    assert.doesNotMatch(result.stderr, /attach connection lost/);
+    const id = result.stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, result.stderr);
+    const attached = run(gate, ["--attach", id], { env: f.env });
+    assert.equal(attached.status, 255, attached.stderr);
+    assert.match(attached.stderr, /receipt: .*exit=255 .*watchdog=0/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a post-admission disk refusal receipts cleanup in a detached job", () => {
   const f = fixture();
   try {

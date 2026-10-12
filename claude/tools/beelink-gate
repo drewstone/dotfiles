@@ -1717,6 +1717,14 @@ while True:
     time.sleep(0.2)
 PY
 }
+job_result_remote() {
+  local dir code
+  dir=$(job_dir_for "$1")
+  [ -f "$dir/exit" ] && [ ! -L "$dir/exit" ] || return 1
+  code=$(cat "$dir/exit") || return 1
+  [[ "$code" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]] || return 1
+  printf '%s\n' "$code"
+}
 if [ "${1:-}" = --job-submit ]; then
   [ "$#" -ge 2 ] || die "invalid job submission"
   id=$2; shift 2
@@ -1726,6 +1734,11 @@ fi
 if [ "${1:-}" = --job-attach ]; then
   [ "$#" = 2 ] || die "invalid job attach"
   job_attach_remote "$2"
+  exit $?
+fi
+if [ "${1:-}" = --job-result ]; then
+  [ "$#" = 2 ] || die "invalid job result"
+  job_result_remote "$2"
   exit $?
 fi
 if [ "${1:-}" = --probe ]; then
@@ -2136,7 +2149,12 @@ if [ "${1:-}" = --attach ]; then
   target=${2%%-*}
   heartbeat=0 on_beelink "$target" --job-attach "$2"
   rc=$?
-  [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $2; run beelink-gate --attach $2 again"
+  if [ "$rc" = 255 ]; then
+    # SSH also exits 255 on transport loss. A completed command may itself
+    # have returned 255; ask the job's exit file before calling it a loss.
+    result=$(heartbeat=0 on_beelink "$target" --job-result "$2" 2>/dev/null) || result=""
+    [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $2; run beelink-gate --attach $2 again"
+  fi
   exit "$rc"
 fi
 
@@ -2238,7 +2256,10 @@ while :; do
     heartbeat=0 on_beelink "$target" --job-attach "$gate_id"
     rc=$?
   fi
-  [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $gate_id; run beelink-gate --attach $gate_id again"
+  if [ "$rc" = 255 ]; then
+    result=$(heartbeat=0 on_beelink "$target" --job-result "$gate_id" 2>/dev/null) || result=""
+    [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $gate_id; run beelink-gate --attach $gate_id again"
+  fi
   # Only an auto placement may move; a named host keeps waiting there, as it always has.
   [ "$rc" = "$NOT_ADMITTED" ] && [ "$requested" = auto ] || exit "$rc"
   placements=$((placements + 1))
