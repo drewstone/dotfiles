@@ -405,17 +405,17 @@ cmd_extend() {
   echo "hostlab: $id expires at $(date -d "@$(cat "$dir/expires")" +%FT%T%z)"
 }
 
-# Hosts without the archive drive (the Beelinks have no /mnt/traces) kept every
-# expired run in place: on 2026-10-12 beelink2 held 22 expired runs, 62 GiB of
-# VM disks, and refused gates on its disk floor. With HOSTLAB_SMALL_ARCHIVE set,
-# the run's logs and small artifacts (no VM disks, nothing over 100 MB) go to
-# <archive>/<host>-<date>/<id>; the run dir is deleted only once the archive
-# holds the same number of files. The archive is a directory, or host:directory
-# reached over SSH.
+# An archive keeps a run's logs and small artifacts (no VM disks, nothing over
+# 100 MB) in <dest>/<id>, and the run dir is deleted only once the archive holds
+# the same number of files. VM disks are throwaway: moving them was the problem
+# on both kinds of host. On 2026-10-12 beelink2, which has no archive drive,
+# held 22 expired runs (62 GiB of disks) and refused gates on its disk floor;
+# the same morning GTR's reaper spent 2.8 h moving one 22 GB run onto the USB
+# trace drive at 0.7 MB/s, holding it at 87-100% utilization and stalling every
+# other reader of /mnt/traces. <dest> is a directory, or host:directory over SSH.
 archive_small() {
-  local d="$1" reason="$2" id dest host_part dir_part want got list
+  local d="$1" reason="$2" dest="$3" id host_part dir_part want got list
   id="$(basename "$d")"
-  dest="${HOSTLAB_SMALL_ARCHIVE%/}/$(hostname -s)-$(date -u +%Y%m%d)"
   list="$(cd "$RUNS" && find "$id" -type f ! -name '*.qcow2' ! -name '*.img' -size -100M | sort)"
   want=$(printf '%s\n' "$list" | grep -c . || true)
   case "$dest" in
@@ -441,13 +441,16 @@ archive_run() {
   case "$ARCHIVE/" in
     "$ARCHIVE_MOUNT"/*)
       if ! mountpoint -q "$ARCHIVE_MOUNT"; then
-        if [ -n "${HOSTLAB_SMALL_ARCHIVE:-}" ] && archive_small "$d" "$reason"; then return 0; fi
+        # A host without the drive archives to HOSTLAB_SMALL_ARCHIVE, by host and date.
+        if [ -n "${HOSTLAB_SMALL_ARCHIVE:-}" ] &&
+          archive_small "$d" "$reason" "${HOSTLAB_SMALL_ARCHIVE%/}/$(hostname -s)-$(date -u +%Y%m%d)"; then return 0; fi
         reap_log "$id $reason: stopped and kept in place, because $ARCHIVE_MOUNT is not mounted (owner: $(cat "$d/owner" 2>/dev/null))"
         return 0
       fi ;;
   esac
-  if mkdir -p "$ARCHIVE" 2>/dev/null && [ -w "$ARCHIVE" ] && mv "$d" "$ARCHIVE/$id"; then
-    reap_log "$id $reason: stopped and archived to $ARCHIVE/$id (owner: $(cat "$ARCHIVE/$id/owner" 2>/dev/null))"
+  if mkdir -p "$ARCHIVE" 2>/dev/null && [ -w "$ARCHIVE" ]; then
+    archive_small "$d" "$reason" "$ARCHIVE" ||
+      reap_log "$id $reason: stopped and kept in place, because its archive to $ARCHIVE failed (owner: $(cat "$d/owner" 2>/dev/null))"
   else
     reap_log "$id $reason: stopped and deleted, because $ARCHIVE is not writable (owner: $(cat "$d/owner" 2>/dev/null))"
     rm -rf "$d"
