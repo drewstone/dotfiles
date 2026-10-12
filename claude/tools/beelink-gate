@@ -496,6 +496,16 @@ not_admitted() {
   echo "beelink-gate: not admitted on $beelink within ${admit_wait}s ($1); placing the gate again" >&2
   exit "$NOT_ADMITTED"
 }
+# A host auto chose can fall below its disk floor between the probe and the
+# gate's own check: on 2026-10-12 docker images filled beelink2 by 14 GiB in
+# 40 min, and a gate placed there exited TEMPFAIL while beelink1 had room. An
+# auto placement gives such a host back, and the launcher's next probe sees it
+# refused and picks the other host, or exits TEMPFAIL when both refuse.
+give_back_host() {
+  rm -f "${urgent_markers[@]}" 2>/dev/null
+  echo "beelink-gate: $beelink gave the gate back before admission ($1); placing the gate again" >&2
+  exit "$NOT_ADMITTED"
+}
 # A waiting gate leaves a ticket named <prefix>.<enqueued epoch>.<pid>. A free
 # checkout goes to the oldest live ticket, not to whichever gate polls first: on
 # 2026-10-12 an ADC gate waited 2,290 s on beelink1 while later gates took each
@@ -1048,6 +1058,8 @@ remote_gate() {
   fi
   unset BEELINK_GATE_CLASS
   urgent=0; [ "${BEELINK_GATE_URGENT:-0}" = 1 ] && urgent=1
+  placed_auto=0; [ "${BEELINK_GATE_AUTO:-0}" = 1 ] && placed_auto=1
+  unset BEELINK_GATE_AUTO
   urgent_markers=()
   admit_wait=${BEELINK_GATE_ADMIT_WAIT:-} admit_by=""
   if [ -n "$admit_wait" ]; then
@@ -1139,7 +1151,10 @@ remote_gate() {
     die "cache path contains a symlink"
   fi
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
-  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  if ! check_floor "$beelink"; then
+    (( placed_auto == 0 )) || give_back_host "$beelink is below its disk floor"
+    tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  fi
   admit_window "$beelink" "$window_day" "$window_hour"
   unset BEELINK_GATE_MAX_CONCURRENT
   # Each repo gets BEELINK_GATE_REPO_CHECKOUTS checkouts per host (default 2):
@@ -1553,6 +1568,7 @@ on_beelink() {
   [ -z "${BEELINK_GATE_LIGHT_CPU:-}" ] || envs+=("BEELINK_GATE_LIGHT_CPU=$BEELINK_GATE_LIGHT_CPU")
   [ -z "${BEELINK_GATE_LIGHT_SLOTS:-}" ] || envs+=("BEELINK_GATE_LIGHT_SLOTS=$BEELINK_GATE_LIGHT_SLOTS")
   [ "${BEELINK_GATE_URGENT:-0}" != 1 ] || envs+=("BEELINK_GATE_URGENT=1")
+  [ "${requested:-}" != auto ] || envs+=("BEELINK_GATE_AUTO=1")
   [ -z "${admit_wait_launch:-}" ] || envs+=("BEELINK_GATE_ADMIT_WAIT=$admit_wait_launch" "BEELINK_GATE_PLACED_WAIT=${placed_wait_launch:-0}")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
   local me=$$ rc heartbeat_fd heartbeat_pid command_pid

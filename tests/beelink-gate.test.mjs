@@ -51,7 +51,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -255,6 +255,22 @@ test("Windows policy is required and a blocked start reports the next allowed ti
 // 2026-10-11 08:00Z: both beelinks were in their update windows, auto printed
 // "no beelink can start this gate" with exit 3, and the landing chain recorded
 // "FAIL pre-gate red" (L1 queue.result, r1527 at 5980b3a8).
+test("an auto-placed gate gives back a host that fell below its disk floor, so the launcher can place it again", () => {
+  const f = fixture();
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const low = { ...f.env, FAKE_AVAIL: String(150 * 2 ** 30) };
+    const auto = run("bash", [gate, "--remote", ...args], { env: { ...low, BEELINK_GATE_AUTO: "1" } });
+    assert.equal(auto.status, 76, auto.stderr);
+    assert.match(auto.stderr, /beelink2 gave the gate back before admission \(beelink2 is below its disk floor\); placing the gate again/);
+    assert.doesNotMatch(auto.stderr, /TEMPFAIL/);
+    // A gate sent to a named host still reports TEMPFAIL with its next allowed time.
+    const named = run("bash", [gate, "--remote", ...args], { env: low });
+    assert.equal(named.status, 75, named.stderr);
+    assert.match(named.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("auto exits TEMPFAIL with the earliest time either host allows when both refuse", () => {
   const f = fixture();
   try {
