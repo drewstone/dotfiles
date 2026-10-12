@@ -15,7 +15,8 @@
 # (default 60s) gives the host back, and the launcher probes both again and
 # goes to whichever admits it first. Admission comes before any checkout work.
 # --urgent (for a fix to a red default branch) goes ahead of every waiting gate
-# for the next free checkout of its repo and the next free host slot.
+# for the next free checkout of its repo and the next free host slot. An urgent
+# auto gate reserves priority on both hosts while it probes for a checkout.
 #
 # --light declares a small check: no dependency install, no browser, and at most
 # BEELINK_GATE_LIGHT_CPU core-seconds of command CPU (default and maximum 120).
@@ -1235,6 +1236,11 @@ remote_gate() {
       [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
       exec {fd}>"$candidate" || die "cannot open lock"
       if flock -n -x "$fd"; then
+        # An urgent reservation can appear between the check above and flock.
+        # Give the newly free checkout back before a normal gate claims it.
+        if (( ! urgent )) && urgent_ahead "$urgent_marker"; then
+          flock -u "$fd"; exec {fd}>&-; break
+        fi
         if (( skipped < ahead )); then
           flock -u "$fd"; exec {fd}>&-; skipped=$((skipped + 1)); continue
         fi
@@ -1280,7 +1286,11 @@ remote_gate() {
   # hold budget, without the lock descriptor and without the launcher's stdin.
   step() {
     local left=$((deadline - SECONDS)) rc step_started=$SECONDS
-    if (( left <= 0 )); then timed_out=1; return 124; fi
+    if (( left <= 0 )); then
+      timed_out=1
+      echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
+      return 124
+    fi
     BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
     current=$!
     wait "$current"; rc=$?
@@ -1662,7 +1672,7 @@ on_beelink() {
     local sleeper="" include_script=${1:-0}
     trap 'if [ -n "$sleeper" ]; then kill -TERM "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
     [ "$include_script" = 1 ] && cat "$0"
-    while kill -0 "$me" 2>/dev/null; do
+    while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
       sleep 5 & sleeper=$!
       wait "$sleeper" || true
       sleeper=""
@@ -1782,6 +1792,12 @@ choose_beelink() {
   local -A seen=()
   local auto_started=$SECONDS
   while :; do
+    if [ -n "${urgent_reservation_dir:-}" ]; then
+      local reserve_pid
+      for reserve_pid in "${urgent_reservation_pids[@]}"; do
+        kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "urgent checkout reservation disconnected before admission"
+      done
+    fi
     best="" best_rank=9 best_load="" light_busy=""
     for target in beelink1 beelink2; do
       line=$(probe_of "$target") || line=""
@@ -1807,6 +1823,11 @@ choose_beelink() {
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     if [ -n "$best" ]; then
+      if [ -n "${urgent_reservation_dir:-}" ]; then
+        for reserve_pid in "${urgent_reservation_pids[@]}"; do
+          kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "urgent checkout reservation disconnected before admission"
+        done
+      fi
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       echo "$best"; return 0
     fi
@@ -1823,9 +1844,83 @@ choose_beelink() {
       echo "beelink-gate: no beelink is both free for this repo and under its load limit after ${waited}s; waiting (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       reported=$waited
     fi
-    sleep "${BEELINK_GATE_AUTO_POLL_SECONDS:-20}"; waited=$((SECONDS - auto_started))
+    sleep "${BEELINK_GATE_AUTO_POLL_SECONDS:-$([ "${BEELINK_GATE_URGENT:-0}" = 1 ] && echo 2 || echo 20)}"; waited=$((SECONDS - auto_started))
   done
 }
+
+# An urgent auto gate needs a marker on each host before it starts probing.
+# Otherwise it has no place in either queue while both checkouts are busy, and
+# a normal waiter can take every checkout that frees before the next probe.
+reserve_urgent() {
+  local beelink repo_url gate_class host owner repo cache_root suffix="" marker rc
+  beelink=$(decode "$1") repo_url=$(decode "$2") gate_class=$(decode "$3")
+  parse_repo_url "$repo_url"
+  cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  [ "$gate_class" = dev ] && suffix=@dev
+  [ "$gate_class" = light ] && suffix=@light
+  marker="$cache_root/.locks/urgent-$host-$owner-$repo$suffix.$$"
+  mkdir -p "$cache_root/.locks" || die "cannot create urgent reservation"
+  : > "$marker" || die "cannot create urgent reservation"
+  trap 'rm -f "$marker"; exit 143' HUP INT TERM
+  echo "beelink-gate-urgent-reserved $beelink"
+  # The launcher keeps stdin open. EOF removes the reservation even if its
+  # session dies; a timeout merely means that no heartbeat bytes arrived.
+  while :; do
+    IFS= read -r -t 5 _; rc=$?
+    (( rc == 0 || rc > 128 )) || break
+  done
+  rm -f "$marker"
+  trap - HUP INT TERM
+}
+
+urgent_reservation_pids=() urgent_reservation_files=() urgent_reservation_dir="" urgent_monitor_pid=""
+stop_urgent_reservations() {
+  local pid file
+  [ -z "$urgent_monitor_pid" ] || kill -TERM "$urgent_monitor_pid" 2>/dev/null || true
+  for file in "${urgent_reservation_files[@]}"; do : > "$file.stop"; done
+  for pid in "${urgent_reservation_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+  [ -z "$urgent_reservation_dir" ] || rm -rf "$urgent_reservation_dir"
+}
+
+watch_urgent_admission() {
+  local log=$1 file
+  while :; do
+    if grep -q '^beelink-gate: lock, host slot .* admitted on ' "$log" 2>/dev/null; then
+      for file in "${urgent_reservation_files[@]}"; do : > "$file.stop"; done
+      return 0
+    fi
+    sleep 0.2
+  done
+}
+start_urgent_reservations() {
+  local host file pid tries
+  urgent_reservation_dir=$(mktemp -d) || die "cannot allocate urgent reservation state"
+  trap stop_urgent_reservations EXIT
+  trap 'exit 143' HUP INT TERM
+  for host in beelink1 beelink2; do
+    file="$urgent_reservation_dir/$host"
+    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")" >"$file" 2>"$file.err" &
+    urgent_reservation_pids+=("$!")
+    urgent_reservation_files+=("$file")
+  done
+  for file in "${urgent_reservation_files[@]}"; do
+    for ((tries = 0; tries < 300; tries++)); do
+      grep -q '^beelink-gate-urgent-reserved ' "$file" 2>/dev/null && break
+      sleep 0.1
+    done
+    grep -q '^beelink-gate-urgent-reserved ' "$file" 2>/dev/null || {
+      cat "$file.err" >&2
+      tempfail "$(utc_in_minutes 5)" "cannot reserve urgent priority on both beelinks"
+    }
+  done
+  echo "beelink-gate: urgent priority reserved on both beelinks" >&2
+}
+
+if [ "${1:-}" = --urgent-reserve ]; then
+  [ "$#" = 4 ] || die "invalid urgent reservation"
+  reserve_urgent "$2" "$3" "$4"
+  exit 0
+fi
 
 # --report [hours]: gate runs per merged PR by repo, from both beelinks' receipts
 # and GitHub's merged-PR counts, with each repo's modes, exit classes and
@@ -1953,6 +2048,9 @@ if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
   admit_wait_launch=$(seconds_of "${BEELINK_GATE_REPLACE_WAIT:-60s}") || die "invalid BEELINK_GATE_REPLACE_WAIT: ${BEELINK_GATE_REPLACE_WAIT:-}"
 fi
 starve_after_launch=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
+if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" = 1 ]; then
+  start_urgent_reservations
+fi
 launched=$SECONDS placements=0
 while :; do
   case "$requested" in
@@ -1976,8 +2074,19 @@ while :; do
     admit_wait_launch=""
     echo "beelink-gate: waited ${placed_wait_launch}s across placements; staying on $target in its place in line" >&2
   fi
-  heartbeat=1 on_beelink "$target" --remote "${encoded[@]}"
-  rc=$?
+  if [ -n "$urgent_reservation_dir" ]; then
+    admission_log="$urgent_reservation_dir/admission.log"
+    : > "$admission_log"
+    watch_urgent_admission "$admission_log" & urgent_monitor_pid=$!
+    heartbeat=1 on_beelink "$target" --remote "${encoded[@]}" 2> >(tee "$admission_log" >&2)
+    rc=$?
+    kill -TERM "$urgent_monitor_pid" 2>/dev/null || true
+    wait "$urgent_monitor_pid" 2>/dev/null || true
+    urgent_monitor_pid=""
+  else
+    heartbeat=1 on_beelink "$target" --remote "${encoded[@]}"
+    rc=$?
+  fi
   # Only an auto placement may move; a named host keeps waiting there, as it always has.
   [ "$rc" = "$NOT_ADMITTED" ] && [ "$requested" = auto ] || exit "$rc"
   placements=$((placements + 1))
