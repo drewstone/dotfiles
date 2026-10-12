@@ -1622,6 +1622,26 @@ test("auto ranks a host over its host-wide pressure ceiling as over its limit, w
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("auto chooses the less pressured host when both are overloaded, even if the other cache is warm", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), FAKE_HOST_PRESSURE_PREFIX: join(f.root, "host") };
+    const host60 = (v) => `some avg10=${v.toFixed(2)} avg60=${v.toFixed(2)} avg300=0.00 total=1\n`;
+    writeFileSync(join(f.root, "host-100.98.195.7"), host60(20));
+    writeFileSync(join(f.root, "host-100.127.22.51"), host60(20));
+    const warm = run(gate, ["--no-install", "beelink1", f.url, f.first, "--", "true"], { env });
+    assert.equal(warm.status, 0, warm.stderr);
+    writeFileSync(join(f.root, "host-100.98.195.7"), host60(73));
+    writeFileSync(join(f.root, "host-100.127.22.51"), host60(50));
+    const waiting = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(waiting.status, 75, waiting.stderr);
+    assert.match(waiting.stderr, /auto chose beelink2/);
+    assert.doesNotMatch(waiting.stderr, /auto chose beelink1/);
+    assert.match(waiting.stderr, /beelink1: host=beelink1 state=free cache=warm .*host_cpu=73\.00/);
+    assert.match(waiting.stderr, /beelink2: host=beelink2 state=free cache=cold .*host_cpu=50\.00/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("an auto gate whose host falls below its disk floor while it queued gives the host back before checkout", async () => {
   const f = fixture();
   try {
