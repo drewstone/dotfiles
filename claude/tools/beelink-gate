@@ -6,7 +6,8 @@
 #   beelink-gate [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --light [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --dev [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
-#   Any form also takes --urgent.
+#   Any form also takes --urgent. Use --pin-host with a named host for
+#   hardware-specific work such as KVM; admission limits still apply.
 #   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #
 # auto re-places a waiting gate: on the beelink it chose, a gate that is not
@@ -1541,6 +1542,7 @@ overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1
 # one can start it under its own limit; otherwise the gate stays and waits there.
 place_named() {
   local named=$1 other line other_line
+  if [ "${pin_host:-0}" = 1 ]; then echo "$named"; return 0; fi
   other=$([ "$named" = beelink1 ] && echo beelink2 || echo beelink1)
   line=$(probe_of "$named") || line=""
   if [ -z "$line" ] || ! overloaded "$line"; then echo "$named"; return 0; fi
@@ -1664,10 +1666,11 @@ PY
   exit "$status"
 fi
 
-install_mode=install gate_branch="" gate_class=""
+install_mode=install gate_branch="" gate_class="" pin_host=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --urgent) export BEELINK_GATE_URGENT=1; shift ;;
+    --pin-host) pin_host=1; shift ;;
     --no-install) [ "$install_mode" = light ] || install_mode=no-install; shift ;;
     --light) [ "$install_mode" != ship ] || die "--light cannot be combined with --ship"; install_mode=light; shift ;;
     --dev) gate_class=dev; shift ;;
@@ -1678,7 +1681,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
@@ -1691,6 +1694,7 @@ if [ "$#" -lt 5 ] || [ "$4" != -- ]; then
   die "$usage"
 fi
 target=$1 repo_url=$2 sha=$3
+if [ "$pin_host" = 1 ] && [ "$target" = auto ]; then die "--pin-host requires a named beelink"; fi
 shift 4
 if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
   [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
