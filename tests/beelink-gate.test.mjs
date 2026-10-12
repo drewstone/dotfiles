@@ -51,7 +51,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -1742,4 +1742,29 @@ test("an --urgent auto gate is never given an admission deadline, so it keeps it
     assert.match(sent, /BEELINK_GATE_URGENT=1 /);
     assert.doesNotMatch(sent, /BEELINK_GATE_ADMIT_WAIT/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("workers inside a gate are capped at cores per running gate, unless the caller chose", async () => {
+  const f = fixture();
+  const holders = [];
+  try {
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    for (const n of [1, 2, 3]) {
+      const marker = join(f.root, `slot-${n}`);
+      holders.push(spawn("flock", ["-x", join(f.cache, ".locks", `slot-${n}.lock`), "bash", "-c", `touch '${marker}'; sleep 20`], { stdio: "ignore" }));
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+    }
+    const cores = Number(spawnSync("nproc", { encoding: "utf8" }).stdout.trim());
+    const expected = Math.max(2, Math.floor(cores / 4));
+    const show = ["bash", "-c", 'printf "%s %s %s %s %s" "$VITEST_MAX_WORKERS" "$VITEST_MAX_FORKS" "$VITEST_MAX_THREADS" "$TURBO_CONCURRENCY" "$CARGO_BUILD_JOBS"'];
+    const result = f.call(f.first, show, { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, Array(5).fill(String(expected)).join(" "));
+    assert.match(result.stderr, new RegExp(`receipt: .*workers=${expected}`));
+    const chosen = f.call(f.first, ["bash", "-c", 'printf "%s" "$CARGO_BUILD_JOBS"'], { noInstall: true, env: { CARGO_BUILD_JOBS: "7" } });
+    assert.equal(chosen.stdout, "7");
+  } finally {
+    for (const h of holders) h.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });

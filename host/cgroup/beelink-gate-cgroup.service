@@ -3,6 +3,7 @@
 # join_gate_cgroup), so its command wins CPU over CI (ci.slice, 25) and lane
 # work (user.slice and /non-systemd, 100). Only gates move here, not every SSH
 # command, which is why /non-systemd itself keeps its weight.
+# Rollback of the ceiling alone: echo max | sudo tee /sys/fs/cgroup/beelink-gate/cpu.max
 # Rollback: sudo systemctl disable --now beelink-gate-cgroup.service &&
 #   sudo rm /etc/systemd/system/beelink-gate-cgroup.service && sudo systemctl daemon-reload;
 #   the cgroups empty as running gates finish (rmdir /sys/fs/cgroup/beelink-gate{,-dev} then).
@@ -13,6 +14,9 @@ Description=High-CPU-weight cgroup for beelink merge gates
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'mkdir -p /sys/fs/cgroup/beelink-gate && echo 400 > /sys/fs/cgroup/beelink-gate/cpu.weight'
+# All gates together get at most 75% of the cores, so CI runners and lane work
+# keep a quarter even when gates fan out (beelink1 at load 93.7, 2026-10-12).
+ExecStart=/bin/sh -c 'echo "$(( $(nproc) * 75000 )) 100000" > /sys/fs/cgroup/beelink-gate/cpu.max'
 # Iterative --dev runs: lowest priority, below CI.
 ExecStart=/bin/sh -c 'mkdir -p /sys/fs/cgroup/beelink-gate-dev && echo 25 > /sys/fs/cgroup/beelink-gate-dev/cpu.weight'
 
