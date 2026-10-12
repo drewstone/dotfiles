@@ -501,17 +501,17 @@ not_admitted() {
 # 2026-10-12 an ADC gate waited 2,290 s on beelink1 while later gates took each
 # checkout as it freed. The epoch is the gate's first enqueue, carried across
 # re-placements through BEELINK_GATE_PLACED_WAIT, so moving hosts keeps its place.
-older_ticket_ahead() {  # <ticket prefix> <my epoch>: a live, older ticket from another gate
-  local t rest since pid
+older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tickets from other gates
+  local t rest since pid n=0
   for t in "$1".*.*; do
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
     [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
     [ "$pid" != "$$" ] || continue
     if ! kill -0 "$pid" 2>/dev/null; then rm -f "$t"; continue; fi
-    if (( since < $2 || (since == $2 && pid < $$) )); then return 0; fi
+    if (( since < $2 || (since == $2 && pid < $$) )); then n=$((n + 1)); fi
   done
-  return 1
+  echo "$n"
 }
 # An urgent gate leaves a marker while it waits; every other gate waiting for the same thing steps aside.
 urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
@@ -1141,14 +1141,20 @@ remote_gate() {
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   while [ -z "$lock" ]; do
+    # Each older waiter reserves one free checkout; with two free and one older
+    # waiter, this gate still takes the second.
+    local ahead=0 skipped=0
+    (( urgent )) || ahead=$(older_tickets_ahead "$ticket_prefix" "$enqueued")
     for ((k = 0; k < copies; k++)); do
       (( urgent )) || ! urgent_ahead "$urgent_marker" || break
-      (( urgent )) || ! older_ticket_ahead "$ticket_prefix" "$enqueued" || break
       suffix=$([ "$k" = 0 ] || echo "@$k"); (( light == 0 )) || suffix=@light; (( dev == 0 )) || suffix=@dev
       candidate="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
       [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
       exec {fd}>"$candidate" || die "cannot open lock"
       if flock -n -x "$fd"; then
+        if (( skipped < ahead )); then
+          flock -u "$fd"; exec {fd}>&-; skipped=$((skipped + 1)); continue
+        fi
         lock_fd=$fd lock=$candidate checkout="$cache_root/$host/$owner/$repo$suffix"
         break
       fi
