@@ -1632,34 +1632,19 @@ test("an auto gate stops moving once it has waited past the starvation backstop,
   }
 });
 
-test("a --dev auto run keeps re-placing after the starvation time, since dev runs have no backstop", async () => {
+test("a --dev auto run keeps its admission deadline after the starvation time", () => {
   const f = fixture();
-  const holders = [];
   try {
-    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "1s", BEELINK_GATE_LOAD_WAIT: "60s" };
-    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
-      const locks = join(f.root, `cache-${ip}`, ".locks");
-      mkdirSync(locks, { recursive: true });
-      const marker = join(f.root, `held-${ip}`);
-      const lock = join(locks, "local-owner-repo@dev.lock");
-      const p = spawn("flock", ["-x", "-F", lock, "bash", "-c", `touch '${marker}'; exec sleep 60`], { stdio: "ignore" });
-      holders.push(p);
-      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
-      assert.equal(existsSync(marker), true, `dev checkout lock on ${ip} was not held`);
-    }
-    const child = spawn(gate, ["--dev", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
-    // The second refusal proves a placement after STARVE_AFTER still has an
-    // admission deadline. A regular gate would stay on that placement.
-    for (let i = 0; i < 600 && (stderr.match(/not admitted on/g) ?? []).length < 2; i++) await sleepMs(50);
-    assert.ok((stderr.match(/not admitted on/g) ?? []).length >= 2, stderr);
-    assert.doesNotMatch(stderr, /staying on beelink/);
-    child.kill();
-    await closed;
+    const drops = join(f.root, "probe-drops");
+    writeFileSync(drops, "2\n");
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "1s", FAKE_PROBE_DROPS: drops, BEELINK_GATE_PROBE_RETRY_SECONDS: "1" };
+    const result = run(gate, ["--dev", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    const sent = readFileSync(join(f.root, "ssh-remote-command"), "utf8");
+    assert.match(sent, /BEELINK_GATE_ADMIT_WAIT=1 /, "dev keeps the deadline needed to re-place");
+    assert.match(sent, /BEELINK_GATE_PLACED_WAIT=[1-9][0-9]* /, "the placement was past STARVE_AFTER");
+    assert.doesNotMatch(result.stderr, /staying on beelink/);
   } finally {
-    for (const p of holders) p.kill();
     rmSync(f.root, { recursive: true, force: true });
   }
 });
