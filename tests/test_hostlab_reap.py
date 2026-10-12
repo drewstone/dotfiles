@@ -132,6 +132,41 @@ class HostlabReapTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(mount, 'archive')), 'archive created on the root disk')
         self.assertIn('not mounted', r.stdout)
 
+    def test_unmounted_drive_with_small_archive_keeps_logs_and_deletes_disks(self):
+        # The Beelinks have no archive drive: logs and small artifacts are kept, VM disks are not.
+        mount = os.path.join(self.tmp, 'drive')
+        small = os.path.join(self.tmp, 'small')
+        os.makedirs(mount)
+        d = self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
+        with open(os.path.join(d, 'console.log'), 'w') as f:
+            f.write('boot\n')
+        with open(os.path.join(d, 'disk.qcow2'), 'wb') as f:
+            f.write(b'\0' * 4096)
+        r = self.hostlab('reap', HOSTLAB_ARCHIVE_MOUNT=mount, HOSTLAB_ARCHIVE=os.path.join(mount, 'archive'),
+                         HOSTLAB_SMALL_ARCHIVE=small)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(d), 'expired run kept on disk')
+        [dated] = os.listdir(small)
+        kept = os.path.join(small, dated, 'dead-qemu')
+        self.assertTrue(os.path.isfile(os.path.join(kept, 'console.log')))
+        self.assertTrue(os.path.isfile(os.path.join(kept, 'owner')))
+        self.assertFalse(os.path.exists(os.path.join(kept, 'disk.qcow2')), 'VM disk archived')
+        self.assertFalse(os.path.exists(os.path.join(mount, 'archive')), 'archive created on the root disk')
+        self.assertIn('small files archived', open(os.path.join(self.home, 'reap.log')).read())
+
+    def test_failed_small_archive_keeps_the_run(self):
+        mount = os.path.join(self.tmp, 'drive')
+        os.makedirs(mount)
+        blocker = os.path.join(self.tmp, 'not-a-dir')
+        with open(blocker, 'w') as f:
+            f.write('x')
+        d = self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
+        r = self.hostlab('reap', HOSTLAB_ARCHIVE_MOUNT=mount, HOSTLAB_ARCHIVE=os.path.join(mount, 'archive'),
+                         HOSTLAB_SMALL_ARCHIVE=os.path.join(blocker, 'sub'))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.isdir(d), 'run deleted without an archive')
+        self.assertIn('not mounted', r.stdout)
+
     def test_unwritable_archive_deletes_the_run(self):
         self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
         r = self.hostlab('reap', HOSTLAB_ARCHIVE='/proc/hostlab-archive')
