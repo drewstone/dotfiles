@@ -130,20 +130,30 @@ install_beelink_worktree_cap() {
 # Beelinks: merge gates win the CPU over CI runner jobs. Never stops a runner:
 # the weight applies live through set-property, and only under contention.
 install_beelink_gate_priority() {
-  local before=$CHANGED
+  local before=$CHANGED ci_weight=25
   CHANGED=0
+  # A host may set the CI runners' weight in /etc/beelink-gate/ci-weight. Staged
+  # 2026-10-12 (op-company, op-devplatform): runners starved at weight 25 timed
+  # out ADC CI, so a host under test runs them at 400, equal to the gate cgroup,
+  # both 4x the default-weight work (sessions, ollama). No CPUQuota: a hard cap
+  # would bring those timeouts back. Rollback: remove the file and rerun
+  # host/install.sh --gate-priority-only.
+  if [ -r /etc/beelink-gate/ci-weight ]; then
+    ci_weight=$(tr -cd '0-9' < /etc/beelink-gate/ci-weight)
+    [[ "$ci_weight" =~ ^[0-9]+$ ]] && (( ci_weight >= 1 && ci_weight <= 10000 )) || { echo "invalid /etc/beelink-gate/ci-weight" >&2; exit 1; }
+  fi
   want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
   if [ "$CHECK" = 1 ]; then
-    [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = 25 ] || drift "ci.slice cpu.weight is not 25"
+    [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "ci.slice cpu.weight is not $ci_weight"
     [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" = 400 ] || drift "beelink-gate cgroup cpu.weight is not 400"
     [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" = 25 ] || drift "beelink-gate-dev cgroup cpu.weight is not 25"
     [ "$(cut -d' ' -f1 /sys/fs/cgroup/beelink-gate/cpu.max 2>/dev/null)" = "$(( $(nproc) * 75000 ))" ] || drift "beelink-gate cgroup cpu.max is not 75% of the cores"
   else
     [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
-    if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != 25 ]; then
-      $SUDO systemctl set-property --runtime ci.slice CPUWeight=25
-      note changed "ci.slice CPUWeight=25"
+    if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != "$ci_weight" ]; then
+      $SUDO systemctl set-property --runtime ci.slice CPUWeight="$ci_weight"
+      note changed "ci.slice CPUWeight=$ci_weight"
     fi
     if [ "$CHANGED" = 1 ] || [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" != 400 ] \
       || [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" != 25 ] \
