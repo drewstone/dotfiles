@@ -170,7 +170,8 @@ def is_install(manager: str, argv: list[str]) -> tuple[bool, list[str]]:
 
 
 def git_worktree_add_target(argv: list[str], cwd: Path):
-    """Return the add destination, respecting Git's chdir and option argument forms."""
+    """Return where `worktree add` or `worktree move` puts a tree, respecting Git's chdir and option forms.
+    A move into _wt is an add there: lane-10080 created a tree outside _wt and moved it in under the floor."""
     i = 0
     while i < len(argv):
         word = argv[i]
@@ -188,19 +189,23 @@ def git_worktree_add_target(argv: list[str], cwd: Path):
             i += 1
         else:
             break
-    if argv[i:i + 2] != ["worktree", "add"]:
+    if argv[i:i + 1] != ["worktree"] or argv[i + 1:i + 2] not in (["add"], ["move"]):
         return None
+    positional = 1 if argv[i + 1] == "move" else 0  # move <worktree> <new-path>: the destination is second
     i += 2
     while i < len(argv):
         word = argv[i]
         if word == "--":
-            i += 1
+            i += 1 + positional
             break
         if word in WORKTREE_VALUE_FLAGS:
             i += 2
         elif any(word.startswith(flag + "=") for flag in WORKTREE_VALUE_FLAGS if flag.startswith("--")):
             i += 1
         elif word.startswith("-"):
+            i += 1
+        elif positional:
+            positional -= 1
             i += 1
         else:
             break
@@ -214,7 +219,7 @@ def refusal(manager: str, argv: list[str], cwd: Path):
         if target and inside_worktree(target[0], target[1]):
             if os.environ.get("TANGLE_STORAGE_LIFECYCLE_CREATE") == "1":
                 return None
-            return ("gtr-install-guard: refused direct git worktree add into GTR _wt. "
+            return ("gtr-install-guard: refused direct git worktree add or move into GTR _wt. "
                     "Use storage-lifecycle create with a sparse exclusion, budget and lane; "
                     "author on a Beelink when its space admission refuses.")
         return None
