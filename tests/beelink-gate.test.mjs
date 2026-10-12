@@ -1838,3 +1838,17 @@ test("a finished gate frees its checkout before the post-command cache prune", (
     assert.equal(readFileSync(seen, "utf8").trim().split("\n").at(-1), "free");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("an --urgent gate is admitted over the pressure limit at once, with halved workers", () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(65));
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_URGENT: "1", BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /URGENT: admitting on beelink2 after \d+s with CPU pressure 65\.00 over its limit of 20/);
+    assert.match(result.stderr, /receipt: .*starved=1/);
+    const normal = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "1s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    assert.equal(normal.status, 75, normal.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});

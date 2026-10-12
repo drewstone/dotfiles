@@ -414,7 +414,7 @@ acquire_slot() {
     if starving; then
       exec {slot_fd}>"$slots_dir/$pool-overflow.lock" || die "cannot open host slot"
       starved=1
-      echo "beelink-gate: STARVED: running past the $max-slot cap on $beelink after $(( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} ))s; SHIP_MAX_WORKERS is halved" >&2
+      echo "beelink-gate: $( [ "${urgent:-0}" = 1 ] && echo URGENT || echo STARVED ): running past the $max-slot cap on $beelink after $(( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} ))s; SHIP_MAX_WORKERS is halved" >&2
       rm -f "$marker.$$"
       return 0
     fi
@@ -582,6 +582,10 @@ gate_worker_budget() {
 # re-placements (BEELINK_GATE_PLACED_WAIT) and on this host since its first wait.
 starving() {
   [ "${dev:-0}" = 0 ] || return 1  # a dev run waits; only merge gates get the backstop
+  # An --urgent gate (a fix for a red default branch or a customer outage) never
+  # waits on pressure or a full slot pool: on 2026-10-12 a customer-facing ADC
+  # fix (#10366) waited 344+ s in urgent admission at pressure 62-65.
+  [ "${urgent:-0}" = 0 ] || return 0
   local after
   after=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
   (( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} >= after ))
@@ -599,7 +603,7 @@ wait_for_load() {
     # 56 times in 2 h without admission.
     if starving; then
       starved=1
-      echo "beelink-gate: STARVED: admitting on $beelink after $(( ${placed_wait:-0} + SECONDS - since ))s with $(metric_name) $load over its limit of $limit; SHIP_MAX_WORKERS is halved" >&2
+      echo "beelink-gate: $( [ "${urgent:-0}" = 1 ] && echo URGENT || echo STARVED ): admitting on $beelink after $(( ${placed_wait:-0} + SECONDS - since ))s with $(metric_name) $load over its limit of $limit; SHIP_MAX_WORKERS is halved" >&2
       break
     fi
     if (( SECONDS - since >= budget )); then
