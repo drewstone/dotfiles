@@ -496,6 +496,23 @@ not_admitted() {
   echo "beelink-gate: not admitted on $beelink within ${admit_wait}s ($1); placing the gate again" >&2
   exit "$NOT_ADMITTED"
 }
+# A waiting gate leaves a ticket named <prefix>.<enqueued epoch>.<pid>. A free
+# checkout goes to the oldest live ticket, not to whichever gate polls first: on
+# 2026-10-12 an ADC gate waited 2,290 s on beelink1 while later gates took each
+# checkout as it freed. The epoch is the gate's first enqueue, carried across
+# re-placements through BEELINK_GATE_PLACED_WAIT, so moving hosts keeps its place.
+older_ticket_ahead() {  # <ticket prefix> <my epoch>: a live, older ticket from another gate
+  local t rest since pid
+  for t in "$1".*.*; do
+    [ -e "$t" ] || continue
+    rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
+    [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
+    [ "$pid" != "$$" ] || continue
+    if ! kill -0 "$pid" 2>/dev/null; then rm -f "$t"; continue; fi
+    if (( since < $2 || (since == $2 && pid < $$) )); then return 0; fi
+  done
+  return 1
+}
 # An urgent gate leaves a marker while it waits; every other gate waiting for the same thing steps aside.
 urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
   local m pid
@@ -1111,6 +1128,10 @@ remote_gate() {
   (( light == 0 )) || urgent_marker+=@light
   (( dev == 0 )) || urgent_marker+=@dev
   if (( urgent )); then : > "$urgent_marker.$$"; urgent_markers+=("$urgent_marker.$$"); fi
+  local ticket_prefix="$cache_root/.locks/queue-$host-$owner-$repo" enqueued=$(( $(date +%s) - placed_wait ))
+  (( light == 0 )) || ticket_prefix+=@light
+  (( dev == 0 )) || ticket_prefix+=@dev
+  : > "$ticket_prefix.$enqueued.$$"; urgent_markers+=("$ticket_prefix.$enqueued.$$")
   # Wait for load before taking a checkout: a gate that only waits for load must
   # not hold the repo's checkout. On 2026-10-11 one ADC gate held it for 1766s of
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
@@ -1118,6 +1139,7 @@ remote_gate() {
   while [ -z "$lock" ]; do
     for ((k = 0; k < copies; k++)); do
       (( urgent )) || ! urgent_ahead "$urgent_marker" || break
+      (( urgent )) || ! older_ticket_ahead "$ticket_prefix" "$enqueued" || break
       suffix=$([ "$k" = 0 ] || echo "@$k"); (( light == 0 )) || suffix=@light; (( dev == 0 )) || suffix=@dev
       candidate="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
       [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
@@ -1137,7 +1159,7 @@ remote_gate() {
     admission_expired && not_admitted "both $host/$owner/$repo checkouts busy"
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
-  rm -f "$urgent_marker.$$"
+  rm -f "$urgent_marker.$$" "$ticket_prefix.$enqueued.$$"
   if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
   [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
   printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
@@ -1218,11 +1240,17 @@ PY
     if [ "$watchdog" = 1 ]; then
       :
     elif cd "$cache_root"; then
+      # The command is done: hand the checkout to the next gate before the cache
+      # prune, which sizes the whole cache and took minutes under load (an ADC
+      # checkout sat held for ~9 min after its signoff passed, 2026-10-12). The
+      # prune then treats this checkout like any other: evicted only if free.
+      rm -f "$lock.holder"
+      [ -z "${lock_fd:-}" ] || flock -u "$lock_fd"
       # The cache cap is a capacity condition, not the command's result: on
       # 2026-10-11 a Hospitality train passed pnpm check (780 tests) and was
       # reported as exit 3 because the cache stood 66 MB over its cap with only
       # active checkouts left. The disk floor guards real disk shortage.
-      if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
+      if ! prune_cache "$cache_root" "" "$cache_max"; then
         cache_note=unpruned
         echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
       fi

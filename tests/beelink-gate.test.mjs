@@ -926,7 +926,8 @@ test("a disk-floor refusal, then a green --ship whose ship-proof publish GitHub 
     f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
     // A GitHub URL that Git serves from the fixture's bare repository.
     const gitconfig = join(f.home, ".gitconfig");
-    writeFileSync(gitconfig, `[url "file://${join(f.root, "owner")}/"]\n\tinsteadOf = https://github.com/owner/\n`);
+    // The gate fetches GitHub over SSH (git@github.com:), so serve that spelling too.
+    writeFileSync(gitconfig, `[url "file://${join(f.root, "owner")}/"]\n\tinsteadOf = https://github.com/owner/\n\tinsteadOf = git@github.com:owner/\n`);
     mkdirSync(join(f.home, ".config", "beelink-gate"), { recursive: true });
     assert.equal(run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(f.home, ".config", "beelink-gate", "ship-proof-key")]).status, 0);
     mkdirSync(join(f.home, "bin"), { recursive: true });
@@ -1797,5 +1798,43 @@ test("a gate that cannot reach the origin exits 75, not as a failed change", () 
     const result = f.call(f.first, ["true"], { noInstall: true, env: { PATH: `${failBin}:${f.env.PATH}` } });
     assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /TEMPFAIL .*could not reach local\/owner\/repo/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a free checkout goes to the oldest waiting gate, not the first to poll", async () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    // An older gate is still waiting: its ticket names a live process and an earlier enqueue time.
+    const older = spawn("sleep", ["30"], { stdio: "ignore" });
+    const ticket = join(f.cache, ".locks", `queue-local-owner-repo.${Math.floor(Date.now() / 1000) - 600}.${older.pid}`);
+    writeFileSync(ticket, "");
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    await sleepMs(3000);
+    // The checkout is free, yet the newer gate has not taken it.
+    assert.doesNotMatch(stderr, /admitted/);
+    older.kill();
+    assert.equal(await closed, 0, stderr);
+    assert.match(stderr, /admitted/);
+    assert.equal(readdirSync(join(f.cache, ".locks")).filter((n) => n.startsWith("queue-")).length, 0, "tickets are cleaned up");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a finished gate frees its checkout before the post-command cache prune", () => {
+  const f = fixture();
+  try {
+    const lock = join(f.cache, ".locks", "local-owner-repo.lock");
+    const seen = join(f.root, "du-saw-lock");
+    // du runs inside the post-command prune; record whether the checkout lock is free at that moment.
+    writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash\nif flock -n '${lock}' true 2>/dev/null; then echo free >> '${seen}'; else echo held >> '${seen}'; fi\nexec /usr/bin/du "$@"\n`);
+    chmodSync(join(f.root, "bin", "du"), 0o755);
+    const result = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1" } });
+    assert.equal(result.status, 0, result.stderr);
+    // The last du calls belong to the post-command prune.
+    assert.equal(readFileSync(seen, "utf8").trim().split("\n").at(-1), "free");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
