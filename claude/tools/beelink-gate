@@ -1023,7 +1023,7 @@ remote_gate() {
   # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
   # that trap only after unwinding every function, so the state they read is
   # global, not local: beelink sha install_mode host owner repo cache_root
-  # checkout cache_max launcher build_root lock started display.
+  # checkout cache_max launcher build_root lock started display run_token.
   local repo_url key origin actual
   local remote_refs left ref branch window_day window_hour max_hold
   local -a command=()
@@ -1076,8 +1076,8 @@ remote_gate() {
   watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" reaped=0
   # Every step's processes carry this token in their environment. A process
   # that leaves the step's group (setsid, a daemonizing dev server) keeps it,
-  # so the gate can still find and stop it.
-  local run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
+  # so the gate can still find and stop it. Global: finish reads it from the EXIT trap.
+  run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
   reap_leftovers() {  # stop every process that still carries run_token
     local signal paths
     for signal in TERM KILL; do
