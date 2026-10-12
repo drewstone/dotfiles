@@ -54,7 +54,7 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_CACHE_MAX_BYTES: _cacheCap, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -1010,6 +1010,18 @@ test("a command does not inherit the launcher's gate settings", () => {
       { noInstall: true, env: { BEELINK_GATE_LAUNCHER: "mac", BEELINK_GATE_MAX_HOLD: "10m", BEELINK_GATE_SHIP_WORKERS: "3", BEELINK_GATE_MAX_CONCURRENT: "2" } });
     assert.equal(shown.status, 0, shown.stderr);
     assert.equal(shown.stdout, "||||");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a launcher cache cap reaches the detached gate's locked pruner", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), BEELINK_GATE_CACHE_MAX_BYTES: "1000" };
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(f.root, "ssh-remote-commands"), "utf8"), /BEELINK_GATE_CACHE_MAX_BYTES=1000/);
+    assert.match(result.stderr, /beelink-gate: evicted LRU cache/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
