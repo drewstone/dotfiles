@@ -1728,3 +1728,18 @@ test("auto retries a dropped probe instead of calling a busy beelink unreachable
     assert.equal(readFileSync(drops, "utf8").trim(), "0");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+test("an --urgent auto gate is never given an admission deadline, so it keeps its host and its place", () => {
+  const f = fixture();
+  try {
+    const env = loadedHosts(f, 0.5, 0.5);
+    const normal = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(normal.status, 0, normal.stderr);
+    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_ADMIT_WAIT=60 /);
+    const urgent = run(gate, ["--urgent", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(urgent.status, 0, urgent.stderr);
+    const sent = readFileSync(join(f.root, "ssh-remote-command"), "utf8");
+    assert.match(sent, /BEELINK_GATE_URGENT=1 /);
+    assert.doesNotMatch(sent, /BEELINK_GATE_ADMIT_WAIT/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});

@@ -1711,7 +1711,11 @@ fi
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
 requested=$target admit_wait_launch="" placed_wait_launch=0
-if [ "$requested" = auto ]; then
+# An --urgent gate stays on the first host auto places it on: giving the host
+# back drops its urgent marker and with it its place ahead of every normal gate.
+# On 2026-10-12 an urgent fix for a red ADC develop (#10345) was re-placed for
+# 1413 s while normal gates re-took the checkout each time it let go.
+if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
   admit_wait_launch=$(seconds_of "${BEELINK_GATE_REPLACE_WAIT:-60s}") || die "invalid BEELINK_GATE_REPLACE_WAIT: ${BEELINK_GATE_REPLACE_WAIT:-}"
 fi
 launched=$SECONDS placements=0
