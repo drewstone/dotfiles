@@ -2198,6 +2198,9 @@ for r in sorted(history, key=lambda item: item.get("at", "")):
         reasons[reason] += 1
     last_head[head], last_exact[exact] = r, r
 measured = sum("base_sha" in r for r in rows)
+print(f"METADATA base_sha={sum(bool(r.get('base_sha')) for r in rows)}/{len(rows)} "
+      f"pr_number={sum(r.get('pr_number') is not None for r in rows)}/{len(rows)} "
+      f"lane={sum(bool(r.get('lane')) for r in rows)}/{len(rows)}")
 print(f"REASONS {measured}/{len(rows)} receipts have new metadata; "
       + " ".join(f"{key}={reasons[key]}" for key in ("first", "different_command", "after_red", "after_green", "after_base_move", "after_green_base_unknown")))
 print(f"AVOIDABLE CANDIDATES {reasons['after_green'] + reasons['after_base_move']} "

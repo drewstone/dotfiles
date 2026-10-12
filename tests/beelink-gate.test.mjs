@@ -2000,7 +2000,7 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
   try {
     installFakeSsh(f);
     const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu });
+    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu, base_sha: "b".repeat(40), pr_number: 417, lane: "op-company:gate" });
     // The fake ssh runs the remote side locally, so both beelinks read this one state dir.
     mkdirSync(join(f.root, "state"), { recursive: true });
     writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1, 30), row("a", "install", 1, 55), row("b", "ship", 0)].join("\n") + "\n");
@@ -2011,7 +2011,9 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
     assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
     assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
-    assert.match(result.stdout, /REASONS 0\/6 receipts have new metadata;/);
+    assert.match(result.stdout, /METADATA base_sha=6\/6 pr_number=6\/6 lane=6\/6/);
+    assert.match(result.stdout, /REASONS 6\/6 receipts have new metadata; first=2 different_command=0 after_red=3 after_green=1 after_base_move=0 after_green_base_unknown=0/);
+    assert.match(result.stdout, /AVOIDABLE CANDIDATES 1 /);
     assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
