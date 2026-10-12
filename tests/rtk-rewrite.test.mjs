@@ -443,7 +443,10 @@ test("the walk refuses any rewrite it cannot prove is a safe insertion of rtk", 
       ["git diff", "rtk git diff", "safe"],
       ["git diff --stat", "rtk git diff --stat", "safe"],
       ["cargo build", "rtk cargo build", "safe"],
-      ["git diff | head -3", "rtk git diff | head -3", "safe"],
+      ["git diff 2>&1", "rtk git diff 2>&1", "safe"],
+      // a file or a program reading rtk's display gets something that is not git's format
+      ["git diff | head -3", "rtk git diff | head -3", "unsafe"],
+      ["git diff > x.patch", "rtk git diff > x.patch", "unsafe"],
       ["git diff && cargo build", "rtk git diff && rtk cargo build", "safe"],
       // a git the shell runs itself is fine: real git is always correct
       ["cargo build & git branch -r", "rtk cargo build & git branch -r", "safe"],
