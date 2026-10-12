@@ -996,20 +996,24 @@ test("Git never prompts in a gate, and a hung ls-remote stops when the launcher 
 test("two gates of one repo run at once in separate checkouts, and a third waits for either", async () => {
   const f = fixture();
   const events = join(f.root, "events");
+  const release = join(f.root, "release");
+  const live = {};
   const launch = (id, hold) => new Promise((resolveDone) => {
-    // A holding gate ends only once both holders have started (or after 30 s), so the
-    // test measures overlap, not how fast a loaded host starts the second gate.
-    const wait = hold ? `for i in $(seq 300); do [ "$(grep -c '^start-[ab] ' '${events}')" -ge 2 ] && break; sleep 0.1; done` : "true";
+    // A holder ends only when the test releases it (or after 60 s): once the third gate
+    // reports it is waiting. Fixed sleeps failed on loaded hosts in both directions.
+    const wait = hold ? `for i in $(seq 600); do [ -e '${release}' ] && break; sleep 0.1; done` : "true";
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo "start-${id} $PWD" >> '${events}'; ${wait}; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
     let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; live[id] = stderr; });
     child.on("close", (status) => resolveDone({ status, stderr }));
   });
   try {
-    const both = [launch("a", 2), launch("b", 2)];
+    const both = [launch("a", true), launch("b", true)];
     for (let i = 0; i < 200 && !(existsSync(events) && readFileSync(events, "utf8").split("\n").filter((l) => l.startsWith("start-")).length === 2); i++) await sleepMs(50);
-    const third = launch("c", 0);
+    const third = launch("c", false);
+    for (let i = 0; i < 600 && !/waiting \d+s for one of 2/.test(live.c ?? ""); i++) await sleepMs(50);
+    writeFileSync(release, "");
     const results = await Promise.all([...both, third]);
     assert.ok(results.every((r) => r.status === 0), JSON.stringify(results));
     const lines = readFileSync(events, "utf8").trim().split("\n");
