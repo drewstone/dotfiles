@@ -28,7 +28,12 @@ function ok(result) {
   return result;
 }
 
-function setup() {
+// The guard applies to network remotes only; a path or file:// remote is a repository on this
+// disk (test fixtures push to their own main). Refusal cases push through a network-shaped
+// pushurl on an unresolvable host: the hook refuses before git opens any connection.
+const NETWORK_PUSH_URL = "git@github.invalid:example/never.git";
+
+function setup({ pushUrl } = {}) {
   const remote = mkdtempSync(join(tmpdir(), "cross-name-remote-"));
   ok(bare(remote, ["init", "--bare", "-q", "-b", "main"]));
   const repo = mkdtempSync(join(tmpdir(), "cross-name-repo-"));
@@ -43,6 +48,7 @@ function setup() {
   ok(bare(repo, ["push", "-q", "origin", "main"]));
   ok(bare(repo, ["push", "-q", "origin", "main:refs/heads/develop"]));
   ok(git(repo, ["config", "core.hooksPath", hooksPath]));
+  if (pushUrl) ok(git(repo, ["config", "remote.origin.pushurl", pushUrl]));
   return repo;
 }
 
@@ -54,7 +60,7 @@ function commitOn(repo, branch, startPoint) {
 }
 
 test("a feature branch tracking origin/develop cannot update develop under push.default=upstream", () => {
-  const repo = setup();
+  const repo = setup({ pushUrl: NETWORK_PUSH_URL });
   commitOn(repo, "feat/x", "origin/develop");
   ok(git(repo, ["config", "push.default", "upstream"]));
   const result = git(repo, ["push", "origin"]);
@@ -64,7 +70,7 @@ test("a feature branch tracking origin/develop cannot update develop under push.
 });
 
 test("a detached HEAD cannot update main", () => {
-  const repo = setup();
+  const repo = setup({ pushUrl: NETWORK_PUSH_URL });
   commitOn(repo, "tmp");
   ok(git(repo, ["switch", "-q", "--detach"]));
   const result = git(repo, ["push", "origin", "HEAD:refs/heads/main"]);
@@ -73,7 +79,7 @@ test("a detached HEAD cannot update main", () => {
 });
 
 test("deleting a default branch is refused", () => {
-  const repo = setup();
+  const repo = setup({ pushUrl: NETWORK_PUSH_URL });
   const result = git(repo, ["push", "origin", ":refs/heads/develop"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /deleting refs\/heads\/develop/);
@@ -98,14 +104,42 @@ test("a feature branch pushes to its own name", () => {
 });
 
 test("the override lets a cross-name push through and says so", () => {
-  const repo = setup();
+  const repo = setup({ pushUrl: NETWORK_PUSH_URL });
   commitOn(repo, "feat/z", "origin/develop");
-  const result = ok(git(repo, ["push", "origin", "HEAD:refs/heads/develop"], { GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH: "1" }));
+  // The hook admits it; the push itself then fails to reach the unresolvable host.
+  const result = git(repo, ["push", "origin", "HEAD:refs/heads/develop"], { GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH: "1" });
   assert.match(result.stderr, /allowed by GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH=1/);
+  assert.doesNotMatch(result.stderr, /Refused: a default branch/);
 });
 
-test("a repository config cannot drop or soften the guard", () => {
+test("a cross-name push to a local path remote is allowed (a test fixture's own main)", () => {
   const repo = setup();
+  commitOn(repo, "fixture/sha", "origin/main");
+  const result = ok(git(repo, ["push", "origin", "HEAD:refs/heads/main"]));
+  assert.doesNotMatch(result.stderr, /Refused/);
+  ok(git(repo, ["push", "origin", ":refs/heads/develop"]));
+});
+
+test("a cross-name push to a file:// remote is allowed", () => {
+  const repo = setup();
+  const local = git(repo, ["config", "remote.origin.url"]).stdout.trim();
+  ok(git(repo, ["config", "remote.origin.pushurl", `file://${local}`]));
+  commitOn(repo, "fixture/file", "origin/main");
+  ok(git(repo, ["push", "origin", "HEAD:refs/heads/main"]));
+});
+
+for (const url of ["https://github.invalid/example/never.git", "ssh://git@github.invalid/example/never.git"]) {
+  test(`a cross-name push to a network remote is refused (${url.split(":")[0]})`, () => {
+    const repo = setup({ pushUrl: url });
+    commitOn(repo, "feat/n", "origin/develop");
+    const result = git(repo, ["push", "origin", "HEAD:refs/heads/develop"]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refused: a default branch is updated from a different ref/);
+  });
+}
+
+test("a repository config cannot drop or soften the guard", () => {
+  const repo = setup({ pushUrl: NETWORK_PUSH_URL });
   writeFileSync(
     join(repo, ".ai-agent-hooks.json"),
     JSON.stringify({
