@@ -1896,7 +1896,7 @@ start_urgent_reservations() {
   trap 'exit 143' HUP INT TERM
   for host in beelink1 beelink2; do
     file="$urgent_reservation_dir/$host"
-    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "$(encode "$host")" "$(encode "$repo_url")" "$(encode "$gate_class")" >"$file" 2>"$file.err" &
+    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")" >"$file" 2>"$file.err" &
     urgent_reservation_pids+=("$!")
     urgent_reservation_files+=("$file")
   done
@@ -2066,13 +2066,14 @@ while :; do
     : > "$admission_log"
     watch_urgent_admission "$admission_log" & urgent_monitor_pid=$!
     heartbeat=1 on_beelink "$target" --remote "${encoded[@]}" 2> >(tee "$admission_log" >&2)
+    rc=$?
     kill -TERM "$urgent_monitor_pid" 2>/dev/null || true
     wait "$urgent_monitor_pid" 2>/dev/null || true
     urgent_monitor_pid=""
   else
     heartbeat=1 on_beelink "$target" --remote "${encoded[@]}"
+    rc=$?
   fi
-  rc=$?
   # Only an auto placement may move; a named host keeps waiting there, as it always has.
   [ "$rc" = "$NOT_ADMITTED" ] && [ "$requested" = auto ] || exit "$rc"
   placements=$((placements + 1))
