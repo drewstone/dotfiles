@@ -1600,6 +1600,38 @@ test("an auto gate whose host falls below its disk floor while it queued gives t
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("an auto gate stops moving once it has waited past the starvation backstop, keeping its age", async () => {
+  const f = fixture();
+  const older = [];
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "2s", BEELINK_GATE_LOAD_WAIT: "60s" };
+    // Each host's one checkout is free, but an older gate is queued for it, so this gate
+    // waits there and, while it may move, gives the host back every second.
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const locks = join(f.root, `cache-${ip}`, ".locks");
+      mkdirSync(locks, { recursive: true });
+      const p = spawn("sleep", ["60"], { stdio: "ignore" });
+      older.push(p);
+      writeFileSync(join(locks, `queue-local-owner-repo.${Math.floor(Date.now() / 1000) - 3600}.${p.pid}`), "");
+    }
+    const child = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 400 && !/staying on beelink\d/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /not admitted on beelink\d within 1s/);
+    assert.match(stderr, /waited \d+s across placements; staying on beelink\d in its place in line/);
+    await sleepMs(2500);
+    // Once it stays, it does not give the host back again.
+    assert.doesNotMatch(stderr.split(/staying on beelink\d/)[1], /not admitted on/);
+    for (const p of older) p.kill();
+    assert.equal(await closed, 0, stderr);
+  } finally {
+    for (const p of older) p.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("without an override, admission reads the pressure of the gate's own top-level cgroup", () => {
   const cgroup = readFileSync("/proc/self/cgroup", "utf8").match(/^0::\/([^/\n]+)/m)?.[1];
   const expected = cgroup && existsSync(`/sys/fs/cgroup/${cgroup}/cpu.pressure`) ? `/sys/fs/cgroup/${cgroup}/cpu.pressure` : "/proc/pressure/cpu";

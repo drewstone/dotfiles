@@ -1652,7 +1652,10 @@ on_beelink() {
   [ -z "${BEELINK_GATE_LIGHT_SLOTS:-}" ] || envs+=("BEELINK_GATE_LIGHT_SLOTS=$BEELINK_GATE_LIGHT_SLOTS")
   [ "${BEELINK_GATE_URGENT:-0}" != 1 ] || envs+=("BEELINK_GATE_URGENT=1")
   [ "${requested:-}" != auto ] || envs+=("BEELINK_GATE_AUTO=1")
-  [ -z "${admit_wait_launch:-}" ] || envs+=("BEELINK_GATE_ADMIT_WAIT=$admit_wait_launch" "BEELINK_GATE_PLACED_WAIT=${placed_wait_launch:-0}")
+  [ -z "${admit_wait_launch:-}" ] || envs+=("BEELINK_GATE_ADMIT_WAIT=$admit_wait_launch")
+  # The wait so far rides along even when the gate may no longer move, so it keeps its
+  # age in the checkout queue and its starvation clock.
+  (( ${placed_wait_launch:-0} == 0 )) || envs+=("BEELINK_GATE_PLACED_WAIT=$placed_wait_launch")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
   local me=$$ rc heartbeat_fd heartbeat_pid command_pid
   heartbeat_input() {
@@ -1949,6 +1952,7 @@ requested=$target admit_wait_launch="" placed_wait_launch=0
 if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
   admit_wait_launch=$(seconds_of "${BEELINK_GATE_REPLACE_WAIT:-60s}") || die "invalid BEELINK_GATE_REPLACE_WAIT: ${BEELINK_GATE_REPLACE_WAIT:-}"
 fi
+starve_after_launch=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
 launched=$SECONDS placements=0
 while :; do
   case "$requested" in
@@ -1963,6 +1967,14 @@ while :; do
     encoded+=("$(encode "$arg")")
   done
   placed_wait_launch=$((SECONDS - launched))
+  # A gate that has waited past the starvation backstop stops moving: each move
+  # dropped its queue ticket for a while, so a newer gate on the host it had just
+  # left took the next free checkout (ADC #10424 waited 37 min on 2026-10-12
+  # while newer gates went first). It now stays on this host, keeping its place.
+  if [ -n "$admit_wait_launch" ] && (( placed_wait_launch >= starve_after_launch )); then
+    admit_wait_launch=""
+    echo "beelink-gate: waited ${placed_wait_launch}s across placements; staying on $target in its place in line" >&2
+  fi
   heartbeat=1 on_beelink "$target" --remote "${encoded[@]}"
   rc=$?
   # Only an auto placement may move; a named host keeps waiting there, as it always has.
