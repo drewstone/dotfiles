@@ -76,6 +76,11 @@ if [[ "\${rest[0]}" == reg ]]; then
 fi
 printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
 printf '%s\\n' "\${rest[*]:2}" > '${join(f.root, "ssh-remote-command")}'
+# FAKE_PROBE_DROPS names a file holding how many probe connections to drop, like a busy sshd.
+if [[ -n "\${FAKE_PROBE_DROPS:-}" && " \${rest[*]} " == *" --probe "* ]]; then
+  n=$(cat "$FAKE_PROBE_DROPS" 2>/dev/null || echo 0)
+  if (( n > 0 )); then echo $((n - 1)) > "$FAKE_PROBE_DROPS"; exit 255; fi
+fi
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_CPU_PRESSURE="$FAKE_PRESSURE_PREFIX-$host"
@@ -1678,5 +1683,19 @@ test("a command's own pnpm uses the gate's store and never stops on a modules pu
     const result = f.call(f.first, ["bash", "-c", 'printf "%s|%s" "$npm_config_store_dir" "$npm_config_confirm_modules_purge"'], { noInstall: true });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, `${f.home}/.local/share/pnpm/store|false`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto retries a dropped probe instead of calling a busy beelink unreachable", () => {
+  const f = fixture();
+  try {
+    const drops = join(f.root, "probe-drops");
+    const env = { ...loadedHosts(f, 0.5, 0.5), FAKE_PROBE_DROPS: drops, BEELINK_GATE_PROBE_RETRY_SECONDS: "0.1" };
+    // Two dropped connections: the probe of the first host succeeds on its third try.
+    writeFileSync(drops, "2\n");
+    const result = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stderr, /beelink1: unreachable/);
+    assert.equal(readFileSync(drops, "utf8").trim(), "0");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
