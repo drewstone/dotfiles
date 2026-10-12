@@ -1286,7 +1286,11 @@ remote_gate() {
   # hold budget, without the lock descriptor and without the launcher's stdin.
   step() {
     local left=$((deadline - SECONDS)) rc step_started=$SECONDS
-    if (( left <= 0 )); then timed_out=1; return 124; fi
+    if (( left <= 0 )); then
+      timed_out=1
+      echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
+      return 124
+    fi
     BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
     current=$!
     wait "$current"; rc=$?
