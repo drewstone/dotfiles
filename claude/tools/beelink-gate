@@ -2180,6 +2180,7 @@ if total_merged:
 # history. A prior checkout on the other Beelink must not look like a first run.
 last_head, last_exact = {}, {}
 reasons = collections.Counter()
+repeat_repos, repeat_lanes = collections.Counter(), collections.Counter()
 for r in sorted(history, key=lambda item: item.get("at", "")):
     head = (r.get("repo"), r.get("sha"))
     exact = head + (r.get("mode"), r.get("command"))
@@ -2196,6 +2197,9 @@ for r in sorted(history, key=lambda item: item.get("at", "")):
         reason = "after_green"
     if r.get("at", "") >= since:
         reasons[reason] += 1
+        if reason != "first":
+            repeat_repos[r.get("repo") or "?"] += 1
+            repeat_lanes[r.get("lane") or "unknown"] += 1
     last_head[head], last_exact[exact] = r, r
 measured = sum("base_sha" in r for r in rows)
 print(f"METADATA base_sha={sum(bool(r.get('base_sha')) for r in rows)}/{len(rows)} "
@@ -2205,6 +2209,9 @@ print(f"REASONS {measured}/{len(rows)} receipts have new metadata; "
       + " ".join(f"{key}={reasons[key]}" for key in ("first", "different_command", "after_red", "after_green", "after_base_move", "after_green_base_unknown")))
 print(f"AVOIDABLE CANDIDATES {reasons['after_green'] + reasons['after_base_move']} "
       "(same head + command after green, with unchanged or moved base; a moved base alone does not prove motive)")
+for label, counts in (("REPEAT_REPO", repeat_repos), ("REPEAT_LANE", repeat_lanes)):
+    for name, count in counts.most_common(5):
+        print(f"{label} {name} {count}")
 # Host pressure at admission, per host: the numbers to beat are host some avg60 < 40
 # while gates run, and no gate admitted above that.
 by_host = collections.defaultdict(list)

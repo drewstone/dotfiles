@@ -2014,6 +2014,8 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     assert.match(result.stdout, /METADATA base_sha=6\/6 pr_number=6\/6 lane=6\/6/);
     assert.match(result.stdout, /REASONS 6\/6 receipts have new metadata; first=2 different_command=0 after_red=3 after_green=1 after_base_move=0 after_green_base_unknown=0/);
     assert.match(result.stdout, /AVOIDABLE CANDIDATES 1 /);
+    assert.match(result.stdout, /REPEAT_REPO github\.com\/o\/r 4/);
+    assert.match(result.stdout, /REPEAT_LANE op-company:gate 4/);
     assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
