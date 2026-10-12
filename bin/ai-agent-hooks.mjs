@@ -383,9 +383,16 @@ function pushedReleaseLine(refUpdates) {
  * develop on 2026-10-11 with no pull request. A receipted merge lands through the GitHub API,
  * not git push, so this never sees it.
  */
-function checkNoCrossNameDefaultPush(repoRoot, refUpdates = []) {
+function checkNoCrossNameDefaultPush(repoRoot, refUpdates = [], remoteUrl = "") {
   if (process.env.GITHUB_ACTIONS) {
     return { ok: true, status: 0, output: "Inside GitHub Actions — workflows own their pushes." };
+  }
+  if (isLocalFilesystemRemote(remoteUrl)) {
+    return {
+      ok: true,
+      status: 0,
+      output: `Local filesystem remote (${remoteUrl}) — not a shared default branch.`,
+    };
   }
   const refused = [];
   for (const u of refUpdates) {
@@ -420,6 +427,24 @@ function checkNoCrossNameDefaultPush(repoRoot, refUpdates = []) {
       "A tracked default branch plus push.default=upstream causes this; create worktrees with --no-track.\n" +
       "Deliberate override (logged): GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH=1",
   };
+}
+
+/**
+ * The pre-push hook's second argument is the push location. A path or file:// URL is a repository
+ * on this disk: test suites build throwaway repos and push a fixture ref to their main, and that
+ * updates no shared default branch. Only a network remote (scheme://, or scp-style host:path) is
+ * guarded. An unknown location keeps the guard on.
+ */
+function isLocalFilesystemRemote(url) {
+  const location = typeof url === "string" ? url.trim() : "";
+  if (!location) return false;
+  if (/^file:\/\//i.test(location)) return true;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(location)) return false;
+  // scp-style user@host:path or host:path: a colon before the first slash.
+  const colon = location.indexOf(":");
+  const slash = location.indexOf("/");
+  if (colon > 0 && (slash === -1 || colon < slash)) return false;
+  return true;
 }
 
 function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
@@ -534,7 +559,11 @@ function runBuiltin(builtin, context) {
   }
 
   if (builtin === "no-cross-name-default-push") {
-    return checkNoCrossNameDefaultPush(context.repoRoot, context.pushRefUpdates);
+    return checkNoCrossNameDefaultPush(
+      context.repoRoot,
+      context.pushRefUpdates,
+      context.pushRemoteUrl,
+    );
   }
 
   return { ok: false, status: 1, output: `Unknown builtin check: ${builtin}` };
@@ -1230,6 +1259,8 @@ async function runHookCommand(rawArgs) {
     branch: currentBranch(repoRoot),
     pushContext,
     pushRefUpdates: hookName === "pre-push" ? readPrePushRefUpdates() : [],
+    // git runs pre-push with <remote name> <push location>.
+    pushRemoteUrl: hookName === "pre-push" ? positionals[2] || "" : "",
     files,
     diff: diffText(repoRoot, hookName, pushContext),
   };
