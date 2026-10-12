@@ -14,6 +14,7 @@ Extend the surface that already serves a capability with a flag, key or field (D
 When a product exists to do a kind of work, operate it and judge its result; never do that work yourself or through subagents, which hides whether the product works (Discovery research is a play pressed with `disco run`; agent-app work goes through `agent-ask`).
 Before saying code lacks or never does something, `git fetch` and `git grep` for it in the owner's `origin/<default>`, and cite the command and the lines it found; a sparse, stale or deployed checkout proves nothing absent.
 Before answering “do we have / does X exist” or saying something is missing, run `have <terms>` (default-branch paths, scripts, workflows with state, content, tasks) and cite what it found; one grep for one spelling proves nothing.
+When the `fff` MCP tools (`mcp__fff__grep`, `mcp__fff__multi_grep`, `mcp__fff__find_files`) are listed, search the current checkout with them before Grep, Glob, `rg` or `grep -r`: their index answers in milliseconds where each of those rescans the tree, and `rg` stays for multiline and case-sensitive regexes; they read the working tree, so a claim that something is missing still comes from `git grep` on `origin/<default>` and `have`.
 Count live consumers before retaining compatibility; preserve required behavior and historical evidence.
 Prioritize correctness, simplicity, robustness, and maintainability over implementation effort.
 Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.

@@ -126,7 +126,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Read|Grep|BashOutput|TaskOutput|Monitor",
+        "matcher": "Bash|Read|Grep|mcp__fff__grep|mcp__fff__multi_grep|BashOutput|TaskOutput|Monitor",
         "hooks": [
           {
             "type": "command",
