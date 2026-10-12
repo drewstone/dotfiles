@@ -354,6 +354,8 @@ def unique_tree_bytes(tree: Path, deadline: float):
             directory = pending.pop()
             with os.scandir(directory) as entries:
                 for entry in entries:
+                    if time.monotonic() >= deadline:
+                        return None
                     info = entry.stat(follow_symlinks=False)
                     if info.st_dev != device:
                         continue
