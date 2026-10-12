@@ -45,18 +45,18 @@ function fixture() {
   writeFileSync(fakePnpm, '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$PNPM_LOG"\n');
   chmodSync(fakePnpm, 0o755);
   const fakeDf = join(bin, "df");
-  writeFileSync(fakeDf, '#!/usr/bin/env bash\nprintf "Avail\\n%s\\n" "${FAKE_AVAIL:-1099511627776}"\n');
+  writeFileSync(fakeDf, '#!/usr/bin/env bash\nprintf "Avail\\n%s\\n" "$(cat "${FAKE_AVAIL_FILE:-/nonexistent}" 2>/dev/null || echo "${FAKE_AVAIL:-1099511627776}")"\n');
   chmodSync(fakeDf, 0o755);
   // Keep ordinary fixture gates far from the synthetic weekly update window.
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
   // No pressure file: the load tests cover the load-average fallback; pressure tests set one.
-  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), BEELINK_GATE_DEV_CGROUP: join(root, "no-dev-cgroup"), BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_HOST_PRESSURE: join(root, "no-host-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), BEELINK_GATE_DEV_CGROUP: join(root, "no-dev-cgroup"), BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -84,6 +84,7 @@ fi
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_CPU_PRESSURE="$FAKE_PRESSURE_PREFIX-$host"
+[[ -z "\${FAKE_HOST_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_HOST_PRESSURE="$FAKE_HOST_PRESSURE_PREFIX-$host"
 exec "\${rest[@]:2}"
 `);
   chmodSync(fakeSsh, 0o755);
@@ -255,6 +256,47 @@ test("Windows policy is required and a blocked start reports the next allowed ti
 // 2026-10-11 08:00Z: both beelinks were in their update windows, auto printed
 // "no beelink can start this gate" with exit 3, and the landing chain recorded
 // "FAIL pre-gate red" (L1 queue.result, r1527 at 5980b3a8).
+test("no gate, urgent included, is admitted while host-wide CPU pressure is over its ceiling", () => {
+  const f = fixture();
+  try {
+    const host = join(f.root, "host-pressure");
+    const hostLine = (avg60) => `some avg10=${avg60.toFixed(2)} avg60=${avg60.toFixed(2)} avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n`;
+    writeFileSync(host, hostLine(90));
+    const wait = { BEELINK_GATE_HOST_PRESSURE: host, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" };
+    const urgent = f.call(f.first, ["true"], { noInstall: true, env: { ...wait, BEELINK_GATE_URGENT: "1" } });
+    assert.equal(urgent.status, 75, urgent.stderr);
+    assert.match(urgent.stderr, /waiting \d+s of 2s: beelink2 host CPU pressure \(some avg60\) 90\.00 over its ceiling of 40/);
+    assert.match(urgent.stderr, /REFUSED beelink2 host CPU pressure \(some avg60\) 90\.00 stayed over its ceiling of 40/);
+    assert.doesNotMatch(urgent.stderr, /URGENT: admitting/);
+    // The limits file raises the ceiling, read at every check.
+    writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "host_pressure_ceiling=95\n");
+    const raised = f.call(f.first, ["true"], { noInstall: true, env: wait });
+    assert.equal(raised.status, 0, raised.stderr);
+    assert.match(raised.stderr, /receipt: .* host_cpu=90\.00\n/);
+    assert.equal(receipts(f).at(-1).start_host_cpu_pressure, 90);
+    rmSync(f.env.BEELINK_GATE_LIMITS_FILE);
+    writeFileSync(host, hostLine(12));
+    const calm = f.call(f.first, ["true"], { noInstall: true, env: wait });
+    assert.equal(calm.status, 0, calm.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an auto-placed gate gives back a host that fell below its disk floor, so the launcher can place it again", () => {
+  const f = fixture();
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const low = { ...f.env, FAKE_AVAIL: String(150 * 2 ** 30) };
+    const auto = run("bash", [gate, "--remote", ...args], { env: { ...low, BEELINK_GATE_AUTO: "1" } });
+    assert.equal(auto.status, 76, auto.stderr);
+    assert.match(auto.stderr, /beelink2 gave the gate back before admission \(beelink2 is below its disk floor\); placing the gate again/);
+    assert.doesNotMatch(auto.stderr, /TEMPFAIL/);
+    // A gate sent to a named host still reports TEMPFAIL with its next allowed time.
+    const named = run("bash", [gate, "--remote", ...args], { env: low });
+    assert.equal(named.status, 75, named.stderr);
+    assert.match(named.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("auto exits TEMPFAIL with the earliest time either host allows when both refuse", () => {
   const f = fixture();
   try {
@@ -1519,6 +1561,45 @@ test("auto places by CPU pressure: equal load averages, the host with low pressu
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("auto ranks a host over its host-wide pressure ceiling as over its limit, whatever its gate cgroup reads", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), FAKE_PRESSURE_PREFIX: join(f.root, "pressure"), FAKE_HOST_PRESSURE_PREFIX: join(f.root, "host") };
+    // beelink1's gates look idle, but the host is saturated by work outside them.
+    writeFileSync(join(f.root, "pressure-100.98.195.7"), pressureLine(2));
+    writeFileSync(join(f.root, "pressure-100.127.22.51"), pressureLine(15));
+    const host60 = (v) => `some avg10=${v.toFixed(2)} avg60=${v.toFixed(2)} avg300=0.00 total=1\n`;
+    writeFileSync(join(f.root, "host-100.98.195.7"), host60(90));
+    writeFileSync(join(f.root, "host-100.127.22.51"), host60(20));
+    const chosen = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(chosen.status, 0, chosen.stderr);
+    assert.match(chosen.stderr, /auto chose beelink2/);
+    assert.match(chosen.stderr, /beelink1: host=beelink1 .*load=90\.00 limit=40 host_cpu=90\.00/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an auto gate whose host falls below its disk floor while it queued gives the host back before checkout", async () => {
+  const f = fixture();
+  try {
+    const avail = join(f.root, "avail");
+    const pressure = join(f.root, "pressure");
+    writeFileSync(avail, String(500 * 2 ** 30));
+    writeFileSync(pressure, pressureLine(60));
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_AUTO: "1", FAKE_AVAIL_FILE: avail, BEELINK_GATE_CPU_PRESSURE: pressure, BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const closed = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 200 && !/waiting \d+s/.test(stderr); i++) await sleepMs(50);
+    // While it waits on pressure, the disk drops below the floor; then pressure clears.
+    writeFileSync(avail, String(150 * 2 ** 30));
+    writeFileSync(pressure, pressureLine(5));
+    assert.equal(await closed, 76, stderr);
+    assert.match(stderr, /beelink2 gave the gate back before checkout \(beelink2 is below its disk floor\); placing the gate again/);
+    assert.doesNotMatch(stderr, /TEMPFAIL/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("without an override, admission reads the pressure of the gate's own top-level cgroup", () => {
   const cgroup = readFileSync("/proc/self/cgroup", "utf8").match(/^0::\/([^/\n]+)/m)?.[1];
   const expected = cgroup && existsSync(`/sys/fs/cgroup/${cgroup}/cpu.pressure`) ? `/sys/fs/cgroup/${cgroup}/cpu.pressure` : "/proc/pressure/cpu";
@@ -1663,7 +1744,7 @@ test("a finished gate stops every process its command left running, detached or 
     left = readFileSync(pids, "utf8").trim().split("\n").map(Number);
     assert.equal(left.length, 2);
     assert.deepEqual(left.filter(running), [], "a process outlived its gate");
-    assert.match(result.stderr, /receipt: .* reaped=2 bundle=none\n/);
+    assert.match(result.stderr, /receipt: .* reaped=2 bundle=none host_cpu=/);
     assert.equal(receipts(f).at(-1).reaped, 2);
   } finally {
     for (const pid of left) { try { process.kill(pid, "SIGKILL"); } catch {} }
@@ -1682,14 +1763,14 @@ test("a command's commits that never reached the remote are saved to a bundle be
     const bundle = receipts(f).at(-1).bundle;
     assert.ok(bundle && existsSync(bundle), result.stderr);
     assert.match(result.stderr, /1 commit\(s\) not on the remote saved to .*\.bundle/);
-    assert.match(result.stderr, new RegExp(`bundle=${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\n`));
+    assert.match(result.stderr, new RegExp(`bundle=${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} host_cpu=`));
     const heads = spawnSync("git", ["bundle", "list-heads", bundle], { encoding: "utf8" });
     assert.match(heads.stdout, new RegExp(`^${commit} HEAD$`, "m"));
     // A gate whose command commits nothing writes no bundle.
     const clean = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(clean.status, 0, clean.stderr);
     assert.equal(receipts(f).at(-1).bundle, null);
-    assert.match(clean.stderr, /bundle=none\n/);
+    assert.match(clean.stderr, /bundle=none host_cpu=/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1779,10 +1860,10 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
   try {
     installFakeSsh(f);
     const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-    const row = (sha, mode, exit) => JSON.stringify({ at, repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30 });
+    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu });
     // The fake ssh runs the remote side locally, so both beelinks read this one state dir.
     mkdirSync(join(f.root, "state"), { recursive: true });
-    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1), row("a", "install", 1), row("b", "ship", 0)].join("\n") + "\n");
+    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1, 30), row("a", "install", 1, 55), row("b", "ship", 0)].join("\n") + "\n");
     writeFileSync(join(f.root, "bin", "gh-drew"), "#!/usr/bin/env bash\necho 2\n");
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
     const result = run(gate, ["--report", "24"], { env: { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) } });
@@ -1790,6 +1871,7 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
     assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
     assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
+    assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
