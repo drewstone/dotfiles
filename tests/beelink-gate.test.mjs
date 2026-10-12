@@ -1634,15 +1634,18 @@ test("an auto gate stops moving once it has waited past the starvation backstop,
 
 test("a --dev auto run keeps re-placing after the starvation time, since dev runs have no backstop", async () => {
   const f = fixture();
-  const older = [];
+  const holders = [];
   try {
     const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_REPLACE_WAIT: "1s", BEELINK_GATE_STARVE_AFTER: "1s", BEELINK_GATE_LOAD_WAIT: "60s" };
     for (const ip of ["100.98.195.7", "100.127.22.51"]) {
       const locks = join(f.root, `cache-${ip}`, ".locks");
       mkdirSync(locks, { recursive: true });
-      const p = spawn("sleep", ["60"], { stdio: "ignore" });
-      older.push(p);
-      writeFileSync(join(locks, `queue-local-owner-repo@dev.${Math.floor(Date.now() / 1000) - 3600}.${p.pid}`), "");
+      const marker = join(f.root, `held-${ip}`);
+      const lock = join(locks, "local-owner-repo@dev.lock");
+      const p = spawn("flock", ["-x", "-F", lock, "bash", "-c", `touch '${marker}'; exec sleep 60`], { stdio: "ignore" });
+      holders.push(p);
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(50);
+      assert.equal(existsSync(marker), true, `dev checkout lock on ${ip} was not held`);
     }
     const child = spawn(gate, ["--dev", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
     let stderr = "";
@@ -1656,7 +1659,7 @@ test("a --dev auto run keeps re-placing after the starvation time, since dev run
     child.kill();
     await closed;
   } finally {
-    for (const p of older) p.kill();
+    for (const p of holders) p.kill();
     rmSync(f.root, { recursive: true, force: true });
   }
 });
