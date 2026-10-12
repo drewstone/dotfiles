@@ -211,6 +211,13 @@ test("a submitted gate survives its launcher and --attach replays its result", a
     assert.equal(receipt.gate_id, id);
     assert.equal(receipt.exit, 7);
     assert.equal(receipt.watchdog, false);
+    const oldExit = join(f.root, "state", "jobs", id, "exit");
+    const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    utimesSync(oldExit, yesterday, yesterday);
+    const next = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
+    assert.equal(next.status, 0, next.stderr);
+    assert.equal(existsSync(join(f.root, "state", "jobs", id)), false, "a later submission prunes expired reconnect logs");
+    assert.equal(receipts(f).length, 2, "receipt history remains after reconnect logs expire");
   } finally {
     child.kill("SIGKILL");
     rmSync(f.root, { recursive: true, force: true });
