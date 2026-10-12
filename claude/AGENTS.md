@@ -55,4 +55,5 @@ No commit, squash message, or PR body carries a `Co-authored-by` trailer or AI a
 Force-push requires explicit authorization; remove worktrees only with wt-remove after verifying retention.
 Root storage, mounts, namespaces, freezes, reboot, and shutdown belong in hostlab's throwaway VM; guard refusals are policy.
 Change production only through its deploy path, admin CLI, or API; never hand-apply a PR or write its database directly.
+Merge a PR only when every precondition its body names is shown true; batch merge passes skip such PRs, and an author with an unmet precondition opens the PR as draft.
 Remove production hosts, VMs, volumes, or sandboxes only through the platform's retire path, which drains and confirms snapshots first; never through raw cloud APIs or scripts inside a production container. A request to delete everything authorizes that path for that task only.
