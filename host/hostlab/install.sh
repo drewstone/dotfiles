@@ -19,6 +19,17 @@ unit_dir="$HOME/.config/systemd/user"
 install -d "$unit_dir"
 install -m 0644 "$SCRIPT_DIR/systemd/hostlab-reap.service" "$unit_dir/hostlab-reap.service"
 install -m 0644 "$SCRIPT_DIR/systemd/hostlab-reap.timer" "$unit_dir/hostlab-reap.timer"
+# A host with no archive drive at all (the Beelinks have no /mnt/traces) keeps
+# expired runs' logs and small artifacts on its own disk and deletes the VM
+# disks; without this, every expired run stayed in place (62 GiB on beelink2,
+# 2026-10-12). GTR keeps its rule: when its drive is missing, runs stay put.
+dropin="$unit_dir/hostlab-reap.service.d/50-small-archive.conf"
+if [ ! -d /mnt/traces ]; then
+  install -d "$(dirname "$dropin")"
+  printf '[Service]\nEnvironment=HOSTLAB_SMALL_ARCHIVE=%%h/.local/state/hostlab-archive\n' > "$dropin"
+else
+  rm -f "$dropin"
+fi
 systemctl --user daemon-reload
 systemctl --user enable --now hostlab-reap.timer >/dev/null
 systemctl --user is-active --quiet hostlab-reap.timer
