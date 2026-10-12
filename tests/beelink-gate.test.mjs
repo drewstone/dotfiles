@@ -351,7 +351,10 @@ test("auto exits TEMPFAIL with the earliest time either host allows when both re
     assert.equal(refused.status, 75, refused.stderr);
     assert.match(refused.stderr, /no beelink can start this gate \(beelink1: host=beelink1 state=refused .*REFUSED beelink1 Windows Update/);
     assert.equal(refused.stderr.trim().split("\n").at(-1), `beelink-gate: TEMPFAIL next_allowed=${windowEnd(nextHour)} no beelink can start this gate`);
-    assert.equal(existsSync(f.cache), false);
+    // Normal auto briefly creates FIFO tickets before probing. A refusal must
+    // remove them without creating a checkout.
+    assert.deepEqual(readdirSync(join(f.cache, ".locks")).filter((name) => name.startsWith("queue-")), []);
+    assert.equal(existsSync(join(f.cache, "local", "owner", "repo")), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
