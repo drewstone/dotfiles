@@ -575,46 +575,71 @@ with_lane_line() {
 # body has no text until gh writes it, so fill_patch asks main to add the line after creation.
 lane_args=()
 fill_patch=0
+# Read a body file (stdin for "-") into lane_text, keeping its trailing newlines; fail when it can't be read.
+lane_text=""
+read_body_file() {
+  local raw
+  if [[ "$1" == "-" ]]; then raw="$(cat && printf x)" || return 1; else raw="$(cat -- "$1" && printf x)" || return 1; fi
+  lane_text="${raw%x}"
+}
 add_lane_line() {
   lane_args=("$@")
   [[ -n "$(lane_line)" && "${1:-}" == "pr" ]] || return 0
+  local -a a=("$@") out=(pr)
   local i=1 n=$#
-  local -a a=("$@")
   while (( i < n )); do
     case "${a[i]}" in
-      -R|--repo) i=$((i + 2)) ;;
-      --repo=*|-R?*) i=$((i + 1)) ;;
+      -R|--repo) out+=("${a[i]}" "${a[i+1]:-}"); i=$((i + 2)) ;;
+      --repo=*|-R?*) out+=("${a[i]}"); i=$((i + 1)) ;;
       *) break ;;
     esac
   done
   (( i < n )) || return 0
-  local sub="${a[i]}" saw_body=0 saw_fill=0 text
+  local sub="${a[i]}" saw_body=0 saw_fill=0 tok k c rest
   [[ "$sub" == "create" || "$sub" == "edit" ]] || return 0
-  i=$((i + 1))
+  out+=("$sub"); i=$((i + 1))
   while (( i < n )); do
-    case "${a[i]}" in
-      --) break ;;
+    tok="${a[i]}"
+    case "$tok" in
+      --) out+=("${a[@]:i}"); i=$n; break ;;
       -b|--body)
-        (( i + 1 < n )) || break
-        a[i+1]="$(with_lane_line "${a[i+1]}")"; saw_body=1; i=$((i + 2)) ;;
+        (( i + 1 < n )) || return 0
+        out+=("$tok" "$(with_lane_line "${a[i+1]}")"); saw_body=1; i=$((i + 2)) ;;
       --body=*)
-        a[i]="--body=$(with_lane_line "${a[i]#--body=}")"; saw_body=1; i=$((i + 1)) ;;
-      -F|--body-file|--body-file=*)
-        local path
-        if [[ "${a[i]}" == --body-file=* ]]; then path="${a[i]#--body-file=}"; else path="${a[i+1]:-}"; fi
-        if [[ "$path" == "-" ]]; then text="$(cat; printf x)"; else text="$(cat -- "$path"; printf x)" || return 0; fi
-        text="${text%x}"
-        if [[ "${a[i]}" == --body-file=* ]]; then
-          a[i]="--body=$(with_lane_line "$text")"; i=$((i + 1))
-        else
-          a[i]="--body"; a[i+1]="$(with_lane_line "$text")"; i=$((i + 2))
-        fi
-        saw_body=1 ;;
-      --fill|--fill-first|--fill-verbose|-f) saw_fill=1; i=$((i + 1)) ;;
-      *) i=$((i + 1)) ;;
+        out+=("--body=$(with_lane_line "${tok#--body=}")"); saw_body=1; i=$((i + 1)) ;;
+      -F|--body-file)
+        (( i + 1 < n )) || return 0
+        read_body_file "${a[i+1]}" || return 0
+        out+=(--body "$(with_lane_line "$lane_text")"); saw_body=1; i=$((i + 2)) ;;
+      --body-file=*)
+        read_body_file "${tok#--body-file=}" || return 0
+        out+=(--body "$(with_lane_line "$lane_text")"); saw_body=1; i=$((i + 1)) ;;
+      --fill|--fill-first|--fill-verbose) saw_fill=1; out+=("$tok"); i=$((i + 1)) ;;
+      -[!-]*)
+        # Short flags, alone or clustered (-df, -bText, -Ffile, -dFfile): flags without a value are
+        # d e f w; any other letter takes the rest of the token, or the next argument, as its value.
+        k=1; local prefix="-" handled=0
+        while (( k < ${#tok} )); do
+          c="${tok:k:1}"
+          case "$c" in
+            f) saw_fill=1; prefix+="$c"; k=$((k + 1)) ;;
+            d|e|w) prefix+="$c"; k=$((k + 1)) ;;
+            b|F)
+              rest="${tok:k+1}"
+              local value consumed=0
+              if [[ -n "$rest" ]]; then value="$rest"; else (( i + 1 < n )) || return 0; value="${a[i+1]}"; consumed=1; fi
+              if [[ "$c" == F ]]; then read_body_file "$value" || return 0; value="$lane_text"; fi
+              [[ "$prefix" != "-" ]] && out+=("$prefix")
+              out+=(--body "$(with_lane_line "$value")")
+              saw_body=1; handled=1; i=$((i + 1 + consumed)); break ;;
+            *) break ;;  # another value-taking flag: the token, and any separate value after it, pass through
+          esac
+        done
+        (( handled )) || { out+=("$tok"); i=$((i + 1)); } ;;
+      *) out+=("$tok"); i=$((i + 1)) ;;
     esac
   done
-  lane_args=("${a[@]}")
+  lane_args=("${out[@]}")
   [[ "$sub" == "create" && $saw_body -eq 0 && $saw_fill -eq 1 ]] && fill_patch=1
   return 0
 }
@@ -628,7 +653,7 @@ run_create_with_fill_patch() {
   out="$(GH_TOKEN="$token" gh "$@")" || status=$?
   [[ -n "$out" ]] && printf '%s\n' "$out"
   (( status == 0 )) || return "$status"
-  url="$(grep -oE 'https://github\.com/[^[:space:]]+/pull/[0-9]+' <<<"$out" | tail -n 1)"
+  url="$(grep -oE 'https://github\.com/[^[:space:]]+/pull/[0-9]+' <<<"$out" | tail -n 1)" || url=""
   [[ -n "$url" ]] || return 0
   if [[ -n "$pr_wip_ledger" ]]; then
     mkdir -p "$pr_wip_dir"
