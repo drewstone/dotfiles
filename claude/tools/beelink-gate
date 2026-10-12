@@ -986,8 +986,15 @@ remote_probe() {
     flock -n -s "$fd" && free_slots=$((free_slots + 1))
     exec {fd}<&-
   done
-  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s next=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$free_slots" "$(load_now)" "$(load_limit)" "${next:--}" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+  # A host over its host-wide ceiling admits no gate, so auto ranks it by that
+  # pressure and ceiling instead of the gate cgroup's, which can look idle there.
+  local probe_load probe_limit host_cpu
+  probe_load=$(load_now) probe_limit=$(load_limit) host_cpu=$(host_pressure_now)
+  if [ -n "$host_cpu" ] && over_limit "$host_cpu" "$(host_pressure_ceiling)"; then
+    probe_load=$host_cpu probe_limit=$(host_pressure_ceiling)
+  fi
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 }
 
 # After a green --ship run, sign what ran and on which tree with this beelink's
@@ -1395,7 +1402,15 @@ PY
   # The final admission checks run after lock and slot acquisition so their
   # refusals need the same cleanup and receipt path as later failures.
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout"
-  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  if ! check_floor "$beelink"; then
+    # The host can cross its floor while the gate queued for pressure, a checkout
+    # or a slot; an auto placement still gives it back (finish releases the lock).
+    if (( placed_auto )); then
+      echo "beelink-gate: $beelink gave the gate back before checkout ($beelink is below its disk floor); placing the gate again" >&2
+      exit "$NOT_ADMITTED"
+    fi
+    tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  fi
   admit_window "$beelink" "$window_day" "$window_hour"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
@@ -1626,6 +1641,7 @@ on_beelink() {
   [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
   [ -z "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ] || envs+=("BEELINK_GATE_MAX_CPU_PRESSURE=$BEELINK_GATE_MAX_CPU_PRESSURE")
+  [ -z "${BEELINK_GATE_HOST_PRESSURE_CEILING:-}" ] || envs+=("BEELINK_GATE_HOST_PRESSURE_CEILING=$BEELINK_GATE_HOST_PRESSURE_CEILING")
   [ -z "${BEELINK_GATE_STARVE_AFTER:-}" ] || envs+=("BEELINK_GATE_STARVE_AFTER=$BEELINK_GATE_STARVE_AFTER")
   [ "${gate_class:-}" != dev ] || envs+=("BEELINK_GATE_CLASS=dev")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
