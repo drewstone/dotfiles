@@ -335,6 +335,108 @@ def release_list(rows, lane, limit=5) -> str:
                    for tree, owner, idle in rows)
 
 
+def unique_tree_bytes(tree: Path, deadline: float):
+    """Conservative allocated bytes freed if this tree alone is removed.
+
+    Hardlinks outside the tree do not free their blocks. Do not follow symlinks
+    or cross mounts, and return unknown rather than stall a floor refusal.
+    """
+    import stat
+    import time
+    total = 0
+    links = {}  # (device, inode) -> [links seen here, total links, allocated bytes]
+    try:
+        device = tree.lstat().st_dev
+        pending = [tree]
+        while pending:
+            if time.monotonic() >= deadline:
+                return None
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if time.monotonic() >= deadline:
+                        return None
+                    info = entry.stat(follow_symlinks=False)
+                    if info.st_dev != device:
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        total += info.st_blocks * 512
+                        pending.append(Path(entry.path))
+                    elif info.st_nlink == 1:
+                        total += info.st_blocks * 512
+                    else:
+                        key = (info.st_dev, info.st_ino)
+                        if key in links:
+                            links[key][0] += 1
+                        else:
+                            links[key] = [1, info.st_nlink, info.st_blocks * 512]
+        total += sum(size for seen, count, size in links.values() if seen == count)
+        return total
+    except OSError:
+        return None
+
+
+def salvage_needed(tree: Path, deadline: float):
+    """Whether wt-remove would need to copy source data; unknown on any probe error."""
+    import subprocess
+    import time
+    excludes = [f":(exclude,glob)**/{name}/**" for name in (
+        "node_modules", "target", ".next", "dist", "build", ".turbo", "coverage",
+        ".venv", "__pycache__", ".pnpm-store", ".cache", ".pytest_cache",
+        ".mypy_cache", ".ruff_cache", "test-results", "playwright-report",
+        ".wrangler/tmp")]
+    excludes.append(":(exclude,glob)**/*.tsbuildinfo")
+    try:
+        for index, args in enumerate((
+            ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+            ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules"],
+            ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", *excludes],
+            ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", ".", *excludes],
+        )):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            result = subprocess.run(["/usr/bin/git", "-C", str(tree), *args],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                    timeout=min(2, remaining), check=True)
+            data = result.stdout.strip(b"\x00\n ")
+            if (index == 0 and data != b"0") or (index != 0 and data):
+                return True
+        return False
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def floor_release_list(rows, lane: str, limit=5) -> str:
+    import time
+    # A single bounded read-only scan keeps a refusal useful under a disk alert.
+    deadline = time.monotonic() + 20
+    size_deadline = deadline - 8
+    measured = [(tree, owner, idle, unique_tree_bytes(tree, size_deadline)) for tree, owner, idle in rows]
+    measured.sort(key=lambda row: (-1 if row[3] is None else row[3]), reverse=True)
+    salvage = {}
+    def needs_copy(tree):
+        if tree not in salvage:
+            salvage[tree] = salvage_needed(tree, deadline)
+        return salvage[tree]
+    output = "\n  Largest linked trees by exclusive allocated bytes (estimate; shared/reflink blocks may differ):"
+    for tree, owner, idle, size in measured[:limit]:
+        copy = needs_copy(tree)
+        state = "salvage-copy-required" if copy else "clean" if copy is False else "salvage-unknown"
+        amount = "unknown" if size is None else f"{size / 2**30:.2f} GiB"
+        prefix = "OWNER_RELEASED=1 " if owner == lane else ""
+        output += f"\n  {prefix}wt-remove {tree}   # exclusive {amount}; {state}; idle {idle / 3600:.1f} h"
+    candidates = []
+    for tree, owner, _, size in measured:
+        if owner is None and needs_copy(tree) is False:
+            candidates.append(f"{tree} ({'unknown' if size is None else f'{size / 2**30:.2f} GiB'} exclusive)")
+            if len(candidates) == 3:
+                break
+    if candidates:
+        output += "\n  Unowned clean reuse candidates (verify liveness and ownership): " + ", ".join(candidates)
+    return output
+
+
 def free_bytes(path: Path):
     while True:
         try:
@@ -361,11 +463,9 @@ def cap_refusal(config: dict, target, lane: str):
                 f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine, lane)}")
     free = free_bytes(resolved(target[0], target[1])[0])
     if free is not None and free < config["floor_bytes"]:
-        named = mine or rows
-        whose = "this lane's" if mine else "the host's"
         return (f"beelink-worktree-cap: refused git worktree add for {lane}: {host} has "
                 f"{free / 2**30:.0f} GiB free, under its {config['floor_bytes'] / 2**30:.0f} GiB floor. "
-                f"Free space first; {whose} longest-idle trees:{release_list(named, lane)}")
+                f"Free space first; inspect these candidates before any release:{floor_release_list(rows, lane)}")
     return None
 
 

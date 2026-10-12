@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -173,6 +173,32 @@ test("a Beelink under its free-space floor refuses new _wt worktrees and names i
   assert.match(r.err, new RegExp(`\\n  wt-remove ${join(home, "code/_wt/x1")}`), "another lane's tree keeps wt-remove's idle guard");
   assert.doesNotMatch(r.err, /OWNER_RELEASED/);
   assert.ok(!existsSync(join(home, "code/_wt/f1")));
+});
+
+test("a floor refusal ranks exclusive bytes and marks source salvage and clean unowned reuse candidates", () => {
+  const { home, repo, git } = beelinkGit({ cap: 6, floor_bytes: 0 });
+  const root = join(home, "code/_wt");
+  for (const name of ["shared", "unique", "source"]) {
+    assert.equal(git(["worktree", "add", "-q", "--detach", join(root, name)],
+      { FLEET_LANE: "op-a:one" }).status, 0);
+  }
+  const head = git(["-C", repo, "rev-parse", "HEAD"]).out.trim();
+  assert.equal(git(["-C", repo, "update-ref", "refs/remotes/origin/main", head]).status, 0);
+  mkdirSync(join(root, "shared/node_modules"));
+  mkdirSync(join(root, "unique/node_modules"));
+  const outside = join(home, "shared-build.bin");
+  writeFileSync(outside, Buffer.alloc(8 * 1024 * 1024));
+  linkSync(outside, join(root, "shared/node_modules/build.bin"));
+  writeFileSync(join(root, "unique/node_modules/build.bin"), Buffer.alloc(2 * 1024 * 1024));
+  writeFileSync(join(root, "source/0"), "keep this source\n");
+  const admin = readFileSync(join(root, "unique/.git"), "utf8").trim().slice("gitdir: ".length);
+  rmSync(join(admin, "fleet-lane"));
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 6, floor_bytes: Number.MAX_SAFE_INTEGER }));
+  const refused = git(["worktree", "add", "-q", "--detach", join(root, "new")], { FLEET_LANE: "op-b:two" });
+  assert.equal(refused.status, 125, refused.err);
+  assert.ok(refused.err.indexOf(`${root}/unique`) < refused.err.indexOf(`${root}/shared`), refused.err);
+  assert.match(refused.err, /source[^\n]*salvage-copy-required/);
+  assert.match(refused.err, /Unowned clean reuse candidates[^\n]*unique/);
 });
 
 test("a symlink to the installed Git wrapper delegates through the wrapper's own preserved executable", () => {
