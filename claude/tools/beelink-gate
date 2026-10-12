@@ -528,13 +528,20 @@ waiter_alive() {  # <ticket or marker file> <pid>
   (( btime + fields[19] / $(getconf CLK_TCK) <= written + 1 ))
 }
 older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tickets from other gates
-  local t rest since pid n=0
+  local t rest since pid token key n=0
+  local -A seen=()
   for t in "$1".*.*; do
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
     [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
     [ "$pid" != "$$" ] || continue
+    token=$(cat "$t" 2>/dev/null) || token=""
+    [[ "$token" =~ ^[0-9a-f]{32}$ ]] || token=""
+    [ -z "$token" ] || [ "$token" != "${reservation_token:-}" ] || continue
     if ! waiter_alive "$t" "$pid"; then rm -f "$t"; continue; fi
+    key=${token:-$pid}
+    [ -z "${seen[$key]:-}" ] || continue
+    seen[$key]=1
     if (( since < $2 || (since == $2 && pid < $$) )); then n=$((n + 1)); fi
   done
   echo "$n"
@@ -1123,6 +1130,9 @@ remote_gate() {
   gate_id=${BEELINK_GATE_ID:-}
   [ -z "$gate_id" ] || [[ "$gate_id" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid gate id"
   unset BEELINK_GATE_ID
+  local reservation_token=${BEELINK_GATE_RESERVATION_TOKEN:-}
+  [ -z "$reservation_token" ] || [[ "$reservation_token" =~ ^[0-9a-f]{32}$ ]] || die "invalid checkout reservation token"
+  unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
 
   # Direct --remote calls still honor a heartbeat. Detached jobs have none:
@@ -1221,7 +1231,8 @@ remote_gate() {
   local ticket_prefix="$cache_root/.locks/queue-$host-$owner-$repo" enqueued=$(( $(date +%s) - placed_wait ))
   (( light == 0 )) || ticket_prefix+=@light
   (( dev == 0 )) || ticket_prefix+=@dev
-  : > "$ticket_prefix.$enqueued.$$"; urgent_markers+=("$ticket_prefix.$enqueued.$$")
+  local ticket="$ticket_prefix.$enqueued.$$"
+  printf '%s' "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
   # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
   # and markers with it; finish replaces this trap once the checkout is held.
   trap 'rm -f "${urgent_markers[@]}" 2>/dev/null' EXIT
@@ -1263,7 +1274,7 @@ remote_gate() {
     admission_expired && not_admitted "both $host/$owner/$repo checkouts busy"
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
-  rm -f "$urgent_marker.$$" "$ticket_prefix.$enqueued.$$"
+  rm -f "$urgent_marker.$$" "$ticket"
   if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
   [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
   printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
@@ -1669,7 +1680,7 @@ RUNNER
   local -a vars=("BEELINK_GATE_ID=$id")
   for name in BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_BRANCH BEELINK_GATE_LOAD_WAIT \
     BEELINK_GATE_MAX_CPU_PRESSURE BEELINK_GATE_HOST_PRESSURE_CEILING BEELINK_GATE_STARVE_AFTER \
-    BEELINK_GATE_CLASS BEELINK_GATE_SHIP_WORKERS BEELINK_GATE_PR BEELINK_GATE_MAX_CONCURRENT \
+    BEELINK_GATE_CLASS BEELINK_GATE_SHIP_WORKERS BEELINK_GATE_PR BEELINK_GATE_RESERVATION_TOKEN BEELINK_GATE_MAX_CONCURRENT \
     BEELINK_GATE_REPO_CHECKOUTS BEELINK_GATE_LIGHT_CPU BEELINK_GATE_LIGHT_SLOTS \
     BEELINK_GATE_URGENT BEELINK_GATE_AUTO BEELINK_GATE_ADMIT_WAIT BEELINK_GATE_PLACED_WAIT; do
     [ -z "${!name:-}" ] || vars+=("$name=${!name}")
@@ -1778,6 +1789,7 @@ on_beelink() {
   [ "${gate_class:-}" != dev ] || envs+=("BEELINK_GATE_CLASS=dev")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [[ "${BEELINK_GATE_PR:-}" =~ ^[0-9]+$ ]] && envs+=("BEELINK_GATE_PR=$BEELINK_GATE_PR")
+  [ -z "${BEELINK_GATE_RESERVATION_TOKEN:-}" ] || envs+=("BEELINK_GATE_RESERVATION_TOKEN=$BEELINK_GATE_RESERVATION_TOKEN")
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
   [ -z "${BEELINK_GATE_REPO_CHECKOUTS:-}" ] || envs+=("BEELINK_GATE_REPO_CHECKOUTS=$BEELINK_GATE_REPO_CHECKOUTS")
   [ -z "${BEELINK_GATE_LIGHT_CPU:-}" ] || envs+=("BEELINK_GATE_LIGHT_CPU=$BEELINK_GATE_LIGHT_CPU")
@@ -1940,10 +1952,10 @@ choose_beelink() {
   local -A seen=()
   local auto_started=$SECONDS
   while :; do
-    if [ -n "${urgent_reservation_dir:-}" ]; then
+    if [ -n "${checkout_reservation_dir:-}" ]; then
       local reserve_pid
-      for reserve_pid in "${urgent_reservation_pids[@]}"; do
-        kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "urgent checkout reservation disconnected before admission"
+      for reserve_pid in "${checkout_reservation_pids[@]}"; do
+        kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "checkout reservation disconnected before admission"
       done
     fi
     best="" best_rank=9 best_load="" light_busy=""
@@ -1974,9 +1986,9 @@ choose_beelink() {
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     if [ -n "$best" ]; then
-      if [ -n "${urgent_reservation_dir:-}" ]; then
-        for reserve_pid in "${urgent_reservation_pids[@]}"; do
-          kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "urgent checkout reservation disconnected before admission"
+      if [ -n "${checkout_reservation_dir:-}" ]; then
+        for reserve_pid in "${checkout_reservation_pids[@]}"; do
+          kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "checkout reservation disconnected before admission"
         done
       fi
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
@@ -1999,21 +2011,29 @@ choose_beelink() {
   done
 }
 
-# An urgent auto gate needs a marker on each host before it starts probing.
-# Otherwise it has no place in either queue while both checkouts are busy, and
-# a normal waiter can take every checkout that frees before the next probe.
-reserve_urgent() {
-  local beelink repo_url gate_class host owner repo cache_root suffix="" marker rc
+# Auto gates need a place on both hosts before they probe. Without a durable
+# normal ticket, a gate spending minutes between probes can lose every freed
+# checkout to a newly arrived gate. Urgent gates use their priority marker.
+reserve_checkout() {
+  local beelink repo_url gate_class host owner repo cache_root suffix="" marker rc priority=urgent epoch="" token=""
   beelink=$(decode "$1") repo_url=$(decode "$2") gate_class=$(decode "$3")
+  if [ "$#" = 6 ]; then
+    priority=$(decode "$4") epoch=$(decode "$5") token=$(decode "$6")
+    [ "$priority" = normal ] && [[ "$epoch" =~ ^[0-9]+$ && "$token" =~ ^[0-9a-f]{32}$ ]] || die "invalid normal checkout reservation"
+  fi
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   [ "$gate_class" = dev ] && suffix=@dev
   [ "$gate_class" = light ] && suffix=@light
-  marker="$cache_root/.locks/urgent-$host-$owner-$repo$suffix.$$"
-  mkdir -p "$cache_root/.locks" || die "cannot create urgent reservation"
-  : > "$marker" || die "cannot create urgent reservation"
+  if [ "$priority" = normal ]; then
+    marker="$cache_root/.locks/queue-$host-$owner-$repo$suffix.$epoch.$$"
+  else
+    marker="$cache_root/.locks/urgent-$host-$owner-$repo$suffix.$$"
+  fi
+  mkdir -p "$cache_root/.locks" || die "cannot create checkout reservation"
+  printf '%s' "$token" > "$marker" || die "cannot create checkout reservation"
   trap 'rm -f "$marker"; exit 143' HUP INT TERM
-  echo "beelink-gate-urgent-reserved $beelink"
+  echo "beelink-gate-$priority-reserved $beelink"
   # The launcher keeps stdin open. EOF removes the reservation even if its
   # session dies; a timeout merely means that no heartbeat bytes arrived.
   while :; do
@@ -2024,52 +2044,61 @@ reserve_urgent() {
   trap - HUP INT TERM
 }
 
-urgent_reservation_pids=() urgent_reservation_files=() urgent_reservation_dir="" urgent_monitor_pid=""
-stop_urgent_reservations() {
+checkout_reservation_pids=() checkout_reservation_files=() checkout_reservation_dir="" checkout_monitor_pid=""
+stop_checkout_reservations() {
   local pid file
-  [ -z "$urgent_monitor_pid" ] || kill -TERM "$urgent_monitor_pid" 2>/dev/null || true
-  for file in "${urgent_reservation_files[@]}"; do : > "$file.stop"; done
-  for pid in "${urgent_reservation_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
-  [ -z "$urgent_reservation_dir" ] || rm -rf "$urgent_reservation_dir"
+  [ -z "$checkout_monitor_pid" ] || kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
+  for file in "${checkout_reservation_files[@]}"; do : > "$file.stop"; done
+  for pid in "${checkout_reservation_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+  [ -z "$checkout_reservation_dir" ] || rm -rf "$checkout_reservation_dir"
 }
 
-watch_urgent_admission() {
+watch_checkout_admission() {
   local log=$1 file
   while :; do
     if grep -q '^beelink-gate: lock, host slot .* admitted on ' "$log" 2>/dev/null; then
-      for file in "${urgent_reservation_files[@]}"; do : > "$file.stop"; done
+      for file in "${checkout_reservation_files[@]}"; do : > "$file.stop"; done
       return 0
     fi
     sleep 0.2
   done
 }
-start_urgent_reservations() {
-  local host file pid tries
-  urgent_reservation_dir=$(mktemp -d) || die "cannot allocate urgent reservation state"
-  trap stop_urgent_reservations EXIT
+start_checkout_reservations() {
+  local priority=${1:-urgent} host file pid tries
+  local -a args=()
+  checkout_reservation_dir=$(mktemp -d) || die "cannot allocate checkout reservation state"
+  trap stop_checkout_reservations EXIT
   trap 'exit 143' HUP INT TERM
   for host in beelink1 beelink2; do
-    file="$urgent_reservation_dir/$host"
-    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")" >"$file" 2>"$file.err" &
-    urgent_reservation_pids+=("$!")
-    urgent_reservation_files+=("$file")
+    file="$checkout_reservation_dir/$host"
+    args=("$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")")
+    if [ "$priority" = normal ]; then
+      args+=("$(encode normal)" "$(encode "$reservation_epoch")" "$(encode "$reservation_token")")
+    fi
+    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "${args[@]}" >"$file" 2>"$file.err" &
+    checkout_reservation_pids+=("$!")
+    checkout_reservation_files+=("$file")
   done
-  for file in "${urgent_reservation_files[@]}"; do
+  for file in "${checkout_reservation_files[@]}"; do
     for ((tries = 0; tries < 300; tries++)); do
-      grep -q '^beelink-gate-urgent-reserved ' "$file" 2>/dev/null && break
+      grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null && break
       sleep 0.1
     done
-    grep -q '^beelink-gate-urgent-reserved ' "$file" 2>/dev/null || {
+    grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null || {
       cat "$file.err" >&2
-      tempfail "$(utc_in_minutes 5)" "cannot reserve urgent priority on both beelinks"
+      tempfail "$(utc_in_minutes 5)" "cannot reserve checkout priority on both beelinks"
     }
   done
-  echo "beelink-gate: urgent priority reserved on both beelinks" >&2
+  if [ "$priority" = urgent ]; then
+    echo "beelink-gate: urgent priority reserved on both beelinks" >&2
+  else
+    echo "beelink-gate: normal FIFO place reserved on both beelinks" >&2
+  fi
 }
 
 if [ "${1:-}" = --urgent-reserve ]; then
-  [ "$#" = 4 ] || die "invalid urgent reservation"
-  reserve_urgent "$2" "$3" "$4"
+  { [ "$#" = 4 ] || [ "$#" = 7 ]; } || die "invalid checkout reservation"
+  reserve_checkout "${@:2}"
   exit 0
 fi
 
@@ -2204,6 +2233,7 @@ if [ -n "${BEELINK_GATE_LOAD_WAIT:-}" ]; then
   seconds_of "$BEELINK_GATE_LOAD_WAIT" >/dev/null || die "invalid BEELINK_GATE_LOAD_WAIT: $BEELINK_GATE_LOAD_WAIT"
 fi
 [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
+unset BEELINK_GATE_RESERVATION_TOKEN
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
 requested=$target admit_wait_launch="" placed_wait_launch=0
 # An --urgent gate stays on the first host auto places it on: giving the host
@@ -2214,8 +2244,15 @@ if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
   admit_wait_launch=$(seconds_of "${BEELINK_GATE_REPLACE_WAIT:-60s}") || die "invalid BEELINK_GATE_REPLACE_WAIT: ${BEELINK_GATE_REPLACE_WAIT:-}"
 fi
 starve_after_launch=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
-if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" = 1 ]; then
-  start_urgent_reservations
+if [ "$requested" = auto ]; then
+  if [ "${BEELINK_GATE_URGENT:-0}" = 1 ]; then
+    start_checkout_reservations
+  else
+    reservation_epoch=$(date +%s)
+    reservation_token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    export BEELINK_GATE_RESERVATION_TOKEN=$reservation_token
+    start_checkout_reservations normal
+  fi
 fi
 launched=$SECONDS placements=0
 while :; do
@@ -2246,15 +2283,15 @@ while :; do
   [ "$rc" = 0 ] || exit "$rc"
   # Keep reservations until the submitted gate itself has joined the checkout
   # queue. Its own urgent marker then survives a lost launcher or SSH session.
-  if [ -n "$urgent_reservation_dir" ]; then
-    admission_log="$urgent_reservation_dir/admission.log"
+  if [ -n "$checkout_reservation_dir" ]; then
+    admission_log="$checkout_reservation_dir/admission.log"
     : > "$admission_log"
-    watch_urgent_admission "$admission_log" & urgent_monitor_pid=$!
+    watch_checkout_admission "$admission_log" & checkout_monitor_pid=$!
     heartbeat=0 on_beelink "$target" --job-attach "$gate_id" 2> >(tee "$admission_log" >&2)
     rc=$?
-    kill -TERM "$urgent_monitor_pid" 2>/dev/null || true
-    wait "$urgent_monitor_pid" 2>/dev/null || true
-    urgent_monitor_pid=""
+    kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
+    wait "$checkout_monitor_pid" 2>/dev/null || true
+    checkout_monitor_pid=""
   else
     heartbeat=0 on_beelink "$target" --job-attach "$gate_id"
     rc=$?
