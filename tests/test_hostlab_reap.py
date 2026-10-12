@@ -167,6 +167,21 @@ class HostlabReapTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(d), 'run deleted without an archive')
         self.assertIn('not mounted', r.stdout)
 
+    def test_archive_drive_keeps_small_files_and_drops_vm_disks(self):
+        # GTR's drive is present: logs and small artifacts go to it, VM disks are never moved.
+        d = self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
+        with open(os.path.join(d, 'console.log'), 'w') as f:
+            f.write('boot\n')
+        for disk in ('disk.qcow2', 'seed.img'):
+            with open(os.path.join(d, disk), 'wb') as f:
+                f.write(b'\0' * 4096)
+        r = self.hostlab('reap')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.exists(d), 'expired run kept on disk')
+        kept = os.path.join(self.archive, 'dead-qemu')
+        self.assertEqual(sorted(os.listdir(kept)), ['caller', 'console.log', 'expires', 'keep', 'owner', 'qemu.pid', 'reaped'])
+        self.assertIn('small files archived', open(os.path.join(self.home, 'reap.log')).read())
+
     def test_unwritable_archive_deletes_the_run(self):
         self.run_dir('dead-qemu', 1, int(time.time()) + 3600, '%d 1' % self.dead_pid, self.dead_pid)
         r = self.hostlab('reap', HOSTLAB_ARCHIVE='/proc/hostlab-archive')
