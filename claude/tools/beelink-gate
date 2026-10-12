@@ -2007,9 +2007,12 @@ choose_beelink() {
       case "$state:$cache:$([ "${slots:-1}" -gt 0 ] && echo slot || echo full)" in
         free:warm:slot) rank=0 ;; free:cold:slot) rank=1 ;; free:*:full) rank=2 ;; *) continue ;;
       esac
-      # Any host under its load limit beats one over it; the gate on an
-      # overloaded host would only wait for the load to fall.
-      ! overloaded "$line" || rank=$((rank + 3))
+      # Any host that can admit beats an overloaded one. If both would wait,
+      # a warm cache cannot admit sooner than a cold cache: prefer the host
+      # closer to its pressure limit while keeping a free slot ahead of a full pool.
+      if overloaded "$line"; then
+        case "$rank" in 0|1) rank=3 ;; *) rank=5 ;; esac
+      fi
       if (( rank < best_rank )) || { (( rank == best_rank )) && awk -v a="${load:-0}" -v b="${best_load:-1e9}" 'BEGIN{exit !(a < b)}'; }; then
         best=$target best_rank=$rank best_load=$load
       fi
