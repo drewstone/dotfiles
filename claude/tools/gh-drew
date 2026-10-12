@@ -538,11 +538,106 @@ add_squash_body() {
     /^[[:space:]]*#/ || /^[[:space:]]*[A-Za-z-]+-[Bb]y:/ || /Generated with \[/ || /^[[:space:]]*<!--/ || /^[[:space:]]*\|/ { if (n) exit; next }
     { sub(/^[[:space:]]+/, ""); sub(/^[-*][[:space:]]+/, ""); printf "%s%s", (n ? " " : ""), $0; n++ }
   ' | cut -c1-600)"
-  if [[ -n "$summary" ]]; then
-    squash_body=(--body "$title"$'\n\n'"$summary")
-  else
-    squash_body=(--body "$title")
+  local message="$title"
+  [[ -n "$summary" ]] && message+=$'\n\n'"$summary"
+  squash_body=(--body "$(with_lane_line "$message")")
+}
+
+# Lane provenance: a PR body or squash message gh-drew writes ends with the run that made it, so a
+# merge can be traced to its lane (hills merges-lane-attributed reads "Run ID:" / "Session:" lines;
+# on 2026-10-12 0 of 656 merged PRs carried one). This names a run, not an author: no trailers.
+lane_line() {
+  if [[ -n "${TANGLE_RUN_ID:-}" ]]; then
+    printf 'Run ID: %s' "$TANGLE_RUN_ID"
+  elif [[ -n "${TANGLE_CLAUDE_SESSION:-}" ]]; then
+    printf 'Session: %s' "$TANGLE_CLAUDE_SESSION"
   fi
+}
+
+# The same line shape the hills collector matches (hills/collectors.py LANE_MARK).
+has_lane_mark() {
+  grep -qiE '^[[:space:]]*[*_`]*[[:space:]]*(lane|fleet lane|run[ -]?id|session)[[:space:]]*[*_`]*[[:space:]]*:[[:space:]]*[^[:space:]]' <<<"$1"
+}
+
+with_lane_line() {
+  local body="$1" line
+  line="$(lane_line)"
+  if [[ -z "$line" ]] || has_lane_mark "$body"; then
+    printf '%s' "$body"
+    return
+  fi
+  while [[ "$body" == *$'\n' ]]; do body="${body%$'\n'}"; done
+  if [[ -n "$body" ]]; then printf '%s\n\n%s\n' "$body" "$line"; else printf '%s\n' "$line"; fi
+}
+
+# Rewrite the body of `pr create` / `pr edit` to carry the lane line. A --body-file is read (stdin
+# for "-") and passed as --body so no temp file outlives the exec. A `pr create --fill` with no
+# body has no text until gh writes it, so fill_patch asks main to add the line after creation.
+lane_args=()
+fill_patch=0
+add_lane_line() {
+  lane_args=("$@")
+  [[ -n "$(lane_line)" && "${1:-}" == "pr" ]] || return 0
+  local i=1 n=$#
+  local -a a=("$@")
+  while (( i < n )); do
+    case "${a[i]}" in
+      -R|--repo) i=$((i + 2)) ;;
+      --repo=*|-R?*) i=$((i + 1)) ;;
+      *) break ;;
+    esac
+  done
+  (( i < n )) || return 0
+  local sub="${a[i]}" saw_body=0 saw_fill=0 text
+  [[ "$sub" == "create" || "$sub" == "edit" ]] || return 0
+  i=$((i + 1))
+  while (( i < n )); do
+    case "${a[i]}" in
+      --) break ;;
+      -b|--body)
+        (( i + 1 < n )) || break
+        a[i+1]="$(with_lane_line "${a[i+1]}")"; saw_body=1; i=$((i + 2)) ;;
+      --body=*)
+        a[i]="--body=$(with_lane_line "${a[i]#--body=}")"; saw_body=1; i=$((i + 1)) ;;
+      -F|--body-file|--body-file=*)
+        local path
+        if [[ "${a[i]}" == --body-file=* ]]; then path="${a[i]#--body-file=}"; else path="${a[i+1]:-}"; fi
+        if [[ "$path" == "-" ]]; then text="$(cat; printf x)"; else text="$(cat -- "$path"; printf x)" || return 0; fi
+        text="${text%x}"
+        if [[ "${a[i]}" == --body-file=* ]]; then
+          a[i]="--body=$(with_lane_line "$text")"; i=$((i + 1))
+        else
+          a[i]="--body"; a[i+1]="$(with_lane_line "$text")"; i=$((i + 2))
+        fi
+        saw_body=1 ;;
+      --fill|--fill-first|--fill-verbose|-f) saw_fill=1; i=$((i + 1)) ;;
+      *) i=$((i + 1)) ;;
+    esac
+  done
+  lane_args=("${a[@]}")
+  [[ "$sub" == "create" && $saw_body -eq 0 && $saw_fill -eq 1 ]] && fill_patch=1
+  return 0
+}
+
+# After `pr create --fill`, append the lane line to the body gh wrote. The create's own output
+# and exit status are what the caller sees.
+run_create_with_fill_patch() {
+  local token="$1"; shift
+  local out status url body
+  out="$(GH_TOKEN="$token" gh "$@")"; status=$?
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  (( status == 0 )) || return "$status"
+  url="$(grep -oE 'https://github\.com/[^[:space:]]+/pull/[0-9]+' <<<"$out" | tail -n 1)"
+  [[ -n "$url" ]] || return 0
+  if [[ -n "$pr_wip_ledger" ]]; then
+    mkdir -p "$pr_wip_dir"
+    printf '%s\tcreated\t%s\n' "$(date -u +%FT%TZ)" "$url" >>"$pr_wip_ledger"
+  fi
+  body="$(GH_TOKEN="$token" gh pr view "$url" --json body --jq .body)" || return 0
+  has_lane_mark "$body" && return 0
+  GH_TOKEN="$token" gh pr edit "$url" --body "$(with_lane_line "$body")" >/dev/null || \
+    echo "gh-drew: created $url but could not add its lane line" >&2
+  return 0
 }
 
 # The body goes before a `--`, after which gh reads only positionals.
@@ -620,7 +715,9 @@ for key in "${token_keys[@]}"; do
     guard_reads "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
-    with_squash_body "$@"
+    add_lane_line "$@"
+    with_squash_body ${lane_args[@]+"${lane_args[@]}"}
+    if (( fill_patch )); then run_create_with_fill_patch "$token" "${final_args[@]}"; exit $?; fi
     run_gh "$token"
   fi
 done
@@ -634,7 +731,9 @@ for key in "${token_keys[@]}"; do
     guard_reads "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
-    with_squash_body "$@"
+    add_lane_line "$@"
+    with_squash_body ${lane_args[@]+"${lane_args[@]}"}
+    if (( fill_patch )); then run_create_with_fill_patch "$token" "${final_args[@]}"; exit $?; fi
     run_gh "$token"
   fi
 done
