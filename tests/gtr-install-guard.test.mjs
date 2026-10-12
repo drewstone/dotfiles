@@ -190,7 +190,7 @@ test("a floor refusal ranks exclusive bytes and marks source salvage and clean u
   writeFileSync(outside, Buffer.alloc(8 * 1024 * 1024));
   linkSync(outside, join(root, "shared/node_modules/build.bin"));
   writeFileSync(join(root, "unique/node_modules/build.bin"), Buffer.alloc(2 * 1024 * 1024));
-  writeFileSync(join(root, "source/notes.txt"), "keep this source\n");
+  writeFileSync(join(root, "source/0"), "keep this source\n");
   const admin = readFileSync(join(root, "unique/.git"), "utf8").trim().slice("gitdir: ".length);
   rmSync(join(admin, "fleet-lane"));
   writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 6, floor_bytes: Number.MAX_SAFE_INTEGER }));

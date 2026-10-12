@@ -387,19 +387,20 @@ def salvage_needed(tree: Path, deadline: float):
         ".wrangler/tmp")]
     excludes.append(":(exclude,glob)**/*.tsbuildinfo")
     try:
-        for args in (
+        for index, args in enumerate((
             ["rev-list", "--count", "HEAD", "--not", "--remotes"],
             ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules"],
             ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", *excludes],
             ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", ".", *excludes],
-        ):
+        )):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return None
             result = subprocess.run(["/usr/bin/git", "-C", str(tree), *args],
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                     timeout=min(2, remaining), check=True)
-            if result.stdout.strip(b"\x00\n ") != b"0" and result.stdout.strip(b"\x00\n "):
+            data = result.stdout.strip(b"\x00\n ")
+            if (index == 0 and data != b"0") or (index != 0 and data):
                 return True
         return False
     except (OSError, subprocess.SubprocessError):
