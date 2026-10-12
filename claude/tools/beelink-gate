@@ -545,6 +545,22 @@ over_limit() {
 
 # Holds a gate that has its lock and slot until the host is under its load
 # limit, the way the disk floor refuses: bounded, with the reason printed.
+# Cores per running gate, at least 2: every held slot (merge, light or dev) is
+# one running gate, this one included.
+gate_worker_budget() {
+  local locks=$1 running=0 f fd
+  for f in "$locks"/slot-*.lock "$locks"/light-slot-*.lock "$locks"/dev-slot-*.lock; do
+    [ -e "$f" ] || continue
+    exec {fd}<"$f" || continue
+    flock -n -s "$fd" || running=$((running + 1))
+    exec {fd}<&-
+  done
+  (( running >= 1 )) || running=1
+  local each=$(( $(nproc) / running ))
+  (( each >= 2 )) || each=2
+  echo "$each"
+}
+
 # Starvation backstop clock: everything this gate has waited, across
 # re-placements (BEELINK_GATE_PLACED_WAIT) and on this host since its first wait.
 starving() {
@@ -1153,9 +1169,9 @@ remote_gate() {
     local status="$1" ran=$((SECONDS - started))
     local preview_verdict
     preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s\n' \
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s workers=%s\n' \
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
-      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" >&2
+      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${gate_workers:-?}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" <<'PY' || true
 import json, sys, time
@@ -1289,6 +1305,17 @@ PY
   # after a green 18-minute run (ADC #10346, beelink1).
   export npm_config_store_dir="${npm_config_store_dir:-$HOME/.local/share/pnpm/store}"
   export npm_config_confirm_modules_purge=false
+  # Workers inside the gate share the host with the other running gates. On
+  # 2026-10-12 beelink1 sat at load 93.7 with about 5 gates, because one ADC
+  # signoff alone fanned out to about 39 node workers. Each test runner,
+  # monorepo task runner and cargo build gets cores / running gates (at least 2)
+  # unless the caller already chose.
+  gate_workers=$(gate_worker_budget "$cache_root/.locks")
+  export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$gate_workers}"
+  export VITEST_MAX_THREADS="${VITEST_MAX_THREADS:-$gate_workers}"
+  export VITEST_MAX_FORKS="${VITEST_MAX_FORKS:-$gate_workers}"
+  export TURBO_CONCURRENCY="${TURBO_CONCURRENCY:-$gate_workers}"
+  export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$gate_workers}"
   cd "$checkout" || exit $?
   # Install and run with the repo's Node (.nvmrc), as its CI does, so the install
   # and the command load the same native addon ABI. pnpm keys a native package's

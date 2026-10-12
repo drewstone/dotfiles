@@ -138,6 +138,7 @@ install_beelink_gate_priority() {
     [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = 25 ] || drift "ci.slice cpu.weight is not 25"
     [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" = 400 ] || drift "beelink-gate cgroup cpu.weight is not 400"
     [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" = 25 ] || drift "beelink-gate-dev cgroup cpu.weight is not 25"
+    [ "$(cut -d' ' -f1 /sys/fs/cgroup/beelink-gate/cpu.max 2>/dev/null)" = "$(( $(nproc) * 75000 ))" ] || drift "beelink-gate cgroup cpu.max is not 75% of the cores"
   else
     [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
     if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != 25 ]; then
@@ -145,7 +146,8 @@ install_beelink_gate_priority() {
       note changed "ci.slice CPUWeight=25"
     fi
     if [ "$CHANGED" = 1 ] || [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" != 400 ] \
-      || [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" != 25 ]; then
+      || [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" != 25 ] \
+      || [ "$(cut -d' ' -f1 /sys/fs/cgroup/beelink-gate/cpu.max 2>/dev/null)" != "$(( $(nproc) * 75000 ))" ]; then
       $SUDO systemctl enable --quiet beelink-gate-cgroup.service
       $SUDO systemctl restart beelink-gate-cgroup.service
       note changed "beelink-gate cgroup cpu.weight=$(cat /sys/fs/cgroup/beelink-gate/cpu.weight)"
