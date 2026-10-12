@@ -1037,17 +1037,24 @@ test("Git never prompts in a gate, and a hung ls-remote stops when the launcher 
 test("two gates of one repo run at once in separate checkouts, and a third waits for either", async () => {
   const f = fixture();
   const events = join(f.root, "events");
+  const release = join(f.root, "release");
+  const live = {};
   const launch = (id, hold) => new Promise((resolveDone) => {
-    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo "start-${id} $PWD" >> '${events}'; sleep ${hold}; echo end-${id} >> '${events}'`].map(encode);
+    // A holder ends only when the test releases it (or after 60 s): once the third gate
+    // reports it is waiting. Fixed sleeps failed on loaded hosts in both directions.
+    const wait = hold ? `for i in $(seq 600); do [ -e '${release}' ] && break; sleep 0.1; done` : "true";
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo "start-${id} $PWD" >> '${events}'; ${wait}; echo end-${id} >> '${events}'`].map(encode);
     const child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
     let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; live[id] = stderr; });
     child.on("close", (status) => resolveDone({ status, stderr }));
   });
   try {
-    const both = [launch("a", 2), launch("b", 2)];
+    const both = [launch("a", true), launch("b", true)];
     for (let i = 0; i < 200 && !(existsSync(events) && readFileSync(events, "utf8").split("\n").filter((l) => l.startsWith("start-")).length === 2); i++) await sleepMs(50);
-    const third = launch("c", 0);
+    const third = launch("c", false);
+    for (let i = 0; i < 600 && !/waiting \d+s for one of 2/.test(live.c ?? ""); i++) await sleepMs(50);
+    writeFileSync(release, "");
     const results = await Promise.all([...both, third]);
     assert.ok(results.every((r) => r.status === 0), JSON.stringify(results));
     const lines = readFileSync(events, "utf8").trim().split("\n");
@@ -1697,12 +1704,69 @@ test("a finished gate stops every process its command left running, detached or 
     left = readFileSync(pids, "utf8").trim().split("\n").map(Number);
     assert.equal(left.length, 2);
     assert.deepEqual(left.filter(running), [], "a process outlived its gate");
-    assert.match(result.stderr, /receipt: .* reaped=2\n/);
+    assert.match(result.stderr, /receipt: .* reaped=2 bundle=none host_cpu=/);
     assert.equal(receipts(f).at(-1).reaped, 2);
   } finally {
     for (const pid of left) { try { process.kill(pid, "SIGKILL"); } catch {} }
     rmSync(f.root, { recursive: true, force: true });
   }
+});
+
+test("a command's commits that never reached the remote are saved to a bundle before the checkout is released", () => {
+  const f = fixture();
+  try {
+    // The command commits, then its push fails.
+    const script = "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m observer && git rev-parse HEAD && exit 1";
+    const result = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(result.status, 1, result.stderr);
+    const commit = result.stdout.trim().split("\n").at(-1);
+    const bundle = receipts(f).at(-1).bundle;
+    assert.ok(bundle && existsSync(bundle), result.stderr);
+    assert.match(result.stderr, /1 commit\(s\) not on the remote saved to .*\.bundle/);
+    assert.match(result.stderr, new RegExp(`bundle=${bundle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} host_cpu=`));
+    const heads = spawnSync("git", ["bundle", "list-heads", bundle], { encoding: "utf8" });
+    assert.match(heads.stdout, new RegExp(`^${commit} HEAD$`, "m"));
+    // A gate whose command commits nothing writes no bundle.
+    const clean = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(clean.status, 0, clean.stderr);
+    assert.equal(receipts(f).at(-1).bundle, null);
+    assert.match(clean.stderr, /bundle=none host_cpu=/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a branch-only commit is bundled under its branch once, and a later gate does not bundle it again", () => {
+  const f = fixture();
+  try {
+    const id = "-c user.name=t -c user.email=t@t";
+    const script = `git switch -qc side && git ${id} commit -q --allow-empty -m side && git rev-parse HEAD && git switch -q --detach ${f.first}`;
+    const first = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(first.status, 0, first.stderr);
+    const commit = first.stdout.trim().split("\n").at(-1);
+    const bundle = receipts(f).at(-1).bundle;
+    assert.ok(bundle && existsSync(bundle), first.stderr);
+    assert.match(first.stderr, /restore: git fetch \S+\.bundle refs\/heads\/side:refs\/gate-bundle\/side/);
+    assert.match(spawnSync("git", ["bundle", "list-heads", bundle], { encoding: "utf8" }).stdout, new RegExp(`^${commit} refs/heads/side$`, "m"));
+    const later = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(later.status, 0, later.stderr);
+    assert.equal(receipts(f).at(-1).bundle, null, later.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("when no bundle can be written, unpushed commits are kept as refs in the checkout", () => {
+  const f = fixture();
+  try {
+    mkdirSync(join(f.root, "state"), { recursive: true });
+    writeFileSync(join(f.root, "state", "bundles"), "not a directory");
+    const script = "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m kept && git rev-parse HEAD";
+    const result = f.call(f.first, ["bash", "-c", script], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    const commit = result.stdout.trim().split("\n").at(-1);
+    const saved = receipts(f).at(-1).bundle;
+    assert.match(saved, /^refs\/beelink-gate-saved\/\S+$/);
+    assert.match(result.stderr, /WARNING could not write a bundle; 1 unpushed commit\(s\) kept as refs\/beelink-gate-saved/);
+    const checkout = join(f.cache, "local", "owner", "repo");
+    assert.equal(f.git(["-C", checkout, "rev-parse", `${saved}/HEAD`], f.root), commit);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("a --dev run has its own checkout and slots, waits behind no merge gate, and gets no starvation backstop", async () => {
