@@ -559,6 +559,55 @@ with_squash_body() {
   (( inserted )) || final_args+=(${squash_body[@]+"${squash_body[@]}"})
 }
 
+# One open PR per fleet lane (ops-board #10097). Lanes opened PRs faster than
+# signoff could land them (5.7/h in vs 3.25/h merged on 2026-10-12), so a lane
+# with an open PR is refused another `pr create`. The key is the lane's root
+# run id, which its subagents inherit; a shell with no lane id is not limited.
+# Each lane's ledger lists the PRs it created; only those are read, read-only
+# through gh-read, and an unreadable state refuses rather than admits.
+pr_wip_dir="${GH_DREW_PR_WIP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/fleet/pr-wip}"
+pr_wip_key="${TANGLE_ROOT_RUN_ID:-${TANGLE_RUN_ID:-}}"
+pr_wip_ledger=""
+if [[ "${1-}" == pr && "${2-}" == create && -n "$pr_wip_key" ]]; then
+  pr_wip_ledger="$pr_wip_dir/$pr_wip_key.tsv"
+fi
+
+pr_wip_guard() {
+  [[ -n "$pr_wip_ledger" && -s "$pr_wip_ledger" ]] || return 0
+  if [[ -n "${PR_WIP_OVERRIDE:-}" ]]; then
+    printf '%s\toverride\t%s\n' "$(date -u +%FT%TZ)" "$PR_WIP_OVERRIDE" >>"$pr_wip_ledger"
+    return 0
+  fi
+  local _when kind url state
+  while IFS=$'\t' read -r _when kind url; do
+    [[ "$kind" == created && -n "$url" ]] || continue
+    state="$("${GH_DREW_PR_WIP_READER:-gh-read}" pr view "$url" --json state --jq .state 2>/dev/null || true)"
+    [[ "$state" == MERGED || "$state" == CLOSED ]] && continue
+    echo "pr create refused: lane $pr_wip_key already has open PR $url (state: ${state:-unreadable}); land or close it first (ops-board #10097). Override: PR_WIP_OVERRIDE=<reason>" >&2
+    exit 1
+  done <"$pr_wip_ledger"
+}
+
+# `pr create` in a lane runs gh as a child so the new PR's URL joins the ledger.
+run_gh() {
+  local token="$1" rc out
+  if [[ -z "$pr_wip_ledger" ]]; then
+    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
+  fi
+  out="$(mktemp)"
+  env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"} | tee "$out"
+  rc=${PIPESTATUS[0]}
+  if (( rc == 0 )); then
+    mkdir -p "$pr_wip_dir"
+    grep -oE 'https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+' "$out" | head -1 |
+      while read -r url; do printf '%s\tcreated\t%s\n' "$(date -u +%FT%TZ)" "$url" >>"$pr_wip_ledger"; done
+  fi
+  rm -f "$out"
+  exit "$rc"
+}
+
+pr_wip_guard
+
 # GH_DREW_TOKEN_KEYS names other keys for a wrapper that runs as another login (gh-read).
 read -r -a token_keys <<< "${GH_DREW_TOKEN_KEYS:-DREW_GH_TOKEN DREWSTONE_GH_TOKEN GH_TOKEN}"
 
@@ -572,7 +621,7 @@ for key in "${token_keys[@]}"; do
     add_squash_body "$token" "$@"
     log_call called "$@"
     with_squash_body "$@"
-    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
+    run_gh "$token"
   fi
 done
 
@@ -586,7 +635,7 @@ for key in "${token_keys[@]}"; do
     add_squash_body "$token" "$@"
     log_call called "$@"
     with_squash_body "$@"
-    exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
+    run_gh "$token"
   fi
 done
 
