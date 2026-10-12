@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Start fff-mcp for one git work tree, or not at all.
+#
+# usage: fff-mcp-scoped <fff-mcp binary> [fff-mcp options]
+#
+# Claude Code starts one fff-mcp per session in the session's directory, and
+# fff-mcp indexes and watches everything under it. On 2026-10-12, five GTR
+# sessions rooted at ~/code and ~/code/_wt (hundreds of checkouts) read 1.2 TB
+# in about two hours and held GTR's I/O pressure at 85-94%, while 34 instances
+# rooted in single repos read 2 GB together. So the server indexes only the
+# root of the git work tree that holds the session directory, and refuses:
+#   - a directory outside any work tree (~/code, lane state directories);
+#   - a work tree that holds other repos it does not ignore, counted as more
+#     than FFF_MCP_MAX_NESTED_REPOS .git entries within three levels (default 5);
+#   - a work tree with more than FFF_MCP_MAX_FILES tracked files (default 100000).
+# Refusing exits 0 before the MCP handshake: the session lists no fff tools and
+# searches with rg, as AGENTS.md says.
+set -u
+
+bin=${1:?usage: fff-mcp-scoped <fff-mcp binary> [options]}
+shift
+
+refuse() { echo "fff-mcp-scoped: $1; not indexing" >&2; exit 0; }
+
+top=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "$PWD is not inside a git work tree"
+case "$top" in "$HOME" | /) refuse "$top is the home or root directory" ;; esac
+
+max_nested=${FFF_MCP_MAX_NESTED_REPOS:-5}
+# fff skips ignored paths, so a gitignored .worktrees/ of the repo's own checkouts does not count.
+nested=$(find "$top" -mindepth 2 -maxdepth 3 -name .git -not -path "$top/.git" 2>/dev/null | head -n 200 |
+  sed 's|/\.git$||' | git -C "$top" check-ignore --stdin --verbose --non-matching 2>/dev/null |
+  awk -F'\t' '$1 == "::" { n++ } END { print n + 0 }')
+[ "$nested" -le "$max_nested" ] || refuse "$top holds more than $max_nested other repos"
+
+max_files=${FFF_MCP_MAX_FILES:-100000}
+files=$(git -C "$top" ls-files 2>/dev/null | head -n $((max_files + 1)) | wc -l)
+[ "$files" -le "$max_files" ] || refuse "$top tracks more than $max_files files"
+
+# --no-warmup skips reading every file into memory after the scan; the cache
+# cap bounds what stays resident; an idle server exits after 15 minutes.
+exec "$bin" --no-warmup --max-cached-files "${FFF_MAX_CACHED_FILES:-5000}" \
+  --idle-timeout-secs "${FFF_MCP_IDLE_TIMEOUT_SECS:-900}" "$@" "$top"
