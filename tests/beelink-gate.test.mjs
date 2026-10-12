@@ -1100,6 +1100,35 @@ test("a named beelink over its load limit hands the gate to the lighter one, and
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a pinned host waits under load instead of handing hardware work to another host", () => {
+  const f = fixture();
+  try {
+    const env = loadedHosts(f, 1, loadLimit * 2);
+    const marker = join(f.root, "hardware-command-ran");
+    const blocked = run(gate, ["--pin-host", "--no-install", "beelink2", f.url, f.first, "--", "touch", marker], { env });
+    assert.equal(blocked.status, 75, blocked.stderr);
+    assert.match(blocked.stderr, /REFUSED beelink2 load .* stayed over its limit/);
+    assert.doesNotMatch(blocked.stderr, /running on beelink1/);
+    assert.equal(existsSync(marker), false);
+    writeFileSync(join(f.root, "load-100.127.22.51"), loadLine(1));
+    const admitted = run(gate, ["--pin-host", "--no-install", "beelink2", f.url, f.first, "--", "touch", marker], { env });
+    assert.equal(admitted.status, 0, admitted.stderr);
+    assert.match(admitted.stderr, /receipt: .*host=beelink2/);
+    assert.equal(existsSync(marker), true);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("pinning auto refuses before any host is contacted", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const result = run(gate, ["--pin-host", "auto", f.url, f.first, "--", "true"], { env: f.env });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /--pin-host requires a named beelink/);
+    assert.equal(existsSync(join(f.root, "ssh-transport")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("auto waits for the light beelink's repo lock instead of queueing on an overloaded one", async () => {
   const f = fixture();
   try {
