@@ -51,12 +51,12 @@ function fixture() {
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
   // No pressure file: the load tests cover the load-average fallback; pressure tests set one.
-  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), BEELINK_GATE_DEV_CGROUP: join(root, "no-dev-cgroup"), BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...inherited, BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_CPU_PRESSURE: join(root, "no-pressure"), BEELINK_GATE_HOST_PRESSURE: join(root, "no-host-pressure"), BEELINK_GATE_CGROUP: join(root, "no-gate-cgroup"), BEELINK_GATE_DEV_CGROUP: join(root, "no-dev-cgroup"), BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -255,6 +255,31 @@ test("Windows policy is required and a blocked start reports the next allowed ti
 // 2026-10-11 08:00Z: both beelinks were in their update windows, auto printed
 // "no beelink can start this gate" with exit 3, and the landing chain recorded
 // "FAIL pre-gate red" (L1 queue.result, r1527 at 5980b3a8).
+test("no gate, urgent included, is admitted while host-wide CPU pressure is over its ceiling", () => {
+  const f = fixture();
+  try {
+    const host = join(f.root, "host-pressure");
+    const hostLine = (avg60) => `some avg10=${avg60.toFixed(2)} avg60=${avg60.toFixed(2)} avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n`;
+    writeFileSync(host, hostLine(90));
+    const wait = { BEELINK_GATE_HOST_PRESSURE: host, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "0.2" };
+    const urgent = f.call(f.first, ["true"], { noInstall: true, env: { ...wait, BEELINK_GATE_URGENT: "1" } });
+    assert.equal(urgent.status, 75, urgent.stderr);
+    assert.match(urgent.stderr, /waiting \d+s of 2s: beelink2 host CPU pressure \(some avg60\) 90\.00 over its ceiling of 40/);
+    assert.match(urgent.stderr, /REFUSED beelink2 host CPU pressure \(some avg60\) 90\.00 stayed over its ceiling of 40/);
+    assert.doesNotMatch(urgent.stderr, /URGENT: admitting/);
+    // The limits file raises the ceiling, read at every check.
+    writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "host_pressure_ceiling=95\n");
+    const raised = f.call(f.first, ["true"], { noInstall: true, env: wait });
+    assert.equal(raised.status, 0, raised.stderr);
+    assert.match(raised.stderr, /receipt: .* host_cpu=90\.00\n/);
+    assert.equal(receipts(f).at(-1).start_host_cpu_pressure, 90);
+    rmSync(f.env.BEELINK_GATE_LIMITS_FILE);
+    writeFileSync(host, hostLine(12));
+    const calm = f.call(f.first, ["true"], { noInstall: true, env: wait });
+    assert.equal(calm.status, 0, calm.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("an auto-placed gate gives back a host that fell below its disk floor, so the launcher can place it again", () => {
   const f = fixture();
   try {
@@ -1731,10 +1756,10 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
   try {
     installFakeSsh(f);
     const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-    const row = (sha, mode, exit) => JSON.stringify({ at, repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30 });
+    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu });
     // The fake ssh runs the remote side locally, so both beelinks read this one state dir.
     mkdirSync(join(f.root, "state"), { recursive: true });
-    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1), row("a", "install", 1), row("b", "ship", 0)].join("\n") + "\n");
+    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1, 30), row("a", "install", 1, 55), row("b", "ship", 0)].join("\n") + "\n");
     writeFileSync(join(f.root, "bin", "gh-drew"), "#!/usr/bin/env bash\necho 2\n");
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
     const result = run(gate, ["--report", "24"], { env: { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) } });
@@ -1742,6 +1767,7 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
     assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
     assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
+    assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
