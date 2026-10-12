@@ -51,7 +51,7 @@ function setup({ pushUrl } = {}) {
   ok(git(repo, ["config", "core.hooksPath", hooksPath]));
   if (pushUrl === NETWORK) {
     ok(git(repo, ["config", "protocol.ext.allow", "always"]));
-    ok(git(repo, ["config", "remote.origin.pushurl", `ext::git %S ${remote}`]));
+    ok(git(repo, ["config", "remote.origin.pushurl", `ext::git %s ${remote}`]));
   } else if (pushUrl) {
     ok(git(repo, ["config", "remote.origin.pushurl", pushUrl]));
   }
