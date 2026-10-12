@@ -467,6 +467,9 @@ for m in json.load(sys.stdin):
 }
 sync_plugins
 
+# fff-mcp: a pinned, checksummed release plus a user-scope MCP registration for Claude Code.
+bash "$SCRIPT_DIR/install-fff-mcp.sh" || true
+
 # Summary
 skill_count=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -type d ! -name skills ! -name '_*' | wc -l | tr -d ' ')
 cmd_count=$(find "$SCRIPT_DIR/commands" -type f 2>/dev/null | wc -l | tr -d ' ')
