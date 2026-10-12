@@ -653,6 +653,19 @@ adopt_origin() {
   origin=$(git -C "$checkout" config --get remote.origin.url) || return $?
   origin_key=$(parse_repo_url "$origin" 2>/dev/null && printf '%s/%s/%s' "$host" "$owner" "$repo")
   [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
+  # A GitHub cache fetches over SSH, the transport the beelinks hold a key for;
+  # an https origin left by an earlier gate is moved to it.
+  if [ "$origin" != "$(fetch_url "$url")" ] && [ "$host" = github.com ]; then
+    git -C "$checkout" remote set-url origin "$(fetch_url "$url")" || return $?
+  fi
+}
+
+# The URL a cache fetches from. The beelinks have an SSH key for GitHub and no
+# https credentials, so https://github.com/<owner>/<repo> is fetched as
+# git@github.com:<owner>/<repo>.git: on 2026-10-12 a cold tangle-tools cache
+# cloned from the https spelling failed with "could not read Username".
+fetch_url() {
+  if [ "$host" = github.com ]; then echo "git@github.com:$owner/$repo.git"; else echo "$1"; fi
 }
 
 # A branch name the gate may check out: Git's own rules, plus no leading dash.
@@ -1247,13 +1260,16 @@ PY
   if [ ! -e "$checkout/.git" ]; then
     [ ! -e "$checkout" ] || die "cache path exists without .git: $checkout"
     git init -q "$checkout" || exit $?
-    git -C "$checkout" remote add origin "$repo_url" || exit $?
+    git -C "$checkout" remote add origin "$(fetch_url "$repo_url")" || exit $?
   fi
   adopt_origin "$checkout" "$repo_url" || exit $?
   # A step, not a command substitution: bash runs the launcher watchdog's trap
   # only between commands, so a hung ls-remote in $(...) held the lock for 34m.
   local refs_file="$checkout/.git/beelink-gate-remote-refs"
-  step timeout 120 git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*' > "$refs_file" || exit $?
+  # Not reaching the origin at all (network, credentials) means the gate could not
+  # start, not that the change failed: exit 75 so a waiter retries instead.
+  step timeout 120 git -C "$checkout" ls-remote --symref origin HEAD 'refs/heads/*' > "$refs_file" \
+    || tempfail "$(utc_in_minutes 5)" "$beelink could not reach $host/$owner/$repo (git ls-remote failed)"
   remote_refs=$(cat "$refs_file") || exit $?
   local -a tracking_refspecs=()
   local -A seen_branches=()
