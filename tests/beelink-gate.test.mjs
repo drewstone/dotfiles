@@ -2205,6 +2205,46 @@ test("a free checkout goes to the oldest waiting gate, not the first to poll", a
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a normal auto waiter keeps its place ahead of a newer gate while both hosts are busy", async () => {
+  const f = fixture();
+  const events = join(f.root, "fifo-events");
+  const b1 = join(f.root, "cache-100.98.195.7", ".locks");
+  const b2 = join(f.root, "cache-100.127.22.51", ".locks");
+  mkdirSync(b1, { recursive: true });
+  mkdirSync(b2, { recursive: true });
+  const holder = spawn("python3", ["-u", "-c", 'import fcntl,sys,time; fs=[open(p,"w") for p in sys.argv[1:]]; [fcntl.flock(f,fcntl.LOCK_EX) for f in fs]; print("held",flush=True); time.sleep(60)', join(b1, "local-owner-repo.lock"), join(b2, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+  let older, newer;
+  try {
+    await new Promise((done) => holder.stdout.once("data", done));
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "20", BEELINK_GATE_LOAD_WAIT: "35s" };
+    older = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "bash", "-c", `echo older >> '${events}'`], { env });
+    let olderErr = "";
+    older.stderr.on("data", (chunk) => { olderErr += chunk; });
+    for (let i = 0; i < 200 && !/no beelink is both free/.test(olderErr); i++) await sleepMs(25);
+    assert.match(olderErr, /no beelink is both free/);
+
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo newer >> '${events}'`].map(encode);
+    newer = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_CACHE_ROOT: join(f.root, "cache-100.127.22.51"), BEELINK_GATE_REPO_CHECKOUTS: "1" } });
+    let newerErr = "";
+    newer.stderr.on("data", (chunk) => { newerErr += chunk; });
+    for (let i = 0; i < 200 && !/waiting \d+s for one of 1/.test(newerErr); i++) await sleepMs(25);
+    assert.match(newerErr, /waiting \d+s for one of 1/);
+    holder.kill("SIGKILL");
+    const [olderStatus, newerStatus] = await Promise.all([new Promise((done) => older.once("close", done)), new Promise((done) => newer.once("close", done))]);
+    assert.equal(olderStatus, 0, olderErr);
+    assert.equal(newerStatus, 0, newerErr);
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["older", "newer"]);
+    for (const locks of [b1, b2]) {
+      assert.deepEqual(readdirSync(locks).filter((name) => name.startsWith("queue-")), [], "normal reservation and gate tickets are removed");
+    }
+  } finally {
+    holder.kill("SIGKILL");
+    older?.kill("SIGKILL");
+    newer?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a ticket whose pid now belongs to a later process does not hold the checkout", () => {
   const f = fixture();
   const reused = spawn("sleep", ["30"], { stdio: "ignore" });
