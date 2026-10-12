@@ -624,7 +624,8 @@ add_lane_line() {
 run_create_with_fill_patch() {
   local token="$1"; shift
   local out status url body
-  out="$(GH_TOKEN="$token" gh "$@")"; status=$?
+  status=0
+  out="$(GH_TOKEN="$token" gh "$@")" || status=$?
   [[ -n "$out" ]] && printf '%s\n' "$out"
   (( status == 0 )) || return "$status"
   url="$(grep -oE 'https://github\.com/[^[:space:]]+/pull/[0-9]+' <<<"$out" | tail -n 1)"
