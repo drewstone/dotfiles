@@ -667,7 +667,8 @@ test("guard still lets rtk answer where it is faithful, and leaves non-git alone
       "git diff --shortstat",
       "git diff -w",
       "git diff --stat -- src/foo.ts",
-      "git diff --stat | head -20",
+      "git diff 2>&1",
+      "git diff 2>/dev/null",
       "git show-ref",
       "git show-ref --heads",
       "git diff-tree --stdin",
@@ -677,6 +678,56 @@ test("guard still lets rtk answer where it is faithful, and leaves non-git alone
     ];
     for (const command of allowed) {
       assert.equal(guardVerdict(command, fixture.repo), "rtk", `expected rtk: ${command}`);
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// rtk's output is a display for the agent, not git's format. When git writes to
+// a file or into a pipe, a program reads it: `git diff > x.patch` routed to rtk
+// wrote a summary and `git apply` exited 7 after a 521 s gate (#10053). The
+// property is asserted on what the caller EXECUTES: the bytes that land in the
+// file must equal real git's, and the patch must apply.
+// ---------------------------------------------------------------------------
+test("rtk never answers when git's output goes to a file or a program", (t) => {
+  if (!has("git")) return t.skip("git not installed");
+  if (!has("rtk")) return t.skip("rtk not installed");
+  const fixture = buildFixture("stdout-sink");
+  try {
+    const sinks = [
+      "git diff > x.patch",
+      "git diff >> x.patch",
+      "git diff >x.patch",
+      "git diff 1> x.patch",
+      "git diff &> x.patch",
+      "git diff >&2",
+      "git diff | git apply --check",
+      "git diff |& cat",
+      "git diff --stat | head -20",
+      "git diff -- a.txt|git apply",
+      "git diff -- a.txt>x.patch",
+      "git diff 2>&1 > x.patch",
+      "git diff 2>x>y",
+    ];
+    const leaks = sinks.filter((command) => guardVerdict(command, fixture.repo) !== "real");
+    assert.deepEqual(leaks, [], "these send rtk's display to a file or a program");
+
+    const raw = spawnSync("git", ["diff"], { cwd: fixture.repo, env: fixture.env });
+    assert.equal(raw.status, 0, String(raw.stderr));
+    assert.ok(raw.stdout.length > 0, "fixture has no unstaged diff, so the comparison proves nothing");
+    for (const [command, file] of [
+      ["git diff > ../redirected.patch", "redirected.patch"],
+      ["git diff | cat > ../piped.patch", "piped.patch"],
+    ]) {
+      const final = finalCommand(command, fixture.repo);
+      const ran = spawnSync("bash", ["-c", final], { cwd: fixture.repo, env: fixture.env, encoding: "utf8" });
+      assert.equal(ran.status, 0, ran.stderr);
+      const written = readFileSync(join(fixture.root, file));
+      assert.ok(written.equals(raw.stdout), `${command} -> ${final} wrote ${written.length} bytes, real git writes ${raw.stdout.length}`);
+      const apply = spawnSync("git", ["apply", "--check", "-R", join(fixture.root, file)], { cwd: fixture.repo, env: fixture.env, encoding: "utf8" });
+      assert.equal(apply.status, 0, `${command}: git apply rejected the file: ${apply.stderr}`);
     }
   } finally {
     fixture.cleanup();

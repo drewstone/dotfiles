@@ -126,6 +126,13 @@ export const MUTANTS = [
     replace: "rtk_guard_args_name_revision() {\n  return 1 # MUTANT\n",
     caughtBy: "guard refuses any git command that names an explicit revision",
   },
+  {
+    name: "stdout-sink-ignored",
+    why: "hands rtk a git whose output a file or a program reads, the #10053 corrupted patch",
+    find: "rtk_guard_stdout_leaves_caller() {\n",
+    replace: "rtk_guard_stdout_leaves_caller() {\n  return 1 # MUTANT\n",
+    caughtBy: "rtk never answers when git's output goes to a file or a program",
+  },
 ];
 
 export const writeMutant = (name, destination, source = HOOK_SOURCE) => {

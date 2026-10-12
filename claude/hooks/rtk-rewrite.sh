@@ -124,7 +124,11 @@
 #     expand into anything, including a revision or another command. The walk
 #     cannot decide it, so the whole string is refused.
 #
-# The cost of all three is output verbosity on commands that would otherwise
+#   STDOUT. rtk answers only when its output comes back to the caller. When the
+#     git it would run writes to a file or into a pipe, a program reads the
+#     output, and rtk's compact display is not the format that program expects.
+#
+# The cost of all four is output verbosity on commands that would otherwise
 # compact. That trade is not negotiable: an agent that reads a rewritten history
 # draws wrong conclusions and has no way to notice.
 #
@@ -676,6 +680,48 @@ rtk_guard_args_name_revision() {
   return 1
 }
 
+# True when the stdout of the invocation starting at $1 goes somewhere other
+# than the caller: a file (`> x.patch`, `>> log`, `&> out`, `>&2`) or another
+# program (`| git apply`, `| tee x`). rtk's output is a compact DISPLAY for an
+# agent to read; it is not git's output format, and a file or a program that
+# expects a patch receives something that is not one. Measured 2026-10-12:
+# `git diff > x.patch` routed to rtk wrote a summary, and `git apply` on it
+# exited 7 after a 521 s gate (agent-dev-container #10053).
+#
+# Same scanning rule as above: it stops only at a recognised command-position
+# token, and a pipe there means the next command reads this output. A token
+# that merely CONTAINS `|` or `>` is a redirect or pipe glued to a word
+# (`path>x.patch`, `a|git`), so it refuses too. Only a redirect of another
+# descriptor (`2>&1`, `2>/dev/null`) leaves stdout with the caller.
+rtk_guard_stdout_leaves_caller() {
+  local i="$1" tok count=${#RTK_GUARD_TOK[@]}
+
+  while [ "$i" -lt "$count" ]; do
+    tok="${RTK_GUARD_TOK[$i]}"
+    case "$tok" in
+      '|' | '|&')
+        RTK_GUARD_STDOUT_SINK="$tok"
+        return 0
+        ;;
+    esac
+    rtk_guard_word_in_list "$tok" "$RTK_GUARD_COMMAND_POSITION" && return 1
+    case "$tok" in
+      *'|'*)
+        RTK_GUARD_STDOUT_SINK="$tok"
+        return 0
+        ;;
+      *'>'*)
+        if ! [[ "$tok" =~ ^[2-9]'>''>'?[^\>]*$ ]]; then
+          RTK_GUARD_STDOUT_SINK="$tok"
+          return 0
+        fi
+        ;;
+    esac
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # THE PREMISE. Deleting every `rtk` token from the rewritten string must give
 # back the original, token for token. This is what makes the walk complete: it
 # guarantees rtk introduced no command word the caller did not type, so the git
@@ -778,6 +824,10 @@ rtk_guard_rewrite_is_provably_safe() {
     fi
     if rtk_guard_args_name_revision "$RTK_GUARD_ARG_START"; then
       rtk_guard_debug "refuse: 'git $RTK_GUARD_SUBCOMMAND' names revision '$RTK_GUARD_REVISION'"
+      return 1
+    fi
+    if rtk_guard_stdout_leaves_caller "$RTK_GUARD_ARG_START"; then
+      rtk_guard_debug "refuse: 'git $RTK_GUARD_SUBCOMMAND' output goes to '$RTK_GUARD_STDOUT_SINK', not to the caller"
       return 1
     fi
   done
