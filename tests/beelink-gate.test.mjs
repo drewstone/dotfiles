@@ -44,6 +44,9 @@ function fixture() {
   const fakePnpm = join(bin, "pnpm");
   writeFileSync(fakePnpm, '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$PNPM_LOG"\n');
   chmodSync(fakePnpm, 0o755);
+  const fakeSystemdRun = join(bin, "systemd-run");
+  writeFileSync(fakeSystemdRun, '#!/usr/bin/env bash\nwhile [[ "$1" == --* ]]; do shift; done\nnohup "$@" </dev/null >/dev/null 2>&1 &\necho "Running as unit: fake"\n');
+  chmodSync(fakeSystemdRun, 0o755);
   const fakeDf = join(bin, "df");
   writeFileSync(fakeDf, '#!/usr/bin/env bash\nprintf "Avail\\n%s\\n" "$(cat "${FAKE_AVAIL_FILE:-/nonexistent}" 2>/dev/null || echo "${FAKE_AVAIL:-1099511627776}")"\n');
   chmodSync(fakeDf, 0o755);
@@ -76,6 +79,7 @@ if [[ "\${rest[0]}" == reg ]]; then
 fi
 printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
 printf '%s\\n' "\${rest[*]:2}" > '${join(f.root, "ssh-remote-command")}'
+printf '%s\\n' "\${rest[*]:2}" >> '${join(f.root, "ssh-remote-commands")}'
 # FAKE_PROBE_DROPS names a file holding how many probe connections to drop, like a busy sshd.
 if [[ -n "\${FAKE_PROBE_DROPS:-}" && " \${rest[*]} " == *" --probe "* ]]; then
   n=$(cat "$FAKE_PROBE_DROPS" 2>/dev/null || echo 0)
@@ -187,7 +191,56 @@ test("the GTR entrypoint sends the script and encoded arguments through WSL SSH"
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("a post-admission disk refusal receipts cleanup and closes the launcher heartbeat", async () => {
+test("a submitted gate survives its launcher and --attach replays its result", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const child = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", "sleep 2; echo attached; exit 7"], { env: f.env });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    for (let i = 0; i < 200 && !/submitted gate_id=/.test(stderr); i++) await sleepMs(25);
+    const id = stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, stderr);
+    child.kill("SIGTERM");
+    await new Promise((done) => child.once("close", done));
+    const attached = run(gate, ["--attach", id], { env: f.env });
+    assert.equal(attached.status, 7, attached.stderr);
+    assert.equal(attached.stdout.trim(), "attached");
+    assert.match(attached.stderr, /receipt: .*exit=7 .*watchdog=0/);
+    const receipt = JSON.parse(readFileSync(join(f.root, "state", "jobs", id, "receipt.json"), "utf8"));
+    assert.equal(receipt.gate_id, id);
+    assert.equal(receipt.exit, 7);
+    assert.equal(receipt.watchdog, false);
+    const oldExit = join(f.root, "state", "jobs", id, "exit");
+    const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    utimesSync(oldExit, yesterday, yesterday);
+    const next = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
+    assert.equal(next.status, 0, next.stderr);
+    assert.equal(existsSync(join(f.root, "state", "jobs", id)), false, "a later submission prunes expired reconnect logs");
+    assert.equal(receipts(f).length, 2, "receipt history remains after reconnect logs expire");
+  } finally {
+    child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a command exit of 255 is not reported as a lost attach connection", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", "exit 255"], { env: f.env });
+    assert.equal(result.status, 255, result.stderr);
+    assert.match(result.stderr, /receipt: .*exit=255 .*watchdog=0/);
+    assert.doesNotMatch(result.stderr, /attach connection lost/);
+    const id = result.stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, result.stderr);
+    const attached = run(gate, ["--attach", id], { env: f.env });
+    assert.equal(attached.status, 255, attached.stderr);
+    assert.match(attached.stderr, /receipt: .*exit=255 .*watchdog=0/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a post-admission disk refusal receipts cleanup in a detached job", () => {
   const f = fixture();
   try {
     installFakeSsh(f);
@@ -201,13 +254,7 @@ if (( count < 3 )); then available=1099511627776; else available=128849018880; f
 printf 'Avail\\n%s\\n' "$available"
 `);
     chmodSync(join(f.root, "bin", "df"), 0o755);
-    const sleepPids = join(f.root, "heartbeat-sleep-pids");
-    writeFileSync(join(f.root, "bin", "sleep"), `#!/usr/bin/env bash
-printf '%s\\n' "$$" >> "$HEARTBEAT_SLEEP_PIDS"
-exec /bin/sleep "$@"
-`);
-    chmodSync(join(f.root, "bin", "sleep"), 0o755);
-    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), HEARTBEAT_SLEEP_PIDS: sleepPids };
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) };
     const result = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env, timeout: 10_000 });
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 75, result.stderr);
@@ -219,10 +266,7 @@ exec /bin/sleep "$@"
     const [receipt] = receipts(f);
     assert.equal(receipt.exit, 75);
     assert.equal(existsSync(join(f.cache, ".locks", "local-owner-repo.lock.holder")), false);
-    const heartbeatPids = readFileSync(sleepPids, "utf8").trim().split("\n").map(Number);
-    assert.ok(heartbeatPids.length > 0, "the launcher started its heartbeat poller");
-    await sleepMs(100);
-    assert.ok(heartbeatPids.every((pid) => !alive(pid)), `heartbeat pollers still alive: ${heartbeatPids.filter(alive)}`);
+    assert.equal(readFileSync(join(f.root, "state", "jobs", receipt.gate_id, "exit"), "utf8").trim(), "75");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -785,7 +829,7 @@ test("the GTR entrypoint forwards a host slot cap to the remote gate", () => {
     const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), BEELINK_GATE_MAX_CONCURRENT: "2" };
     const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /^env (\S+ )*BEELINK_GATE_MAX_CONCURRENT=2 (\S+ )*bash -s -- --remote /);
+    assert.match(readFileSync(join(f.root, "ssh-remote-commands"), "utf8"), /^env (\S+ )*BEELINK_GATE_MAX_CONCURRENT=2 (\S+ )*bash -s -- --job-submit beelink2-[0-9a-f]{32} /m);
     const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CONCURRENT: "2;id" } });
     assert.equal(invalid.status, 2);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -1436,7 +1480,7 @@ test("auto gives back a host whose checkouts were taken after it chose it, and r
     renameSync(ssh, join(f.root, "bin", "ssh-real"));
     const locks = `${join(f.root, "cache")}-100.127.22.51/.locks`;
     writeFileSync(ssh, `#!/usr/bin/env bash
-if [[ " $* " == *" --remote "* && " $* " == *" 100.127.22.51 "* && -e '${join(f.root, "take-b2")}' ]]; then
+if [[ " $* " == *" --job-submit "* && " $* " == *" 100.127.22.51 "* && -e '${join(f.root, "take-b2")}' ]]; then
   rm -f '${join(f.root, "take-b2")}'
   python3 -c 'import fcntl,os,sys,time; fs=[open(p,"w") for p in sys.argv[1:3]]; [fcntl.flock(x, fcntl.LOCK_EX) for x in fs]; open(sys.argv[3],"w").close(); time.sleep(60)' \\
     '${locks}/local-owner-repo.lock' '${locks}/local-owner-repo@1.lock' '${join(f.root, "b2-held")}' </dev/null >/dev/null 2>&1 &
