@@ -48,6 +48,8 @@ Gate a pushed revision from any host, including the Mac, GTR or either beelink, 
 
 Gate JSON receipts include the fetched default-branch tip as `base_sha`, `pr_number` when the caller sets `BEELINK_GATE_PR`, and `lane` from `FLEET_LANE` or `FLEET_STATUS_FILE`. Set `BEELINK_GATE_PR=<number>` for a PR gate; a commit SHA alone may belong to several PRs, so the gate does not guess. Invalid PR numbers are refused before contacting a host. Their `reason` describes the previous matching run among the last 10,000 receipts on that host: `first`, `different_command`, `after_red`, `after_green`, or `after_base_move` (same head and command after a green run with a different base). A missing prior base is `after_green_base_unknown`. `beelink-gate --report` recomputes those reasons across both hosts and prints metadata coverage. A missing PR or lane stays null rather than being guessed.
 
+An `auto` gate reserves its normal FIFO place on both Beelinks before probing. The reservation stays while it re-places and is handed to the submitted gate's ticket, so a new gate cannot take the first checkout that frees during a probe gap. Urgent gates keep their priority markers. Admission still observes the host disk, CPU and slot limits.
+
 ### Host disk rule
 
 This is the single definition of disk use on GTR and the Beelinks. Its owner is op-company's `beelink-gate-caps` lane; `gtr-disk` runs host cleanup. Every other lane removes only its own finished worktree, with `wt-remove`, and sends any disk problem to the owner instead of sweeping, re-checking free space or acknowledging cleanups.
