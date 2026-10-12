@@ -87,19 +87,30 @@ else
   say "installed $TAG ($TARGET, sha256 $WANT)"
 fi
 
+# The deploy service runs with a minimal PATH that lacks ~/.local/bin, where the
+# native installer puts claude; without this fallback a deploy never registered
+# the wrapper (#408 reached GTR at 03:03 with the bare binary still registered).
+PATH="$PATH:$HOME/.local/bin"
 command -v claude >/dev/null 2>&1 || { say "claude CLI not on PATH; server not registered"; exit 0; }
 
 # --no-update-check: the server otherwise asks GitHub for a newer release at startup and
-# prints a curl-pipe-shell upgrade hint into the session.
+# prints a curl-pipe-shell upgrade hint into the session. fff-mcp-scoped (claude/tools,
+# linked into ~/bin by install.sh) starts it only for one git work tree; see that file.
+WRAPPER="$HOME/bin/fff-mcp-scoped"
+# install.sh links it with every tool; this script can also run on its own.
+if [ ! -x "$WRAPPER" ]; then
+  mkdir -p "$HOME/bin" && ln -sfn "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tools/fff-mcp-scoped" "$WRAPPER" ||
+    { say "WARN could not link $WRAPPER; server not registered"; exit 0; }
+fi
 current="$(claude mcp get "$NAME" 2>/dev/null || true)"
-if printf '%s\n' "$current" | grep -qF -- "Command: $BIN" && printf '%s\n' "$current" | grep -qF -- "Args: --no-update-check"; then
+if printf '%s\n' "$current" | grep -qF -- "Command: $WRAPPER" && printf '%s\n' "$current" | grep -qF -- "Args: $BIN --no-update-check"; then
   say "registered for Claude Code"
 else
   claude mcp remove --scope user "$NAME" >/dev/null 2>&1 || true
-  if claude mcp add --scope user "$NAME" -- "$BIN" --no-update-check >/dev/null 2>&1; then
-    say "registered for Claude Code ($BIN)"
+  if claude mcp add --scope user "$NAME" -- "$WRAPPER" "$BIN" --no-update-check >/dev/null 2>&1; then
+    say "registered for Claude Code ($WRAPPER $BIN)"
   else
-    say "WARN 'claude mcp add' failed; run it by hand: claude mcp add --scope user $NAME -- $BIN --no-update-check"
+    say "WARN 'claude mcp add' failed; run it by hand: claude mcp add --scope user $NAME -- $WRAPPER $BIN --no-update-check"
   fi
 fi
 exit 0
