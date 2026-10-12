@@ -34,7 +34,7 @@ esac
   const reader = join(bin, "gh-read");
   writeFileSync(reader, `#!/usr/bin/env bash
 echo "$*" >>"${reads}"
-echo "\${FAKE_PR_STATE:-OPEN}"
+echo "\${FAKE_PR_STATE-OPEN}"
 `);
   chmodSync(reader, 0o755);
   const wip = join(root, "pr-wip");
