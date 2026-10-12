@@ -25,7 +25,8 @@
 #   --ttl 2h (a kept VM's lifetime; 90s, 45m, 2h, 1d), --owner NAME,
 #   --mem 4G, --cpus 4, --scratch 16G, --work DIR (default: cwd)
 # Env: HOSTLAB_HOME (default ~/.cache/hostlab),
-#   HOSTLAB_ARCHIVE (default /mnt/traces/archive/hostlab), HOSTLAB_OWNER
+#   HOSTLAB_ARCHIVE (default /mnt/traces/archive/hostlab), HOSTLAB_OWNER,
+#   HOSTLAB_SMALL_ARCHIVE (a directory or host:directory; see archive_run)
 #
 # Every VM records its owner, its caller and, when kept, an expiry. The
 # hostlab-reap timer (host/hostlab/install.sh) runs `hostlab reap` every
@@ -404,6 +405,35 @@ cmd_extend() {
   echo "hostlab: $id expires at $(date -d "@$(cat "$dir/expires")" +%FT%T%z)"
 }
 
+# Hosts without the archive drive (the Beelinks have no /mnt/traces) kept every
+# expired run in place: on 2026-10-12 beelink2 held 22 expired runs, 62 GiB of
+# VM disks, and refused gates on its disk floor. With HOSTLAB_SMALL_ARCHIVE set,
+# the run's logs and small artifacts (no VM disks, nothing over 100 MB) go to
+# <archive>/<host>-<date>/<id>; the run dir is deleted only once the archive
+# holds the same number of files. The archive is a directory, or host:directory
+# reached over SSH.
+archive_small() {
+  local d="$1" reason="$2" id dest host_part dir_part want got list
+  id="$(basename "$d")"
+  dest="${HOSTLAB_SMALL_ARCHIVE%/}/$(hostname -s)-$(date -u +%Y%m%d)"
+  list="$(cd "$RUNS" && find "$id" -type f ! -name '*.qcow2' ! -name '*.img' -size -100M | sort)"
+  want=$(printf '%s\n' "$list" | grep -c . || true)
+  case "$dest" in
+    *:*)
+      host_part="${dest%%:*}"; dir_part="${dest#*:}"
+      printf '%s\n' "$list" | tar -C "$RUNS" -czf - -T - \
+        | ssh -o BatchMode=yes -o ConnectTimeout=15 "$host_part" "mkdir -p '$dir_part' && tar -C '$dir_part' -xzf -" || return 1
+      got=$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$host_part" "find '$dir_part/$id' -type f | wc -l") || return 1 ;;
+    *)
+      mkdir -p "$dest" || return 1
+      printf '%s\n' "$list" | tar -C "$RUNS" -czf - -T - | tar -C "$dest" -xzf - || return 1
+      got=$(find "$dest/$id" -type f | wc -l) ;;
+  esac
+  [ "${got:-0}" -eq "$want" ] || { reap_log "$id $reason: small-file archive at $dest holds $got of $want files; kept in place"; return 1; }
+  rm -rf "$d"
+  reap_log "$id $reason: stopped, $want small files archived to $dest/$id, VM disks deleted (owner: $(cat "$dest/$id/owner" 2>/dev/null || echo see-archive))"
+}
+
 archive_run() {
   local d="$1" reason="$2" id
   id="$(basename "$d")"
@@ -411,6 +441,7 @@ archive_run() {
   case "$ARCHIVE/" in
     "$ARCHIVE_MOUNT"/*)
       if ! mountpoint -q "$ARCHIVE_MOUNT"; then
+        if [ -n "${HOSTLAB_SMALL_ARCHIVE:-}" ] && archive_small "$d" "$reason"; then return 0; fi
         reap_log "$id $reason: stopped and kept in place, because $ARCHIVE_MOUNT is not mounted (owner: $(cat "$d/owner" 2>/dev/null))"
         return 0
       fi ;;
