@@ -111,6 +111,31 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("receipts identify the base, PR, lane, and observable reason for a repeated gate", () => {
+  const f = fixture();
+  try {
+    const env = { BEELINK_GATE_PR: "417", FLEET_STATUS_FILE: "/tmp/op-company--beelink-gate-caps.md" };
+    const failed = f.call(f.first, ["bash", "-c", "exit 7"], { env });
+    assert.equal(failed.status, 7, failed.stderr);
+    assert.equal(f.call(f.first, ["bash", "-c", "exit 7"], { env }).status, 7);
+    assert.equal(f.call(f.first, ["true"], { env }).status, 0);
+    assert.equal(f.call(f.first, ["true"], { env }).status, 0);
+
+    writeFileSync(join(f.source, "value.txt"), "third\n");
+    f.git(["commit", "-qam", "third"]);
+    const third = f.git(["rev-parse", "HEAD"]);
+    const defaultBranch = f.git(["--git-dir", f.bare, "symbolic-ref", "HEAD"], f.root);
+    f.git(["--git-dir", f.bare, "fetch", f.source, third], f.root);
+    f.git(["--git-dir", f.bare, "update-ref", defaultBranch, third], f.root);
+    assert.equal(f.call(f.first, ["true"], { env }).status, 0);
+
+    const rows = receipts(f);
+    assert.deepEqual(rows.map((r) => r.reason), ["first", "after_red", "different_command", "after_green", "after_base_move"]);
+    assert.deepEqual(rows.map((r) => r.base_sha), [f.second, f.second, f.second, f.second, third]);
+    assert.ok(rows.every((r) => r.pr_number === 417 && r.lane === "op-company:beelink-gate-caps" && r.reason_scope === "host_last_10000_receipts"));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("refreshes default, main, develop, and requested-head tracking refs without moving detached HEAD", () => {
   const f = fixture();
   try {
@@ -829,10 +854,15 @@ test("the GTR entrypoint forwards a host slot cap to the remote gate", () => {
   const f = fixture();
   try {
     installFakeSsh(f);
-    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), BEELINK_GATE_MAX_CONCURRENT: "2" };
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), BEELINK_GATE_MAX_CONCURRENT: "2", BEELINK_GATE_PR: "417", FLEET_STATUS_FILE: "/tmp/op-company--beelink-gate-caps.md" };
     const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
     assert.equal(result.status, 0, result.stderr);
     assert.match(readFileSync(join(f.root, "ssh-remote-commands"), "utf8"), /^env (\S+ )*BEELINK_GATE_MAX_CONCURRENT=2 (\S+ )*bash -s -- --job-submit beelink2-[0-9a-f]{32} /m);
+    assert.equal(receipts(f).at(-1).pr_number, 417);
+    assert.equal(receipts(f).at(-1).lane, "op-company:beelink-gate-caps");
+    const invalidPr = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_PR: "417oops" } });
+    assert.equal(invalidPr.status, 2);
+    assert.match(invalidPr.stderr, /invalid BEELINK_GATE_PR/);
     const invalid = run(gate, ["beelink2", f.url, f.first, "--", "true"], { env: { ...env, BEELINK_GATE_MAX_CONCURRENT: "2;id" } });
     assert.equal(invalid.status, 2);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -1976,7 +2006,7 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
   try {
     installFakeSsh(f);
     const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu });
+    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu, base_sha: "b".repeat(40), pr_number: 417, lane: "op-company:gate" });
     // The fake ssh runs the remote side locally, so both beelinks read this one state dir.
     mkdirSync(join(f.root, "state"), { recursive: true });
     writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1, 30), row("a", "install", 1, 55), row("b", "ship", 0)].join("\n") + "\n");
@@ -1987,6 +2017,11 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
     assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
     assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
+    assert.match(result.stdout, /METADATA base_sha=6\/6 pr_number=6\/6 lane=6\/6/);
+    assert.match(result.stdout, /REASONS 6\/6 receipts have new metadata; first=2 different_command=0 after_red=3 after_green=1 after_base_move=0 after_green_base_unknown=0/);
+    assert.match(result.stdout, /AVOIDABLE CANDIDATES 1 /);
+    assert.match(result.stdout, /REPEAT_REPO github\.com\/o\/r 4/);
+    assert.match(result.stdout, /REPEAT_LANE op-company:gate 4/);
     assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
