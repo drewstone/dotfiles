@@ -58,8 +58,8 @@ package installs are not refused, since Beelinks are where they run.
 - Counting, checkout and the lane record run under one per-lane lock, and the record is written whenever the tree exists,
   so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
 - Trees outside `_wt` (tool caches, `tangle-ops ship`, the adc-wt pool, `~/company/_wt`) and every other Git command pass through.
-- This is a guardrail for cooperating agents, not a sandbox: a new `FLEET_LANE` value, a Git alias, or `worktree move`
-  into `_wt` gets past it. Trees made before installation carry no lane and are not counted.
+- This is a guardrail for cooperating agents, not a sandbox: a new `FLEET_LANE` value or a Git alias gets past it.
+  A `worktree move` into `_wt` is checked like an add (lane-10080 moved a 4.6 GB tree in under the floor on 2026-10-12). Trees made before installation carry no lane and are not counted.
 
 Measured 2026-10-11: beelink1 gained 49 `_wt` worktrees in 6 h and held 73 GB of `_wt` data unique beyond the pnpm store;
 the idle reapers cannot touch a tree younger than 12 h.

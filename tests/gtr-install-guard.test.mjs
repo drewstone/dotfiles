@@ -12,7 +12,7 @@ const GUARD = resolve("host/gtr-install-guard/guard.py");
 const HOME = mkdtempSync(join(tmpdir(), "gtr-install-guard-"));
 const BIN = join(HOME, "bin");
 mkdirSync(BIN);
-for (const name of ["pnpm", "npm", "yarn", "uv", "corepack"]) {
+for (const name of ["pnpm", "npm", "yarn", "uv", "corepack", "git"]) {
   copyFileSync(GUARD, join(BIN, name));
   writeFileSync(join(BIN, `${name}.gtr-original`), "#!/bin/sh\necho ran \"$@\"\n", { mode: 0o755 });
 }
@@ -198,4 +198,29 @@ test("the Beelink shim sends only worktree commands to Python", () => {
   const r = spawnSync("sh", [resolve("host/gtr-install-guard/beelink-git"), "--version"], { encoding: "utf8" });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /^git version/);
+});
+
+test("a Beelink worktree move into _wt is held to the same cap and floor as an add", () => {
+  const { home, git } = beelinkGit({ cap: 1, floor_bytes: 0 });
+  const lane = { FLEET_LANE: "op-devplatform:mover" };
+  const outside = (name) => join(home, "code/repo/.worktrees", name);
+  assert.equal(git(["worktree", "add", "-q", "--detach", outside("m1")], lane).status, 0, "outside _wt is not capped");
+  assert.equal(git(["worktree", "move", outside("m1"), join(home, "code/_wt/m1")]).status, 125, "a move into _wt needs a lane");
+  assert.equal(git(["worktree", "move", outside("m1"), join(home, "code/_wt/m1")], lane).status, 0);
+  const admin = readFileSync(join(home, "code/_wt/m1/.git"), "utf8").trim().slice("gitdir: ".length);
+  assert.equal(readFileSync(join(admin, "fleet-lane"), "utf8"), "op-devplatform:mover\n");
+  assert.equal(git(["worktree", "add", "-q", "--detach", outside("m2")], lane).status, 0);
+  const second = git(["worktree", "move", "-f", outside("m2"), join(home, "code/_wt/m2")], lane);
+  assert.equal(second.status, 125, "the moved tree counts against the lane");
+  assert.match(second.err, /holds 1 of 1/);
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER }));
+  const floor = git(["worktree", "move", outside("m2"), join(home, "code/_wt/m3")], lane);
+  assert.equal(floor.status, 125, "lane-10080 moved a tree into _wt under the floor on 2026-10-12");
+  assert.match(floor.err, /floor/);
+});
+
+test("GTR refuses a worktree move into _wt like an add", () => {
+  const r = run("git", ["worktree", "move", "/tmp/elsewhere", join(HOME, "code/_wt/moved")], HOME);
+  assert.equal(r.status, 125);
+  assert.match(r.err, /refused/);
 });
