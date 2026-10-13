@@ -74,12 +74,40 @@ utc_in_minutes() {
 decode() { printf '%s' "$1" | base64 --decode; }
 
 floor_gib() {
-  local host="$1"
+  local host="$1" base path line override="" found=0
   case "$host" in
-    beelink1) echo 100 ;;
-    beelink2) echo 162 ;;
+    beelink1) base=100 ;;
+    beelink2) base=162 ;;
     *) die "unknown remote beelink: $host" ;;
   esac
+  path=$(limits_file)
+  if [[ -e "$path" || -L "$path" ]]; then
+    if [[ ! -f "$path" || ! -r "$path" ]]; then
+      echo "beelink-gate: invalid disk_floor_gib limits file: $path" >&2
+      return 1
+    fi
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        disk_floor_gib=*)
+          if (( found )); then
+            echo "beelink-gate: invalid disk_floor_gib: duplicate limit" >&2
+            return 1
+          fi
+          override=${line#disk_floor_gib=}
+          found=1
+          ;;
+      esac
+    done < "$path"
+  fi
+  if (( found )); then
+    if [[ ! "$override" =~ ^[0-9]{1,4}$ ]] || (( 10#$override < base || 10#$override > 1024 )); then
+      echo "beelink-gate: invalid disk_floor_gib: $override (must be $base-1024)" >&2
+      return 1
+    fi
+    echo "$((10#$override))"
+  else
+    echo "$base"
+  fi
 }
 
 free_bytes() {
@@ -91,7 +119,7 @@ free_bytes() {
 
 check_floor() {
   local host="$1" floor_gib available
-  floor_gib=$(floor_gib "$host")
+  floor_gib=$(floor_gib "$host") || return 3
   available=$(free_bytes)
   if (( available < floor_gib * 1024 * 1024 * 1024 )); then
     printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor; use the other beelink or ask the host owner to recover capacity\n' \
@@ -279,10 +307,11 @@ PY
 # Use only this command's locked, disposable checkouts to restore a host's disk
 # floor with 10 GiB headroom. A missing cache has nothing safe to evict.
 recover_floor_from_cache() {
-  local host="$1" root="$2" cap="$3" current="$4" available wanted
+  local host="$1" root="$2" cap="$3" current="$4" available wanted floor
   [ -d "$root/.locks" ] || return 0
   available=$(free_bytes)
-  wanted=$(( $(floor_gib "$host") * 1024 * 1024 * 1024 + 10 * 1024 * 1024 * 1024 ))
+  floor=$(floor_gib "$host") || return 3
+  wanted=$(( floor * 1024 * 1024 * 1024 + 10 * 1024 * 1024 * 1024 ))
   (( available < wanted )) || return 0
   echo "beelink-gate: disk reserve needs $((wanted - available)) bytes; pruning owned idle cache" >&2
   prune_cache "$root" "$current" "$cap" "$((wanted - available))" || true
