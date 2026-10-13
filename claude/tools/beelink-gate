@@ -1358,7 +1358,7 @@ remote_gate() {
   # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
   # not take both beelinks. On 2026-10-11, 38 gates of one repo from one lane
   # waited 527 min in total behind a single checkout per host.
-  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd capacity_fd
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
   # A light gate waits behind no normal gate: it has its own <repo>@light checkout.
   (( light == 0 )) || copies=1
@@ -1366,8 +1366,10 @@ remote_gate() {
   (( dev == 0 )) || copies=1
   unset BEELINK_GATE_REPO_CHECKOUTS
   mkdir -p "$cache_root/.locks" "$cache_root/$host/$owner" || die "cannot create cache"
+  [ ! -L "$cache_root/.locks/.capacity.lock" ] || die "capacity lock is a symlink"
+  exec {capacity_fd}>>"$cache_root/.locks/.capacity.lock" || die "cannot open capacity lock"
   lock=""
-  local waiting_since=$SECONDS last_report=-60
+  local waiting_since=$SECONDS last_report=-60 capacity_claim_wait_ms=0 claim_started_ms
   checkout=""
   local urgent_marker="$cache_root/.locks/urgent-$host-$owner-$repo"
   (( light == 0 )) || urgent_marker+=@light
@@ -1386,6 +1388,19 @@ remote_gate() {
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   while [ -z "$lock" ]; do
+    # Cleanup and the cache pruner hold this lock exclusively before inspecting
+    # repo locks. A shared claim prevents either from racing a new checkout,
+    # while other gates can claim their own repos at the same time. Release it
+    # as soon as the repo flock is held; the command keeps only its repo lock.
+    claim_started_ms=$(date +%s%3N)
+    while ! flock -w 1 -s "$capacity_fd"; do
+      if (( SECONDS - last_report >= 60 )); then
+        echo "beelink-gate: waiting $((SECONDS - waiting_since))s for capacity cleanup on $beelink" >&2
+        last_report=$SECONDS
+      fi
+      admission_expired && not_admitted "capacity cleanup in progress"
+    done
+    capacity_claim_wait_ms=$((capacity_claim_wait_ms + $(date +%s%3N) - claim_started_ms))
     # Each older waiter reserves one free checkout; with two free and one older
     # waiter, this gate still takes the second.
     local ahead=0 skipped=0
@@ -1411,6 +1426,7 @@ remote_gate() {
       exec {fd}>&-
       reclaim_dead_holder "$candidate"
     done
+    flock -u "$capacity_fd"
     [ -z "$lock" ] || break
     if (( SECONDS - last_report >= 60 )); then
       echo "beelink-gate: waiting $((SECONDS - waiting_since))s for one of $copies $host/$owner/$repo checkouts on $beelink; $(holder_line "$cache_root/.locks/$host-$owner-$repo.lock")" >&2
@@ -1419,6 +1435,7 @@ remote_gate() {
     admission_expired && not_admitted "both $host/$owner/$repo checkouts busy"
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
+  exec {capacity_fd}>&-
   rm -f "$urgent_marker.$$" "$ticket"
   if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
   [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
@@ -1484,9 +1501,9 @@ remote_gate() {
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
       "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
@@ -1509,6 +1526,7 @@ timing = {"fetch_s": int(fetch_s) if fetch_s else None,
           "pre_command_s": int(pre_command_s) if pre_command_s else None,
           "command_s": int(command_s) if command_s else None,
           "cleanup_s": int(cleanup_s) if cleanup_s else None,
+          "capacity_claim_wait_ms": int(capacity_claim_wait_ms),
           "cache_lock_wait_ms": None,
           "cache_prune_work_ms": None}
 # pre_command_s includes fetch and precheck prune; cleanup_s includes cleanup

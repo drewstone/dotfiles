@@ -2177,7 +2177,7 @@ test("a green command stays green when the cache is over its cap with only activ
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("the receipt separates cache-lock wait from the command and cleanup", async () => {
+test("the receipt separates capacity-claim wait from cache pruning and the command", async () => {
   const f = fixture();
   const locks = join(f.cache, ".locks");
   const marker = join(f.root, "capacity-held");
@@ -2189,13 +2189,94 @@ test("the receipt separates cache-lock wait from the command and cleanup", async
     const result = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(result.status, 0, result.stderr);
     const row = receipts(f).at(-1);
-    assert.ok(row.timing.cache_lock_wait_ms.precheck >= 500, JSON.stringify(row.timing));
-    assert.ok(row.timing.pre_command_s >= 1, JSON.stringify(row.timing));
+    assert.ok(row.timing.capacity_claim_wait_ms >= 500, JSON.stringify(row.timing));
+    assert.ok(row.timing.cache_lock_wait_ms.precheck >= 0, JSON.stringify(row.timing));
+    assert.ok(row.waited_s >= 1, JSON.stringify(row));
+    assert.ok(row.timing.pre_command_s >= 0, JSON.stringify(row.timing));
     assert.ok(row.timing.fetch_s >= 0 && row.timing.command_s >= 0 && row.timing.cleanup_s >= 0);
     assert.ok(row.timing.cache_prune_work_ms.cleanup >= 0);
     assert.match(result.stderr, /beelink-gate timing: /);
   } finally {
     holder.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("an exclusive capacity cleanup blocks a new checkout claim without taking its repo lock", async () => {
+  const f = fixture();
+  const locks = join(f.cache, ".locks");
+  const held = join(f.root, "cleanup-held");
+  const release = join(f.root, "release-cleanup");
+  mkdirSync(locks, { recursive: true });
+  const holder = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c",
+    `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.05; done`], { stdio: "ignore" });
+  let child;
+  try {
+    for (let i = 0; i < 100 && !existsSync(held); i++) await sleepMs(20);
+    assert.equal(existsSync(held), true);
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", (status) => resolveDone(status)));
+    for (let i = 0; i < 150 && !/waiting \d+s for capacity cleanup/.test(stderr); i++) await sleepMs(20);
+    assert.match(stderr, /waiting \d+s for capacity cleanup/);
+    assert.equal(run("flock", ["-n", "-x", join(locks, "local-owner-repo.lock"), "true"]).status, 0,
+      "the gate claimed a checkout before cleanup released the capacity lock");
+    writeFileSync(release, "");
+    assert.equal(await done, 0, stderr);
+  } finally {
+    writeFileSync(release, "");
+    holder.kill(); child?.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("two gates claim concurrently while an exclusive pruner waits for the shared claim", async () => {
+  const f = fixture();
+  const locks = join(f.cache, ".locks");
+  const firstClaim = join(f.root, "first-claim");
+  const release = join(f.root, "release-claim");
+  const prunerEntered = join(f.root, "pruner-entered");
+  const otherBare = join(f.root, "owner", "other.git");
+  f.git(["clone", "-q", "--bare", f.source, otherBare], f.root);
+  mkdirSync(locks, { recursive: true });
+  const firstLock = join(locks, "local-owner-repo.lock");
+  writeFileSync(join(f.root, "bin", "flock"), `#!/usr/bin/env bash
+if [[ "$1" == -n && "$2" == -x && "$(readlink "/proc/$PPID/fd/$3")" == '${firstLock}' ]]; then
+  touch '${firstClaim}'
+  while [ ! -e '${release}' ]; do sleep 0.05; done
+fi
+exec /usr/bin/flock "$@"
+`);
+  chmodSync(join(f.root, "bin", "flock"), 0o755);
+  const args = (url) => ["beelink2", url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+  const launch = (url) => {
+    const child = spawn("bash", [gate, "--remote", ...args(url)], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    return { child, done: new Promise((resolveDone) => child.on("close", (status) => resolveDone({ status, stderr }))) };
+  };
+  let first, second, pruner;
+  try {
+    first = launch(f.url);
+    for (let i = 0; i < 150 && !existsSync(firstClaim); i++) await sleepMs(20);
+    assert.equal(existsSync(firstClaim), true, "first gate never entered its shared claim");
+    second = launch(`file://${otherBare}`);
+    const otherHolder = join(locks, "local-owner-other.lock.holder");
+    for (let i = 0; i < 150 && !existsSync(otherHolder); i++) await sleepMs(20);
+    assert.equal(existsSync(otherHolder), true, "another repo could not claim under the shared lock");
+    pruner = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c", `touch '${prunerEntered}'`], { stdio: "ignore" });
+    await sleepMs(100);
+    assert.equal(existsSync(prunerEntered), false, "exclusive pruner entered during a shared claim");
+    writeFileSync(release, "");
+    const results = await Promise.all([first.done, second.done]);
+    assert.ok(results.every((result) => result.status === 0), JSON.stringify(results));
+    for (let i = 0; i < 150 && !existsSync(prunerEntered); i++) await sleepMs(20);
+    assert.equal(existsSync(prunerEntered), true, "pruner did not proceed after the claim finished");
+  } finally {
+    writeFileSync(release, "");
+    first?.child.kill(); second?.child.kill(); pruner?.kill();
     rmSync(f.root, { recursive: true, force: true });
   }
 });
