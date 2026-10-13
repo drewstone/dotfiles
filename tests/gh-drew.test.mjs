@@ -241,3 +241,152 @@ test("a description of only trailers yields the title alone; an explicit body an
     rmSync(s.root, { recursive: true, force: true });
   }
 });
+
+// Lane provenance: a PR body or squash message gh-drew writes ends with the run that made it
+// ("Run ID:" or "Session:"), the line hills merges-lane-attributed counts. Never a trailer.
+function prSandbox() {
+  const s = sandbox();
+  const argsFile = join(s.root, "pr-args");
+  const editFile = join(s.root, "edit-args");
+  writeFileSync(join(s.root, "bin", "gh"), `#!/usr/bin/env bash
+case "$*" in
+  "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
+  "api user --jq .login") echo '{"message":"API rate limit exceeded"}'; exit 1 ;;
+  "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
+  "pr view"*"--json title --jq .title") echo "fix(x): one change" ;;
+  "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;
+  "pr edit https://"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${editFile}" ;;
+  "pr create"*|"pr edit"*|"pr merge"*|"pr -R "*|*" pr create"*|*" pr edit"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${argsFile}"
+    case "$*" in *--fill*|*" -df"*) echo "https://github.com/o/r/pull/77" ;; esac ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+`);
+  return { ...s, argsFile, editFile };
+}
+
+function runPr(s, args, env = {}, input) {
+  const result = spawnSync(resolve(ghDrew), args, { cwd: s.work, env: { ...s.env, ...env }, encoding: "utf8", input });
+  assert.equal(result.status, 0, result.stderr);
+  return { args: readFileSync(s.argsFile, "utf8").split("\0").slice(0, -1), stdout: result.stdout };
+}
+
+const RUN = { TANGLE_RUN_ID: "run_abc123" };
+
+test("pr create and pr edit bodies end with the run's Run ID line, once", () => {
+  const s = prSandbox();
+  try {
+    assert.deepEqual(runPr(s, ["pr", "create", "--title", "t", "--body", "Does a thing."], RUN).args,
+      ["pr", "create", "--title", "t", "--body", "Does a thing.\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["pr", "-R", "o/r", "edit", "5", "-b", "x\n\n"], RUN).args,
+      ["pr", "-R", "o/r", "edit", "5", "-b", "x\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["pr", "create", "--body=y"], RUN).args, ["pr", "create", "--body=y\n\nRun ID: run_abc123"]);
+    // A body that already names its lane, run or session is left alone (any case, markdown emphasis allowed).
+    for (const body of ["x\n\nRun ID: run_other", "x\n**Lane:** gtm", "x\nsession: abc"]) {
+      assert.deepEqual(runPr(s, ["pr", "create", "--body", body], RUN).args, ["pr", "create", "--body", body]);
+    }
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("an inherited repository flag before pr keeps the run line", () => {
+  const s = prSandbox();
+  try {
+    assert.deepEqual(runPr(s, ["-R", "o/r", "pr", "create", "--body", "Root body."], RUN).args,
+      ["-R", "o/r", "pr", "create", "--body", "Root body.\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["--repo=o/r", "pr", "edit", "7", "--body=Edited."], RUN).args,
+      ["--repo=o/r", "pr", "edit", "7", "--body=Edited.\n\nRun ID: run_abc123"]);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test("a body file or stdin body is read and passed as --body with the line; Session is the fallback", () => {
+  const s = prSandbox();
+  try {
+    const file = join(s.root, "body.md");
+    writeFileSync(file, "From a file.\n");
+    assert.deepEqual(runPr(s, ["pr", "create", "--body-file", file], RUN).args,
+      ["pr", "create", "--body", "From a file.\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["pr", "create", `--body-file=${file}`], { TANGLE_CLAUDE_SESSION: "sess-9" }).args,
+      ["pr", "create", "--body", "From a file.\n\nSession: sess-9"]);
+    assert.deepEqual(runPr(s, ["pr", "create", "-F", "-"], RUN, "From stdin.\n").args,
+      ["pr", "create", "--body", "From stdin.\n\nRun ID: run_abc123"]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("with no run or session in the environment nothing changes", () => {
+  const s = prSandbox();
+  try {
+    const file = join(s.root, "body.md");
+    writeFileSync(file, "Plain.\n");
+    assert.deepEqual(runPr(s, ["pr", "create", "--body", "Plain."]).args, ["pr", "create", "--body", "Plain."]);
+    assert.deepEqual(runPr(s, ["pr", "create", "-F", file]).args, ["pr", "create", "-F", file]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("pr create --fill gets the line added to the body gh wrote, after creation", () => {
+  const s = prSandbox();
+  try {
+    const out = runPr(s, ["pr", "create", "--fill"], { ...RUN, FAKE_BODY: "Commit body." });
+    assert.deepEqual(out.args, ["pr", "create", "--fill"]);
+    assert.match(out.stdout, /pull\/77/);
+    const edit = readFileSync(s.editFile, "utf8").split("\0").slice(0, -1);
+    assert.deepEqual(edit, ["pr", "edit", "https://github.com/o/r/pull/77", "--body", "Commit body.\n\nRun ID: run_abc123"]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("a squash merge message gh-drew writes ends with the Run ID line, and never a trailer", () => {
+  const s = prSandbox();
+  try {
+    const args = runPr(s, ["pr", "merge", "12", "--squash"], { ...RUN, FAKE_BODY: "Fixes it.\n\nCo-authored-by: X <x@y>" }).args;
+    assert.deepEqual(args.slice(0, 4), ["pr", "merge", "12", "--squash"]);
+    assert.equal(args[5], "fix(x): one change\n\nFixes it.\n\nRun ID: run_abc123");
+    assert.ok(!args[5].includes("Co-authored-by"));
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("short flags alone, attached or clustered get the line; a cluster with f is a fill", () => {
+  const s = prSandbox();
+  try {
+    const file = join(s.root, "b.md");
+    writeFileSync(file, "Filed.\n");
+    assert.deepEqual(runPr(s, ["pr", "create", "-bInline"], RUN).args, ["pr", "create", "--body", "Inline\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["pr", "create", `-F${file}`], RUN).args, ["pr", "create", "--body", "Filed.\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["pr", "create", "-db", "Drafted"], RUN).args, ["pr", "create", "-d", "--body", "Drafted\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["pr", "create", "-t", "T", "-b", "B"], RUN).args, ["pr", "create", "-t", "T", "-b", "B\n\nRun ID: run_abc123"]);
+    const out = runPr(s, ["pr", "create", "-df"], { ...RUN, FAKE_BODY: "Commits." });
+    assert.deepEqual(out.args, ["pr", "create", "-df"]);
+    assert.deepEqual(readFileSync(s.editFile, "utf8").split("\0").slice(0, -1),
+      ["pr", "edit", "https://github.com/o/r/pull/77", "--body", "Commits.\n\nRun ID: run_abc123"]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+test("an unreadable body file leaves the arguments for gh to reject, and a fill that prints no URL keeps its status", () => {
+  const s = prSandbox();
+  try {
+    assert.deepEqual(runPr(s, ["pr", "edit", "12", "--body-file", "missing.md"], RUN).args, ["pr", "edit", "12", "--body-file", "missing.md"]);
+    writeFileSync(join(s.root, "bin", "gh"), `#!/usr/bin/env bash
+case "$*" in
+  "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
+  "api user --jq .login") echo '{"message":"API rate limit exceeded"}'; exit 1 ;;
+  "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
+  "pr create"*) echo "Opening in your browser." ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+`);
+    const result = spawnSync(resolve(ghDrew), ["pr", "create", "--fill", "--web"], { cwd: s.work, env: { ...s.env, ...RUN }, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /browser/);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
