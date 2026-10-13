@@ -2232,6 +2232,65 @@ test("an exclusive capacity cleanup blocks a new checkout claim without taking i
   }
 });
 
+test("a registered capacity writer drains new checkout claims before they take a repo lock", async () => {
+  const f = fixture();
+  const locks = join(f.cache, ".locks");
+  const intent = join(locks, ".capacity.writer.intent");
+  const held = join(f.root, "writer-held");
+  const release = join(f.root, "release-writer");
+  mkdirSync(locks, { recursive: true });
+  const holder = spawn("flock", ["-x", join(locks, ".capacity.writer.lock"), "bash", "-c",
+    `touch '${intent}' '${held}'; while [ ! -e '${release}' ]; do sleep 0.05; done; rm '${intent}'`], { stdio: "ignore" });
+  let child;
+  try {
+    for (let i = 0; i < 100 && !existsSync(held); i++) await sleepMs(20);
+    assert.equal(existsSync(held), true);
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", (status) => resolveDone(status)));
+    for (let i = 0; i < 150 && !/waiting \d+s for capacity writer/.test(stderr); i++) await sleepMs(20);
+    assert.match(stderr, /waiting \d+s for capacity writer/);
+    assert.equal(run("flock", ["-n", "-x", join(locks, "local-owner-repo.lock"), "true"]).status, 0,
+      "the gate claimed a checkout while a writer intent was live");
+    writeFileSync(release, "");
+    assert.equal(await done, 0, stderr);
+    assert.equal(existsSync(intent), false);
+  } finally {
+    writeFileSync(release, "");
+    holder.kill(); child?.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("a dead capacity writer's intent is cleared and a live writer times out new claims", async () => {
+  const f = fixture();
+  const locks = join(f.cache, ".locks");
+  const intent = join(locks, ".capacity.writer.intent");
+  mkdirSync(locks, { recursive: true });
+  let holder;
+  try {
+    writeFileSync(intent, "abandoned");
+    const recovered = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(existsSync(intent), false, "the abandoned marker survived an unlocked writer fd");
+
+    const held = join(f.root, "writer-held");
+    holder = spawn("flock", ["-x", join(locks, ".capacity.writer.lock"), "bash", "-c",
+      `touch '${intent}' '${held}'; sleep 10`], { stdio: "ignore" });
+    for (let i = 0; i < 100 && !existsSync(held); i++) await sleepMs(20);
+    assert.equal(existsSync(held), true);
+    const refused = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS: "1" } });
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, /TEMPFAIL .*capacity writer intent exceeded 1s/);
+    assert.equal(run("flock", ["-n", "-x", join(locks, "local-owner-repo.lock"), "true"]).status, 0);
+  } finally {
+    holder?.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("two gates claim concurrently while an exclusive pruner waits for the shared claim", async () => {
   const f = fixture();
   const locks = join(f.cache, ".locks");
