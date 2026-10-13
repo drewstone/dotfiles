@@ -96,11 +96,21 @@ check_free() {
 reap_log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$CACHE/reap.log"; }
 
 need() {
-  local b
+  local b kvm_gid account_groups active_groups
   for b in qemu-system-x86_64 qemu-img cloud-localds ssh ssh-keygen python3; do
     command -v "$b" >/dev/null 2>&1 || die "missing $b (sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client)"
   done
-  [ -r /dev/kvm ] && [ -w /dev/kvm ] || die "/dev/kvm is not accessible (add yourself to the kvm group)"
+  if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+    kvm_gid=$(getent group kvm 2>/dev/null | cut -d: -f3) || kvm_gid=""
+    if [[ "$kvm_gid" =~ ^[0-9]+$ ]] && [ "$(stat -c %g /dev/kvm 2>/dev/null)" = "$kvm_gid" ]; then
+      account_groups=$(id -G "$(id -un)" 2>/dev/null || true)
+      active_groups=$(id -G)
+      if [[ " $account_groups " == *" $kvm_gid "* && " $active_groups " != *" $kvm_gid "* ]]; then
+        die "/dev/kvm is inaccessible: the account belongs to kvm, but this process does not. A lingering systemd user manager can keep old groups; run this hostlab call through sg kvm -c 'hostlab ...'"
+      fi
+    fi
+    die "/dev/kvm is not accessible (add yourself to the kvm group)"
+  fi
   mkdir -p "$CACHE" "$RUNS"
   if [ ! -f "$KEY" ]; then
     ssh-keygen -q -t ed25519 -N '' -C hostlab -f "$KEY"
