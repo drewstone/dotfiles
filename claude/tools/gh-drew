@@ -562,7 +562,7 @@ with_squash_body() {
 # One open PR per fleet lane (ops-board #10097). Lanes opened PRs faster than
 # signoff could land them (5.7/h in vs 3.25/h merged on 2026-10-12), so a lane
 # with an open PR is refused another `pr create`. Fleet stamps a stable key
-# from operator and project, shared by helpers and new runs of the same lane.
+# from the claimed project, shared by helpers, new runs, and operator handoffs.
 # Older sessions retain their run-id key; a shell with no lane id is not limited.
 # Each lane's ledger lists the PRs it created; only those are read, read-only
 # through gh-read, and an unreadable state refuses rather than admits.

@@ -106,14 +106,14 @@ test("a fleet lane key isolates sibling lanes even when their lineage root is sh
   const s = sandbox();
   try {
     mkdirSync(s.wip, { recursive: true });
-    writeFileSync(join(s.wip, "op-t--first.tsv"), `2026-10-12T00:00:00Z\tcreated\t${OPEN_PR}\n`);
+    writeFileSync(join(s.wip, "fleet--first.tsv"), `2026-10-12T00:00:00Z\tcreated\t${OPEN_PR}\n`);
     const common = { TANGLE_ROOT_RUN_ID: LANE, TANGLE_RUN_ID: "run_child" };
-    const first = create(s, { ...common, TANGLE_PR_WIP_KEY: "op-t--first" });
+    const first = create(s, { ...common, TANGLE_PR_WIP_KEY: "fleet--first" });
     assert.equal(first.status, 1);
     assert.ok(first.stderr.includes(OPEN_PR));
-    const second = create(s, { ...common, TANGLE_PR_WIP_KEY: "op-t--second" });
+    const second = create(s, { ...common, TANGLE_PR_WIP_KEY: "fleet--second" });
     assert.equal(second.status, 0, second.stderr);
-    assert.ok(readFileSync(join(s.wip, "op-t--second.tsv"), "utf8").includes(NEW_PR));
+    assert.ok(readFileSync(join(s.wip, "fleet--second.tsv"), "utf8").includes(NEW_PR));
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
@@ -121,7 +121,7 @@ test("two simultaneous creates in one lane admit only one GitHub call", async ()
   const s = sandbox();
   try {
     const calls = join(s.root, "creates.log");
-    const env = { ...s.env, TANGLE_PR_WIP_KEY: "op-t--first", FAKE_CREATE_DELAY: "0.3",
+    const env = { ...s.env, TANGLE_PR_WIP_KEY: "fleet--first", FAKE_CREATE_DELAY: "0.3",
       FAKE_CREATE_LOG: calls };
     const run = () => new Promise((resolveResult) => {
       const child = spawn(ghDrew, ["pr", "create", "--title", "t", "--body", "b"], { env });
