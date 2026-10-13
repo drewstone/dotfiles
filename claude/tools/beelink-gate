@@ -544,7 +544,16 @@ children_cpu_ticks() {
 # Admission ends early for a placement that may move: the remote gate gives the host back (exit 76, which
 # only the launcher sees) and the launcher places the gate again. Nothing is checked out before admission.
 NOT_ADMITTED=76
-admission_expired() { [ -n "${admit_by:-}" ] && (( SECONDS >= admit_by )); }
+cancel_if_requested() {
+  [ -z "${gate_id:-}" ] || [ ! -f "$STATE_DIR/jobs/.canceled/$gate_id" ] || {
+    echo "beelink-gate: canceled gate_id=$gate_id before command" >&2
+    exit 75
+  }
+}
+admission_expired() {
+  cancel_if_requested
+  [ -n "${admit_by:-}" ] && (( SECONDS >= admit_by ))
+}
 not_admitted() {
   [ -z "${lock:-}" ] || rm -f "$lock.holder"
   rm -f "${urgent_markers[@]}" 2>/dev/null
@@ -1183,6 +1192,7 @@ remote_gate() {
   gate_id=${BEELINK_GATE_ID:-}
   [ -z "$gate_id" ] || [[ "$gate_id" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid gate id"
   unset BEELINK_GATE_ID
+  cancel_if_requested
   local reservation_token=${BEELINK_GATE_RESERVATION_TOKEN:-}
   [ -z "$reservation_token" ] || [[ "$reservation_token" =~ ^[0-9a-f]{32}$ ]] || die "invalid checkout reservation token"
   unset BEELINK_GATE_RESERVATION_TOKEN
@@ -1706,6 +1716,7 @@ PY
   fi
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  cancel_if_requested
   echo "beelink-gate: running ${display% }" >&2
   local tick cpu_before cpu_after
   tick=$(getconf CLK_TCK 2>/dev/null || echo 100)
@@ -1783,8 +1794,37 @@ PY
 #!/usr/bin/env bash
 dir=$(cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
 set +e
-bash "$dir/gate.sh" --remote "$@" > "$dir/stdout.log" 2> "$dir/stderr.log"
-rc=$?
+child= stop_requested=0
+stop_child() {
+  stop_requested=1
+  : > "$dir/../.canceled/${dir##*/}"
+  [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true
+}
+trap stop_child TERM INT HUP
+bash "$dir/gate.sh" --remote "$@" > "$dir/stdout.log" 2> "$dir/stderr.log" &
+child=$!
+birth=$(awk '{print $22}' "/proc/$child/stat" 2>/dev/null)
+printf '%s %s\n' "$child" "$birth" > "$dir/gate.pid.tmp"
+mv -- "$dir/gate.pid.tmp" "$dir/gate.pid"
+[ "$stop_requested" = 0 ] || kill -TERM "$child" 2>/dev/null || true
+wait "$child"; rc=$?
+if [ "$stop_requested" = 1 ]; then
+  # A TERM interrupts bash's wait even when gate.sh moved to a different
+  # cgroup. Never publish a terminal exit while that exact child still lives.
+  for ((i=0; i<100; i++)); do
+    state=$(awk '{print $3}' "/proc/$child/stat" 2>/dev/null)
+    [ "$state" = Z ] && break
+    kill -0 "$child" 2>/dev/null || break
+    sleep 0.1
+  done
+  state=$(awk '{print $3}' "/proc/$child/stat" 2>/dev/null)
+  if [ "$state" != Z ] && kill -0 "$child" 2>/dev/null; then
+    echo "beelink-gate: gate child $child survived unit stop" >&2
+    exit 75
+  fi
+  wait "$child" 2>/dev/null || true
+  rc=75
+fi
 exec {lock_fd}> "$dir/../.locks/${dir##*/}.lock"
 flock "$lock_fd"
 printf '%s\n' "$rc" > "$dir/exit.tmp"
@@ -1804,10 +1844,20 @@ RUNNER
     printf '75\n' > "$dir/exit"
     return 75
   fi
+  : > "$dir/submitted"
   echo "beelink-gate: submitted gate_id=$id" >&2
 }
+gate_process_alive() {
+  local dir=$1 pid birth actual state
+  [ -f "$dir/gate.pid" ] && [ ! -L "$dir/gate.pid" ] || return 1
+  read -r pid birth < "$dir/gate.pid" || return 1
+  [[ "$pid" =~ ^[1-9][0-9]*$ && "$birth" =~ ^[1-9][0-9]*$ ]] || return 1
+  read -r state actual < <(awk '{print $3, $22}' "/proc/$pid/stat" 2>/dev/null) || return 1
+  [ "$actual" = "$birth" ] && [ "$state" != Z ] && [ "$state" != X ] || return 1
+  gate_pid=$pid
+}
 job_cancel_remote() {
-  local id=$1 dir unit state lock_fd
+  local id=$1 dir unit state lock_fd gate_pid i
   dir=$(job_dir_for "$id")
   mkdir -p "$STATE_DIR/jobs/.locks" "$STATE_DIR/jobs/.canceled" || return 75
   exec {lock_fd}> "$STATE_DIR/jobs/.locks/$id.lock" || return 75
@@ -1821,6 +1871,21 @@ job_cancel_remote() {
       inactive|failed) ;;
       *) echo "beelink-gate: $unit remains $state; retry cancellation" >&2; return 75 ;;
     esac
+    if [ -f "$dir/submitted" ] && [ ! -f "$dir/gate.pid" ] && [ ! -f "$dir/exit" ]; then
+      echo "beelink-gate: cannot confirm gate child for $id after unit stop; retry cancellation" >&2
+      return 75
+    fi
+    if gate_process_alive "$dir"; then
+      kill -TERM "$gate_pid" 2>/dev/null || true
+      for ((i=0; i<100; i++)); do
+        gate_process_alive "$dir" || break
+        sleep 0.1
+      done
+      if gate_process_alive "$dir"; then
+        echo "beelink-gate: gate child $gate_pid survived unit stop; retry cancellation" >&2
+        return 75
+      fi
+    fi
     # The unit's cgroup may have killed runner.sh before it wrote its exit.
     # An attach then sees a terminal TEMPFAIL instead of waiting indefinitely.
     printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"
