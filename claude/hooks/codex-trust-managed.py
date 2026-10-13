@@ -12,8 +12,18 @@ import time
 import tomllib
 
 
-def hook_hash(home, path, guard):
+def find_codex():
     codex = shutil.which('codex')
+    if codex:
+        return codex
+    # dotfiles-deploy.service does not inherit an interactive PATH. The
+    # installer links this executable before it asks Codex to trust the hook.
+    installed = Path.home() / 'bin/codex'
+    return str(installed) if installed.is_file() and os.access(installed, os.X_OK) else None
+
+
+def hook_hash(home, path, guard):
+    codex = find_codex()
     if not codex:
         raise RuntimeError('codex is unavailable; scan guard trust is pending')
     proc = subprocess.Popen([codex, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

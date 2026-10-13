@@ -33,3 +33,15 @@ def test_installer_preserves_other_hooks_and_trusts_only_its_guard(tmp_path, mon
     monkeypatch.setattr(trust, 'hook_hash', lambda *args: (key, 'sha256:changed'))
     with pytest.raises(RuntimeError, match='changed since it was trusted'):
         trust.install(home, '/guard.sh')
+
+
+def test_service_path_finds_codex_linked_by_installer(tmp_path, monkeypatch):
+    home = tmp_path / 'home'
+    binary = home / 'bin/codex'
+    binary.parent.mkdir(parents=True)
+    binary.write_text('#!/bin/sh\nexit 0\n')
+    binary.chmod(0o755)
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('PATH', str(tmp_path / 'systemd-path'))
+
+    assert trust.find_codex() == str(binary)
