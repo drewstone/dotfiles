@@ -45,8 +45,9 @@ def hook_hash(home, path, guard):
                     continue
                 if response.get('error'):
                     raise RuntimeError('Codex hooks/list failed')
+                sources = {str(path), str(path.resolve())}
                 matches = [hook for data in response['result']['data'] for hook in data['hooks']
-                           if hook.get('sourcePath') == str(path)
+                           if hook.get('sourcePath') in sources
                            and hook.get('eventName') == 'preToolUse'
                            and hook.get('handlerType') == 'command'
                            and hook.get('command') == guard
