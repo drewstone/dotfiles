@@ -1,6 +1,6 @@
 # Motion recipes
 
-Read the recipe for the component you are building. Values use the tokens from the skill: `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`, `--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1)`, `--ease-drawer: cubic-bezier(0.32, 0.72, 0, 1)`.
+Read the recipe for the component you are building. Use the project's tokens first; otherwise define `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)`, `--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1)`, and `--ease-drawer: cubic-bezier(0.32, 0.72, 0, 1)`.
 
 | Component | Recipe |
 |---|---|
@@ -19,3 +19,5 @@ Read the recipe for the component you are building. Values use the tokens from t
 | Crossfade that will not settle | Blur the content 2px and dim to 0.7 opacity for 200ms during the swap. |
 | Programmatic, no library | `el.animate([...], { duration, easing: 'cubic-bezier(0.77, 0, 0.175, 1)', fill: 'forwards' })`. |
 | Spring config | Apple-style `{ type: "spring", duration: 0.5, bounce: 0.2 }`, or `{ mass: 1, stiffness: 100, damping: 10 }` for more control. Apple ships damping 1.0 / response 0.4 for repositioning and 0.8 / 0.3 for sheets. |
+
+For drag-to-dismiss, consider both distance and a fast flick (about 0.11 px/ms). Project release velocity to a resting point, then snap to the nearest target. Past an edge, increase resistance with `rubberband(x, size, c = 0.55) = (x * size * c) / (size + c * |x|)`.

@@ -2,7 +2,7 @@
 
 Derived from emilkowalski/skills emil-design-eng, apple-design, and mobile-native (MIT).
 
-Read this when implementing or reviewing interface detail: press feedback, materials, typography, foundations, or phone behavior. Motion itself belongs to `/motion`.
+Read this when implementing or reviewing interface detail: press feedback, materials, typography, foundations, or phone behavior. For animation or gestures, read [motion](motion.md).
 
 Report review findings as one table: `| Before | After | Why |`, one row per issue.
 
