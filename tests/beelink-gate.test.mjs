@@ -2177,6 +2177,29 @@ test("a green command stays green when the cache is over its cap with only activ
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("the receipt separates cache-lock wait from the command and cleanup", async () => {
+  const f = fixture();
+  const locks = join(f.cache, ".locks");
+  const marker = join(f.root, "capacity-held");
+  mkdirSync(locks, { recursive: true });
+  const holder = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c", `touch '${marker}'; sleep 3`], { stdio: "ignore" });
+  try {
+    for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(20);
+    assert.equal(existsSync(marker), true);
+    const result = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(result.status, 0, result.stderr);
+    const row = receipts(f).at(-1);
+    assert.ok(row.timing.cache_lock_wait_ms.precheck >= 500, JSON.stringify(row.timing));
+    assert.ok(row.timing.pre_command_s >= 1, JSON.stringify(row.timing));
+    assert.ok(row.timing.fetch_s >= 0 && row.timing.command_s >= 0 && row.timing.cleanup_s >= 0);
+    assert.ok(row.timing.cache_prune_work_ms.cleanup >= 0);
+    assert.match(result.stderr, /beelink-gate timing: /);
+  } finally {
+    holder.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("an admitted gate tells its command so through BEELINK_GATE_ADMITTED", () => {
   const f = fixture();
   try {
