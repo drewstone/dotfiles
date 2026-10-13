@@ -257,7 +257,7 @@ case "$*" in
   "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;
   "pr edit https://"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${editFile}" ;;
   "pr create"*|"pr edit"*|"pr merge"*|"pr -R "*) for a in "$@"; do printf '%s\\0' "$a"; done > "${argsFile}"
-    case "$*" in *--fill*) echo "https://github.com/o/r/pull/77" ;; esac ;;
+    case "$*" in *--fill*|*" -df"*) echo "https://github.com/o/r/pull/77" ;; esac ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
 `);
@@ -297,7 +297,7 @@ test("a body file or stdin body is read and passed as --body with the line; Sess
     assert.deepEqual(runPr(s, ["pr", "create", "--body-file", file], RUN).args,
       ["pr", "create", "--body", "From a file.\n\nRun ID: run_abc123"]);
     assert.deepEqual(runPr(s, ["pr", "create", `--body-file=${file}`], { TANGLE_CLAUDE_SESSION: "sess-9" }).args,
-      ["pr", "create", "--body=From a file.\n\nSession: sess-9"]);
+      ["pr", "create", "--body", "From a file.\n\nSession: sess-9"]);
     assert.deepEqual(runPr(s, ["pr", "create", "-F", "-"], RUN, "From stdin.\n").args,
       ["pr", "create", "--body", "From stdin.\n\nRun ID: run_abc123"]);
   } finally {

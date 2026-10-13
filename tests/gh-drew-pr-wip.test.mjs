@@ -24,7 +24,11 @@ case "$*" in
   "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
   "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
   "api rate_limit --jq .resources.core.reset") echo 1790332087 ;;
-  "pr create"*) echo "Creating pull request"; echo "${NEW_PR}" ;;
+  "pr create"*)
+    if [[ "\${FAKE_CREATE_NO_URL:-}" == 1 ]]; then echo "Opening in your browser."
+    else echo "Creating pull request"; echo "${NEW_PR}"; fi ;;
+  "pr view ${NEW_PR} --json body --jq .body") echo "Base body" ;;
+  "pr edit ${NEW_PR}"*) printf '%s\\n' "$@" > "$FAKE_EDIT_ARGS" ;;
   *) echo "gh ran" ;;
 esac
 `);
@@ -40,7 +44,8 @@ echo "\${FAKE_PR_STATE-OPEN}"
   const wip = join(root, "pr-wip");
   const env = { PATH: `${bin}:${process.env.PATH}`, HOME: join(root, "home"), DREW_GH_TOKEN: TOKEN,
     GH_DREW_CACHE_DIR: join(root, "cache"), GH_DREW_LOG_DIR: join(root, "logs"),
-    GH_DREW_SECRETS_FILE: join(root, "absent.env"), GH_DREW_PR_WIP_DIR: wip };
+    GH_DREW_SECRETS_FILE: join(root, "absent.env"), GH_DREW_PR_WIP_DIR: wip,
+    FAKE_EDIT_ARGS: join(root, "edit-args") };
   delete env.TANGLE_ROOT_RUN_ID;
   delete env.TANGLE_RUN_ID;
   return { root, wip, reads, ledger: join(wip, `${LANE}.tsv`), env };
@@ -74,6 +79,29 @@ test("a lane's first create is allowed without a state read and joins its ledger
     assert.ok(r.stdout.includes(NEW_PR));
     assert.match(readFileSync(s.ledger, "utf8"), new RegExp(`\\tcreated\\t${NEW_PR}\\n$`));
     assert.ok(!existsSync(s.reads), "an empty ledger needs no GitHub read");
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test("a lane's fill create records the PR and appends its run line", () => {
+  const s = sandbox();
+  try {
+    const r = spawnSync(ghDrew, ["pr", "create", "--title", "t", "--fill"],
+      { env: { ...s.env, TANGLE_RUN_ID: LANE }, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(NEW_PR));
+    assert.match(readFileSync(s.ledger, "utf8"), new RegExp(`\\tcreated\\t${NEW_PR}\\n$`));
+    const editArgs = readFileSync(s.env.FAKE_EDIT_ARGS, "utf8");
+    assert.ok(editArgs.includes("Base body\n\nRun ID: " + LANE), editArgs);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test("a successful create without a printed URL keeps its status and records no PR", () => {
+  const s = sandbox();
+  try {
+    const r = create(s, { TANGLE_RUN_ID: LANE, FAKE_CREATE_NO_URL: "1" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Opening in your browser/);
+    assert.ok(!existsSync(s.ledger));
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 

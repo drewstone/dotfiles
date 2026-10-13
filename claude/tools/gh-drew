@@ -711,7 +711,7 @@ pr_wip_guard() {
 
 # `pr create` in a lane runs gh as a child so the new PR's URL joins the ledger.
 run_gh() {
-  local token="$1" rc out
+  local token="$1" rc out url
   if [[ -z "$pr_wip_ledger" ]]; then
     exec env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"}
   fi
@@ -719,9 +719,11 @@ run_gh() {
   env GH_TOKEN="$token" gh ${final_args[@]+"${final_args[@]}"} | tee "$out"
   rc=${PIPESTATUS[0]}
   if (( rc == 0 )); then
-    mkdir -p "$pr_wip_dir"
-    grep -oE 'https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+' "$out" | head -1 |
-      while read -r url; do printf '%s\tcreated\t%s\n' "$(date -u +%FT%TZ)" "$url" >>"$pr_wip_ledger"; done
+    url="$(grep -oE 'https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+' "$out" | head -1)" || url=""
+    if [[ -n "$url" ]]; then
+      mkdir -p "$pr_wip_dir"
+      printf '%s\tcreated\t%s\n' "$(date -u +%FT%TZ)" "$url" >>"$pr_wip_ledger"
+    fi
   fi
   rm -f "$out"
   exit "$rc"
