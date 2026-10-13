@@ -75,6 +75,16 @@ The gate reads `disk_floor_gib` at each admission check, including after a wait.
 - When the 1 GiB lane quota is full, reuse the lane's worktree with `git switch -c` after pushing its previous branch, or use `OWNER_RELEASED=1 wt-remove <path>` after that work is pushed and merged or abandoned. Keep all owner-tool retention checks.
 - When GTR creation refuses for space below its 36 GiB admission floor, author in a Beelink worktree as above. Never bypass hooks through the GitHub git-data API or symlink another checkout's `node_modules` into a GTR worktree.
 
+Discovery Lab scratch checkouts must use a linked worktree of the owning shared clone, or a sparse checkout. A standalone full clone or plain export materializes historical `pursuits/` and preregistration inputs on the host even when the scratch task needs only source. For an isolated Lab clone, set `scratch_path` and `ref` to the intended directory and branch or commit, then set sparse patterns before the first checkout:
+
+```sh
+git clone --filter=blob:none --no-checkout git@github.com:tangle-network/discovery-lab.git "$scratch_path"
+git -C "$scratch_path" sparse-checkout set --no-cone '/*' '!/pursuits/' '!/prereg/**/input.json'
+git -C "$scratch_path" checkout "$ref"
+```
+
+Keep actual run directories at `DISCO_PURSUITS_ROOT`, outside Git checkouts. Retire finished scratch worktrees through `wt-remove`; a standalone clone or export needs its owner's retention and release check before removal.
+
 ## Preserve concurrent work
 
 Check the relevant checkout's status, base, and ownership before editing; inspect history, reflog, or PRs when changes or conflicts need explanation.
