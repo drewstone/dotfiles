@@ -203,6 +203,10 @@ def size(path):
         raise OSError(f"du {path}: no size result")
     return int(fields[0])
 
+def free_bytes(path):
+    stat = os.statvfs(path)
+    return stat.f_bavail * stat.f_frsize
+
 try:
     with (locks / ".capacity.lock").open("a+") as global_lock:
         fcntl.flock(global_lock, fcntl.LOCK_EX)
@@ -223,10 +227,17 @@ try:
                         stamp = git_dir
                     candidates.append((stamp.stat().st_mtime_ns, repo, size(repo), host.name, owner.name))
         total = size(root)
-        reclaimed = 0
+        estimated_total = total
+        estimated_reclaimed = 0
+        initial_free = free_bytes(root) if required_reclaim else 0
+        target_free = initial_free + required_reclaim
         for _, repo, bytes_used, host, owner in sorted(candidates):
-            if total <= cap and reclaimed >= required_reclaim:
-                break
+            if estimated_total <= cap and estimated_reclaimed >= required_reclaim:
+                # Separate du calls count a hardlinked inode in both checkouts,
+                # while the cache-wide du counts it once. Verify before stopping.
+                total = size(root)
+                if total <= cap and (not required_reclaim or free_bytes(root) >= target_free):
+                    break
             lock_path = locks / f"{host}-{owner}-{repo.name}.lock"
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             try:
@@ -236,12 +247,13 @@ try:
                     except BlockingIOError:
                         continue
                 shutil.rmtree(repo)
-                total -= bytes_used
-                reclaimed += bytes_used
+                estimated_total -= bytes_used
+                estimated_reclaimed += bytes_used
                 print(f"beelink-gate: evicted LRU cache {repo} ({bytes_used} bytes)", file=sys.stderr)
             finally:
                 os.close(fd)
         total = size(root)
+        reclaimed = max(0, free_bytes(root) - initial_free) if required_reclaim else 0
         if total > cap:
             print(f"beelink-gate: cache cap exceeded: {total} > {cap} bytes; active checkouts cannot be evicted", file=sys.stderr)
             sys.exit(3)

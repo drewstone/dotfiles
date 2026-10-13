@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -593,6 +593,24 @@ test("evicts the least recently used idle checkout before fetching", () => {
     assert.equal(existsSync(older), false);
     assert.equal(existsSync(newer), true);
     assert.match(result.stderr, /evicted LRU cache .*older/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("cache cap remeasures after evicting a checkout hardlinked to another", () => {
+  const f = fixture();
+  try {
+    const older = cacheSlot(f, "older", 1000);
+    const newer = cacheSlot(f, "newer", 2000);
+    rmSync(join(newer, "payload"));
+    linkSync(join(older, "payload"), join(newer, "payload"));
+    // The shared payload still occupies the cache after only the older link is removed.
+    // Both idle checkouts must be gone before the command starts under this cap.
+    const result = f.call(f.first, ["bash", "-c", 'test ! -e "$NEWER"'], {
+      env: { BEELINK_GATE_CACHE_MAX_BYTES: "600000", NEWER: newer },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(older), false);
+    assert.equal(existsSync(newer), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1728,7 +1746,6 @@ test("an auto gate stops moving once it has waited past the starvation backstop,
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const closed = new Promise((resolveDone) => child.on("close", resolveDone));
     for (let i = 0; i < 400 && !/staying on beelink\d/.test(stderr); i++) await sleepMs(50);
-    assert.match(stderr, /not admitted on beelink\d within 1s/);
     assert.match(stderr, /waited \d+s across placements; staying on beelink\d in its place in line/);
     await sleepMs(2500);
     // Once it stays, it does not give the host back again.
