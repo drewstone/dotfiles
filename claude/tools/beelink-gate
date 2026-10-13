@@ -1721,12 +1721,16 @@ PY
   local tick cpu_before cpu_after
   tick=$(getconf CLK_TCK 2>/dev/null || echo 100)
   cpu_before=$(children_cpu_ticks)
+  # The submitted user unit can inherit umask 0002. Give the requested command
+  # a predictable non-group-writable default without changing the gate shell's
+  # mask for receipts, bundles, and other state written after the command.
+  local -a command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${command[@]}")
   if (( light )); then
     # No browser: Playwright finds no installed browser and fails the test that wants one.
     mkdir -p "$checkout/.git/beelink-gate-no-browsers"
-    PLAYWRIGHT_BROWSERS_PATH="$checkout/.git/beelink-gate-no-browsers" step "${command[@]}"
+    PLAYWRIGHT_BROWSERS_PATH="$checkout/.git/beelink-gate-no-browsers" step "${command_with_umask[@]}"
   else
-    step "${command[@]}"
+    step "${command_with_umask[@]}"
   fi
   local status=$?
   cpu_after=$(children_cpu_ticks)

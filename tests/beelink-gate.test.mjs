@@ -131,6 +131,17 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("gate command uses a safe default umask when the remote user unit inherits 0002", () => {
+  const f = fixture();
+  try {
+    const remote = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour,
+      "bash", "-c", "umask; mkdir probe-dir; stat -c %a probe-dir"].map(encode);
+    const result = run("bash", ["-c", 'umask 0002; exec "$@"', "gate-test", "bash", gate, "--remote", ...remote], { env: f.env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /(?:^|\n)0022\n755(?:\n|$)/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("receipts identify the base, PR, lane, and observable reason for a repeated gate", () => {
   const f = fixture();
   try {
