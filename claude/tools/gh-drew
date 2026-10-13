@@ -692,12 +692,13 @@ with_squash_body() {
 
 # One open PR per fleet lane (ops-board #10097). Lanes opened PRs faster than
 # signoff could land them (5.7/h in vs 3.25/h merged on 2026-10-12), so a lane
-# with an open PR is refused another `pr create`. The key is the lane's root
-# run id, which its subagents inherit; a shell with no lane id is not limited.
+# with an open PR is refused another `pr create`. Fleet stamps a stable key
+# from the claimed project, shared by helpers, new runs, and operator handoffs.
+# Older sessions retain their run-id key; a shell with no lane id is not limited.
 # Each lane's ledger lists the PRs it created; only those are read, read-only
 # through gh-read, and an unreadable state refuses rather than admits.
 pr_wip_dir="${GH_DREW_PR_WIP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/fleet/pr-wip}"
-pr_wip_key="${TANGLE_ROOT_RUN_ID:-${TANGLE_RUN_ID:-}}"
+pr_wip_key="${TANGLE_PR_WIP_KEY:-${TANGLE_ROOT_RUN_ID:-${TANGLE_RUN_ID:-}}}"
 pr_wip_ledger=""
 pr_wip_args=("$@")
 pr_wip_pos=0
@@ -721,7 +722,28 @@ if [[ "${pr_wip_args[pr_wip_pos]:-}" == pr ]]; then
   done
 fi
 if (( pr_wip_is_pr )) && [[ "${pr_wip_args[pr_wip_pos]:-}" == create && -n "$pr_wip_key" ]]; then
+  if [[ ! "$pr_wip_key" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "gh-drew: invalid fleet PR WIP key" >&2
+    exit 2
+  fi
   pr_wip_ledger="$pr_wip_dir/$pr_wip_key.tsv"
+  mkdir -p "$pr_wip_dir"
+  # Keep the check, GitHub create, and ledger write in one local critical
+  # section. A crashed creator leaves the lock in place and fails closed.
+  pr_wip_lock="$pr_wip_dir/$pr_wip_key.lock"
+  pr_wip_locked=0
+  for (( pr_wip_wait=0; pr_wip_wait<600; pr_wip_wait++ )); do
+    if mkdir "$pr_wip_lock" 2>/dev/null; then
+      pr_wip_locked=1
+      trap 'rmdir "$pr_wip_lock"' EXIT
+      break
+    fi
+    sleep 0.1
+  done
+  if (( ! pr_wip_locked )); then
+    echo "gh-drew: PR create for lane $pr_wip_key is locked ($pr_wip_lock); inspect the creator before clearing it" >&2
+    exit 1
+  fi
 fi
 
 pr_wip_guard() {
