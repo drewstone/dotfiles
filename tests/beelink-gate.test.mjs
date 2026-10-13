@@ -98,6 +98,22 @@ exec "\${rest[@]:2}"
   chmodSync(fakeSsh, 0o755);
 }
 
+function installFakeUnits(f) {
+  const units = join(f.root, "units");
+  mkdirSync(units);
+  writeFileSync(join(f.root, "bin", "systemd-run"), `#!/usr/bin/env bash
+while [[ "$1" == --* ]]; do
+  [[ "$1" == --unit=* ]] && unit=\${1#--unit=}
+  shift
+done
+nohup "$@" </dev/null >/dev/null 2>&1 &
+printf '%s\n' "$!" > "$FAKE_UNITS_DIR/$unit"
+echo "Running as unit: $unit"
+`);
+  chmodSync(join(f.root, "bin", "systemd-run"), 0o755);
+  return units;
+}
+
 test("reuses one checkout, cleans prior outputs, and receipts the requested SHA and command", () => {
   const f = fixture();
   try {
@@ -272,7 +288,7 @@ echo "Running as unit: $unit"
 if [[ "$1" == stop ]]; then
   unit=\${2%.service}
   pid=$(cat "$FAKE_UNITS_DIR/$unit" 2>/dev/null) || exit 0
-  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true # gate.sh may have left the unit cgroup
   touch "$FAKE_UNITS_DIR/$unit.stopped"
   exit 0
 fi
@@ -314,6 +330,101 @@ exit 1
     writeFileSync(release, "\n");
     await holderDone;
     assert.equal(existsSync(started), false, "the canceled gate must not run after the holder releases the checkout");
+  } finally {
+    writeFileSync(release, "\n");
+    holder.kill("SIGKILL");
+    waiter?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("stopping a queued remote unit terminates its gate after it leaves the unit cgroup", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = installFakeUnits(f);
+  const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held");
+  const release = join(f.root, "release");
+  const started = join(f.root, "started");
+  const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
+  const holderDone = new Promise((done) => holder.once("close", done));
+  let holderErr = "";
+  holder.stderr.on("data", (chunk) => { holderErr += chunk; });
+  let waiter;
+  try {
+    for (let i = 0; i < 200 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), holderErr);
+    waiter = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${started}'`], { env });
+    let waiterErr = "";
+    waiter.stderr.on("data", (chunk) => { waiterErr += chunk; });
+    for (let i = 0; i < 200 && !/submitted gate_id=/.test(waiterErr); i++) await sleepMs(25);
+    const id = waiterErr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, waiterErr);
+    const job = join(f.root, "state", "jobs", id);
+    for (let i = 0; i < 200 && !(existsSync(join(job, "stderr.log")) && readFileSync(join(job, "stderr.log"), "utf8").includes("checkouts on beelink2")); i++) await sleepMs(25);
+    assert.match(readFileSync(join(job, "stderr.log"), "utf8"), /checkouts on beelink2/);
+    const runnerPid = Number(readFileSync(join(units, `beelink-gate-${id}`), "utf8"));
+    process.kill(runnerPid, "SIGTERM"); // systemd stops the runner; the gate has moved to another cgroup.
+    writeFileSync(release, "\n");
+    await holderDone;
+    for (let i = 0; i < 200 && !existsSync(join(job, "exit")); i++) await sleepMs(25);
+    assert.equal(existsSync(started), false, "the stopped unit's gate must not run after checkout release");
+    assert.equal(readFileSync(join(job, "exit"), "utf8").trim(), "75");
+    const attached = run(gate, ["--attach", id], { env, timeout: 10_000 });
+    assert.equal(attached.status, 75, attached.stderr);
+  } finally {
+    writeFileSync(release, "\n");
+    holder.kill("SIGKILL");
+    waiter?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = installFakeUnits(f);
+  writeFileSync(join(f.root, "bin", "systemctl"), `#!/usr/bin/env bash
+[[ "$1" == --user ]] && shift
+if [[ "$1" == stop ]]; then
+  unit=\${2%.service}
+  pid=$(cat "$FAKE_UNITS_DIR/$unit" 2>/dev/null) || exit 0
+  kill -TERM "$pid" 2>/dev/null || true
+  exit 0
+fi
+[[ "$1" == show ]] && { echo inactive; exit 0; }
+exit 1
+`);
+  chmodSync(join(f.root, "bin", "systemctl"), 0o755);
+  const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held");
+  const release = join(f.root, "release");
+  const started = join(f.root, "started");
+  const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
+  const holderDone = new Promise((done) => holder.once("close", done));
+  let holderErr = "";
+  holder.stderr.on("data", (chunk) => { holderErr += chunk; });
+  let waiter;
+  try {
+    for (let i = 0; i < 200 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), holderErr);
+    waiter = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${started}'`], { env });
+    let waiterErr = "";
+    waiter.stderr.on("data", (chunk) => { waiterErr += chunk; });
+    for (let i = 0; i < 200 && !/submitted gate_id=/.test(waiterErr); i++) await sleepMs(25);
+    const id = waiterErr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, waiterErr);
+    const job = join(f.root, "state", "jobs", id);
+    for (let i = 0; i < 200 && !(existsSync(join(job, "gate.pid")) && existsSync(join(job, "stderr.log")) && readFileSync(join(job, "stderr.log"), "utf8").includes("checkouts on beelink2")); i++) await sleepMs(25);
+    assert.match(readFileSync(join(job, "stderr.log"), "utf8"), /checkouts on beelink2/);
+    const runnerPid = Number(readFileSync(join(units, `beelink-gate-${id}`), "utf8"));
+    process.kill(runnerPid, "SIGKILL"); // Simulates a runner that cannot run its TERM trap.
+    const cancel = run(gate, ["--cancel-job", id], { env, timeout: 20_000 });
+    assert.equal(cancel.status, 0, cancel.stderr);
+    assert.equal(readFileSync(join(job, "exit"), "utf8").trim(), "75");
+    writeFileSync(release, "\n");
+    await holderDone;
+    assert.equal(existsSync(started), false, "the canceled child must not run after checkout release");
   } finally {
     writeFileSync(release, "\n");
     holder.kill("SIGKILL");
