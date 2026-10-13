@@ -120,12 +120,19 @@ free_bytes() {
 }
 
 check_floor() {
-  local host="$1" floor_gib available
+  local host="$1" reserve="${2:-0}" floor_gib available floor_bytes
   floor_gib=$(floor_gib "$host") || return 3
   available=$(free_bytes)
-  if (( available < floor_gib * 1024 * 1024 * 1024 )); then
+  last_floor_available=$available
+  floor_bytes=$((floor_gib * 1024 * 1024 * 1024))
+  if (( available < floor_bytes )); then
     printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor; use the other beelink or ask the host owner to recover capacity\n' \
       "$host" "$available" "$floor_gib" >&2
+    return 3
+  fi
+  if (( reserve > 0 && available < floor_bytes + reserve )); then
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_gib" "$reserve" >&2
     return 3
   fi
 }
@@ -788,6 +795,50 @@ parse_repo_url() {
   done
 }
 
+# The fixed 10 GiB pre-install headroom is the safe fallback for a repo with
+# no receipt yet. Later receipts include that headroom plus bytes consumed
+# between admission and the install check (fetch, checkout and install). Use
+# only this host's most recent measured reserve for this repo; malformed and
+# older receipts must not make admission permissive.
+last_install_reserve_bytes() {
+  local beelink="$1" repo_key="$2" mode="$3"
+  case "$mode" in install|ship|dev) ;; *) echo 0; return ;; esac
+  python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$repo_key" <<'PY'
+import json
+import mmap
+import os
+import sys
+
+path, host, repo = sys.argv[1:]
+fallback = 10 * 1024 ** 3
+try:
+    with open(path, "rb") as receipts:
+        if os.fstat(receipts.fileno()).st_size:
+            with mmap.mmap(receipts.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                pos = len(data)
+                for _ in range(10000):
+                    if pos == 0:
+                        break
+                    if data[pos - 1:pos] == b"\n":
+                        pos -= 1
+                    start = data.rfind(b"\n", 0, pos) + 1
+                    line, pos = data[start:pos], start
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict) or row.get("host") != host or row.get("repo") != repo:
+                        continue
+                    value = row.get("install_reserve_bytes")
+                    if type(value) is int and fallback <= value <= 1024 ** 4:
+                        print(value)
+                        sys.exit(0)
+except FileNotFoundError:
+    pass
+print(fallback)
+PY
+}
+
 # The cache is keyed by host/owner/repo, so any spelling of that repo (https or
 # SSH, with or without .git) owns it; a different repo in that path is refused.
 # The checkout keeps the origin it was created with: that transport has already
@@ -1014,14 +1065,21 @@ reclaim_dead_holder() {
 
 # Prints one line for `auto`: state=free|busy|refused, cache=warm|cold, load.
 remote_probe() {
-  [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || die "invalid probe request"
-  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err
+  if [ "$#" -lt 4 ] || [ "$#" -gt 6 ]; then die "invalid probe request"; fi
+  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err probe_mode=install reserve_mode reserve
   beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
-  light=0 dev=0; [ "$#" -eq 5 ] && [ "$(decode "$5")" = light ] && light=1
-  [ "$#" -eq 5 ] && [ "$(decode "$5")" = dev ] && dev=1
+  [ "$#" -ge 5 ] && probe_mode=$(decode "$5")
+  reserve_mode=$probe_mode
+  [ "$#" -eq 6 ] && reserve_mode=$(decode "$6")
+  light=0 dev=0; [ "$probe_mode" = light ] && light=1
+  [ "$probe_mode" = dev ] && dev=1
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
-  reason=$(check_floor "$beelink" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
+  reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode") \
+    || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
+  if [ "$state" != refused ]; then
+    reason=$(check_floor "$beelink" "$reserve" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
+  fi
   if [ "$state" != refused ]; then
     err=$(mktemp)
     next=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>"$err") || { state=refused; reason=$(cat "$err"); }
@@ -1197,6 +1255,8 @@ remote_gate() {
   [ -z "$reservation_token" ] || [[ "$reservation_token" =~ ^[0-9a-f]{32}$ ]] || die "invalid checkout reservation token"
   unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
+  local install_reserve_bytes observed_install_reserve_bytes=0 admission_free_bytes=0
+  install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode") || die "cannot read install reserve receipts"
 
   # Direct --remote calls still honor a heartbeat. Detached jobs have none:
   # their own session and MAX_HOLD bound survive a lost launcher.
@@ -1272,7 +1332,7 @@ remote_gate() {
     die "cache path contains a symlink"
   fi
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
-  if ! check_floor "$beelink"; then
+  if ! check_floor "$beelink" "$install_reserve_bytes"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its disk floor"
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
@@ -1391,6 +1451,14 @@ remote_gate() {
     reap_leftovers
     return "$rc"
   }
+  observe_install_reserve() {
+    (( install_reserve_bytes > 0 && admission_free_bytes > 0 )) || return 0
+    local consumed=$((admission_free_bytes - last_floor_available))
+    (( consumed > 0 )) || consumed=0
+    local observed=$((10 * 1024 * 1024 * 1024 + consumed))
+    (( observed > observed_install_reserve_bytes )) && observed_install_reserve_bytes=$observed
+    return 0
+  }
   receipt() {
     local status="$1" ran=$((SECONDS - started))
     local preview_verdict
@@ -1399,9 +1467,9 @@ remote_gate() {
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
       "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
@@ -1413,6 +1481,8 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink
        "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
        "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
        "lane": lane or None, "reason_scope": "host_last_10000_receipts"}
+if int(install_reserve):
+    row["install_reserve_bytes"] = int(install_reserve)
 if preview:
     try:
         row["preview"] = json.loads(preview)
@@ -1541,7 +1611,7 @@ PY
   # The final admission checks run after lock and slot acquisition so their
   # refusals need the same cleanup and receipt path as later failures.
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout"
-  if ! check_floor "$beelink"; then
+  if ! check_floor "$beelink" "$install_reserve_bytes"; then
     # The host can cross its floor while the gate queued for pressure, a checkout
     # or a slot; an auto placement still gives it back (finish releases the lock).
     if (( placed_auto )); then
@@ -1550,6 +1620,7 @@ PY
     fi
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
+  admission_free_bytes=$last_floor_available
   admit_window "$beelink" "$window_day" "$window_hour"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
@@ -1623,7 +1694,10 @@ PY
   gate_refs_taken=1
   # Keep this gate's fetched checkout locked and intact; reclaim only other idle caches.
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
-  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  local floor_ok=0
+  check_floor "$beelink" || floor_ok=1
+  observe_install_reserve
+  (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it
   # survives between gates and the LRU cap counts and evicts it with its repo.
@@ -1715,7 +1789,10 @@ PY
     rebuild_native_addons || exit $?
   fi
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
-  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  floor_ok=0
+  check_floor "$beelink" || floor_ok=1
+  observe_install_reserve
+  (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   cancel_if_requested
   echo "beelink-gate: running ${display% }" >&2
   local tick cpu_before cpu_after
@@ -2126,7 +2203,7 @@ probe_of() {
   # 00:01Z, beelink2 at load 70 answering SSH in under a second).
   for attempt in 1 2 3; do
     if update_window_of "$target" 2>/dev/null; then
-      line=$(heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" 2>/dev/null \
+      line=$(heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" "$(encode "$install_mode")" 2>/dev/null \
         | grep '^beelink-gate-probe ' | tail -1)
       [ -z "$line" ] || { echo "$line"; return 0; }
     fi
