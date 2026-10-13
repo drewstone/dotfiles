@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -15,6 +15,32 @@ function withHome(run) {
     run(home)
   } finally {
     rmSync(home, { recursive: true, force: true })
+  }
+}
+
+function installerEnv(home) {
+  const bin = join(home, 'bin')
+  mkdirSync(bin)
+  const codex = join(bin, 'codex')
+  writeFileSync(codex, `#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+for line in sys.stdin:
+    if json.loads(line).get('id') != 2:
+        continue
+    path = str(Path(os.environ['CODEX_HOME']) / 'hooks.json')
+    guard = str(Path(os.environ['HOME']) / '.claude/hooks/scan-guard.sh')
+    print(json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'data': [{'hooks': [{
+        'sourcePath': path, 'eventName': 'preToolUse', 'handlerType': 'command',
+        'command': guard, 'timeoutSec': 10, 'key': 'fixture-guard',
+        'currentHash': 'sha256:fixture'}]}]}}), flush=True)
+`)
+  chmodSync(codex, 0o755)
+  return {
+    ...process.env,
+    HOME: home,
+    PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
+    AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
   }
 }
 
@@ -230,12 +256,7 @@ test('installer links Runtime skills from the store and retires checkout links',
 
     const result = spawnSync('bash', [installer], {
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: home,
-        PATH: '/usr/local/bin:/usr/bin:/bin',
-        AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
-      },
+      env: installerEnv(home),
     })
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /Runtime skills: @tangle-network\/agent-runtime@0\.999\.0/)
@@ -263,12 +284,7 @@ test('an installer with no store and no registry leaves Runtime links alone', ()
 
     const result = spawnSync('bash', [installer], {
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: home,
-        PATH: '/usr/local/bin:/usr/bin:/bin',
-        AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
-      },
+      env: installerEnv(home),
     })
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /WARN Runtime skills not installed/)
@@ -306,12 +322,7 @@ test('installer skips and prunes directories without SKILL.md', () => {
 
     const result = spawnSync('bash', [installer], {
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        HOME: home,
-        PATH: '/usr/local/bin:/usr/bin:/bin',
-        AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
-      },
+      env: installerEnv(home),
     })
     assert.equal(result.status, 0, result.stderr)
     assert.match(result.stdout, /invalid skill symlink/)
