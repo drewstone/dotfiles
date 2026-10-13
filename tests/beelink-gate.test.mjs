@@ -798,8 +798,8 @@ test("auto uses the repo's last install reserve before choosing a host", () => {
     installFakeSsh(f);
     const floor = 200 * 1024 ** 3;
     const availPrefix = join(f.root, "free");
-    writeFileSync(`${availPrefix}-beelink1`, String(floor + 20 * 1024 ** 3));
-    writeFileSync(`${availPrefix}-beelink2`, String(floor + 1024 ** 3));
+    writeFileSync(`${availPrefix}-100.98.195.7`, String(floor + 20 * 1024 ** 3));
+    writeFileSync(`${availPrefix}-100.127.22.51`, String(floor + 1024 ** 3));
     writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
     mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
     writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
