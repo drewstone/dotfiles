@@ -65,6 +65,8 @@ This is the single definition of disk use on GTR and the Beelinks. Its owner is 
 | Beelinks | Cargo output in `~/.cache/<repo>-build` untouched for 24 h is removed after each gate | `beelink-gate`, holding the repo's gate locks and cargo's own locks |
 | Beelinks | No gate starts below 100 GiB free on beelink1 or 162 GiB on beelink2; a host may raise its floor with `disk_floor_gib=` in `~/.config/beelink-gate/limits` | `beelink-gate` |
 
+Gate checkout claims hold `~/.cache/beelink-gate/.locks/.capacity.lock` shared through repo-lock selection and release it once the repo flock is held. The gate cache pruner and an external cache cleanup hold that capacity lock exclusively before checking repo locks, so cleanup cannot race a new claim; active gates remain protected by their repo locks. Cleanup must acquire the capacity lock before any repo lock and keep its own age, lock, and live-file checks.
+
 `wt-remove` refuses to salvage while `/mnt/traces` is not mounted and responsive. Change a limit through a pull request to its enforcing file, then tell the owner.
 
 The gate reads `disk_floor_gib` at each admission check, including after a wait. It refuses an invalid, duplicated, or lower-than-default value instead of opening admission. Set a raised floor only after the gate change has passed on a Beelink and deployed to both hosts; remove the override when the host owner confirms the capacity recovery.

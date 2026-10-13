@@ -1358,7 +1358,7 @@ remote_gate() {
   # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
   # not take both beelinks. On 2026-10-11, 38 gates of one repo from one lane
   # waited 527 min in total behind a single checkout per host.
-  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd capacity_fd
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
   # A light gate waits behind no normal gate: it has its own <repo>@light checkout.
   (( light == 0 )) || copies=1
@@ -1366,6 +1366,8 @@ remote_gate() {
   (( dev == 0 )) || copies=1
   unset BEELINK_GATE_REPO_CHECKOUTS
   mkdir -p "$cache_root/.locks" "$cache_root/$host/$owner" || die "cannot create cache"
+  [ ! -L "$cache_root/.locks/.capacity.lock" ] || die "capacity lock is a symlink"
+  exec {capacity_fd}>>"$cache_root/.locks/.capacity.lock" || die "cannot open capacity lock"
   lock=""
   local waiting_since=$SECONDS last_report=-60
   checkout=""
@@ -1386,6 +1388,17 @@ remote_gate() {
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   while [ -z "$lock" ]; do
+    # Cleanup and the cache pruner hold this lock exclusively before inspecting
+    # repo locks. A shared claim prevents either from racing a new checkout,
+    # while other gates can claim their own repos at the same time. Release it
+    # as soon as the repo flock is held; the command keeps only its repo lock.
+    while ! flock -w 1 -s "$capacity_fd"; do
+      if (( SECONDS - last_report >= 60 )); then
+        echo "beelink-gate: waiting $((SECONDS - waiting_since))s for capacity cleanup on $beelink" >&2
+        last_report=$SECONDS
+      fi
+      admission_expired && not_admitted "capacity cleanup in progress"
+    done
     # Each older waiter reserves one free checkout; with two free and one older
     # waiter, this gate still takes the second.
     local ahead=0 skipped=0
@@ -1411,6 +1424,7 @@ remote_gate() {
       exec {fd}>&-
       reclaim_dead_holder "$candidate"
     done
+    flock -u "$capacity_fd"
     [ -z "$lock" ] || break
     if (( SECONDS - last_report >= 60 )); then
       echo "beelink-gate: waiting $((SECONDS - waiting_since))s for one of $copies $host/$owner/$repo checkouts on $beelink; $(holder_line "$cache_root/.locks/$host-$owner-$repo.lock")" >&2
@@ -1419,6 +1433,7 @@ remote_gate() {
     admission_expired && not_admitted "both $host/$owner/$repo checkouts busy"
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
+  exec {capacity_fd}>&-
   rm -f "$urgent_marker.$$" "$ticket"
   if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
   [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
