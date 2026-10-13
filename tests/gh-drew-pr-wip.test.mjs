@@ -117,6 +117,17 @@ test("a lane with an open PR is refused, and the refusal names that PR", () => {
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
+test("a root-level repo flag cannot evade the open-PR lane guard", () => {
+  const s = sandbox();
+  try {
+    seed(s, OPEN_PR);
+    const r = spawnSync(ghDrew, ["-R", "o/r", "pr", "create", "--body", "b"],
+      { env: { ...s.env, TANGLE_RUN_ID: LANE, FAKE_PR_STATE: "OPEN" }, encoding: "utf8" });
+    assert.equal(r.status, 1);
+    assert.ok(r.stderr.includes(`already has open PR ${OPEN_PR}`), r.stderr);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
 test("a subagent shares its lane's ledger through the root run id", () => {
   const s = sandbox();
   try {

@@ -584,9 +584,19 @@ read_body_file() {
 }
 add_lane_line() {
   lane_args=("$@")
-  [[ -n "$(lane_line)" && "${1:-}" == "pr" ]] || return 0
-  local -a a=("$@") out=(pr)
-  local i=1 n=$#
+  [[ -n "$(lane_line)" ]] || return 0
+  local -a a=("$@") out=()
+  local i=0 n=$#
+  # gh accepts its inherited repo flag before `pr` as well as after it.
+  while (( i < n )); do
+    case "${a[i]}" in
+      -R|--repo) (( i + 1 < n )) || return 0; out+=("${a[i]}" "${a[i+1]}"); i=$((i + 2)) ;;
+      --repo=*|-R?*) out+=("${a[i]}"); i=$((i + 1)) ;;
+      *) break ;;
+    esac
+  done
+  [[ "${a[i]:-}" == pr ]] || return 0
+  out+=(pr); i=$((i + 1))
   while (( i < n )); do
     case "${a[i]}" in
       -R|--repo) out+=("${a[i]}" "${a[i+1]:-}"); i=$((i + 2)) ;;
@@ -689,7 +699,28 @@ with_squash_body() {
 pr_wip_dir="${GH_DREW_PR_WIP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/fleet/pr-wip}"
 pr_wip_key="${TANGLE_ROOT_RUN_ID:-${TANGLE_RUN_ID:-}}"
 pr_wip_ledger=""
-if [[ "${1-}" == pr && "${2-}" == create && -n "$pr_wip_key" ]]; then
+pr_wip_args=("$@")
+pr_wip_pos=0
+pr_wip_is_pr=0
+while (( pr_wip_pos < ${#pr_wip_args[@]} )); do
+  case "${pr_wip_args[pr_wip_pos]}" in
+    -R|--repo) pr_wip_pos=$((pr_wip_pos + 2)) ;;
+    --repo=*|-R?*) pr_wip_pos=$((pr_wip_pos + 1)) ;;
+    *) break ;;
+  esac
+done
+if [[ "${pr_wip_args[pr_wip_pos]:-}" == pr ]]; then
+  pr_wip_is_pr=1
+  pr_wip_pos=$((pr_wip_pos + 1))
+  while (( pr_wip_pos < ${#pr_wip_args[@]} )); do
+    case "${pr_wip_args[pr_wip_pos]}" in
+      -R|--repo) pr_wip_pos=$((pr_wip_pos + 2)) ;;
+      --repo=*|-R?*) pr_wip_pos=$((pr_wip_pos + 1)) ;;
+      *) break ;;
+    esac
+  done
+fi
+if (( pr_wip_is_pr )) && [[ "${pr_wip_args[pr_wip_pos]:-}" == create && -n "$pr_wip_key" ]]; then
   pr_wip_ledger="$pr_wip_dir/$pr_wip_key.tsv"
 fi
 

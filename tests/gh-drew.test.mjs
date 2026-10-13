@@ -256,7 +256,7 @@ case "$*" in
   "pr view"*"--json title --jq .title") echo "fix(x): one change" ;;
   "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;
   "pr edit https://"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${editFile}" ;;
-  "pr create"*|"pr edit"*|"pr merge"*|"pr -R "*) for a in "$@"; do printf '%s\\0' "$a"; done > "${argsFile}"
+  "pr create"*|"pr edit"*|"pr merge"*|"pr -R "*|*" pr create"*|*" pr edit"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${argsFile}"
     case "$*" in *--fill*|*" -df"*) echo "https://github.com/o/r/pull/77" ;; esac ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
@@ -287,6 +287,16 @@ test("pr create and pr edit bodies end with the run's Run ID line, once", () => 
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
+});
+
+test("an inherited repository flag before pr keeps the run line", () => {
+  const s = prSandbox();
+  try {
+    assert.deepEqual(runPr(s, ["-R", "o/r", "pr", "create", "--body", "Root body."], RUN).args,
+      ["-R", "o/r", "pr", "create", "--body", "Root body.\n\nRun ID: run_abc123"]);
+    assert.deepEqual(runPr(s, ["--repo=o/r", "pr", "edit", "7", "--body=Edited."], RUN).args,
+      ["--repo=o/r", "pr", "edit", "7", "--body=Edited.\n\nRun ID: run_abc123"]);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
 test("a body file or stdin body is read and passed as --body with the line; Session is the fallback", () => {
