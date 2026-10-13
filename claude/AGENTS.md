@@ -17,6 +17,7 @@ Before answering “do we have / does X exist” or saying something is missing,
 When the `fff` MCP tools (`mcp__fff__grep`, `mcp__fff__multi_grep`, `mcp__fff__find_files`) are listed, search the current checkout with them before Grep, Glob, `rg` or `grep -r`: their index answers in milliseconds where each of those rescans the tree, and `rg` stays for multiline and case-sensitive regexes; they read the working tree, so a claim that something is missing still comes from `git grep` on `origin/<default>` and `have`.
 Count live consumers before retaining compatibility; preserve required behavior and historical evidence.
 Prioritize correctness, simplicity, robustness, and maintainability over implementation effort.
+Own the smallest complete production outcome. Delete obsolete behavior, reuse the existing owner, and put complex decisions behind a small interface that callers can prove. Scope cleanup to what the outcome requires; a larger diff, more agents, or a stronger model is not evidence of better engineering. Stop when the acceptance checks and requested consumer proof pass, and retain independent follow-ups with their owner and next check.
 Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.
 When you measure something by hand with a script, build that measurement into its owner's live instrument in the same session (Discovery: the scorecard and the run page); the script is only a reference.
 
