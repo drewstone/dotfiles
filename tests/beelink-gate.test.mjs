@@ -2177,7 +2177,7 @@ test("a green command stays green when the cache is over its cap with only activ
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("the receipt separates cache-lock wait from the command and cleanup", async () => {
+test("the receipt separates capacity-claim wait from cache pruning and the command", async () => {
   const f = fixture();
   const locks = join(f.cache, ".locks");
   const marker = join(f.root, "capacity-held");
@@ -2189,8 +2189,10 @@ test("the receipt separates cache-lock wait from the command and cleanup", async
     const result = f.call(f.first, ["true"], { noInstall: true });
     assert.equal(result.status, 0, result.stderr);
     const row = receipts(f).at(-1);
-    assert.ok(row.timing.cache_lock_wait_ms.precheck >= 500, JSON.stringify(row.timing));
-    assert.ok(row.timing.pre_command_s >= 1, JSON.stringify(row.timing));
+    assert.ok(row.timing.capacity_claim_wait_ms >= 500, JSON.stringify(row.timing));
+    assert.ok(row.timing.cache_lock_wait_ms.precheck >= 0, JSON.stringify(row.timing));
+    assert.ok(row.waited_s >= 1, JSON.stringify(row));
+    assert.ok(row.timing.pre_command_s >= 0, JSON.stringify(row.timing));
     assert.ok(row.timing.fetch_s >= 0 && row.timing.command_s >= 0 && row.timing.cleanup_s >= 0);
     assert.ok(row.timing.cache_prune_work_ms.cleanup >= 0);
     assert.match(result.stderr, /beelink-gate timing: /);
