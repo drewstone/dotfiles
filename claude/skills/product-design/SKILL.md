@@ -1,6 +1,6 @@
 ---
 name: product-design
-description: Design, polish, audit, and test product UI, including animation and gestures, from real references and browser evidence.
+description: Design, polish, audit, and test product UI from real references and browser evidence; use for variants, phones, site reproduction, animation, gestures, and worst-case data.
 metadata:
   short-description: Reference-first product UI without label/step slop
 ---

@@ -21,3 +21,4 @@ Prefer transforms on the moving element over a parent CSS variable that restyles
 Read [component recipes](motion-recipes.md) for buttons, dropdowns, tooltips, modals, drawers, toasts, accordions, hold-to-confirm, tabs, scroll reveal, and drag-to-dismiss.
 
 For an audit, rank findings by user impact and interaction frequency. Prefer deleting motion, then reducing it, fixing easing or origin, making it interruptible, improving rendering performance, and finally polishing it. Report file, current value, target value, and a browser check; require reduced-motion handling for movement.
+Block approval for motion on a keyboard or 100+ times/day action, entry from `scale(0)`, `ease-in` on UI, unexplained motion over 300 ms, avoidable layout-property animation, or missing reduced-motion handling. Keep blur under 20 px.

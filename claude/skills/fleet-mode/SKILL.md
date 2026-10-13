@@ -1,5 +1,5 @@
 ---
-name: tangle-fleet-mode
+name: fleet-mode
 description: Coordinate Tangle's active fleet across owned lanes, mergeable deliveries, and the ops board when asked to run fleet mode or mass shipping.
 ---
 
@@ -29,7 +29,7 @@ For recurring cleanup, assign the owner of the producer or resource. Each lane r
 ## Log the run
 
 ```bash
-skill-run-log /tangle-fleet-mode --target "<fleet goal and delivery cut>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
+skill-run-log /fleet-mode --target "<fleet goal and delivery cut>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
 ```
 
 ## Then consider

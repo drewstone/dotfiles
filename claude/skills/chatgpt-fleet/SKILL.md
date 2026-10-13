@@ -5,7 +5,7 @@ description: Drive ChatGPT Pro work items through the maintained ChatGPT Fleet C
 
 # ChatGPT Fleet
 
-Use the installed `chatgpt-fleet` command for work delegated to ChatGPT accounts. Read its current [README](https://github.com/drewstone/tangle-tools/blob/main/chatgpt-fleet/README.md) and `--help` before operating it; they own accounts, model choice, admission, commands, exit codes, browser setup, and retained state. This skill owns the work item's brief and the delivery verdict.
+Use the installed `chatgpt-fleet` command for work delegated to ChatGPT accounts. Read `~/.local/share/tangle-tools/chatgpt-fleet/README.md` and the installed command's `--help` before operating it; they own accounts, model choice, admission, commands, exit codes, browser setup, and retained state. This skill owns the work item's brief and the delivery verdict.
 
 ## Reconcile before dispatch
 
@@ -26,6 +26,7 @@ Read the captured answer and artifacts, then verify every claimed PR by number, 
 Record the PR with `pr <item> <number>`. Use `ack` to record how the answer was used or rejected. Close a PR item with `--merged` only when GitHub confirms the merge; close a research item with `--answered` after its answer is checked, or `--abandoned` with the reason when it stops. Preserve exports and active turns during browser recovery; the README owns sweep and archive behavior.
 
 Report verified delivery, unresolved gaps, each gap's owner, and the next completion check. A finished ChatGPT turn is not proof that the user's outcome occurred.
+Keep prompts, replies, and downloaded files in the CLI's durable state directory; scratch files can disappear during a long turn.
 
 ## Log the run
 

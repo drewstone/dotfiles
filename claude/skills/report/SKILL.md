@@ -109,5 +109,6 @@ Fix the weakest dimensions before the reader sees the deliverable when the fix i
 |---|---|---|
 | A result remains null, surprising, or suspect, or failures need causal grouping | `/diagnose` | The raw rows, computation, and candidate causes |
 | A measured gap has an authorized improvement to test | `/evolve` | The baseline, mechanism, and required outcome |
+| A tested product mechanism cannot meet the required outcome | `/hypothesize` | The failed mechanism, substitute, and evidence about the constraint |
 | A required conclusion lacks observation of the actual path | `/ground-truth` | The missing segment and execution boundary |
 | The finding requires operating an authorized run | `/operate` | Current state, bounds, and the next action |

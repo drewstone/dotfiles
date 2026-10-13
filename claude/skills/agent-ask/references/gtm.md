@@ -12,6 +12,6 @@ Read every deliverable, including downloaded assets at full size. Grade each app
 | Logo lockup | Size, spacing, and product name match the product's current site. |
 | Brand assets | Logo, fonts, colors, and screenshots come from the live product or brand package. |
 | Pricing | Every plan, price, and limit matches the served catalog and site at check time. |
-| Craft | Specific sourced claims, deliberate hierarchy, no filler, invented advantage, or generic layout. |
+| Craft | Specific sourced claims, deliberate hierarchy, no filler, brand-banned vocabulary, invented advantage, or generic layout. |
 
 Return failed items to the same agent thread with evidence and the bar. When it cannot meet the bar, fix the missing GTM Agent capability and re-ask unassisted. Show Drew the passed result with the conversation link and evidence.
