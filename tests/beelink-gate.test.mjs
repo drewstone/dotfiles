@@ -2264,6 +2264,48 @@ test("a registered capacity writer drains new checkout claims before they take a
   }
 });
 
+test("a writer registering during a shared claim makes the gate give that claim back", async () => {
+  const f = fixture();
+  const locks = join(f.cache, ".locks");
+  const intent = join(locks, ".capacity.writer.intent");
+  const release = join(f.root, "release-writer");
+  mkdirSync(locks, { recursive: true });
+  writeFileSync(join(f.root, "bin", "flock"), `#!/usr/bin/env bash
+if [[ "$1" == -w && "$2" == 1 && "$3" == -s ]]; then
+  /usr/bin/flock "$@" || exit $?
+  if [ ! -e '${join(f.root, "writer-triggered")}' ]; then
+    touch '${join(f.root, "writer-triggered")}'
+    fd=$4
+    eval "exec $fd>&-"
+    /usr/bin/flock -x '${join(locks, ".capacity.writer.lock")}' bash -c "touch '${intent}'; while [ ! -e '${release}' ]; do sleep 0.05; done; rm '${intent}'" >/dev/null 2>&1 &
+    for _ in {1..100}; do [ -e '${intent}' ] && exit 0; sleep 0.02; done
+    exit 1
+  fi
+  exit 0
+fi
+exec /usr/bin/flock "$@"
+`);
+  chmodSync(join(f.root, "bin", "flock"), 0o755);
+  let child;
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    child = spawn("bash", [gate, "--remote", ...args], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", (status) => resolveDone(status)));
+    for (let i = 0; i < 150 && !/waiting \d+s for capacity writer/.test(stderr); i++) await sleepMs(20);
+    assert.match(stderr, /waiting \d+s for capacity writer/);
+    assert.equal(run("flock", ["-n", "-x", join(locks, "local-owner-repo.lock"), "true"]).status, 0,
+      "the gate took its repo lock after a writer registered during the shared claim");
+    writeFileSync(release, "");
+    assert.equal(await done, 0, stderr);
+  } finally {
+    writeFileSync(release, "");
+    child?.kill();
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a dead capacity writer's intent is cleared and a live writer times out new claims", async () => {
   const f = fixture();
   const locks = join(f.cache, ".locks");
