@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 // ops-board #10097: a fleet lane with an open PR is refused another `pr create`.
@@ -24,7 +24,10 @@ case "$*" in
   "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
   "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
   "api rate_limit --jq .resources.core.reset") echo 1790332087 ;;
-  "pr create"*) echo "Creating pull request"; echo "${NEW_PR}" ;;
+  "pr create"*)
+    if [[ -n "\${FAKE_CREATE_LOG:-}" ]]; then echo create >>"$FAKE_CREATE_LOG"; fi
+    sleep "\${FAKE_CREATE_DELAY:-0}"
+    echo "Creating pull request"; echo "${NEW_PR}" ;;
   *) echo "gh ran" ;;
 esac
 `);
@@ -96,6 +99,40 @@ test("a subagent shares its lane's ledger through the root run id", () => {
     const r = create(s, { TANGLE_ROOT_RUN_ID: LANE, TANGLE_RUN_ID: "run_subagent", FAKE_PR_STATE: "OPEN" });
     assert.equal(r.status, 1);
     assert.ok(r.stderr.includes(OPEN_PR));
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test("a fleet lane key isolates sibling lanes even when their lineage root is shared", () => {
+  const s = sandbox();
+  try {
+    mkdirSync(s.wip, { recursive: true });
+    writeFileSync(join(s.wip, "op-t--first.tsv"), `2026-10-12T00:00:00Z\tcreated\t${OPEN_PR}\n`);
+    const common = { TANGLE_ROOT_RUN_ID: LANE, TANGLE_RUN_ID: "run_child" };
+    const first = create(s, { ...common, TANGLE_PR_WIP_KEY: "op-t--first" });
+    assert.equal(first.status, 1);
+    assert.ok(first.stderr.includes(OPEN_PR));
+    const second = create(s, { ...common, TANGLE_PR_WIP_KEY: "op-t--second" });
+    assert.equal(second.status, 0, second.stderr);
+    assert.ok(readFileSync(join(s.wip, "op-t--second.tsv"), "utf8").includes(NEW_PR));
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test("two simultaneous creates in one lane admit only one GitHub call", async () => {
+  const s = sandbox();
+  try {
+    const calls = join(s.root, "creates.log");
+    const env = { ...s.env, TANGLE_PR_WIP_KEY: "op-t--first", FAKE_CREATE_DELAY: "0.3",
+      FAKE_CREATE_LOG: calls };
+    const run = () => new Promise((resolveResult) => {
+      const child = spawn(ghDrew, ["pr", "create", "--title", "t", "--body", "b"], { env });
+      let stderr = "";
+      child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (status) => resolveResult({ status, stderr }));
+    });
+    const results = await Promise.all([run(), run()]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [0, 1], JSON.stringify(results));
+    assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 1);
+    assert.ok(results.some((r) => r.stderr.includes("already has open PR")));
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
