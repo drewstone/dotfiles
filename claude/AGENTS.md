@@ -10,6 +10,7 @@ Fix causes, not retries or manual workarounds.
 Ask what outcome matters, what can disappear, and what evidence would change the next decision.
 Use these questions for judgment, not a mandatory report or routine confirmation.
 Find existing owners and consumers; prefer deletion, simplification, optimization, then automation.
+A rate, price, quota, limit or version has one owner that serves it; documents, prompts and memory say where to read it, never its value, because a copied value goes stale silently (a stale example file once had agents quoting a markup five times the live one).
 Extend the surface that already serves a capability with a flag, key or field (Discovery: a play-file key or a `disco run` option); a new command, verb or concept needs Drew to ask for it by name.
 When a product exists to do a kind of work, operate it and judge its result; never do that work yourself or through subagents, which hides whether the product works (Discovery research is a play pressed with `disco run`; agent-app work goes through `agent-ask`).
 Before saying code lacks or never does something, `git fetch` and `git grep` for it in the owner's `origin/<default>`, and cite the command and the lines it found; a sparse, stale or deployed checkout proves nothing absent.
