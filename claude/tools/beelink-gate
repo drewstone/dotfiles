@@ -1,4 +1,27 @@
 #!/usr/bin/env bash
+# Associative arrays below require Bash 4+. macOS's system Bash 3.2 otherwise
+# fails during initialization before validating the request, which can look like
+# a successful gate to callers that do not enable errexit. Re-exec an installed
+# compatible Bash so callers using the normal CLI keep working without a new install.
+bash_major=0
+if [ -n "${BASH_VERSION:-}" ]; then bash_major=${BASH_VERSION%%.*}; fi
+case "$bash_major" in ''|*[!0-9]*) bash_major=0 ;; esac
+if [ "$bash_major" -lt 4 ]; then
+  compatible_bash=
+  path_bash=$(command -v bash 2>/dev/null || true)
+  for bash_candidate in "$path_bash" /opt/homebrew/bin/bash /usr/local/bin/bash /opt/local/bin/bash; do
+    [ -n "$bash_candidate" ] && [ -x "$bash_candidate" ] || continue
+    if "$bash_candidate" -c "test \"\${BASH_VERSINFO[0]}\" -ge 4" >/dev/null 2>&1; then
+      compatible_bash=$bash_candidate
+      break
+    fi
+  done
+  if [ -n "$compatible_bash" ]; then
+    exec "$compatible_bash" "$0" "$@"
+  fi
+  echo "beelink-gate: requires Bash 4 or newer; no compatible Bash was found on PATH or in standard macOS locations" >&2
+  exit 2
+fi
 # shellcheck disable=SC2317 # receipt, finish and signal handlers run through traps.
 # Gate one commit in a reusable, locked checkout on a beelink.
 #
