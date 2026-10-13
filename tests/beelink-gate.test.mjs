@@ -540,6 +540,26 @@ test("refuses below the selected host's floor before creating a cache", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a host disk-floor limit refuses a gate before its cache and cannot lower the default", () => {
+  const f = fixture();
+  try {
+    const limits = join(f.root, "no-limits");
+    writeFileSync(limits, "disk_floor_gib=210\n");
+    const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(205 * 1024 ** 3) } });
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, /below its 210 GiB disk floor/);
+    assert.equal(existsSync(f.cache), false);
+
+    const allowed = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
+    assert.equal(allowed.status, 0, allowed.stderr);
+
+    writeFileSync(limits, "disk_floor_gib=100\n");
+    const invalid = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
+    assert.equal(invalid.status, 75, invalid.stderr);
+    assert.match(invalid.stderr, /invalid disk_floor_gib/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a symlinked cache checkout cannot redirect cleaning or eviction outside the cache", () => {
   const f = fixture();
   try {

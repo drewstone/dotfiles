@@ -61,9 +61,11 @@ This is the single definition of disk use on GTR and the Beelinks. Its owner is 
 | Beelinks | At most 4 `_wt` worktrees per lane; none created below 200 GiB free | the Git shim, from [`beelink-worktree-cap.json`](../../host/gtr-install-guard/beelink-worktree-cap.json) |
 | Beelinks | Gate cache at most 40 GiB, least recently used idle checkout evicted first; Rust output inside it | `beelink-gate` |
 | Beelinks | Cargo output in `~/.cache/<repo>-build` untouched for 24 h is removed after each gate | `beelink-gate`, holding the repo's gate locks and cargo's own locks |
-| Beelinks | No gate starts below 100 GiB free on beelink1 or 162 GiB on beelink2 | `beelink-gate` |
+| Beelinks | No gate starts below 100 GiB free on beelink1 or 162 GiB on beelink2; a host may raise its floor with `disk_floor_gib=` in `~/.config/beelink-gate/limits` | `beelink-gate` |
 
 `wt-remove` refuses to salvage while `/mnt/traces` is not mounted and responsive. Change a limit through a pull request to its enforcing file, then tell the owner.
+
+The gate reads `disk_floor_gib` at each admission check, including after a wait. It refuses an invalid, duplicated, or lower-than-default value instead of opening admission. Set a raised floor only after the gate change has passed on a Beelink and deployed to both hosts; remove the override when the host owner confirms the capacity recovery.
 
 ### GTR worktree rule
 
