@@ -10,6 +10,8 @@
 #   hardware-specific work such as KVM; admission limits still apply.
 #   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #   beelink-gate --attach <gate-id>
+#   --cancel-on-term lets a manager's TERM/HUP/INT stop its exact remote gate.
+#   Without it a lost launcher leaves the gate running for --attach.
 #
 # auto re-places a waiting gate: on the beelink it chose, a gate that is not
 # admitted (repo checkout, host slot and load) within BEELINK_GATE_REPLACE_WAIT
@@ -1744,9 +1746,17 @@ job_dir_for() {
   echo "$STATE_DIR/jobs/$1"
 }
 job_submit() {
-  local id=$1 dir unit name
+  local id=$1 dir unit name lock_fd
   shift
   dir=$(job_dir_for "$id")
+  mkdir -p "$STATE_DIR/jobs/.locks" "$STATE_DIR/jobs/.canceled" || return 75
+  exec {lock_fd}> "$STATE_DIR/jobs/.locks/$id.lock" || return 75
+  flock "$lock_fd" || return 75
+  if [ -f "$STATE_DIR/jobs/.canceled/$id" ]; then
+    echo "beelink-gate: gate_id=$id canceled before submission; TEMPFAIL 75" >&2
+    [ ! -d "$dir" ] || printf '75\n' > "$dir/exit"
+    return 75
+  fi
   [ -f "$dir/gate.sh" ] && [ ! -L "$dir/gate.sh" ] || die "gate source was not staged for $id"
   # Jobs can emit large logs. Keep completed reconnect records for one day;
   # active jobs have no exit file and their receipt also lives in receipts.jsonl.
@@ -1771,6 +1781,8 @@ dir=$(cd -- "$(dirname -- "$0")" && pwd -P) || exit 2
 set +e
 bash "$dir/gate.sh" --remote "$@" > "$dir/stdout.log" 2> "$dir/stderr.log"
 rc=$?
+exec {lock_fd}> "$dir/../.locks/${dir##*/}.lock"
+flock "$lock_fd"
 printf '%s\n' "$rc" > "$dir/exit.tmp"
 mv -- "$dir/exit.tmp" "$dir/exit"
 RUNNER
@@ -1784,11 +1796,32 @@ RUNNER
     [ -z "${!name:-}" ] || vars+=("$name=${!name}")
   done
   unit="beelink-gate-$id"
-  if ! systemd-run --user --collect --unit="$unit" /usr/bin/env "${vars[@]}" /usr/bin/bash "$dir/runner.sh" "$@" >&2; then
+  if ! systemd-run --user --collect --unit="$unit" /usr/bin/env "${vars[@]}" /usr/bin/bash "$dir/runner.sh" "$@" {lock_fd}>&- >&2; then
     printf '75\n' > "$dir/exit"
     return 75
   fi
   echo "beelink-gate: submitted gate_id=$id" >&2
+}
+job_cancel_remote() {
+  local id=$1 dir unit state lock_fd
+  dir=$(job_dir_for "$id")
+  mkdir -p "$STATE_DIR/jobs/.locks" "$STATE_DIR/jobs/.canceled" || return 75
+  exec {lock_fd}> "$STATE_DIR/jobs/.locks/$id.lock" || return 75
+  flock "$lock_fd" || return 75
+  : > "$STATE_DIR/jobs/.canceled/$id" || return 75
+  if [ -d "$dir" ] && [ ! -f "$dir/exit" ]; then
+    unit="beelink-gate-$id.service"
+    systemctl --user stop "$unit" >&2 || true
+    state=$(systemctl --user show "$unit" -p ActiveState --value 2>/dev/null) || return 75
+    case "$state" in
+      inactive|failed) ;;
+      *) echo "beelink-gate: $unit remains $state; retry cancellation" >&2; return 75 ;;
+    esac
+    # The unit's cgroup may have killed runner.sh before it wrote its exit.
+    # An attach then sees a terminal TEMPFAIL instead of waiting indefinitely.
+    printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"
+  fi
+  echo "beelink-gate: canceled gate_id=$id" >&2
 }
 job_attach_remote() {
   local dir
@@ -1843,6 +1876,11 @@ fi
 if [ "${1:-}" = --job-attach ]; then
   [ "$#" = 2 ] || die "invalid job attach"
   job_attach_remote "$2"
+  exit $?
+fi
+if [ "${1:-}" = --job-cancel ]; then
+  [ "$#" = 2 ] || die "invalid job cancellation"
+  job_cancel_remote "$2"
   exit $?
 fi
 if [ "${1:-}" = --job-result ]; then
@@ -2325,12 +2363,25 @@ if [ "${1:-}" = --attach ]; then
   fi
   exit "$rc"
 fi
+if [ "${1:-}" = --cancel-job ]; then
+  [ "$#" = 2 ] && [[ "$2" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid cancellation id"
+  launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+  target=${2%%-*}
+  # A manager's cgroup can vanish immediately after scheduling this unit.
+  # Retry transport failures here, outside that cgroup, until the marker lands.
+  for ((attempt=0; attempt<60; attempt++)); do
+    if heartbeat=0 on_beelink "$target" --job-cancel "$2"; then exit 0; fi
+    sleep 5
+  done
+  tempfail "$(utc_in_minutes 5)" "could not confirm cancellation of $2"
+fi
 
-install_mode=install gate_branch="" gate_class="" pin_host=0
+install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --urgent) export BEELINK_GATE_URGENT=1; shift ;;
     --pin-host) pin_host=1; shift ;;
+    --cancel-on-term) cancel_on_term=1; shift ;;
     --no-install) [ "$install_mode" = light ] || install_mode=no-install; shift ;;
     --light) [ "$install_mode" != ship ] || die "--light cannot be combined with --ship"; install_mode=light; shift ;;
     --dev) gate_class=dev; shift ;;
@@ -2341,7 +2392,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
@@ -2399,6 +2450,24 @@ if [ "$requested" = auto ]; then
     start_checkout_reservations normal
   fi
 fi
+cancel_launcher_job() {
+  trap - HUP INT TERM
+  if [ -n "${gate_id:-}" ]; then
+    echo "beelink-gate: manager stopped; scheduling cancellation of gate_id=$gate_id" >&2
+    systemd-run --user --collect --unit="beelink-gate-cancel-$gate_id" /usr/bin/bash "$0" --cancel-job "$gate_id" >&2 \
+      || /usr/bin/bash "$0" --cancel-job "$gate_id" >&2
+  fi
+  exit 143
+}
+run_cancelable() {
+  if [ "$cancel_on_term" = 1 ]; then
+    "$@" &
+    local child=$! rc
+    wait "$child"; rc=$?
+    return "$rc"
+  fi
+  "$@"
+}
 launched=$SECONDS placements=0
 while :; do
   case "$requested" in
@@ -2420,9 +2489,10 @@ while :; do
     echo "beelink-gate: waited ${placed_wait_launch}s across placements; staying on $target in its place in line" >&2
   fi
   gate_id="$target-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  [ "$cancel_on_term" != 1 ] || trap cancel_launcher_job HUP INT TERM
   echo "beelink-gate: gate_id=$gate_id; reconnect with beelink-gate --attach $gate_id" >&2
-  stage_job "$target" "$gate_id" || tempfail "$(utc_in_minutes 5)" "could not stage $gate_id on $target"
-  BEELINK_GATE_ID="$gate_id" heartbeat=0 on_beelink "$target" --job-submit "$gate_id" "${encoded[@]}"
+  run_cancelable stage_job "$target" "$gate_id" || tempfail "$(utc_in_minutes 5)" "could not stage $gate_id on $target"
+  BEELINK_GATE_ID="$gate_id" heartbeat=0 run_cancelable on_beelink "$target" --job-submit "$gate_id" "${encoded[@]}"
   rc=$?
   [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "submit connection lost for $gate_id; run beelink-gate --attach $gate_id before retrying"
   [ "$rc" = 0 ] || exit "$rc"
@@ -2432,13 +2502,13 @@ while :; do
     admission_log="$checkout_reservation_dir/admission.log"
     : > "$admission_log"
     watch_checkout_admission "$admission_log" & checkout_monitor_pid=$!
-    heartbeat=0 on_beelink "$target" --job-attach "$gate_id" 2> >(tee "$admission_log" >&2)
+    heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id" 2> >(tee "$admission_log" >&2)
     rc=$?
     kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
     wait "$checkout_monitor_pid" 2>/dev/null || true
     checkout_monitor_pid=""
   else
-    heartbeat=0 on_beelink "$target" --job-attach "$gate_id"
+    heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id"
     rc=$?
   fi
   if [ "$rc" = 255 ]; then

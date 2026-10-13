@@ -85,6 +85,10 @@ if [[ -n "\${FAKE_PROBE_DROPS:-}" && " \${rest[*]} " == *" --probe "* ]]; then
   n=$(cat "$FAKE_PROBE_DROPS" 2>/dev/null || echo 0)
   if (( n > 0 )); then echo $((n - 1)) > "$FAKE_PROBE_DROPS"; exit 255; fi
 fi
+if [[ -n "\${FAKE_STAGE_PAUSE:-}" && "\${rest[*]}" == "wsl.exe -- bash -s" ]]; then
+  touch "$FAKE_STAGE_PAUSE"
+  while [[ ! -e "$FAKE_STAGE_PAUSE.release" ]]; do sleep 0.05; done
+fi
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_CPU_PRESSURE="$FAKE_PRESSURE_PREFIX-$host"
@@ -244,6 +248,110 @@ test("a submitted gate survives its launcher and --attach replays its result", a
     assert.equal(existsSync(join(f.root, "state", "jobs", id)), false, "a later submission prunes expired reconnect logs");
     assert.equal(receipts(f).length, 2, "receipt history remains after reconnect logs expire");
   } finally {
+    child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("opt-in launcher termination cancels its queued remote gate", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = join(f.root, "units");
+  mkdirSync(units);
+  writeFileSync(join(f.root, "bin", "systemd-run"), `#!/usr/bin/env bash
+while [[ "$1" == --* ]]; do
+  [[ "$1" == --unit=* ]] && unit=\${1#--unit=}
+  shift
+done
+nohup setsid "$@" </dev/null >/dev/null 2>&1 &
+printf '%s\\n' "$!" > "$FAKE_UNITS_DIR/$unit"
+echo "Running as unit: $unit"
+`);
+  writeFileSync(join(f.root, "bin", "systemctl"), `#!/usr/bin/env bash
+[[ "$1" == --user ]] && shift
+if [[ "$1" == stop ]]; then
+  unit=\${2%.service}
+  pid=$(cat "$FAKE_UNITS_DIR/$unit" 2>/dev/null) || exit 0
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  touch "$FAKE_UNITS_DIR/$unit.stopped"
+  exit 0
+fi
+if [[ "$1" == show ]]; then
+  unit=\${2%.service}
+  [[ -e "$FAKE_UNITS_DIR/$unit.stopped" ]] && echo inactive || echo active
+  exit 0
+fi
+exit 1
+`);
+  chmodSync(join(f.root, "bin", "systemctl"), 0o755);
+  const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held");
+  const release = join(f.root, "release");
+  const started = join(f.root, "started");
+  const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
+  const holderDone = new Promise((done) => holder.once("close", done));
+  let holderErr = "";
+  holder.stderr.on("data", (chunk) => { holderErr += chunk; });
+  let waiter;
+  try {
+    for (let i = 0; i < 200 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), holderErr);
+    waiter = spawn(gate, ["--cancel-on-term", "--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${started}'`], { env, detached: true });
+    const waiterDone = new Promise((done) => waiter.once("close", done));
+    let waiterErr = "";
+    waiter.stderr.on("data", (chunk) => { waiterErr += chunk; });
+    for (let i = 0; i < 200 && !/submitted gate_id=/.test(waiterErr); i++) await sleepMs(25);
+    const id = waiterErr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, waiterErr);
+    process.kill(-waiter.pid, "SIGTERM"); // systemd's default KillMode=control-group
+    await waiterDone;
+    const cancelMarker = join(f.root, "state", "jobs", ".canceled", id);
+    for (let i = 0; i < 200 && !existsSync(cancelMarker); i++) await sleepMs(25);
+    assert.ok(existsSync(cancelMarker), `missing cancellation marker for ${id}: ${waiterErr}`);
+    const attached = run(gate, ["--attach", id], { env, timeout: 10_000 });
+    assert.equal(attached.status, 75, attached.stderr);
+    assert.equal(existsSync(started), false, "cancellation reached the queued gate before admission");
+    writeFileSync(release, "\n");
+    await holderDone;
+    assert.equal(existsSync(started), false, "the canceled gate must not run after the holder releases the checkout");
+  } finally {
+    writeFileSync(release, "\n");
+    holder.kill("SIGKILL");
+    waiter?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("cancellation before staging finishes prevents a later submission", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const pause = join(f.root, "stage-pause");
+  const started = join(f.root, "started");
+  const env = { ...f.env, FAKE_STAGE_PAUSE: pause };
+  const child = spawn(gate, ["--cancel-on-term", "--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${started}'`], { env });
+  const exited = new Promise((done) => child.once("exit", done));
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  try {
+    for (let i = 0; i < 200 && !existsSync(pause); i++) await sleepMs(25);
+    assert.ok(existsSync(pause), stderr);
+    const id = stderr.match(/gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, stderr);
+    child.kill("SIGTERM");
+    await exited;
+    const marker = join(f.root, "state", "jobs", ".canceled", id);
+    for (let i = 0; i < 200 && !existsSync(marker); i++) await sleepMs(25);
+    assert.ok(existsSync(marker), stderr);
+    writeFileSync(`${pause}.release`, "\n");
+    const staged = join(f.root, "state", "jobs", id, "gate.sh");
+    for (let i = 0; i < 200 && !existsSync(staged); i++) await sleepMs(25);
+    assert.ok(existsSync(staged), stderr);
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `touch '${started}'`].map(encode);
+    const submission = run("bash", [gate, "--job-submit", id, ...args], { env, timeout: 10_000 });
+    assert.equal(submission.status, 75, submission.stderr);
+    assert.equal(existsSync(started), false);
+  } finally {
+    writeFileSync(`${pause}.release`, "\n");
     child.kill("SIGKILL");
     rmSync(f.root, { recursive: true, force: true });
   }
