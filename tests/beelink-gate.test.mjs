@@ -798,6 +798,7 @@ test("auto uses the repo's last install reserve before choosing a host", () => {
     installFakeSsh(f);
     const floor = 200 * 1024 ** 3;
     const availPrefix = join(f.root, "free");
+    const cachePrefix = join(f.root, "host-cache");
     writeFileSync(`${availPrefix}-100.98.195.7`, String(floor + 20 * 1024 ** 3));
     writeFileSync(`${availPrefix}-100.127.22.51`, String(floor + 1024 ** 3));
     writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
@@ -805,12 +806,13 @@ test("auto uses the repo's last install reserve before choosing a host", () => {
     writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
       `${JSON.stringify({ host: "beelink2", repo: "local/owner/repo", mode: "install", install_reserve_bytes: 11 * 1024 ** 3 })}\n`);
     const result = run(gate, ["auto", f.url, f.first, "--", "true"],
-      { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix }, timeout: 20_000 });
+      { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: cachePrefix }, timeout: 20_000 });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /auto chose beelink1.*beelink2: host=beelink2 state=refused/);
     assert.match(result.stderr, /last-seen install reserve/);
     assert.match(result.stderr, /receipt: .*host=beelink1/);
-    assert.equal(existsSync(join(f.cache, "beelink2", "local", "owner", "repo")), false);
+    assert.equal(existsSync(join(`${cachePrefix}-100.98.195.7`, "local", "owner", "repo")), true);
+    assert.equal(existsSync(join(`${cachePrefix}-100.127.22.51`, "local", "owner", "repo")), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
