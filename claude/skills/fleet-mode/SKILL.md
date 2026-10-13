@@ -37,5 +37,6 @@ skill-run-log /fleet-mode --target "<fleet goal and delivery cut>" --verdict <PA
 | Condition | Next skill | What to pass |
 |---|---|---|
 | One deliverable needs dependent or parallel tracks | `/orchestrate` | Owner, brief, dependencies, and evidence contract |
+| A lane needs a checked handoff across sessions | `/session-continuity` | Its STATUS, board item, and next completion check |
 | A measured hill is flat across attempts | `/hypothesize` | The outcome series and limiting constraint |
 | Delivery is complete but the outcome remains uncertain | `/report` | Served revision, measured results, and target |
