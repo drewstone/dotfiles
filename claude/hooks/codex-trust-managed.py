@@ -22,6 +22,23 @@ def find_codex():
     return str(installed) if installed.is_file() and os.access(installed, os.X_OK) else None
 
 
+def installed_hook(response, path, guard):
+    hooks = [hook for data in response['result']['data'] for hook in data['hooks']
+             if hook.get('eventName') == 'preToolUse'
+             and hook.get('handlerType') == 'command'
+             and hook.get('command') == guard
+             and hook.get('timeoutSec') == 10]
+    # Codex may list both an account's hooks.json and the shared file it
+    # symlinks to. Trust the account's key; use the target only when Codex
+    # did not report the account path at all.
+    matches = [hook for hook in hooks if hook.get('sourcePath') == str(path)]
+    if not matches:
+        matches = [hook for hook in hooks if hook.get('sourcePath') == str(path.resolve())]
+    if len(matches) != 1:
+        raise RuntimeError(f'expected one installed scan guard in {path}; found {len(matches)}')
+    return matches[0]
+
+
 def hook_hash(home, path, guard):
     codex = find_codex()
     if not codex:
@@ -55,16 +72,8 @@ def hook_hash(home, path, guard):
                     continue
                 if response.get('error'):
                     raise RuntimeError('Codex hooks/list failed')
-                sources = {str(path), str(path.resolve())}
-                matches = [hook for data in response['result']['data'] for hook in data['hooks']
-                           if hook.get('sourcePath') in sources
-                           and hook.get('eventName') == 'preToolUse'
-                           and hook.get('handlerType') == 'command'
-                           and hook.get('command') == guard
-                           and hook.get('timeoutSec') == 10]
-                if len(matches) != 1:
-                    raise RuntimeError(f'expected one installed scan guard in {path}; found {len(matches)}')
-                return matches[0]['key'], matches[0]['currentHash']
+                hook = installed_hook(response, path, guard)
+                return hook['key'], hook['currentHash']
         raise RuntimeError('Codex hooks/list did not answer within 12 seconds')
     finally:
         if proc.poll() is None:

@@ -46,3 +46,22 @@ class CodexTrustManagedTests(unittest.TestCase):
             binary.chmod(0o755)
             with patch.dict(os.environ, {'HOME': str(home), 'PATH': str(Path(tmp) / 'systemd-path')}):
                 self.assertEqual(trust.find_codex(), str(binary))
+
+    def test_symlinked_account_hook_uses_its_own_trust_key(self):
+        with TemporaryDirectory() as tmp:
+            shared = Path(tmp) / 'shared/hooks.json'
+            shared.parent.mkdir()
+            shared.write_text('{}')
+            account = Path(tmp) / 'account/hooks.json'
+            account.parent.mkdir()
+            account.symlink_to(shared)
+            guard = '/guard.sh'
+            hooks = [{'sourcePath': str(source), 'eventName': 'preToolUse',
+                      'handlerType': 'command', 'command': guard, 'timeoutSec': 10,
+                      'key': key, 'currentHash': 'sha256:exact'}
+                     for source, key in ((account, 'account-key'), (shared, 'shared-key'))]
+            response = {'result': {'data': [{'hooks': hooks}]}}
+
+            self.assertEqual(trust.installed_hook(response, account, guard)['key'], 'account-key')
+            response['result']['data'][0]['hooks'] = hooks[1:]
+            self.assertEqual(trust.installed_hook(response, account, guard)['key'], 'shared-key')
