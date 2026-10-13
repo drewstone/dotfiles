@@ -120,7 +120,7 @@ An app that has not mounted the operator API answers that it does not serve it y
 ## gtm-ask
 
 Hand an outcome-level ask to the production GTM agent (gtm.tangle.tools) and read back its result.
-The `gtm-ask` skill says how a session phrases the ask and gates what comes back.
+The [agent-ask GTM bar](../skills/agent-ask/references/gtm.md) says how a session phrases the ask and gates what comes back.
 
 ```bash
 gtm-ask "Make on-brand Reddit ads for Sandbox; find our real logo, fonts and screenshots yourself"

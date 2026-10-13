@@ -1,6 +1,6 @@
 ---
 name: report
-description: Research a question from primary sources, or answer analytical, status, fleet, or play questions from checked evidence with uncertainty and a decision.
+description: Research a question from primary sources, or answer analytical, product bet, status, fleet, or play questions from checked evidence with uncertainty and a decision.
 ---
 
 # Report
@@ -32,6 +32,8 @@ Trace each claim to the source that owns it and cite it.
 When the user wants a durable note, write one Markdown file where the repository keeps such notes and say where.
 Delegate the reading to a background worker only when delegation is available and the user can keep working.
 Research that a product exists to do, such as the research a Discovery run needs, belongs to that product ([AGENTS.md](../../AGENTS.md)), not to this section.
+
+For a ship, narrow, rebuild, or kill decision on a product bet, read [product bet review](references/product-bet.md) before weighing the evidence.
 
 ## Questions about active research and fleets
 
@@ -107,5 +109,6 @@ Fix the weakest dimensions before the reader sees the deliverable when the fix i
 |---|---|---|
 | A result remains null, surprising, or suspect, or failures need causal grouping | `/diagnose` | The raw rows, computation, and candidate causes |
 | A measured gap has an authorized improvement to test | `/evolve` | The baseline, mechanism, and required outcome |
+| A tested product mechanism cannot meet the required outcome | `/hypothesize` | The failed mechanism, substitute, and evidence about the constraint |
 | A required conclusion lacks observation of the actual path | `/ground-truth` | The missing segment and execution boundary |
 | The finding requires operating an authorized run | `/operate` | Current state, bounds, and the next action |

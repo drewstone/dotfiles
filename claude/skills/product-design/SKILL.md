@@ -1,6 +1,6 @@
 ---
 name: product-design
-description: Design, polish, audit, and test product UI from real references and browser evidence, including worst-case data, variants, phones, and site reproduction.
+description: Design, polish, audit, and test product UI from real references and browser evidence; use for variants, phones, site reproduction, animation, gestures, and worst-case data.
 metadata:
   short-description: Reference-first product UI without label/step slop
 ---
@@ -28,7 +28,7 @@ For a blog or research index, read [editorial surfaces](references/editorial-sur
 2. Remove duplicate navigation, decorative panels, repeated action copy, and states that imply readiness the product has not achieved.
    Keep labels that identify controls or clarify status, risk, units, permissions, or accessibility.
 3. Implement with the application's existing components and tokens.
-   Read [polish](references/polish.md) for press feedback, materials, typography, foundations, and phone behavior; use `/motion` for animation.
+   Read [polish](references/polish.md) for press feedback, materials, typography, foundations, and phone behavior; read [motion](references/motion.md) when changing animation or gestures.
 
 When the user wants to compare directions, or a state model needs checking before it is built, read [variants and prototypes](references/variants.md).
 
@@ -88,7 +88,6 @@ skill-run-log /product-design --target "<what this run targeted>" --verdict <PAS
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Evidence questions the product value rather than UI execution | `/product-innovation-audit` | the workflow and unresolved user value |
+| Evidence questions the product value rather than UI execution | `/report` | the workflow and unresolved user value; use its product bet review |
 | A reproduced defect needs deeper source investigation or review | `/critical-audit` | the reproduction, diff, and behavior to preserve |
 | Browser work passes and required non-UI checks remain | `/verify` | the verified flows and remaining checks |
-| The change adds or reviews animation or gesture motion | `/motion` | the components and interactions |

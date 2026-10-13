@@ -33,5 +33,5 @@ skill-run-log /grilling --target "<plan>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|A
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The settled plan is a product bet whose value is uncertain | `/product-innovation-audit` | the decisions and open risks |
+| The settled plan is a product bet whose value is uncertain | `/report` | the decisions and open risks; use its product bet review |
 | The plan includes interface or domain decisions | `/codebase-design` | the settled terms and constraints |

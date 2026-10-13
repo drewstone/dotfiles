@@ -69,6 +69,6 @@ skill-run-log /session-continuity --target "<active goal>" --verdict <PASS|FAIL|
 | Condition | Next skill | What to pass |
 |---|---|---|
 | A research run needs recovery or a successor | `/operate` | The checked brief and execution owner's records |
-| Two valid next actions compete | `/governor` | The brief and active objective |
+| Two valid next actions compete | `/report` | The brief, active objective, and evidence for each action |
 | A completion claim remains unproved | `/verify` | The claim and its consumer check |
 | Repeated continuity failures need assessment | `/reflect` | The handoffs and retained evidence |

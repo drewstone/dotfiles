@@ -1,6 +1,6 @@
 ---
 name: agent-ask
-description: Delegate work to a production Tangle agent app (gtm, tax, legal, insurance, creative, hospitality, builder, physim, super) through its standard operator API with agent-ask, follow the turn, and gate the result before showing Drew.
+description: Delegate work to a production Tangle agent app, including GTM, through its operator API; follow the turn and gate the result before showing Drew.
 ---
 
 # Agent ask
@@ -11,7 +11,7 @@ Your job is the ask, the verdict, and the capability the agent was missing.
 
 `agent-ask --help` owns the commands, options, and exit codes.
 The operator API it speaks is in agent-app's [operator API design](https://github.com/tangle-network/agent-app/blob/main/docs/operator-api.md).
-For GTM work, the `gtm-ask` skill holds GTM's quality bar; use `agent-ask --app gtm` with that bar.
+For GTM work, read the [GTM operator bar](references/gtm.md) before the ask and use `agent-ask --app gtm` or the `gtm-ask` CLI.
 
 ## 1. Write the outcome-level ask
 
