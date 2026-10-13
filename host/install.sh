@@ -140,7 +140,10 @@ install_beelink_gate_priority() {
   # host/install.sh --gate-priority-only.
   if [ -r /etc/beelink-gate/ci-weight ]; then
     ci_weight=$(tr -cd '0-9' < /etc/beelink-gate/ci-weight)
-    [[ "$ci_weight" =~ ^[0-9]+$ ]] && (( ci_weight >= 1 && ci_weight <= 10000 )) || { echo "invalid /etc/beelink-gate/ci-weight" >&2; exit 1; }
+    if [[ ! "$ci_weight" =~ ^[0-9]+$ ]] || (( ci_weight < 1 || ci_weight > 10000 )); then
+      echo "invalid /etc/beelink-gate/ci-weight" >&2
+      exit 1
+    fi
   fi
   want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service

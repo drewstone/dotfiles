@@ -101,3 +101,15 @@ item on the board.
 - If you're the third person to hit the same bug, write the tool that prevents it for everyone.
 - If it takes more than 3 sentences to explain what you're doing, simplify until it takes 1.
 - Speed is a feature. Done is better than perfect. Shipped is better than reviewed.
+
+## Log the run
+
+```bash
+skill-run-log /fleet-mode --target "<fleet task>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /stop
+```
+
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| A lane needs a checked handoff across sessions | `/session-continuity` | Its STATUS, board item, and next completion check |
