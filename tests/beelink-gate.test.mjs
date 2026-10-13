@@ -2326,6 +2326,9 @@ test("a dead capacity writer's intent is cleared and a live writer times out new
     const refused = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS: "1" } });
     assert.equal(refused.status, 75, refused.stderr);
     assert.match(refused.stderr, /TEMPFAIL .*capacity writer intent exceeded 1s/);
+    const returned = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_AUTO: "1", BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS: "1" } });
+    assert.equal(returned.status, 76, returned.stderr);
+    assert.match(returned.stderr, /capacity writer intent exceeded 1s.*placing the gate again/);
     assert.equal(run("flock", ["-n", "-x", join(locks, "local-owner-repo.lock"), "true"]).status, 0);
   } finally {
     holder?.kill();
