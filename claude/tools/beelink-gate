@@ -227,10 +227,12 @@ try:
                         stamp = git_dir
                     candidates.append((stamp.stat().st_mtime_ns, repo, size(repo), host.name, owner.name))
         total = size(root)
+        initial_total = total
         estimated_total = total
         estimated_reclaimed = 0
-        initial_free = free_bytes(root) if required_reclaim else 0
+        initial_free = free_bytes(root)
         target_free = initial_free + required_reclaim
+        evictions = 0
         for _, repo, bytes_used, host, owner in sorted(candidates):
             if estimated_total <= cap and estimated_reclaimed >= required_reclaim:
                 # Separate du calls count a hardlinked inode in both checkouts,
@@ -249,11 +251,19 @@ try:
                 shutil.rmtree(repo)
                 estimated_total -= bytes_used
                 estimated_reclaimed += bytes_used
+                evictions += 1
                 print(f"beelink-gate: evicted LRU cache {repo} ({bytes_used} bytes)", file=sys.stderr)
             finally:
                 os.close(fd)
         total = size(root)
-        reclaimed = max(0, free_bytes(root) - initial_free) if required_reclaim else 0
+        final_free = free_bytes(root)
+        reclaimed = max(0, final_free - initial_free)
+        if evictions or required_reclaim or total > cap:
+            print(
+                f"beelink-gate: cache prune: cache_before={initial_total} cache_after={total} "
+                f"free_before={initial_free} free_after={final_free}",
+                file=sys.stderr,
+            )
         if total > cap:
             print(f"beelink-gate: cache cap exceeded: {total} > {cap} bytes; active checkouts cannot be evicted", file=sys.stderr)
             sys.exit(3)

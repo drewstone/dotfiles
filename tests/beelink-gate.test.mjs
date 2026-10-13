@@ -611,6 +611,11 @@ test("cache cap remeasures after evicting a checkout hardlinked to another", () 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(existsSync(older), false);
     assert.equal(existsSync(newer), false);
+    const summary = result.stderr.match(/cache prune: cache_before=(\d+) cache_after=(\d+) free_before=(\d+) free_after=(\d+)/);
+    assert.ok(summary, result.stderr);
+    assert.ok(Number(summary[1]) > 600000, result.stderr);
+    assert.ok(Number(summary[2]) <= 600000, result.stderr);
+    assert.ok(Number(summary[3]) > 0 && Number(summary[4]) > 0, result.stderr);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
