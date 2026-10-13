@@ -90,6 +90,7 @@ if [[ -n "\${FAKE_STAGE_PAUSE:-}" && "\${rest[*]}" == "wsl.exe -- bash -s" ]]; t
   while [[ ! -e "$FAKE_STAGE_PAUSE.release" ]]; do sleep 0.05; done
 fi
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
+[[ -z "\${FAKE_AVAIL_PREFIX:-}" ]] || export FAKE_AVAIL_FILE="$FAKE_AVAIL_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_CPU_PRESSURE="$FAKE_PRESSURE_PREFIX-$host"
 [[ -z "\${FAKE_HOST_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_HOST_PRESSURE="$FAKE_HOST_PRESSURE_PREFIX-$host"
@@ -128,6 +129,7 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
     assert.equal(f.git(["-C", join(f.cache, "local", "owner", "repo"), "rev-parse", "HEAD"]), f.second);
     assert.deepEqual(readdirSync(join(f.cache, "local", "owner")), ["repo"]);
     assert.deepEqual(readFileSync(f.npmLog, "utf8").trim().split("\n"), ["ci --cache " + f.home + "/.npm", "ci --cache " + f.home + "/.npm"]);
+    assert.equal(receipts(f).at(-1).install_reserve_bytes, 10 * 1024 ** 3);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -780,13 +782,35 @@ test("a host disk-floor limit refuses a gate before its cache and cannot lower t
     assert.match(refused.stderr, /below its 210 GiB disk floor/);
     assert.equal(existsSync(f.cache), false);
 
-    const allowed = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
+    const allowed = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(221 * 1024 ** 3) } });
     assert.equal(allowed.status, 0, allowed.stderr);
 
     writeFileSync(limits, "disk_floor_gib=100\n");
     const invalid = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
     assert.equal(invalid.status, 75, invalid.stderr);
     assert.match(invalid.stderr, /invalid disk_floor_gib/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("auto uses the repo's last install reserve before choosing a host", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const floor = 200 * 1024 ** 3;
+    const availPrefix = join(f.root, "free");
+    writeFileSync(`${availPrefix}-beelink1`, String(floor + 20 * 1024 ** 3));
+    writeFileSync(`${availPrefix}-beelink2`, String(floor + 1024 ** 3));
+    writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
+    mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
+    writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
+      `${JSON.stringify({ host: "beelink2", repo: "local/owner/repo", mode: "install", install_reserve_bytes: 11 * 1024 ** 3 })}\n`);
+    const result = run(gate, ["auto", f.url, f.first, "--", "true"],
+      { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix }, timeout: 20_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /auto chose beelink1.*beelink2: host=beelink2 state=refused/);
+    assert.match(result.stderr, /last-seen install reserve/);
+    assert.match(result.stderr, /receipt: .*host=beelink1/);
+    assert.equal(existsSync(join(f.cache, "beelink2", "local", "owner", "repo")), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

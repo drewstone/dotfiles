@@ -50,6 +50,8 @@ Gate JSON receipts include the fetched default-branch tip as `base_sha`, `pr_num
 
 An `auto` gate reserves its normal FIFO place on both Beelinks before probing. The reservation stays while it re-places and is handed to the submitted gate's ticket, so a new gate cannot take the first checkout that frees during a probe gap. Urgent gates keep their priority markers. Admission still observes the host disk, CPU and slot limits.
 
+For a gate that installs dependencies, each host's probe and final admission require free disk at least equal to its floor plus that repo's last measured install reserve from a host-local receipt. The reserve is the existing 10 GiB install headroom plus disk consumed from admission through checkout and the gate's frozen install; with no measured receipt, the gate uses 10 GiB. A refusal exits 75 before fetch, and `auto` can place on the other host. No-install and light gates keep the plain host floor. Receipts record `install_reserve_bytes` for runs that reach the install check.
+
 ### Host disk rule
 
 This is the single definition of disk use on GTR and the Beelinks. Its owner is op-company's `beelink-gate-caps` lane; `gtr-disk` runs host cleanup. Every other lane removes only its own finished worktree, with `wt-remove`, and sends any disk problem to the owner instead of sweeping, re-checking free space or acknowledging cleanups.
