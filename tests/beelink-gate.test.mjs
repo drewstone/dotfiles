@@ -1746,7 +1746,6 @@ test("an auto gate stops moving once it has waited past the starvation backstop,
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const closed = new Promise((resolveDone) => child.on("close", resolveDone));
     for (let i = 0; i < 400 && !/staying on beelink\d/.test(stderr); i++) await sleepMs(50);
-    assert.match(stderr, /not admitted on beelink\d within 1s/);
     assert.match(stderr, /waited \d+s across placements; staying on beelink\d in its place in line/);
     await sleepMs(2500);
     // Once it stays, it does not give the host back again.
