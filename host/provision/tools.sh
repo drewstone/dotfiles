@@ -7,7 +7,7 @@
 # power_save) when the mt7925e drops off; NetworkManager does not show it.
 # Ubuntu Desktop has no SSH server. Agents reach the box over Tailscale SSH;
 # OpenSSH is the key-only way in on loopback and the tailnet, never the LAN.
-BASE_PACKAGES="curl ca-certificates git jq unzip xz-utils fontconfig tmux psmisc dconf-cli wl-clipboard iw python3-venv qemu-system-x86 qemu-utils cloud-image-utils openssh-server"
+BASE_PACKAGES="curl ca-certificates git jq sqlite3 unzip xz-utils fontconfig tmux psmisc dconf-cli wl-clipboard iw python3-venv qemu-system-x86 qemu-utils cloud-image-utils openssh-server"
 SSHD_KEYS_ONLY=/etc/ssh/sshd_config.d/10-dotfiles-keys-only.conf
 SSHD_BIN="${SSHD_BIN:-/usr/sbin/sshd}"
 SSHD_CONFIG="${SSHD_CONFIG:-/etc/ssh/sshd_config}"
