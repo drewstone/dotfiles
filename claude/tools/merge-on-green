@@ -131,6 +131,9 @@ def main():
         if action == "merge" and not a.dry_run:
             m = gh("pr", "merge", str(n), "-R", a.repo, "--merge", "--match-head-commit", head)
             outcome = "merged" if m.returncode == 0 else "merge refused: " + (m.stderr.strip() or m.stdout.strip())[:160]
+            if re.search(r"(?i)conflict|cannot be cleanly created", outcome):
+                # GitHub's mergeable flag lags a merge that just landed; the refusal is the fresh answer.
+                action = "conflict"
         elif action == "refresh" and not a.dry_run and noted.get(f"refresh:{n}") != head:
             u = gh("api", "--method", "PUT", f"repos/{a.repo}/pulls/{n}/update-branch", "-f", f"expected_head_sha={head}")
             outcome = "updated from develop" if u.returncode == 0 else "update refused: " + (u.stderr.strip() or u.stdout.strip())[:160]
@@ -140,7 +143,7 @@ def main():
                 gh("pr", "comment", str(n), "-R", a.repo, "--body",
                    "This conflicts with develop, so its gate cannot run. Merge develop into the branch and it merges itself once green.")
                 noted[str(n)] = head
-        elif action == "conflict" and not a.dry_run and noted.get(str(n)) != head:
+        if action == "conflict" and not a.dry_run and noted.get(str(n)) != head:
             gh("pr", "comment", str(n), "-R", a.repo, "--body",
                "Green, but it conflicts with develop. Merge develop into the branch and it merges itself.")
             noted[str(n)] = head

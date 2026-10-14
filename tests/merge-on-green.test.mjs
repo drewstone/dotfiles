@@ -22,14 +22,14 @@ function pr(number, over = {}) {
 }
 const withChecks = (n, nodes) => pr(n, { commits: { nodes: [{ commit: { committedDate: old, statusCheckRollup: { contexts: { nodes } } } }] } });
 
-function fixture(prs, { refuse = [], conflictUpdate = [] } = {}) {
+function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Request is not mergeable" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "mog-"));
   writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { pullRequests: { nodes: prs } } } }));
   writeFileSync(join(dir, "gh-drew"), `#!/bin/bash
 echo "$*" >> "${dir}/calls.log"
 if [ "$1 $2" = "api graphql" ]; then cat "${dir}/graphql.json"; exit 0; fi
 for r in ${conflictUpdate.join(" ")}; do [ "$1 $3 $4" = "api PUT repos/tangle-network/agent-container/pulls/$r/update-branch" ] && { echo "gh: merge conflict between base and head (HTTP 422)" >&2; exit 1; }; done
-if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r" ] && { echo "Pull Request is not mergeable" >&2; exit 1; }; done; exit 0; fi
+if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r" ] && { echo "${refuseText}" >&2; exit 1; }; done; exit 0; fi
 exit 0
 `);
   chmodSync(join(dir, "gh-drew"), 0o755);
@@ -110,6 +110,12 @@ test("a red status from the retired local signoff does not hold a green PR", () 
   const f = fixture([withChecks(16, [...green, { __typename: "StatusContext", context: "signoff/local", state: "FAILURE" }])]);
   f.run();
   assert.match(f.calls(), /pr merge 16 /);
+});
+
+test("a merge GitHub refuses for a conflict tells the owner once per head", () => {
+  const f = fixture([pr(18)], { refuse: [18], refuseText: "Pull request #18 is not mergeable: the merge commit cannot be cleanly created." });
+  f.run(); f.run();
+  assert.equal((f.calls().match(/pr comment 18 /g) || []).length, 1);
 });
 
 test("a merge GitHub refuses is recorded with its reason", () => {
