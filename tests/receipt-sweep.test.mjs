@@ -165,6 +165,34 @@ test("a merge visible on develop before GitHub marks it merged is polled for", (
   assert.match(f.read("sleep.log"), /^15$/m);
 });
 
+// The headlines develop actually carried on 2026-10-14: revision-receipt merges, GitHub
+// merges and the checked version PR. GitHub's merge oid is unknown until it marks the PR.
+for (const headline of [
+  "chore: merge locally signed PR #19",
+  "Merge pull request #19 from tangle-network/feat/x",
+  "chore: merge checked version PR 19",
+]) {
+  test(`a merge headline "${headline}" counts as on develop`, () => {
+    const f = fixture();
+    f.pr(19, f.open(A), f.open(A), `drewstone\tfalse\tOPEN\tfeat/x\t${A}\t`, f.merged(A, "d".repeat(40)));
+    f.gate(19, "0|ok");
+    writeFileSync(join(f.stub, "history"), `${"e".repeat(40)} ${headline}\n`);
+    const r = f.run(["19"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(f.result(19), /exit=0 state=MERGED/);
+  });
+}
+
+test("a longer PR number in a headline does not count as this PR's merge", () => {
+  const f = fixture();
+  f.pr(19, f.open(A), f.open(A), `drewstone\tfalse\tOPEN\tfeat/x\t${A}\t`);
+  f.gate(19, "0|ok");
+  writeFileSync(join(f.stub, "history"), `${"e".repeat(40)} chore: merge locally signed PR #190\n`);
+  f.run(["19"]);
+  assert.match(f.result(19), /exit=0 state=OPEN/);
+  assert.doesNotMatch(f.read("sleep.log"), /^15$/m);
+});
+
 test("results append across runs, one line per run per PR", () => {
   const f = fixture();
   f.pr(18, f.open(A));
