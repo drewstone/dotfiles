@@ -2728,6 +2728,13 @@ fi
 target=$1 repo_url=$2 sha=$3
 if [ "$pin_host" = 1 ] && [ "$target" = auto ]; then die "--pin-host requires a named beelink"; fi
 shift 4
+# agent-container stopped merging on a local signoff on 2026-10-14 (agent-dev-container
+# #10892): its PRs merge on green CI and develop runs the full suite after merge. Sessions
+# that loaded the old rule kept holding Beelink slots the CI runners on the same hosts need.
+if [[ "$repo_url" =~ tangle-network/agent-(dev-)?container(\.git)?$ ]] && [ "$gate_class" != dev ] \
+  && [[ " $* " =~ [[:space:]/](signoff(\.sh)?|revision-receipt\.mjs)[[:space:]] ]]; then
+  die "agent-container no longer merges on a local signoff. Push and stop: merge-on-green merges the PR once Fast Checks, Build and Type Check pass, and develop runs the full suite after merge (agent-dev-container docs/processes/shipping.md). For an iterative run of affected tests use --dev."
+fi
 if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
   [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
 fi
