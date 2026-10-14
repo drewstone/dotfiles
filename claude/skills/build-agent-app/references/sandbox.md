@@ -1,7 +1,7 @@
 # Sandbox execution and live viewing
 
 Use the maintained Sandbox SDK for sessions, dispatch, replay, and browser state instead of rebuilding platform behavior.
-Read the current [SDK integration guide](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/INTEGRATION.md), [exports](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/package.json), and [app execution guidance](https://github.com/tangle-network/agent-app/blob/main/AGENTS.md) before selecting the driver and transport.
+Read the current [SDK integration guide](https://github.com/tangle-network/agent-container/blob/develop/products/sandbox/sdk/INTEGRATION.md), [exports](https://github.com/tangle-network/agent-container/blob/develop/products/sandbox/sdk/package.json), and [app execution guidance](https://github.com/tangle-network/agent-app/blob/main/AGENTS.md) before selecting the driver and transport.
 Confirm required methods against the consuming project's actual package.
 
 ## Choose the path from its lifetime

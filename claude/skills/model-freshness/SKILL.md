@@ -46,7 +46,7 @@ Report requested and served identities, source coverage, remaining substitutions
 
 When a model or execution backend change can alter supported reasoning controls, measure what the deployed model and CLI accept.
 A local CLI, another model, or a successful exit with a warning does not establish deployed support.
-In agent-dev-container, use the maintained [probe](https://github.com/tangle-network/agent-dev-container/blob/develop/scripts/probe-reasoning-capabilities.mjs) and [consistency check](https://github.com/tangle-network/agent-dev-container/blob/develop/scripts/check-reasoning-capabilities.mjs); they own binary resolution, supported arguments, and the generated capability record.
+In agent-container, use the maintained [probe](https://github.com/tangle-network/agent-container/blob/develop/scripts/probe-reasoning-capabilities.mjs) and [consistency check](https://github.com/tangle-network/agent-container/blob/develop/scripts/check-reasoning-capabilities.mjs); they own binary resolution, supported arguments, and the generated capability record.
 
 Run the probe for the affected backend against the binary the project ships, not an unrelated executable on PATH.
 Capture stdout, stderr, exit status, and observed model identity; confirm a disputed setting with a real turn when enumeration is incomplete or a CLI may silently substitute a default.
@@ -54,7 +54,7 @@ A missing binary or credential is an unmeasured case with its reason; no per-inv
 Use existing authorization and a bounded smoke before paid probes.
 
 Regenerate the owning capability record from the probe result, keeping the measured execution identity so a backend change invalidates old evidence.
-Update the [shared reasoning mapping](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/sdk-provider-cli-base/src/reasoning-effort.ts) only when a measured change requires it, then run the consistency check and affected mapper contract tests.
+Update the [shared reasoning mapping](https://github.com/tangle-network/agent-container/blob/develop/packages/sdk-provider-cli-base/src/reasoning-effort.ts) only when a measured change requires it, then run the consistency check and affected mapper contract tests.
 Report changed support, silent substitutions, unmeasured cases, and the checks run.
 
 ## Log the run

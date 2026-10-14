@@ -6,7 +6,7 @@ Keep documented capability distinct from behavior wired into the current product
 ## Check the real paths
 
 1. Locate the repository's escalation record and adapter sources.
-   In agent-dev-container, start with `docs/processes/harness-user-escalation.md`, `packages/sdk-provider-*`, and the interactive session implementation.
+   In agent-container, start with `docs/processes/harness-user-escalation.md`, `packages/sdk-provider-*`, and the interactive session implementation.
    Resolve current paths from the repository before assuming that an older layout still applies.
 2. Enumerate the supported backends from their registered adapters and interactive launch configuration.
 3. For each relevant backend, record its installed version and actual invocation in both modes:
