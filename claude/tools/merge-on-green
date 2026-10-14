@@ -71,8 +71,9 @@ def decide(pr, now):
     if failed:
         return "wait", "red: " + ", ".join(failed[:3])
     missing = [n for n in REQUIRED if not checks.get(n) or any(s != "SUCCESS" for s in checks[n])]
-    if missing and pr["mergeable"] != "CONFLICTING" and all(n not in checks for n in REQUIRED):
-        # The gate never ran on this head (a PR opened before the gate existed):
+    never_ran = all(all(st in ("SKIPPED", "NEUTRAL") for st in checks.get(n, ["SKIPPED"])) for n in REQUIRED)
+    if missing and pr["mergeable"] != "CONFLICTING" and never_ran:
+        # The gate never ran on this head (absent, or skipped by the pre-2026-10-14 ci.yml):
         # bring it up to date with develop, which runs the gate on the new head.
         return "refresh", "gate never ran; updating from develop"
     if missing:
