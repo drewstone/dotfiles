@@ -93,6 +93,16 @@ test("deadline stops the retries when the next window is past it", () => {
   assert.equal(f.read("sleep.log"), "");
 });
 
+test("a spent deadline stops before the gate is called, with the reason recorded", () => {
+  const f = fixture();
+  f.pr(20, f.open(A), f.open(A), f.open(A));
+  f.gate(20, "0|never called");
+  const r = f.run(["--deadline", "30s", "20"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(existsSync(join(f.stub, "gate.log")) ? f.read("gate.log").trim() : "", "");
+  assert.match(f.result(20), /attempts=0 exit=124 .*receipt=deadline reached before a gate started/);
+});
+
 test("repeated 75 inside the deadline has no attempt cap", () => {
   const f = fixture();
   const soon = new Date(Date.now() + 1000).toISOString().replace(/\.\d+Z/, "Z");

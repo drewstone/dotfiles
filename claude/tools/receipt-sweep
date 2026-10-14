@@ -163,13 +163,23 @@ sweep_pr() {
       IFS=$'\t' read -r author draft state branch head merge <<<"$info"
       if [ "$state" != OPEN ] || [ "$draft" != false ]; then rc=0; receipt=""; break; fi
     fi
+    # beelink-gate's 45 m hold budget starts only once a host admits the job; time
+    # queued behind other gates is unbounded there. Bound the call by the sweep's
+    # own deadline, not a fixed timeout that kills receipts still waiting in line.
+    remaining=$((DEADLINE_AT - $(now_epoch)))
+    if [ "$remaining" -le 60 ]; then
+      log "#$n deadline reached before attempt $((attempts + 1))"; rc=124; receipt="deadline reached before a gate started"; break
+    fi
     attempts=$((attempts + 1))
     log "#$n attempt $attempts $branch @ ${head:0:8}"
-    FLEET_LANE="${FLEET_LANE:-op-company:receipt-sweep}" timeout 2700 beelink-gate --branch "$branch" auto "$REPO_URL" "$head" -- node scripts/ci/revision-receipt.mjs merge "$n" 2>&1 | strip_ansi > "$out"
+    FLEET_LANE="${FLEET_LANE:-op-company:receipt-sweep}" timeout "$remaining" beelink-gate --branch "$branch" auto "$REPO_URL" "$head" -- node scripts/ci/revision-receipt.mjs merge "$n" 2>&1 | strip_ansi > "$out"
     rc=${PIPESTATUS[0]}
     cat "$out" >&2
     receipt="$(last_receipt_line "$out")"
     [ "$rc" -eq 0 ] && break
+    if [ "$rc" -eq 124 ] && ! grep -q "admitted on" "$out"; then
+      log "#$n deadline reached while queued for a gate"; receipt="deadline reached while queued for a gate"; break
+    fi
     if [ "$rc" -eq 75 ]; then
       next="$(grep -o 'next_allowed=[0-9T:-]*Z' "$out" | tail -1 | cut -d= -f2)"
       wait_s="$(wait_seconds "$next")"
