@@ -916,7 +916,7 @@ class PnpmStorePruneTest(unittest.TestCase):
         self.store = os.path.join(t, 'store')
         os.makedirs(os.path.join(self.store, 'v10', 'files'))
         self.releases = os.path.join(t, 'corepack')
-        self.f.write(self.releases, '10.33.4/dist/pnpm.cjs', '// fake pnpm\n')
+        self.release('10.33.4', {'pnpm': 'bin/pnpm.cjs', 'pnpx': 'bin/pnpx.cjs'})
         self.calls = os.path.join(t, 'node-calls')
         bindir = os.path.join(t, 'bin')
         # The fake prune records its arguments, then tries the slots a gate would create next: none may be free.
@@ -943,6 +943,12 @@ class PnpmStorePruneTest(unittest.TestCase):
     def tearDown(self):
         self.f.cleanup()
 
+    def release(self, version, bins):
+        """A corepack cache entry laid out as the published package: package.json names the pnpm entry."""
+        self.f.write(self.releases, version + '/package.json', json.dumps({'name': 'pnpm', 'version': version, 'bin': bins}))
+        entry = bins if isinstance(bins, str) else bins['pnpm']
+        self.f.write(self.releases, version + '/' + entry, '// fake pnpm\n')
+
     def age_locks(self, seconds=3600):
         for name in os.listdir(self.locks):
             os.utime(os.path.join(self.locks, name), (time.time() - seconds, time.time() - seconds))
@@ -964,7 +970,7 @@ class PnpmStorePruneTest(unittest.TestCase):
         if not os.path.exists(self.calls):
             return False
         with open(self.calls) as fh:
-            self.assertEqual(fh.read().split(), [os.path.join(self.releases, '10.33.4', 'dist', 'pnpm.cjs'),
+            self.assertEqual(fh.read().split(), [os.path.join(self.releases, '10.33.4', 'bin', 'pnpm.cjs'),
                                                  'store', 'prune', '--store-dir', self.store])
         os.remove(self.calls)
         return True
@@ -985,6 +991,37 @@ class PnpmStorePruneTest(unittest.TestCase):
         self.assertEqual(rows[0]['decision'], 'remove-derived')
         self.reap()
         self.assertFalse(self.pruned(), 'at most once a day')
+
+    def test_each_store_version_is_pruned_by_the_newest_pnpm_script_of_its_major(self):
+        # pnpm 11 names bin/pnpm.mjs; until 2026-10-14 the reaper looked only for dist/pnpm.cjs and never pruned v11.
+        os.makedirs(os.path.join(self.store, 'v11', 'files'))
+        os.makedirs(os.path.join(self.store, 'v12', 'files'))
+        self.release('11.17.0', {'pnpm': 'bin/pnpm.mjs'})
+        self.release('11.25.0', {'pnpm': 'bin/pnpm.mjs'})
+        self.release('11.9.0', {'pnpm': 'bin/pnpm.mjs'})
+        self.release('12.6.0', {'pnpm': 'pnpm'})  # a native binary: node cannot run it
+        rows = {r['path']: r for r in self.reap()}
+        with open(self.calls) as fh:
+            calls = [line.split() for line in fh if 'store' in line]
+        self.assertEqual(calls, [
+            [os.path.join(self.releases, '10.33.4', 'bin', 'pnpm.cjs'), 'store', 'prune', '--store-dir', self.store],
+            [os.path.join(self.releases, '11.25.0', 'bin', 'pnpm.mjs'), 'store', 'prune', '--store-dir', self.store]])
+        self.assertEqual(rows[os.path.join(self.store, 'v11')]['decision'], 'remove-derived')
+        self.assertIn('bytes', rows[os.path.join(self.store, 'v11')])
+        self.assertEqual(rows[os.path.join(self.store, 'v12')]['decision'], 'keep-derived')
+
+    def test_a_native_pnpm_binary_is_not_a_release_node_can_run(self):
+        self.release('12.6.0', {'pnpm': 'pnpm'})
+        self.assertIsNone(load_reaper().pnpm_release(self.releases, '12'))
+        self.release('12.7.0', 'bin/pnpm.mjs')  # a string bin names the pnpm entry too
+        self.assertEqual(load_reaper().pnpm_release(self.releases, '12'),
+                         os.path.join(self.releases, '12.7.0', 'bin', 'pnpm.mjs'))
+
+    def test_a_release_whose_manifest_points_outside_it_is_not_run(self):
+        os.makedirs(os.path.join(self.store, 'v11', 'files'))
+        self.f.write(self.releases, '11.25.0/package.json', json.dumps({'bin': {'pnpm': '../10.33.4/bin/pnpm.cjs'}}))
+        rows = {r['path']: r for r in self.reap()}
+        self.assertEqual(rows[os.path.join(self.store, 'v11')]['reason'], 'no node or no pnpm release for this store version')
 
     def test_a_gate_that_started_recently_or_a_running_install_keeps_the_store_until_overnight(self):
         self.age_locks(5 * 60)
