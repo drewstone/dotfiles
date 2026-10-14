@@ -216,6 +216,20 @@ content — frozen install, typecheck, an optional proof command). No file
 means no quick check; pr-gate still does the merge/push/gh-merge steps. Any
 merge conflict outside CHANGELOG.md stops the gate for manual resolution.
 
+## merge-on-green
+
+Merges every green agent-container PR into develop. It runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge.
+
+A PR merges when it is not a draft, not conflicting and not a release branch; Fast Checks, Build and Type Check succeeded on its head; no check failed; no unresolved review thread opens with P0 or P1; it has no `hold` label or hold phrase ("do not merge", "merge only after"); and its head is at least 2 minutes old. The merge pins that head (`--match-head-commit`). A PR whose gate never ran is updated from develop once per head. A green PR that conflicts gets one comment per head.
+
+```bash
+merge-on-green --dry-run                 # print decisions, merge nothing
+cat ~/.local/state/merge-on-green/status.md       # what each open PR waits on
+tail ~/.local/state/merge-on-green/decisions.jsonl
+```
+
+To keep a ready PR open, add the `hold` label.
+
 ## receipt-sweep
 
 Lands agent-container PRs through the revision receipt, one at a time. Agents call

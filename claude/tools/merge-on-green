@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Merge every green agent-container pull request into develop.
+
+usage: merge-on-green [--repo owner/name] [--state-dir DIR] [--dry-run]
+
+One tick reads every open PR into develop in one GraphQL call and merges each
+PR that is ready:
+  - not a draft, not conflicting, not a release branch;
+  - Fast Checks, Build and Type Check succeeded on the current head;
+  - no check on the head failed;
+  - no unresolved review thread opens with P0 or P1;
+  - no hold label and no hold phrase in the body;
+  - its head is at least 2 minutes old (a push may still be landing).
+Merges pin the exact head they judged (--match-head-commit) and run as
+drewstone through gh-drew, so develop CI and release automation fire exactly
+as they do for any merge. Develop then runs the full test fan; red is fixed
+forward (docs/processes/shipping.md in agent-container).
+
+Each decision is appended to <state-dir>/decisions.jsonl and the open queue is
+written to <state-dir>/status.md. Run it from a timer; it holds a lock.
+"""
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+
+REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
+RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
+HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
+RED = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+MIN_HEAD_AGE_S = int(os.environ.get("MERGE_ON_GREEN_MIN_AGE_S", "120"))
+
+QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
+pullRequests(states:OPEN,baseRefName:"develop",first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
+number isDraft mergeable headRefName headRefOid body labels(first:20){nodes{name}}
+commits(last:1){nodes{commit{committedDate statusCheckRollup{contexts(first:100){nodes{__typename
+...on CheckRun{name conclusion status} ...on StatusContext{context state}}}}}}}
+reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{body}}}}}}}}"""
+
+
+def gh(*args, input=None):
+    return subprocess.run(["gh-drew", *args], input=input, capture_output=True, text=True)
+
+
+def decide(pr, now):
+    """Return (action, reason) for one PR node: merge, conflict, or wait."""
+    if pr["isDraft"]:
+        return "wait", "draft"
+    if pr["headRefName"].startswith(RELEASE_PREFIXES):
+        return "wait", "release branch"
+    labels = {l["name"] for l in pr["labels"]["nodes"]}
+    if "hold" in labels:
+        return "wait", "hold label"
+    if HOLD.search(pr.get("body") or ""):
+        return "wait", "hold phrase in body"
+    if any(not t["isResolved"] and re.search(r"\bP[01]\b", (t["comments"]["nodes"] or [{"body": ""}])[0]["body"])
+           for t in pr["reviewThreads"]["nodes"]):
+        return "wait", "unresolved P0/P1 thread"
+    commit = pr["commits"]["nodes"][0]["commit"]
+    checks = {}
+    for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", []):
+        if c["__typename"] == "CheckRun":
+            checks.setdefault(c["name"], []).append(c["conclusion"] or c["status"])
+        else:
+            checks.setdefault(c["context"], []).append(c["state"])
+    failed = sorted(n for n, states in checks.items() if any(s in RED for s in states))
+    if failed:
+        return "wait", "red: " + ", ".join(failed[:3])
+    missing = [n for n in REQUIRED if not checks.get(n) or any(s != "SUCCESS" for s in checks[n])]
+    if missing and pr["mergeable"] != "CONFLICTING" and all(n not in checks for n in REQUIRED):
+        # The gate never ran on this head (a PR opened before the gate existed):
+        # bring it up to date with develop, which runs the gate on the new head.
+        return "refresh", "gate never ran; updating from develop"
+    if missing:
+        return "wait", "waiting on " + ", ".join(missing)
+    age = (now - dt.datetime.fromisoformat(commit["committedDate"].replace("Z", "+00:00"))).total_seconds()
+    if age < MIN_HEAD_AGE_S:
+        return "wait", f"head {int(age)}s old"
+    if pr["mergeable"] == "CONFLICTING":
+        return "conflict", "conflicts with develop"
+    return "merge", "green"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--repo", default="tangle-network/agent-container")
+    ap.add_argument("--state-dir", default=os.path.expanduser("~/.local/state/merge-on-green"))
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+    owner, name = a.repo.split("/", 1)
+    os.makedirs(a.state_dir, exist_ok=True)
+    lock = open(os.path.join(a.state_dir, "lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0
+
+    r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}")
+    if r.returncode != 0:
+        print(f"merge-on-green: read failed: {r.stderr.strip()[:200]}", file=sys.stderr)
+        return 1
+    prs = json.loads(r.stdout)["data"]["repository"]["pullRequests"]["nodes"]
+    now = dt.datetime.now(dt.timezone.utc)
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    noted_path = os.path.join(a.state_dir, "conflict-noted.json")
+    noted = json.load(open(noted_path)) if os.path.exists(noted_path) else {}
+    status, records = [], []
+
+    for pr in prs:
+        n, head = pr["number"], pr["headRefOid"]
+        action, reason = decide(pr, now)
+        outcome = reason
+        if action == "merge" and not a.dry_run:
+            m = gh("pr", "merge", str(n), "-R", a.repo, "--merge", "--match-head-commit", head)
+            outcome = "merged" if m.returncode == 0 else "merge refused: " + (m.stderr.strip() or m.stdout.strip())[:160]
+        elif action == "refresh" and not a.dry_run and noted.get(f"refresh:{n}") != head:
+            u = gh("api", "--method", "PUT", f"repos/{a.repo}/pulls/{n}/update-branch", "-f", f"expected_head_sha={head}")
+            outcome = "updated from develop" if u.returncode == 0 else "update refused: " + (u.stderr.strip() or u.stdout.strip())[:160]
+            noted[f"refresh:{n}"] = head
+        elif action == "conflict" and not a.dry_run and noted.get(str(n)) != head:
+            gh("pr", "comment", str(n), "-R", a.repo, "--body",
+               "Green, but it conflicts with develop. Merge develop into the branch and it merges itself.")
+            noted[str(n)] = head
+        records.append({"at": stamp, "pr": n, "head": head, "action": action, "outcome": outcome})
+        if outcome != "merged":
+            status.append(f"- #{n} {pr['headRefName']}: {outcome}")
+
+    with open(os.path.join(a.state_dir, "decisions.jsonl"), "a") as f:
+        for rec in records:
+            if rec["action"] != "wait" or rec["outcome"] == "merged":
+                f.write(json.dumps(rec) + "\n")
+    json.dump(noted, open(noted_path, "w"))
+    with open(os.path.join(a.state_dir, "status.md"), "w") as f:
+        f.write(f"# merge-on-green {stamp}\n\n" + ("\n".join(status) or "Nothing waiting.") + "\n")
+    for rec in records:
+        if rec["action"] != "wait":
+            print(f"{stamp} #{rec['pr']} {rec['outcome']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
