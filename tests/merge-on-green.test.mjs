@@ -89,6 +89,13 @@ test("a PR whose gate never ran is updated from develop once per head, never mer
   assert.doesNotMatch(f.calls(), /pr merge 14 /);
 });
 
+test("a gate the old CI recorded as SKIPPED counts as never run, and the PR is updated from develop", () => {
+  const f = fixture([withChecks(15, [check("Fast Checks", "SKIPPED"), check("Build", "SKIPPED"), check("Type Check", "SKIPPED"), check("regressions")])]);
+  f.run();
+  assert.match(f.calls(), /pulls\/15\/update-branch/);
+  assert.doesNotMatch(f.calls(), /pr merge 15 /);
+});
+
 test("a merge GitHub refuses is recorded with its reason", () => {
   const f = fixture([pr(13)], { refuse: [13] });
   const r = f.run();
