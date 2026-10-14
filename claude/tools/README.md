@@ -216,6 +216,27 @@ content — frozen install, typecheck, an optional proof command). No file
 means no quick check; pr-gate still does the merge/push/gh-merge steps. Any
 merge conflict outside CHANGELOG.md stops the gate for manual resolution.
 
+## receipt-sweep
+
+Lands agent-container PRs through the revision receipt, one at a time. Agents call
+`receipt-sweep --detach <pr>...` and never write their own detached script.
+
+```bash
+receipt-sweep --detach 1234 1240          # login-shell child; prints log and result paths
+receipt-sweep [--repo tangle-network/agent-container] [--deadline 4h] [--state-dir DIR] <pr>...
+```
+
+For each PR it reads author, draft flag, state and head in one GraphQL call (skipping
+unless drewstone, open and not draft), re-reads the head before every attempt, and runs
+`beelink-gate --branch <branch> auto <repo-url> <head> -- node scripts/ci/revision-receipt.mjs merge <N>`.
+Exit 75 waits until the gate's `next_allowed` plus 20 s (clamped to 30 s..20 min) and retries
+until `--deadline`, with no attempt cap. A receipt step that failed after a passing signoff
+reruns once. Any other failure is recorded and the sweep moves on; red signoffs are not retried.
+Each PR appends exactly one line to `<state-dir>/<N>.result` (UTC time, pr, head, attempts,
+exit, state, merge commit, last receipt line) and prints it. `--detach` also writes
+`run-<stamp>.pid` and `.log` there, confirms after 20 s that the child lives and has no
+"command not found" (exit 127), and stops with `kill $(cat <pidfile>)`.
+
 ## beelink-gate
 
 From GTR, run a full-SHA gate on a beelink without creating a lane worktree there:
