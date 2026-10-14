@@ -96,6 +96,12 @@ test("a gate the old CI recorded as SKIPPED counts as never run, and the PR is u
   assert.doesNotMatch(f.calls(), /pr merge 15 /);
 });
 
+test("a red status from the retired local signoff does not hold a green PR", () => {
+  const f = fixture([withChecks(16, [...green, { __typename: "StatusContext", context: "signoff/local", state: "FAILURE" }])]);
+  f.run();
+  assert.match(f.calls(), /pr merge 16 /);
+});
+
 test("a merge GitHub refuses is recorded with its reason", () => {
   const f = fixture([pr(13)], { refuse: [13] });
   const r = f.run();
