@@ -15,7 +15,7 @@
 set -uo pipefail
 
 GH="${GH_CLI:-gh-drew}"
-REPO="${WF_REPO:-tangle-network/agent-dev-container}"
+REPO="${WF_REPO:-tangle-network/agent-container}"
 
 die() { echo "wf: $*" >&2; exit 1; }
 command -v "$GH" >/dev/null || die "$GH not found"

@@ -1,6 +1,6 @@
 # Durability and identities
 
-Read [prompt and dispatch types](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/src/types.ts) and the matching example in the [SDK examples](https://github.com/tangle-network/agent-dev-container/tree/develop/products/sandbox/sdk/examples).
+Read [prompt and dispatch types](https://github.com/tangle-network/agent-container/blob/develop/products/sandbox/sdk/src/types.ts) and the matching example in the [SDK examples](https://github.com/tangle-network/agent-container/tree/develop/products/sandbox/sdk/examples).
 Choose an attached stream, durable batch, Worker dispatch, or cross-process reconnect example according to the caller that can fail.
 
 | Identity | What it identifies |

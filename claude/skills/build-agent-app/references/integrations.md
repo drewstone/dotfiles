@@ -7,7 +7,7 @@ Use this when the product needs connectors, grants, approvals, webhooks, or host
 | Need | Package | Read first |
 |---|---|---|
 | Implement connector contracts or provider execution | `@tangle-network/agent-integrations` | [adoption and architecture guide](https://github.com/tangle-network/agent-integrations/blob/main/README.md) and [exports](https://github.com/tangle-network/agent-integrations/blob/main/package.json) |
-| Consume hosted Tangle Hub connections, tools, approvals, subscriptions, or workflows | `@tangle-network/hub-sdk` | [SDK guide](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/hub-sdk/README.md) and [exports](https://github.com/tangle-network/agent-dev-container/blob/develop/packages/hub-sdk/src/index.ts) |
+| Consume hosted Tangle Hub connections, tools, approvals, subscriptions, or workflows | `@tangle-network/hub-sdk` | [SDK guide](https://github.com/tangle-network/agent-container/blob/develop/packages/hub-sdk/README.md) and [exports](https://github.com/tangle-network/agent-container/blob/develop/packages/hub-sdk/src/index.ts) |
 
 Locate the relevant implementation, client method, and test for the chosen capability: catalog, credentials, direct execution, runtime, policy, delegation, webhook intake, or Hub action.
 Confirm imports against the target project's installed package before coding.

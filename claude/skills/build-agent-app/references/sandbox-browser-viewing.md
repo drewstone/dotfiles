@@ -1,6 +1,6 @@
 # Browser viewing
 
-Read [interactive session types](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/src/interactive-types.ts), [scoped token types](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/src/scoped-token-types.ts), and [gateway exports](https://github.com/tangle-network/agent-dev-container/blob/develop/products/sandbox/sdk/src/session-gateway/index.ts).
+Read [interactive session types](https://github.com/tangle-network/agent-container/blob/develop/products/sandbox/sdk/src/interactive-types.ts), [scoped token types](https://github.com/tangle-network/agent-container/blob/develop/products/sandbox/sdk/src/scoped-token-types.ts), and [gateway exports](https://github.com/tangle-network/agent-container/blob/develop/products/sandbox/sdk/src/session-gateway/index.ts).
 Use the current browser example for the SDK installed by the product.
 
 The browser gateway observes the supported session event path.
