@@ -22,12 +22,13 @@ function pr(number, over = {}) {
 }
 const withChecks = (n, nodes) => pr(n, { commits: { nodes: [{ commit: { committedDate: old, statusCheckRollup: { contexts: { nodes } } } }] } });
 
-function fixture(prs, { refuse = [] } = {}) {
+function fixture(prs, { refuse = [], conflictUpdate = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "mog-"));
   writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { pullRequests: { nodes: prs } } } }));
   writeFileSync(join(dir, "gh-drew"), `#!/bin/bash
 echo "$*" >> "${dir}/calls.log"
 if [ "$1 $2" = "api graphql" ]; then cat "${dir}/graphql.json"; exit 0; fi
+for r in ${conflictUpdate.join(" ")}; do [ "$1 $3 $4" = "api PUT repos/tangle-network/agent-container/pulls/$r/update-branch" ] && { echo "gh: merge conflict between base and head (HTTP 422)" >&2; exit 1; }; done
 if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r" ] && { echo "Pull Request is not mergeable" >&2; exit 1; }; done; exit 0; fi
 exit 0
 `);
@@ -87,6 +88,13 @@ test("a PR whose gate never ran is updated from develop once per head, never mer
   f.run(); f.run();
   assert.equal((f.calls().match(/api --method PUT repos\/tangle-network\/agent-container\/pulls\/14\/update-branch -f expected_head_sha=a+14/g) || []).length, 1);
   assert.doesNotMatch(f.calls(), /pr merge 14 /);
+});
+
+test("a PR whose gate cannot run because it conflicts tells its owner once per head", () => {
+  const f = fixture([withChecks(17, [check("regressions")])], { conflictUpdate: [17] });
+  f.run(); f.run();
+  assert.equal((f.calls().match(/pr comment 17 /g) || []).length, 1);
+  assert.doesNotMatch(f.calls(), /pr merge 17 /);
 });
 
 test("a gate the old CI recorded as SKIPPED counts as never run, and the PR is updated from develop", () => {

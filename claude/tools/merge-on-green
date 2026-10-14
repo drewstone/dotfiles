@@ -124,6 +124,11 @@ def main():
             u = gh("api", "--method", "PUT", f"repos/{a.repo}/pulls/{n}/update-branch", "-f", f"expected_head_sha={head}")
             outcome = "updated from develop" if u.returncode == 0 else "update refused: " + (u.stderr.strip() or u.stdout.strip())[:160]
             noted[f"refresh:{n}"] = head
+            if "conflict" in outcome and noted.get(str(n)) != head:
+                # GitHub runs no pull_request CI on a conflicting head, so only the owner can unblock it.
+                gh("pr", "comment", str(n), "-R", a.repo, "--body",
+                   "This conflicts with develop, so its gate cannot run. Merge develop into the branch and it merges itself once green.")
+                noted[str(n)] = head
         elif action == "conflict" and not a.dry_run and noted.get(str(n)) != head:
             gh("pr", "comment", str(n), "-R", a.repo, "--body",
                "Green, but it conflicts with develop. Merge develop into the branch and it merges itself.")
