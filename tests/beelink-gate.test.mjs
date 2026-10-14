@@ -85,6 +85,11 @@ if [[ -n "\${FAKE_PROBE_DROPS:-}" && " \${rest[*]} " == *" --probe "* ]]; then
   n=$(cat "$FAKE_PROBE_DROPS" 2>/dev/null || echo 0)
   if (( n > 0 )); then echo $((n - 1)) > "$FAKE_PROBE_DROPS"; exit 255; fi
 fi
+# FAKE_RECEIPT_DROPS names a file holding how many beelink1 receipt reads to drop.
+if [[ -n "\${FAKE_RECEIPT_DROPS:-}" && "$host" == 100.98.195.7 && " \${rest[*]} " == *" --receipts "* ]]; then
+  n=$(cat "$FAKE_RECEIPT_DROPS" 2>/dev/null || echo 0)
+  if (( n > 0 )); then echo $((n - 1)) > "$FAKE_RECEIPT_DROPS"; exit 255; fi
+fi
 if [[ -n "\${FAKE_STAGE_PAUSE:-}" && "\${rest[*]}" == "wsl.exe -- bash -s" ]]; then
   touch "$FAKE_STAGE_PAUSE"
   while [[ ! -e "$FAKE_STAGE_PAUSE.release" ]]; do sleep 0.05; done
@@ -2541,6 +2546,33 @@ test("--report gives runs per merged PR by repo, with modes, exit classes and ex
     assert.match(result.stdout, /REPEAT_REPO github\.com\/o\/r 4/);
     assert.match(result.stdout, /REPEAT_LANE op-company:gate 4/);
     assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("--report counts a renamed repo under its current name and marks a missing host's receipts as partial", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+    const row = (repo, sha) => JSON.stringify({ at, host: "beelink2", repo, sha, mode: "install", command: "npm test", exit: 0, waited_s: 5 });
+    mkdirSync(join(f.root, "state"), { recursive: true });
+    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("github.com/o/old", "a"), row("github.com/o/r", "b")].join("\n") + "\n");
+    // GitHub resolves the old name to the new one; search answers 2 merged PRs.
+    writeFileSync(join(f.root, "bin", "gh-drew"), '#!/usr/bin/env bash\n[[ "$*" == *repos/o/old* ]] && { echo o/r; exit 0; }\necho 2\n');
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    const drops = join(f.root, "receipt-drops");
+    const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_RECEIPT_DROPS: drops, BEELINK_GATE_PROBE_RETRY_SECONDS: "0" };
+    writeFileSync(drops, "1\n");
+    const retried = run(gate, ["--report", "24"], { env });
+    assert.equal(retried.status, 0, retried.stderr);
+    assert.match(retried.stdout, /o\/r\s+4\s+2\s+2\.0 /);
+    assert.doesNotMatch(retried.stdout, /o\/old|PARTIAL/);
+    writeFileSync(drops, "2\n");
+    const partial = run(gate, ["--report", "24"], { env });
+    assert.equal(partial.status, 75, partial.stderr);
+    assert.match(partial.stderr, /could not read beelink1's receipts/);
+    assert.match(partial.stdout, /^PARTIAL missing receipts from beelink1;/m);
+    assert.match(partial.stdout, /TOTAL 2 runs \/ 2 merged PRs = 1\.0 runs per merged PR \(target <= 1\.5\) PARTIAL missing beelink1/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

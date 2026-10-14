@@ -2541,15 +2541,23 @@ if [ "${1:-}" = --report ]; then
   hours=${2:-24}
   [[ "$hours" =~ ^[1-9][0-9]*$ ]] || die "usage: beelink-gate --report [hours]"
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
-  receipts_file=$(mktemp)
+  receipts_file=$(mktemp) host_rows=$(mktemp) missing=""
   for host in beelink1 beelink2; do
-    heartbeat=0 on_beelink "$host" --receipts 2>/dev/null | sed "s/^{/{\"from\": \"$host\", /" >> "$receipts_file" \
-      || echo "beelink-gate: --report could not read $host's receipts" >&2
+    # One retry, then a loud partial: on 2026-10-14 one dropped B1 read silently
+    # turned a 352-run window into a B2-only 115 runs at 1.0 runs per merged PR.
+    if heartbeat=0 on_beelink "$host" --receipts > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts > "$host_rows" 2>/dev/null; }; then
+      sed "s/^{/{\"from\": \"$host\", /" "$host_rows" >> "$receipts_file"
+    else
+      echo "beelink-gate: --report could not read $host's receipts" >&2
+      missing+="${missing:+,}$host"
+    fi
   done
+  rm -f "$host_rows"
   merged_lookup=$(command -v gh-drew || command -v gh || true)
-  python3 - "$receipts_file" "$hours" "$merged_lookup" <<'PY'
+  python3 - "$receipts_file" "$hours" "$merged_lookup" "$missing" <<'PY'
 import collections, datetime as dt, json, subprocess, sys
-path, hours, gh = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 now = dt.datetime.now(dt.timezone.utc)
 since = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 history = []
@@ -2559,6 +2567,21 @@ for line in open(path):
     except ValueError:
         continue
     history.append(r)
+# GitHub follows a renamed repo but its search does not, so receipts group under the
+# current name; otherwise agent-dev-container's runs after its rename had no merged count.
+canonical_names = {}
+def canonical(repo):
+    if not gh or not repo.startswith("github.com/"):
+        return repo
+    if repo not in canonical_names:
+        out = subprocess.run([gh, "api", f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"],
+                             capture_output=True, text=True)
+        name = out.stdout.strip()
+        canonical_names[repo] = f"github.com/{name}" if out.returncode == 0 and name.count("/") == 1 else repo
+    return canonical_names[repo]
+for r in history:
+    if r.get("repo"):
+        r["repo"] = canonical(r["repo"])
 rows = [r for r in history if r.get("at", "") >= since]
 def exit_class(code):
     return {0: "pass", 1: "fail", 2: "usage", 3: "refused", 75: "tempfail", 76: "replaced", 124: "timeout", 143: "stopped"}.get(code, "other")
@@ -2573,6 +2596,8 @@ def merged(repo):
                          capture_output=True, text=True)
     return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
 print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
+if missing:
+    print(f"PARTIAL missing receipts from {missing}; every count below omits that host")
 print(f"{'repo':38} {'runs':>5} {'merged':>6} {'runs/PR':>7} {'p50 wait':>8} {'repeats':>7}  modes / exits")
 total_runs = total_merged = 0
 for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
@@ -2588,7 +2613,8 @@ for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
     print(f"{repo[len('github.com/'):] if repo.startswith('github.com/') else repo:38} {len(rs):5} {m if m is not None else '?':>6} {ratio:>7} {waits[len(waits) // 2]:7}s {repeats:7}  "
           + " ".join(f"{k}={v}" for k, v in modes.most_common()) + " / " + " ".join(f"{k}={v}" for k, v in exits.most_common()))
 if total_merged:
-    print(f"TOTAL {total_runs} runs / {total_merged} merged PRs = {total_runs / total_merged:.1f} runs per merged PR (target <= 1.5)")
+    print(f"TOTAL {total_runs} runs / {total_merged} merged PRs = {total_runs / total_merged:.1f} runs per merged PR (target <= 1.5)"
+          + (f" PARTIAL missing {missing}" if missing else ""))
 # Recompute across both hosts: a receipt's own reason only sees its host's
 # history. A prior checkout on the other Beelink must not look like a first run.
 last_head, last_exact = {}, {}
@@ -2637,6 +2663,7 @@ for host, rs in sorted(by_host.items()):
     p50 = f"{hp[len(hp) // 2]:.1f}" if hp else "-"
     print(f"HOST {host}: {len(rs)} runs, p50 wait {waits[len(waits) // 2]}s, host cpu avg60 at admission p50 {p50} "
           f"({len(hp)} measured, {over} over 40), timeouts {sum(1 for r in rs if r.get('exit') == 124 or r.get('timed_out'))}")
+sys.exit(75 if missing else 0)
 PY
   status=$?
   rm -f "$receipts_file"
