@@ -1,0 +1,9 @@
+[Unit]
+Description=Merge green agent-container PRs into develop (dotfiles claude/tools/merge-on-green)
+Documentation=file://%h/bin/merge-on-green
+
+[Service]
+Type=oneshot
+Environment=FLEET_LANE=op-company:merge-on-green
+ExecStart=/bin/bash -lc '%h/bin/merge-on-green'
+TimeoutStartSec=10min

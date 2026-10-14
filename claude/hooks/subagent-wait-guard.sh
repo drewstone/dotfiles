@@ -55,9 +55,9 @@ if reason is None:
 # 2026-10-14: a detached receipt script on drew-gtr-pro ran under a non-login shell,
 # found neither gh-drew nor beelink-gate, exited 127 at once, and the PR waited
 # unmerged behind a result file nobody had checked.
-msg = (reason + " To land a PR, run `receipt-sweep --detach <pr>`: it waits out the gate, "
-       "merges through the revision receipt and writes one result line to "
-       "~/.local/state/receipt-sweep/<pr>.result; never write your own detached script. "
+msg = (reason + " To land an agent-container PR, push it and stop: merge-on-green merges it "
+       "once Fast Checks, Build and Type Check are green; never wait for it or write your own "
+       "merge script. "
        "For other waiting, arm a nohup script on drew-gtr-pro or a Beelink that does the "
        "waiting, acts on the result and writes one line to a results file, started with "
        "`setsid nohup bash -lc '<script>'` so PATH has gh-drew and beelink-gate; read its "

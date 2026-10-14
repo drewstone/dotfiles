@@ -22,9 +22,10 @@ Own the smallest complete production outcome. Delete obsolete behavior, reuse th
 Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.
 When you measure something by hand with a script, build that measurement into its owner's live instrument in the same session (Discovery: the scorecard and the run page); the script is only a reference.
 
-For executable changes, merge the base and pass frozen install, typecheck, and affected tests on a Beelink.
+Executable changes merge on a fast gate, get the full suite after merge, and are gated again before deploy ([Anthropic's model](https://www.anthropic.com/engineering/redesigning-source-control)).
+In agent-container, push and stop: Fast Checks, Build and Type Check gate the PR, `merge-on-green` merges it within minutes of green, develop runs the full fan, and a red develop is fixed forward.
+Elsewhere, run the 2-minute gate on a Beelink (merge the base, frozen install, typecheck, the change's own tests), then merge immediately.
 For documentation-only changes, use relevant content, link, or structural checks.
-When that local gate passes, merge or enable auto-merge immediately.
 Never watch PR CI; fix failures forward while preserving hooks, enforced protections, and release authority.
 Add CI or automated review gates only when requested; never request hosted Codex PR reviews.
 Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
