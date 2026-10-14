@@ -55,10 +55,13 @@ if reason is None:
 # 2026-10-14: a detached receipt script on drew-gtr-pro ran under a non-login shell,
 # found neither gh-drew nor beelink-gate, exited 127 at once, and the PR waited
 # unmerged behind a result file nobody had checked.
-msg = (reason + " Arm a nohup script on drew-gtr-pro or a Beelink that does the waiting, "
-       "acts on the result and writes one line to a results file. Start it with "
-       "`setsid nohup bash -lc '<script>'` so PATH has gh-drew and beelink-gate, and read "
-       "its log once before you end your turn: exit 127 means a command is not on PATH. "
+msg = (reason + " To land a PR, run `receipt-sweep --detach <pr>`: it waits out the gate, "
+       "merges through the revision receipt and writes one result line to "
+       "~/.local/state/receipt-sweep/<pr>.result; never write your own detached script. "
+       "For other waiting, arm a nohup script on drew-gtr-pro or a Beelink that does the "
+       "waiting, acts on the result and writes one line to a results file, started with "
+       "`setsid nohup bash -lc '<script>'` so PATH has gh-drew and beelink-gate; read its "
+       "log once before you end your turn: exit 127 means a command is not on PATH. "
        "Then end your turn with your final report. Do the work yourself instead of "
        "delegating it.")
 print(json.dumps({
