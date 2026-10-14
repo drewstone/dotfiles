@@ -9,7 +9,7 @@ import test from "node:test";
 const TOOL = resolve("claude/tools/merge-on-green");
 const old = "2026-01-01T00:00:00Z";
 const sha = (n) => String(n).padStart(40, "a");
-const check = (name, conclusion = "SUCCESS", status = "COMPLETED") => ({ __typename: "CheckRun", name, conclusion, status });
+const check = (name, conclusion = "SUCCESS", status = "COMPLETED") => ({ __typename: "CheckRun", name, conclusion, status, completedAt: "2026-01-01T00:09:30Z" });
 const green = [check("Fast Checks"), check("Build"), check("Type Check")];
 
 function pr(number, over = {}) {
@@ -46,6 +46,8 @@ test("a green PR merges, pinned to the head it judged", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(f.calls(), new RegExp(`pr merge 1 -R tangle-network/agent-container --merge --match-head-commit ${sha(1)}`));
   assert.match(r.stdout, /#1 merged/);
+  assert.match(readFileSync(join(f.dir, "state", "decisions.jsonl"), "utf8"), /"head_to_green_s": 570/);
+  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /last 1 merges: p50 9 min, max 9 min/);
 });
 
 test("anything not green and ready waits, and is never merged", () => {

@@ -40,7 +40,7 @@ QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$nam
 pullRequests(states:OPEN,baseRefName:"develop",first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
 number isDraft mergeable headRefName headRefOid body labels(first:20){nodes{name}}
 commits(last:1){nodes{commit{committedDate statusCheckRollup{contexts(first:100){nodes{__typename
-...on CheckRun{name conclusion status} ...on StatusContext{context state}}}}}}}
+...on CheckRun{name conclusion status completedAt} ...on StatusContext{context state}}}}}}}
 reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{body}}}}}}}}"""
 
 
@@ -88,6 +88,17 @@ def decide(pr, now):
     return "merge", "green"
 
 
+def head_to_green_s(pr):
+    """Seconds from the head commit to the last required check passing, or None."""
+    commit = pr["commits"]["nodes"][0]["commit"]
+    done = [c.get("completedAt") for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", [])
+            if c["__typename"] == "CheckRun" and c["name"] in REQUIRED and c.get("completedAt")]
+    if len(done) < len(REQUIRED):
+        return None
+    parse = lambda t: dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    return int((max(map(parse, done)) - parse(commit["committedDate"])).total_seconds())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default="tangle-network/agent-container")
@@ -133,7 +144,10 @@ def main():
             gh("pr", "comment", str(n), "-R", a.repo, "--body",
                "Green, but it conflicts with develop. Merge develop into the branch and it merges itself.")
             noted[str(n)] = head
-        records.append({"at": stamp, "pr": n, "head": head, "action": action, "outcome": outcome})
+        rec = {"at": stamp, "pr": n, "head": head, "action": action, "outcome": outcome}
+        if outcome == "merged":
+            rec["head_to_green_s"] = head_to_green_s(pr)
+        records.append(rec)
         if outcome != "merged":
             status.append(f"- #{n} {pr['headRefName']}: {outcome}")
 
@@ -142,8 +156,17 @@ def main():
             if rec["action"] != "wait" or rec["outcome"] == "merged":
                 f.write(json.dumps(rec) + "\n")
     json.dump(noted, open(noted_path, "w"))
+    gates = []
+    with open(os.path.join(a.state_dir, "decisions.jsonl")) as f:
+        for line in f:
+            g = json.loads(line).get("head_to_green_s")
+            if isinstance(g, int):
+                gates.append(g)
+    gates = sorted(gates[-20:])
+    gate_line = (f"Gate, head to green, last {len(gates)} merges: p50 {gates[len(gates) // 2] // 60} min, "
+                 f"max {gates[-1] // 60} min.\n\n") if gates else ""
     with open(os.path.join(a.state_dir, "status.md"), "w") as f:
-        f.write(f"# merge-on-green {stamp}\n\n" + ("\n".join(status) or "Nothing waiting.") + "\n")
+        f.write(f"# merge-on-green {stamp}\n\n" + gate_line + ("\n".join(status) or "Nothing waiting.") + "\n")
     for rec in records:
         if rec["action"] != "wait":
             print(f"{stamp} #{rec['pr']} {rec['outcome']}")
