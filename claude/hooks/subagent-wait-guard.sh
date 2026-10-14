@@ -52,9 +52,15 @@ elif tool == "Agent":
 if reason is None:
     sys.exit(0)
 
+# 2026-10-14: a detached receipt script on drew-gtr-pro ran under a non-login shell,
+# found neither gh-drew nor beelink-gate, exited 127 at once, and the PR waited
+# unmerged behind a result file nobody had checked.
 msg = (reason + " Arm a nohup script on drew-gtr-pro or a Beelink that does the waiting, "
-       "acts on the result and writes one line to a results file, then end your turn "
-       "with your final report. Do the work yourself instead of delegating it.")
+       "acts on the result and writes one line to a results file. Start it with "
+       "`setsid nohup bash -lc '<script>'` so PATH has gh-drew and beelink-gate, and read "
+       "its log once before you end your turn: exit 127 means a command is not on PATH. "
+       "Then end your turn with your final report. Do the work yourself instead of "
+       "delegating it.")
 print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "PreToolUse",
