@@ -211,6 +211,7 @@ admit_window() {
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
     python3 - "$1" "$2" "$3" "${4:-0}" <<'PY'
+import contextlib
 import fcntl
 import os
 from pathlib import Path
@@ -221,6 +222,26 @@ import time
 
 root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 locks = root / ".locks"
+
+@contextlib.contextmanager
+def writer_intent():
+    # Register before waiting for the exclusive capacity lock. New checkout
+    # claims then drain instead of indefinitely overtaking this pruner.
+    writer_fd = os.open(locks / ".capacity.writer.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    intent = locks / ".capacity.writer.intent"
+    try:
+        fcntl.flock(writer_fd, fcntl.LOCK_EX)
+        # The writer lock, not a PID or clock lease, proves an intent is live.
+        # A process death releases it, so the next writer can clear the marker.
+        intent.unlink(missing_ok=True)
+        marker_fd = os.open(intent, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        os.close(marker_fd)
+        try:
+            yield
+        finally:
+            intent.unlink(missing_ok=True)
+    finally:
+        os.close(writer_fd)
 
 def size(path):
     result = subprocess.run(
@@ -247,7 +268,7 @@ def free_bytes(path):
     return stat.f_bavail * stat.f_frsize
 
 try:
-    with (locks / ".capacity.lock").open("a+") as global_lock:
+    with writer_intent(), (locks / ".capacity.lock").open("a+") as global_lock:
         lock_wait_start = time.monotonic_ns()
         fcntl.flock(global_lock, fcntl.LOCK_EX)
         lock_acquired = time.monotonic_ns()
@@ -327,6 +348,38 @@ finally:
         except OSError:
             pass  # Measurement must not change the gate result.
 PY
+}
+
+# A writer holds the fd lock for its whole intent and removal pass. If it dies,
+# flock releases that lock; a claimant can then remove its abandoned marker.
+capacity_writer_active() {
+  [ -e "$intent_file" ] || [ -L "$intent_file" ] || return 1
+  [ ! -L "$intent_file" ] && [ -f "$intent_file" ] || die "capacity writer intent is not a regular file"
+  if flock -n -x "$writer_fd"; then
+    rm -f -- "$intent_file" || die "cannot clear stale capacity writer intent"
+    flock -u "$writer_fd"
+    return 1
+  fi
+  return 0
+}
+
+wait_for_capacity_writer() {
+  local now_ms elapsed_ms
+  now_ms=$(date +%s%3N)
+  (( intent_started_ms )) || intent_started_ms=$now_ms
+  elapsed_ms=$((now_ms - intent_started_ms))
+  if (( elapsed_ms >= intent_wait_limit * 1000 )); then
+    if (( placed_auto )); then
+      not_admitted "capacity writer intent exceeded ${intent_wait_limit}s"
+    fi
+    tempfail "$(utc_in_minutes 5)" "capacity writer intent exceeded ${intent_wait_limit}s on $beelink"
+  fi
+  if (( SECONDS - last_report >= 60 )); then
+    echo "beelink-gate: waiting $((elapsed_ms / 1000))s for capacity writer on $beelink" >&2
+    last_report=$SECONDS
+  fi
+  admission_expired && not_admitted "capacity writer in progress"
+  sleep 1 & wait $!
 }
 
 # Use only this command's locked, disposable checkouts to restore a host's disk
@@ -1358,7 +1411,7 @@ remote_gate() {
   # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
   # not take both beelinks. On 2026-10-11, 38 gates of one repo from one lane
   # waited 527 min in total behind a single checkout per host.
-  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd capacity_fd
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd capacity_fd writer_fd
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
   # A light gate waits behind no normal gate: it has its own <repo>@light checkout.
   (( light == 0 )) || copies=1
@@ -1366,8 +1419,15 @@ remote_gate() {
   (( dev == 0 )) || copies=1
   unset BEELINK_GATE_REPO_CHECKOUTS
   mkdir -p "$cache_root/.locks" "$cache_root/$host/$owner" || die "cannot create cache"
-  [ ! -L "$cache_root/.locks/.capacity.lock" ] || die "capacity lock is a symlink"
+  local intent_wait_limit=${BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS:-120} intent_started_ms=0
+  [[ "$intent_wait_limit" =~ ^[1-9][0-9]*$ ]] && (( intent_wait_limit <= 120 )) \
+    || die "invalid BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS: $intent_wait_limit (max 120)"
+  unset BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS
+  local intent_file="$cache_root/.locks/.capacity.writer.intent"
+  [ ! -L "$cache_root/.locks/.capacity.lock" ] && [ ! -L "$cache_root/.locks/.capacity.writer.lock" ] \
+    || die "capacity lock is a symlink"
   exec {capacity_fd}>>"$cache_root/.locks/.capacity.lock" || die "cannot open capacity lock"
+  exec {writer_fd}>>"$cache_root/.locks/.capacity.writer.lock" || die "cannot open capacity writer lock"
   lock=""
   local waiting_since=$SECONDS last_report=-60 capacity_claim_wait_ms=0 claim_started_ms
   checkout=""
@@ -1393,12 +1453,28 @@ remote_gate() {
     # while other gates can claim their own repos at the same time. Release it
     # as soon as the repo flock is held; the command keeps only its repo lock.
     claim_started_ms=$(date +%s%3N)
-    while ! flock -w 1 -s "$capacity_fd"; do
-      if (( SECONDS - last_report >= 60 )); then
-        echo "beelink-gate: waiting $((SECONDS - waiting_since))s for capacity cleanup on $beelink" >&2
-        last_report=$SECONDS
+    while :; do
+      if capacity_writer_active; then
+        wait_for_capacity_writer
+        continue
       fi
-      admission_expired && not_admitted "capacity cleanup in progress"
+      intent_started_ms=0
+      if ! flock -w 1 -s "$capacity_fd"; then
+        if (( SECONDS - last_report >= 60 )); then
+          echo "beelink-gate: waiting $((SECONDS - waiting_since))s for capacity cleanup on $beelink" >&2
+          last_report=$SECONDS
+        fi
+        admission_expired && not_admitted "capacity cleanup in progress"
+        continue
+      fi
+      # An intent can register while the shared claim waits for .capacity.lock.
+      # Check again before taking any repo lock; give the claim back to the writer.
+      if capacity_writer_active; then
+        flock -u "$capacity_fd"
+        wait_for_capacity_writer
+        continue
+      fi
+      break
     done
     capacity_claim_wait_ms=$((capacity_claim_wait_ms + $(date +%s%3N) - claim_started_ms))
     # Each older waiter reserves one free checkout; with two free and one older
@@ -1436,6 +1512,7 @@ remote_gate() {
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
   exec {capacity_fd}>&-
+  exec {writer_fd}>&-
   rm -f "$urgent_marker.$$" "$ticket"
   if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
   [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
