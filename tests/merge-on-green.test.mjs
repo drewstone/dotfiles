@@ -196,6 +196,15 @@ test("a check judged by its latest run: a failure re-run green merges", () => {
   assert.match(f.calls(), /pr merge 32 /);
 });
 
+test("a red gate is refreshed from develop once per head and develop; a red side check only waits", () => {
+  const f = fixture([withChecks(40, [check("Fast Checks"), check("Build"), check("Type Check", "FAILURE")]), withChecks(41, [...green, check("Unit Tests", "FAILURE")])]);
+  f.run(); f.run();
+  assert.equal((f.calls().match(/pulls\/40\/update-branch/g) || []).length, 1);
+  assert.doesNotMatch(f.calls(), /pulls\/41\/update-branch/);
+  assert.doesNotMatch(f.calls(), /pr merge 4[01] /);
+  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /#40 .*red gate: Type Check; already refreshed/);
+});
+
 test("a merge GitHub refuses is recorded with its reason", () => {
   const f = fixture([pr(13)], { refuse: [13] });
   const r = f.run();
