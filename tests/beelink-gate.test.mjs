@@ -1139,7 +1139,7 @@ test("a repo's committed sparse patterns keep excluded paths out of every gate c
     const checkout = join(f.cache, "local", "owner", "repo");
     const plain = f.call(f.second, ["true"]);
     assert.equal(plain.status, 0, plain.stderr);
-    assert.match(plain.stderr, / sparse=none workers=/);
+    assert.match(plain.stderr, / sparse=none checkout=/);
     assert.equal(receipts(f).at(-1).sparse, null);
     assert.equal(sparseConfig(checkout), "", "a repo without patterns keeps a full checkout");
 
@@ -1154,7 +1154,7 @@ test("a repo's committed sparse patterns keep excluded paths out of every gate c
     const first = f.call(sparse, check);
     assert.equal(first.status, 0, first.stderr);
     assert.match(first.stderr, /applying repo sparse patterns to \S+: \/\* !\/history\//);
-    assert.match(first.stderr, / sparse=repo workers=/);
+    assert.match(first.stderr, / sparse=repo checkout=/);
     assert.equal(receipts(f).at(-1).sparse, "repo");
     // A later gate keeps the patterns without setting them again.
     const again = f.call(sparse, check);
