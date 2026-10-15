@@ -45,7 +45,7 @@ function pr(number, over = {}) {
   return {
     number, isDraft: false, mergeable: "MERGEABLE", headRefName: `feat/${number}`, headRefOid: sha(number),
     body: "Problem, change, proof.", labels: { nodes: [] },
-    commits: { nodes: [{ commit: { committedDate: old, statusCheckRollup: { contexts: { nodes: green } } } }] },
+    commits: { nodes: [{ commit: { committedDate: old, checkSuites: { nodes: [{ createdAt: "2026-01-01T00:05:00Z" }] }, statusCheckRollup: { contexts: { nodes: green } } } }] },
     reviewThreads: { nodes: [] }, ...over,
   };
 }
@@ -77,8 +77,8 @@ test("a green PR merges, pinned to the head it judged", () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(f.calls(), new RegExp(`pr merge 1 -R tangle-network/agent-container --merge --match-head-commit ${sha(1)}`));
   assert.match(r.stdout, /#1 merged/);
-  assert.match(readFileSync(join(f.dir, "state", "decisions.jsonl"), "utf8"), /"head_to_green_s": 570/);
-  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /last 1 merges: p50 9 min, max 9 min/);
+  assert.match(readFileSync(join(f.dir, "state", "decisions.jsonl"), "utf8"), /"head_to_green_s": 270/);
+  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /last 1 merges: p50 4 min, max 4 min/);
 });
 
 test("anything not green and ready waits, and is never merged", () => {
