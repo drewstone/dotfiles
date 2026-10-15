@@ -3153,6 +3153,44 @@ test("a free checkout goes to the oldest waiting gate, not the first to poll", a
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("an auto gate keeps its reservation's place in line, so it and a newer gate never wait for each other", async () => {
+  const f = fixture();
+  const owners = [];
+  try {
+    // The launcher reserved the auto gate's place on both hosts at epoch `reserved`. Every
+    // ticket is owned by a live process and written after it starts, as waiter_alive requires.
+    const token = "ab".repeat(16);
+    const reserved = Math.floor(Date.now() / 1000) - 100;
+    const live = async () => { const child = spawn("sleep", ["120"]); owners.push(child); await sleepMs(50); return child.pid; };
+    const [reservation, newcomer] = [await live(), await live()].sort((a, b) => a - b);
+    const caches = ["100.98.195.7", "100.127.22.51"].map((ip) => join(f.root, `cache-${ip}`));
+    const ticketDir = (cache) => { mkdirSync(join(cache, ".locks"), { recursive: true }); return join(cache, ".locks"); };
+    for (const cache of caches) writeFileSync(join(ticketDir(cache), `queue-local-owner-repo.${reserved}.${reservation}`), token);
+    const beelink2 = caches[1];
+    const events = join(f.root, "events");
+    const gateOn = (who, env) => f.call(f.first, ["bash", "-c", `echo ${who} >> '${events}'`], { noInstall: true,
+      env: { BEELINK_GATE_CACHE_ROOT: beelink2, BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_ADMIT_WAIT: "3", ...env } });
+    // The auto gate was placed after waiting 0 s, so `now - placed_wait` would date it now.
+    const auto = { BEELINK_GATE_AUTO: "1", BEELINK_GATE_RESERVATION_TOKEN: token, BEELINK_GATE_PLACED_WAIT: "0" };
+
+    for (const [label, newerEpoch] of [["a newer gate dated between the reservation and now", reserved + 50], ["a newer gate in the reservation's second", reserved]]) {
+      const newerTicket = join(ticketDir(beelink2), `queue-local-owner-repo.${newerEpoch}.${newcomer}`);
+      writeFileSync(newerTicket, "");
+      const first = gateOn("auto", auto);
+      assert.equal(first.status, 0, `${label}: the auto gate waited for a newer gate\n${first.stderr}`);
+      rmSync(newerTicket);
+      // The newer gate, dated by its own wait, defers to the reservation alone and is given back.
+      const second = gateOn("newer", { BEELINK_GATE_AUTO: "1", BEELINK_GATE_PLACED_WAIT: String(Math.floor(Date.now() / 1000) - newerEpoch) });
+      assert.equal(second.status, 76, `${label}: the newer gate went ahead of the reservation\n${second.stderr}`);
+      assert.match(second.stderr, /not admitted on beelink2 within 3s \(both local\/owner\/repo checkouts busy\)/);
+    }
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["auto", "auto"]);
+  } finally {
+    for (const child of owners) child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("a normal auto waiter keeps its place ahead of a newer gate while both hosts are busy", async () => {
   const f = fixture();
   const events = join(f.root, "fifo-events");
