@@ -177,6 +177,25 @@ test("a refused conflict is retried only after develop moves", () => {
   assert.equal((f.calls().match(/pr comment 19 /g) || []).length, 1);
 });
 
+test("a cancelled non-gate run does not hold a green PR, and a gate run must still succeed", () => {
+  const f = fixture([
+    withChecks(30, [...green, check("regressions", "CANCELLED")]),
+    withChecks(31, [check("Fast Checks"), check("Build", "CANCELLED"), check("Type Check")]),
+  ]);
+  f.run();
+  assert.match(f.calls(), /pr merge 30 /);
+  assert.doesNotMatch(f.calls(), /pr merge 31 /);
+  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /#31 .*waiting on Build/);
+});
+
+test("a check judged by its latest run: a failure re-run green merges", () => {
+  const failedFirst = { ...check("Unit Tests", "FAILURE"), completedAt: "2026-01-01T00:05:00Z" };
+  const greenAfter = { ...check("Unit Tests"), completedAt: "2026-01-01T00:20:00Z" };
+  const f = fixture([withChecks(32, [...green, failedFirst, greenAfter])]);
+  f.run();
+  assert.match(f.calls(), /pr merge 32 /);
+});
+
 test("a merge GitHub refuses is recorded with its reason", () => {
   const f = fixture([pr(13)], { refuse: [13] });
   const r = f.run();
