@@ -1008,6 +1008,64 @@ echo $(( $(cat "$FAKE_AVAIL_FILE") - 50000000000 )) > "$FAKE_AVAIL_FILE"
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("the reserve measures the store the frozen install writes, even when the environment names another", () => {
+  const f = fixture();
+  try {
+    publish(f, "pnpm", () => { rmSync(join(f.source, "package-lock.json")); writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n"); });
+    const sha = f.git(["rev-parse", "HEAD"]);
+    // The install writes 3 MB into the --store-dir the gate passes it.
+    writeFileSync(join(f.root, "bin", "pnpm"), `#!/usr/bin/env bash
+[ "$1" = install ] || exit 0
+while [ $# -gt 0 ]; do [ "$1" = --store-dir ] && store=$2; shift; done
+mkdir -p "$store/v10/files/bb" && head -c 3000000 /dev/zero > "$store/v10/files/bb/blob"
+`);
+    const custom = join(f.root, "custom-store");
+    mkdirSync(custom);
+    const result = f.call(sha, ["true"], { env: { npm_config_store_dir: custom } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(existsSync(join(f.home, ".local", "share", "pnpm", "store", "v10", "files", "bb", "blob")));
+    const row = receipts(f).at(-1);
+    assert.ok(row.reserve_gate_bytes >= 3_000_000, `the install store's 3 MB were left out: ${JSON.stringify(row)}`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a measurement of the gate's bytes is cut at the gate's remaining hold, so the lock is never held past it", () => {
+  const f = fixture();
+  try {
+    // du for the gate's bytes (--total) hangs; the cache pruner's own du is untouched.
+    writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash
+[[ " $* " == *" --total "* ]] && exec sleep 40
+exec /usr/bin/du "$@"
+`);
+    chmodSync(join(f.root, "bin", "du"), 0o755);
+    const started = Date.now();
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_MAX_HOLD: "6s" } });
+    const elapsed = (Date.now() - started) / 1000;
+    // The spent hold stops the next step, git ls-remote, which the gate reports as TEMPFAIL.
+    assert.equal(result.status, 75, result.stderr);
+    assert.match(result.stderr, /hold limit of 6s reached/);
+    // A fixed 60 s bound let the first hung measurement alone hold the lock for 40 s.
+    assert.ok(receipts(f).at(-1).ran_s <= 15 && elapsed < 30, `held ${receipts(f).at(-1).ran_s}s (wall ${elapsed}s) against a 6 s hold`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a measurement whose du ignores TERM is still cut at the gate's remaining hold", () => {
+  const f = fixture();
+  try {
+    // An ignored signal survives exec, so this du outlives a TERM.
+    writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash
+if [[ " $* " == *" --total "* ]]; then trap '' TERM; exec sleep 40; fi
+exec /usr/bin/du "$@"
+`);
+    chmodSync(join(f.root, "bin", "du"), 0o755);
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_MAX_HOLD: "6s" } });
+    assert.equal(result.status, 75, result.stderr);
+    assert.match(result.stderr, /hold limit of 6s reached/);
+    // A KILL sent five seconds after the TERM held the lock to about 12 s.
+    assert.ok(receipts(f).at(-1).ran_s <= 9, `held ${receipts(f).at(-1).ran_s}s against a 6 s hold`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a measurement of the gate's bytes that times out or fails records the cold reserve, never less than the headroom", () => {
   const f = fixture();
   try {
@@ -3151,6 +3209,53 @@ test("a free checkout goes to the oldest waiting gate, not the first to poll", a
     assert.match(stderr, /admitted/);
     assert.equal(readdirSync(join(f.cache, ".locks")).filter((n) => n.startsWith("queue-")).length, 0, "tickets are cleaned up");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an auto gate keeps its reservation's place in line, so it and a newer gate never wait for each other", async () => {
+  const f = fixture();
+  const owners = [];
+  try {
+    // The launcher reserved the auto gate's place on both hosts at epoch `reserved`. Every
+    // ticket is owned by a live process and written after it starts, as waiter_alive requires.
+    const token = "ab".repeat(16);
+    const reserved = Math.floor(Date.now() / 1000) - 100;
+    const live = async () => { const child = spawn("sleep", ["120"]); owners.push(child); await sleepMs(50); return child.pid; };
+    const [reservation, newcomer] = [await live(), await live()].sort((a, b) => a - b);
+    const caches = ["100.98.195.7", "100.127.22.51"].map((ip) => join(f.root, `cache-${ip}`));
+    const ticketDir = (cache) => { mkdirSync(join(cache, ".locks"), { recursive: true }); return join(cache, ".locks"); };
+    for (const cache of caches) writeFileSync(join(ticketDir(cache), `queue-local-owner-repo.${reserved}.${reservation}`), token);
+    const beelink2 = caches[1];
+    const events = join(f.root, "events");
+    const gateOn = (who, env) => f.call(f.first, ["bash", "-c", `echo ${who} >> '${events}'`], { noInstall: true,
+      env: { BEELINK_GATE_CACHE_ROOT: beelink2, BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_ADMIT_WAIT: "3", ...env } });
+    // The auto gate was placed after waiting 0 s, so `now - placed_wait` would date it now.
+    const auto = { BEELINK_GATE_AUTO: "1", BEELINK_GATE_RESERVATION_TOKEN: token, BEELINK_GATE_PLACED_WAIT: "0" };
+
+    // A newer gate dated between the reservation and now - placed_wait: the auto gate goes
+    // first, and the newer gate, dated by its own wait, defers to the reservation alone.
+    // No epochs tie, so no pid decides the order.
+    let newerTicket = join(ticketDir(beelink2), `queue-local-owner-repo.${reserved + 50}.${newcomer}`);
+    writeFileSync(newerTicket, "");
+    const first = gateOn("auto", auto);
+    assert.equal(first.status, 0, `the auto gate waited for a newer gate\n${first.stderr}`);
+    rmSync(newerTicket);
+    const second = gateOn("newer", { BEELINK_GATE_AUTO: "1", BEELINK_GATE_PLACED_WAIT: String(Math.floor(Date.now() / 1000) - reserved - 50) });
+    assert.equal(second.status, 76, `the newer gate went ahead of the reservation\n${second.stderr}`);
+    assert.match(second.stderr, /not admitted on beelink2 within 3s \(both local\/owner\/repo checkouts busy\)/);
+
+    // A newer ticket in the reservation's own second, with a larger pid than the reservation:
+    // the auto gate's place is the oldest of its tickets, so it does not wait either. (A real
+    // gate's own pid cannot be chosen, so only this side of a tie is checked.)
+    newerTicket = join(ticketDir(beelink2), `queue-local-owner-repo.${reserved}.${newcomer}`);
+    writeFileSync(newerTicket, "");
+    const tied = gateOn("auto", auto);
+    assert.equal(tied.status, 0, `in a tie the auto gate waited for a newer gate\n${tied.stderr}`);
+    rmSync(newerTicket);
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["auto", "auto"]);
+  } finally {
+    for (const child of owners) child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 test("a normal auto waiter keeps its place ahead of a newer gate while both hosts are busy", async () => {

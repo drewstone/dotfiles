@@ -750,21 +750,29 @@ waiter_alive() {  # <ticket or marker file> <pid>
   (( btime + fields[19] / $(getconf CLK_TCK) <= written + 1 ))
 }
 older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tickets from other gates
-  local t rest since pid token key n=0
-  local -A seen=()
+  # A gate's place is the oldest (epoch, pid) among its tickets: an auto gate holds a
+  # reservation ticket and its own, under one token. Every gate compares those same
+  # pairs, so two gates can never each count the other as ahead.
+  local t rest since pid token key me_since=$2 me_pid=$$ n=0
+  local -A key_since=() key_pid=()
   for t in "$1".*.*; do
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
     [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
-    [ "$pid" != "$$" ] || continue
     token=$(cat "$t" 2>/dev/null) || token=""
     [[ "$token" =~ ^[0-9a-f]{32}$ ]] || token=""
-    [ -z "$token" ] || [ "$token" != "${reservation_token:-}" ] || continue
+    if [ "$pid" = "$$" ] || { [ -n "$token" ] && [ "$token" = "${reservation_token:-}" ]; }; then
+      if (( since < me_since || (since == me_since && pid < me_pid) )); then me_since=$since me_pid=$pid; fi
+      continue
+    fi
     if ! waiter_alive "$t" "$pid"; then rm -f "$t"; continue; fi
     key=${token:-$pid}
-    [ -z "${seen[$key]:-}" ] || continue
-    seen[$key]=1
-    if (( since < $2 || (since == $2 && pid < $$) )); then n=$((n + 1)); fi
+    if [ -z "${key_since[$key]:-}" ] || (( since < key_since[$key] || (since == key_since[$key] && pid < key_pid[$key]) )); then
+      key_since[$key]=$since key_pid[$key]=$pid
+    fi
+  done
+  for key in "${!key_since[@]}"; do
+    if (( key_since[$key] < me_since || (key_since[$key] == me_since && key_pid[$key] < me_pid) )); then n=$((n + 1)); fi
   done
   echo "$n"
 }
@@ -1059,11 +1067,16 @@ PY
 # writes, in one du, so a node_modules file hardlinked into the store counts once.
 # On beelink1 at load 12-16 the Lab checkout and the 15 GiB pnpm store (486,018
 # files) took 1.1-2.7 s. Prints nothing when du fails, warns about anything but a
-# file that vanished mid-scan, or runs past 60 s.
-gate_bytes() {  # <checkout> <store>...
-  local out err rc
+# file that vanished mid-scan, or runs past <seconds> (the caller passes 60 s or the
+# gate's remaining hold, whichever is less, so a scan never holds the lock past it).
+gate_bytes() {  # <seconds> <checkout> <store>...
+  local limit=$1 out err rc
+  shift
+  (( limit > 0 )) || return 1
   err=$(mktemp) || return 1
-  out=$(LC_ALL=C timeout 60 du -s --total -B1 -- "$@" 2>"$err"); rc=$?
+  # KILL at the limit itself: du needs no cleanup, and a grace after TERM would let
+  # a du that ignores TERM keep the lock past the hold.
+  out=$(LC_ALL=C timeout -s KILL "$limit" du -s --total -B1 -- "$@" 2>"$err"); rc=$?
   if (( rc == 1 )) && ! grep -qv '^du: cannot access .*: No such file or directory$' "$err"; then rc=0; fi
   rm -f -- "$err"
   out=$(tail -n 1 <<<"$out"); out=${out%%[[:space:]]*}
@@ -1514,7 +1527,9 @@ remote_gate() {
   parse_repo_url "$repo_url"
   local install_reserve_bytes observed_install_reserve_bytes=0 admitted_shape="" reserve_heat=cold
   local reserve_bytes_before="" reserve_free_before="" reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
-  local -a package_stores=("${npm_config_store_dir:-$HOME/.local/share/pnpm/store}" "$HOME/.npm")
+  # The frozen install always writes the fixed store; a store the environment names is measured too.
+  local -a package_stores=("$HOME/.local/share/pnpm/store" "$HOME/.npm")
+  [ -z "${npm_config_store_dir:-}" ] || [ "$npm_config_store_dir" = "${package_stores[0]}" ] || package_stores+=("$npm_config_store_dir")
   local reserve_spec=${BEELINK_GATE_SPARSE_SPEC:-} peer_reserve=${BEELINK_GATE_PEER_RESERVE:-} peer_warm_reserve=${BEELINK_GATE_PEER_WARM_RESERVE:-}
   unset BEELINK_GATE_SPARSE_SPEC BEELINK_GATE_PEER_RESERVE BEELINK_GATE_PEER_WARM_RESERVE
 
@@ -1632,6 +1647,18 @@ remote_gate() {
   local ticket_prefix="$cache_root/.locks/queue-$host-$owner-$repo" enqueued=$(( $(date +%s) - placed_wait ))
   (( light == 0 )) || ticket_prefix+=@light
   (( dev == 0 )) || ticket_prefix+=@dev
+  # An auto gate's place in line is its reservation's, made on both hosts before its
+  # first probe and found here by its token. Dating its own ticket by now - placed_wait
+  # left out the reservation's setup, so a newer gate could fall between the two
+  # tickets: it waited for the reservation while this gate waited for it.
+  if [ -n "$reservation_token" ]; then
+    local reserved reserved_since
+    for reserved in "$ticket_prefix".*.*; do
+      [ -f "$reserved" ] && [ "$(cat "$reserved" 2>/dev/null)" = "$reservation_token" ] || continue
+      reserved_since=${reserved#"$ticket_prefix".}; reserved_since=${reserved_since%%.*}
+      [[ "$reserved_since" =~ ^[0-9]+$ ]] && (( reserved_since < enqueued )) && enqueued=$reserved_since
+    done
+  fi
   local ticket="$ticket_prefix.$enqueued.$$"
   printf '%s' "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
   # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
@@ -1756,6 +1783,13 @@ remote_gate() {
     reap_leftovers
     return "$rc"
   }
+  # Each scan gets at most 60 s and never more than the gate's remaining hold; a scan
+  # cut short counts as a failed measurement, which records the cold reserve.
+  measure_gate_bytes() {
+    local left=$((deadline - SECONDS))
+    (( left < 60 )) || left=60
+    gate_bytes "$left" "$checkout" "${package_stores[@]}"
+  }
   # The reserve a receipt records is the 10 GiB headroom plus the most this gate's
   # own bytes grew since just before its fetch (gate_bytes); host free space also
   # moves with other lanes' writes and decides only the floor. A measurement that
@@ -1764,7 +1798,7 @@ remote_gate() {
     (( install_reserve_bytes > 0 )) || return 0
     local now started grown observed
     started=$(date +%s%3N)
-    if [ -n "$reserve_bytes_before" ] && now=$(gate_bytes "$checkout" "${package_stores[@]}"); then
+    if [ -n "$reserve_bytes_before" ] && now=$(measure_gate_bytes); then
       reserve_du_ms=$(( $(date +%s%3N) - started ))
       grown=$((now - reserve_bytes_before))
       (( grown > ${reserve_gate_bytes:-0} )) && reserve_gate_bytes=$grown
@@ -2031,7 +2065,7 @@ PY
   adopt_origin "$checkout" "$repo_url" || exit $?
   if (( install_reserve_bytes > 0 )); then
     reserve_free_before=$(free_bytes)
-    reserve_bytes_before=$(gate_bytes "$checkout" "${package_stores[@]}") || reserve_bytes_before=""
+    reserve_bytes_before=$(measure_gate_bytes) || reserve_bytes_before=""
   fi
   # A step, not a command substitution: bash runs the launcher watchdog's trap
   # only between commands, so a hung ls-remote in $(...) held the lock for 34m.
