@@ -7,6 +7,14 @@ Custom CLI tools for managing Claude Code. Installed via `install.sh` which syml
 Run `gh` as `drewstone` with the token from the environment or the devops vault.
 Below 150 core calls left (`GH_DREW_MIN_CORE`), it refuses reads and keeps the rest for writes.
 
+Before `pr merge`, `--auto` included, it reads the PR's head, review threads and comments in one GraphQL query:
+
+- An unresolved review thread that a Codex reviewer started and no person has answered refuses the merge, naming each finding's `path:line`, title and link.
+- A Codex review running on the head is waited for, up to `GH_DREW_REVIEW_WAIT` seconds (default 600), then refuses with exit 75.
+- A PR that opened or turned ready under 30 s ago, with no Codex comment yet, waits out those 30 s: Codex comments 12 to 16 s after either.
+- No Codex comment, a usage-limit comment, a failed review, or a finished review whose findings are all answered or resolved carries on.
+- `GH_DREW_REVIEW_OVERRIDE=<reason>` merges without the check and logs the reason. A read that fails refuses.
+
 Each call appends one line to `~/.local/state/gh-drew/calls-<hour>.tsv` (`GH_DREW_LOG_DIR`):
 
 ```text
@@ -220,7 +228,7 @@ merge conflict outside CHANGELOG.md stops the gate for manual resolution.
 
 Merges every green agent-container PR into develop. It runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge.
 
-A PR merges when it is not a draft, not conflicting and not a release branch; Fast Checks, Build and Type Check succeeded on its head; no check failed; no unresolved review thread opens with P0 or P1; it has no `hold` label or hold phrase ("do not merge", "merge only after"); and its head is at least 2 minutes old. The merge pins that head (`--match-head-commit`). A PR whose gate never ran is updated from develop once per head. A green PR that conflicts gets one comment per head.
+A PR merges when it is not a draft, not conflicting and not a release branch; Fast Checks, Build and Type Check succeeded on its head; no check failed; no unresolved review thread opens with P0 or P1; it has no `hold` label or hold phrase ("do not merge", "merge only after"); and its head is at least 2 minutes old. The merge pins that head (`--match-head-commit`). A PR whose gate never ran is updated from develop once per head. A green PR that conflicts gets one comment per head. gh-drew's Codex review check runs on each merge without waiting (`GH_DREW_REVIEW_WAIT=0`), so a PR whose review is still running or has an unanswered Codex finding is refused and tried again on the next tick.
 
 ```bash
 merge-on-green --dry-run                 # print decisions, merge nothing
