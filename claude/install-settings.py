@@ -113,6 +113,12 @@ def main():
         patch = diff(reference, live)
     overlay = accumulate(overlay, patch)
     installed = merge(base, overlay)
+    # Plugins inherit Claude's environment. Put the managed Codex wrapper before
+    # Homebrew even when Claude starts outside the user's interactive shell.
+    env = installed.setdefault('env', {})
+    wrapper_dir = os.path.join(os.path.dirname(os.path.abspath(args.claude_dir)), 'bin')
+    search_path = env.get('PATH', os.environ.get('PATH', os.defpath)).split(os.pathsep)
+    env['PATH'] = os.pathsep.join([wrapper_dir, *(p for p in search_path if p != wrapper_dir)])
 
     if args.check:
         current = not linked and os.path.exists(live_path) and load(live_path) == installed

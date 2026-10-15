@@ -56,8 +56,22 @@ class InstallSettingsTest(unittest.TestCase):
             self.assertEqual(run(base, home, '--check').returncode, 1)
             self.assertEqual(run(base, home).returncode, 0)
             self.assertEqual(json.loads((home / 'settings.json').read_text()),
-                             {'model': 'sonnet', 'hooks': {'Stop': 2}, 'modelSettings': {'b': {'effort': 'xhigh'}}})
+                             {'model': 'sonnet', 'hooks': {'Stop': 2}, 'modelSettings': {'b': {'effort': 'xhigh'}},
+                              'env': {'PATH': str(home.parent / 'bin') + os.pathsep + os.environ['PATH']}})
             self.assertEqual(run(base, home, '--check').returncode, 0)
+
+    def test_plugin_path_uses_wrapper_before_homebrew_and_keeps_machine_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / '.claude'
+            home.mkdir()
+            base = Path(tmp) / 'base.json'
+            base.write_text('{}')
+            (home / 'settings.machine.json').write_text(json.dumps({'env': {'PATH': '/opt/homebrew/bin:/private/bin'}}))
+            self.assertEqual(run(base, home).returncode, 0)
+            env = json.loads((home / 'settings.json').read_text())['env']
+            self.assertEqual(env['PATH'], str(home.parent / 'bin') + ':/opt/homebrew/bin:/private/bin')
+            self.assertEqual(run(base, home).returncode, 0)
+            self.assertEqual(json.loads((home / 'settings.json').read_text())['env'], env)
 
 
 if __name__ == '__main__':

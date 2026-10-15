@@ -42,6 +42,7 @@ echo "Installing Claude config from $SCRIPT_DIR"
 mkdir -p "$CLAUDE_DIR"
 link "$SCRIPT_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 python3 "$SCRIPT_DIR/install-settings.py" --base "$SCRIPT_DIR/settings.json" --claude-dir "$CLAUDE_DIR"
+python3 "$SCRIPT_DIR/install-codex-config.py"
 [ -f "$SCRIPT_DIR/RTK.md" ] && link "$SCRIPT_DIR/RTK.md" "$CLAUDE_DIR/RTK.md"
 
 # Shared agent instructions

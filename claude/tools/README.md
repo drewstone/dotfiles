@@ -2,6 +2,18 @@
 
 Custom CLI tools for managing Claude Code. Installed via `install.sh` which symlinks tools to `~/bin/`.
 
+## Codex account choice
+
+The existing `codex` wrapper routes new `exec` and `app-server` processes through
+`acct run` using the real Codex executable. `acct` owns account ranking and live
+reservations. Each broker keeps its chosen account for its lifetime, including
+all tasks that reuse that broker. Existing brokers keep running on their account.
+An explicit `CODEX_HOME` pins the account. Login, help, version checks, and account
+probes bypass allocation. `ACCT_ROUTED=codex` prevents a second allocation when
+`acct` invokes the wrapper; a Claude allocation does not bypass Codex allocation.
+The managed Claude settings put `~/bin` before Homebrew in the plugin's PATH.
+Install tangle-tools with `acct run` support for these Codex subcommands first.
+
 ## gh-drew
 
 Run `gh` as `drewstone` with the token from the environment or the devops vault.

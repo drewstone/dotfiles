@@ -108,6 +108,9 @@ codex_fallback_ok() {
   grep -Eq '^project_doc_fallback_filenames *=.*"CLAUDE\.md"' "$HOME/.codex/config.toml" 2>/dev/null
 }
 
+codex_defaults_ok() { python3 "$DOTFILES/claude/install-codex-config.py" --check; }
+set_codex_defaults() { python3 "$DOTFILES/claude/install-codex-config.py"; }
+
 # A top-level TOML key must come before the first [table], so prepend it.
 add_codex_fallback() {
   local cfg="$HOME/.codex/config.toml" tmp
@@ -193,6 +196,7 @@ module_agents() {
   ensure "Claude local trust excludes temporary directories" claude_local_trust_ok -- sanitize_claude_local_trust
   claude_plugins
   ensure "Codex reads CLAUDE.md when a folder has no AGENTS.md" codex_fallback_ok -- add_codex_fallback
+  ensure "Codex shared model defaults" codex_defaults_ok -- set_codex_defaults
   if [ -f "$HOME/.claude.json" ]; then
     ensure "Claude trusts $CLAUDE_TRUST_DIRS" claude_trust_ok -- add_claude_trust
   else

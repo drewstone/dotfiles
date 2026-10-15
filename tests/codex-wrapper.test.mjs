@@ -36,6 +36,7 @@ printf '%s\\n' "$@" > "$CODEX_ARGS_FILE"
         // ran real codex with `run` and read its usage error. Pin the fake through the same
         // override an operator would use.
         CODEX_REAL_BIN: fakeCodexPath,
+        CODEX_HOME: testRoot,
       },
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -47,5 +48,59 @@ printf '%s\\n' "$@" > "$CODEX_ARGS_FILE"
     assert.deepEqual(runWrapper(["exec", "current prompt", "--json"]), ["exec", "current prompt", "--json"]);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
+test("new brokers and exec calls allocate once through acct and retain explicit pins", () => {
+  const home = mkdtempSync(join(tmpdir(), "codex-routing-"));
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  const real = join(bin, "codex");
+  const log = join(home, "route.json");
+  writeFileSync(real, `#!/usr/bin/env node
+require('fs').writeFileSync(process.env.ROUTE_LOG, JSON.stringify({args: process.argv.slice(2), routed: process.env.ACCT_ROUTED, home: process.env.CODEX_HOME}));
+process.exit(Number(process.env.CODEX_EXIT || 0));
+`);
+  writeFileSync(join(bin, "acct"), `#!/usr/bin/env bash
+printf '%s\\n' "$@" > "$ACCT_ARGS"
+[ "$1" = run ] && [ "$2" = -- ] || exit 90
+shift 2
+export ACCT_ROUTED=codex CODEX_HOME="$ALLOCATED_HOME"
+exec "$@"
+`);
+  chmodSync(real, 0o755);
+  chmodSync(join(bin, "acct"), 0o755);
+  const route = (args, extra = {}) => {
+    rmSync(join(home, "acct.args"), { force: true });
+    const result = spawnSync(wrapperPath, args, {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_REAL_BIN: real,
+        CODEX_HOME: "", ACCT_ROUTED: "", ROUTE_LOG: log, ACCT_ARGS: join(home, "acct.args"),
+        ALLOCATED_HOME: join(home, "allocated"), ...extra },
+    });
+    return { result, launch: JSON.parse(readFileSync(log, "utf8")) };
+  };
+  try {
+    for (const args of [["app-server"], ["exec", "prompt with spaces", "--model", "explicit-model"],
+      ["--model", "explicit-model", "exec", "prompt"]]) {
+      const { result, launch } = route(args, { ACCT_ROUTED: "claude" });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(readFileSync(join(home, "acct.args"), "utf8").trimEnd().split("\n"), ["run", "--", real, ...args]);
+      assert.deepEqual(launch, { args, routed: "codex", home: join(home, "allocated") });
+    }
+    for (const [args, extra] of [
+      [["exec", "pinned"], { CODEX_HOME: join(home, "pinned") }],
+      [["app-server"], { ACCT_ROUTED: "codex" }],
+      [["login", "status"], {}], [["--version"], {}],
+      [["app-server", "--help"], {}], [["exec", "-h"], {}],
+    ]) {
+      const { result, launch } = route(args, extra);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(launch.args, args);
+      assert.throws(() => readFileSync(join(home, "acct.args")), { code: "ENOENT" });
+    }
+    assert.equal(route(["exec", "failure"], { CODEX_EXIT: "29" }).result.status, 29);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });

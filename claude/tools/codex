@@ -44,6 +44,24 @@ if [ "${1:-}" = "run" ]; then
   set -- exec "$@"
 fi
 
+# Global options may precede the subcommand. Skip their values without treating
+# an option value or an exec prompt as a command.
+allocate=false
+skip_value=false
+for argument in "$@"; do
+  if "$skip_value"; then skip_value=false; continue; fi
+  case "$argument" in
+    exec|e|app-server) allocate=true; break ;;
+    -c|--config|-m|--model|-p|--profile|-C|--cd|-s|--sandbox|-a|--ask-for-approval|--enable|--disable|-i|--image|--add-dir|--local-provider)
+      skip_value=true ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+for argument in "$@"; do
+  case "$argument" in --help|-h|--version|-V) allocate=false ;; esac
+done
+
 run_codex() {
   local candidate="$1"
   shift
@@ -53,6 +71,12 @@ run_codex() {
   local resolved
   resolved="$(readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate")"
   [ "$resolved" != "$self" ] || return 1
+
+  # A broker keeps this account for its lifetime. acct sets ACCT_ROUTED for
+  # recursive wrapper calls; CODEX_HOME is an intentional pin, including probes.
+  if "$allocate" && [ "${ACCT_ROUTED:-}" != codex ] && [ -z "${CODEX_HOME:-}" ]; then
+    PATH="$(dirname "$candidate"):$PATH" exec acct run -- "$candidate" "$@"
+  fi
 
   PATH="$(dirname "$candidate"):$PATH" exec "$candidate" "$@"
 }
