@@ -126,7 +126,7 @@ floor_gib() {
   fi
   if (( found )); then
     if [[ ! "$override" =~ ^[0-9]{1,4}$ ]] || (( 10#$override > 1024 )); then
-      echo "beelink-gate: invalid disk_floor_gib: $override (must be $base-1024)" >&2
+      echo "beelink-gate: invalid disk_floor_gib: $override (must be a whole number up to 1024; below $base holds $base)" >&2
       return 1
     fi
     # A number under the host minimum cannot lower the floor, so it holds the

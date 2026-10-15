@@ -71,7 +71,7 @@ Gate checkout claims hold `~/.cache/beelink-gate/.locks/.capacity.lock` shared t
 
 `wt-remove` refuses to salvage while `/mnt/traces` is not mounted and responsive. Change a limit through a pull request to its enforcing file, then tell the owner.
 
-The gate reads `disk_floor_gib` at each admission check, including after a wait. It refuses an invalid, duplicated, or lower-than-default value instead of opening admission. Set a raised floor only after the gate change has passed on a Beelink and deployed to both hosts; remove the override when the host owner confirms the capacity recovery.
+The gate reads `disk_floor_gib` at each admission check, including after a wait. A value below the host minimum holds the minimum and the gate says so; a non-numeric, duplicated or over-1024 value refuses admission. Set a raised floor only after the gate change has passed on a Beelink and deployed to both hosts; remove the override when the host owner confirms the capacity recovery.
 
 ### GTR worktree rule
 
