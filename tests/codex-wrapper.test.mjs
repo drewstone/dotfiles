@@ -79,7 +79,7 @@ exec "$@"
     const result = spawnSync(wrapperPath, args, {
       encoding: "utf8",
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_REAL_BIN: real,
-        CODEX_HOME: "", ACCT_ROUTED: "", ROUTE_LOG: log, ACCT_ARGS: join(home, "acct.args"),
+        HOME: home, XDG_CONFIG_HOME: join(home, ".config"), CODEX_HOME: "", ACCT_ROUTED: "", ROUTE_LOG: log, ACCT_ARGS: join(home, "acct.args"),
         ALLOCATED_HOME: join(home, "allocated"), FIXTURE_HOME: home, ...extra },
     });
     return { result, launch: JSON.parse(readFileSync(log, "utf8")) };
@@ -97,6 +97,15 @@ exec "$@"
       [["app-server"], { ACCT_ROUTED: "codex" }],
       [["login", "status"], {}], [["--version"], {}],
       [["app-server", "--help"], {}], [["exec", "-h"], {}],
+      [["exec", "resume", "saved-session", "continue"], {}],
+      [["exec", "resume", "--last", "continue"], {}],
+      [["--model", "fixture", "exec", "fork", "saved-session", "continue"], {}],
+      [["app-server", "generate-ts", "--out", "/fixture/output"], {}],
+      [["app-server", "generate-json-schema", "--out", "/fixture/output"], {}],
+      [["app-server", "daemon", "status"], {}], [["app-server", "proxy"], {}],
+      [["exec", "--oss", "--local-provider", "ollama", "local prompt"], {}],
+      [["--oss", "exec", "local prompt"], {}],
+      [["exec", "--local-provider=lmstudio", "local prompt"], {}],
     ]) {
       const { result, launch } = route(args, extra);
       assert.equal(result.status, 0, result.stderr);
@@ -106,7 +115,7 @@ exec "$@"
     assert.equal(route(["exec", "failure"], { CODEX_EXIT: "29" }).result.status, 29);
     // Linux provisioning installs this native binary even without nvm.
     if (process.platform === "linux") {
-      assert.equal(route(["app-server"], { CODEX_REAL_BIN: "", NVM_DIR: join(home, "no-nvm") }).result.status, 0);
+      assert.equal(route(["app-server", "--listen=unix:///fixture/socket"], { CODEX_REAL_BIN: "", NVM_DIR: join(home, "no-nvm") }).result.status, 0);
       assert.equal(readFileSync(join(home, "acct.args"), "utf8").split("\n")[2], join(home, ".local/bin/codex"));
     }
   } finally {

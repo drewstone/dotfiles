@@ -4,15 +4,35 @@ Custom CLI tools for managing Claude Code. Installed via `install.sh` which syml
 
 ## Codex account choice
 
-The existing `codex` wrapper routes new `exec` and `app-server` processes through
-`acct run` using the real Codex executable. `acct` owns account ranking and live
-reservations. Each broker keeps its chosen account for its lifetime, including
-all tasks that reuse that broker. Existing brokers keep running on their account.
-An explicit `CODEX_HOME` pins the account. Login, help, version checks, and account
-probes bypass allocation. `ACCT_ROUTED=codex` prevents a second allocation when
-`acct` invokes the wrapper; a Claude allocation does not bypass Codex allocation.
+The existing `codex` wrapper routes fresh subscription `exec` calls through
+`acct run`. For the Codex Companion plugin's unpinned stdio broker, it keeps the broker's
+JSON-RPC connection stable and admits each new `thread/start` through `acct`.
+Completed workers exit through stdin EOF. Thread ownership persists in the
+router, so earlier tasks stay on their account while later tasks can use another.
+The wrapper recognizes the plugin's `scripts/app-server-broker.mjs serve`
+launcher. Other app servers and non-stdio servers allocate once for their
+process, preserving their native connection and history behavior.
+
+Explicit `CODEX_HOME` pins bypass allocation. Exec resume/fork resolves the
+original enrolled home from saved rollout metadata or the native thread-name
+index. `resume --last` selects the newest saved session matching the requested
+working directory by last update time, including SQLite's current cwd; `--all`
+removes that filter. Explicit resumed threads keep
+their originating home and report quota exhaustion there. They are not migrated
+to another account. If no saved home matches, native Codex retains its normal
+missing-session behavior in the default home.
+
+Local-provider execs, app-server tooling and control commands, login, help,
+version checks, and account probes bypass allocation. `ACCT_ROUTED=codex`
+prevents recursive allocation; a Claude allocation does not bypass Codex routing.
 The managed Claude settings put `~/bin` before Homebrew in the plugin's PATH.
-Install tangle-tools with `acct run` support for these Codex subcommands first.
+The wrapper resolves its symlink before loading `codex-routing/`, which stays
+beside the maintained wrapper in the dotfiles checkout. Routing uses Node.js
+from PATH or the managed nvm default without loading nvm.sh. Continuation
+lookup uses Python's read-only SQLite support and rollout metadata, honoring
+`ACCT_CONFIG` and enrolled home symlinks. Install tangle-tools
+with `acct run` support for these Codex subcommands first. Existing brokers and
+running lanes are unaffected until their next normal launch.
 
 ## gh-drew
 
