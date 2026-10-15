@@ -781,7 +781,7 @@ test("refuses below the selected host's floor before creating a cache", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("a host disk-floor limit refuses a gate before its cache and cannot lower the default", () => {
+test("a host disk-floor limit refuses a gate before its cache, and one below the minimum holds the minimum", () => {
   const f = fixture();
   try {
     const limits = join(f.root, "no-limits");
@@ -795,6 +795,14 @@ test("a host disk-floor limit refuses a gate before its cache and cannot lower t
     assert.equal(allowed.status, 0, allowed.stderr);
 
     writeFileSync(limits, "disk_floor_gib=100\n");
+    const clamped = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
+    assert.equal(clamped.status, 0, clamped.stderr);
+    assert.match(clamped.stderr, /disk_floor_gib=100 is below beelink2's 162 GiB minimum; using 162/);
+    const stillFloored = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(160 * 1024 ** 3) } });
+    assert.equal(stillFloored.status, 75, stillFloored.stderr);
+    assert.match(stillFloored.stderr, /below its 162 GiB disk floor/);
+
+    writeFileSync(limits, "disk_floor_gib=1x0\n");
     const invalid = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
     assert.equal(invalid.status, 75, invalid.stderr);
     assert.match(invalid.stderr, /invalid disk_floor_gib/);

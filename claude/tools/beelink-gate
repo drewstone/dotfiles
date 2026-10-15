@@ -125,9 +125,17 @@ floor_gib() {
     done < "$path"
   fi
   if (( found )); then
-    if [[ ! "$override" =~ ^[0-9]{1,4}$ ]] || (( 10#$override < base || 10#$override > 1024 )); then
-      echo "beelink-gate: invalid disk_floor_gib: $override (must be $base-1024)" >&2
+    if [[ ! "$override" =~ ^[0-9]{1,4}$ ]] || (( 10#$override > 1024 )); then
+      echo "beelink-gate: invalid disk_floor_gib: $override (must be a whole number up to 1024; below $base holds $base)" >&2
       return 1
+    fi
+    # A number under the host minimum cannot lower the floor, so it holds the
+    # minimum instead of refusing every gate: an override of 150, valid only on
+    # beelink1, took all of beelink2's gates out on 2026-10-15.
+    if (( 10#$override < base )); then
+      echo "beelink-gate: disk_floor_gib=$((10#$override)) is below $host's $base GiB minimum; using $base" >&2
+      echo "$base"
+      return 0
     fi
     echo "$((10#$override))"
   else
