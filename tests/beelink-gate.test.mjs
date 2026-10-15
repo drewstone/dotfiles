@@ -3166,22 +3166,26 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
     await new Promise((done) => holder.stdout.once("data", done));
     const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "20", BEELINK_GATE_LOAD_WAIT: "35s" };
     older = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "bash", "-c", `echo older >> '${events}'`], { env });
-    let olderErr = "";
-    older.stderr.on("data", (chunk) => { olderErr += chunk; });
+    let olderErr = "", olderAdmitted = 0n, newerAdmitted = 0n;
+    older.stderr.on("data", (chunk) => { olderErr += chunk; if (!olderAdmitted && /admitted on beelink/.test(olderErr)) olderAdmitted = process.hrtime.bigint(); });
     for (let i = 0; i < 200 && !/no beelink is both free/.test(olderErr); i++) await sleepMs(25);
     assert.match(olderErr, /no beelink is both free/);
 
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo newer >> '${events}'`].map(encode);
     newer = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_CACHE_ROOT: join(f.root, "cache-100.127.22.51"), BEELINK_GATE_REPO_CHECKOUTS: "1" } });
     let newerErr = "";
-    newer.stderr.on("data", (chunk) => { newerErr += chunk; });
+    newer.stderr.on("data", (chunk) => { newerErr += chunk; if (!newerAdmitted && /admitted on beelink/.test(newerErr)) newerAdmitted = process.hrtime.bigint(); });
     for (let i = 0; i < 200 && !/waiting \d+s for one of 1/.test(newerErr); i++) await sleepMs(25);
     assert.match(newerErr, /waiting \d+s for one of 1/);
     holder.kill("SIGKILL");
     const [olderStatus, newerStatus] = await Promise.all([new Promise((done) => older.once("close", done)), new Promise((done) => newer.once("close", done))]);
     assert.equal(olderStatus, 0, olderErr);
     assert.equal(newerStatus, 0, newerErr);
-    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["older", "newer"]);
+    // The FIFO property is admission order: the newer gate is admitted only after the
+    // older one. Once they run on different hosts, which echo lands first is a race
+    // (it failed 3 of about 10 gate runs on 2026-10-15), so the echoes are compared as a set.
+    assert.ok(olderAdmitted > 0n && newerAdmitted > olderAdmitted, `${olderErr}\n${newerErr}`);
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n").sort(), ["newer", "older"]);
     for (const locks of [b1, b2]) {
       assert.deepEqual(readdirSync(locks).filter((name) => name.startsWith("queue-")), [], "normal reservation and gate tickets are removed");
     }
