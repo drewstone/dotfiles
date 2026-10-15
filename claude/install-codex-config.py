@@ -30,7 +30,7 @@ def main():
     # before writing also rejects accidental matches inside multiline strings.
     table = re.search(r'^\s*\[', text, re.M)
     split = table.start() if table else len(text)
-    top = re.sub(r'^(?:model|model_reasoning_effort)\s*=.*(?:\n|$)', '', text[:split], flags=re.M)
+    top = re.sub(r'^[ \t]*(?:model|model_reasoning_effort)\s*=.*(?:\n|$)', '', text[:split], flags=re.M)
     updated = ''.join(f'{key} = {json.dumps(value)}\n' for key, value in DEFAULTS.items()) + top + text[split:]
     if tomllib.loads(updated) != expected:
         raise ValueError('cannot update Codex defaults while preserving the remaining config')
