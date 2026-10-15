@@ -52,14 +52,22 @@ not a cosmetic tweak — otherwise the measurement can't separate them.
 ## Measurement status (2026-10-11)
 
 `terse-ops-v1` was the single active variant from 2026-09-20 to 2026-10-10, across 4,011 sessions in the Mac's assignment log.
-The `trace-insights` join that should have scored it was never built: its README still describes the analyze stage in the future tense.
-So no variant has a measured result.
+So no variant had a measured result by 2026-10-11.
 On 2026-10-10 Drew rejected terse output for analysis ("These bullet points just aint cutting it"), and `evidence-lead-v1` became active.
 The inactive variants (`terse-ops-v1`, `lead-checkpoint-v1`, `gate-checkpoint-v1`) were then deleted; git history keeps them.
-Until the join exists, the measurement is the corrections ledger in [the climb](../../docs/processes/climb.md#corrections-are-data): Drew's corrections per session, by theme, under each variant.
-Do not start a rotation until the join scores variants; until then, a rotation only adds noise.
+Before the join existed, the measurement was the corrections ledger in [the climb](../../docs/processes/climb.md#corrections-are-data): Drew's corrections per session, by theme, under each variant.
 
 On 2026-10-11 Drew rejected the terminal output itself: two colors, no fixed order for what, why, how and focus, unambitious answers that lean on old records, and no visible sign of learning from a week of Terraform mistakes.
 `evidence-lead-v1` was rewritten in place, keeping its slug, with the same blocks in the same order every turn, emoji color for status and charts, the owner's voice, and a Learned block that shows each mistake, its durable fix and its status.
 The assignment log records the slug, not the text, so split its sessions at the merge time of the PR that made this rewrite (`git log --format='%cI %s' -- claude/directives/variants/evidence-lead-v1.md` lists it).
 The measure is the corrections ledger's communication theme after that time against before it.
+
+## Rotation (2026-10-15)
+
+The trace-insights join now exists: trace-mine's daily analyst writes a "Directive scores" table, with corrections per hour and per turn and 95% intervals per variant.
+On 2026-10-14 `evidence-lead-v1` had 43 labelled turns at 18.6% corrections per turn [9.7%, 32.6%].
+
+The rotation `evidence-lead-v1` vs `evidence-lead-rhythm-v1` starts 2026-10-15.
+`evidence-lead-rhythm-v1` is `evidence-lead-v1` plus a Rhythm section; the hypothesis is that long unattended work units, a written finish line, and a restate-after-two-corrections reset lower Drew's correction rate.
+Decision rule: after at least 300 labelled Drew turns per arm or 14 days, whichever comes first, keep `evidence-lead-rhythm-v1` if its per-turn correction rate is at least 5 points lower than `evidence-lead-v1`'s; otherwise set `evidence-lead-v1` back with `directive set evidence-lead-v1`.
+Record the result here and in the climb ledger.
