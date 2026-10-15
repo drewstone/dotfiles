@@ -206,6 +206,22 @@ admit_window() {
   esac
 }
 
+# A .beelink-gate/sparse-checkout file's patterns, without comments, blank
+# lines or trailing spaces (stdin to stdout).
+sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
+
+# The checkout shape an install reserve was measured on: full, or sha256 of
+# the normalized patterns of the .beelink-gate/sparse-checkout read on stdin.
+sparse_spec_of() {
+  local want
+  want=$(sparse_normalize)
+  if [ -z "$want" ]; then
+    echo full
+  else
+    printf '%s\n' "$want" | python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+  fi
+}
+
 # A repo keeps tracked paths its gated commands never read out of its gate
 # checkouts by committing .beelink-gate/sparse-checkout: `git sparse-checkout
 # --no-cone` patterns, one per line, # for comments. Discovery Lab's excludes
@@ -223,7 +239,7 @@ admit_window() {
 # checkout.
 sparse_apply() {  # <checkout> <rev> [--shrink-only]
   local want enabled
-  want=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d')
+  want=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sparse_normalize)
   enabled=$(git -C "$1" config --bool core.sparseCheckout)
   sparse_source=${want:+repo}
   if [ -z "$want" ]; then
@@ -240,7 +256,7 @@ sparse_apply() {  # <checkout> <rev> [--shrink-only]
 # decisions; per-repo locks keep active gates out of the eviction set.
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
-    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_apply)" <<'PY'
+    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_normalize sparse_apply)" <<'PY'
 import contextlib
 import fcntl
 import os
@@ -934,20 +950,48 @@ parse_repo_url() {
 
 # The fixed 10 GiB pre-install headroom is the safe fallback for a repo with
 # no receipt yet. Later receipts include that headroom plus bytes consumed
-# between admission and the install check (fetch, checkout and install). Use
-# only this host's most recent measured reserve for this repo; malformed and
-# older receipts must not make admission permissive.
-last_install_reserve_bytes() {
+# between admission and the install check (fetch, checkout and install), and
+# the checkout shape they measured (sparse_spec: full or a pattern digest). A
+# reserve measured on another shape says nothing about this one: on
+# 2026-10-15 beelink2's newest Lab receipt was a 28.2 GB full clone, which
+# refused every sparse Lab gate, so none could write a sparse receipt. With
+# the gated commit's shape known (<spec>), use this host's newest receipt of
+# that shape, else the other beelink's (<peer>), else the headroom. With the
+# shape unknown, use this host's newest receipt, as before. Either way a
+# malformed receipt never counts, and an older one never overrides a newer one.
+# match-only prints only this host's matching value, for the other beelink.
+last_install_reserve_bytes() {  # <beelink> <host/owner/repo> <mode> [<spec> [<peer> [match-only]]]
   local beelink="$1" repo_key="$2" mode="$3"
   case "$mode" in install|ship|dev) ;; *) echo 0; return ;; esac
-  python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$repo_key" <<'PY'
+  python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$repo_key" "${4:-}" "${5:-}" "${6:-}" <<'PY'
 import json
 import mmap
 import os
+import re
 import sys
 
-path, host, repo = sys.argv[1:]
+path, host, repo, spec, peer, match_only = sys.argv[1:]
 fallback = 10 * 1024 ** 3
+SPEC = re.compile(r"full|sha256:[0-9a-f]{64}")
+spec = spec if SPEC.fullmatch(spec) else ""
+
+def measured(value):
+    return type(value) is int and fallback <= value <= 1024 ** 4
+
+def shape(row):
+    # Receipts from before sparse_spec: one with sparse patterns measured
+    # unknown patterns; every other one measured a full checkout.
+    if "sparse_spec" not in row:
+        return None if row.get("sparse") else "full"
+    value = row["sparse_spec"]
+    return value if isinstance(value, str) and SPEC.fullmatch(value) else None
+
+def answer(value, source):
+    if not match_only:
+        print(f"beelink-gate: install reserve {value} bytes from {source}", file=sys.stderr)
+    print(value)
+    sys.exit(0)
+
 try:
     with open(path, "rb") as receipts:
         if os.fstat(receipts.fileno()).st_size:
@@ -967,12 +1011,19 @@ try:
                     if not isinstance(row, dict) or row.get("host") != host or row.get("repo") != repo:
                         continue
                     value = row.get("install_reserve_bytes")
-                    if type(value) is int and fallback <= value <= 1024 ** 4:
-                        print(value)
-                        sys.exit(0)
+                    if not measured(value):
+                        continue
+                    if not spec:
+                        answer(value, f"{host}'s newest receipt (checkout shape unknown)")
+                    if shape(row) == spec:
+                        answer(value, f"{host}'s newest receipt for checkout shape {spec}")
 except FileNotFoundError:
     pass
-print(fallback)
+if match_only:
+    sys.exit(0)
+if spec and peer.isdigit() and measured(int(peer)):
+    answer(int(peer), f"the other beelink's newest receipt for checkout shape {spec}")
+answer(fallback, "the 10 GiB headroom" + (f" (no receipt for checkout shape {spec})" if spec else ""))
 PY
 }
 
@@ -1212,7 +1263,7 @@ remote_probe() {
   [ "$probe_mode" = dev ] && dev=1
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
-  reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode") \
+  reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" "${BEELINK_GATE_PEER_RESERVE:-}" 2>/dev/null) \
     || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
   if [ "$state" != refused ]; then
     reason=$(check_floor "$beelink" "$reserve" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
@@ -1393,11 +1444,13 @@ remote_gate() {
   unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
   local install_reserve_bytes observed_install_reserve_bytes=0 admission_free_bytes=0
-  install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode") || die "cannot read install reserve receipts"
+  local reserve_spec=${BEELINK_GATE_SPARSE_SPEC:-} peer_reserve=${BEELINK_GATE_PEER_RESERVE:-}
+  unset BEELINK_GATE_SPARSE_SPEC BEELINK_GATE_PEER_RESERVE
+  install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve") || die "cannot read install reserve receipts"
 
   # Direct --remote calls still honor a heartbeat. Detached jobs have none:
   # their own session and MAX_HOLD bound survive a lost launcher.
-  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" sparse_source="" reaped=0 bundle_note="" gate_refs_before="" gate_refs_taken=0
+  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" sparse_source="" sparse_spec="" reaped=0 bundle_note="" gate_refs_before="" gate_refs_taken=0
   # Every step's processes carry this token in their environment. A process
   # that leaves the step's group (setsid, a daemonizing dev server) keeps it,
   # so the gate can still find and stop it. Global: finish reads it from the EXIT trap.
@@ -1646,9 +1699,9 @@ remote_gate() {
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
       "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
@@ -1659,7 +1712,7 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink
        "node": node or None, "rebuild": rebuild or None, "reaped": int(reaped), "bundle": bundle or None,
        "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
        "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
-       "lane": lane or None, "sparse": sparse or None, "reason_scope": "host_last_10000_receipts"}
+       "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "reason_scope": "host_last_10000_receipts"}
 if int(install_reserve):
     row["install_reserve_bytes"] = int(install_reserve)
 if preview:
@@ -1894,6 +1947,7 @@ PY
   fi
   # Before checkout, so a path the repo's sparse patterns exclude is never written.
   sparse_apply "$checkout" "$sha" || exit $?
+  sparse_spec=$(git -C "$checkout" cat-file blob "$sha:.beelink-gate/sparse-checkout" 2>/dev/null | sparse_spec_of)
   if [ -n "$gate_branch" ]; then
     git -C "$checkout" checkout --force -B "$gate_branch" "$sha" || exit $?
     git -C "$checkout" branch --set-upstream-to="origin/$gate_branch" "$gate_branch" >/dev/null || exit $?
@@ -2131,7 +2185,7 @@ RUNNER
     BEELINK_GATE_MAX_CPU_PRESSURE BEELINK_GATE_HOST_PRESSURE_CEILING BEELINK_GATE_STARVE_AFTER \
     BEELINK_GATE_CLASS BEELINK_GATE_SHIP_WORKERS BEELINK_GATE_PR BEELINK_GATE_LANE BEELINK_GATE_RESERVATION_TOKEN BEELINK_GATE_MAX_CONCURRENT \
     BEELINK_GATE_REPO_CHECKOUTS BEELINK_GATE_LIGHT_CPU BEELINK_GATE_LIGHT_SLOTS \
-    BEELINK_GATE_URGENT BEELINK_GATE_AUTO BEELINK_GATE_ADMIT_WAIT BEELINK_GATE_PLACED_WAIT; do
+    BEELINK_GATE_URGENT BEELINK_GATE_AUTO BEELINK_GATE_ADMIT_WAIT BEELINK_GATE_PLACED_WAIT BEELINK_GATE_SPARSE_SPEC BEELINK_GATE_PEER_RESERVE; do
     [ -z "${!name:-}" ] || vars+=("$name=${!name}")
   done
   unit="beelink-gate-$id"
@@ -2252,6 +2306,14 @@ if [ "${1:-}" = --job-result ]; then
   job_result_remote "$2"
   exit $?
 fi
+# This host's newest install reserve for one checkout shape, for the other beelink.
+if [ "${1:-}" = --reserve-match ]; then
+  [ "$#" = 4 ] || die "invalid reserve query"
+  parse_repo_url "$(decode "$3")"
+  value=$(last_install_reserve_bytes "$(decode "$2")" "$host/$owner/$repo" install "$(decode "$4")" "" match-only) || exit 0
+  [ -z "$value" ] || echo "beelink-gate-reserve $value"
+  exit 0
+fi
 if [ "${1:-}" = --probe ]; then
   shift
   remote_probe "$@"
@@ -2274,6 +2336,9 @@ self_beelink() {
   esac
 }
 SELF=$(self_beelink)
+# Each beelink's newest install reserve for the gated commit's checkout shape;
+# a gate on one host falls back to the other's.
+declare -A matched_reserve=()
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
@@ -2303,6 +2368,9 @@ on_beelink() {
   # The wait so far rides along even when the gate may no longer move, so it keeps its
   # age in the checkout queue and its starvation clock.
   (( ${placed_wait_launch:-0} == 0 )) || envs+=("BEELINK_GATE_PLACED_WAIT=$placed_wait_launch")
+  [ -z "${BEELINK_GATE_SPARSE_SPEC:-}" ] || envs+=("BEELINK_GATE_SPARSE_SPEC=$BEELINK_GATE_SPARSE_SPEC")
+  local peer_host=beelink1; [ "$target" != beelink1 ] || peer_host=beelink2
+  [ -z "${matched_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_RESERVE=${matched_reserve[$peer_host]}")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
   local me=$$ rc heartbeat_fd heartbeat_pid command_pid
   heartbeat_input() {
@@ -2829,6 +2897,37 @@ fi
 export BEELINK_GATE_LANE
 unset BEELINK_GATE_RESERVATION_TOKEN
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+# The gated commit's checkout shape, read before any beelink fetches it, so each
+# host's reserve comes from a receipt of the same shape (last_install_reserve_bytes).
+commit_sparse_spec() {  # <repo-url> <sha>; prints nothing when it cannot tell
+  local host owner repo gh raw err
+  parse_repo_url "$1" 2>/dev/null || return 0
+  if [ "$host" = github.com ]; then
+    gh=$(command -v gh-drew || command -v gh) || return 0
+    err=$(mktemp) || return 0
+    if raw=$("$gh" api "repos/$owner/$repo/contents/.beelink-gate/sparse-checkout?ref=$2" --jq .content 2>"$err"); then
+      printf '%s' "$raw" | tr -d '\n' | base64 --decode | sparse_spec_of
+    elif grep -q 'HTTP 404' "$err"; then
+      echo full
+    fi
+    rm -f "$err"
+  elif [ "$host" = local ] && git -C "${1#file://}" cat-file -e "$2^{commit}" 2>/dev/null; then
+    git -C "${1#file://}" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sparse_spec_of
+  fi
+}
+BEELINK_GATE_SPARSE_SPEC=""
+case "$install_mode" in
+  install|ship)
+    BEELINK_GATE_SPARSE_SPEC=$(commit_sparse_spec "$repo_url" "$sha")
+    if [ -n "$BEELINK_GATE_SPARSE_SPEC" ]; then
+      for reserve_host in beelink1 beelink2; do
+        matched_reserve[$reserve_host]=$(heartbeat=0 on_beelink "$reserve_host" --reserve-match "$(encode "$reserve_host")" "$(encode "$repo_url")" "$(encode "$BEELINK_GATE_SPARSE_SPEC")" 2>/dev/null \
+          | sed -n 's/^beelink-gate-reserve \([0-9]*\)$/\1/p' | tail -1)
+      done
+    fi
+    ;;
+esac
+export BEELINK_GATE_SPARSE_SPEC
 requested=$target admit_wait_launch="" placed_wait_launch=0
 # An --urgent gate stays on the first host auto places it on: giving the host
 # back drops its urgent marker and with it its place ahead of every normal gate.
