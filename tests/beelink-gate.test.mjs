@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
@@ -953,6 +953,137 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
       assert.equal(existsSync(older), true);
       assert.equal(existsSync(newer), false);
     } finally { locker.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// Commits a change to the fixture source and makes it reachable on the fixture remote.
+function publish(f, name, edit) {
+  edit();
+  f.git(["add", "-A"]);
+  f.git(["commit", "-qm", name]);
+  const sha = f.git(["rev-parse", "HEAD"]);
+  f.git(["--git-dir", f.bare, "fetch", "-q", f.source, sha], f.root);
+  f.git(["--git-dir", f.bare, "update-ref", `refs/heads/${name}`, sha], f.root);
+  return sha;
+}
+
+// An idle, fully checked-out cache checkout of github.com/<owner>/<name> holding these files.
+function idleCheckout(f, owner, name, files, usedSeconds) {
+  const dir = join(f.cache, "github.com", owner, name);
+  mkdirSync(join(f.cache, ".locks"), { recursive: true });
+  mkdirSync(dir, { recursive: true });
+  f.git(["init", "-q", dir], f.root);
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, path)), { recursive: true });
+    writeFileSync(join(dir, path), body);
+  }
+  f.git(["-C", dir, "add", "."], f.root);
+  f.git(["-C", dir, "commit", "-qm", "seed"], f.root);
+  const marker = join(dir, ".git", "beelink-gate-used");
+  writeFileSync(marker, "");
+  utimesSync(marker, usedSeconds, usedSeconds);
+  return dir;
+}
+
+const sparseConfig = (dir) => run("git", ["-C", dir, "config", "--bool", "core.sparseCheckout"]).stdout.trim();
+
+test("a repo's committed sparse patterns keep excluded paths out of every gate checkout until it drops them", () => {
+  const f = fixture();
+  try {
+    const checkout = join(f.cache, "local", "owner", "repo");
+    const plain = f.call(f.second, ["true"]);
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.match(plain.stderr, / sparse=none workers=/);
+    assert.equal(receipts(f).at(-1).sparse, null);
+    assert.equal(sparseConfig(checkout), "", "a repo without patterns keeps a full checkout");
+
+    const sparse = publish(f, "sparse", () => {
+      mkdirSync(join(f.source, ".beelink-gate"));
+      mkdirSync(join(f.source, "history", "run"), { recursive: true });
+      writeFileSync(join(f.source, ".beelink-gate", "sparse-checkout"), "# run data no gated command reads\n/*\n!/history/\n");
+      writeFileSync(join(f.source, "history", "run", "result.json"), "{}\n");
+    });
+    const full = publish(f, "full", () => rmSync(join(f.source, ".beelink-gate"), { recursive: true }));
+    const check = ["bash", "-c", "test -f value.txt && test -f .beelink-gate/sparse-checkout && test ! -e history"];
+    const first = f.call(sparse, check);
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stderr, /applying repo sparse patterns to \S+: \/\* !\/history\//);
+    assert.match(first.stderr, / sparse=repo workers=/);
+    assert.equal(receipts(f).at(-1).sparse, "repo");
+    // A later gate keeps the patterns without setting them again.
+    const again = f.call(sparse, check);
+    assert.equal(again.status, 0, again.stderr);
+    assert.doesNotMatch(again.stderr, /applying repo sparse patterns/);
+    assert.equal(receipts(f).at(-1).sparse, "repo");
+    assert.equal(sparseConfig(checkout), "true");
+
+    const restored = f.call(full, ["test", "-f", "history/run/result.json"]);
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.match(restored.stderr, /has no sparse patterns; restoring its full tree/);
+    assert.equal(receipts(f).at(-1).sparse, null);
+    assert.equal(sparseConfig(checkout), "false");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the cache prune applies Discovery Lab's default sparse patterns to its idle checkout, never to a locked one or a repo without patterns", async () => {
+  const f = fixture();
+  const marker = join(f.root, "locked");
+  try {
+    const files = { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000), "prereg/x/input.json": "{}\n" };
+    const lab = idleCheckout(f, "tangle-network", "discovery-lab", files, 1000);
+    const busy = idleCheckout(f, "tangle-network", "discovery-lab@1", files, 1000);
+    const plain = idleCheckout(f, "test", "plain", { "src/a.txt": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000) }, 2000);
+    const locker = spawn("flock", ["-x", join(f.cache, ".locks", "github.com-tangle-network-discovery-lab@1.lock"), "bash", "-c", `touch '${marker}'; sleep 30`], { env: f.env });
+    try {
+      for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(20);
+      assert.equal(existsSync(marker), true);
+      const result = f.call(f.first, ["true"]);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /applying default sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
+      const freed = result.stderr.match(/sparse patterns freed (\d+) bytes of idle cache \S+discovery-lab\n/);
+      assert.ok(freed && Number(freed[1]) >= 400_000, result.stderr);
+      assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
+    } finally { locker.kill(); }
+    assert.equal(existsSync(join(lab, "pursuits")), false);
+    assert.equal(existsSync(join(lab, "prereg", "x", "input.json")), true, "prereg stays: Lab tests read it");
+    assert.equal(existsSync(join(lab, "runner", "a.mjs")), true);
+    assert.equal(sparseConfig(lab), "true");
+    assert.equal(existsSync(join(busy, "pursuits", "old", "run.json")), true, "an active gate's checkout is not touched");
+    assert.equal(existsSync(join(plain, "pursuits", "old", "run.json")), true);
+    assert.equal(sparseConfig(plain), "");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a host short only of a repo's install reserve applies sparse patterns to idle checkouts before admission and evicts nothing for it", () => {
+  const f = fixture();
+  try {
+    // Free space falls as the cache grows, so shrinking an idle checkout reaches admission.
+    writeFileSync(join(f.root, "bin", "df"), '#!/usr/bin/env bash\nused=$(du -sb "$BEELINK_GATE_CACHE_ROOT" 2>/dev/null | cut -f1)\nprintf "Avail\\n%s\\n" "$((FAKE_AVAIL_BASE - ${used:-0}))"\n');
+    const floor = 162 * 1024 ** 3;
+    const reserve = 11 * 1024 ** 3;
+    mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
+    writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
+      `${JSON.stringify({ host: "beelink2", repo: "local/owner/repo", mode: "install", install_reserve_bytes: reserve })}\n`);
+    const used = () => Number(run("du", ["-sb", f.cache]).stdout.split("\t")[0]);
+    const runData = { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(4_000_000) };
+
+    // 2 MB short, and the only idle checkout has no patterns: refused, nothing evicted.
+    const plain = idleCheckout(f, "test", "plain", runData, 1000);
+    const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL_BASE: String(floor + reserve + used() - 2_000_000) } });
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, /install reserve needs \d+ bytes; applying sparse patterns to owned idle cache/);
+    assert.match(refused.stderr, /last-seen install reserve/);
+    assert.equal(existsSync(join(plain, "pursuits", "old", "run.json")), true);
+
+    // The same shortfall with an idle Lab checkout: its run data frees the bytes first.
+    rmSync(plain, { recursive: true });
+    const lab = idleCheckout(f, "tangle-network", "discovery-lab", runData, 1000);
+    const admitted = f.call(f.first, ["true"], { env: { FAKE_AVAIL_BASE: String(floor + reserve + used() - 2_000_000) } });
+    assert.equal(admitted.status, 0, admitted.stderr);
+    assert.match(admitted.stderr, /install reserve needs \d+ bytes; applying sparse patterns to owned idle cache/);
+    assert.match(admitted.stderr, /sparse patterns freed \d+ bytes of idle cache \S+discovery-lab/);
+    assert.equal(existsSync(join(lab, "pursuits")), false);
+    assert.equal(existsSync(join(lab, "runner", "a.mjs")), true);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
