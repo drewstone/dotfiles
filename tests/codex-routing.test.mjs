@@ -15,7 +15,7 @@ function fixture() {
   mkdirSync(bin);
   symlinkSync(wrapper, join(bin, "codex"));
   writeFileSync(join(home, "quota.json"), JSON.stringify({ a: 0, b: 0 }));
-  writeFileSync(join(bin, "acct"), `#!/usr/bin/env node
+  writeFileSync(join(bin, "acct"), `#!${process.execPath}
 const fs = require('fs'), path = require('path'), cp = require('child_process');
 const root = process.env.FIXTURE_HOME, quota = JSON.parse(fs.readFileSync(path.join(root, 'quota.json')));
 const seat = Object.keys(quota).filter(k => quota[k] < 100).sort((a,b) => quota[a] - quota[b])[0];
@@ -28,7 +28,7 @@ process.exit(result.status ?? 91);
 `);
   // The native fixture implements the actual JSON-RPC process boundary. It
   // models quota refusal and persistent homes; no subscription calls are made.
-  writeFileSync(real, `#!/usr/bin/env node
+  writeFileSync(real, `#!${process.execPath}
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), readline = require('readline');
 if (process.argv.includes('--version') || process.argv.includes('--help')) {console.log('fixture codex'); process.exit(0);}
 const home = process.env.CODEX_HOME || path.join(process.env.HOME,'.codex'), seat=path.basename(home);
@@ -120,7 +120,7 @@ test("saved exec resumes and forks retain the origin across differently loaded a
     writeFileSync(join(home, "sessions", `rollout-${at}-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, timestamp: at, cwd } }) + "\n");
   }
   writeFileSync(join(a, "session_index.jsonl"), JSON.stringify({ id: idA, thread_name: "saved-name" }) + "\n");
-  writeFileSync(f.real, `#!/usr/bin/env node
+  writeFileSync(f.real, `#!${process.execPath}
 require('fs').writeFileSync(process.env.FIXTURE_HOME+'/origin',process.env.CODEX_HOME||'default');
 `);
   try {
@@ -202,6 +202,16 @@ test("Codex Companion v1.0.4 runs sequential tasks through one real shared broke
   const lifecycle = await import(pathToFileURL(join(plugin, "scripts/lib/broker-lifecycle.mjs")));
   const codex = await import(pathToFileURL(join(plugin, "scripts/lib/codex.mjs")));
   let session;
+  // Native Codex can be installed without node in PATH. The companion itself
+  // uses an absolute Node executable; the wrapper must find the nvm default.
+  const nvm = join(f.home, "nvm"), nodeBin = join(nvm, "versions/node/v-fixture/bin");
+  mkdirSync(join(nvm, "alias"), { recursive: true }); mkdirSync(nodeBin, { recursive: true });
+  writeFileSync(join(nvm, "alias/default"), "fixture\n"); symlinkSync(process.execPath, join(nodeBin, "node"));
+  for (const command of ["bash", "readlink", "dirname", "ps", "cat", "python3"]) {
+    const path = spawnSync("sh", ["-c", `command -v ${command}`], { encoding: "utf8" }).stdout.trim();
+    symlinkSync(path, join(f.bin, command));
+  }
+  f.env.PATH = f.bin; f.env.NVM_DIR = nvm;
   try {
     Object.assign(process.env, f.env);
     delete process.env.CODEX_COMPANION_APP_SERVER_ENDPOINT;

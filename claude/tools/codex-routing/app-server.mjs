@@ -77,7 +77,7 @@ function startWorker(home) {
     for (const [id, request] of serverRequests) if (request.worker === worker) serverRequests.delete(id);
   };
   proc.on("error", exited);
-  proc.on("exit", exited);
+  proc.on("close", exited);
   return worker;
 }
 
