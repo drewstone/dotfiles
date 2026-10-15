@@ -53,7 +53,8 @@ const withChecks = (n, nodes) => pr(n, { commits: { nodes: [{ commit: { committe
 
 function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Request is not mergeable", gitUrl } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "mog-"));
-  writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { pullRequests: { nodes: prs } } } }));
+  const graphql = (develop) => writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { ref: { target: { oid: develop } }, pullRequests: { nodes: prs } } } }));
+  graphql("d".repeat(40));
   writeFileSync(join(dir, "gh-drew"), `#!/bin/bash
 echo "$*" >> "${dir}/calls.log"
 if [ "$1 $2" = "api graphql" ]; then cat "${dir}/graphql.json"; exit 0; fi
@@ -67,7 +68,7 @@ exit 0
     env: { ...process.env, ...GIT_ID, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8",
   });
   const calls = () => (existsSync(join(dir, "calls.log")) ? readFileSync(join(dir, "calls.log"), "utf8") : "");
-  return { dir, run, calls };
+  return { dir, run, calls, moveDevelop: () => graphql("e".repeat(40)) };
 }
 
 test("a green PR merges, pinned to the head it judged", () => {
@@ -165,6 +166,15 @@ test("a conflict git cannot resolve leaves the branch alone and tells the owner"
   f.run();
   assert.deepEqual(o.parents("feat/21"), o.parents(o.head));
   assert.match(f.calls(), /pr comment 21 /);
+});
+
+test("a refused conflict is retried only after develop moves", () => {
+  const f = fixture([pr(19)], { refuse: [19], refuseText: "the merge commit cannot be cleanly created." });
+  f.run(); f.run();
+  assert.equal((f.calls().match(/pr merge 19 /g) || []).length, 1);
+  f.moveDevelop(); f.run();
+  assert.equal((f.calls().match(/pr merge 19 /g) || []).length, 2);
+  assert.equal((f.calls().match(/pr comment 19 /g) || []).length, 1);
 });
 
 test("a merge GitHub refuses is recorded with its reason", () => {
