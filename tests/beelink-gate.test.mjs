@@ -1019,38 +1019,39 @@ test("a repo's committed sparse patterns keep excluded paths out of every gate c
 
     const restored = f.call(full, ["test", "-f", "history/run/result.json"]);
     assert.equal(restored.status, 0, restored.stderr);
-    assert.match(restored.stderr, /has no sparse patterns; restoring its full tree/);
+    assert.match(restored.stderr, /has no sparse patterns at \S+; restoring its full tree/);
     assert.equal(receipts(f).at(-1).sparse, null);
     assert.equal(sparseConfig(checkout), "false");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("the cache prune applies Discovery Lab's default sparse patterns to its idle checkout, never to a locked one or a repo without patterns", async () => {
+test("the cache prune applies the sparse patterns an idle checkout's HEAD commits, never to a locked checkout or one whose HEAD has none", async () => {
   const f = fixture();
   const marker = join(f.root, "locked");
   try {
-    const files = { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000), "prereg/x/input.json": "{}\n" };
-    const lab = idleCheckout(f, "tangle-network", "discovery-lab", files, 1000);
-    const busy = idleCheckout(f, "tangle-network", "discovery-lab@1", files, 1000);
-    const plain = idleCheckout(f, "test", "plain", { "src/a.txt": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000) }, 2000);
+    const committed = { ".beelink-gate/sparse-checkout": "/*\n!/pursuits/\n", "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000), "prereg/x/input.json": "{}\n" };
+    const lab = idleCheckout(f, "tangle-network", "discovery-lab", committed, 1000);
+    const busy = idleCheckout(f, "tangle-network", "discovery-lab@1", committed, 1000);
+    // No default for any repo: a Lab checkout whose HEAD predates the file stays full.
+    const old = idleCheckout(f, "tangle-network", "discovery-lab@dev", { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000) }, 2000);
     const locker = spawn("flock", ["-x", join(f.cache, ".locks", "github.com-tangle-network-discovery-lab@1.lock"), "bash", "-c", `touch '${marker}'; sleep 30`], { env: f.env });
     try {
       for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(20);
       assert.equal(existsSync(marker), true);
       const result = f.call(f.first, ["true"]);
       assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stderr, /applying default sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
+      assert.match(result.stderr, /applying repo sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
       const freed = result.stderr.match(/sparse patterns freed (\d+) bytes of idle cache \S+discovery-lab\n/);
       assert.ok(freed && Number(freed[1]) >= 300_000, result.stderr);
       assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
     } finally { locker.kill(); }
     assert.equal(existsSync(join(lab, "pursuits")), false);
-    assert.equal(existsSync(join(lab, "prereg", "x", "input.json")), true, "prereg stays: Lab tests read it");
+    assert.equal(existsSync(join(lab, "prereg", "x", "input.json")), true);
     assert.equal(existsSync(join(lab, "runner", "a.mjs")), true);
     assert.equal(sparseConfig(lab), "true");
     assert.equal(existsSync(join(busy, "pursuits", "old", "run.json")), true, "an active gate's checkout is not touched");
-    assert.equal(existsSync(join(plain, "pursuits", "old", "run.json")), true);
-    assert.equal(sparseConfig(plain), "");
+    assert.equal(existsSync(join(old, "pursuits", "old", "run.json")), true);
+    assert.equal(sparseConfig(old), "");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1066,8 +1067,9 @@ test("a host short only of a repo's install reserve applies sparse patterns to i
       `${JSON.stringify({ host: "beelink2", repo: "local/owner/repo", mode: "install", install_reserve_bytes: reserve })}\n`);
     const used = () => Number(run("du", ["-sb", f.cache]).stdout.split("\t")[0]);
     const runData = { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(4_000_000) };
+    const committed = { ...runData, ".beelink-gate/sparse-checkout": "/*\n!/pursuits/\n" };
 
-    // 2 MB short, and the only idle checkout has no patterns: refused, nothing evicted.
+    // 2 MB short, and the only idle checkout commits no patterns: refused, nothing evicted.
     const plain = idleCheckout(f, "test", "plain", runData, 1000);
     const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL_BASE: String(floor + reserve + used() - 2_000_000) } });
     assert.equal(refused.status, 75, refused.stderr);
@@ -1075,9 +1077,9 @@ test("a host short only of a repo's install reserve applies sparse patterns to i
     assert.match(refused.stderr, /last-seen install reserve/);
     assert.equal(existsSync(join(plain, "pursuits", "old", "run.json")), true);
 
-    // The same shortfall with an idle Lab checkout: its run data frees the bytes first.
+    // The same shortfall with an idle checkout whose HEAD commits patterns: its run data frees the bytes first.
     rmSync(plain, { recursive: true });
-    const lab = idleCheckout(f, "tangle-network", "discovery-lab", runData, 1000);
+    const lab = idleCheckout(f, "tangle-network", "discovery-lab", committed, 1000);
     const admitted = f.call(f.first, ["true"], { env: { FAKE_AVAIL_BASE: String(floor + reserve + used() - 2_000_000) } });
     assert.equal(admitted.status, 0, admitted.stderr);
     assert.match(admitted.stderr, /install reserve needs \d+ bytes; applying sparse patterns to owned idle cache/);
