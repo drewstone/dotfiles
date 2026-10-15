@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -70,13 +70,17 @@ exec "$@"
 `);
   chmodSync(real, 0o755);
   chmodSync(join(bin, "acct"), 0o755);
+  writeFileSync(join(bin, "getent"), '#!/bin/sh\nprintf "fixture:x:1:1::%s:/bin/bash\\n" "$FIXTURE_HOME"\n');
+  chmodSync(join(bin, "getent"), 0o755);
+  mkdirSync(join(home, ".local/bin"), { recursive: true });
+  symlinkSync(real, join(home, ".local/bin/codex"));
   const route = (args, extra = {}) => {
     rmSync(join(home, "acct.args"), { force: true });
     const result = spawnSync(wrapperPath, args, {
       encoding: "utf8",
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CODEX_REAL_BIN: real,
         CODEX_HOME: "", ACCT_ROUTED: "", ROUTE_LOG: log, ACCT_ARGS: join(home, "acct.args"),
-        ALLOCATED_HOME: join(home, "allocated"), ...extra },
+        ALLOCATED_HOME: join(home, "allocated"), FIXTURE_HOME: home, ...extra },
     });
     return { result, launch: JSON.parse(readFileSync(log, "utf8")) };
   };
@@ -100,6 +104,11 @@ exec "$@"
       assert.throws(() => readFileSync(join(home, "acct.args")), { code: "ENOENT" });
     }
     assert.equal(route(["exec", "failure"], { CODEX_EXIT: "29" }).result.status, 29);
+    // Linux provisioning installs this native binary even without nvm.
+    if (process.platform === "linux") {
+      assert.equal(route(["app-server"], { CODEX_REAL_BIN: "", NVM_DIR: join(home, "no-nvm") }).result.status, 0);
+      assert.equal(readFileSync(join(home, "acct.args"), "utf8").split("\n")[2], join(home, ".local/bin/codex"));
+    }
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

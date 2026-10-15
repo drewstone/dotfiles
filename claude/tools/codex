@@ -86,7 +86,7 @@ run_codex() {
 # 9.6-38.8 s wall on this host at load 95-150, against 0.32 s for the same binary named
 # directly. Every health probe and every spawned turn pays it, so a bridge whose CODEX_BIN is
 # this wrapper reads as unavailable and its runs settle driver-failed. Order: an explicit
-# override, the native Homebrew build, then the nvm version the default alias names. The native
+# override, Homebrew, the standalone install, then the nvm version the default alias names. The native
 # build wins because it answers --version in 0.32 s against 1.0 s for the npm package under nvm,
 # which is a Node script and pays Node startup; both are the same codex-cli and were 0.154.0 when
 # this order was chosen. Set CODEX_REAL_BIN to pin one if they ever drift.
@@ -97,6 +97,7 @@ fi
 for candidate in \
   ${CODEX_REAL_BIN:-} \
   /opt/homebrew/bin/codex \
+  "${acct_home:-$HOME}/.local/bin/codex" \
   ${default_alias_version:+"$nvm_dir/versions/node/v${default_alias_version#v}/bin/codex"}
 do
   [ -n "$candidate" ] || continue
