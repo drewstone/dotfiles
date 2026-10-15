@@ -3,7 +3,7 @@
 Use when progress stalls, work repeats, or the user requests a waste audit.
 Start with one turn and stop when the next useful correction is clear; self-review must not become another monitoring loop.
 
-Resolve the maintained [Tangle Traces CLI](https://github.com/tangle-network/traces#session-facts) and check its help.
+Resolve the maintained [Tangle Traces CLI](https://github.com/tangle-network/traces/blob/main/docs/facts.md) and check its help.
 On this Mac, it is `~/.local/bin/traces`; bare `traces` currently resolves an unrelated Homebrew tool.
 Read deterministic facts before considering model-backed analysis.
 This example uses Codex; other agents must select their own `--harness` and explicit `--session` from CLI help.
