@@ -140,6 +140,7 @@ agent-ask apps                                               # known apps and or
 ```
 
 It starts the turn with a client-generated turn id, so a retried start never runs twice, then holds `?wait=25` turn reads until the turn settles, waits on a decision, or `--wait` ends.
+Model selection uses `--model`, then `AGENT_ASK_MODEL`, then the workspace's saved model.
 Exit codes match `gtm-ask`: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on a decision.
 The key is that app's operator key from `<APP>_OPERATOR_API_KEY`, else the one Tangle agent key `TANGLE_AGENT_KEY`, from the environment or `~/company/devops/secrets/agent-state.env`; the origin defaults to the app's production host and is overridden by `--origin` or `<APP>_BASE_URL` (HTTPS, or loopback HTTP).
 An app that has not mounted the operator API answers that it does not serve it yet.
@@ -158,7 +159,7 @@ gtm-ask file research/plan.md                          # read a vault file the a
 gtm-ask --json --download ./assets "<ask>"             # one JSON object; save referenced asset files
 ```
 
-It starts a new thread unless `--thread` names one, sends `gpt-6.1-sol` unless `--model` overrides it, and follows the turn through its stream, the replay route, then slow `/api/chat/running` polls.
+It starts a new thread unless `--thread` names one, uses the workspace's saved model unless `--model` overrides it, and follows the turn through its stream, the replay route, then slow `/api/chat/running` polls.
 The result comes from the persisted thread, not the stream: reply, failure notice, asset-version URLs, vault paths the turn created or edited, and open questions or Hub approvals.
 Exit codes: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question.
 

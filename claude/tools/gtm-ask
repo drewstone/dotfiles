@@ -16,7 +16,6 @@ import { takeSlot } from './operator-api/rate.mjs'
 const DEFAULT_BASE = 'https://gtm.tangle.tools'
 // Drew's operator workspace, "GTM Agent".
 const DEFAULT_WORKSPACE = 'b81b721c078853fdd78687ee622a1e69'
-const DEFAULT_MODEL = 'gpt-6-luna'
 const KEY_NAME = 'GTM_OPERATOR_API_KEY'
 const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
 // An ask the agent raises can be resolved by the runtime itself; one still open after this is the owner's.
@@ -39,7 +38,7 @@ options:
   --workspace <id>   workspace (default $GTM_WORKSPACE_ID, else ${DEFAULT_WORKSPACE})
   --thread <id>      continue this thread instead of starting a new one
   --title <text>     title for a new thread (default: the ask's first line)
-  --model <id>       model for the turn (default ${DEFAULT_MODEL})
+  --model <id>       model for the turn (default: the workspace's saved model)
   --wait <duration>  how long to follow the turn, e.g. 90s, 30m, 1h (default 30m; status 0);
                      0 returns once the turn is admitted
   --download <dir>   save the asset files the reply references into <dir>
@@ -596,7 +595,7 @@ async function main(argv) {
   const response = await client.request('POST', '/api/chat', {
     raw: true,
     signal: controller.signal,
-    body: { workspaceId, threadId, turnId, model: options.model ?? DEFAULT_MODEL, content: ask },
+    body: { workspaceId, threadId, turnId, ...(options.model ? { model: options.model } : {}), content: ask },
   })
   const ctx = {
     client, base, workspaceId, threadId, options, progress, defaultWorkspace,

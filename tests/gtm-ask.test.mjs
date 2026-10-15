@@ -125,13 +125,13 @@ const reply = (threadId, extra = {}) => ({
   ...extra,
 })
 
-test('a new ask creates a thread, sends the default model, and prints reply, assets and vault writes', async () => {
+test('a new ask creates a thread, leaves the model to the workspace, and prints reply, assets and vault writes', async () => {
   const api = await startApi({ chat: completed('gtm-agent:th-1:0'), reply: reply('th-1') })
   try {
     const result = await run(api, ['--workspace', 'ws1', 'Draft the launch plan'])
     assert.equal(result.code, 0, result.stderr)
     const chat = api.calls.find((call) => call.path === '/api/chat')
-    assert.equal(chat.body.model, 'gpt-6-luna')
+    assert.equal(Object.hasOwn(chat.body, 'model'), false)
     assert.equal(chat.body.workspaceId, 'ws1')
     assert.equal(chat.body.threadId, 'th-1')
     assert.equal(chat.body.content, 'Draft the launch plan')
@@ -143,6 +143,17 @@ test('a new ask creates a thread, sends the default model, and prints reply, ass
     assert.match(result.stdout, /created {2}research\/plan\.md/)
     assert.match(result.stdout, /\/api\/workspaces\/ws1\/asset-versions\/v123\/file/)
     assert.match(result.stdout, /asset-versions\/v456\/file/)
+  } finally {
+    await api.close()
+  }
+})
+
+test('--model preserves the explicit model in the chat request', async () => {
+  const api = await startApi({ chat: completed('gtm-agent:th-1:0'), reply: reply('th-1') })
+  try {
+    const result = await run(api, ['--workspace', 'ws1', '--model', 'requested-model', 'Draft the launch plan'])
+    assert.equal(result.code, 0, result.stderr)
+    assert.equal(api.calls.find((call) => call.path === '/api/chat').body.model, 'requested-model')
   } finally {
     await api.close()
   }
