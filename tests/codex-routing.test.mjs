@@ -123,10 +123,13 @@ test("saved exec resumes and forks retain the origin across differently loaded a
   writeFileSync(f.real, `#!${process.execPath}
 require('fs').writeFileSync(process.env.FIXTURE_HOME+'/origin',process.env.CODEX_HOME||'default');
 `);
+  writeFileSync(join(f.home, "quota.json"), JSON.stringify({ a: 100, b: 0 }));
   try {
     for (const [args, home] of [
       [["exec", "resume", idA, "continue"], a], [["exec", "fork", idA, "continue"], a],
       [["exec", "resume", "saved-name", "continue"], a],
+      [["exec", "--output-schema", "/fixture/schema.json", "resume", idA, "continue"], a],
+      [["exec", "-o", "/fixture/output", "fork", idA, "continue"], a],
       [["exec", "resume", "--last", "continue"], a],
       [["exec", "resume", "--last", "--all", "continue"], b],
       [["--cd", "/another/workspace", "exec", "resume", "--last", "continue"], b],

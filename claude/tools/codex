@@ -62,7 +62,7 @@ for argument in "$@"; do
     --help|-h|--version|-V|--oss|--local-provider|--local-provider=*)
       allocate=false
       break ;;
-    -c|--config|-m|--model|-p|--profile|-C|--cd|-s|--sandbox|-a|--ask-for-approval|--enable|--disable|-i|--image|--add-dir|--listen|--code-mode-host|--ws-auth|--ws-token-file|--ws-token-sha256|--ws-shared-secret-file|--ws-issuer|--ws-audience|--ws-max-clock-skew-seconds)
+    -c|--config|-m|--model|-p|--profile|-C|--cd|-s|--sandbox|-a|--ask-for-approval|--enable|--disable|-i|--image|--add-dir|-o|--output-last-message|--output-schema|--thread-source|--cyber-access-program|--listen|--code-mode-host|--ws-auth|--ws-token-file|--ws-token-sha256|--ws-shared-secret-file|--ws-issuer|--ws-audience|--ws-max-clock-skew-seconds)
       skip_value=true ;;
     -*) ;;
     *)
