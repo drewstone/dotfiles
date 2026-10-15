@@ -58,11 +58,13 @@ function projectOf(cwd) {
 
 // trace-mine model labels, keyed by host:turn-uuid.
 const labels = new Map()
+const labelsByTime = new Map()
 if (existsSync(LABELS)) {
   for (const line of readFileSync(LABELS, 'utf8').split('\n')) {
     if (!line) continue
     const r = JSON.parse(line)
     labels.set(r.id, r)
+    if (r.host && r.session && r.ts) labelsByTime.set(`${r.host}:${r.session}:${String(r.ts).slice(0, 19)}`, r)
   }
 } else console.error(`no ${LABELS}: every turn goes to the adjudication pass`)
 
@@ -85,8 +87,9 @@ for (const name of readdirSync(EXTRACT).filter((n) => n.endsWith('.jsonl') && n 
       seen.add(key)
       if (!text || MACHINE.some((re) => re.test(text)) || THIRD_PERSON_DREW.test(text) || MACHINE_CWD.test(rec.cwd ?? '')) { dropped += 1; continue }
       const author = isClaude ? (RELAY(text) ? 'relay' : 'human') : t.author
-      const id = isClaude ? `${rec.host}:${t.id}` : `${rec.host}:${rec.session}:${t.ts}`
-      const model = labels.get(id)
+      const id = isClaude && t.id ? `${rec.host}:${t.id}` : `${rec.host}:${rec.session}:${t.ts}`
+      // Rows from traces carry no record uuid; trace-mine labels also join by host, session and turn time.
+      const model = labels.get(id) ?? labelsByTime.get(`${rec.host}:${rec.session}:${String(t.ts).slice(0, 19)}`)
       const lex = detectCorrection({ text })
       const correction = model && model.detector !== 'lexical' ? model.correction : lex.correction
       rows.push({
