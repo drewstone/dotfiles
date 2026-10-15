@@ -31,21 +31,20 @@ The agent-cap-guard counts a Workflow as three Opus agents, so a workflow starts
 
 ## 1. Extract every store on every host
 
-- **Claude Code.** Use `traces facts` only after both of these hold:
-  - a traces release contains tangle-network/traces#185 (`gh release list --repo tangle-network/traces` shows a release newer than 2026-10-15T08:41Z);
-  - its daily human-turn counts match extract.mjs over one week.
-
-  Until then, run trace-mine's extractor, `E=~/.local/share/tangle-tools/trace-insights/mine/analyst/extract.mjs`:
-  `$N --max-old-space-size=12000 $E extract --since ISO --until ISO > $OUT/extract/claude-<host>.jsonl`
-  On the GTR, run it the way trace-mine's `onHost` does:
-  `ssh drew-gtr-pro 'PATH=$HOME/.local/bin:/usr/local/bin:$PATH node --max-old-space-size=12000 --input-type=module - extract --since ISO --until ISO' < $E`
+- **Claude Code.** `traces` owns the turn classification (it reads through harness-sessions). Check `traces --version` is at least 0.23.0 on each host, then:
+  `traces facts --harness claude-code --since ISO --until ISO --format json > $OUT/extract/claude-<host>.facts.json`
+  (on the GTR: `ssh drew-gtr-pro 'PATH=$HOME/.local/bin:$PATH traces facts …' > …`).
+  If its `selection.unreadSessions` names a session outside a `/tmp` project, also run trace-mine's extractor for the same window, `E=~/.local/share/tangle-tools/trace-insights/mine/analyst/extract.mjs`:
+  `$N --max-old-space-size=12000 $E extract --since ISO --until ISO > $OUT/extract/claude-<host>.extract.jsonl` (GTR: `ssh drew-gtr-pro 'PATH=$HOME/.local/bin:/usr/local/bin:$PATH node --max-old-space-size=12000 --input-type=module - extract --since ISO --until ISO' < $E`).
+  Then `python3 -I $K/scripts/from_traces.py $OUT/extract/claude-<host>.facts.json --host <host> [--fallback $OUT/extract/claude-<host>.extract.jsonl] > $OUT/extract/claude-<host>.jsonl`.
+  It prints every unread session and whether the fallback recovered it; name each one in the report, and file it against traces when it is a reader error.
 - **Codex, Pi and OpenCode.** Run `python3 -I $K/scripts/multi_extract.py <codex|pi|opencode>` locally. On the GTR, run `ssh drew-gtr-pro "python3 -I - <harness>" < $K/scripts/multi_extract.py`.
   Write each output to `$OUT/extract/<harness>-<host>.jsonl`. The host defaults to the short lowercase hostname, which matches trace-mine's turn ids.
   It reads both Codex account homes, Pi sessions and the OpenCode database. Kimi stores hold product runs, so skip them.
   Mac Claude sessions that the live store purged (August) exist only in the GTR trace archive (`/mnt/traces`). Name that gap if the window reaches it.
 - **trace-mine Opus labels.** `scp drew-gtr-pro:.local/state/trace-mine/analyst/turns.jsonl $OUT/extract/trace-mine-labels.jsonl`
 
-Done when there is one file per harness per host, no stderr holds a Traceback, and every empty file is explained (for example, no store on that host).
+Done when there is one file per harness per host, no stderr holds a Traceback, every empty file is explained (for example, no store on that host), and from_traces.py reports no session as LOST.
 
 ## 2. Merge
 
