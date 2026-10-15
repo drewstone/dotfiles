@@ -3160,10 +3160,15 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
   const b2 = join(f.root, "cache-100.127.22.51", ".locks");
   mkdirSync(b1, { recursive: true });
   mkdirSync(b2, { recursive: true });
-  const holder = spawn("python3", ["-u", "-c", 'import fcntl,sys,time; fs=[open(p,"w") for p in sys.argv[1:]]; [fcntl.flock(f,fcntl.LOCK_EX) for f in fs]; print("held",flush=True); time.sleep(60)', join(b1, "local-owner-repo.lock"), join(b2, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+  const hold = (lock) => spawn("python3", ["-u", "-c", 'import fcntl,sys,time; f=open(sys.argv[1],"w"); fcntl.flock(f,fcntl.LOCK_EX); print("held",flush=True); time.sleep(60)', lock], { stdio: ["ignore", "pipe", "ignore"] });
+  // beelink1 stays busy throughout, so the older waiter can only be placed on beelink2,
+  // where the newer gate waits too. Releasing both let them run on different hosts,
+  // and their echoes raced (3 flakes in about 10 gate runs on 2026-10-15).
+  const holder = hold(join(b2, "local-owner-repo.lock"));
+  const busyB1 = hold(join(b1, "local-owner-repo.lock"));
   let older, newer;
   try {
-    await new Promise((done) => holder.stdout.once("data", done));
+    await Promise.all([holder, busyB1].map((child) => new Promise((done) => child.stdout.once("data", done))));
     const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "20", BEELINK_GATE_LOAD_WAIT: "35s" };
     older = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "bash", "-c", `echo older >> '${events}'`], { env });
     let olderErr = "";
@@ -3187,6 +3192,7 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
     }
   } finally {
     holder.kill("SIGKILL");
+    busyB1.kill("SIGKILL");
     older?.kill("SIGKILL");
     newer?.kill("SIGKILL");
     rmSync(f.root, { recursive: true, force: true });
