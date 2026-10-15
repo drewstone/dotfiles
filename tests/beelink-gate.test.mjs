@@ -832,14 +832,16 @@ function shapedReserveFixture(f, freeGiB) {
   });
   const spec = `sha256:${createHash("sha256").update("/*\n!/history/\n").digest("hex")}`;
   const availPrefix = join(f.root, "free");
-  for (const [ip, gib] of Object.entries({ "100.98.195.7": 400, "100.127.22.51": freeGiB })) writeFileSync(`${availPrefix}-${ip}`, String((200 + gib) * 1024 ** 3));
+  const setFree = (gib) => writeFileSync(`${availPrefix}-100.127.22.51`, String((200 + gib) * 1024 ** 3));
+  writeFileSync(`${availPrefix}-100.98.195.7`, String(600 * 1024 ** 3));
+  setFree(freeGiB);
   writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
   mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
   const seed = (...rows) => writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
     rows.map((row) => typeof row === "string" ? row : JSON.stringify({ repo: "local/owner/repo", mode: "install", ...row })).join("\n") + "\n", { flag: "a" });
-  const gateOn = () => run(gate, ["beelink2", f.url, sha, "--", "true"],
-    { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: join(f.root, "host-cache") }, timeout: 30_000 });
-  return { sha, spec, seed, gateOn };
+  const gateOn = (target = sha, env = {}) => run(gate, ["beelink2", f.url, target, "--", "true"],
+    { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: join(f.root, "host-cache"), ...env }, timeout: 30_000 });
+  return { sha, spec, seed, gateOn, setFree };
 }
 
 test("an install reserve measured on another checkout shape is ignored, and one of the same shape is used", () => {
@@ -857,7 +859,7 @@ test("an install reserve measured on another checkout shape is ignored, and one 
     seed({ host: "beelink2", sparse_spec: spec, install_reserve_bytes: 20 * 1024 ** 3 });
     const refused = gateOn();
     assert.equal(refused.status, 75, refused.stderr);
-    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest receipt for checkout shape ${spec}`));
+    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest cold receipt for checkout shape ${spec}`));
     assert.match(refused.stderr, /below its 200 GiB disk floor plus 21474836480 bytes last-seen install reserve/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -870,7 +872,7 @@ test("a host with no receipt of the gated checkout shape uses the other beelink'
     // The headroom alone would admit 12 GiB above the floor; beelink1's measured 13 GiB does not.
     const refused = gateOn();
     assert.equal(refused.status, 75, refused.stderr);
-    assert.match(refused.stderr, new RegExp(`install reserve 13958643712 bytes from the other beelink's newest receipt for checkout shape ${spec}`));
+    assert.match(refused.stderr, new RegExp(`install reserve 13958643712 bytes from the other beelink's newest cold receipt for checkout shape ${spec}`));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -884,10 +886,84 @@ test("a malformed or older receipt never loosens the install reserve", () => {
       { host: "beelink2", sparse_spec: spec, install_reserve_bytes: "11000000000" },
       { host: "beelink2", sparse_spec: "sha256:not-a-digest", install_reserve_bytes: 10 * 1024 ** 3 + 1 },
       { host: "beelink2", sparse: "repo", install_reserve_bytes: 10 * 1024 ** 3 + 2 },
+      { host: "beelink2", sparse_spec: spec, checkout_temperature: "lukewarm", install_reserve_bytes: 10 * 1024 ** 3 + 3 },
+      { host: "beelink2", sparse_spec: spec, checkout_temperature: "warm", install_reserve_bytes: 10 * 1024 ** 3 + 4 },
       '{"host": "beelink2", "repo": "local/owner/repo", "install_reserve_bytes": 10737418243');
     const refused = gateOn();
     assert.equal(refused.status, 75, refused.stderr);
-    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest receipt for checkout shape ${spec}`));
+    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest cold receipt for checkout shape ${spec}`));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the first warm gate pays the cold reserve of its shape until a warm receipt exists, and receipts record temperature", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn, setFree } = shapedReserveFixture(f, 15);
+    const clone = gateOn();
+    assert.equal(clone.status, 0, clone.stderr);
+    assert.match(clone.stderr, / checkout=cold /);
+    assert.equal(receipts(f).at(-1).checkout_temperature, "cold");
+
+    seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 12 * 1024 ** 3 });
+    const firstWarm = gateOn();
+    assert.equal(firstWarm.status, 0, firstWarm.stderr);
+    assert.match(firstWarm.stderr, new RegExp(`install reserve 12884901888 bytes from beelink2's newest cold receipt for checkout shape ${spec}; a warm checkout pays it until a beelink has a warm receipt of its shape`));
+    assert.match(firstWarm.stderr, / checkout=warm /);
+    assert.equal(receipts(f).at(-1).checkout_temperature, "warm");
+    assert.equal(receipts(f).at(-1).install_reserve_bytes, 10 * 1024 ** 3);
+
+    // 11 GiB free above the floor: the cold reserve would refuse, the warm receipt admits.
+    setFree(11);
+    seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 12 * 1024 ** 3 });
+    const warm = gateOn();
+    assert.equal(warm.status, 0, warm.stderr);
+    assert.match(warm.stderr, new RegExp(`install reserve 10737418240 bytes from beelink2's newest warm receipt for checkout shape ${spec}`));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a warm gate with no warm receipt of its shape on its host uses the other beelink's", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn } = shapedReserveFixture(f, 12);
+    assert.equal(gateOn().status, 0);
+    seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 14 * 1024 ** 3 },
+      { host: "beelink1", sparse_spec: spec, checkout_temperature: "warm", install_reserve_bytes: 10 * 1024 ** 3 + 512 * 1024 ** 2 });
+    const warm = gateOn();
+    assert.equal(warm.status, 0, warm.stderr);
+    assert.match(warm.stderr, new RegExp(`install reserve 11274289152 bytes from the other beelink's newest warm receipt for checkout shape ${spec}`));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a warm checkout of another shape than the gated commit pays the cold reserve", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn } = shapedReserveFixture(f, 15);
+    // The cached checkout is full (f.second commits no patterns); the gated commit is sparse.
+    assert.equal(gateOn(f.second).status, 0);
+    seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "warm", install_reserve_bytes: 10 * 1024 ** 3 },
+      { host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 20 * 1024 ** 3 });
+    const refused = gateOn();
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest cold receipt for checkout shape ${spec}\\n`));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a warm checkout that its own prune evicts between admission and install is judged on the cold reserve before it clones", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn } = shapedReserveFixture(f, 15);
+    assert.equal(gateOn().status, 0);
+    seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "warm", install_reserve_bytes: 10 * 1024 ** 3 },
+      { host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 20 * 1024 ** 3 });
+    // A cap below one checkout: the precheck prune, after admission, evicts this gate's own checkout.
+    const raced = gateOn(undefined, { BEELINK_GATE_CACHE_MAX_BYTES: "1000" });
+    assert.equal(raced.status, 75, raced.stderr);
+    assert.match(raced.stderr, new RegExp(`install reserve 10737418240 bytes from beelink2's newest warm receipt for checkout shape ${spec}`));
+    assert.match(raced.stderr, /evicted LRU cache .*local\/owner\/repo/);
+    assert.match(raced.stderr, /left the cache after admission, so this gate clones it; judging it on the cold reserve/);
+    assert.match(raced.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest cold receipt for checkout shape ${spec}`));
+    assert.match(raced.stderr, /below its 200 GiB disk floor plus 21474836480 bytes last-seen install reserve/);
+    assert.doesNotMatch(raced.stderr, /fetching /);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
