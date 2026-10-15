@@ -51,10 +51,9 @@ function startWorker(home) {
       || message.error?.data?.codexErrorInfo === "usageLimitExceeded"
       || (message.method === "account/rateLimits/updated"
         && [limits?.primary, limits?.secondary].some(window => window?.usedPercent >= 100));
-    if (exhausted && !worker.quotaInvalidated) {
+    if (exhausted) {
       try {
         execFileSync("acct", ["resets", "codex", "--invalidate"], { stdio: "ignore", timeout: 5000 });
-        worker.quotaInvalidated = true;
       } catch { allocationError = new Error("Codex quota cache invalidation failed; new task admission stopped."); }
     }
     if (message.method) {
