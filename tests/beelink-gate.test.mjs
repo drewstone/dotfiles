@@ -1049,6 +1049,23 @@ exec /usr/bin/du "$@"
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a measurement whose du ignores TERM is still cut at the gate's remaining hold", () => {
+  const f = fixture();
+  try {
+    // An ignored signal survives exec, so this du outlives a TERM.
+    writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash
+if [[ " $* " == *" --total "* ]]; then trap '' TERM; exec sleep 40; fi
+exec /usr/bin/du "$@"
+`);
+    chmodSync(join(f.root, "bin", "du"), 0o755);
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_MAX_HOLD: "6s" } });
+    assert.equal(result.status, 75, result.stderr);
+    assert.match(result.stderr, /hold limit of 6s reached/);
+    // A KILL sent five seconds after the TERM held the lock to about 12 s.
+    assert.ok(receipts(f).at(-1).ran_s <= 9, `held ${receipts(f).at(-1).ran_s}s against a 6 s hold`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a measurement of the gate's bytes that times out or fails records the cold reserve, never less than the headroom", () => {
   const f = fixture();
   try {
