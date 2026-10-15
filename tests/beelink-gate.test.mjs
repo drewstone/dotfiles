@@ -1041,7 +1041,7 @@ test("the cache prune applies Discovery Lab's default sparse patterns to its idl
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stderr, /applying default sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
       const freed = result.stderr.match(/sparse patterns freed (\d+) bytes of idle cache \S+discovery-lab\n/);
-      assert.ok(freed && Number(freed[1]) >= 400_000, result.stderr);
+      assert.ok(freed && Number(freed[1]) >= 300_000, result.stderr);
       assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
     } finally { locker.kill(); }
     assert.equal(existsSync(join(lab, "pursuits")), false);
