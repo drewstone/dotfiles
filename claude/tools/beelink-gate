@@ -206,11 +206,52 @@ admit_window() {
   esac
 }
 
+# A repo keeps tracked paths its gated commands never read out of its gate
+# checkouts by committing .beelink-gate/sparse-checkout: `git sparse-checkout
+# --no-cone` patterns, one per line, # for comments. A file with no patterns
+# keeps the checkout full. A repo that commits no file uses its entry here,
+# until it commits its own. Discovery Lab's rule (docs/processes/agent-work.md
+# on its master) excludes historical /pursuits/ from every execution checkout;
+# its tests read prereg/, so prereg stays. On 2026-10-14 its full gate checkout
+# held 11 GB on beelink1, and its 22-28 GB measured install reserve kept Lab
+# gates off both beelinks from about 19:50Z.
+sparse_default() {  # <host/owner/repo>
+  case "$1" in
+    github.com/tangle-network/discovery-lab) printf '%s\n' '/*' '!/pursuits/' ;;
+  esac
+}
+
+# Keeps <checkout> at its repo's sparse patterns for <rev>, the commit it is
+# about to check out (an idle checkout passes HEAD). The caller holds the
+# checkout's repo lock. Setting patterns removes the excluded tracked files
+# now, and later checkouts never write them; a repo with no patterns gets its
+# full tree back. Sets sparse_source (repo, default or empty) and says on
+# stderr when it changed the checkout.
+sparse_apply() {  # <checkout> <rev> <host/owner/repo>
+  local declared want enabled
+  if declared=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null); then
+    sparse_source=repo
+  else
+    declared=$(sparse_default "$3") sparse_source=default
+  fi
+  want=$(printf '%s\n' "$declared" | sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d')
+  enabled=$(git -C "$1" config --bool core.sparseCheckout)
+  if [ -z "$want" ]; then
+    sparse_source=""
+    [ "$enabled" = true ] || return 0
+    echo "beelink-gate: $1 has no sparse patterns; restoring its full tree" >&2
+    git -C "$1" sparse-checkout disable
+  elif [ "$enabled" != true ] || [ "$want" != "$(cat "$1/.git/info/sparse-checkout" 2>/dev/null)" ]; then
+    echo "beelink-gate: applying $sparse_source sparse patterns to $1: $(printf '%s' "$want" | tr '\n' ' ')" >&2
+    printf '%s\n' "$want" | git -C "$1" sparse-checkout set --no-cone --stdin
+  fi
+}
+
 # Cache directories are owned by this command. A global lock serializes size
 # decisions; per-repo locks keep active gates out of the eviction set.
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
-    python3 - "$1" "$2" "$3" "${4:-0}" <<'PY'
+    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_default sparse_apply)" <<'PY'
 import contextlib
 import fcntl
 import os
@@ -221,6 +262,7 @@ import sys
 import time
 
 root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+sparse_code = sys.argv[5]
 locks = root / ".locks"
 
 @contextlib.contextmanager
@@ -290,10 +332,40 @@ try:
                     candidates.append((stamp.stat().st_mtime_ns, repo, size(repo), host.name, owner.name))
         total = size(root)
         initial_total = total
-        estimated_total = total
-        estimated_reclaimed = 0
         initial_free = free_bytes(root)
         target_free = initial_free + required_reclaim
+        # An idle checkout first shrinks to its repo's sparse patterns: those
+        # are paths no gated command reads, and the checkout stays warm for the
+        # next gate. LRU eviction then weighs what remains.
+        sparsified = 0
+        for index, (stamp_ns, repo, bytes_used, host, owner) in enumerate(candidates):
+            fd = os.open(locks / f"{host}-{owner}-{repo.name}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            try:
+                if repo != current:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        continue
+                result = subprocess.run(
+                    ["bash", "-c", sparse_code + '\nsparse_apply "$@"', "beelink-gate",
+                     str(repo), "HEAD", f"{host}/{owner}/{repo.name.split('@')[0]}"],
+                    text=True, capture_output=True, stdin=subprocess.DEVNULL,
+                )
+                # sparse_apply writes to stderr only when it changes the checkout.
+                sys.stderr.write(result.stderr)
+                if result.returncode:
+                    print(f"beelink-gate: sparse patterns not applied to idle cache {repo} (exit {result.returncode})", file=sys.stderr)
+                elif result.stderr:
+                    after = size(repo)
+                    sparsified += max(0, bytes_used - after)
+                    candidates[index] = (stamp_ns, repo, after, host, owner)
+                    print(f"beelink-gate: sparse patterns freed {bytes_used - after} bytes of idle cache {repo}", file=sys.stderr)
+            finally:
+                os.close(fd)
+        if sparsified:
+            total = size(root)
+        estimated_total = total
+        estimated_reclaimed = sparsified
         evictions = 0
         for _, repo, bytes_used, host, owner in sorted(candidates):
             if estimated_total <= cap and estimated_reclaimed >= required_reclaim:
@@ -320,7 +392,7 @@ try:
         total = size(root)
         final_free = free_bytes(root)
         reclaimed = max(0, final_free - initial_free)
-        if evictions or required_reclaim or total > cap:
+        if evictions or sparsified or required_reclaim or total > cap:
             print(
                 f"beelink-gate: cache prune: cache_before={initial_total} cache_after={total} "
                 f"free_before={initial_free} free_after={final_free}",
@@ -384,15 +456,23 @@ wait_for_capacity_writer() {
 
 # Use only this command's locked, disposable checkouts to restore a host's disk
 # floor with 10 GiB headroom. A missing cache has nothing safe to evict.
+# A host short only of the repo's last measured install reserve gets the same
+# pass with nothing to reclaim: it applies sparse patterns to idle checkouts
+# and evicts only for the cache cap, so their bytes count before admission.
 recover_floor_from_cache() {
-  local host="$1" root="$2" cap="$3" current="$4" available wanted floor
+  local host="$1" root="$2" cap="$3" current="$4" reserve="${5:-0}" available wanted floor
   [ -d "$root/.locks" ] || return 0
   available=$(free_bytes)
   floor=$(floor_gib "$host") || return 3
-  wanted=$(( floor * 1024 * 1024 * 1024 + 10 * 1024 * 1024 * 1024 ))
-  (( available < wanted )) || return 0
-  echo "beelink-gate: disk reserve needs $((wanted - available)) bytes; pruning owned idle cache" >&2
-  prune_cache "$root" "$current" "$cap" "$((wanted - available))" || true
+  floor=$(( floor * 1024 * 1024 * 1024 ))
+  wanted=$(( floor + 10 * 1024 * 1024 * 1024 ))
+  if (( available < wanted )); then
+    echo "beelink-gate: disk reserve needs $((wanted - available)) bytes; pruning owned idle cache" >&2
+    prune_cache "$root" "$current" "$cap" "$((wanted - available))" || true
+  elif (( available < floor + reserve )); then
+    echo "beelink-gate: install reserve needs $((floor + reserve - available)) bytes; applying sparse patterns to owned idle cache" >&2
+    prune_cache "$root" "$current" "$cap" 0 || true
+  fi
 }
 
 # Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
@@ -1329,7 +1409,7 @@ remote_gate() {
 
   # Direct --remote calls still honor a heartbeat. Detached jobs have none:
   # their own session and MAX_HOLD bound survive a lost launcher.
-  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" reaped=0 bundle_note="" gate_refs_before="" gate_refs_taken=0
+  watchdog=0 timed_out=0 current="" waited=0 start_load="" start_pressure="" starved=0 gate_cgroup_joined="" cache_note="" sparse_source="" reaped=0 bundle_note="" gate_refs_before="" gate_refs_taken=0
   # Every step's processes carry this token in their environment. A process
   # that leaves the step's group (setsid, a daemonizing dev server) keeps it,
   # so the gate can still find and stop it. Global: finish reads it from the EXIT trap.
@@ -1400,7 +1480,7 @@ remote_gate() {
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi
-  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout" "$install_reserve_bytes"
   if ! check_floor "$beelink" "$install_reserve_bytes"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its disk floor"
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
@@ -1574,13 +1654,13 @@ remote_gate() {
     local status="$1" ran=$((SECONDS - started))
     local preview_verdict
     preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s\n' \
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s sparse=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s\n' \
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
-      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
+      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
@@ -1591,7 +1671,7 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink
        "node": node or None, "rebuild": rebuild or None, "reaped": int(reaped), "bundle": bundle or None,
        "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
        "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
-       "lane": lane or None, "reason_scope": "host_last_10000_receipts"}
+       "lane": lane or None, "sparse": sparse or None, "reason_scope": "host_last_10000_receipts"}
 if int(install_reserve):
     row["install_reserve_bytes"] = int(install_reserve)
 if preview:
@@ -1751,7 +1831,7 @@ PY
   fi
   # The final admission checks run after lock and slot acquisition so their
   # refusals need the same cleanup and receipt path as later failures.
-  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout"
+  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout" "$install_reserve_bytes"
   if ! check_floor "$beelink" "$install_reserve_bytes"; then
     # The host can cross its floor while the gate queued for pressure, a checkout
     # or a slot; an auto placement still gives it back (finish releases the lock).
@@ -1824,6 +1904,8 @@ PY
   if [ -n "$default_branch" ]; then
     base_sha=$(git -C "$checkout" rev-parse --verify "refs/remotes/origin/$default_branch^{commit}") || base_sha=""
   fi
+  # Before checkout, so a path the repo's sparse patterns exclude is never written.
+  sparse_apply "$checkout" "$sha" "$host/$owner/$repo" || exit $?
   if [ -n "$gate_branch" ]; then
     git -C "$checkout" checkout --force -B "$gate_branch" "$sha" || exit $?
     git -C "$checkout" branch --set-upstream-to="origin/$gate_branch" "$gate_branch" >/dev/null || exit $?

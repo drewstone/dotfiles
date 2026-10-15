@@ -254,7 +254,12 @@ refreshes `origin/` refs for the remote default branch, `main` or `develop`,
 and branches whose remote head matches the requested SHA. It fetches only those
 branch histories; the requested SHA remains detached. Its 40 GiB total cap evicts
 the least recently used idle checkout before and after gates;
-keep retained proof outside the cache. A gate refuses before fetching when
+keep retained proof outside the cache. A repo keeps tracked paths its gated
+commands never read out of the checkout by committing
+`.beelink-gate/sparse-checkout` (`git sparse-checkout --no-cone` patterns);
+Discovery Lab gets its own rule (`/*`, `!/pursuits/`) until it commits one. The
+gate sets the patterns before checkout and applies them to idle checkouts when
+it prunes, before evicting any, and the receipt records `sparse`. A gate refuses before fetching when
 beelink1 has less than 100 GiB or beelink2 has less than 162 GiB free on its
 root filesystem. A second floor
 check after installation keeps the requested command from starting if its
