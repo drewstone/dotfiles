@@ -135,7 +135,10 @@ test("reuses one checkout, cleans prior outputs, and receipts the requested SHA 
     assert.equal(f.git(["-C", join(f.cache, "local", "owner", "repo"), "rev-parse", "HEAD"]), f.second);
     assert.deepEqual(readdirSync(join(f.cache, "local", "owner")), ["repo"]);
     assert.deepEqual(readFileSync(f.npmLog, "utf8").trim().split("\n"), ["ci --cache " + f.home + "/.npm", "ci --cache " + f.home + "/.npm"]);
-    assert.equal(receipts(f).at(-1).install_reserve_bytes, 10 * 1024 ** 3);
+    const row = receipts(f).at(-1);
+    assert.equal(row.reserve_basis, "measured");
+    assert.equal(row.install_reserve_bytes, 10 * 1024 ** 3 + row.reserve_gate_bytes);
+    assert.ok(row.reserve_gate_bytes >= 0 && row.reserve_gate_bytes < 1024 ** 2, JSON.stringify(row));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -910,14 +913,15 @@ test("the first warm gate pays the cold reserve of its shape until a warm receip
     assert.match(firstWarm.stderr, new RegExp(`install reserve 12884901888 bytes from beelink2's newest cold receipt for checkout shape ${spec}; a warm checkout pays it until a beelink has a warm receipt of its shape`));
     assert.match(firstWarm.stderr, / checkout=warm /);
     assert.equal(receipts(f).at(-1).checkout_temperature, "warm");
-    assert.equal(receipts(f).at(-1).install_reserve_bytes, 10 * 1024 ** 3);
+    const warmReserve = receipts(f).at(-1).install_reserve_bytes;
+    assert.ok(warmReserve >= 10 * 1024 ** 3 && warmReserve < 10 * 1024 ** 3 + 1024 ** 2, String(warmReserve));
 
     // 11 GiB free above the floor: the cold reserve would refuse, the warm receipt admits.
     setFree(11);
     seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 12 * 1024 ** 3 });
     const warm = gateOn();
     assert.equal(warm.status, 0, warm.stderr);
-    assert.match(warm.stderr, new RegExp(`install reserve 10737418240 bytes from beelink2's newest warm receipt for checkout shape ${spec}`));
+    assert.match(warm.stderr, new RegExp(`install reserve ${warmReserve} bytes from beelink2's newest warm receipt for checkout shape ${spec}`));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -964,6 +968,77 @@ test("a warm checkout that its own prune evicts between admission and install is
     assert.match(raced.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest cold receipt for checkout shape ${spec}`));
     assert.match(raced.stderr, /below its 200 GiB disk floor plus 21474836480 bytes last-seen install reserve/);
     assert.doesNotMatch(raced.stderr, /fetching /);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the recorded reserve is the gate's own bytes, a store file hardlinked into node_modules counted once, not the host's free-space drop", () => {
+  const f = fixture();
+  try {
+    publish(f, "pnpm", () => { rmSync(join(f.source, "package-lock.json")); writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n"); });
+    const sha = f.git(["rev-parse", "HEAD"]);
+    // The install adds one 3 MB file to the store and hardlinks it into node_modules,
+    // while another lane writes 50 GB elsewhere on the host.
+    writeFileSync(join(f.root, "bin", "pnpm"), `#!/usr/bin/env bash
+printf "%s\\n" "$*" >> "$PNPM_LOG"
+[ "$1" = install ] || exit 0
+while [ $# -gt 0 ]; do [ "$1" = --store-dir ] && store=$2; shift; done
+mkdir -p "$store/v10/files/aa" node_modules/pkg
+[ -e "$store/v10/files/aa/blob" ] || head -c 3000000 /dev/zero > "$store/v10/files/aa/blob"
+ln -f "$store/v10/files/aa/blob" node_modules/pkg/blob
+echo $(( $(cat "$FAKE_AVAIL_FILE") - 50000000000 )) > "$FAKE_AVAIL_FILE"
+`);
+    const avail = join(f.root, "avail");
+    writeFileSync(avail, String(1024 ** 4));
+    const env = { FAKE_AVAIL_FILE: avail };
+    const cold = f.call(sha, ["test", "-f", "node_modules/pkg/blob"], { env });
+    assert.equal(cold.status, 0, cold.stderr);
+    assert.match(cold.stderr, /install reserve after install: gate bytes \+\d+ \(checkout and package stores, du \d+ ms\); host free fell \d+ bytes over the same window; records \d+ \(measured\)/);
+    let row = receipts(f).at(-1);
+    assert.equal(row.reserve_basis, "measured");
+    // Counting the hardlink twice would be 6 MB; the tiny clone adds well under 1 MB.
+    assert.ok(row.reserve_gate_bytes >= 3_000_000 && row.reserve_gate_bytes < 4_000_000, JSON.stringify(row));
+    assert.ok(row.reserve_host_free_drop >= 50_000_000_000, JSON.stringify(row));
+    assert.equal(row.install_reserve_bytes, 10 * 1024 ** 3 + row.reserve_gate_bytes);
+
+    const warm = f.call(sha, ["test", "-f", "node_modules/pkg/blob"], { env });
+    assert.equal(warm.status, 0, warm.stderr);
+    row = receipts(f).at(-1);
+    assert.equal(row.checkout_temperature, "warm");
+    assert.ok(row.reserve_gate_bytes < 1024 ** 2 && row.reserve_host_free_drop >= 50_000_000_000, JSON.stringify(row));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a measurement of the gate's bytes that times out or fails records the cold reserve, never less than the headroom", () => {
+  const f = fixture();
+  try {
+    // du for the gate's bytes (--total) misbehaves; the cache pruner's own du is untouched.
+    writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash
+if [[ " $* " == *" --total "* ]]; then
+  case "\${FAKE_DU_TOTAL:-}" in
+    timeout) exit 124 ;;
+    fail) echo "du: cannot read directory '/store/v10': Permission denied" >&2; printf '123\\ttotal\\n'; exit 1 ;;
+  esac
+fi
+exec /usr/bin/du "$@"
+`);
+    chmodSync(join(f.root, "bin", "du"), 0o755);
+    mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
+    const seeded = join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl");
+    writeFileSync(seeded, `${JSON.stringify({ host: "beelink2", repo: "local/owner/repo", mode: "install", install_reserve_bytes: 13 * 1024 ** 3 })}\n`);
+    for (const fault of ["timeout", "fail"]) {
+      const result = f.call(f.first, ["true"], { env: { FAKE_DU_TOTAL: fault } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stderr, /could not measure this gate's own bytes after install; recording the cold reserve/);
+      const row = receipts(f).at(-1);
+      assert.equal(row.reserve_basis, "cold_fallback", fault);
+      assert.equal(row.install_reserve_bytes, 13 * 1024 ** 3, fault);
+    }
+    // With no receipt to fall back on, the headroom: never zero.
+    rmSync(seeded);
+    const bare = f.call(f.first, ["true"], { env: { FAKE_DU_TOTAL: "timeout" } });
+    assert.equal(bare.status, 0, bare.stderr);
+    assert.equal(receipts(f).at(-1).install_reserve_bytes, 10 * 1024 ** 3);
+    assert.equal(receipts(f).at(-1).reserve_basis, "cold_fallback");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -3091,22 +3166,26 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
     await new Promise((done) => holder.stdout.once("data", done));
     const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "20", BEELINK_GATE_LOAD_WAIT: "35s" };
     older = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "bash", "-c", `echo older >> '${events}'`], { env });
-    let olderErr = "";
-    older.stderr.on("data", (chunk) => { olderErr += chunk; });
+    let olderErr = "", olderAdmitted = 0n, newerAdmitted = 0n;
+    older.stderr.on("data", (chunk) => { olderErr += chunk; if (!olderAdmitted && /admitted on beelink/.test(olderErr)) olderAdmitted = process.hrtime.bigint(); });
     for (let i = 0; i < 200 && !/no beelink is both free/.test(olderErr); i++) await sleepMs(25);
     assert.match(olderErr, /no beelink is both free/);
 
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo newer >> '${events}'`].map(encode);
     newer = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_CACHE_ROOT: join(f.root, "cache-100.127.22.51"), BEELINK_GATE_REPO_CHECKOUTS: "1" } });
     let newerErr = "";
-    newer.stderr.on("data", (chunk) => { newerErr += chunk; });
+    newer.stderr.on("data", (chunk) => { newerErr += chunk; if (!newerAdmitted && /admitted on beelink/.test(newerErr)) newerAdmitted = process.hrtime.bigint(); });
     for (let i = 0; i < 200 && !/waiting \d+s for one of 1/.test(newerErr); i++) await sleepMs(25);
     assert.match(newerErr, /waiting \d+s for one of 1/);
     holder.kill("SIGKILL");
     const [olderStatus, newerStatus] = await Promise.all([new Promise((done) => older.once("close", done)), new Promise((done) => newer.once("close", done))]);
     assert.equal(olderStatus, 0, olderErr);
     assert.equal(newerStatus, 0, newerErr);
-    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["older", "newer"]);
+    // The FIFO property is admission order: the newer gate is admitted only after the
+    // older one. Once they run on different hosts, which echo lands first is a race
+    // (it failed 3 of about 10 gate runs on 2026-10-15), so the echoes are compared as a set.
+    assert.ok(olderAdmitted > 0n && newerAdmitted > olderAdmitted, `${olderErr}\n${newerErr}`);
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n").sort(), ["newer", "older"]);
     for (const locks of [b1, b2]) {
       assert.deepEqual(readdirSync(locks).filter((name) => name.startsWith("queue-")), [], "normal reservation and gate tickets are removed");
     }
