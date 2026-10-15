@@ -750,21 +750,29 @@ waiter_alive() {  # <ticket or marker file> <pid>
   (( btime + fields[19] / $(getconf CLK_TCK) <= written + 1 ))
 }
 older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tickets from other gates
-  local t rest since pid token key n=0
-  local -A seen=()
+  # A gate's place is the oldest (epoch, pid) among its tickets: an auto gate holds a
+  # reservation ticket and its own, under one token. Every gate compares those same
+  # pairs, so two gates can never each count the other as ahead.
+  local t rest since pid token key me_since=$2 me_pid=$$ n=0
+  local -A key_since=() key_pid=()
   for t in "$1".*.*; do
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
     [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
-    [ "$pid" != "$$" ] || continue
     token=$(cat "$t" 2>/dev/null) || token=""
     [[ "$token" =~ ^[0-9a-f]{32}$ ]] || token=""
-    [ -z "$token" ] || [ "$token" != "${reservation_token:-}" ] || continue
+    if [ "$pid" = "$$" ] || { [ -n "$token" ] && [ "$token" = "${reservation_token:-}" ]; }; then
+      if (( since < me_since || (since == me_since && pid < me_pid) )); then me_since=$since me_pid=$pid; fi
+      continue
+    fi
     if ! waiter_alive "$t" "$pid"; then rm -f "$t"; continue; fi
     key=${token:-$pid}
-    [ -z "${seen[$key]:-}" ] || continue
-    seen[$key]=1
-    if (( since < $2 || (since == $2 && pid < $$) )); then n=$((n + 1)); fi
+    if [ -z "${key_since[$key]:-}" ] || (( since < key_since[$key] || (since == key_since[$key] && pid < key_pid[$key]) )); then
+      key_since[$key]=$since key_pid[$key]=$pid
+    fi
+  done
+  for key in "${!key_since[@]}"; do
+    if (( key_since[$key] < me_since || (key_since[$key] == me_since && key_pid[$key] < me_pid) )); then n=$((n + 1)); fi
   done
   echo "$n"
 }
@@ -1632,6 +1640,18 @@ remote_gate() {
   local ticket_prefix="$cache_root/.locks/queue-$host-$owner-$repo" enqueued=$(( $(date +%s) - placed_wait ))
   (( light == 0 )) || ticket_prefix+=@light
   (( dev == 0 )) || ticket_prefix+=@dev
+  # An auto gate's place in line is its reservation's, made on both hosts before its
+  # first probe and found here by its token. Dating its own ticket by now - placed_wait
+  # left out the reservation's setup, so a newer gate could fall between the two
+  # tickets: it waited for the reservation while this gate waited for it.
+  if [ -n "$reservation_token" ]; then
+    local reserved reserved_since
+    for reserved in "$ticket_prefix".*.*; do
+      [ -f "$reserved" ] && [ "$(cat "$reserved" 2>/dev/null)" = "$reservation_token" ] || continue
+      reserved_since=${reserved#"$ticket_prefix".}; reserved_since=${reserved_since%%.*}
+      [[ "$reserved_since" =~ ^[0-9]+$ ]] && (( reserved_since < enqueued )) && enqueued=$reserved_since
+    done
+  fi
   local ticket="$ticket_prefix.$enqueued.$$"
   printf '%s' "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
   # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
