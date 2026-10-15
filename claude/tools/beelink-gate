@@ -1055,6 +1055,21 @@ answer(fallback, f"the 10 GiB headroom (no receipt for checkout shape {spec}){no
 PY
 }
 
+# The bytes a gate owns on disk: its checkout and the package stores its install
+# writes, in one du, so a node_modules file hardlinked into the store counts once.
+# On beelink1 at load 12-16 the Lab checkout and the 15 GiB pnpm store (486,018
+# files) took 1.1-2.7 s. Prints nothing when du fails, warns about anything but a
+# file that vanished mid-scan, or runs past 60 s.
+gate_bytes() {  # <checkout> <store>...
+  local out err rc
+  err=$(mktemp) || return 1
+  out=$(LC_ALL=C timeout 60 du -s --total -B1 -- "$@" 2>"$err"); rc=$?
+  if (( rc == 1 )) && ! grep -qv '^du: cannot access .*: No such file or directory$' "$err"; then rc=0; fi
+  rm -f -- "$err"
+  out=$(tail -n 1 <<<"$out"); out=${out%%[[:space:]]*}
+  (( rc == 0 )) && [[ "$out" =~ ^[0-9]+$ ]] && echo "$out"
+}
+
 # The shape a cached checkout has now: full, or the digest of its applied
 # patterns. Fails when there is no checkout.
 checkout_shape() {  # <checkout>
@@ -1497,7 +1512,9 @@ remote_gate() {
   [ -z "$reservation_token" ] || [[ "$reservation_token" =~ ^[0-9a-f]{32}$ ]] || die "invalid checkout reservation token"
   unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
-  local install_reserve_bytes observed_install_reserve_bytes=0 admission_free_bytes=0 admitted_shape="" reserve_heat=cold
+  local install_reserve_bytes observed_install_reserve_bytes=0 admitted_shape="" reserve_heat=cold
+  local reserve_bytes_before="" reserve_free_before="" reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
+  local -a package_stores=("${npm_config_store_dir:-$HOME/.local/share/pnpm/store}" "$HOME/.npm")
   local reserve_spec=${BEELINK_GATE_SPARSE_SPEC:-} peer_reserve=${BEELINK_GATE_PEER_RESERVE:-} peer_warm_reserve=${BEELINK_GATE_PEER_WARM_RESERVE:-}
   unset BEELINK_GATE_SPARSE_SPEC BEELINK_GATE_PEER_RESERVE BEELINK_GATE_PEER_WARM_RESERVE
 
@@ -1739,12 +1756,30 @@ remote_gate() {
     reap_leftovers
     return "$rc"
   }
-  observe_install_reserve() {
-    (( install_reserve_bytes > 0 && admission_free_bytes > 0 )) || return 0
-    local consumed=$((admission_free_bytes - last_floor_available))
-    (( consumed > 0 )) || consumed=0
-    local observed=$((10 * 1024 * 1024 * 1024 + consumed))
+  # The reserve a receipt records is the 10 GiB headroom plus the most this gate's
+  # own bytes grew since just before its fetch (gate_bytes); host free space also
+  # moves with other lanes' writes and decides only the floor. A measurement that
+  # fails records the cold reserve, never less.
+  observe_install_reserve() {  # <when>
+    (( install_reserve_bytes > 0 )) || return 0
+    local now started grown observed
+    started=$(date +%s%3N)
+    if [ -n "$reserve_bytes_before" ] && now=$(gate_bytes "$checkout" "${package_stores[@]}"); then
+      reserve_du_ms=$(( $(date +%s%3N) - started ))
+      grown=$((now - reserve_bytes_before))
+      (( grown > ${reserve_gate_bytes:-0} )) && reserve_gate_bytes=$grown
+      : "${reserve_gate_bytes:=0}"
+      observed=$((10 * 1024 * 1024 * 1024 + reserve_gate_bytes))
+      [ "$reserve_basis" = cold_fallback ] || reserve_basis=measured
+    else
+      reserve_basis=cold_fallback
+      echo "beelink-gate: could not measure this gate's own bytes $1; recording the cold reserve" >&2
+      observed=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" cold) \
+        || observed=$((10 * 1024 * 1024 * 1024))
+    fi
+    [ -z "$reserve_free_before" ] || reserve_host_drop=$((reserve_free_before - last_floor_available))
     (( observed > observed_install_reserve_bytes )) && observed_install_reserve_bytes=$observed
+    echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
     return 0
   }
   receipt() {
@@ -1755,9 +1790,9 @@ remote_gate() {
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
       "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${checkout_temperature:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" <<'PY' || true
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature = sys.argv[1:]
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature, reserve_gate_bytes, reserve_host_drop, reserve_basis, reserve_du_ms = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
@@ -1771,6 +1806,10 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink
        "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "checkout_temperature": checkout_temperature or None, "reason_scope": "host_last_10000_receipts"}
 if int(install_reserve):
     row["install_reserve_bytes"] = int(install_reserve)
+    # The gate's own bytes against the host's free-space drop over the same window.
+    row["reserve_basis"] = reserve_basis or None
+    for key, value in (("reserve_gate_bytes", reserve_gate_bytes), ("reserve_host_free_drop", reserve_host_drop), ("reserve_du_ms", reserve_du_ms)):
+        row[key] = int(value) if value.lstrip("-").isdigit() else None
 if preview:
     try:
         row["preview"] = json.loads(preview)
@@ -1946,7 +1985,6 @@ PY
     fi
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
-  admission_free_bytes=$last_floor_available
   admit_window "$beelink" "$window_day" "$window_hour"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
@@ -1983,7 +2021,6 @@ PY
         fi
         tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
       fi
-      admission_free_bytes=$last_floor_available
     fi
   fi
   if [ ! -e "$checkout/.git" ]; then
@@ -1992,6 +2029,10 @@ PY
     git -C "$checkout" remote add origin "$(fetch_url "$repo_url")" || exit $?
   fi
   adopt_origin "$checkout" "$repo_url" || exit $?
+  if (( install_reserve_bytes > 0 )); then
+    reserve_free_before=$(free_bytes)
+    reserve_bytes_before=$(gate_bytes "$checkout" "${package_stores[@]}") || reserve_bytes_before=""
+  fi
   # A step, not a command substitution: bash runs the launcher watchdog's trap
   # only between commands, so a hung ls-remote in $(...) held the lock for 34m.
   local refs_file="$checkout/.git/beelink-gate-remote-refs"
@@ -2053,7 +2094,7 @@ PY
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   local floor_ok=0
   check_floor "$beelink" || floor_ok=1
-  observe_install_reserve
+  observe_install_reserve "after checkout"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it
@@ -2148,7 +2189,7 @@ PY
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   floor_ok=0
   check_floor "$beelink" || floor_ok=1
-  observe_install_reserve
+  observe_install_reserve "after install"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   cancel_if_requested
   echo "beelink-gate: running ${display% }" >&2
