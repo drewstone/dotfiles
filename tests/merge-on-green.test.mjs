@@ -12,6 +12,35 @@ const sha = (n) => String(n).padStart(40, "a");
 const check = (name, conclusion = "SUCCESS", status = "COMPLETED") => ({ __typename: "CheckRun", name, conclusion, status, completedAt: "2026-01-01T00:09:30Z" });
 const green = [check("Fast Checks"), check("Build"), check("Type Check")];
 
+// Pushes run this checkout's own global hooks (ai-agent-hooks), not whatever is installed.
+const GIT_ID = {
+  GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.test", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.test",
+  GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: resolve("git/hooks"),
+};
+
+// A real origin: develop and feat/<n> both change ledger.md (merge=union) and, when asked, code.txt.
+function gitOrigin(n, { realConflict = false } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "mog-git-"));
+  const origin = join(root, "origin.git"), work = join(root, "work");
+  const g = (...args) => {
+    const r = spawnSync("git", args, { cwd: work, encoding: "utf8", env: { ...process.env, ...GIT_ID } });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  spawnSync("git", ["init", "-q", "--bare", origin]);
+  spawnSync("git", ["init", "-q", "-b", "develop", work]);
+  const commit = (files, msg) => { for (const [f, body] of Object.entries(files)) writeFileSync(join(work, f), body); g("add", "."); g("commit", "-qm", msg); };
+  commit({ ".gitattributes": "ledger.md merge=union\n", "ledger.md": "- base\n", "code.txt": "base\n" }, "base");
+  g("checkout", "-qb", `feat/${n}`);
+  commit({ "ledger.md": "- base\n- feature\n", ...(realConflict ? { "code.txt": "feature\n" } : {}) }, "feature");
+  g("checkout", "-q", "develop");
+  commit({ "ledger.md": "- base\n- develop\n", ...(realConflict ? { "code.txt": "develop\n" } : {}) }, "develop");
+  g("push", "-q", origin, "develop", `feat/${n}`);
+  const show = (ref, path) => spawnSync("git", ["--git-dir", origin, "show", `${ref}:${path}`], { encoding: "utf8" }).stdout;
+  const parents = (ref) => spawnSync("git", ["--git-dir", origin, "log", "-1", "--format=%P", ref], { encoding: "utf8" }).stdout.trim().split(" ");
+  return { origin, head: g("rev-parse", `feat/${n}`), develop: g("rev-parse", "develop"), show, parents };
+}
+
 function pr(number, over = {}) {
   return {
     number, isDraft: false, mergeable: "MERGEABLE", headRefName: `feat/${number}`, headRefOid: sha(number),
@@ -22,7 +51,7 @@ function pr(number, over = {}) {
 }
 const withChecks = (n, nodes) => pr(n, { commits: { nodes: [{ commit: { committedDate: old, statusCheckRollup: { contexts: { nodes } } } }] } });
 
-function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Request is not mergeable" } = {}) {
+function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Request is not mergeable", gitUrl } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "mog-"));
   writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { pullRequests: { nodes: prs } } } }));
   writeFileSync(join(dir, "gh-drew"), `#!/bin/bash
@@ -33,8 +62,9 @@ if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r"
 exit 0
 `);
   chmodSync(join(dir, "gh-drew"), 0o755);
-  const run = () => spawnSync("python3", [TOOL, "--state-dir", join(dir, "state")], {
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8",
+  // No test reaches GitHub: the merge mirror clones gitUrl, a missing local path unless a test builds an origin.
+  const run = () => spawnSync("python3", [TOOL, "--state-dir", join(dir, "state"), "--git-url", gitUrl ?? join(dir, "no-origin.git")], {
+    env: { ...process.env, ...GIT_ID, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8",
   });
   const calls = () => (existsSync(join(dir, "calls.log")) ? readFileSync(join(dir, "calls.log"), "utf8") : "");
   return { dir, run, calls };
@@ -116,6 +146,25 @@ test("a merge GitHub refuses for a conflict tells the owner once per head", () =
   const f = fixture([pr(18)], { refuse: [18], refuseText: "Pull request #18 is not mergeable: the merge commit cannot be cleanly created." });
   f.run(); f.run();
   assert.equal((f.calls().match(/pr comment 18 /g) || []).length, 1);
+});
+
+test("a conflict only GitHub sees (a merge=union ledger) gets develop merged in by git, with no comment", () => {
+  const o = gitOrigin(20);
+  const f = fixture([pr(20, { mergeable: "CONFLICTING", headRefOid: o.head })], { gitUrl: o.origin });
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(o.parents("feat/20"), [o.head, o.develop]);
+  assert.equal(o.show("feat/20", "ledger.md"), "- base\n- feature\n- develop\n");
+  assert.doesNotMatch(f.calls(), /pr comment 20 /);
+  assert.match(r.stdout, /#20 merged develop in \(git attributes\)/);
+});
+
+test("a conflict git cannot resolve leaves the branch alone and tells the owner", () => {
+  const o = gitOrigin(21, { realConflict: true });
+  const f = fixture([pr(21, { mergeable: "CONFLICTING", headRefOid: o.head })], { gitUrl: o.origin });
+  f.run();
+  assert.deepEqual(o.parents("feat/21"), o.parents(o.head));
+  assert.match(f.calls(), /pr comment 21 /);
 });
 
 test("a merge GitHub refuses is recorded with its reason", () => {
