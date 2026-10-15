@@ -9,6 +9,9 @@ import test from "node:test";
 // A fake gh answers the identity check and the quota read; nothing here reaches GitHub.
 const ghDrew = resolve("claude/tools/gh-drew");
 const TOKEN = "ghp_FAKEtokenFAKEtokenFAKEtoken0001";
+// What gh-drew's pre-merge review read sees on a PR with no Codex review.
+const NO_REVIEW = JSON.stringify({ data: { repository: { pullRequest: { url: "https://github.com/o/r/pull/12", headRefOid: "abc",
+  reviewThreads: { nodes: [] }, comments: { nodes: [] } } } } });
 
 function sandbox() {
   const root = mkdtempSync(join(tmpdir(), "gh-drew-log-"));
@@ -35,7 +38,7 @@ esac
   chmodSync(loop, 0o755);
   const poll = join(bin, "op-meta-poll.py");
   writeFileSync(poll, `import subprocess, sys\nsys.exit(subprocess.run([${JSON.stringify(ghDrew)}, *sys.argv[1:]]).returncode)\n`);
-  const env = { PATH: `${bin}:${process.env.PATH}`, HOME: home, DREW_GH_TOKEN: TOKEN,
+  const env = { PATH: `${bin}:${process.env.PATH}`, HOME: home, DREW_GH_TOKEN: TOKEN, NO_REVIEW,
     GH_DREW_CACHE_DIR: join(root, "cache"), GH_DREW_LOG_DIR: logs, GH_DREW_SECRETS_FILE: join(root, "absent.env") };
   return { root, home, work, logs, loop, poll, env };
 }
@@ -197,6 +200,7 @@ case "$*" in
   "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
   "api user --jq .login") echo '{"message":"API rate limit exceeded"}'; exit 1 ;;
   "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
+  "api graphql "*reviewThreads*) echo "$NO_REVIEW" ;;
   "pr view"*"--json title --jq .title") echo "fix(x): one change" ;;
   "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;
   "pr merge"*|"pr -R "*" merge"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${argsFile}" ;;
@@ -253,6 +257,7 @@ case "$*" in
   "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
   "api user --jq .login") echo '{"message":"API rate limit exceeded"}'; exit 1 ;;
   "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
+  "api graphql "*reviewThreads*) echo "$NO_REVIEW" ;;
   "pr view"*"--json title --jq .title") echo "fix(x): one change" ;;
   "pr view"*"--json body --jq .body") printf '%s' "$FAKE_BODY" ;;
   "pr edit https://"*) for a in "$@"; do printf '%s\\0' "$a"; done > "${editFile}" ;;

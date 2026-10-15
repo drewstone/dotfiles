@@ -467,6 +467,252 @@ EOF
   fi
 }
 
+# Reads a `pr merge` command line into merge_selector, merge_repo (--repo o/r, or nothing),
+# merge_squash, merge_body and merge_disable_auto; returns 1 for any other command.
+parse_pr_merge() {
+  [[ "${1:-}" == "pr" ]] || return 1
+  shift
+  merge_selector="" merge_repo=() merge_squash=0 merge_body=0 merge_disable_auto=0
+  local arg
+  # gh accepts the inherited repository flag before the subcommand: gh pr -R o/r merge 12 -s.
+  while (( $# )) && [[ "$1" != "merge" ]]; do
+    case "$1" in
+      -R|--repo) merge_repo=(--repo "${2:-}"); shift 2 || return 1 ;;
+      --repo=*) merge_repo=(--repo "${1#--repo=}"); shift ;;
+      -R?*) merge_repo=(--repo "${1#-R}"); shift ;;
+      *) return 1 ;;
+    esac
+  done
+  (( $# )) || return 1
+  shift
+  while (( $# )); do
+    arg="$1"; shift
+    case "$arg" in
+      -s|--squash) merge_squash=1 ;;
+      --disable-auto) merge_disable_auto=1 ;;
+      -b|--body|-F|--body-file) merge_body=1; shift || true ;;
+      --body=*|--body-file=*) merge_body=1 ;;
+      -R|--repo) merge_repo=(--repo "${1:-}"); shift || true ;;
+      --repo=*) merge_repo=(--repo "${arg#--repo=}") ;;
+      -t|--subject|-A|--author-email|--match-head-commit) shift || true ;;
+      --) [[ -z "$merge_selector" ]] && merge_selector="${1:-}"; break ;;
+      -[!-]?*)
+        # A cluster of short flags (-sd, -sb msg, -Ro/r): read it letter by letter.
+        local i=1 c
+        while (( i < ${#arg} )); do
+          c="${arg:i:1}"
+          case "$c" in
+            s) merge_squash=1 ;;
+            b|F|R|t|A)
+              [[ "$c" == b || "$c" == F ]] && merge_body=1
+              if (( i + 1 < ${#arg} )); then
+                [[ "$c" == R ]] && merge_repo=(--repo "${arg:i+1}")
+              else
+                [[ "$c" == R ]] && merge_repo=(--repo "${1:-}")
+                shift || true
+              fi
+              break ;;
+          esac
+          i=$((i + 1))
+        done ;;
+      -*) ;;
+      *) [[ -z "$merge_selector" ]] && merge_selector="$arg" ;;
+    esac
+  done
+  return 0
+}
+
+# Codex reviews arrive minutes after a PR opens, and agents merged without reading them: on
+# 2026-10-15, dotfiles#465 merged 22 s after it opened while its review ran, and the review's two
+# P2 findings landed 6 minutes after the merge. Of the 42 completed Codex reviews on dotfiles from
+# 2026-10-11 to 10-15, 20 finished after their PR merged.
+# Before a merge (or --auto), one GraphQL query reads the PR's head, review threads and comments:
+# - a review thread a Codex reviewer started, unresolved and with no reply from a non-bot account,
+#   refuses the merge and names the finding;
+# - a Codex Review Summary showing a review running on the head waits up to GH_DREW_REVIEW_WAIT
+#   seconds, re-reading once a minute, then refuses (exit 75: merge again once it finishes);
+# - a PR that opened or turned ready under 30 s ago with no Codex comment yet waits for the rest of
+#   those 30 s: Codex posts its summary 12 s (median) to 16 s (90th percentile) after either, and 9
+#   of 44 dotfiles reviews from 10-11 to 10-15 started after a merge made 3 to 12 s after it;
+# - no Codex comment, a usage-limit comment, a failed review, or a completed review with every
+#   finding answered carries on.
+# The default wait is 600 s: those 42 reviews took 232 s at the median and 603 s at the 90th
+# percentile from start to finish, and a merge comes at least one gate after the review starts.
+# GH_DREW_REVIEW_OVERRIDE=<reason> merges without the check; the reason is logged. Reads that fail
+# refuse. GraphQL draws on no core quota, so cap_reads and guard_reads never count these reads.
+review_wait="${GH_DREW_REVIEW_WAIT:-600}"
+read -r -d '' review_query <<'GRAPHQL' || true
+fragment pr on PullRequest {
+  url headRefOid createdAt
+  timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
+  reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
+    comments(first: 50) { nodes { author { __typename login } body url } } } }
+  comments(first: 100) { nodes { author { login } body } }
+}
+GRAPHQL
+# Prints "pr <url> <head>", then "finding <path:line> <title> <url>" for each unanswered Codex
+# thread, "running <review> <commit>" for each Codex review running on the head, and
+# "pending <seconds left> <seconds since>" while a just-opened or just-ready PR has no Codex comment.
+read -r -d '' review_reader <<'PY' || true
+import json, re, sys
+from datetime import datetime, timezone
+answer = json.load(sys.stdin)
+if answer.get("errors"):
+    sys.exit("GitHub answered: " + "; ".join(e.get("message", "?") for e in answer["errors"])[:300])
+repo = (answer.get("data") or {}).get("repository")
+if not repo:
+    sys.exit("GitHub returned no repository")
+pr = repo.get("pullRequest")
+if pr is None and repo.get("pullRequests") is not None:
+    found = repo["pullRequests"]["nodes"]
+    if len(found) != 1:
+        sys.exit(f"{len(found)} open pull requests have this head branch; name the PR number")
+    pr = found[0]
+if not pr:
+    sys.exit("GitHub returned no such pull request")
+head = pr["headRefOid"]
+codex = lambda actor: "codex" in ((actor or {}).get("login") or "").lower()
+clean = lambda s: re.sub(r"\s+", " ", s).strip()
+print("pr", pr["url"], head, sep="\t")
+for thread in pr["reviewThreads"]["nodes"]:
+    said = thread["comments"]["nodes"]
+    if thread["isResolved"] or not said or not codex(said[0]["author"]):
+        continue
+    if any(c["author"] and c["author"]["__typename"] != "Bot" for c in said[1:]):
+        continue
+    line = thread["line"] or thread["originalLine"]
+    where = thread["path"] + (f":{line}" if line else "") + (" (outdated)" if thread["isOutdated"] else "")
+    title = next((l for l in said[0]["body"].splitlines() if l.strip()), "")
+    title = re.sub(r"!\[([^\]]*?)(?: Badge)?\]\([^)]*\)", r"\1", title)
+    title = clean(re.sub(r"<[^>]+>|\*\*|__", "", title))[:160]
+    print("finding", where, title, said[0]["url"], sep="\t")
+running = set()
+for comment in pr["comments"]["nodes"]:
+    body = comment["body"] or ""
+    if not codex(comment["author"]) or "codex-pull-request-review-summary" not in body:
+        continue
+    # The summary carries this state while a review runs or after it fails, and drops it once
+    # the review completes (dotfiles#464 and #465, 2026-10-15).
+    state = re.search(r"codex-review-state:v1 (\{.*?\}) -->", body)
+    try:
+        for review, s in (json.loads(state.group(1)) if state else {}).items():
+            if s and s.get("status") in ("running", "queued", "pending", "in_progress") and s.get("commit_sha") == head:
+                running.add((review.replace("_", " "), head[:7]))
+    except (ValueError, AttributeError):
+        pass
+for review, commit in sorted(running):
+    print("running", review, commit, sep="\t")
+moments = [pr.get("createdAt")] + [n.get("createdAt") for n in ((pr.get("timelineItems") or {}).get("nodes") or []) if n]
+moments = [datetime.fromisoformat(m.replace("Z", "+00:00")) for m in moments if m]
+if moments and not running and not any(codex(c["author"]) for c in pr["comments"]["nodes"]):
+    since = max(0, int((datetime.now(timezone.utc) - max(moments)).total_seconds()))
+    if since < 30:
+        print("pending", 30 - since, since, sep="\t")
+PY
+
+# Reads the PR that parse_pr_merge named; prints review_reader's lines.
+review_state() {
+  local token="$1" sel="$merge_selector" repo="${merge_repo[1]:-}" rest json
+  local -a vars=()
+  if [[ "$sel" =~ ^https?://[^/]+/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    vars=(-f "owner=${BASH_REMATCH[1]}" -f "name=${BASH_REMATCH[2]}")
+    sel="${BASH_REMATCH[3]}"
+  elif [[ -n "$repo" ]]; then
+    # -R takes [HOST/]OWNER/REPO or a URL.
+    repo="${repo#*://}"; repo="${repo%.git}"; repo="${repo%/}"; rest="${repo%/*}"
+    vars=(-f "owner=${rest##*/}" -f "name=${repo##*/}")
+  else
+    # gh fills these from the current repository (or GH_REPO), as `gh pr merge` does.
+    vars=(-F "owner={owner}" -F "name={repo}")
+  fi
+  sel="${sel#\#}"
+  if [[ "$sel" =~ ^[0-9]+$ ]]; then
+    vars+=(-F "number=$sel" -f "query=query(\$owner: String!, \$name: String!, \$number: Int!) {
+  repository(owner: \$owner, name: \$name) { pullRequest(number: \$number) { ...pr } } }
+$review_query")
+  else
+    if [[ -n "$sel" ]]; then vars+=(-f "branch=${sel#*:}"); else vars+=(-F "branch={branch}"); fi
+    vars+=(-f "query=query(\$owner: String!, \$name: String!, \$branch: String!) {
+  repository(owner: \$owner, name: \$name) { pullRequests(headRefName: \$branch, states: OPEN, first: 2) { nodes { ...pr } } } }
+$review_query")
+  fi
+  json="$(GH_TOKEN="$token" gh api graphql "${vars[@]}")" || return 1
+  printf '%s' "$json" | python3 -I -c "$review_reader"
+}
+
+review_guard() {
+  local token="$1"; shift
+  parse_pr_merge "$@" || return 0
+  (( ! merge_disable_auto )) || return 0
+  if [[ -n "${GH_DREW_REVIEW_OVERRIDE:-}" ]]; then
+    local reason="${GH_DREW_REVIEW_OVERRIDE//[$'\t\n\r']/ }"
+    log_call "review-override: ${reason:0:200}" "$@"
+    echo "gh-drew: merging without the Codex review check: $reason" >&2
+    return 0
+  fi
+  if [[ ! "$review_wait" =~ ^[0-9]+$ ]]; then
+    echo "gh-drew: GH_DREW_REVIEW_WAIT must be whole seconds, got '$review_wait'" >&2
+    exit 2
+  fi
+  local start=$SECONDS out err kind a b c url head elapsed why told="" pending since nap
+  local -a findings running
+  err="$(mktemp)"
+  while :; do
+    findings=() running=() url="" head="" pending="" since=""
+    if ! out="$(review_state "$token" 2>"$err")"; then
+      log_call refused "$@"
+      echo "gh-drew: refusing to merge: cannot read the PR's reviews: $(tr '\n' ' ' <"$err" | cut -c1-300)" >&2
+      echo "Merge again once GitHub answers, or override with GH_DREW_REVIEW_OVERRIDE=<reason>." >&2
+      rm -f "$err"
+      exit 1
+    fi
+    while IFS=$'\t' read -r kind a b c; do
+      case "$kind" in
+        pr) url="$a" head="$b" ;;
+        finding) findings+=("  $a  $b"$'\n'"    $c") ;;
+        running) running+=("$a of ${b}") ;;
+        pending) pending="$a" since="$b" ;;
+      esac
+    done <<<"$out"
+    if (( ${#findings[@]} )); then
+      log_call refused "$@"
+      {
+        echo "gh-drew: refusing to merge $url: ${#findings[@]} Codex review finding(s) have no answer:"
+        printf '%s\n' "${findings[@]}"
+        echo "For each, fix it and reply on the thread with the commit, reply with the evidence that it"
+        echo "does not apply, or resolve the thread. Then merge again."
+        echo "Override: GH_DREW_REVIEW_OVERRIDE=<reason>"
+      } >&2
+      rm -f "$err"
+      exit 1
+    fi
+    nap=60
+    if (( ${#running[@]} )); then
+      why="Codex ${running[*]} is running"
+    elif [[ -n "$pending" ]]; then
+      why="no Codex comment yet, ${since}s after the PR opened or turned ready"
+      nap="$pending"
+    else
+      break
+    fi
+    elapsed=$((SECONDS - start))
+    if (( elapsed >= review_wait )); then
+      log_call refused "$@"
+      echo "gh-drew: refusing to merge $url: $why (waited ${elapsed}s, GH_DREW_REVIEW_WAIT=$review_wait)." >&2
+      echo "Merge again once Codex answers, or override with GH_DREW_REVIEW_OVERRIDE=<reason>." >&2
+      rm -f "$err"
+      exit 75
+    fi
+    (( review_wait - elapsed > nap )) || nap=$((review_wait - elapsed))
+    if [[ "$why" != "$told" ]]; then
+      echo "gh-drew: waiting up to $(( ${#running[@]} ? review_wait : nap ))s to merge $url: $why." >&2
+      told="$why"
+    fi
+    sleep "$nap"
+  done
+  rm -f "$err"
+}
+
 # A squash merge without an explicit body lets GitHub write the message, and
 # GitHub then appends "Co-authored-by:" for every PR commit whose author email
 # is not verified on the merging account (agents commit as unverified tangle
@@ -476,56 +722,11 @@ EOF
 squash_body=()
 add_squash_body() {
   local token="$1"; shift
-  [[ "${1:-}" == "pr" ]] || return 0
-  shift
-  local squash=0 selector="" repo=() arg
-  # gh accepts the inherited repository flag before the subcommand: gh pr -R o/r merge 12 -s.
-  while (( $# )) && [[ "$1" != "merge" ]]; do
-    case "$1" in
-      -R|--repo) repo=(--repo "${2:-}"); shift 2 || return 0 ;;
-      --repo=*) repo=(--repo "${1#--repo=}"); shift ;;
-      -R?*) repo=(--repo "${1#-R}"); shift ;;
-      *) return 0 ;;
-    esac
-  done
-  (( $# )) || return 0
-  shift
-  while (( $# )); do
-    arg="$1"; shift
-    case "$arg" in
-      -s|--squash) squash=1 ;;
-      -b|--body|-F|--body-file|--body=*|--body-file=*) return 0 ;;
-      -R|--repo) repo=(--repo "${1:-}"); shift || true ;;
-      --repo=*) repo=(--repo "${arg#--repo=}") ;;
-      -t|--subject|-A|--author-email|--match-head-commit) shift || true ;;
-      --) [[ -z "$selector" ]] && selector="${1:-}"; break ;;
-      -[!-]?*)
-        # A cluster of short flags (-sd, -sb msg, -Ro/r): read it letter by letter.
-        local i=1 c
-        while (( i < ${#arg} )); do
-          c="${arg:i:1}"
-          case "$c" in
-            s) squash=1 ;;
-            b|F) return 0 ;;
-            R|t|A)
-              if (( i + 1 < ${#arg} )); then
-                [[ "$c" == R ]] && repo=(--repo "${arg:i+1}")
-              else
-                [[ "$c" == R ]] && repo=(--repo "${1:-}")
-                shift || true
-              fi
-              break ;;
-          esac
-          i=$((i + 1))
-        done ;;
-      -*) ;;
-      *) [[ -z "$selector" ]] && selector="$arg" ;;
-    esac
-  done
-  (( squash )) || return 0
+  parse_pr_merge "$@" || return 0
+  (( merge_squash && ! merge_body )) || return 0
   local view=(pr view) title description summary
-  [[ -n "$selector" ]] && view+=("$selector")
-  view+=(${repo[@]+"${repo[@]}"})
+  [[ -n "$merge_selector" ]] && view+=("$merge_selector")
+  view+=(${merge_repo[@]+"${merge_repo[@]}"})
   title="$(GH_TOKEN="$token" gh "${view[@]}" --json title --jq .title)" || {
     echo "gh-drew: cannot read the PR title to write the squash body; pass --body explicitly" >&2
     exit 2
@@ -794,6 +995,7 @@ for key in "${token_keys[@]}"; do
   if [[ "$login" == "$expected_login" ]]; then
     cap_reads "$@"
     guard_reads "$token" "$@"
+    review_guard "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
     add_lane_line "$@"
@@ -810,6 +1012,7 @@ for key in "${token_keys[@]}"; do
   if [[ "$login" == "$expected_login" ]]; then
     cap_reads "$@"
     guard_reads "$token" "$@"
+    review_guard "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
     add_lane_line "$@"
