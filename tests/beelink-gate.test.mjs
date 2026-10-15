@@ -1034,6 +1034,9 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
     const busy = idleCheckout(f, "tangle-network", "discovery-lab@1", committed, 1000);
     // No default for any repo: a Lab checkout whose HEAD predates the file stays full.
     const old = idleCheckout(f, "tangle-network", "discovery-lab@dev", { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000) }, 2000);
+    // A sparse checkout left at a HEAD without the file (its checkout of a newer commit failed) stays sparse: the prune only shrinks.
+    const stranded = idleCheckout(f, "tangle-network", "discovery-lab@light", { "runner/a.mjs": "a\n", "pursuits/old/run.json": Buffer.alloc(400_000) }, 2000);
+    f.git(["-C", stranded, "sparse-checkout", "set", "--no-cone", "/*", "!/pursuits/"], f.root);
     const locker = spawn("flock", ["-x", join(f.cache, ".locks", "github.com-tangle-network-discovery-lab@1.lock"), "bash", "-c", `touch '${marker}'; sleep 30`], { env: f.env });
     try {
       for (let i = 0; i < 100 && !existsSync(marker); i++) await sleepMs(20);
@@ -1044,6 +1047,7 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
       const freed = result.stderr.match(/sparse patterns freed (\d+) bytes of idle cache \S+discovery-lab\n/);
       assert.ok(freed && Number(freed[1]) >= 300_000, result.stderr);
       assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
+      assert.doesNotMatch(result.stderr, /restoring its full tree/);
     } finally { locker.kill(); }
     assert.equal(existsSync(join(lab, "pursuits")), false);
     assert.equal(existsSync(join(lab, "prereg", "x", "input.json")), true);
@@ -1052,6 +1056,8 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
     assert.equal(existsSync(join(busy, "pursuits", "old", "run.json")), true, "an active gate's checkout is not touched");
     assert.equal(existsSync(join(old, "pursuits", "old", "run.json")), true);
     assert.equal(sparseConfig(old), "");
+    assert.equal(existsSync(join(stranded, "pursuits")), false, "the prune never restores a full tree");
+    assert.equal(sparseConfig(stranded), "true");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
