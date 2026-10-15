@@ -34,7 +34,10 @@ import sys
 REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
 RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
 HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
-RED = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+# A cancelled run says nothing about the tree and nothing re-runs it, so it is not red;
+# #11004 sat green for 2 h on 2026-10-15 behind a cancelled "regressions" run.
+# The gate checks still have to read SUCCESS (REQUIRED below).
+RED = {"FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 # Statuses only the retired local-signoff path posted; a stale red one is not a gate.
 RETIRED = {"signoff/local"}
 MIN_HEAD_AGE_S = int(os.environ.get("MERGE_ON_GREEN_MIN_AGE_S", "120"))
@@ -73,12 +76,14 @@ def decide(pr, now):
         # GitHub runs no pull_request CI on a conflicting head, so nothing else can change.
         return "conflict", "conflicts with develop"
     commit = pr["commits"]["nodes"][0]["commit"]
-    checks = {}
+    # Judge each check by its latest run: a failure that was re-run green is green.
+    runs = {}
     for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", []):
         if c["__typename"] == "CheckRun":
-            checks.setdefault(c["name"], []).append(c["conclusion"] or c["status"])
+            runs.setdefault(c["name"], []).append((c.get("completedAt") or "~", c["conclusion"] or c["status"]))
         elif c["context"] not in RETIRED:
-            checks.setdefault(c["context"], []).append(c["state"])
+            runs.setdefault(c["context"], []).append(("~", c["state"]))
+    checks = {n: [max(rs, key=lambda r: r[0])[1]] for n, rs in runs.items()}
     failed = sorted(n for n, states in checks.items() if any(s in RED for s in states))
     if failed:
         return "wait", "red: " + ", ".join(failed[:3])
