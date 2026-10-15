@@ -3,6 +3,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 const gate = resolve("claude/tools/beelink-gate");
@@ -818,6 +819,75 @@ test("auto uses the repo's last install reserve before choosing a host", () => {
     assert.match(result.stderr, /receipt: .*host=beelink1/);
     assert.equal(existsSync(join(`${cachePrefix}-100.98.195.7`, "local", "owner", "repo")), true);
     assert.equal(existsSync(join(`${cachePrefix}-100.127.22.51`, "local", "owner", "repo")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// A fixture commit whose .beelink-gate/sparse-checkout excludes history/, gated on a named
+// beelink2 through the launcher with a 200 GiB floor; free space per host comes from free.
+function shapedReserveFixture(f, freeGiB) {
+  installFakeSsh(f);
+  const sha = publish(f, "shaped", () => {
+    mkdirSync(join(f.source, ".beelink-gate"));
+    writeFileSync(join(f.source, ".beelink-gate", "sparse-checkout"), "# run data\n/*\n!/history/\n");
+  });
+  const spec = `sha256:${createHash("sha256").update("/*\n!/history/\n").digest("hex")}`;
+  const availPrefix = join(f.root, "free");
+  for (const [ip, gib] of Object.entries({ "100.98.195.7": 400, "100.127.22.51": freeGiB })) writeFileSync(`${availPrefix}-${ip}`, String((200 + gib) * 1024 ** 3));
+  writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
+  mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
+  const seed = (...rows) => writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
+    rows.map((row) => typeof row === "string" ? row : JSON.stringify({ repo: "local/owner/repo", mode: "install", ...row })).join("\n") + "\n", { flag: "a" });
+  const gateOn = () => run(gate, ["beelink2", f.url, sha, "--", "true"],
+    { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: join(f.root, "host-cache") }, timeout: 30_000 });
+  return { sha, spec, seed, gateOn };
+}
+
+test("an install reserve measured on another checkout shape is ignored, and one of the same shape is used", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn } = shapedReserveFixture(f, 15);
+    // A full-clone receipt from before receipts named their shape: 28 GiB, and 15 GiB free above the floor.
+    seed({ host: "beelink2", install_reserve_bytes: 28 * 1024 ** 3 });
+    const admitted = gateOn();
+    assert.equal(admitted.status, 0, admitted.stderr);
+    assert.match(admitted.stderr, new RegExp(`install reserve 10737418240 bytes from the 10 GiB headroom \\(no receipt for checkout shape ${spec}\\)`));
+    assert.match(admitted.stderr, /receipt: .* sparse=repo /);
+    assert.equal(receipts(f).at(-1).sparse_spec, spec);
+
+    seed({ host: "beelink2", sparse_spec: spec, install_reserve_bytes: 20 * 1024 ** 3 });
+    const refused = gateOn();
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest receipt for checkout shape ${spec}`));
+    assert.match(refused.stderr, /below its 200 GiB disk floor plus 21474836480 bytes last-seen install reserve/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a host with no receipt of the gated checkout shape uses the other beelink's", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn } = shapedReserveFixture(f, 12);
+    seed({ host: "beelink2", install_reserve_bytes: 28 * 1024 ** 3 }, { host: "beelink1", sparse_spec: spec, install_reserve_bytes: 13 * 1024 ** 3 });
+    // The headroom alone would admit 12 GiB above the floor; beelink1's measured 13 GiB does not.
+    const refused = gateOn();
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, new RegExp(`install reserve 13958643712 bytes from the other beelink's newest receipt for checkout shape ${spec}`));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a malformed or older receipt never loosens the install reserve", () => {
+  const f = fixture();
+  try {
+    const { spec, seed, gateOn } = shapedReserveFixture(f, 15);
+    seed({ host: "beelink2", sparse_spec: spec, install_reserve_bytes: 30 * 1024 ** 3 },
+      { host: "beelink2", sparse_spec: spec, install_reserve_bytes: 20 * 1024 ** 3 },
+      { host: "beelink2", sparse_spec: spec, install_reserve_bytes: 5 },
+      { host: "beelink2", sparse_spec: spec, install_reserve_bytes: "11000000000" },
+      { host: "beelink2", sparse_spec: "sha256:not-a-digest", install_reserve_bytes: 10 * 1024 ** 3 + 1 },
+      { host: "beelink2", sparse: "repo", install_reserve_bytes: 10 * 1024 ** 3 + 2 },
+      '{"host": "beelink2", "repo": "local/owner/repo", "install_reserve_bytes": 10737418243');
+    const refused = gateOn();
+    assert.equal(refused.status, 75, refused.stderr);
+    assert.match(refused.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest receipt for checkout shape ${spec}`));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
