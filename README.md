@@ -8,6 +8,9 @@ Run `./claude/install.sh` from the durable checkout that will own installed syml
 Use `--force` only when replacing existing configuration is intended.
 The installer shares instructions, skills, commands, and tools across supported agent homes.
 It also installs Claude settings, hooks, and plugins.
+It manages the shared Codex model defaults through `claude/install-codex-config.py`,
+preserving other private config values and enrolled account symlinks.
+Explicit model flags and project or profile settings still override shared defaults.
 See [skills](claude/skills/README.md) and [tools](claude/tools/README.md) for their maintained guidance.
 
 For Codex, add this top-level setting to `~/.codex/config.toml`:

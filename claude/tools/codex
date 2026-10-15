@@ -31,6 +31,8 @@ if [ "${TANGLE_INTELLIGENCE_LOG_USER_PROMPTS:-}" != "1" ]; then
 fi
 
 if [ "${TANGLE_INTELLIGENCE_OTEL:-}" = "1" ] && [ -r "$otel_env" ]; then
+  # Loaded from machine configuration at runtime.
+  # shellcheck source=/dev/null
   . "$otel_env"
   if [ "${TANGLE_INTELLIGENCE_LOG_USER_PROMPTS:-}" != "1" ]; then
     OTEL_LOG_USER_PROMPTS=0
@@ -44,6 +46,39 @@ if [ "${1:-}" = "run" ]; then
   set -- exec "$@"
 fi
 
+# A continuation belongs to the current Codex home. Switching accounts changes
+# both its saved-session lookup and --last, so allocate only fresh subscription
+# work. App-server protocol generators and local providers need no subscription.
+allocate=false
+command_name=""
+operation=""
+skip_value=false
+literal=false
+for argument in "$@"; do
+  if "$skip_value"; then skip_value=false; continue; fi
+  if "$literal"; then continue; fi
+  case "$argument" in
+    --) literal=true ;;
+    --help|-h|--version|-V|--oss|--local-provider|--local-provider=*)
+      allocate=false
+      break ;;
+    -c|--config|-m|--model|-p|--profile|-C|--cd|-s|--sandbox|-a|--ask-for-approval|--enable|--disable|-i|--image|--add-dir|-o|--output-last-message|--output-schema|--thread-source|--cyber-access-program|--listen|--code-mode-host|--ws-auth|--ws-token-file|--ws-token-sha256|--ws-shared-secret-file|--ws-issuer|--ws-audience|--ws-max-clock-skew-seconds)
+      skip_value=true ;;
+    -*) ;;
+    *)
+      if [ -z "$command_name" ]; then
+        command_name="$argument"
+        case "$command_name" in exec|e|app-server) allocate=true ;; esac
+      elif [ -z "$operation" ]; then
+        operation="$argument"
+      fi ;;
+  esac
+done
+case "$command_name:$operation" in
+  exec:resume|exec:fork|e:resume|e:fork|app-server:?*)
+    allocate=false ;;
+esac
+
 run_codex() {
   local candidate="$1"
   shift
@@ -54,6 +89,39 @@ run_codex() {
   resolved="$(readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate")"
   [ "$resolved" != "$self" ] || return 1
 
+  local node_bin
+  node_bin="$(command -v node || true)"
+  if [ -z "$node_bin" ] && [ -n "$default_alias_version" ] && [ -x "$nvm_dir/versions/node/v${default_alias_version#v}/bin/node" ]; then
+    node_bin="$nvm_dir/versions/node/v${default_alias_version#v}/bin/node"
+  fi
+
+  if [ "${CODEX_ROUTER_CHILD:-}" = 1 ]; then
+    printf '%s\n' "${CODEX_HOME:-}" >&3
+    unset CODEX_ROUTER_CHILD
+  elif [ -z "${CODEX_HOME:-}" ]; then
+    case "$command_name:$operation" in
+      exec:resume|exec:fork|e:resume|e:fork)
+        origin_home="$(python3 "$(dirname "$self")/codex-routing/session-home.py" "$@")"
+        if [ -n "$origin_home" ]; then export CODEX_HOME="$origin_home"; fi ;;
+    esac
+  fi
+
+  # acct marks recursive calls. Explicit CODEX_HOME values pin the origin,
+  # including probes and resumed conversations.
+  if "$allocate" && [ "${ACCT_ROUTED:-}" != codex ] && [ -z "${CODEX_HOME:-}" ]; then
+    local parent_command
+    parent_command="$(ps -p "$PPID" -o args= 2>/dev/null || true)"
+    # Companion launches exactly `codex app-server`; other servers retain native routing.
+    if [ "$#" = 1 ] && [ "$1" = app-server ] && [[ "$parent_command" == *"/scripts/app-server-broker.mjs serve "* ]]; then
+      if [ -z "$node_bin" ]; then
+        printf 'Codex task routing requires Node.js in PATH or the managed nvm default.\n' >&2
+        exit 127
+      fi
+      PATH="$(dirname "$node_bin"):$(dirname "$candidate"):$PATH" exec "$node_bin" "$(dirname "$self")/codex-routing/app-server.mjs" "$self" "$candidate" "$@"
+    fi
+    PATH="$(dirname "$candidate"):$PATH" exec acct run -- "$candidate" "$@"
+  fi
+
   PATH="$(dirname "$candidate"):$PATH" exec "$candidate" "$@"
 }
 
@@ -62,7 +130,7 @@ run_codex() {
 # 9.6-38.8 s wall on this host at load 95-150, against 0.32 s for the same binary named
 # directly. Every health probe and every spawned turn pays it, so a bridge whose CODEX_BIN is
 # this wrapper reads as unavailable and its runs settle driver-failed. Order: an explicit
-# override, the native Homebrew build, then the nvm version the default alias names. The native
+# override, Homebrew, the standalone install, then the nvm version the default alias names. The native
 # build wins because it answers --version in 0.32 s against 1.0 s for the npm package under nvm,
 # which is a Node script and pays Node startup; both are the same codex-cli and were 0.154.0 when
 # this order was chosen. Set CODEX_REAL_BIN to pin one if they ever drift.
@@ -73,6 +141,7 @@ fi
 for candidate in \
   ${CODEX_REAL_BIN:-} \
   /opt/homebrew/bin/codex \
+  "${acct_home:-$HOME}/.local/bin/codex" \
   ${default_alias_version:+"$nvm_dir/versions/node/v${default_alias_version#v}/bin/codex"}
 do
   [ -n "$candidate" ] || continue
@@ -80,6 +149,8 @@ do
 done
 
 if [ -s "$nvm_dir/nvm.sh" ]; then
+  # nvm is installed outside this repository.
+  # shellcheck source=/dev/null
   . "$nvm_dir/nvm.sh"
 
   if nvm use --silent default >/dev/null 2>&1; then

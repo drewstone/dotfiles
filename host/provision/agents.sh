@@ -193,6 +193,8 @@ module_agents() {
   ensure "Claude local trust excludes temporary directories" claude_local_trust_ok -- sanitize_claude_local_trust
   claude_plugins
   ensure "Codex reads CLAUDE.md when a folder has no AGENTS.md" codex_fallback_ok -- add_codex_fallback
+  ensure "Codex shared model defaults" python3 "$DOTFILES/claude/install-codex-config.py" --check -- \
+    python3 "$DOTFILES/claude/install-codex-config.py"
   if [ -f "$HOME/.claude.json" ]; then
     ensure "Claude trusts $CLAUDE_TRUST_DIRS" claude_trust_ok -- add_claude_trust
   else

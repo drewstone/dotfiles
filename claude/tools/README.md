@@ -2,6 +2,25 @@
 
 Custom CLI tools for managing Claude Code. Installed via `install.sh` which symlinks tools to `~/bin/`.
 
+## Codex account choice
+
+The `codex` wrapper admits fresh subscription execs through `acct run`.
+Codex Companion's stdio broker keeps its connection while each new thread gets
+an account; in-flight and continued threads retain their original account.
+Completed workers exit through stdin EOF. Exhaustion notifications invalidate
+acct quota snapshots before the next task; other app servers allocate per process.
+Explicit `CODEX_HOME` pins, local inference, tooling, help and probes bypass allocation.
+
+Exec resume/fork resolves enrolled saved-session homes, including names and
+cwd-filtered `--last` ordered by last update time. `--all` removes the cwd filter.
+Missing sessions retain native errors; continuations report exhaustion in their
+original home. Lookup honors `ACCT_CONFIG` and enrolled symlinks.
+
+Claude settings put `~/bin` before Homebrew. The wrapper resolves its symlink to
+load adjacent routing helpers, using Node from PATH or the managed nvm default
+and Python for read-only session lookup. Deploy tangle-tools `acct run` support
+first. Existing brokers and running lanes keep their current processes.
+
 ## gh-drew
 
 Run `gh` as `drewstone` with the token from the environment or the devops vault.
