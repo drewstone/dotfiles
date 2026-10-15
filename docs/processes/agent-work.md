@@ -106,6 +106,7 @@ A loop or service that only reads GitHub (runs, statuses, compares, PR files) us
 Missing DREW_GH_TOKEN requires restoring its owner, not switching accounts; SSH transport does not establish API identity.
 Fetch the PR target, verify `git merge-tree --write-tree BASE HEAD`, and resolve conflicts.
 Use Conventional Commits and repository hooks; dotfiles git/install.sh owns global hooks.
+Write a multi-line commit or PR message to a file and pass it with `git commit -F <file>` or `--body-file <file>`; on 2026-10-15 an inline `-m` with unbalanced quotes ran message text as Mac shell commands.
 Use the [shared merge gate](../../claude/AGENTS.md#own-the-outcome); apply authorized waivers through the permitted path.
 
 One owner carries the PR through review, merge, release, and requested consumer proof.
