@@ -56,7 +56,7 @@ function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Req
   const graphql = (develop) => writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { ref: { target: { oid: develop } }, pullRequests: { nodes: prs } } } }));
   graphql("d".repeat(40));
   writeFileSync(join(dir, "gh-drew"), `#!/bin/bash
-echo "$*" >> "${dir}/calls.log"
+echo "$* wait=\${GH_DREW_REVIEW_WAIT:-}" >> "${dir}/calls.log"
 if [ "$1 $2" = "api graphql" ]; then cat "${dir}/graphql.json"; exit 0; fi
 for r in ${conflictUpdate.join(" ")}; do [ "$1 $3 $4" = "api PUT repos/tangle-network/agent-container/pulls/$r/update-branch" ] && { echo "gh: merge conflict between base and head (HTTP 422)" >&2; exit 1; }; done
 if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r" ] && { echo "${refuseText}" >&2; exit 1; }; done; exit 0; fi
@@ -75,7 +75,7 @@ test("a green PR merges, pinned to the head it judged", () => {
   const f = fixture([pr(1)]);
   const r = f.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(f.calls(), new RegExp(`pr merge 1 -R tangle-network/agent-container --merge --match-head-commit ${sha(1)}`));
+  assert.match(f.calls(), new RegExp(`pr merge 1 -R tangle-network/agent-container --merge --match-head-commit ${sha(1)} wait=0`));
   assert.match(r.stdout, /#1 merged/);
   assert.match(readFileSync(join(f.dir, "state", "decisions.jsonl"), "utf8"), /"head_to_green_s": 270/);
   assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /last 1 merges: p50 4 min, max 4 min/);

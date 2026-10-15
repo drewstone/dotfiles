@@ -1,0 +1,62 @@
+{
+ "data": {
+  "repository": {
+   "pullRequest": {
+    "url": "https://github.com/drewstone/dotfiles/pull/465",
+    "headRefOid": "b132bb77a79f60012c6ce0476cc25b76933bbd20",
+    "reviewThreads": {
+     "nodes": [
+      {
+       "isResolved": false,
+       "isOutdated": false,
+       "path": "claude/tools/beelink-gate",
+       "line": 1517,
+       "originalLine": 1517,
+       "comments": {
+        "nodes": [
+         {
+          "author": {
+           "__typename": "Bot",
+           "login": "chatgpt-codex-connector"
+          },
+          "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Always measure the pnpm store used by the frozen install**\n\nWhen `npm_config_store_dir` is already set in the remote environment, this array measures that custom directory instead of `$HOME/.local/share/pnpm/store`, but the frozen install still explicitly writes to `$HOME/.local/share/pnpm/store` at line 2175. Growth in the actual install store is therefore omitted from `reserve_gate_bytes`, causing the receipt to understate disk consumption and later gates to be admitted with too little reserve; include the fixed install store even when a custom store is also present.\n\nUseful? React with 👍 / 👎.",
+          "url": "https://github.com/drewstone/dotfiles/pull/465#discussion_r4279903162"
+         }
+        ]
+       }
+      },
+      {
+       "isResolved": false,
+       "isOutdated": false,
+       "path": "claude/tools/beelink-gate",
+       "line": 1066,
+       "originalLine": 1066,
+       "comments": {
+        "nodes": [
+         {
+          "author": {
+           "__typename": "Bot",
+           "login": "chatgpt-codex-connector"
+          },
+          "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Bound each disk scan by the remaining gate hold time**\n\nWhen `du` stalls near the configured deadline, this direct `timeout 60` can keep the checkout lock for up to another minute because it is independent of `deadline`; GNU `timeout --help` confirms that it allows the command its specified duration. Unlike commands run through `step()`, all three new measurements bypass the remaining-hold calculation, so a gate with a short `BEELINK_GATE_MAX_HOLD`, or one whose install nearly consumes its budget, can exceed the advertised lock bound before the next step notices expiry.\n\nUseful? React with 👍 / 👎.",
+          "url": "https://github.com/drewstone/dotfiles/pull/465#discussion_r4279903172"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "comments": {
+     "nodes": [
+      {
+       "author": {
+        "login": "chatgpt-codex-connector"
+       },
+       "body": "<!-- codex-pull-request-review-summary -->\n\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ✅ **Completed** <relative-time datetime=\"2026-10-15T06:45:15.914263Z\">2026-10-15T06:45:15.914263Z</relative-time> | `b132bb7` | PR opened |\n\n\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\" or \"@codex security review\".\n\nCodex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.\n\n</details>"
+      }
+     ]
+    }
+   }
+  }
+ }
+}

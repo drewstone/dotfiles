@@ -1,0 +1,29 @@
+{
+ "data": {
+  "repository": {
+   "pullRequest": {
+    "url": "https://github.com/drewstone/dotfiles/pull/464",
+    "headRefOid": "90b68679e6c1ec668e28398b788e33ae7f497b8d",
+    "reviewThreads": {
+     "nodes": []
+    },
+    "comments": {
+     "nodes": [
+      {
+       "author": {
+        "login": "chatgpt-codex-connector"
+       },
+       "body": "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 {\"code_review\":{\"commit_sha\":\"90b68679e6c1ec668e28398b788e33ae7f497b8d\",\"has_any_findings\":true,\"has_unresolved_findings\":true,\"status\":\"failed\"},\"security_review\":{\"commit_sha\":null,\"has_any_findings\":null,\"has_unresolved_findings\":null,\"status\":null}} -->\n\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ⚠️ **Failed** <relative-time datetime=\"2026-10-15T05:28:46.664935Z\">2026-10-15T05:28:46.664935Z</relative-time> | `90b6867` | PR opened |\n\n\n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\" or \"@codex security review\".\n\nCodex reacts with 👀 while any review is running, comments if it has suggestions, and reacts with 👍 once all reviews finish with no findings.\n\n</details>"
+      },
+      {
+       "author": {
+        "login": "chatgpt-codex-connector"
+       },
+       "body": "You have reached your Codex usage limits for code reviews. You can see your limits in the [Codex usage dashboard](https://chatgpt.com/codex/cloud/settings/usage).\nTo continue using code reviews, add credits to your account and enable them for code reviews in your [settings](https://chatgpt.com/codex/cloud/settings/code-review)."
+      }
+     ]
+    }
+   }
+  }
+ }
+}

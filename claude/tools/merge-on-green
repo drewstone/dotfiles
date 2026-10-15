@@ -38,6 +38,9 @@ RED = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP
 # Statuses only the retired local-signoff path posted; a stale red one is not a gate.
 RETIRED = {"signoff/local"}
 MIN_HEAD_AGE_S = int(os.environ.get("MERGE_ON_GREEN_MIN_AGE_S", "120"))
+# gh-drew waits for a Codex review running on the head before it merges; a tick does not wait,
+# so such a PR is refused now and tried again on the next tick.
+os.environ.setdefault("GH_DREW_REVIEW_WAIT", "0")
 
 QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
 ref(qualifiedName:"refs/heads/develop"){target{oid}}
