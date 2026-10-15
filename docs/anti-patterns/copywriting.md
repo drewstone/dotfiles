@@ -83,7 +83,7 @@ Heading test:
 
 If the heading cannot stand alone without a label above it, it is not done.
 
-## UI copy review
+## UI Copy
 
 Avoid:
 

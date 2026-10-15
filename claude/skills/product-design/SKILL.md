@@ -33,7 +33,7 @@ For a blog or research index, read [editorial surfaces](references/editorial-sur
 3. Implement with the application's existing components and tokens.
    Read [polish](references/polish.md) for detail review and phone checks; read [motion](references/motion.md) when changing animation or gestures.
 
-When the user wants to compare directions, or a state model needs checking before it is built, read [variants and prototypes](references/variants.md).
+For a major redesign, requested direction comparison or state model that needs checking before implementation, read [variants and prototypes](references/variants.md).
 
 To reproduce a reference site, capture it at desktop and mobile widths and inspect its live DOM, computed styles, assets, and interaction states.
 Implement with the target repository's components and tokens, then compare screenshots at the same viewport and fix visible differences.

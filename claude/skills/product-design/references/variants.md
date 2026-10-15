@@ -10,7 +10,7 @@ Read this for major redesign exploration, requested direction comparisons, or a 
 
 1. Narrow the request to one piece of UI and restate it in one sentence.
 2. Read the stack, tokens, and product personality; every variant uses the real tokens and looks shippable.
-3. Build three to five variants that differ on a named axis each (layout, density, personality, motion, interaction model). Close variations of one idea teach nothing.
+3. Build variants that differ on named axes such as composition, density or interaction model. Take the required exploration scope from the project's policy owner. Close variations of one idea teach nothing.
 4. Render them on the real page behind a `?variant=` parameter so headers, data, and density are present; use a new prototype route only when no page can host the piece.
 5. Give each variant real interactions and realistic content, and hold each to the polish and motion bar.
 6. Add a small fixed switcher that names each variant's axis; it is tooling, not part of the design.
