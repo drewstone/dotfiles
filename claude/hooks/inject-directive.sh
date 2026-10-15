@@ -20,9 +20,23 @@ SESSION=$(printf '%s' "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null) |
 ACTIVE=$(tr -d '[:space:]' < "$DIR/active" 2>/dev/null)
 [ -n "$ACTIVE" ] || exit 0
 
-# Rotation: "rotate:a,b,c" → deterministic per-session assignment by stable hash,
-# so a given session always sees the same variant (clean A/B unit = the session).
-if [ "${ACTIVE#rotate:}" != "$ACTIVE" ]; then
+SEEN="$HOME/.claude/.directive-seen"
+marker="$SEEN/$SESSION"
+# A session keeps the variant it was first logged with, even after `active` changes:
+# the A/B unit is the session, and the log is what the trace-insights join reads.
+# Markers written before pinning are empty; recover their variant from the log.
+PINNED=""
+if [ -s "$marker" ]; then
+  PINNED=$(tr -d '[:space:]' < "$marker" 2>/dev/null)
+elif [ -e "$marker" ] && [ -f "$HOME/.claude/directives-log.jsonl" ]; then
+  PINNED=$(grep -F "\"session\":\"$SESSION\"" "$HOME/.claude/directives-log.jsonl" 2>/dev/null | head -1 | jq -r '.variant // empty' 2>/dev/null)
+  [ -n "$PINNED" ] && printf '%s\n' "$PINNED" > "$marker" 2>/dev/null
+fi
+
+if [ -n "$PINNED" ] && [ -f "$DIR/variants/$PINNED.md" ]; then
+  SLUG="$PINNED"
+# Rotation: "rotate:a,b,c" → deterministic per-session assignment by stable hash.
+elif [ "${ACTIVE#rotate:}" != "$ACTIVE" ]; then
   IFS=',' read -ra POOL <<< "${ACTIVE#rotate:}"
   n=${#POOL[@]}
   [ "$n" -gt 0 ] || exit 0
@@ -36,15 +50,13 @@ FILE="$DIR/variants/$SLUG.md"
 [ -f "$FILE" ] || exit 0
 
 # Log the (session → variant) assignment once per session for later A/B correlation.
-SEEN="$HOME/.claude/.directive-seen"
 mkdir -p "$SEEN" 2>/dev/null || true
-marker="$SEEN/$SESSION"
 if [ ! -e "$marker" ]; then
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   cwd=$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null)
   printf '{"ts":"%s","session":"%s","variant":"%s","cwd":"%s"}\n' \
     "$ts" "$SESSION" "$SLUG" "$cwd" >> "$HOME/.claude/directives-log.jsonl" 2>/dev/null || true
-  : > "$marker" 2>/dev/null || true
+  printf '%s\n' "$SLUG" > "$marker" 2>/dev/null || true
 fi
 
 jq -n --rawfile body "$FILE" --arg slug "$SLUG" '
