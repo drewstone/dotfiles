@@ -1008,6 +1008,46 @@ echo $(( $(cat "$FAKE_AVAIL_FILE") - 50000000000 )) > "$FAKE_AVAIL_FILE"
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("the reserve measures the store the frozen install writes, even when the environment names another", () => {
+  const f = fixture();
+  try {
+    publish(f, "pnpm", () => { rmSync(join(f.source, "package-lock.json")); writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n"); });
+    const sha = f.git(["rev-parse", "HEAD"]);
+    // The install writes 3 MB into the --store-dir the gate passes it.
+    writeFileSync(join(f.root, "bin", "pnpm"), `#!/usr/bin/env bash
+[ "$1" = install ] || exit 0
+while [ $# -gt 0 ]; do [ "$1" = --store-dir ] && store=$2; shift; done
+mkdir -p "$store/v10/files/bb" && head -c 3000000 /dev/zero > "$store/v10/files/bb/blob"
+`);
+    const custom = join(f.root, "custom-store");
+    mkdirSync(custom);
+    const result = f.call(sha, ["true"], { env: { npm_config_store_dir: custom } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(existsSync(join(f.home, ".local", "share", "pnpm", "store", "v10", "files", "bb", "blob")));
+    const row = receipts(f).at(-1);
+    assert.ok(row.reserve_gate_bytes >= 3_000_000, `the install store's 3 MB were left out: ${JSON.stringify(row)}`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a measurement of the gate's bytes is cut at the gate's remaining hold, so the lock is never held past it", () => {
+  const f = fixture();
+  try {
+    // du for the gate's bytes (--total) hangs; the cache pruner's own du is untouched.
+    writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash
+[[ " $* " == *" --total "* ]] && exec sleep 40
+exec /usr/bin/du "$@"
+`);
+    chmodSync(join(f.root, "bin", "du"), 0o755);
+    const started = Date.now();
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_MAX_HOLD: "6s" } });
+    const elapsed = (Date.now() - started) / 1000;
+    assert.equal(result.status, 124, result.stderr);
+    assert.match(result.stderr, /hold limit of 6s reached/);
+    // A fixed 60 s bound let the first hung measurement alone hold the lock for 40 s.
+    assert.ok(receipts(f).at(-1).ran_s <= 15 && elapsed < 30, `held ${receipts(f).at(-1).ran_s}s (wall ${elapsed}s) against a 6 s hold`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("a measurement of the gate's bytes that times out or fails records the cold reserve, never less than the headroom", () => {
   const f = fixture();
   try {
