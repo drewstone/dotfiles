@@ -1,24 +1,22 @@
 # Interface motion
 
-Read this when the UI work includes animation or gestures. Use the project's easing and duration tokens; add tokens only where none exist. Motion earns its place by helping the user.
+Read this when changing animation or gestures. For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
 
-## Decide in order
+## Inspect and implement
 
-1. Frequency: keyboard shortcuts and other 100+ times/day actions need no animation; frequent hover and list navigation need barely perceptible motion or none; occasional modals and toasts can use standard motion; rare onboarding and success can allow delight.
-2. Purpose: spatial consistency, state change, feedback, explanation, or avoiding a jarring jump.
-3. Tool: CSS transition for toggled state; `@starting-style` for entry; CSS animation for predetermined motion during load; WAAPI for programmatic control; Motion for springs, layout, exit, and gesture-driven values.
-4. Properties: prefer `transform` and `opacity`; use `clip-path` for reveals and height only for accordions. Enter from `scale(0.9–0.97)` with `opacity: 0`. Scale popovers, menus, and tooltips from their trigger; keep modals centered.
-5. Timing: enter and exit use ease-out, on-screen movement ease-in-out, hover and color `ease`, constant motion `linear`. Press 100–160 ms; tooltip 125–200 ms; dropdown 150–250 ms; modal or drawer 200–500 ms. Keep UI motion under 300 ms unless a longer duration has a reason. Stagger groups 30–80 ms without blocking input.
-6. Interruption: use transitions or springs when an action can repeat quickly; exit along the entry path. Begin a new animation from the current on-screen value.
-7. Access: under `prefers-reduced-motion`, keep short opacity and color changes and drop movement. Run hover motion only for fine hovering pointers.
+1. Inventory active CSS and JavaScript animations in the affected flow. Record trigger, moving object, origin, frequency, interruption and reduced-motion path.
+2. Locate the project's motion tokens and shared component recipe. For Tangle, follow the bible's motion-owner links; change the existing owner when the recipe needs correction.
+3. Choose an implementation for the behavior: CSS transitions for toggled state, `@starting-style` for entry, WAAPI for programmatic control, or the project's maintained motion library for layout and gestures.
+4. Establish destination layout before animating between measured bounds. Keep the semantic state transition independent of animation callbacks.
+5. Check rapid reversal, repeated input, close/Back, hidden tabs and reduced motion. Inspect both CSS and JavaScript branches.
+6. Capture matched normal, interrupted and reduced-motion sequences. Compare the moving object's continuity and the reader's anchor using the bible's acceptance protocol.
 
 ## Gestures and performance
 
-Respond on pointer-down, track 1:1 during drag, hand release velocity to the spring, and never lock input during a transition. Use a critically damped spring by default; add bounce only for a flick or throw. Capture one pointer and require roughly 10 px before committing to a drag direction.
+Use pointer capture for a single active pointer and inspect cancellation and extra touches. Measure drag direction and release velocity from the same coordinate system. Project the release toward a resting target; tune resistance against real-device evidence and the shared recipe.
 
-Prefer transforms on the moving element over a parent CSS variable that restyles descendants. Motion's `x`/`y`/`scale` shorthands can run on the main thread; pass a full transform string when the page is busy. Check feel in slow motion and on a real phone.
+Prefer transforms on the moving element over a parent CSS variable that restyles descendants. Check whether the library's transform shorthands run on the main thread; inspect a performance trace before changing the implementation. Review slow playback and a real phone separately.
 
-Read [component recipes](motion-recipes.md) for buttons, dropdowns, tooltips, modals, drawers, toasts, accordions, hold-to-confirm, tabs, scroll reveal, and drag-to-dismiss.
+Read [component techniques](motion-recipes.md) when choosing the implementation. Generic techniques do not override Tangle's tokens or approved behavior.
 
-For an audit, rank findings by user impact and interaction frequency. Prefer deleting motion, then reducing it, fixing easing or origin, making it interruptible, improving rendering performance, and finally polishing it. Report file, current value, target value, and a browser check; require reduced-motion handling for movement.
-Block approval for motion on a keyboard or 100+ times/day action, entry from `scale(0)`, `ease-in` on UI, unexplained motion over 300 ms, avoidable layout-property animation, or missing reduced-motion handling. Keep blur under 20 px.
+For an audit, rank observed failures by user impact and interaction frequency. Record file, current behavior, shared-owner correction and browser proof. Reuse the bible's verdict criteria instead of maintaining a second timing or easing table.

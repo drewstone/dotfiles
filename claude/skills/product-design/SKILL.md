@@ -5,10 +5,14 @@ metadata:
   short-description: Reference-first product UI without label/step slop
 ---
 
-# Product Design
+# Product design
 
 Design or correct the interface around the user's task and verify it in the rendered product.
 For a report-only request, deliver findings without changing the product.
+
+## Read the shared owner
+
+For Tangle products, read the [Brand design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) before local pattern guidance. Follow its implementation-owner links for tokens, type/control scale and surfaces/states. Read the relevant product docs for composition and recovery semantics. Product-design owns execution procedure; Brand owns shared principles, motion, interaction and acceptance.
 
 ## Establish the task
 
@@ -25,17 +29,11 @@ For a blog or research index, read [editorial surfaces](references/editorial-sur
 
 1. Choose controls that perform the task directly.
    When a mode changes the input or output type, change the actual controls and behavior accordingly.
-2. Remove duplicate navigation, decorative panels, repeated action copy, and states that imply readiness the product has not achieved.
-   Keep labels that identify controls or clarify status, risk, units, permissions, or accessibility.
+2. Map changed controls and states to the shared components and their existing owners.
 3. Implement with the application's existing components and tokens.
-   Read [polish](references/polish.md) for press feedback, materials, typography, foundations, and phone behavior; read [motion](references/motion.md) when changing animation or gestures.
+   Read [polish](references/polish.md) for detail review and phone checks; read [motion](references/motion.md) when changing animation or gestures.
 
 When the user wants to compare directions, or a state model needs checking before it is built, read [variants and prototypes](references/variants.md).
-
-Match density and media to the task.
-Operational tools need scannable state and actions; product identity may need a real screenshot, person, place, or artifact.
-Counts belong where they help the reader choose or compare.
-Prefer familiar, accessible controls over custom decoration.
 
 To reproduce a reference site, capture it at desktop and mobile widths and inspect its live DOM, computed styles, assets, and interaction states.
 Implement with the target repository's components and tokens, then compare screenshots at the same viewport and fix visible differences.
@@ -70,11 +68,9 @@ Click through the changed flow and inspect desktop and mobile screenshots, suppo
 Fix observed regressions before reporting quality.
 Reopen the original failing paths after a fix; a complaint or defect is fixed only when the rendered evidence shows the intended result.
 
-Marketing product views must be real, faithful representations or clearly conceptual diagrams.
-Sparse data does not justify fabricated activity or readiness.
-A successful build or unit-test result does not establish usable interactions or visual quality.
-Complete the requested improvements; a numerical design score is not a completion criterion.
-If deployment is part of the request, also verify the served revision and live user path.
+Use the bible's evidence and acceptance contract for Tangle verdicts and [UI evidence](../../../docs/anti-patterns/ui-evidence.md) for capture and privacy procedure.
+Keep observable behavior, independent craft review and target-user results separate. Mark missing proof UNCHECKED and scope any NOT APPLICABLE verdict with a reason.
+If deployment is part of the request, verify the served revision and live user path.
 
 Report the observed problems, decisions, changed files, before/after screenshots or browser artifacts, tested flows and states, checks, and remaining limitations.
 

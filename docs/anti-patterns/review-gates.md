@@ -32,25 +32,11 @@ Pass only if:
 - every claim has a proof path
 - every CTA points to a real next action
 
-## Design Gate
+## Design gate
 
-Reject if:
+For Tangle work, apply the [design bible's acceptance](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md#principles-and-evidence). Record functional assertions and independent craft verdicts separately; a pass in one cannot compensate for an unresolved failure in the other. Missing proof is UNCHECKED. These are review criteria within existing gates, not new hosted checks.
 
-- the page is mostly text
-- the page has no real artifact
-- the page uses cards for product taxonomy
-- the page has tiny labels above headings
-- the page has decorative chips
-- changed files were not grepped for banned label patterns
-
-Apply [UI evidence](ui-evidence.md) before opening or accepting a UI or UX PR.
-
-Pass only if:
-
-- the first viewport makes one decision clear
-- the visual system is visible without reading every word
-- product proof is real
-- hierarchy survives if labels are removed
+Apply [UI evidence](ui-evidence.md) for capture and privacy procedure before opening or accepting a UI or UX PR. Keep scoped rejected examples in [product design](product-design.md).
 
 ## Blog Gate
 

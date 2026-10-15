@@ -1,5 +1,7 @@
 # Reference Systems
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 This file records external systems and reference-site lessons used to shape the anti-pattern doctrine.
 
 The standard is not "famous company did it." The standard is: source-of-truth documentation, maintained practice, concrete rules, and visible output quality.
@@ -119,6 +121,8 @@ AGENTS.md:
   - https://github.com/agentsmd/agents.md
   - https://github.blog/ai-and-ml/github-copilot/how-to-write-a-great-agents-md-lessons-from-over-2500-repositories/
 
+Extract an exact example and the property being transferred before using a reference. Tangle policy takes precedence over another system's typography, colors, motion recipes and brand character.
+
 ## Browser evidence and accessibility
 
 These references describe capture and interaction behavior.
@@ -212,13 +216,6 @@ Lessons:
 - E2B: technical infrastructure can be clean and graphic with sparse copy. It uses visual identity, not paragraph density.
 - Vercel: hierarchy and omission are the product. The page does not try to show every feature.
 - Fish: video, color, and product media make the page feel alive. It does not depend on small labels to create rhythm.
-
-What this means for Tangle:
-
-- The homepage should not be a company map.
-- Blog and research should stay, but research should be light, calm, and argument-led.
-- Product pages should only return when they have real artifacts: screenshots, traces, demos, model routing views, eval outputs, or diagrams grounded in the actual system.
-- If a graphic cannot be tied to a real product state, it should not ship.
 
 ## Source Quality Rules
 

@@ -6,46 +6,26 @@ Read this when implementing or reviewing interface detail: press feedback, mater
 
 Report review findings as one table: `| Before | After | Why |`, one row per issue.
 
-## Feel
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
 
-- Show press feedback on pointer-down (`:active`, `pointerdown`), not on release.
-- Remove nonessential latency on the input path: artificial timers, transition waits, and debounces that delay feedback.
-- Defaults matter more than options; handle edge cases silently (pause timers on hidden tabs, keep hover across gaps between stacked items, capture the pointer during drag).
-- Match the personality: a dashboard stays crisp, a consumer surface can be warmer.
+## Review detail
 
-## Materials and depth
-
-- Translucent layers (`backdrop-filter: blur()` over a semi-transparent background) carry navigation and sheets over scrolling content; heavier materials separate structure, lighter ones mark interactive elements.
-- Larger surfaces read thicker: more blur and a deeper shadow than small chips.
-- Dim the background for a blocking task; keep it visible and offset for a parallel panel.
-- Over translucent surfaces, raise text contrast and weight slightly.
-- Prefer a fade mask where content meets floating chrome to a hard 1px divider.
-- Honor `prefers-reduced-transparency` (more opaque, less blur) and `prefers-contrast: more` (near-solid backgrounds with a defined border).
-
-## Typography
-
-- Tracking depends on size: negative for large display text, slightly positive for small text.
-- Leading shrinks as size grows; loosen it for scripts with tall marks and tighten it for dense data.
-- Build hierarchy from weight, size, and leading together; use `tabular-nums` for numbers that update or align.
-- Size spacing in `rem` or `em` so a larger user font does not break layout; start from the system font unless the brand needs another.
-
-## Foundations
-
-- Feedback has four kinds: status, completion, warning, error. Validate inline rather than on submit.
-- Every screen answers where am I, where can I go, what is here, and how do I leave.
-- Place a control next to what it changes; a control that needs a label to explain its effect is mapped badly.
-- Name navigation after its contents ("Library", "Progress"), not an umbrella ("Home").
+1. Compare the rendered control with its shared component story in rest, press, focus, pending and error states that apply.
+2. Inspect computed type, spacing, surface and state roles against the owner's tokens. Correct the owner before adding a downstream equivalent.
+3. Check translucent layers over the content that actually scrolls behind them. Inspect supported contrast/transparency preferences independently.
+4. Compare optical edges and reading measure using matched screenshots. Record independent craft findings separately from functional assertions.
+5. Remove artificial input-path waits and inspect timer behavior in hidden tabs. Verify the outcome rather than treating a particular CSS technique as a pass.
 
 ## Phones
 
 | Symptom | Fix |
 |---|---|
 | Hover stays stuck after a tap | Put hover rules in `@media (hover: hover) and (pointer: fine)` |
-| Gray or blue flash on tap | `-webkit-tap-highlight-color: transparent` |
+| Gray or blue flash on tap | Inspect native and custom press feedback together before suppressing the native highlight |
 | Layout height wrong | `100dvh` for app shells and bottom-pinned UI, `100svh` for a hero |
 | Page zooms into an input | Input font size at least 16px; never `user-scalable=no` or `maximum-scale=1` |
 | Tap feels slow | Pointer-down feedback plus `touch-action: manipulation` |
-| Pull-to-refresh hijacks scrolling | `overscroll-behavior: none` on `html, body` |
+| Pull-to-refresh hijacks scrolling | Inspect overscroll on the intended scroll container and preserve required browser navigation |
 | Content stops at the notch | `viewport-fit=cover` with `env(safe-area-inset-*)` |
 | Long press selects button text | `user-select: none` on controls only |
 | Horizontal carousel scrolls the page | `touch-action: pan-y` on the gesture surface |

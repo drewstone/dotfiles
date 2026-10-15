@@ -1,6 +1,8 @@
 # Copywriting Anti-Patterns
 
-This file governs marketing copy, UI copy, page copy, launch copy, and general public-facing writing.
+This file owns writing methods and rejected examples for marketing, UI, pages, launches and public-facing writing.
+
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
 
 ## Banned Defaults
 
@@ -19,7 +21,7 @@ Do not use:
 - "Three anchor pieces"
 - "Follow the argument by system layer"
 
-Do not use small labels to make text feel designed. Labels are for data, controls, navigation, provenance, status, units, or accessibility. They are not decoration.
+Apply the bible's shared copy and label standard; retain the rejected phrases above as concrete review examples.
 
 ## Counting Copy
 
@@ -81,7 +83,7 @@ Heading test:
 
 If the heading cannot stand alone without a label above it, it is not done.
 
-## UI Copy
+## UI copy review
 
 Avoid:
 

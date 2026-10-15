@@ -1,5 +1,7 @@
 # AI Agent Work Anti-Patterns
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 These are failures specific to agents doing writing and design work.
 
 ## Acting Before Seeing
@@ -46,22 +48,9 @@ Agents tend to add:
 
 Default move should be deletion until the page has a clear job.
 
-## One-Pass Design
+## One-pass design
 
-Bad:
-
-- implement
-- build passes
-- claim done
-
-Good:
-
-- implement smallest coherent change
-- screenshot desktop and mobile
-- inspect for anti-patterns
-- grep labels
-- remove worst visible issue
-- repeat until the page is not embarrassing
+Use [product-design](../../claude/skills/product-design/SKILL.md) for the inspect, implement, capture and correction loop. A successful build alone does not complete that procedure.
 
 ## The "Everything At Once" Trap
 

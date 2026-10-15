@@ -1,8 +1,10 @@
 # Variants and prototypes
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 Derived from emilkowalski/skills ui-variants and mattpocock/skills prototype (MIT).
 
-Read this when the user wants to compare different directions for a piece of UI, or to check whether a logic or state model feels right before building it.
+Read this for major redesign exploration, requested direction comparisons, or a logic/state model that needs checking before implementation. For Tangle major redesigns, follow the bible's exploration requirement; use the same real task and content across materially different models. Small corrections keep the established workflow.
 
 ## UI variants
 

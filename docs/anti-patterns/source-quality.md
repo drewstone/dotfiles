@@ -1,5 +1,7 @@
 # Source Quality
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 This file prevents reference theater.
 
 ## The Source Ladder
@@ -39,6 +41,8 @@ Tier 4: Noise
 - design trend posts
 - screenshots without context
 - "inspired by Apple" without a named pattern
+
+Separate observation, craft judgment and projection in the evidence record. Use the bible's acceptance contract for Tangle claims; a reference example or agent opinion cannot substitute for a user study.
 
 ## How To Use Sources
 

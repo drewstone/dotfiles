@@ -2,6 +2,8 @@
 
 Marketing pages fail when they become a taxonomy diagram or a pitch deck.
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 ## Homepage Anti-Patterns
 
 Do not show:
@@ -16,21 +18,6 @@ Do not show:
 - a "proof" section without real proof
 - an OSS grid just because repos exist
 
-Homepage should answer:
-
-- What is this?
-- Why does it matter now?
-- What is the one product spine?
-- What can I inspect?
-
-For Tangle-style pages, the spine is likely:
-
-- Sandbox
-- Router
-- Intelligence
-
-Everything else is secondary unless the page is specifically about it.
-
 ## Section Anti-Patterns
 
 Bad section structure:
@@ -43,13 +30,6 @@ Bad section structure:
 
 This shape is almost always AI-generated marketing sludge.
 
-Better:
-
-- one strong heading
-- one visual product artifact
-- one sentence if necessary
-- no labels unless they are real data
-
 ## Product Page Anti-Patterns
 
 Do not:
@@ -60,15 +40,6 @@ Do not:
 - hide the actual product behind icons
 - use cards to avoid making a diagram
 - make the first viewport a split text/card layout unless the card is the product itself
-
-Show:
-
-- real screenshot
-- real terminal output
-- real trace
-- real model route
-- real eval result
-- real artifact
 
 ## Technical Product Marketing Anti-Patterns
 
