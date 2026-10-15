@@ -43,7 +43,7 @@ QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$nam
 ref(qualifiedName:"refs/heads/develop"){target{oid}}
 pullRequests(states:OPEN,baseRefName:"develop",first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
 number isDraft mergeable isCrossRepository headRefName headRefOid body labels(first:20){nodes{name}}
-commits(last:1){nodes{commit{committedDate statusCheckRollup{contexts(first:100){nodes{__typename
+commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt}} statusCheckRollup{contexts(first:100){nodes{__typename
 ...on CheckRun{name conclusion status completedAt} ...on StatusContext{context state}}}}}}}
 reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{body}}}}}}}}"""
 
@@ -131,14 +131,20 @@ def merge_develop_with_attributes(a, pr):
 
 
 def head_to_green_s(pr):
-    """Seconds from the head commit to the last required check passing, or None."""
+    """Seconds from CI receiving the head (its first check suite) to the last required check passing.
+
+    Falls back to the commit time when GitHub reports no suite; a head committed long before it
+    was pushed would otherwise count its idle hours as gate time.
+    """
     commit = pr["commits"]["nodes"][0]["commit"]
     done = [c.get("completedAt") for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", [])
             if c["__typename"] == "CheckRun" and c["name"] in REQUIRED and c.get("completedAt")]
     if len(done) < len(REQUIRED):
         return None
     parse = lambda t: dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
-    return int((max(map(parse, done)) - parse(commit["committedDate"])).total_seconds())
+    suites = [parse(x["createdAt"]) for x in ((commit.get("checkSuites") or {}).get("nodes") or []) if x.get("createdAt")]
+    start = max(parse(commit["committedDate"]), min(suites)) if suites else parse(commit["committedDate"])
+    return int((max(map(parse, done)) - start).total_seconds())
 
 
 def main():
