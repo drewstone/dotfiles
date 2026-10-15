@@ -215,15 +215,19 @@ admit_window() {
 # checkout. This keeps <checkout> at the patterns committed at <rev>, the
 # commit it is about to check out (an idle checkout passes HEAD); the caller
 # holds the checkout's repo lock. Setting patterns removes the excluded
-# tracked files now, and later checkouts never write them. Sets sparse_source
-# to repo or empty, and says on stderr when it changed the checkout.
-sparse_apply() {  # <checkout> <rev>
+# tracked files now, and later checkouts never write them. The cache prune
+# passes --shrink-only: it never restores a full tree, which would write
+# gigabytes in the step that frees disk (on 2026-10-15 an idle Lab checkout at
+# a commit older than its file was rewritten with 4.7 GB of pursuits/). Sets
+# sparse_source to repo or empty, and says on stderr when it changed the
+# checkout.
+sparse_apply() {  # <checkout> <rev> [--shrink-only]
   local want enabled
   want=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d')
   enabled=$(git -C "$1" config --bool core.sparseCheckout)
   sparse_source=${want:+repo}
   if [ -z "$want" ]; then
-    [ "$enabled" = true ] || return 0
+    [ "$enabled" = true ] && [ "${3:-}" != --shrink-only ] || return 0
     echo "beelink-gate: $1 has no sparse patterns at $2; restoring its full tree" >&2
     git -C "$1" sparse-checkout disable
   elif [ "$enabled" != true ] || [ "$want" != "$(cat "$1/.git/info/sparse-checkout" 2>/dev/null)" ]; then
@@ -332,7 +336,7 @@ try:
                     except BlockingIOError:
                         continue
                 result = subprocess.run(
-                    ["bash", "-c", sparse_code + '\nsparse_apply "$@"', "beelink-gate", str(repo), "HEAD"],
+                    ["bash", "-c", sparse_code + '\nsparse_apply "$@"', "beelink-gate", str(repo), "HEAD", "--shrink-only"],
                     text=True, capture_output=True, stdin=subprocess.DEVNULL,
                 )
                 # sparse_apply writes to stderr only when it changes the checkout.
