@@ -10,7 +10,7 @@ const sessionResolver = fileURLToPath(new URL("./session-home.py", import.meta.u
 // every future task to the account that happened to launch the broker.
 const [wrapper, binary, ...args] = process.argv.slice(2);
 const workers = new Set(), threads = new Map(), serverRequests = new Map();
-let initialization, sequence = 0, closed = false;
+let initialization, allocationError, sequence = 0, closed = false;
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const failure = () => new Error("Codex account worker unavailable.");
 
@@ -46,6 +46,17 @@ function startWorker(home) {
     let message;
     try { message = JSON.parse(line); }
     catch { proc.stdin.end(); return; }
+    const limits = message.params?.rateLimits;
+    const exhausted = message.params?.error?.codexErrorInfo === "usageLimitExceeded"
+      || message.error?.data?.codexErrorInfo === "usageLimitExceeded"
+      || (message.method === "account/rateLimits/updated"
+        && [limits?.primary, limits?.secondary].some(window => window?.usedPercent >= 100));
+    if (exhausted && !worker.quotaInvalidated) {
+      try {
+        execFileSync("acct", ["resets", "codex", "--invalidate"], { stdio: "ignore", timeout: 5000 });
+        worker.quotaInvalidated = true;
+      } catch { allocationError = new Error("Codex quota cache invalidation failed; new task admission stopped."); }
+    }
     if (message.method) {
       const thread = message.params?.thread?.id ?? message.params?.threadId;
       if (thread) threads.set(thread, worker);
@@ -92,6 +103,7 @@ function request(worker, method, params) {
 
 async function ready(home) {
   if (closed) throw failure();
+  if (!home && allocationError) throw allocationError;
   const worker = startWorker(home);
   try {
     [worker.initializeResult] = await Promise.all([

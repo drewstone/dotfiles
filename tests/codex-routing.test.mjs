@@ -15,9 +15,15 @@ function fixture() {
   mkdirSync(bin);
   symlinkSync(wrapper, join(bin, "codex"));
   writeFileSync(join(home, "quota.json"), JSON.stringify({ a: 0, b: 0 }));
+  writeFileSync(join(home, "cached-quota.json"), JSON.stringify({ a: 0, b: 0 }));
   writeFileSync(join(bin, "acct"), `#!${process.execPath}
 const fs = require('fs'), path = require('path'), cp = require('child_process');
-const root = process.env.FIXTURE_HOME, quota = JSON.parse(fs.readFileSync(path.join(root, 'quota.json')));
+const root = process.env.FIXTURE_HOME;
+if (process.argv.slice(2).join(' ') === 'resets codex --invalidate') {
+  fs.copyFileSync(path.join(root,'quota.json'),path.join(root,'cached-quota.json'));
+  fs.appendFileSync(path.join(root,'invalidations'),'1\\n'); process.exit(0);
+}
+const quota = JSON.parse(fs.readFileSync(path.join(root, 'cached-quota.json')));
 const seat = Object.keys(quota).filter(k => quota[k] < 100).sort((a,b) => quota[a] - quota[b])[0];
 fs.appendFileSync(path.join(root, 'admissions.jsonl'), JSON.stringify({seat:seat || null})+'\\n');
 if (!seat) process.exit(42);
@@ -60,9 +66,9 @@ if(m.method==='thread/resume'||m.method==='thread/fork') {
 }
 if(m.method==='turn/start') {
   const quota=JSON.parse(fs.readFileSync(quotaFile));
-  if(quota[seat]>=100) return out({id:m.id,error:{code:-32000,message:'subscription-exhausted'}});
+  if(quota[seat]>=100) {out({method:'error',params:{threadId:p.threadId,error:{codexErrorInfo:'usageLimitExceeded'}}});return out({id:m.id,error:{code:-32000,message:'subscription-exhausted'}});}
   const text=p.input?.[0]?.text || '', turn={id:crypto.randomUUID(),status:'inProgress'}; turns.set(p.threadId,turn);
-  if(text==='exhaust'){quota[seat]=100;fs.writeFileSync(quotaFile,JSON.stringify(quota));}
+  if(text==='exhaust'){quota[seat]=100;fs.writeFileSync(quotaFile,JSON.stringify(quota));out({method:'account/rateLimits/updated',params:{rateLimits:{primary:{usedPercent:100}}}});} else out({method:'account/rateLimits/updated',params:{rateLimits:{primary:{usedPercent:25}}}});
   result(m,{turn});out({method:'turn/started',params:{threadId:p.threadId,turn}});
   if(text==='approve'){approval={threadId:p.threadId,turn};out({id:1,method:'item/commandExecution/requestApproval',params:{threadId:p.threadId}});}
   else if(text!=='hold') setTimeout(()=>finish(p.threadId,turn),20);
@@ -177,6 +183,8 @@ test("one stdio broker allocates each new task, preserves active threads and app
     await client.request("turn/start", { threadId: first, input: [{ type: "text", text: "hold" }] });
     // Quota changes while the first task is in flight. Its worker stays live.
     writeFileSync(join(f.home, "quota.json"), JSON.stringify({ a: 100, b: 0 }));
+    await assert.rejects(client.request("turn/start", { threadId: first, input: [{ type: "text", text: "continue" }] }), /subscription-exhausted/);
+    assert.equal(readFileSync(join(f.home, "invalidations"), "utf8"), "1\n");
     const second = (await client.request("thread/start", {})).thread.id;
     await client.request("turn/start", { threadId: second, input: [{ type: "text", text: "approve" }] });
     await client.notification("turn/completed", second);
@@ -188,6 +196,7 @@ test("one stdio broker allocates each new task, preserves active threads and app
     await assert.rejects(client.request("turn/start", { threadId: first, input: [{ type: "text", text: "continue" }] }), /subscription-exhausted/);
     assert.deepEqual(f.records("admissions.jsonl"), [{ seat: "a" }, { seat: "b" }]);
     writeFileSync(join(f.home, "quota.json"), JSON.stringify({ a: 100, b: 100 }));
+    await assert.rejects(client.request("turn/start", { threadId: second }), /subscription-exhausted/);
     await assert.rejects(client.request("thread/start", {}), /worker unavailable/);
     assert.deepEqual(f.records("admissions.jsonl"), [{ seat: "a" }, { seat: "b" }, { seat: null }]);
   } finally {
@@ -227,7 +236,9 @@ test("Codex Companion v1.0.4 runs sequential tasks through one real shared broke
     assert.equal(second.status, 0); assert.equal(second.finalMessage, "b");
     assert.equal(lifecycle.loadBrokerSession(f.home).endpoint, session.endpoint);
     assert.deepEqual(f.records("admissions.jsonl"), [{ seat: "a" }, { seat: "b" }]);
+    assert.equal(readFileSync(join(f.home, "invalidations"), "utf8"), "1\n");
     writeFileSync(join(f.home, "quota.json"), JSON.stringify({ a: 100, b: 100 }));
+    writeFileSync(join(f.home, "cached-quota.json"), JSON.stringify({ a: 100, b: 100 }));
     await assert.rejects(codex.runAppServerTurn(f.home, { prompt: "normal" }), /worker unavailable/);
     assert.deepEqual(f.records("admissions.jsonl"), [{ seat: "a" }, { seat: "b" }, { seat: null }]);
   } finally {

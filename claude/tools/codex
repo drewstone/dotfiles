@@ -111,27 +111,13 @@ run_codex() {
   if "$allocate" && [ "${ACCT_ROUTED:-}" != codex ] && [ -z "${CODEX_HOME:-}" ]; then
     local parent_command
     parent_command="$(ps -p "$PPID" -o args= 2>/dev/null || true)"
-    if [ "$command_name" = app-server ] && [ -z "$operation" ] && [[ "$parent_command" == *"/scripts/app-server-broker.mjs serve "* ]]; then
-      stdio=true
-      listen_value=false
-      for argument in "$@"; do
-        if "$listen_value"; then
-          [ "$argument" = stdio:// ] || stdio=false
-          listen_value=false
-        else
-          case "$argument" in
-            --listen) listen_value=true ;;
-            --listen=*) [ "$argument" = --listen=stdio:// ] || stdio=false ;;
-          esac
-        fi
-      done
-      if "$stdio"; then
-        if [ -z "$node_bin" ]; then
-          printf 'Codex task routing requires Node.js in PATH or the managed nvm default.\n' >&2
-          exit 127
-        fi
-        PATH="$(dirname "$node_bin"):$(dirname "$candidate"):$PATH" exec "$node_bin" "$(dirname "$self")/codex-routing/app-server.mjs" "$self" "$candidate" "$@"
+    # Companion launches exactly `codex app-server`; other servers retain native routing.
+    if [ "$#" = 1 ] && [ "$1" = app-server ] && [[ "$parent_command" == *"/scripts/app-server-broker.mjs serve "* ]]; then
+      if [ -z "$node_bin" ]; then
+        printf 'Codex task routing requires Node.js in PATH or the managed nvm default.\n' >&2
+        exit 127
       fi
+      PATH="$(dirname "$node_bin"):$(dirname "$candidate"):$PATH" exec "$node_bin" "$(dirname "$self")/codex-routing/app-server.mjs" "$self" "$candidate" "$@"
     fi
     PATH="$(dirname "$candidate"):$PATH" exec acct run -- "$candidate" "$@"
   fi
