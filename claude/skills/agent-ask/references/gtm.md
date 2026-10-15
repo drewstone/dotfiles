@@ -8,12 +8,12 @@ Read every deliverable, including downloaded assets at full size. Give each deli
 
 | Item | Passes when |
 |---|---|
-| SDK code | It runs or typechecks against the published package version. |
+| SDK code | It runs or typechecks against the published package version. Displayed code uses valid syntax for its shown language; JavaScript SDK expressions have no shell `$` prompt. |
 | Logo lockup | Size, spacing, and product name match the product's current site. |
 | Brand assets | Logo, fonts, colors, and screenshots match the live product site and brand package; cite the checked sources. |
 | Pricing | Every plan, price, and limit matches the served catalog and site at check time. |
 | Copy | Names the buyer's problem and a specific benefit with sourced claims; no cringe, generic hype, filler, brand-banned vocabulary, or invented advantage. |
-| Layout | One clear focal point, deliberate reading order, readable type, and enough space to avoid clutter at the intended size. |
+| Layout | One clear focal point, deliberate reading order, readable type, and uncluttered spacing at the intended size. Render the saved creative at full size; inspect edges, clipping, and padding, especially footer/card spacing. |
 | Idea | A clever, product-specific insight or hook the agent can defend with buyer evidence; a rival's name cannot replace this product's without changing the idea. |
 | Campaign | Identifies the buyer, fits the channel, and leads through one clear CTA to a working buyer path and a measurable product outcome. |
 
