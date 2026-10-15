@@ -16,12 +16,13 @@ Behavior it forbids: merging a PR, or calling PR work done, without reading its 
   - dotfiles#465 opened at 06:38:50Z, and its Codex review started at 06:38:58Z. The PR merged at 06:39:12Z, while the review was running.
     The review finished at 06:45:12Z with two unanswered P2 inline findings: `claude/tools/beelink-gate:1517`, which measures the wrong pnpm store, and `:1066`, a `du` timeout outside the hold budget.
 - dotfiles, 2026-10-11 to 10-15: 20 of 42 completed Codex reviews finished after their PR merged. From start to finish the reviews took 232 s at the median and 603 s at the 90th percentile.
+- Over the same PRs, 11 of 44 Codex reviews started after the merge. In 9 of them the merge came 3 to 12 s after the PR opened or turned ready. Codex comments 12 s (median) to 16 s (90th percentile) after either event, so a merge in that window finds no audit at all.
 - Recurrence: the 2026-06-19 traces entry in the reflections index says an agent "claimed no review comments from a stale snapshot — async bot had posted real findings". On 2026-10-15 the written rule in `docs/processes/agent-work.md`, "After a push, read available comments, reviews, and inline threads", was in force and did not prevent it.
 
 ## Changes
 
 - `gh-drew pr merge`, including `--auto`, reads the PR's review threads and Codex Review Summary in one GraphQL query.
-  It refuses on an unanswered Codex thread and waits, within a bound, for a review running on the head.
+  It refuses on an unanswered Codex thread. It waits, within a bound, for a review running on the head, and for the first 30 s after a PR opens or turns ready.
   It carries on when there is no audit, a usage-limit notice, or a failed review.
   The tests replay the #465 and #464 GraphQL answers.
 - merge-on-green's ticks run that check without waiting.

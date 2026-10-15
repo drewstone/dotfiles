@@ -11,6 +11,7 @@ Before `pr merge`, `--auto` included, it reads the PR's head, review threads and
 
 - An unresolved review thread that a Codex reviewer started and no person has answered refuses the merge, naming each finding's `path:line`, title and link.
 - A Codex review running on the head is waited for, up to `GH_DREW_REVIEW_WAIT` seconds (default 600), then refuses with exit 75.
+- A PR that opened or turned ready under 30 s ago, with no Codex comment yet, waits out those 30 s: Codex comments 12 to 16 s after either.
 - No Codex comment, a usage-limit comment, a failed review, or a finished review whose findings are all answered or resolved carries on.
 - `GH_DREW_REVIEW_OVERRIDE=<reason>` merges without the check and logs the reason. A read that fails refuses.
 

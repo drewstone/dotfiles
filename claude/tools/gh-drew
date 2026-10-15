@@ -531,6 +531,9 @@ parse_pr_merge() {
 #   refuses the merge and names the finding;
 # - a Codex Review Summary showing a review running on the head waits up to GH_DREW_REVIEW_WAIT
 #   seconds, re-reading once a minute, then refuses (exit 75: merge again once it finishes);
+# - a PR that opened or turned ready under 30 s ago with no Codex comment yet waits for the rest of
+#   those 30 s: Codex posts its summary 12 s (median) to 16 s (90th percentile) after either, and 9
+#   of 44 dotfiles reviews from 10-11 to 10-15 started after a merge made 3 to 12 s after it;
 # - no Codex comment, a usage-limit comment, a failed review, or a completed review with every
 #   finding answered carries on.
 # The default wait is 600 s: those 42 reviews took 232 s at the median and 603 s at the 90th
@@ -540,16 +543,19 @@ parse_pr_merge() {
 review_wait="${GH_DREW_REVIEW_WAIT:-600}"
 read -r -d '' review_query <<'GRAPHQL' || true
 fragment pr on PullRequest {
-  url headRefOid
+  url headRefOid createdAt
+  timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
   reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
     comments(first: 50) { nodes { author { __typename login } body url } } } }
   comments(first: 100) { nodes { author { login } body } }
 }
 GRAPHQL
 # Prints "pr <url> <head>", then "finding <path:line> <title> <url>" for each unanswered Codex
-# thread and "running <review> <commit>" for each Codex review running on the head, tab-separated.
+# thread, "running <review> <commit>" for each Codex review running on the head, and
+# "pending <seconds left> <seconds since>" while a just-opened or just-ready PR has no Codex comment.
 read -r -d '' review_reader <<'PY' || true
 import json, re, sys
+from datetime import datetime, timezone
 answer = json.load(sys.stdin)
 if answer.get("errors"):
     sys.exit("GitHub answered: " + "; ".join(e.get("message", "?") for e in answer["errors"])[:300])
@@ -596,6 +602,12 @@ for comment in pr["comments"]["nodes"]:
         pass
 for review, commit in sorted(running):
     print("running", review, commit, sep="\t")
+moments = [pr.get("createdAt")] + [n.get("createdAt") for n in ((pr.get("timelineItems") or {}).get("nodes") or []) if n]
+moments = [datetime.fromisoformat(m.replace("Z", "+00:00")) for m in moments if m]
+if moments and not running and not any(codex(c["author"]) for c in pr["comments"]["nodes"]):
+    since = max(0, int((datetime.now(timezone.utc) - max(moments)).total_seconds()))
+    if since < 30:
+        print("pending", 30 - since, since, sep="\t")
 PY
 
 # Reads the PR that parse_pr_merge named; prints review_reader's lines.
@@ -642,11 +654,11 @@ review_guard() {
     echo "gh-drew: GH_DREW_REVIEW_WAIT must be whole seconds, got '$review_wait'" >&2
     exit 2
   fi
-  local start=$SECONDS out err kind a b c url head elapsed told=0
+  local start=$SECONDS out err kind a b c url head elapsed why told="" pending since nap
   local -a findings running
   err="$(mktemp)"
   while :; do
-    findings=() running=() url="" head=""
+    findings=() running=() url="" head="" pending="" since=""
     if ! out="$(review_state "$token" 2>"$err")"; then
       log_call refused "$@"
       echo "gh-drew: refusing to merge: cannot read the PR's reviews: $(tr '\n' ' ' <"$err" | cut -c1-300)" >&2
@@ -659,6 +671,7 @@ review_guard() {
         pr) url="$a" head="$b" ;;
         finding) findings+=("  $a  $b"$'\n'"    $c") ;;
         running) running+=("$a of ${b}") ;;
+        pending) pending="$a" since="$b" ;;
       esac
     done <<<"$out"
     if (( ${#findings[@]} )); then
@@ -673,20 +686,29 @@ review_guard() {
       rm -f "$err"
       exit 1
     fi
-    (( ${#running[@]} )) || break
+    nap=60
+    if (( ${#running[@]} )); then
+      why="Codex ${running[*]} is running"
+    elif [[ -n "$pending" ]]; then
+      why="no Codex comment yet, ${since}s after the PR opened or turned ready"
+      nap="$pending"
+    else
+      break
+    fi
     elapsed=$((SECONDS - start))
     if (( elapsed >= review_wait )); then
       log_call refused "$@"
-      echo "gh-drew: refusing to merge $url: Codex ${running[*]} is still running after ${elapsed}s (GH_DREW_REVIEW_WAIT=$review_wait)." >&2
-      echo "Merge again once it finishes, or override with GH_DREW_REVIEW_OVERRIDE=<reason>." >&2
+      echo "gh-drew: refusing to merge $url: $why (waited ${elapsed}s, GH_DREW_REVIEW_WAIT=$review_wait)." >&2
+      echo "Merge again once Codex answers, or override with GH_DREW_REVIEW_OVERRIDE=<reason>." >&2
       rm -f "$err"
       exit 75
     fi
-    if (( ! told )); then
-      echo "gh-drew: Codex ${running[*]} is running on $url; waiting up to ${review_wait}s for it before merging." >&2
-      told=1
+    (( review_wait - elapsed > nap )) || nap=$((review_wait - elapsed))
+    if [[ "$why" != "$told" ]]; then
+      echo "gh-drew: waiting up to $(( ${#running[@]} ? review_wait : nap ))s to merge $url: $why." >&2
+      told="$why"
     fi
-    sleep $(( review_wait - elapsed < 60 ? review_wait - elapsed : 60 ))
+    sleep "$nap"
   done
   rm -f "$err"
 }

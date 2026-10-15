@@ -62,10 +62,10 @@ function logged(s) {
   return files.flatMap((f) => readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean)).map((l) => l.split("\t")[1]);
 }
 
-// A copy of the #465 answer with its threads changed by `edit`.
+// A copy of the #465 answer with its pull request changed by `edit`.
 function variant(s, edit) {
   const answer = JSON.parse(readFileSync(DONE, "utf8"));
-  edit(answer.data.repository.pullRequest.reviewThreads.nodes);
+  edit(answer.data.repository.pullRequest);
   const file = join(s.root, `variant-${Math.random().toString(36).slice(2)}.json`);
   writeFileSync(file, JSON.stringify(answer));
   return file;
@@ -84,10 +84,10 @@ Override: GH_DREW_REVIEW_OVERRIDE=<reason>
 test("dotfiles#465 as it was at its merge: the running review is waited for, then its findings refuse", () => {
   const s = sandbox();
   try {
-    const r = run(s, ["pr", "merge", "465", "--squash", "-R", "drewstone/dotfiles"], [RUNNING, DONE], { GH_DREW_REVIEW_WAIT: "2" });
+    const r = run(s, ["pr", "merge", "465", "--squash", "-R", "drewstone/dotfiles"], [RUNNING, DONE], { GH_DREW_REVIEW_WAIT: "3" });
     assert.equal(r.status, 1, r.stderr);
-    assert.equal(r.stderr, "gh-drew: Codex code review of b132bb7 is running on https://github.com/drewstone/dotfiles/pull/465; "
-      + "waiting up to 2s for it before merging.\n" + REFUSAL_465);
+    assert.equal(r.stderr, "gh-drew: waiting up to 3s to merge https://github.com/drewstone/dotfiles/pull/465: "
+      + "Codex code review of b132bb7 is running.\n" + REFUSAL_465);
     assert.equal(r.merged, null);
     assert.equal(r.reads, 2);
     assert.deepEqual(logged(s), ["refused"]);
@@ -101,11 +101,54 @@ test("a review still running when the wait ends refuses with exit 75, and a wait
   try {
     const r = run(s, ["pr", "merge", "465", "--auto", "--squash", "-R", "drewstone/dotfiles"], [RUNNING], { GH_DREW_REVIEW_WAIT: "0" });
     assert.equal(r.status, 75, r.stderr);
-    assert.match(r.stderr, /refusing to merge https:\/\/github\.com\/drewstone\/dotfiles\/pull\/465: Codex code review of b132bb7 is still running after 0s \(GH_DREW_REVIEW_WAIT=0\)/);
-    assert.match(r.stderr, /Merge again once it finishes, or override with GH_DREW_REVIEW_OVERRIDE=<reason>/);
+    assert.match(r.stderr, /refusing to merge https:\/\/github\.com\/drewstone\/dotfiles\/pull\/465: Codex code review of b132bb7 is running \(waited 0s, GH_DREW_REVIEW_WAIT=0\)/);
+    assert.match(r.stderr, /Merge again once Codex answers, or override with GH_DREW_REVIEW_OVERRIDE=<reason>/);
     assert.equal(r.merged, null);
     assert.equal(r.reads, 1);
     assert.deepEqual(logged(s), ["refused"]);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+// Of 44 dotfiles Codex reviews from 2026-10-11 to 10-15, 9 started after a merge made 3 to 12 s after
+// the PR opened or turned ready, before Codex had commented (#423, #424, #428, #429, #439, #442 and others).
+test("a PR merged seconds after it turned ready waits for Codex to comment; an older PR with no Codex comment merges", () => {
+  const s = sandbox();
+  try {
+    const justReady = variant(s, (pr) => {
+      pr.reviewThreads.nodes = [];
+      pr.comments.nodes = [];
+      pr.timelineItems.nodes = [{ createdAt: new Date(Date.now() - 5000).toISOString().replace(/\.\d+Z$/, "Z") }];
+    });
+    const r = run(s, ["pr", "merge", "465", "--squash", "-R", "drewstone/dotfiles"], [justReady, DONE], { GH_DREW_REVIEW_WAIT: "4" });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /^gh-drew: waiting up to [1-4]s to merge https:\/\/github\.com\/drewstone\/dotfiles\/pull\/465: no Codex comment yet, \d+s after the PR opened or turned ready\.\n/);
+    assert.ok(r.stderr.endsWith(REFUSAL_465), r.stderr);
+    assert.equal(r.merged, null);
+    assert.equal(r.reads, 2);
+
+    const s2 = sandbox();
+    try {
+      const refused = run(s2, ["pr", "merge", "465", "-R", "drewstone/dotfiles"], [justReady], { GH_DREW_REVIEW_WAIT: "0" });
+      assert.equal(refused.status, 75, refused.stderr);
+      assert.match(refused.stderr, /: no Codex comment yet, \d+s after the PR opened or turned ready \(waited 0s, GH_DREW_REVIEW_WAIT=0\)/);
+      assert.equal(refused.merged, null);
+    } finally {
+      rmSync(s2.root, { recursive: true, force: true });
+    }
+
+    const s3 = sandbox();
+    try {
+      const quiet = variant(s3, (pr) => { pr.reviewThreads.nodes = []; pr.comments.nodes = []; });
+      const merged = run(s3, ["pr", "merge", "465", "-R", "drewstone/dotfiles"], [quiet]);
+      assert.equal(merged.status, 0, merged.stderr);
+      assert.equal(merged.stderr, "");
+      assert.deepEqual(merged.merged, ["pr", "merge", "465", "-R", "drewstone/dotfiles"]);
+      assert.equal(merged.reads, 1);
+    } finally {
+      rmSync(s3.root, { recursive: true, force: true });
+    }
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
@@ -129,16 +172,22 @@ test("a finding answered by a person or resolved carries on, also after waiting;
   const s = sandbox();
   try {
     const reply = (login, typename) => ({ author: { __typename: typename, login }, body: "Fixed in abc1234.", url: "https://github.com/drewstone/dotfiles/pull/465#discussion_r1" });
-    const answered = variant(s, (threads) => { threads[0].comments.nodes.push(reply("drewstone", "User")); threads[1].isResolved = true; });
-    const r = run(s, ["pr", "merge", "465", "--squash", "-R", "drewstone/dotfiles"], [RUNNING, answered], { GH_DREW_REVIEW_WAIT: "1" });
+    const answered = variant(s, (pr) => {
+      pr.reviewThreads.nodes[0].comments.nodes.push(reply("drewstone", "User"));
+      pr.reviewThreads.nodes[1].isResolved = true;
+    });
+    const r = run(s, ["pr", "merge", "465", "--squash", "-R", "drewstone/dotfiles"], [RUNNING, answered], { GH_DREW_REVIEW_WAIT: "3" });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^gh-drew: Codex code review of b132bb7 is running on .*; waiting up to 1s for it before merging\.\n$/);
+    assert.match(r.stderr, /^gh-drew: waiting up to 3s to merge .*: Codex code review of b132bb7 is running\.\n$/);
     assert.deepEqual(r.merged.slice(0, 3), ["pr", "merge", "465"]);
     assert.equal(r.reads, 2);
 
     const s2 = sandbox();
     try {
-      const botOnly = variant(s2, (threads) => { threads[0].comments.nodes.push(reply("github-actions", "Bot")); threads[1].isResolved = true; });
+      const botOnly = variant(s2, (pr) => {
+        pr.reviewThreads.nodes[0].comments.nodes.push(reply("github-actions", "Bot"));
+        pr.reviewThreads.nodes[1].isResolved = true;
+      });
       const refused = run(s2, ["pr", "merge", "465", "-R", "drewstone/dotfiles"], [botOnly]);
       assert.equal(refused.status, 1, refused.stderr);
       assert.match(refused.stderr, /1 Codex review finding\(s\) have no answer:\n  claude\/tools\/beelink-gate:1517  P2 Always measure/);
