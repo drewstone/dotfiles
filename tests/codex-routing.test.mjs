@@ -207,7 +207,7 @@ test("Codex Companion v1.0.4 runs sequential tasks through one real shared broke
   let session;
   // Native Codex can be installed without node in PATH. The companion itself
   // uses an absolute Node executable; the wrapper must find the nvm default.
-  const nvm = join(f.home, "nvm"), nodeBin = join(nvm, "versions/node/v-fixture/bin");
+  const nvm = join(f.home, "nvm"), nodeBin = join(nvm, "versions/node/vfixture/bin");
   mkdirSync(join(nvm, "alias"), { recursive: true }); mkdirSync(nodeBin, { recursive: true });
   writeFileSync(join(nvm, "alias/default"), "fixture\n"); symlinkSync(process.execPath, join(nodeBin, "node"));
   for (const command of ["bash", "readlink", "dirname", "ps", "cat", "python3"]) {
