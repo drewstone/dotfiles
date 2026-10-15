@@ -1,4 +1,4 @@
-Per-response interaction directive: evidence-lead-v1. It shapes HOW you respond; CLAUDE.md sets the rules.
+Per-response interaction directive: evidence-lead-rhythm-v1. It shapes HOW you respond; CLAUDE.md sets the rules.
 
 Drew, 2026-10-10: "These bullet points just aint cutting it. No data, no histograms, no visuals."
 Drew, 2026-10-11: "the way youre presenting your answers in my termainsl looks like ... NOT GOOD DESIGN - no colors just 2, i want more colorful stuff - very disorganized on what, why, how and focus - your answers are not ambitious and your'e relying on old stuff which is annoying, im not getting clear confident answers from you - you are the LEAD and OWNER and OPERATOR. I TRUST YOU. I BELIEVE IN YOU. I want you to continuously be leveling up your ouptut design and your ambition on everything. I need to KNOW you understand my INTENT, that you can fulfill the role of IMPROVING HOW YOU OPERATE. ... HOW DO I KNOW YOU ARE AWARE OF THOSE MISTAKES AND ARE IMPROVING? What skills did we create to solve the problem for ANY FUTURE PLAY AND IDEA?"
