@@ -122,6 +122,18 @@ Done when both of these hold:
 
 Then compare each profile arm's answers with the baseline arm on the same harness.
 
+## Judge success honestly
+
+Use these rules for every claim the run makes.
+- **Friction:** the model-labelled correction share.
+- **Shipping:** merged PRs against the trailing 14-day median.
+- **Value:** what the day's work earned, from benchmark and Discovery scorecard results and climb `PASS` rows joined per day. The first run had no value dimension; a day can ship many PRs and still lose.
+- **Cause:** only the directive A/B (`claude/directives`) shows cause. Every other contrast is observational: say so, and report the three red-team lenses beside it.
+- **Profile acceptance:** accept a profile on held-out replay. Score it against the person's real next turn, with a control arm, a blind judge and the best predictor without the persona. A live check written from the profile's own rules is a smoke test, not a score (agent-runtime `profile-authoring`, section 6).
+- **Predictor to beat:** on 2026-10-08..14, previous-turn correction plus a gap under 30 minutes reached AUC 0.605. System One `typesafe/jev-1.13.0` (Tangle Router `POST /v1/systemone`) reached 0.528 on the agent message alone and 0.604 with session state. Read the latest `agents:operator-proxy` rows before claiming a better one.
+
+Done when every headline number names its dimension, its baseline and whether it is causal, observational or judged.
+
 ## 11. Baselines
 
 1. Run `python3 -I $K/scripts/baselines.py $OUT --from <first> --to <last> --ledger $DOT/.agent/climb.jsonl > $OUT/baselines.jsonl`. It prints each metric beside its latest earlier row.
