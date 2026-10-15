@@ -3173,17 +3173,26 @@ test("an auto gate keeps its reservation's place in line, so it and a newer gate
     // The auto gate was placed after waiting 0 s, so `now - placed_wait` would date it now.
     const auto = { BEELINK_GATE_AUTO: "1", BEELINK_GATE_RESERVATION_TOKEN: token, BEELINK_GATE_PLACED_WAIT: "0" };
 
-    for (const [label, newerEpoch] of [["a newer gate dated between the reservation and now", reserved + 50], ["a newer gate in the reservation's second", reserved]]) {
-      const newerTicket = join(ticketDir(beelink2), `queue-local-owner-repo.${newerEpoch}.${newcomer}`);
-      writeFileSync(newerTicket, "");
-      const first = gateOn("auto", auto);
-      assert.equal(first.status, 0, `${label}: the auto gate waited for a newer gate\n${first.stderr}`);
-      rmSync(newerTicket);
-      // The newer gate, dated by its own wait, defers to the reservation alone and is given back.
-      const second = gateOn("newer", { BEELINK_GATE_AUTO: "1", BEELINK_GATE_PLACED_WAIT: String(Math.floor(Date.now() / 1000) - newerEpoch) });
-      assert.equal(second.status, 76, `${label}: the newer gate went ahead of the reservation\n${second.stderr}`);
-      assert.match(second.stderr, /not admitted on beelink2 within 3s \(both local\/owner\/repo checkouts busy\)/);
-    }
+    // A newer gate dated between the reservation and now - placed_wait: the auto gate goes
+    // first, and the newer gate, dated by its own wait, defers to the reservation alone.
+    // No epochs tie, so no pid decides the order.
+    let newerTicket = join(ticketDir(beelink2), `queue-local-owner-repo.${reserved + 50}.${newcomer}`);
+    writeFileSync(newerTicket, "");
+    const first = gateOn("auto", auto);
+    assert.equal(first.status, 0, `the auto gate waited for a newer gate\n${first.stderr}`);
+    rmSync(newerTicket);
+    const second = gateOn("newer", { BEELINK_GATE_AUTO: "1", BEELINK_GATE_PLACED_WAIT: String(Math.floor(Date.now() / 1000) - reserved - 50) });
+    assert.equal(second.status, 76, `the newer gate went ahead of the reservation\n${second.stderr}`);
+    assert.match(second.stderr, /not admitted on beelink2 within 3s \(both local\/owner\/repo checkouts busy\)/);
+
+    // A newer ticket in the reservation's own second, with a larger pid than the reservation:
+    // the auto gate's place is the oldest of its tickets, so it does not wait either. (A real
+    // gate's own pid cannot be chosen, so only this side of a tie is checked.)
+    newerTicket = join(ticketDir(beelink2), `queue-local-owner-repo.${reserved}.${newcomer}`);
+    writeFileSync(newerTicket, "");
+    const tied = gateOn("auto", auto);
+    assert.equal(tied.status, 0, `in a tie the auto gate waited for a newer gate\n${tied.stderr}`);
+    rmSync(newerTicket);
     assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["auto", "auto"]);
   } finally {
     for (const child of owners) child.kill("SIGKILL");
