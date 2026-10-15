@@ -1,0 +1,252 @@
+<title>Drew Voice Ledger</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single reading column of an operator's ledger; charts and tables break wider, quotes set as typed input. */
+:root {
+  --bg: #f5f6f8; --surface: #ffffff; --ink: #151922; --muted: #5a6273; --rule: #dde1e8;
+  --accent: #2f4fd6; --good: #0b7a6e; --bad: #c0264a; --warn: #a15c07; --chip: #eceff5;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1218; --surface: #161a22; --ink: #e6e9f0; --muted: #9aa3b5; --rule: #2a303c;
+  --accent: #7f9bff; --good: #3cc4b2; --bad: #ff6b8a; --warn: #f0b04a; --chip: #212734; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1218; --surface: #161a22; --ink: #e6e9f0; --muted: #9aa3b5; --rule: #2a303c;
+  --accent: #7f9bff; --good: #3cc4b2; --bad: #ff6b8a; --warn: #f0b04a; --chip: #212734; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 17px/1.6 var(--body); }
+.wrap { max-width: 1060px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 80px; display: grid; gap: 56px }
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0 }
+h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 1.6rem; font-weight: 700 }
+h3 { font-size: 1.1rem; font-weight: 600 }
+p { margin: 0; max-width: 68ch }
+.eyebrow { font: 500 0.75rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted) }
+section { display: grid; gap: 18px; min-width: 0 }
+.lede { font-size: 1.25rem; max-width: 62ch }
+.lede b { font-weight: 600 }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule) }
+.tile { background: var(--surface); padding: 16px 18px; display: grid; gap: 4px; min-width: 0 }
+.tile .v { font: 600 1.7rem/1.1 var(--display); font-variant-numeric: tabular-nums }
+.tile .k { font-size: 0.86rem; color: var(--muted); line-height: 1.35 }
+.figure { background: var(--surface); border: 1px solid var(--rule); padding: 18px; display: grid; gap: 10px; min-width: 0 }
+.figure .cap { font-size: 0.9rem; color: var(--muted) }
+.scroll { overflow-x: auto }
+svg text { fill: var(--muted); font: 11px var(--mono) }
+svg .lbl { fill: var(--ink) }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font: 0.8rem var(--mono); color: var(--muted) }
+.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px }
+.quote { font: 0.95rem/1.5 var(--mono); background: var(--chip); padding: 10px 12px; border-left: 3px solid var(--accent); white-space: pre-wrap; overflow-wrap: anywhere }
+.quote::before { content: "› "; color: var(--accent) }
+.quote.bad { border-left-color: var(--bad) } .quote.good { border-left-color: var(--good) }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--rule); vertical-align: top }
+th { font: 500 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted) }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap }
+.pill { display: inline-block; font: 500 0.72rem/1 var(--mono); padding: 4px 7px; border-radius: 3px; background: var(--chip); color: var(--muted); white-space: nowrap }
+.pill.survives { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good) }
+.pill.weakened { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn) }
+.pill.refuted { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad) }
+.finding { border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 10px }
+.finding .meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px }
+.two > * { min-width: 0 }
+details { border-top: 1px solid var(--rule) }
+details > summary { cursor: pointer; padding: 12px 0; display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: baseline; list-style: none }
+details > summary::-webkit-details-marker { display: none }
+details > summary:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+details .body { padding: 0 0 18px; display: grid; gap: 12px }
+.day { font-family: var(--mono); font-size: 0.85rem; color: var(--muted) }
+.score { font-family: var(--mono); font-size: 0.8rem; white-space: nowrap }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chips span { font: 0.75rem var(--mono); background: var(--chip); padding: 3px 7px; border-radius: 3px }
+pre.code { font: 0.8rem/1.5 var(--mono); background: var(--chip); padding: 12px; overflow-x: auto; margin: 0; max-height: 420px }
+button { font: 500 0.8rem var(--mono); background: var(--surface); color: var(--ink); border: 1px solid var(--rule); padding: 6px 10px; cursor: pointer }
+button:hover { border-color: var(--accent) }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+input[type=search] { font: 0.9rem var(--mono); padding: 7px 10px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); min-width: 0; flex: 1 1 220px }
+.cloud { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; line-height: 1.2 }
+.cloud span { font-family: var(--display) }
+.small { font-size: 0.85rem; color: var(--muted) }
+ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; max-width: 75ch }
+@media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+@media (max-width: 560px) { details > summary { grid-template-columns: 1fr; gap: 4px } body { font-size: 16px } .tiles { grid-template-columns: 1fr } }
+@media (prefers-reduced-motion: no-preference) { details[open] .body { animation: in .18s ease-out } @keyframes in { from { opacity: .4 } to { opacity: 1 } } }
+</style>
+
+<div class="wrap" id="app">
+  <header style="display:grid;gap:14px">
+    <div class="eyebrow" data-k="eyebrowTop"></div>
+    <h1>Drew Voice Ledger</h1>
+    <p class="lede" id="lede"></p>
+  </header>
+  <section><div class="tiles" id="tiles"></div></section>
+  <section>
+    <div class="eyebrow" data-k="windowLabel"></div>
+    <h2 data-k="timelineHeadline"></h2>
+    <div class="figure"><div class="scroll" id="timeline"></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>merged PRs per day</span><span><i style="background:var(--bad)"></i>share of Drew's turns that were corrections (days with 10+ turns)</span></div>
+      <div class="cap" id="timelineCap"></div></div>
+    <div class="figure"><div class="scroll" id="monthly"></div><div class="cap" data-k="monthlyCap"></div></div>
+  </section>
+  <section>
+    <div class="eyebrow">What precedes a correction</div>
+    <h2 data-k="liftHeadline"></h2>
+    <div class="two">
+      <div class="figure"><h3>Agent reply features</h3><div id="agentLift"></div><div class="cap" id="agentCap"></div></div>
+      <div class="figure"><h3>Drew's message features</h3><div id="drewLift"></div><div class="cap" id="drewCap"></div></div>
+    </div>
+    <div class="two">
+      <div class="figure"><h3>Correction themes</h3><div id="themes"></div></div>
+      <div class="figure"><h3>Correction share by harness</h3><div id="harness"></div></div>
+    </div>
+  </section>
+  <section id="findingsSec">
+    <div class="eyebrow">Best days against worst days · red-teamed</div>
+    <h2>Findings, each with its number to beat</h2>
+    <p class="small" id="findingsNote"></p>
+    <div id="findings" style="display:grid;gap:20px"></div>
+  </section>
+  <section>
+    <div class="eyebrow">Synthesis</div>
+    <h2>Is it improving, and what next</h2>
+    <div style="display:grid;gap:18px" id="extras"></div>
+  </section>
+  <section id="rewriteSec">
+    <div class="eyebrow">Keep the voice, add the missing piece</div>
+    <h2>Small edits to what Drew says</h2>
+    <div id="rewrites" style="display:grid;gap:18px"></div>
+  </section>
+  <section>
+    <div class="eyebrow">Twelve lines</div>
+    <h2>Voice card</h2>
+    <div id="voice" style="display:grid;gap:10px"></div>
+  </section>
+  <section>
+    <div class="eyebrow" data-k="profilesEyebrow"></div>
+    <h2>Profiles distilled from Drew's own words</h2>
+    <div id="profiles" style="display:grid;gap:14px"></div>
+  </section>
+  <section>
+    <div class="eyebrow">Concepts by month · from the day profiles</div>
+    <h2>What Drew talked about</h2>
+    <div class="two" id="clouds"></div>
+  </section>
+  <section>
+    <div class="eyebrow" data-k="daysEyebrow"></div>
+    <h2>Day explorer</h2>
+    <div class="controls"><input type="search" id="q" placeholder="Filter by word, project, or date"><button id="sortBtn" type="button">Sort: score</button></div>
+    <div id="days"></div>
+  </section>
+  <section>
+    <div class="eyebrow">Method and limits</div>
+    <h2>How this was measured</h2>
+    <div class="figure"><div class="scroll" id="funnel"></div><div class="cap" id="funnelCap"></div></div>
+    <div id="method" style="display:grid;gap:12px"></div>
+  </section>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent)
+// Headings and captions that state this run's numbers come from the data, never from the template.
+document.querySelectorAll('[data-k]').forEach((el) => { el.textContent = (D.text || {})[el.dataset.k] ?? '' })
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const pct = (x, d = 0) => (x * 100).toFixed(d) + '%'
+const fmt = (n) => Number(n).toLocaleString('en-US')
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim()
+
+$('lede').innerHTML = D.lede
+$('tiles').innerHTML = D.tiles.map((t) => `<div class="tile"><div class="v">${esc(t.v)}</div><div class="k">${esc(t.k)}</div></div>`).join('')
+
+function timeline() {
+  const S = D.series, W = Math.max(720, S.length * 12), H = 260, L = 44, R = 44, T = 14, B = 34
+  const maxP = Math.max(...S.map((d) => d.prs)), pTop = Math.ceil(maxP / 200) * 200
+  const x = (i) => L + (i + 0.5) * (W - L - R) / S.length, bw = (W - L - R) / S.length * 0.7
+  const cMax = Math.max(0.6, Math.ceil(Math.max(...S.filter((d) => d.corrRate != null).map((d) => d.corrRate)) * 5) / 5)
+  const yP = (v) => H - B - v / pTop * (H - T - B), yC = (v) => H - B - v / cMax * (H - T - B)
+  let g = ''
+  for (let v = 0; v <= pTop; v += pTop / 4) g += `<line x1="${L}" x2="${W - R}" y1="${yP(v)}" y2="${yP(v)}" stroke="var(--rule)"/><text x="${L - 6}" y="${yP(v) + 4}" text-anchor="end">${v}</text>`
+  for (let v = 0; v <= cMax + 1e-9; v += 0.2) g += `<text x="${W - R + 6}" y="${yC(v) + 4}">${pct(v)}</text>`
+  S.forEach((d, i) => { g += `<rect x="${x(i) - bw / 2}" y="${yP(d.prs)}" width="${bw}" height="${H - B - yP(d.prs)}" fill="var(--accent)" opacity="0.55"><title>${d.day}: ${d.prs} PRs, ${d.turns} Drew turns${d.corrRate != null ? ', ' + pct(d.corrRate) + ' corrections' : ''}</title></rect>`; if (i % 7 === 0) g += `<text x="${x(i)}" y="${H - B + 16}" text-anchor="middle">${d.day.slice(5)}</text>` })
+  let path = '', pen = false
+  S.forEach((d, i) => { if (d.corrRate == null) { pen = false; return } path += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${yC(d.corrRate).toFixed(1)} `; pen = true })
+  g += `<path d="${path}" fill="none" stroke="var(--bad)" stroke-width="2"/>`
+  S.forEach((d, i) => { if (d.corrRate != null) g += `<circle cx="${x(i)}" cy="${yC(d.corrRate)}" r="2.6" fill="var(--bad)"><title>${d.day}: ${pct(d.corrRate)}</title></circle>` })
+  $('timeline').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Daily merged PRs and correction share">${g}</svg>`
+  $('timelineCap').textContent = D.timelineCap
+}
+function monthly() {
+  const M = Object.entries(D.months).filter(([, v]) => v.turns >= 100), W = 720, H = 220, L = 50, B = 46, T = 20
+  const max = Math.max(...M.map(([, v]) => v.prs)), top = Math.ceil(max / 1000) * 1000, bw = (W - L - 20) / M.length
+  const y = (v) => H - B - v / top * (H - T - B)
+  let g = ''
+  for (let v = 0; v <= top; v += top / 4) g += `<line x1="${L}" x2="${W - 10}" y1="${y(v)}" y2="${y(v)}" stroke="var(--rule)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v)}</text>`
+  M.forEach(([m, v], i) => { const cx = L + i * bw + bw / 2; g += `<rect x="${cx - bw * 0.3}" y="${y(v.prs)}" width="${bw * 0.6}" height="${H - B - y(v.prs)}" fill="var(--accent)" opacity="0.7"/><text class="lbl" x="${cx}" y="${y(v.prs) - 6}" text-anchor="middle">${fmt(v.prs)}</text><text x="${cx}" y="${H - B + 16}" text-anchor="middle">${m}</text><text x="${cx}" y="${H - B + 32}" text-anchor="middle" style="fill:var(--bad)">${pct(v.corr / v.turns, 1)} corr</text>` })
+  $('monthly').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px" role="img" aria-label="Monthly PRs and correction share">${g}</svg>`
+}
+function liftChart(el, rows, base, label) {
+  const W = 560, rowH = 30, L = 250, H = rows.length * rowH + 30, mid = L + (W - L) / 2, span = Math.max(...rows.map((r) => Math.abs(r.diff))) * 1.05
+  const x = (d) => mid + d / span * ((W - L) / 2 - 64)
+  let g = `<line x1="${mid}" x2="${mid}" y1="4" y2="${H - 22}" stroke="var(--muted)"/>`
+  rows.forEach((r, i) => { const yy = 8 + i * rowH, c = r.diff > 0 ? 'var(--bad)' : 'var(--good)', x0 = Math.min(mid, x(r.diff)), w = Math.abs(x(r.diff) - mid)
+    g += `<text class="lbl" x="${L - 8}" y="${yy + 14}" text-anchor="end">${esc(r.label)}</text><rect x="${x0}" y="${yy + 3}" width="${Math.max(1, w)}" height="16" fill="${c}" opacity="${Math.abs(r.z) >= 2 ? 0.9 : 0.35}"><title>${esc(r.label)}: ${pct(r.with, 1)} vs ${pct(r.without, 1)} (n=${r.n}, z=${r.z})</title></rect><text x="${r.diff > 0 ? x(r.diff) + 4 : x(r.diff) - 4}" y="${yy + 15}" text-anchor="${r.diff > 0 ? 'start' : 'end'}">${r.diff > 0 ? '+' : ''}${(r.diff * 100).toFixed(1)} pts</text>` })
+  g += `<text x="${mid}" y="${H - 6}" text-anchor="middle">${label} ${pct(base, 1)} · faint: |z| &lt; 2</text>`
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(label)}">${g}</svg>`
+}
+function hbars(el, rows, unit) {
+  const max = Math.max(...rows.map((r) => r.v))
+  el.innerHTML = rows.map((r) => `<div style="display:grid;grid-template-columns:110px minmax(0,1fr) 130px;gap:10px;align-items:center;font-size:.86rem"><span class="num">${esc(r.k)}</span><span style="background:var(--chip);height:14px"><span style="display:block;height:14px;width:${(r.v / max * 100).toFixed(1)}%;background:${r.c || 'var(--accent)'}"></span></span><span class="num" style="text-align:right">${unit(r)}</span></div>`).join('')
+  el.style.display = 'grid'; el.style.gap = '8px'
+}
+timeline(); monthly()
+liftChart($('agentLift'), D.agentLift, D.base, 'base correction share')
+liftChart($('drewLift'), D.drewLift, D.nextBase, 'base next-turn correction')
+$('agentCap').textContent = D.agentCap; $('drewCap').textContent = D.drewCap
+hbars($('themes'), Object.entries(D.themes).filter(([k]) => k !== 'null').map(([k, v]) => ({ k, v, c: 'var(--bad)' })), (r) => fmt(r.v))
+hbars($('harness'), Object.entries(D.harness).filter(([, v]) => v.n >= 100).map(([k, v]) => ({ k, v: v.rate, n: v.n })), (r) => `${pct(r.v, 1)} <span class="small">n=${fmt(r.n)}</span>`)
+
+$('findingsNote').textContent = D.findingsNote
+$('findings').innerHTML = (D.findings || []).map((f, i) => `<article class="finding"><div class="meta"><span class="num small">${i + 1}</span>${(f.verdicts || []).map((v) => `<span class="pill ${v.verdict}" title="${esc(v.numbers)}">${esc(v.lens)}: ${v.verdict}</span>`).join('')}<span class="pill">${esc(f.evidenceKind)}</span></div>
+  <h3>${esc(f.claim)}</h3><p class="small">${esc(f.contrast)} · effect ${esc(f.effect)} · n ${esc(f.n)}</p>
+  <div class="two"><div class="quote good">${esc(f.goodDayQuote)}</div><div class="quote bad">${esc(f.badDayQuote)}</div></div>
+  <p><b>Mechanism.</b> ${esc(f.mechanism)}</p><p><b>Proposal.</b> ${esc(f.proposal)}</p><p><b>Number to beat.</b> <span class="num">${esc(f.numberToBeat)}</span></p></article>`).join('')
+$('extras').innerHTML = [['The question nobody asked: which corrections did the rules fix?', D.extras.unasked], ['Ten times better', D.extras.tenX], ['Shipping against alignment', D.extras.tradeoff], ['How the work shifted', D.extras.domainsOverTime]].map(([h, p]) => `<div class="figure"><h3>${esc(h)}</h3><p>${esc(p)}</p></div>`).join('')
+$('rewrites').innerHTML = (D.rewrites || []).map((r) => `<div class="finding"><div class="day">${esc(r.day)}</div><div class="quote bad">${esc(r.said)}</div><p class="small">${esc(r.whatHappened)}</p><div class="quote good">${esc(r.betterPhrasing)}</div><p class="small">${esc(r.why)}</p></div>`).join('')
+$('voice').innerHTML = (D.voiceCard || []).map((v) => `<div style="display:grid;gap:4px"><div class="quote">${esc(v.quote)}</div><div class="small"><span class="num">${esc(v.day)}</span> · ${esc(v.why)}</div></div>`).join('')
+$('profiles').innerHTML = (D.profiles || []).map((p, i) => `<div class="figure"><div class="controls" style="justify-content:space-between"><h3>${esc(p.name)}</h3><button type="button" data-copy="${i}">Copy JSON</button></div><p class="small">${esc(p.oneLine)}</p><pre class="code" id="prof${i}">${esc(JSON.stringify(p.json, null, 2))}</pre></div>`).join('') + `<div class="figure"><h3>Run one</h3><pre class="code">${esc(D.runHow)}</pre><p class="small">${esc(D.runNote)}</p></div>`
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-copy]'); if (!b) return; const t = $('prof' + b.dataset.copy).textContent; navigator.clipboard.writeText(t).then(() => { b.textContent = 'Copied' }, () => { const r = document.createRange(); r.selectNodeContents($('prof' + b.dataset.copy)); getSelection().removeAllRanges(); getSelection().addRange(r); b.textContent = 'Selected' }) })
+$('clouds').innerHTML = Object.entries(D.concepts).map(([m, cs]) => { const max = cs[0][1]; return `<div class="figure"><h3 class="num">${m}</h3><div class="cloud">${cs.map(([t, w]) => `<span style="font-size:${(0.78 + 0.9 * w / max).toFixed(2)}rem;opacity:${(0.55 + 0.45 * w / max).toFixed(2)}">${esc(t)}</span>`).join('')}</div></div>` }).join('')
+
+let sortBy = 'score'
+function renderDays() {
+  const q = $('q').value.toLowerCase().trim()
+  const ds = D.days.filter((d) => !q || JSON.stringify(d).toLowerCase().includes(q)).sort((a, b) => sortBy === 'score' ? b.score2 - a.score2 : a.day.localeCompare(b.day))
+  $('days').innerHTML = ds.map((d) => `<details><summary><span class="day">${d.day}</span><span>${esc(d.headline)}</span><span class="score" style="color:${d.score2 >= 0 ? 'var(--good)' : 'var(--bad)'}">${d.score2 >= 0 ? '+' : ''}${d.score2.toFixed(2)}</span></summary><div class="body">
+    <div class="chips"><span>${d.drewTurns} turns</span><span>${pct(d.correctionRate)} corrections</span><span>${d.praise} praise</span><span>${d.mergedPRs} PRs (14-day median ${d.prBaseline})</span><span>judged ${d.judged}/100</span>${Object.entries(d.harness).map(([h, n]) => `<span>${esc(h)} ${n}</span>`).join('')}</div>
+    <div class="chips">${d.domains.map((x) => `<span>${esc(x.name)} · ${pct(x.share)}</span>`).join('')}</div>
+    ${d.essence.map((e) => `<div class="quote">${esc(e)}</div>`).join('')}
+    <div class="two"><div><b class="small">Worked</b><ul class="small">${d.worked.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div><div><b class="small">Failed</b><ul class="small">${d.failed.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div></div>
+    <div class="chips">${d.concepts.map((c) => `<span>${esc(c)}</span>`).join('')}</div>
+    <pre class="code">${esc(JSON.stringify(d.profile, null, 2))}</pre></div></details>`).join('') || '<p class="small">No day matches that filter.</p>'
+}
+$('q').addEventListener('input', renderDays)
+$('sortBtn').addEventListener('click', () => { sortBy = sortBy === 'score' ? 'date' : 'score'; $('sortBtn').textContent = 'Sort: ' + sortBy; renderDays() })
+renderDays()
+
+;(function funnel() {
+  const F = D.funnel, rows = [[F.extractedLabel || 'Turns extracted', F.extracted], ['After machine-prefix rules', F.afterRules], ['Typed or pasted by Drew (Haiku authorship pass)', F.drew + F.relay], ['Typed or dictated by Drew', F.drew]]
+  const W = 720, rowH = 34, L = 300, H = rows.length * rowH + 8, max = F.extracted
+  let g = ''
+  rows.forEach(([k, v], i) => { const y = 4 + i * rowH; g += `<text class="lbl" x="${L - 10}" y="${y + 18}" text-anchor="end">${k}</text><rect x="${L}" y="${y + 4}" width="${(v / max) * (W - L - 70)}" height="20" fill="var(--accent)" opacity="${1 - i * 0.18}"/><text x="${L + (v / max) * (W - L - 70) + 6}" y="${y + 18}">${fmt(v)}</text>` })
+  $('funnel').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px" role="img" aria-label="Corpus funnel">${g}</svg>`
+  $('funnelCap').textContent = D.funnelCap
+})()
+$('method').innerHTML = D.method.map((m) => `<div><h3>${esc(m.h)}</h3><p>${m.p}</p></div>`).join('')
+</script>
