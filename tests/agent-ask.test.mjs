@@ -115,6 +115,27 @@ test('an ask starts a turn with a client turn id, holds reads until it settles, 
   }
 })
 
+test('GTM leaves model selection to the workspace unless a flag or environment override is set', async () => {
+  const api = await startApi()
+  try {
+    for (const { args, model, env } of [
+      { args: [] },
+      { args: [], model: 'environment-model', env: { AGENT_ASK_MODEL: 'environment-model' } },
+      { args: ['--model', 'requested-model'], model: 'requested-model', env: { AGENT_ASK_MODEL: 'environment-model' } },
+    ]) {
+      const result = await run(api, ['--app', 'gtm', '--workspace', 'ws1', '--wait', '0', ...args, 'Draft the launch plan'], {
+        env: { GTM_BASE_URL: api.base, GTM_OPERATOR_API_KEY: KEY, ...env },
+      })
+      assert.equal(result.code, 3, result.stderr)
+      const body = api.calls.filter((call) => call.method === 'POST').at(-1).body
+      assert.equal(Object.hasOwn(body, 'model'), model !== undefined)
+      assert.equal(body.model, model)
+    }
+  } finally {
+    await api.close()
+  }
+})
+
 test('--json and --download return one object and save the referenced assets', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'agent-ask-assets-'))
   const api = await startApi({

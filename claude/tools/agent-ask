@@ -14,7 +14,7 @@ import { retryAfterSeconds, takeSlot } from './operator-api/rate.mjs'
 
 // Production origins and defaults; --origin or <APP>_BASE_URL overrides the origin.
 const APPS = {
-  gtm: { name: 'GTM Agent', origin: 'https://gtm.tangle.tools', workspace: 'b81b721c078853fdd78687ee622a1e69', model: 'gpt-6-luna' },
+  gtm: { name: 'GTM Agent', origin: 'https://gtm.tangle.tools', workspace: 'b81b721c078853fdd78687ee622a1e69' },
   tax: { name: 'Tax Agent', origin: 'https://taxes.tangle.tools' },
   legal: { name: 'Legal Agent', origin: 'https://legal.tangle.tools' },
   insurance: { name: 'Insurance Agent', origin: 'https://insurance.tangle.tools' },
@@ -50,7 +50,7 @@ options:
   --workspace <id>   workspace (default $<APP>_WORKSPACE_ID, the app default, or the key's only workspace)
   --thread <id>      continue this conversation instead of starting a new one
   --title <text>     title for a new conversation (default: the ask's first line)
-  --model <id>       model for the turn (default: gtm uses gpt-6-luna, other apps their workspace default)
+  --model <id>       model for the turn (default $AGENT_ASK_MODEL, else the workspace's saved model)
   --wait <duration>  how long to follow the turn, e.g. 90s, 30m, 1h (default 30m; status 0);
                      0 returns once the turn is admitted
   --days <n>         window for journal and scorecard (default 7)
@@ -415,7 +415,7 @@ async function main(argv) {
       return EXIT.running
     }
   }
-  const model = options.model ?? process.env.AGENT_ASK_MODEL ?? APPS[app].model
+  const model = options.model ?? process.env.AGENT_ASK_MODEL
   const body = {
     turnId: randomUUID(), content: ask,
     ...(options.thread ? { threadId: options.thread } : { title: (options.title ?? ask.split('\n')[0]).slice(0, 80) }),
