@@ -73,10 +73,26 @@ function runGit(cwd, args, allowFailure = false) {
 function resolveRepoRoot(inputPath) {
   const cwd = inputPath ? resolve(inputPath) : process.cwd();
   const probe = runGit(cwd, ["rev-parse", "--show-toplevel"], true);
-  if (!probe.ok) {
-    throw new Error(`Not a git repository: ${cwd}`);
-  }
-  return probe.stdout.trim();
+  if (probe.ok) return probe.stdout.trim();
+  // A bare repository (a bot's merge mirror) has no working tree: its git dir is the root,
+  // and content checks read the pushed commit instead of files on disk.
+  if (isBareRepo(cwd)) return runGit(cwd, ["rev-parse", "--absolute-git-dir"], true).stdout.trim();
+  throw new Error(`Not a git repository: ${cwd}`);
+}
+
+function isBareRepo(dir) {
+  const bare = runGit(dir, ["rev-parse", "--is-bare-repository"], true);
+  return bare.ok && bare.stdout.trim() === "true";
+}
+
+// In a bare repository git names exactly what is pushed on stdin; HEAD has nothing to do with it.
+function barePushContext(update) {
+  const created = /^0+$/.test(update.remoteSha);
+  return {
+    range: created ? `${update.localSha}~1...${update.localSha}` : `${update.remoteSha}...${update.localSha}`,
+    baseRef: created ? `${update.localSha}~1` : update.remoteSha,
+    upstream: "",
+  };
 }
 
 function formatHooksPathForGit(repoRoot, hooksDir) {
@@ -241,14 +257,14 @@ function commandExists(command) {
   return spawnSync("bash", ["-lc", `command -v ${command}`], { encoding: "utf8" }).status === 0;
 }
 
-function checkMergeConflictMarkers(repoRoot, files) {
+function checkMergeConflictMarkers(repoRoot, files, contentRev = "") {
   if (files.length === 0) {
     return { ok: true, status: 0, output: "No changed files to inspect." };
   }
 
   const result = spawnSync(
     "git",
-    ["grep", "-nE", "^(<<<<<<<( .*)?|\\|\\|\\|\\|\\|\\|\\|( .*)?|=======|>>>>>>>( .*)?)$", "--", ...files],
+    ["grep", "-nE", "^(<<<<<<<( .*)?|\\|\\|\\|\\|\\|\\|\\|( .*)?|=======|>>>>>>>( .*)?)$", ...(contentRev ? [contentRev] : []), "--", ...files],
     { cwd: repoRoot, encoding: "utf8" },
   );
 
@@ -271,7 +287,7 @@ function checkMergeConflictMarkers(repoRoot, files) {
   };
 }
 
-function checkSuspiciousSecrets(repoRoot, files) {
+function checkSuspiciousSecrets(repoRoot, files, contentRev = "") {
   if (files.length === 0) {
     return { ok: true, status: 0, output: "No changed files to inspect." };
   }
@@ -287,16 +303,21 @@ function checkSuspiciousSecrets(repoRoot, files) {
   const findings = [];
 
   for (const relativePath of files) {
-    const absPath = join(repoRoot, relativePath);
-    if (!existsSync(absPath)) {
-      continue;
-    }
-
     let file;
-    try {
-      file = readFileSync(absPath, "utf8");
-    } catch {
-      continue;
+    if (contentRev) {
+      const shown = runGit(repoRoot, ["show", `${contentRev}:${relativePath}`], true);
+      if (!shown.ok) continue;
+      file = shown.stdout;
+    } else {
+      const absPath = join(repoRoot, relativePath);
+      if (!existsSync(absPath)) {
+        continue;
+      }
+      try {
+        file = readFileSync(absPath, "utf8");
+      } catch {
+        continue;
+      }
     }
 
     const lines = file.split("\n");
@@ -547,11 +568,11 @@ function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
 
 function runBuiltin(builtin, context) {
   if (builtin === "merge-conflict-markers") {
-    return checkMergeConflictMarkers(context.repoRoot, context.files);
+    return checkMergeConflictMarkers(context.repoRoot, context.files, context.contentRev);
   }
 
   if (builtin === "suspicious-secrets") {
-    return checkSuspiciousSecrets(context.repoRoot, context.files);
+    return checkSuspiciousSecrets(context.repoRoot, context.files, context.contentRev);
   }
 
   if (builtin === "mergeable-with-base") {
@@ -1251,14 +1272,17 @@ async function runHookCommand(rawArgs) {
   );
   mkdirSync(runDir, { recursive: true });
 
-  const pushContext = resolvePushDiffContext(repoRoot);
+  const pushRefUpdates = hookName === "pre-push" ? readPrePushRefUpdates() : [];
+  const barePush = isBareRepo(repoRoot) ? pushRefUpdates.find((u) => !/^0+$/.test(u.localSha)) : undefined;
+  const pushContext = barePush ? barePushContext(barePush) : resolvePushDiffContext(repoRoot);
   const files = changedFiles(repoRoot, hookName, pushContext);
   const context = {
     repoRoot,
     hookName,
     branch: currentBranch(repoRoot),
     pushContext,
-    pushRefUpdates: hookName === "pre-push" ? readPrePushRefUpdates() : [],
+    contentRev: barePush?.localSha || "",
+    pushRefUpdates,
     // git runs pre-push with <remote name> <push location>.
     pushRemoteUrl: hookName === "pre-push" ? positionals[2] || "" : "",
     files,
