@@ -25,6 +25,7 @@ Constraints, all binding:
   [ ] no installs, builds or test suites on the Mac; run them on a Beelink or gtr
   [ ] never print, log or paste a secret; read keys from their vault
   [ ] a chat or prompt change runs the full suite before merge, not only affected tests
+  [ ] no new unit or mock tests and no updating tests to a new API; prove with integration tests and a live proof
   [ ] <this task's limits: spend, production state, who approves what>
 Done when: <observable condition>, proven by <command and output, URL, receipt or SHA>
 Report back:

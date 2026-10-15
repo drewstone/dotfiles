@@ -36,6 +36,7 @@ Choose proof in this order:
 2. Integration across real data, API, persistence, process, and package boundaries.
 3. Golden cases from representative real data, including consequential regressions and edge cases.
 
+Never write a new unit or mock test, and never update one to follow an API change: delete it.
 Presume implementation-level unit tests are removable.
 Keep one only for a consequential failure that these stronger checks cannot reasonably detect; state the reason.
 Delete tests that mirror private helpers, assert mock choreography, repeat equivalent cases, or preserve obsolete architecture.
@@ -47,7 +48,7 @@ A mocked dependency cannot establish an integration or E2E claim.
 Keep real boundary failures detectable, and preserve historical research and calibration evidence.
 Measure verification time, invocations, flakiness, and agent rework where available; coverage percentages and test counts are not success targets.
 
-This policy follows Drew's testing priorities.
+This policy follows Drew's testing priorities. Drew, 2026-10-15: "Consolidated tests should only have a few extremely strong unit tests, extremely strong integration tests, and real live proofs, frequently, to prove that things work."
 [Callaway's test-deletion experiment](https://x.com/shcallaway/status/2106142042405453879) motivates the audit; its proposed benefits remain hypotheses.
 
 ## Implement and deliver

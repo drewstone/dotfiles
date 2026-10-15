@@ -24,7 +24,8 @@ When you measure something by hand with a script, build that measurement into it
 
 Executable changes merge on a fast gate, get the full suite after merge, and are gated again before deploy ([Anthropic's model](https://www.anthropic.com/engineering/redesigning-source-control)).
 In agent-container, push and stop: Fast Checks, Build and Type Check gate the PR, `merge-on-green` merges it within minutes of green, develop runs the full fan, and a red develop is fixed forward.
-Elsewhere, run the 2-minute gate on a Beelink (merge the base, frozen install, typecheck, the change's own tests), then merge immediately.
+Elsewhere, run the 2-minute gate on a Beelink (merge the base, frozen install, typecheck, the integration tests the change touches), then merge immediately.
+Never write or maintain unit or mock tests. Drew, 2026-10-15: "Unit tests, mock tests, and all that shit are useless and slow us down. … we will literally never … waste time writing and maintaining unit tests. If we are updating unit tests to adhere to new APIs, that is a sign to delete that shit." A repo's proof is a few extremely strong unit tests, extremely strong integration tests, and frequent real live proofs; a test that breaks on a valid API change is deleted, not updated ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)).
 For documentation-only changes, use relevant content, link, or structural checks.
 Never watch PR CI; fix failures forward while preserving hooks, enforced protections, and release authority.
 Add CI or automated review gates only when requested; never request hosted Codex PR reviews, but read every review and audit a PR has before merging it and answer each finding with a fix or evidence, and read audits that land after a merge and fix forward.
