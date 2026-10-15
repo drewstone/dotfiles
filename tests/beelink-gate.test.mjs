@@ -1041,7 +1041,8 @@ exec /usr/bin/du "$@"
     const started = Date.now();
     const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_MAX_HOLD: "6s" } });
     const elapsed = (Date.now() - started) / 1000;
-    assert.equal(result.status, 124, result.stderr);
+    // The spent hold stops the next step, git ls-remote, which the gate reports as TEMPFAIL.
+    assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /hold limit of 6s reached/);
     // A fixed 60 s bound let the first hung measurement alone hold the lock for 40 s.
     assert.ok(receipts(f).at(-1).ran_s <= 15 && elapsed < 30, `held ${receipts(f).at(-1).ran_s}s (wall ${elapsed}s) against a 6 s hold`);
