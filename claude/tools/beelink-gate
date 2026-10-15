@@ -208,41 +208,26 @@ admit_window() {
 
 # A repo keeps tracked paths its gated commands never read out of its gate
 # checkouts by committing .beelink-gate/sparse-checkout: `git sparse-checkout
-# --no-cone` patterns, one per line, # for comments. A file with no patterns
-# keeps the checkout full. A repo that commits no file uses its entry here,
-# until it commits its own. Discovery Lab's rule (docs/processes/agent-work.md
-# on its master) excludes historical /pursuits/ from every execution checkout;
-# its tests read prereg/, so prereg stays. On 2026-10-14 its full gate checkout
-# held 11 GB on beelink1, and its 22-28 GB measured install reserve kept Lab
-# gates off both beelinks from about 19:50Z.
-sparse_default() {  # <host/owner/repo>
-  case "$1" in
-    github.com/tangle-network/discovery-lab) printf '%s\n' '/*' '!/pursuits/' ;;
-  esac
-}
-
-# Keeps <checkout> at its repo's sparse patterns for <rev>, the commit it is
-# about to check out (an idle checkout passes HEAD). The caller holds the
-# checkout's repo lock. Setting patterns removes the excluded tracked files
-# now, and later checkouts never write them; a repo with no patterns gets its
-# full tree back. Sets sparse_source (repo, default or empty) and says on
-# stderr when it changed the checkout.
-sparse_apply() {  # <checkout> <rev> <host/owner/repo>
-  local declared want enabled
-  if declared=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null); then
-    sparse_source=repo
-  else
-    declared=$(sparse_default "$3") sparse_source=default
-  fi
-  want=$(printf '%s\n' "$declared" | sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d')
+# --no-cone` patterns, one per line, # for comments. Discovery Lab's excludes
+# historical /pursuits/: on 2026-10-14 its full gate checkout held 11 GB on
+# beelink1, and its 22-28 GB measured install reserve kept Lab gates off both
+# beelinks. A commit without the file, or with no patterns in it, gets a full
+# checkout. This keeps <checkout> at the patterns committed at <rev>, the
+# commit it is about to check out (an idle checkout passes HEAD); the caller
+# holds the checkout's repo lock. Setting patterns removes the excluded
+# tracked files now, and later checkouts never write them. Sets sparse_source
+# to repo or empty, and says on stderr when it changed the checkout.
+sparse_apply() {  # <checkout> <rev>
+  local want enabled
+  want=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d')
   enabled=$(git -C "$1" config --bool core.sparseCheckout)
+  sparse_source=${want:+repo}
   if [ -z "$want" ]; then
-    sparse_source=""
     [ "$enabled" = true ] || return 0
-    echo "beelink-gate: $1 has no sparse patterns; restoring its full tree" >&2
+    echo "beelink-gate: $1 has no sparse patterns at $2; restoring its full tree" >&2
     git -C "$1" sparse-checkout disable
   elif [ "$enabled" != true ] || [ "$want" != "$(cat "$1/.git/info/sparse-checkout" 2>/dev/null)" ]; then
-    echo "beelink-gate: applying $sparse_source sparse patterns to $1: $(printf '%s' "$want" | tr '\n' ' ')" >&2
+    echo "beelink-gate: applying repo sparse patterns to $1: $(printf '%s' "$want" | tr '\n' ' ')" >&2
     printf '%s\n' "$want" | git -C "$1" sparse-checkout set --no-cone --stdin
   fi
 }
@@ -251,7 +236,7 @@ sparse_apply() {  # <checkout> <rev> <host/owner/repo>
 # decisions; per-repo locks keep active gates out of the eviction set.
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
-    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_default sparse_apply)" <<'PY'
+    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_apply)" <<'PY'
 import contextlib
 import fcntl
 import os
@@ -334,7 +319,7 @@ try:
         initial_total = total
         initial_free = free_bytes(root)
         target_free = initial_free + required_reclaim
-        # An idle checkout first shrinks to its repo's sparse patterns: those
+        # An idle checkout first shrinks to the sparse patterns its HEAD commits: those
         # are paths no gated command reads, and the checkout stays warm for the
         # next gate. LRU eviction then weighs what remains.
         sparsified = 0
@@ -347,8 +332,7 @@ try:
                     except BlockingIOError:
                         continue
                 result = subprocess.run(
-                    ["bash", "-c", sparse_code + '\nsparse_apply "$@"', "beelink-gate",
-                     str(repo), "HEAD", f"{host}/{owner}/{repo.name.split('@')[0]}"],
+                    ["bash", "-c", sparse_code + '\nsparse_apply "$@"', "beelink-gate", str(repo), "HEAD"],
                     text=True, capture_output=True, stdin=subprocess.DEVNULL,
                 )
                 # sparse_apply writes to stderr only when it changes the checkout.
@@ -1905,7 +1889,7 @@ PY
     base_sha=$(git -C "$checkout" rev-parse --verify "refs/remotes/origin/$default_branch^{commit}") || base_sha=""
   fi
   # Before checkout, so a path the repo's sparse patterns exclude is never written.
-  sparse_apply "$checkout" "$sha" "$host/$owner/$repo" || exit $?
+  sparse_apply "$checkout" "$sha" || exit $?
   if [ -n "$gate_branch" ]; then
     git -C "$checkout" checkout --force -B "$gate_branch" "$sha" || exit $?
     git -C "$checkout" branch --set-upstream-to="origin/$gate_branch" "$gate_branch" >/dev/null || exit $?
