@@ -1,14 +1,16 @@
 # Variants and prototypes
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 Derived from emilkowalski/skills ui-variants and mattpocock/skills prototype (MIT).
 
-Read this when the user wants to compare different directions for a piece of UI, or to check whether a logic or state model feels right before building it.
+Read this for major redesign exploration, requested direction comparisons, or a logic/state model that needs checking before implementation. For Tangle major redesigns, follow the bible's exploration requirement; use the same real task and content across materially different models. Small corrections keep the established workflow.
 
 ## UI variants
 
 1. Narrow the request to one piece of UI and restate it in one sentence.
 2. Read the stack, tokens, and product personality; every variant uses the real tokens and looks shippable.
-3. Build three to five variants that differ on a named axis each (layout, density, personality, motion, interaction model). Close variations of one idea teach nothing.
+3. Build variants that differ on named axes such as composition, density or interaction model. Take the required exploration scope from the project's policy owner. Close variations of one idea teach nothing.
 4. Render them on the real page behind a `?variant=` parameter so headers, data, and density are present; use a new prototype route only when no page can host the piece.
 5. Give each variant real interactions and realistic content, and hold each to the polish and motion bar.
 6. Add a small fixed switcher that names each variant's axis; it is tooling, not part of the design.

@@ -1,6 +1,8 @@
 # Product Design Anti-Patterns
 
-This file covers visible UI, product demos, dashboards, landing-page graphics, and application surfaces.
+This file keeps scoped rejection examples and review methods for visible UI, product demos, dashboards, landing-page graphics, and application surfaces.
+
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
 
 ## Label-Driven UI
 
@@ -11,17 +13,6 @@ Bad:
 - labels above every metric
 - captions that restate icons
 - process labels like `run`, `observe`, `improve`, `ship`
-
-Good:
-
-- visible state
-- selected tabs
-- real controls
-- real data
-- real screenshots
-- direct manipulation
-
-If the label is removed and the UI collapses, the design is not carrying meaning.
 
 ## Dashboard and Settings Drift
 
@@ -61,14 +52,6 @@ Do not use card grids for:
 - mission
 - vision
 
-Use instead:
-
-- one dominant product artifact
-- a diagram with real boundaries
-- a table if comparison is the task
-- a screenshot sequence
-- a single narrative scroll section
-
 ## Fake Diagrams
 
 Bad diagrams:
@@ -78,13 +61,6 @@ Bad diagrams:
 - traffic-light terminal rows
 - ornamental trace tables
 - SVG architecture art that cannot be mapped to a real system
-
-Good diagrams:
-
-- show real inputs and outputs
-- name boundaries
-- include timestamps, states, costs, logs, eval results, or screenshots when relevant
-- make one argument visually
 
 ## Visual Asset Anti-Patterns
 
@@ -97,13 +73,6 @@ Do not use:
 - fake browser chrome unless the browser state matters
 - monochrome code blocks as the only visual language
 
-Use:
-
-- real product screenshots
-- generated bitmap images when a concept needs atmosphere
-- motion only when it clarifies sequence or state
-- diagrams derived from actual traces or architecture
-
 ## AI Product UI Anti-Patterns
 
 Do not:
@@ -115,13 +84,6 @@ Do not:
 - make generated output look like verified fact
 - use "magic" as the primary explanation
 
-AI UI should show:
-
-- what the system used
-- what it produced
-- what it is uncertain about
-- what the user can approve, reject, inspect, or retry
-
 ## Wrapping and truncation
 
 - a headline that wraps its last word onto its own line at 1280
@@ -130,9 +92,7 @@ AI UI should show:
 - code or a URL cut with an ellipsis in a marketing frame
 - ten tabs in a row that fold into two rows
 
-Nothing on a marketing page wraps or truncates at 1280, 1100 or 400 px.
-Fit the copy to the width or the width to the copy: shorten the line, widen the container, pin column widths, set `white-space: nowrap`, or move the control into a vertical list.
-Check the rendered page at each width before reporting; a build or a test proves nothing here.
+Check responsive text fit and reflow against the bible. Allow necessary wrapping and accessible scroll regions. Inspect orphaned words, clipped actions and unexplained truncation in the rendered page. Recompose at narrow widths before reducing type; reserve no-wrap for content that requires it and provide an accessible way to inspect overflow.
 
 ## Label and surface mismatch
 

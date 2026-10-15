@@ -15,17 +15,11 @@ Fake structure is what agents add when they do not understand the product, audie
 - research pages with non-research comparison posts
 - marketing pages that explain instead of show
 
-## What Good Looks Like
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
 
-Good work has fewer visible parts and more force.
+## Editorial checks
 
-- One viewport makes one decision clear.
-- A heading carries the idea without an eyebrow label.
-- A product page shows the product directly.
-- Research argues from evidence, not category names.
-- Blog writing teaches something specific.
-- UI copy names actions, state, values, and consequences.
-- Visual design uses artifacts, screenshots, diagrams, media, motion, or data.
+Research argues from evidence rather than category names. Blog writing teaches something specific. Check the claim or lesson against the actual sources before accepting either label.
 
 ## Anti-Patterns By Class
 

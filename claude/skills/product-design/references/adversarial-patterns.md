@@ -1,5 +1,7 @@
 # Adversarial UI patterns
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 Adapt cases to the requested workflow, supported behavior, and authorized test data.
 Use the real browser and inspect resulting state, not only whether an action completed without an error.
 
@@ -8,6 +10,7 @@ Use the real browser and inspect resulting state, not only whether an action com
 | Forms | Submit missing required values, malformed input, and values around documented limits. | Correct validation, preserved input, no unintended mutation, and readable layout. |
 | Rendered text | Submit controlled markup through a test account where user text is later displayed. | Text remains inert; inspect the actual rendering sink rather than assuming a literal script tag tests every XSS path. |
 | Duplicate actions | Retry or double-submit a state-changing action. | Final durable state and idempotency behavior; multiple network requests may still be safe. |
+| Disconnect and cancellation | In a disposable environment, disconnect before/after acknowledgment, stop while pending, then reopen and reconcile before retry. | Correlate operation IDs, persisted state and provider receipts through the bible's evidence contract. |
 | Dialogs | Open, navigate with keyboard, cancel, and submit. | Focus containment and return, supported dismissal behavior, unsaved-change handling, and scroll restoration. |
 | Navigation | Open an interior URL, navigate back and forward, and use an invalid route. | Correct active state, access enforcement, and the state restoration promised by the product. |
 | Authentication | Open a protected route without auth, sign out, and exercise an expired test session. | Protected data is not exposed; recovery and redirect behavior remain usable without stale user data. |

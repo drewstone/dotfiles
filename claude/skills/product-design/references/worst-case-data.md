@@ -1,5 +1,7 @@
 # Worst-case data
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 Derived from emilkowalski/skills break-ui (MIT).
 
 Read this when stress-testing a component or screen with realistic extreme content.
@@ -7,7 +9,7 @@ Read this when stress-testing a component or screen with realistic extreme conte
 1. List each rendered field with its source, type, documented limit, and whether it is optional.
 2. Build a worst-case fixture for each field from the table below, plus empty, one, and huge collections, and keep the realistic fixture beside it.
 3. Switch between them without touching production behavior: a development-only `?data=worst` parameter, a prototype route, or a standalone HTML file.
-4. Render at supported widths and themes and record every break with its cause and fix.
+4. Declare the environment, render the fixtures and record every break with its cause and fix. For Tangle, take reflow, browser zoom, overflow and supported-input acceptance from the bible's evidence contract.
 
 Use `example.com`, `example.org`, or `.test` for emails and URLs.
 

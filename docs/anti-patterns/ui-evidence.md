@@ -1,5 +1,7 @@
 # UI delivery evidence
 
+For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+
 Use this for product UI, websites, documentation widgets, charts, visual assets, and visible CLI interactions.
 The PR must let a reviewer see the changed user experience.
 

@@ -1,12 +1,12 @@
 # Anti-Patterns
 
-This directory is doctrine for writing and design work. It exists because positive guidance is too easy for agents to reinterpret into generic SaaS output.
+This directory keeps writing methods, review procedures and scoped rejection examples. For Tangle principles, visual grammar, motion, interaction and acceptance, read the [Brand design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md). Use [product-design](../../claude/skills/product-design/SKILL.md) for execution procedure.
 
 The rule: when working on public writing, research, marketing pages, product UI, homepages, or design systems, read the relevant anti-pattern file before producing copy or UI.
 
 ## Files
 
-- `principles.md` - the global bar and failure taxonomy.
+- `principles.md` - scoped failure taxonomy and removal tests.
 - `copywriting.md` - prose, labels, headings, UX copy, and marketing language failures.
 - `blog-and-research.md` - blog posts, research notes, comparison posts, and technical arguments.
 - `blog-discovery.md` - SEO, answer-engine, and generative-search discovery failures.
@@ -15,7 +15,7 @@ The rule: when working on public writing, research, marketing pages, product UI,
 - [UI evidence](ui-evidence.md) - before and after screenshots, interaction videos, and reviewable PR proof.
 - `ai-agent-work.md` - how agents should operate when doing design or writing.
 - `source-quality.md` - source ranking, reference extraction, and anti-reference-theater rules.
-- `world-class-site.md` - the bar for serious technical startup sites, including Tangle's current site doctrine.
+- `world-class-site.md` - retained site rationale and historical product framing.
 - `review-gates.md` - accept/reject gates for copy, design, blog, research, AI products, and source use.
 - `reference-systems.md` - external systems and site-audit lessons this doctrine is based on.
 
@@ -29,14 +29,6 @@ The rule: when working on public writing, research, marketing pages, product UI,
 - `../green-patterns/blog-discovery.md` - query ownership, answer clarity, evidence, links, metadata, and measurement.
 - `../rubrics/blog-quality.md` - the scored zero-context acceptance rubric and reviewer worksheet.
 - `../rubrics/blog-discovery-quality.md` - the scored search and answer visibility rubric.
-
-## Hard Defaults
-
-- If a section needs a tiny label to explain why it exists, the section probably does not exist yet.
-- If a card needs an internal taxonomy label to feel meaningful, the card is probably not meaningful.
-- If the output mostly explains the product instead of showing an artifact, it is not designed.
-- If the writing sounds like a company trying to sound important, delete it.
-- If the page tries to show every product, repo, agent, layer, and future idea at once, it has no hierarchy.
 
 ## Required Preflight
 
@@ -52,7 +44,7 @@ Before claiming done:
 1. Grep changed files for `kicker`, `eyebrow`, `badge`, `chip`, `label`, `step`, `phase`, `platform loop`, `what * builds`, `proof over positioning`.
 2. Apply [UI evidence](ui-evidence.md) to visible product changes, including PR attachments.
 3. State what was removed, not only what was added.
-4. If the work is still mostly text, say that plainly and keep iterating.
+4. Record functional, craft and user-evidence verdicts against the shared acceptance owner.
 
 ## Source Discipline
 
