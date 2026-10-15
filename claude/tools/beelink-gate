@@ -1074,7 +1074,9 @@ gate_bytes() {  # <seconds> <checkout> <store>...
   shift
   (( limit > 0 )) || return 1
   err=$(mktemp) || return 1
-  out=$(LC_ALL=C timeout -k 5 "$limit" du -s --total -B1 -- "$@" 2>"$err"); rc=$?
+  # KILL at the limit itself: du needs no cleanup, and a grace after TERM would let
+  # a du that ignores TERM keep the lock past the hold.
+  out=$(LC_ALL=C timeout -s KILL "$limit" du -s --total -B1 -- "$@" 2>"$err"); rc=$?
   if (( rc == 1 )) && ! grep -qv '^du: cannot access .*: No such file or directory$' "$err"; then rc=0; fi
   rm -f -- "$err"
   out=$(tail -n 1 <<<"$out"); out=${out%%[[:space:]]*}
