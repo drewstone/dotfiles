@@ -1205,7 +1205,7 @@ stale_native_addons() {
   local abi
   abi=$(node -p process.versions.modules 2>/dev/null) || return 0
   python3 - "$abi" <<'PY'
-import json, os, re, sys
+import json, os, re, subprocess, sys
 abi = sys.argv[1]
 root = "node_modules/.pnpm"
 allowed, denied = set(), set()
@@ -1270,6 +1270,32 @@ def addons(top, depth=0):
         elif entry.name.endswith(".node") and entry.is_file():
             yield entry.path
 
+def entrypoint_loads_native(path):
+    # Prebuilt addons may live in optional dependency packages. Let this Node
+    # validate the selected binary, and require a native module reachable from
+    # this entrypoint rather than an unrelated NODE_OPTIONS preload.
+    probe = r"""
+const entry = require.resolve(process.argv[1]);
+require(entry);
+const seen = new Set(), native = [];
+function visit(mod) {
+  if (!mod || seen.has(mod.id)) return;
+  seen.add(mod.id);
+  if (mod.filename.endsWith('.node')) native.push(mod.filename);
+  for (const child of mod.children) visit(child);
+}
+visit(require.cache[entry]);
+console.log(JSON.stringify(native));
+"""
+    try:
+        result = subprocess.run(["node", "-e", probe, os.path.abspath(path)],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, timeout=10)
+        loaded = json.loads(result.stdout) if result.returncode == 0 else []
+        return isinstance(loaded, list) and bool(loaded)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
 for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
     base = os.path.join(root, store_entry, "node_modules")
     try:
@@ -1284,7 +1310,7 @@ for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
                 continue
             found = list(addons(path))
             if not found:
-                if pkg in allowed:
+                if pkg in allowed and not entrypoint_loads_native(path):
                     print(f"{pkg}\t{path}\tmissing addon")
                 continue
             for addon in found:
