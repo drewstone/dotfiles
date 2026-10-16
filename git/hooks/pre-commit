@@ -77,7 +77,8 @@ if [ -n "$added" ]; then
   # Payment card numbers: the 16-digit (4-4-4-4) and 15-digit Amex (4-6-5) shapes with a
   # card-network prefix that pass the Luhn check, except the published processor test
   # numbers fixtures legitimately use. Shape and prefix keep epoch-millisecond timestamps
-  # and numeric IDs from tripping it.
+  # and numeric IDs from tripping it, and the decimal-point guards keep the digits of a
+  # fraction (cost tables print 16 or more decimal places) from reading as a card.
   if printf '%s\n' "$added" | python3 -c '
 import re, sys
 TEST = {"4242424242424242", "4000056655665556", "5555555555554444", "2223003122003222",
@@ -86,7 +87,7 @@ TEST = {"4242424242424242", "4000056655665556", "5555555555554444", "22230031220
         "4000000000009995", "4000000000000069", "4000000000000127", "4000000000000119",
         "4000002500003155", "4000002760003184"}
 PREFIX = re.compile(r"^(4|5[1-5]|2[2-7]|3[47]|6011|65)")
-SHAPE = re.compile(r"(?<![\d])(?:\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}|3[47]\d{2}[ -]?\d{6}[ -]?\d{5})(?![\d])")
+SHAPE = re.compile(r"(?<![\d.])(?:\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}|3[47]\d{2}[ -]?\d{6}[ -]?\d{5})(?![\d]|\.\d)")
 def luhn(d):
     t = 0
     for i, c in enumerate(reversed(d)):
