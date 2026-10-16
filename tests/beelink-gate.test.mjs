@@ -595,7 +595,7 @@ test("an auto-placed gate gives back a host that fell below its disk floor, so t
   const f = fixture();
   try {
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
-    const low = { ...f.env, FAKE_AVAIL: String(150 * 2 ** 30) };
+    const low = { ...f.env, FAKE_AVAIL: String(140 * 2 ** 30) };
     const auto = run("bash", [gate, "--remote", ...args], { env: { ...low, BEELINK_GATE_AUTO: "1" } });
     assert.equal(auto.status, 76, auto.stderr);
     assert.match(auto.stderr, /beelink2 gave the gate back before admission \(beelink2 is below its disk floor\); placing the gate again/);
