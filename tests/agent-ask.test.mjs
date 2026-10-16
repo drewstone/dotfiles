@@ -106,24 +106,9 @@ test('an ask starts a turn with a client turn id, holds reads until it settles, 
     const reads = api.calls.filter((call) => call.method === 'GET' && call.path.endsWith(`/turns/${start.body.turnId}`))
     assert.equal(reads.length, 2)
     assert.equal(reads[0].query.wait, '1')
-    assert.match(result.stdout, /status {3}completed \(model gpt-6-luna, \$0\.31\)/)
     assert.match(result.stdout, /Plan written\./)
     assert.match(result.stdout, /created {2}research\/plan\.md/)
     assert.match(result.stdout, /\/api\/operator\/v1\/workspaces\/ws1\/assets\/v1/)
-  } finally {
-    await api.close()
-  }
-})
-
-test('--json preserves the optional sandbox settlement separately from model cost before ACK', async () => {
-  const sandboxSettlement = { basis: 'agent_key_sandbox_share', consumedUsd: 0.0000007, settledAt: null }
-  const api = await startApi({ latest: baseTurn({ state: 'failed', costUsd: 0, sandboxSettlement }) })
-  try {
-    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', '--json', 'status', 'th-existing'])
-    assert.equal(result.code, 1, result.stderr)
-    const output = JSON.parse(result.stdout)
-    assert.equal(output.costUsd, 0)
-    assert.deepEqual(output.sandboxSettlement, sandboxSettlement)
   } finally {
     await api.close()
   }

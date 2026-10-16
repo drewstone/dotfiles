@@ -275,8 +275,14 @@ function exitFor(status) {
 function render(result) {
   const lines = []
   lines.push(`thread   ${result.threadId}  ${result.url ?? ''}`.trimEnd())
-  const detail = [result.model && `model ${result.model}`, result.costUsd != null && `$${Number(result.costUsd).toFixed(2)}`].filter(Boolean).join(', ')
+  const detail = [result.model && `model ${result.model}`, result.costUsd != null && `model cost $${Number(result.costUsd)}`].filter(Boolean).join(', ')
   lines.push(`status   ${result.status}${detail ? ` (${detail})` : ''}`)
+  if (result.sandboxSettlement) {
+    const { consumedUsd, settledAt } = result.sandboxSettlement
+    const share = consumedUsd == null ? 'pending' : `$${consumedUsd}`
+    const ack = settledAt == null ? 'pending' : `confirmed at ${settledAt}`
+    lines.push(`sandbox  recorded agent-key share ${share} (ACK ${ack})`)
+  }
   if (result.failure) lines.push(`failure  ${result.failure.code ?? ''} ${result.failure.message}`.trimEnd())
   if (result.reply) lines.push('', result.reply)
   if (result.assets.length) {
@@ -309,6 +315,7 @@ async function finish(ctx, turn, { admitted = false } = {}) {
   const result = {
     app, origin, workspaceId, threadId: turn.threadId, turnId: turn.turnId, executionId: turn.executionId ?? null,
     url: turn.url ?? null, status, state: turn.state, model: turn.model ?? null, costUsd: turn.costUsd ?? null,
+    ...(turn.sandboxSettlement !== undefined ? { sandboxSettlement: turn.sandboxSettlement } : {}),
     reply: turn.reply?.content?.trim() ?? '', failure: turn.failure ?? null,
     assets: turn.assets ?? [], files: turn.files ?? [], approvals: turn.approvals ?? [], next,
   }
