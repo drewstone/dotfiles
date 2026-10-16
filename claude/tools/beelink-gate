@@ -1205,7 +1205,7 @@ stale_native_addons() {
   local abi
   abi=$(node -p process.versions.modules 2>/dev/null) || return 0
   python3 - "$abi" <<'PY'
-import json, os, re, sys
+import json, os, re, subprocess, sys, tempfile
 abi = sys.argv[1]
 root = "node_modules/.pnpm"
 allowed, denied = set(), set()
@@ -1270,6 +1270,56 @@ def addons(top, depth=0):
         elif entry.name.endswith(".node") and entry.is_file():
             yield entry.path
 
+def entrypoint_loads_native(path):
+    # Prebuilt addons may live in optional dependency packages. Let this Node
+    # validate a declared same-family platform binary reachable from this
+    # entrypoint, excluding incidental native dependencies and preloads.
+    probe = r"""
+const fs = require('node:fs'), path = require('node:path');
+const root = process.argv[1], manifest = require(path.join(root, 'package.json'));
+const family = manifest.name.split('/').pop() + '-';
+const libc = process.platform === 'linux' && (process.report.getReport().header.glibcVersionRuntime ? 'glibc' : 'musl');
+function owner(file) {
+  for (let dir = path.dirname(fs.realpathSync(file));; dir = path.dirname(dir)) {
+    const metadata = path.join(dir, 'package.json');
+    if (fs.existsSync(metadata)) return { root: dir, manifest: JSON.parse(fs.readFileSync(metadata, 'utf8')) };
+    if (dir === path.dirname(dir)) return null;
+  }
+}
+const providers = new Set();
+for (const name of Object.keys(manifest.optionalDependencies || {})) {
+  if (!name.split('/').pop().startsWith(family)) continue;
+  try {
+    const candidate = owner(require.resolve(name, { paths: [root] })), meta = candidate.manifest;
+    if (meta.name === name && meta.os?.includes(process.platform) && meta.cpu?.includes(process.arch)
+        && (!libc || meta.libc?.includes(libc))) providers.add(candidate.root);
+  } catch {}
+}
+const entry = require.resolve(root);
+require(entry);
+const seen = new Set(), native = [];
+function visit(mod) {
+  if (!mod || seen.has(mod.id)) return;
+  seen.add(mod.id);
+  if (mod.filename.endsWith('.node') && providers.has(owner(mod.filename)?.root)) native.push(mod.filename);
+  for (const child of mod.children) visit(child);
+}
+visit(require.cache[entry]);
+console.log(JSON.stringify(native));
+"""
+    try:
+        # A helper may inherit stdout after Node exits; a file avoids waiting
+        # forever for a descendant to close a captured pipe after timeout.
+        with tempfile.TemporaryFile(mode="w+") as output:
+            result = subprocess.run(["node", "-e", probe, os.path.abspath(path)],
+                                    stdin=subprocess.DEVNULL, stdout=output,
+                                    stderr=subprocess.DEVNULL, text=True, timeout=10)
+            output.seek(0)
+            loaded = json.load(output) if result.returncode == 0 else []
+        return isinstance(loaded, list) and bool(loaded)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
 for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
     base = os.path.join(root, store_entry, "node_modules")
     try:
@@ -1284,7 +1334,7 @@ for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
                 continue
             found = list(addons(path))
             if not found:
-                if pkg in allowed:
+                if pkg in allowed and not entrypoint_loads_native(path):
                     print(f"{pkg}\t{path}\tmissing addon")
                 continue
             for addon in found:
@@ -1303,8 +1353,10 @@ PY
 # store, and a rebuild in place overwrites the store's shared copy for every
 # checkout and Node that links it. The result goes on the receipt.
 rebuild_native_addons() {
-  local stale names=() dirs=() reasons=() name dir reason after
-  stale=$(stale_native_addons) || return 0
+  local stale names=() dirs=() reasons=() name dir reason after scan_rc
+  stale=$(BEELINK_GATE_RUN=$run_token stale_native_addons); scan_rc=$?
+  reap_leftovers
+  (( scan_rc == 0 )) || return "$scan_rc"
   [ -n "$stale" ] || return 0
   while IFS=$'\t' read -r name dir reason; do
     names+=("$name"); dirs+=("$dir"); reasons+=("$name $reason")
@@ -1312,7 +1364,9 @@ rebuild_native_addons() {
   echo "beelink-gate: rebuilding native addons for node $gate_node: ${reasons[*]}" >&2
   for dir in "${dirs[@]}"; do rm -rf -- "$dir/build" || return $?; done
   step pnpm rebuild --store-dir "$HOME/.local/share/pnpm/store" "${names[@]}" || return $?
-  after=$(stale_native_addons)
+  after=$(BEELINK_GATE_RUN=$run_token stale_native_addons); scan_rc=$?
+  reap_leftovers
+  (( scan_rc == 0 )) || return "$scan_rc"
   if [ -n "$after" ]; then
     native_rebuild="failed: ${reasons[*]}"
     echo "beelink-gate: NATIVE ADDONS STILL STALE after pnpm rebuild, so node $gate_node cannot load them: ${after//$'\t'/ }" >&2

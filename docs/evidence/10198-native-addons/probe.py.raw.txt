@@ -1,0 +1,63 @@
+import pathlib, subprocess, tempfile, shutil, os, json, hashlib, time
+repo = pathlib.Path.cwd()
+proof = pathlib.Path('/home/drew/reviews/native-guard-10198')
+retained = proof / 'installed'
+manifest = json.loads((proof / 'installed-manifest.json').read_text())
+relative_package = pathlib.Path(manifest['retainedPackageRoot']).relative_to(retained)
+relative_native = pathlib.Path('node_modules/.pnpm/@parcel+watcher-linux-x64-glibc@2.6.0/node_modules/@parcel/watcher-linux-x64-glibc/watcher.node')
+node = '/home/drew/.nvm/versions/node/v22.23.3/bin/node'
+env = os.environ.copy(); env['PATH'] = str(pathlib.Path(node).parent) + ':' + env['PATH']; env.pop('NODE_OPTIONS', None)
+abi = subprocess.check_output([node, '-p', 'process.versions.modules'], text=True, env=env).strip()
+source = (repo / 'claude/tools/beelink-gate').read_text()
+before = subprocess.check_output(['git', 'show', '53c31d243b540875d0f2f9374ef70bd62fd81604:claude/tools/beelink-gate'], text=True)
+def guard_python(text):
+    start = text.index('stale_native_addons() {')
+    start = text.index('  python3 - "$abi" <<\'PY\'\n', start) + len('  python3 - "$abi" <<\'PY\'\n')
+    return text[start:text.index('\nPY\n}', start)]
+def guard(text, fixture, options=None):
+    child = env.copy()
+    if options: child['NODE_OPTIONS'] = options
+    start = time.monotonic()
+    result = subprocess.run(['python3', '-', abi], input=guard_python(text), cwd=fixture, env=child, capture_output=True, text=True, timeout=20)
+    return {'exit': result.returncode, 'stale': result.stdout.strip().splitlines(), 'stderr': result.stderr, 'seconds': round(time.monotonic()-start, 3)}
+load_script = r"""
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+(async()=>{const watcher=require(process.argv[1]);const dir=fs.mkdtempSync(path.join(os.tmpdir(),'native-entry-fs-'));let sub,timer;try{let yes,no;const observed=new Promise((a,b)=>{yes=a;no=b});sub=await watcher.subscribe(dir,(error,events)=>{if(error)return no(error);if(events.some(e=>e.path===path.join(dir,'proof.txt')))yes(events.map(e=>({type:e.type,name:path.basename(e.path)})))});fs.writeFileSync(path.join(dir,'proof.txt'),'actual filesystem event');const events=await Promise.race([observed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Event deadline')),5000)})]);console.log(JSON.stringify({result:'PASS',node:process.version,abi:process.versions.modules,events}));}finally{clearTimeout(timer);if(sub)await sub.unsubscribe();fs.rmSync(dir,{recursive:true,force:true})}})().catch(error=>{console.log(JSON.stringify({result:'FAIL',code:error.code,message:error.message}));process.exitCode=1});
+"""
+report = {'sourceSha':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(), 'sourceFileSha256':hashlib.sha256(source.encode()).hexdigest(), 'beforeSource':'53c31d243b540875d0f2f9374ef70bd62fd81604', 'node':subprocess.check_output([node,'-p','process.version'],text=True).strip(),'abi':abi,'cases':[],'errors':[]}
+with tempfile.TemporaryDirectory(prefix='gate-native-integration-') as scratch:
+    scratch = pathlib.Path(scratch)
+    for case in ['external-valid','external-missing','external-wrong-abi','local-fallback-valid','unrelated-preload','entrypoint-timeout']:
+        fixture=scratch/case
+        if case in ['unrelated-preload','entrypoint-timeout']:
+            pkg=fixture/'node_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control';pkg.mkdir(parents=True)
+            (pkg/'binding.gyp').write_text('{}\n');(pkg/'package.json').write_text('{"name":"entry-control","version":"1.0.0","main":"index.js"}\n')
+            (pkg/'index.js').write_text('module.exports = {}\n' if case=='unrelated-preload' else 'setInterval(() => {}, 1000)\n')
+            (fixture/'pnpm-workspace.yaml').write_text('allowBuilds:\n  entry-control: true\n')
+        else:
+            shutil.copytree(retained,fixture,symlinks=True);pkg=fixture/relative_package
+            if case=='external-missing':(fixture/relative_native).unlink()
+            if case=='external-wrong-abi':shutil.copy2(proof/'wrong-abi-original.node',fixture/relative_native)
+            if case=='local-fallback-valid':
+                destination=pkg/'build/Release/watcher.node';destination.parent.mkdir(parents=True);shutil.copy2(fixture/relative_native,destination);(fixture/relative_native).unlink()
+        options='--require='+str(retained/relative_native) if case=='unrelated-preload' else None
+        original=guard(before,fixture,options);changed=guard(source,fixture,options)
+        row={'case':case,'before':original,'after':changed}
+        if case not in ['unrelated-preload','entrypoint-timeout']:
+            runtime=subprocess.run([node,'-e',load_script,str(pkg)],env=env,capture_output=True,text=True,timeout=10)
+            row['runtime']={'exit':runtime.returncode,'stdout':runtime.stdout.strip(),'stderr':runtime.stderr}
+        report['cases'].append(row)
+        try:
+            assert original['exit']==0 and changed['exit']==0, 'Guard process failed'
+            if case=='external-valid': assert original['stale'] and not changed['stale'] and row['runtime']['exit']==0, 'Valid external binding not accepted'
+            elif case=='local-fallback-valid': assert not original['stale'] and not changed['stale'] and row['runtime']['exit']==0, 'Valid local fallback regressed'
+            else:
+                assert original['stale'] and changed['stale'], 'Invalid/unrelated entrypoint was accepted'
+                if case=='external-missing': assert row['runtime']['exit']!=0 and 'No prebuild or local build' in row['runtime']['stdout'], 'Missing module not exercised'
+                if case=='external-wrong-abi': assert row['runtime']['exit']!=0 and 'NODE_MODULE_VERSION 137' in row['runtime']['stdout'] and 'NODE_MODULE_VERSION 127' in row['runtime']['stdout'], 'Actual ABI mismatch not exercised'
+                if case=='entrypoint-timeout': assert changed['seconds']>=10, 'Probe was not bounded by its timeout'
+        except AssertionError as error: report['errors'].append({'case':case,'error':str(error)})
+report['result']='PASS' if not report['errors'] else 'FAIL'
+(proof/'guard-proof.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps({'result':report['result'],'sourceSha':report['sourceSha'],'cases':len(report['cases']),'errors':report['errors']}))
+raise SystemExit(0 if not report['errors'] else 1)
