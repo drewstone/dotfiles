@@ -7,6 +7,7 @@ Resolve installed symlinks before following links.
 
 Deliver through the requested consumer; prove production claims through the shipped user flow before Drew tests it, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)).
 Fix causes, not retries or manual workarounds.
+Never revert a merged change; fix it forward. Drew, 2026-10-12: "we move forward we crush and fix and simplify we don't revert!"; 2026-10-16, after a release-train revert: "can we stop reverting, get that shit out of our process". A red develop, cut or release goes back to the change's author with the bisected failing tests, and the release owner lands the fix itself when the author cannot land it first; no deadline makes a revert PR the remedy.
 Ask what outcome matters, what can disappear, and what evidence would change the next decision.
 Use these questions for judgment, not a mandatory report or routine confirmation.
 Find existing owners and consumers; prefer deletion, simplification, optimization, then automation.
