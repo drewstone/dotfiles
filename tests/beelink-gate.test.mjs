@@ -1845,9 +1845,9 @@ test("a disk-floor refusal, then a green --ship whose ship-proof publish GitHub 
     chmodSync(join(f.home, "bin", "gh-drew"), 0o755);
     const ship = (avail) => run("bash", [gate, "--remote", ...["beelink2", "https://github.com/owner/repo.git", sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)],
       { env: { ...f.env, GIT_CONFIG_GLOBAL: gitconfig, ...(avail ? { FAKE_AVAIL: avail } : {}) } });
-    const refused = ship("166684823552");
+    const refused = ship("150323855360");
     assert.equal(refused.status, 75, refused.stderr);
-    assert.match(refused.stderr, /REFUSED beelink2 has 166684823552 bytes free, below its 162 GiB disk floor/);
+    assert.match(refused.stderr, /REFUSED beelink2 has 150323855360 bytes free, below its 150 GiB disk floor/);
     assert.match(refused.stderr.trim().split("\n").at(-1), /^beelink-gate: TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor$/);
     const retried = ship();
     assert.equal(retried.status, 0, retried.stderr);
