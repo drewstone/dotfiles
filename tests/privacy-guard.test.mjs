@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 const hook = resolve("git/hooks/pre-commit");
 // Fictional detail: the real denylist is a local, untracked file and never appears here.
 const DETAIL = "77 Fictional Test Lane";
+// A Luhn-valid 16-digit run, assembled at runtime so this file never stages one itself.
+const LUHN_DIGITS = ["4539", "1488", "0343", "6467"].join("");
 
 function repoWith(content, { denylist = `# local only\n${DETAIL}\n` } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "privacy-guard-"));
@@ -43,6 +45,7 @@ test("accepts published processor test cards, timestamps and ordinary content", 
   for (const content of [
     "stripe test card 4242 4242 4242 4242\n",
     "created_at 1791416871000 and id 4539148803436467123\n",
+    `cost_per_slot 0.${LUHN_DIGITS} and ${LUHN_DIGITS}.5 usd\n`,
     "nothing personal here\n",
   ]) {
     assert.equal(repoWith(content).status, 0, content);
