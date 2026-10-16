@@ -217,7 +217,7 @@ test("a merge GitHub refuses is recorded with its reason", () => {
   assert.match(log, /"pr": 13, .*"outcome": "merge refused/);
 });
 
-// The pause: `pause` writes it, the next pass merges only version PRs and release-critical PRs, and it ends on its own.
+// The pause: `pause` writes it, the next pass merges only release-critical PRs, and it ends on its own.
 const merged = (f, n) => new RegExp(`pr merge ${n} -R tangle-network/agent-container --merge --match-head-commit ${sha(n)}`).test(f.calls());
 const pause = (f, ...args) => {
   const r = f.run("pause", "--minutes", "30", "--reason", "version PR #11196 CI window", ...args);
@@ -229,7 +229,7 @@ test("unpaused, a green PR merges, status says so and names the allowlist, and a
   const f = fixture([pr(50), pr(51, { headRefName: "changeset-release/develop" })]);
   const s = f.run("status");
   assert.equal(s.status, 0, s.stderr);
-  assert.match(s.stdout, /not paused\. A pause merges only: head branch changeset-release\/\* \(version PRs\), label release-critical/);
+  assert.match(s.stdout, /not paused\. A pause merges only: PRs labelled release-critical \(version PRs stay with release\.yml\)/);
   const r = f.run();
   assert.equal(r.status, 0, r.stderr);
   assert.ok(merged(f, 50));
@@ -245,15 +245,16 @@ test("paused, a normal green PR is skipped with one line naming the pause", () =
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!merged(f, 52));
   assert.match(r.stdout, /^\S+ paused until \S+Z \(version PR #11196 CI window\): skipped #52$/m);
-  assert.match(f.run("status").stdout, /paused until .*While paused it merges only: head branch changeset-release\/\* \(version PRs\), label release-critical/s);
+  assert.match(f.run("status").stdout, /paused until .*While paused it merges only: PRs labelled release-critical \(version PRs stay with release\.yml\)/s);
 });
 
-test("paused, a green version PR (changeset-release/*) merges", () => {
+test("paused, a green version PR (changeset-release/*) is left to release.yml: no merge call", () => {
   const f = fixture([pr(53, { headRefName: "changeset-release/develop" })]);
   pause(f);
   const r = f.run();
-  assert.ok(merged(f, 53), f.calls());
-  assert.match(r.stdout, /#53 merged/);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(f.calls(), /pr merge 53 /);
+  assert.doesNotMatch(r.stdout, /#53 merged/);
 });
 
 test("paused, a green release-critical PR merges, and a red one still waits", () => {

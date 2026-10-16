@@ -262,7 +262,7 @@ tail ~/.local/state/merge-on-green/decisions.jsonl
 
 To keep a ready PR open, add the `hold` label.
 
-To give a release a clean CI window, pause it on drew-gtr-pro, where the timer runs. While paused, each pass still runs but merges only version PRs (head `changeset-release/*`, which it otherwise leaves to release automation) and PRs labelled `release-critical`; every other PR gets one line, `paused until … (reason): skipped #N`. A pause ends on its own at its `until`; `pause` refuses more than 120 minutes, so a longer hold is a new pause.
+To give a release a clean CI window, pause it on drew-gtr-pro, where the timer runs. While paused, each pass still runs but merges only PRs labelled `release-critical`; version PRs (`changeset-release/*`) stay with release.yml, paused or not, and every other PR gets one line, `paused until … (reason): skipped #N`. A pause ends on its own at its `until`; `pause` refuses more than 120 minutes, so a longer hold is a new pause.
 
 ```bash
 # A login shell puts ~/bin (gh-drew) on PATH, as the timer's unit does.
