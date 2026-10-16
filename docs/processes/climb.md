@@ -2,7 +2,7 @@
 
 Everything we make is a version on a hill: a product, a ruler, an agent profile, a skill, a directive, a hook, a system, a report.
 Everything we want is a measured position on that hill.
-Every change is a move with a prediction, kept if it climbs and reverted if it does not.
+Every change is a move with a prediction, kept if it climbs and fixed forward or deleted if it does not.
 The hill itself is checked against the goal, so we never climb the wrong one.
 
 This document is the shared process for Claude, Codex and OpenCode.
@@ -26,7 +26,7 @@ A loop that measures but never decides is not a climb.
 | **Metric with headroom** | How far are we from a cited world-class exemplar, on 0–100 or a physical unit? | Every version scores the maximum, or the scale is relative to our own past |
 | **Instrument** | What measures it cheaply and identically every time? | Someone measures it by hand once |
 | **Ledger** | Which moves were made, with what prediction, and what happened? | Changes ship without a predicted effect |
-| **Decision rule** | When do we keep, iterate, abandon or revert? | Results are reported but nothing is reverted |
+| **Decision rule** | When do we keep, iterate or abandon? | Results are reported but nothing changes |
 | **Calibration** | Does the metric still track the goal? | The metric saturates, drifts, or disagrees with the person's own verdict |
 
 Before work on any layer, name the hill, read its current and best values, and write the number to beat.
