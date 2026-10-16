@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -3322,47 +3322,90 @@ test("an auto gate keeps its reservation's place in line, so it and a newer gate
   }
 });
 
-test("a normal auto waiter keeps its place ahead of a newer gate while both hosts are busy", async () => {
-  const f = fixture();
-  const events = join(f.root, "fifo-events");
-  const b1 = join(f.root, "cache-100.98.195.7", ".locks");
-  const b2 = join(f.root, "cache-100.127.22.51", ".locks");
-  mkdirSync(b1, { recursive: true });
-  mkdirSync(b2, { recursive: true });
-  const holder = spawn("python3", ["-u", "-c", 'import fcntl,sys,time; fs=[open(p,"w") for p in sys.argv[1:]]; [fcntl.flock(f,fcntl.LOCK_EX) for f in fs]; print("held",flush=True); time.sleep(60)', join(b1, "local-owner-repo.lock"), join(b2, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
-  let older, newer;
+test("a real reservation admits its gate ahead of a gate queued before it launches", { timeout: 120_000 }, async (t) => {
+  // This journey uses the admitted host's real tools, policy, pressure and disk.
+  // The older gate starts last: only its reservation can put it ahead.
+  const host = ({ "DESKTOP-18IR33V": "beelink1", beelink1: "beelink1", beelink2: "beelink2" })[hostname()];
+  if (!host || process.env.BEELINK_GATE_ADMITTED !== "1") return t.skip("requires an admitted Beelink journey");
+  const root = mkdtempSync(join(tmpdir(), "gate-fifo-journey-"));
+  const cache = join(root, "cache"), state = join(root, "state"), source = join(root, "source");
+  const events = join(root, "events"), release = join(root, "release");
+  const token = "a21f6c49ec5047469430d82a795be5ba";
+  const env = { ...process.env, BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_STATE_DIR: state,
+    XDG_CACHE_HOME: join(root, "xdg-cache"), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_LOAD_WAIT: "60s", BEELINK_GATE_MAX_HOLD: "60s" };
+  // The outer gate's placement and heartbeat belong to that gate, not these
+  // private-cache children. Keep actual host limits and pressure inputs.
+  for (const key of ["BEELINK_GATE_ID", "BEELINK_GATE_RESERVATION_TOKEN", "BEELINK_GATE_HEARTBEAT", "BEELINK_GATE_AUTO",
+    "BEELINK_GATE_CLASS", "BEELINK_GATE_URGENT", "BEELINK_GATE_ADMIT_WAIT", "BEELINK_GATE_PLACED_WAIT", "CARGO_TARGET_DIR"]) delete env[key];
+  const children = [], deadline = Date.now() + 85_000;
+  const launch = (args, extra = {}) => {
+    const child = spawn("timeout", ["--kill-after=3s", "80s", "bash", gate, ...args], { env: { ...env, ...extra }, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.once("close", (code) => resolveDone({ code, stdout, stderr })));
+    const job = { child, done, get stdout() { return stdout; }, get stderr() { return stderr; } };
+    children.push(job);
+    return job;
+  };
+  const until = async (check, reason) => {
+    while (!check() && Date.now() < deadline && children.every((job) => job.child.exitCode === null && job.child.signalCode === null)) await sleepMs(25);
+    assert.ok(check(), `${reason}\n${children.map((job) => job.stderr).join("\n")}`);
+  };
+  const git = (...args) => {
+    const result = run("git", args, { cwd: source, env });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  let reservation, holder, holderDone;
   try {
-    await new Promise((done) => holder.stdout.once("data", done));
-    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "20", BEELINK_GATE_LOAD_WAIT: "35s" };
-    older = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "bash", "-c", `echo older >> '${events}'`], { env });
-    let olderErr = "", olderAdmitted = 0n, newerAdmitted = 0n;
-    older.stderr.on("data", (chunk) => { olderErr += chunk; if (!olderAdmitted && /admitted on beelink/.test(olderErr)) olderAdmitted = process.hrtime.bigint(); });
-    for (let i = 0; i < 200 && !/no beelink is both free/.test(olderErr); i++) await sleepMs(25);
-    assert.match(olderErr, /no beelink is both free/);
-
-    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo newer >> '${events}'`].map(encode);
-    newer = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_CACHE_ROOT: join(f.root, "cache-100.127.22.51"), BEELINK_GATE_REPO_CHECKOUTS: "1" } });
-    let newerErr = "";
-    newer.stderr.on("data", (chunk) => { newerErr += chunk; if (!newerAdmitted && /admitted on beelink/.test(newerErr)) newerAdmitted = process.hrtime.bigint(); });
-    for (let i = 0; i < 200 && !/waiting \d+s for one of 1/.test(newerErr); i++) await sleepMs(25);
-    assert.match(newerErr, /waiting \d+s for one of 1/);
-    holder.kill("SIGKILL");
-    const [olderStatus, newerStatus] = await Promise.all([new Promise((done) => older.once("close", done)), new Promise((done) => newer.once("close", done))]);
-    assert.equal(olderStatus, 0, olderErr);
-    assert.equal(newerStatus, 0, newerErr);
-    // The FIFO property is admission order: the newer gate is admitted only after the
-    // older one. Once they run on different hosts, which echo lands first is a race
-    // (it failed 3 of about 10 gate runs on 2026-10-15), so the echoes are compared as a set.
-    assert.ok(olderAdmitted > 0n && newerAdmitted > olderAdmitted, `${olderErr}\n${newerErr}`);
-    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n").sort(), ["newer", "older"]);
-    for (const locks of [b1, b2]) {
-      assert.deepEqual(readdirSync(locks).filter((name) => name.startsWith("queue-")), [], "normal reservation and gate tickets are removed");
-    }
+    mkdirSync(source); mkdirSync(join(root, "owner")); mkdirSync(join(cache, ".locks"), { recursive: true });
+    writeFileSync(join(source, "value.txt"), "real FIFO journey\n");
+    git("init", "-q"); git("add", "."); git("commit", "-qm", "FIFO journey");
+    const sha = git("rev-parse", "HEAD"), bare = join(root, "owner", "repo.git"), url = `file://${bare}`;
+    git("clone", "-q", "--bare", source, bare);
+    const queried = run("timeout", ["20s", "/mnt/c/Windows/System32/reg.exe", "query", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU"]);
+    assert.equal(queried.status, 0, queried.stderr);
+    const policy = queried.stdout;
+    const day = Number.parseInt(policy.match(/ScheduledInstallDay\s+REG_DWORD\s+(0x[\da-f]+)/i)?.[1], 16);
+    const hour = Number.parseInt(policy.match(/ScheduledInstallTime\s+REG_DWORD\s+(0x[\da-f]+)/i)?.[1], 16);
+    assert.ok(Number.isInteger(day) && Number.isInteger(hour), "actual Windows Update policy is required");
+    holder = spawn("flock", ["--no-fork", "-x", join(cache, ".locks", "local-owner-repo.lock"), "bash", "-c", 'echo held; read -r _'], { stdio: ["pipe", "pipe", "pipe"] });
+    holderDone = new Promise((done) => holder.once("close", done));
+    let held = false;
+    holder.stdout.once("data", () => { held = true; });
+    await until(() => held, "checkout holder did not start");
+    reservation = launch(["--urgent-reserve", ...[host, url, "no-install", "normal", Math.floor(Date.now() / 1000), token].map(encode)]);
+    await until(() => reservation.stdout.includes("normal-reserved"), "reservation did not start");
+    const remote = (command, extra) => launch(["--remote", ...[host, url, sha, "no-install", day, hour, "bash", "-c", command].map(encode)], extra);
+    const newer = remote(`echo newer >> '${events}'`);
+    await until(() => /waiting \d+s for one of 1/.test(newer.stderr), "newer gate did not queue");
+    const older = remote(`echo older-start >> '${events}'; while [[ ! -e '${release}' ]]; do sleep 0.05; done; echo older-finish >> '${events}'`, { BEELINK_GATE_RESERVATION_TOKEN: token });
+    await until(() => /waiting \d+s for one of 1/.test(older.stderr), "reserved gate did not queue");
+    holder.stdin.end("release\n");
+    assert.equal(await holderDone, 0);
+    await until(() => existsSync(events), "reserved command did not start");
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["older-start"]);
+    // Mirror the launcher's reservation release only after actual admission.
+    reservation.child.stdin.end();
+    assert.equal((await reservation.done).code, 0);
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["older-start"], "newer command must stay behind the held checkout");
+    writeFileSync(release, "");
+    const results = await Promise.all([older.done, newer.done]);
+    for (const result of results) assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(readFileSync(events, "utf8").trim().split("\n"), ["older-start", "older-finish", "newer"]);
+    const rows = readFileSync(join(state, "receipts.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(rows.length, 2);
+    for (const row of rows) { assert.equal(row.exit, 0); assert.equal(row.sha, sha); }
+    assert.deepEqual(readdirSync(join(cache, ".locks")).filter((name) => name.startsWith("queue-")), []);
+    t.diagnostic("real FIFO: reservation -> newer queued -> reserved gate queued -> older-start -> reservation released -> older-finish -> newer; 2 successful receipts");
   } finally {
-    holder.kill("SIGKILL");
-    older?.kill("SIGKILL");
-    newer?.kill("SIGKILL");
-    rmSync(f.root, { recursive: true, force: true });
+    writeFileSync(release, "");
+    holder?.stdin.end(); holder?.kill("SIGTERM");
+    reservation?.child.stdin.end();
+    for (const job of children) if (job.child.exitCode === null) job.child.kill("SIGTERM");
+    await Promise.all([...children.map((job) => job.done), holderDone]);
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
