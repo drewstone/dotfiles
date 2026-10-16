@@ -57,6 +57,9 @@ if [ ! -e "$marker" ]; then
   printf '{"ts":"%s","session":"%s","variant":"%s","cwd":"%s"}\n' \
     "$ts" "$SESSION" "$SLUG" "$cwd" >> "$HOME/.claude/directives-log.jsonl" 2>/dev/null || true
   printf '%s\n' "$SLUG" > "$marker" 2>/dev/null || true
+  # The same assignment, on the session's identity record that traces reads (session-identity.sh).
+  "$(dirname "${BASH_SOURCE[0]}")/session-identity.sh" "$SESSION" \
+    "$(jq -nc --arg v "$SLUG" '{"agent.directive.variant": $v}')" 2>/dev/null || true
 fi
 
 jq -n --rawfile body "$FILE" --arg slug "$SLUG" '
