@@ -2479,7 +2479,7 @@ test("an auto gate whose host falls below its disk floor while it queued gives t
     const closed = new Promise((resolveDone) => child.on("close", resolveDone));
     for (let i = 0; i < 200 && !/waiting \d+s/.test(stderr); i++) await sleepMs(50);
     // While it waits on pressure, the disk drops below the floor; then pressure clears.
-    writeFileSync(avail, String(150 * 2 ** 30));
+    writeFileSync(avail, String(140 * 2 ** 30));
     writeFileSync(pressure, pressureLine(5));
     assert.equal(await closed, 76, stderr);
     assert.match(stderr, /beelink2 gave the gate back before checkout \(beelink2 is below its disk floor\); placing the gate again/);
