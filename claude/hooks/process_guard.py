@@ -57,6 +57,12 @@ while their briefs said not to:
                 around `climb-log append`, which checks that every reported number names its selection
                 rule. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair Drew approved.
 
+  tail-sleep    `tail -f /dev/null` as a command, usually `read -t N < <(tail -f /dev/null)` used as a
+                sleep. Under the Mac's bash 3.2 the read can outlive its timeout, and every poll leaks a
+                tail: on 2026-10-15 company-01's watchers hung for 15 h, never reported, and left 380
+                processes behind. Wait with `sleep` in a loop with a `date +%s` deadline instead.
+                Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
+
 Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed
 too: an admin merge or force push run on a Beelink has the same effect on GitHub. The Mac
 build rule skips remote commands, which is where that work belongs.
@@ -1297,6 +1303,20 @@ def rule_kill(cmd):
 LEDGER = re.compile(r"(?:^|/)(?:\.agent/climb\.jsonl|reports/climb/ledger\.jsonl)$")
 
 
+def rule_tail_sleep(cmd):
+    """`tail -f /dev/null` as a command is a sleep that can hang and leaks a process per poll."""
+    if cmd.prog != "tail" or "/dev/null" not in cmd.argv[1:]:
+        return None
+    if not any(a in ("-f", "-F", "--follow") or a.startswith("--follow=") for a in cmd.argv[1:]):
+        return None
+    return ("tail-sleep", "tail -f /dev/null as a sleep",
+            "`tail -f /dev/null` never exits, so `read -t N < <(tail -f /dev/null)` is a sleep that can outlive "
+            "its timeout and leaves a tail behind on every poll; on 2026-10-15 watchers built this way hung for "
+            "15 h and leaked 380 processes on the Mac. Wait with `sleep N` inside a loop bounded by a "
+            "`date +%s` deadline, and check the watched thing's conclusion before exiting. To run it anyway, "
+            "put CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.", "CC_ALLOW_TAIL_SLEEP")
+
+
 def rule_ledger_write(cmd):
     """A shell write into a climb ledger skips climb-log's measurement check (and `>` erases its history)."""
     hit = next((w for w in cmd.writes if LEDGER.search(w.strip("'\""))), None)
@@ -1509,7 +1529,7 @@ def evaluate_full(payload):
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_kill(cmd),
-                    rule_ledger_write(cmd)):
+                    rule_ledger_write(cmd), rule_tail_sleep(cmd)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])

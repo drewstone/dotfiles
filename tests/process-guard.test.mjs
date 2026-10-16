@@ -479,6 +479,28 @@ test("ledger-write: reads, the checked append and an approved repair pass", () =
   assert.equal(decide("CC_ALLOW_LEDGER_WRITE=1 sed -n 1,10p .agent/climb.jsonl > .agent/climb.jsonl"), "allow");
 });
 
+// ----------------------------------------------------------------------------- tail-sleep
+
+test("tail-sleep: refuses tail -f /dev/null used as a sleep, locally, nested and over ssh", () => {
+  check([
+    "read -t 30 < <(tail -f /dev/null) || true",
+    "for i in $(seq 1 12); do gh pr view 1; read -t 30 < <(tail -f /dev/null) || true; done",
+    "bash -c 'read -t 2 < <(tail -f /dev/null); echo done'",
+    "ssh -n drew-gtr-pro 'read -t 25 < <(tail -f /dev/null); uptime'",
+  ], "deny");
+  assert.match(reason("read -t 30 < <(tail -f /dev/null)"), /date \+%s/);
+});
+
+test("tail-sleep: following real logs, container keepalives and the override pass", () => {
+  check([
+    "tail -f /var/log/system.log",
+    "tail -n 20 /dev/null",
+    "docker run -d img tail -f /dev/null",
+    "sleep 30",
+  ], "allow");
+  assert.equal(decide("read -t 5 < <(CC_ALLOW_TAIL_SLEEP=1 tail -f /dev/null)"), "allow");
+});
+
 // -------------------------------------------------------------------------------- general
 
 test("logs never hold a key-shaped value from the command", () => {
