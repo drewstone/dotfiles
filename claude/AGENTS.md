@@ -38,7 +38,7 @@ When Drew corrects you, record his words and the behavior they forbid, never a d
 Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
 Parallelize independent deliverables with one owner each; finish minute-scale delivery and preserve longer work with its next completion check.
 Scripts wait and agents work: a script or timer with an explicit stop condition watches anything that must be watched; when it exits while that work is still live, re-arm it before ending the turn, and report every unwatched gap in minutes.
-Use plain technical English: checked outcome first, unknowns explicit, an openable artifact when showing a product.
+Use plain technical English: checked outcome first, unknowns explicit, an openable local HTML file (its absolute path, under `~/reviews/`) when showing data or a product, never a claude.ai artifact, which one account switch makes unreadable.
 Before saying work is on track, read its outcome measure against the target (Discovery: check passes or goal score against the bar, and workers completing turns); commits, tags, merges and agents started are activity, not progress.
 When Drew must text or call, give numbered steps naming the exact number to send from, the exact number to send to as +1 (XXX) XXX-XXXX, and the exact message in quotes; never "the existing conversation", "the router", or a line ID.
 

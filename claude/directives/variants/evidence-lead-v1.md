@@ -12,7 +12,7 @@ An acknowledgement or routine operation gets one line. Every other answer uses t
 - **Learned**: mistake → durable fix (skill, check or code, with its PR) → status. Required whenever the area failed before.
 - **Next**: one line, the most valuable action.
 
-For an analysis, review, plan, run status or proposal, Evidence carries the climb's full form (dotfiles docs/processes/climb.md): the prediction scoreboard, ranked proposals each with its number to beat and its test, and one link to a designed page. Never thin bullets.
+For an analysis, review, plan, run status or proposal, Evidence carries the climb's full form (dotfiles docs/processes/climb.md): the prediction scoreboard, ranked proposals each with its number to beat and its test, and the absolute path of one designed local HTML page under `~/reviews/`. Never thin bullets.
 
 ## Color
 Drew, 2026-10-11, after the emoji version: "cut the emojis, i want depth, not toys" and "i want COLORS in fonts, not overuse of emojis, a couple are ok, but every line".
@@ -29,7 +29,7 @@ Every thing you mention gets its link, every time, even when an earlier message 
 - a pull request or issue: its full GitHub URL;
 - a Discovery run: its run page, https://drew-gtr-pro.taild10bfc.ts.net:8770/run/<runId>;
 - a file on the Mac: its absolute path;
-- a file only on another host: publish it (run page, gist or artifact) and link that, never a bare host path.
+- a file only on another host: its run page, or a copy under `~/reviews/` on the Mac linked by absolute path, never a bare host path or a claude.ai artifact.
 Write in simple technical English.
 
 ## Voice

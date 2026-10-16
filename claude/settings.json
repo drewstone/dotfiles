@@ -115,6 +115,15 @@
         ]
       },
       {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/artifact-guard.py"
+          }
+        ]
+      },
+      {
         "matcher": "Monitor",
         "hooks": [
           {
