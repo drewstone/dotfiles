@@ -2,6 +2,9 @@
 """Merge every green agent-container pull request into develop.
 
 usage: merge-on-green [--repo owner/name] [--state-dir DIR] [--dry-run]
+       merge-on-green pause --minutes N --reason TEXT    (N at most 120)
+       merge-on-green resume
+       merge-on-green status
 
 One tick reads every open PR into develop in one GraphQL call and merges each
 PR that is ready:
@@ -19,16 +22,25 @@ drewstone through gh-drew, so develop CI and release automation fire exactly
 as they do for any merge. Develop then runs the full test fan; red is fixed
 forward (docs/processes/shipping.md in agent-container).
 
+A pause holds every merge except version PRs (head changeset-release/*) and PRs
+labelled release-critical, so a release gets a clean CI window. It comes from
+<state-dir>/pause.json, written by `pause` and removed by `resume`, or from the
+repo variable MERGE_ON_GREEN_PAUSED="<until UTC ISO> [reason]", read once per
+pass. Each ends on its own at its until; a variable also ends 120 minutes after
+it was last set. While paused the pass runs and logs one line per skipped PR.
+
 Each decision is appended to <state-dir>/decisions.jsonl and the open queue is
 written to <state-dir>/status.md. Run it from a timer; it holds a lock.
 """
 import argparse
 import datetime as dt
 import fcntl
+import getpass
 import json
 import os
 import time
 import re
+import socket
 import subprocess
 import sys
 
@@ -46,6 +58,12 @@ RED_REFRESH_S = int(os.environ.get("MERGE_ON_GREEN_RED_REFRESH_S", "1800"))
 # gh-drew waits for a Codex review running on the head before it merges; a tick does not wait,
 # so such a PR is refused now and tried again on the next tick.
 os.environ.setdefault("GH_DREW_REVIEW_WAIT", "0")
+# A pause ends on its own: version PR #11196 needed one clean CI window on 2026-10-15, and the
+# only pause then was stopping the timer by hand behind a separate dead-man restart.
+PAUSE_MAX_MIN = 120
+PAUSE_VAR = "MERGE_ON_GREEN_PAUSED"
+ALLOW_BRANCH, ALLOW_LABEL = "changeset-release/", "release-critical"
+ALLOWLIST = f"head branch {ALLOW_BRANCH}* (version PRs), label {ALLOW_LABEL}"
 
 QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
 ref(qualifiedName:"refs/heads/develop"){target{oid}}
@@ -60,11 +78,77 @@ def gh(*args, input=None):
     return subprocess.run(["gh-drew", *args], input=input, capture_output=True, text=True)
 
 
-def decide(pr, now):
+def allowlisted(pr):
+    return pr["headRefName"].startswith(ALLOW_BRANCH) or ALLOW_LABEL in {l["name"] for l in pr["labels"]["nodes"]}
+
+
+def utc(s):
+    t = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+
+def active_pause(a, now):
+    """The pause in force now, from pause.json or the repo variable, or None; the later one wins."""
+    pauses = []
+    try:
+        with open(os.path.join(a.state_dir, "pause.json")) as f:
+            p = json.load(f)
+        pauses.append((utc(p["until"]), p.get("reason", ""), f"{p.get('who') or 'unknown'} via pause.json"))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    r = gh("api", f"repos/{a.repo}/actions/variables/{PAUSE_VAR}")
+    try:
+        v = json.loads(r.stdout)
+        until, _, why = v["value"].strip().partition(" ")
+        # A forgotten variable cannot hold merges past the same 120 minutes a `pause` may ask for.
+        end = min(utc(until), utc(v["updated_at"]) + dt.timedelta(minutes=PAUSE_MAX_MIN))
+        pauses.append((end, why.strip(), f"repo variable {PAUSE_VAR}"))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        pass
+    live = [p for p in pauses if p[0] > now]
+    if not live:
+        return None
+    until, reason, by = max(live)
+    return {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "reason": reason or "no reason given", "by": by}
+
+
+def pause_line(p):
+    if not p:
+        return f"merge-on-green: not paused. A pause merges only: {ALLOWLIST}."
+    return (f"merge-on-green: paused until {p['until']} ({p['reason']}), set by {p['by']}.\n"
+            f"While paused it merges only: {ALLOWLIST}.")
+
+
+def control(a):
+    """The pause, resume and status commands; none of them takes the pass lock."""
+    path = os.path.join(a.state_dir, "pause.json")
+    if a.command == "pause":
+        if a.minutes is None or not 1 <= a.minutes <= PAUSE_MAX_MIN or not (a.reason or "").strip():
+            print(f"merge-on-green: pause needs --minutes 1..{PAUSE_MAX_MIN} and --reason; a longer hold is a new pause "
+                  f"when this one ends (got --minutes {a.minutes})", file=sys.stderr)
+            return 2
+        until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=a.minutes)
+        lane = os.environ.get("FLEET_LANE")
+        rec = {"until": until.strftime("%Y-%m-%dT%H:%M:%SZ"), "reason": a.reason.strip(),
+               "who": f"{getpass.getuser()}@{socket.gethostname()}" + (f" ({lane})" if lane else "")}
+        with open(path + ".tmp", "w") as f:
+            json.dump(rec, f)
+        os.replace(path + ".tmp", path)
+    elif a.command == "resume":
+        if os.path.exists(path):
+            os.remove(path)
+        # The variable is the other pause source; resume ends both.
+        gh("api", "--method", "DELETE", f"repos/{a.repo}/actions/variables/{PAUSE_VAR}")
+    print(pause_line(active_pause(a, dt.datetime.now(dt.timezone.utc))))
+    return 0
+
+
+def decide(pr, now, paused=False):
     """Return (action, reason) for one PR node: merge, conflict, or wait."""
     if pr["isDraft"]:
         return "wait", "draft"
-    if pr["headRefName"].startswith(RELEASE_PREFIXES):
+    # A version PR is release automation's to merge, except during a pause, which exists to land it.
+    if pr["headRefName"].startswith(RELEASE_PREFIXES) and not (paused and pr["headRefName"].startswith(ALLOW_BRANCH)):
         return "wait", "release branch"
     labels = {l["name"] for l in pr["labels"]["nodes"]}
     if "hold" in labels:
@@ -167,10 +251,15 @@ def main():
     ap.add_argument("--state-dir", default=os.path.expanduser("~/.local/state/merge-on-green"))
     ap.add_argument("--git-url", help="clone URL for the merge mirror (default: the repo over SSH)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("command", nargs="?", choices=["pause", "resume", "status"], help="omit to run one pass")
+    ap.add_argument("--minutes", type=int, help=f"pause: how long, at most {PAUSE_MAX_MIN}")
+    ap.add_argument("--reason", help="pause: why, shown in every skipped line")
     a = ap.parse_args()
     owner, name = a.repo.split("/", 1)
     a.git_url = a.git_url or f"git@github.com:{a.repo}.git"
     os.makedirs(a.state_dir, exist_ok=True)
+    if a.command:
+        return control(a)
     lock = open(os.path.join(a.state_dir, "lock"), "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -186,6 +275,7 @@ def main():
     develop_tip = ((repo.get("ref") or {}).get("target") or {}).get("oid", "")
     now = dt.datetime.now(dt.timezone.utc)
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    pause = active_pause(a, now)
     noted_path = os.path.join(a.state_dir, "conflict-noted.json")
     noted = json.load(open(noted_path)) if os.path.exists(noted_path) else {}
     for k, v in list(noted.items()):  # notes written before 2026-10-15 hold a bare head: its owner was told
@@ -195,7 +285,12 @@ def main():
 
     for pr in prs:
         n, head = pr["number"], pr["headRefOid"]
-        action, reason = decide(pr, now)
+        if pause and not allowlisted(pr):
+            outcome = f"paused until {pause['until']} ({pause['reason']}): skipped #{n}"
+            records.append({"at": stamp, "pr": n, "head": head, "action": "paused", "outcome": outcome})
+            status.append(f"- #{n} {pr['headRefName']}: {outcome}")
+            continue
+        action, reason = decide(pr, now, paused=bool(pause))
         handled = f"{head}@{develop_tip}"
         if action != "wait" and noted.get(str(n)) == handled:
             # This head's conflict was handled against this develop; retry when either moves.
@@ -245,7 +340,7 @@ def main():
 
     with open(os.path.join(a.state_dir, "decisions.jsonl"), "a") as f:
         for rec in records:
-            if rec["action"] != "wait" or rec["outcome"] == "merged":
+            if rec["action"] not in ("wait", "paused") or rec["outcome"] == "merged":
                 f.write(json.dumps(rec) + "\n")
     json.dump(noted, open(noted_path, "w"))
     gates = []
@@ -258,9 +353,12 @@ def main():
     gate_line = (f"Gate, head to green, last {len(gates)} merges: p50 {gates[len(gates) // 2] // 60} min, "
                  f"max {gates[-1] // 60} min.\n\n") if gates else ""
     with open(os.path.join(a.state_dir, "status.md"), "w") as f:
-        f.write(f"# merge-on-green {stamp}\n\n" + gate_line + ("\n".join(status) or "Nothing waiting.") + "\n")
+        f.write(f"# merge-on-green {stamp}\n\n" + (pause_line(pause) + "\n\n" if pause else "") + gate_line
+                + ("\n".join(status) or "Nothing waiting.") + "\n")
     for rec in records:
-        if rec["action"] != "wait":
+        if rec["action"] == "paused":
+            print(f"{stamp} {rec['outcome']}")
+        elif rec["action"] != "wait":
             print(f"{stamp} #{rec['pr']} {rec['outcome']}")
     return 0
 

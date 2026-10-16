@@ -1,6 +1,6 @@
 // merge-on-green against a fake gh-drew: one fixture of open PRs, one tick, the merges it makes.
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -51,20 +51,24 @@ function pr(number, over = {}) {
 }
 const withChecks = (n, nodes) => pr(n, { commits: { nodes: [{ commit: { committedDate: old, statusCheckRollup: { contexts: { nodes } } } }] } });
 
-function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Request is not mergeable", gitUrl } = {}) {
+function fixture(prs, { refuse = [], conflictUpdate = [], refuseText = "Pull Request is not mergeable", gitUrl, variable } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "mog-"));
+  if (variable) writeFileSync(join(dir, "variable.json"), JSON.stringify({ name: "MERGE_ON_GREEN_PAUSED", ...variable }));
   const graphql = (develop) => writeFileSync(join(dir, "graphql.json"), JSON.stringify({ data: { repository: { ref: { target: { oid: develop } }, pullRequests: { nodes: prs } } } }));
   graphql("d".repeat(40));
   writeFileSync(join(dir, "gh-drew"), `#!/bin/bash
 echo "$* wait=\${GH_DREW_REVIEW_WAIT:-}" >> "${dir}/calls.log"
 if [ "$1 $2" = "api graphql" ]; then cat "${dir}/graphql.json"; exit 0; fi
+if [ "$1 $2" = "api repos/tangle-network/agent-container/actions/variables/MERGE_ON_GREEN_PAUSED" ]; then
+  [ -f "${dir}/variable.json" ] && { cat "${dir}/variable.json"; exit 0; }; echo '{"message":"Not Found"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1
+fi
 for r in ${conflictUpdate.join(" ")}; do [ "$1 $3 $4" = "api PUT repos/tangle-network/agent-container/pulls/$r/update-branch" ] && { echo "gh: merge conflict between base and head (HTTP 422)" >&2; exit 1; }; done
 if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r" ] && { echo "${refuseText}" >&2; exit 1; }; done; exit 0; fi
 exit 0
 `);
   chmodSync(join(dir, "gh-drew"), 0o755);
   // No test reaches GitHub: the merge mirror clones gitUrl, a missing local path unless a test builds an origin.
-  const run = () => spawnSync("python3", [TOOL, "--state-dir", join(dir, "state"), "--git-url", gitUrl ?? join(dir, "no-origin.git")], {
+  const run = (...args) => spawnSync("python3", [TOOL, ...args, "--state-dir", join(dir, "state"), "--git-url", gitUrl ?? join(dir, "no-origin.git")], {
     env: { ...process.env, ...GIT_ID, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8",
   });
   const calls = () => (existsSync(join(dir, "calls.log")) ? readFileSync(join(dir, "calls.log"), "utf8") : "");
@@ -211,4 +215,92 @@ test("a merge GitHub refuses is recorded with its reason", () => {
   assert.match(r.stdout, /#13 merge refused: Pull Request is not mergeable/);
   const log = readFileSync(join(f.dir, "state", "decisions.jsonl"), "utf8");
   assert.match(log, /"pr": 13, .*"outcome": "merge refused/);
+});
+
+// The pause: `pause` writes it, the next pass merges only version PRs and release-critical PRs, and it ends on its own.
+const merged = (f, n) => new RegExp(`pr merge ${n} -R tangle-network/agent-container --merge --match-head-commit ${sha(n)}`).test(f.calls());
+const pause = (f, ...args) => {
+  const r = f.run("pause", "--minutes", "30", "--reason", "version PR #11196 CI window", ...args);
+  assert.equal(r.status, 0, r.stderr);
+  return r;
+};
+
+test("unpaused, a green PR merges, status says so and names the allowlist, and a version PR is left to release automation", () => {
+  const f = fixture([pr(50), pr(51, { headRefName: "changeset-release/develop" })]);
+  const s = f.run("status");
+  assert.equal(s.status, 0, s.stderr);
+  assert.match(s.stdout, /not paused\. A pause merges only: head branch changeset-release\/\* \(version PRs\), label release-critical/);
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(merged(f, 50));
+  assert.ok(!merged(f, 51));
+  assert.doesNotMatch(r.stdout, /paused/);
+});
+
+test("paused, a normal green PR is skipped with one line naming the pause", () => {
+  const f = fixture([pr(52)]);
+  const p = pause(f);
+  assert.match(p.stdout, /paused until \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ \(version PR #11196 CI window\), set by .+ via pause\.json/);
+  const r = f.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!merged(f, 52));
+  assert.match(r.stdout, /^\S+ paused until \S+Z \(version PR #11196 CI window\): skipped #52$/m);
+  assert.match(f.run("status").stdout, /paused until .*While paused it merges only: head branch changeset-release\/\* \(version PRs\), label release-critical/s);
+});
+
+test("paused, a green version PR (changeset-release/*) merges", () => {
+  const f = fixture([pr(53, { headRefName: "changeset-release/develop" })]);
+  pause(f);
+  const r = f.run();
+  assert.ok(merged(f, 53), f.calls());
+  assert.match(r.stdout, /#53 merged/);
+});
+
+test("paused, a green release-critical PR merges, and a red one still waits", () => {
+  const critical = { labels: { nodes: [{ name: "release-critical" }] } };
+  const f = fixture([pr(54, critical), { ...withChecks(55, [check("Fast Checks"), check("Build")]), ...critical }]);
+  pause(f);
+  f.run();
+  assert.ok(merged(f, 54), f.calls());
+  assert.ok(!merged(f, 55));
+});
+
+test("an expired pause merges normally, and resume ends a live one", () => {
+  const f = fixture([pr(56)]);
+  mkdirSync(join(f.dir, "state"), { recursive: true });
+  writeFileSync(join(f.dir, "state", "pause.json"), JSON.stringify({ until: "2026-01-01T00:00:00Z", reason: "old", who: "t" }));
+  f.run();
+  assert.ok(merged(f, 56));
+
+  const g = fixture([pr(57)]);
+  pause(g);
+  g.run();
+  assert.ok(!merged(g, 57));
+  assert.match(g.run("resume").stdout, /not paused/);
+  assert.match(g.calls(), /api --method DELETE repos\/tangle-network\/agent-container\/actions\/variables\/MERGE_ON_GREEN_PAUSED/);
+  g.run();
+  assert.ok(merged(g, 57));
+});
+
+test("a pause longer than 120 minutes is refused and nothing pauses", () => {
+  const f = fixture([pr(58)]);
+  const r = f.run("pause", "--minutes", "500", "--reason", "release");
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--minutes 1\.\.120/);
+  assert.ok(!existsSync(join(f.dir, "state", "pause.json")));
+  f.run();
+  assert.ok(merged(f, 58));
+});
+
+test("the repo variable pauses from anywhere, and ends 120 minutes after it was set", () => {
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  const f = fixture([pr(59)], { variable: { value: `${later} cut 2026-10-15`, updated_at: new Date().toISOString() } });
+  const r = f.run();
+  assert.ok(!merged(f, 59));
+  assert.match(r.stdout, /paused until \S+ \(cut 2026-10-15\): skipped #59/);
+  assert.match(f.run("status").stdout, /set by repo variable MERGE_ON_GREEN_PAUSED/);
+
+  const stale = fixture([pr(60)], { variable: { value: later, updated_at: new Date(Date.now() - 3 * 3_600_000).toISOString() } });
+  stale.run();
+  assert.ok(merged(stale, 60));
 });
