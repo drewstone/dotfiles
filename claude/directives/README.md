@@ -36,6 +36,11 @@ Each new session's variant assignment is logged once to `~/.claude/directives-lo
 
     {"ts":"...","session":"<id>","variant":"<slug>","cwd":"..."}
 
+The same assignment lands as `agent.directive.variant` on the session's identity record,
+`~/.local/state/session-identity/claude-code/<id>.json`, beside the harness, model, profile
+and skills the SessionStart hook records there (`hooks/session-identity.sh`). It is the
+record `traces facts` is to read to say who acted in a session.
+
 The `trace-insights` engine (offline, daily) joins these assignments against the session
 transcripts to score each variant — did runs under a variant need fewer corrective
 turns, fewer re-asks, less back-and-forth? Winning variants get promoted into `active`;
