@@ -1,13 +1,13 @@
 # Brief kit
 
 Use the kit when an answer has more than one dimension: an operations review, a fleet or incident report, a comparison, or a status that needs duration, shape or ownership.
-Write a JSON spec, check it, look once, and publish the page as an artifact.
+Write a JSON spec, check it, look once, and write the page to `~/reviews/<YYYY-MM-DD>-<slug>.html`; give its absolute path and `open` it. Never publish it as a claude.ai artifact.
 A one-fact answer stays a sentence.
 
 ```bash
 viz brief spec.json                  # the terminal status: every block as text, with the page's numbers
 viz brief spec.json --color emoji    # the chat status (the default under VIZ_COLOR=emoji, as in Claude Code)
-viz brief spec.json -o brief.html    # the page; spec errors exit 2 and missing climb parts warn
+viz brief spec.json -o ~/reviews/2026-10-15-fleet.html    # the page; spec errors exit 2 and missing climb parts warn
 viz brief spec.json --section 3      # one section, by number or by words in its key or title
 ```
 
