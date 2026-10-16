@@ -525,7 +525,7 @@ printf 'Avail\\n%s\\n' "$available"
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
-    assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(result.stderr, /REFUSED beelink2.*below its 150 GiB disk floor/);
     assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
     assert.equal(readFileSync(dfCount, "utf8").trim(), "4", "the floor changed after the cache-recovery check and admission checks");
     assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=75`));
@@ -595,7 +595,7 @@ test("an auto-placed gate gives back a host that fell below its disk floor, so t
   const f = fixture();
   try {
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
-    const low = { ...f.env, FAKE_AVAIL: String(150 * 2 ** 30) };
+    const low = { ...f.env, FAKE_AVAIL: String(140 * 2 ** 30) };
     const auto = run("bash", [gate, "--remote", ...args], { env: { ...low, BEELINK_GATE_AUTO: "1" } });
     assert.equal(auto.status, 76, auto.stderr);
     assert.match(auto.stderr, /beelink2 gave the gate back before admission \(beelink2 is below its disk floor\); placing the gate again/);
@@ -773,7 +773,7 @@ test("refuses below the selected host's floor before creating a cache", () => {
     const available = 120 * 1024 ** 3;
     const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(available) } });
     assert.equal(refused.status, 75);
-    assert.match(refused.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(refused.stderr, /REFUSED beelink2.*below its 150 GiB disk floor/);
     assert.match(refused.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ beelink2 is below its disk floor/);
     assert.equal(existsSync(f.cache), false);
     const allowed = f.call(f.first, ["true"], { host: "beelink1", env: { FAKE_AVAIL: String(available) } });
@@ -797,10 +797,10 @@ test("a host disk-floor limit refuses a gate before its cache, and one below the
     writeFileSync(limits, "disk_floor_gib=100\n");
     const clamped = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
     assert.equal(clamped.status, 0, clamped.stderr);
-    assert.match(clamped.stderr, /disk_floor_gib=100 is below beelink2's 162 GiB minimum; using 162/);
-    const stillFloored = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(160 * 1024 ** 3) } });
+    assert.match(clamped.stderr, /disk_floor_gib=100 is below beelink2's 150 GiB minimum; using 150/);
+    const stillFloored = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(140 * 1024 ** 3) } });
     assert.equal(stillFloored.status, 75, stillFloored.stderr);
-    assert.match(stillFloored.stderr, /below its 162 GiB disk floor/);
+    assert.match(stillFloored.stderr, /below its 150 GiB disk floor/);
 
     writeFileSync(limits, "disk_floor_gib=1x0\n");
     const invalid = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
@@ -1351,7 +1351,7 @@ test("a host short only of a repo's install reserve applies sparse patterns to i
   try {
     // Free space falls as the cache grows, so shrinking an idle checkout reaches admission.
     writeFileSync(join(f.root, "bin", "df"), '#!/usr/bin/env bash\nused=$(du -sb "$BEELINK_GATE_CACHE_ROOT" 2>/dev/null | cut -f1)\nprintf "Avail\\n%s\\n" "$((FAKE_AVAIL_BASE - ${used:-0}))"\n');
-    const floor = 162 * 1024 ** 3;
+    const floor = 150 * 1024 ** 3;
     const reserve = 11 * 1024 ** 3;
     mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
     writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
@@ -1845,9 +1845,9 @@ test("a disk-floor refusal, then a green --ship whose ship-proof publish GitHub 
     chmodSync(join(f.home, "bin", "gh-drew"), 0o755);
     const ship = (avail) => run("bash", [gate, "--remote", ...["beelink2", "https://github.com/owner/repo.git", sha, "ship", f.windowDay, f.windowHour, "bash", "scripts/ship.sh", "verify"].map(encode)],
       { env: { ...f.env, GIT_CONFIG_GLOBAL: gitconfig, ...(avail ? { FAKE_AVAIL: avail } : {}) } });
-    const refused = ship("166684823552");
+    const refused = ship("150323855360");
     assert.equal(refused.status, 75, refused.stderr);
-    assert.match(refused.stderr, /REFUSED beelink2 has 166684823552 bytes free, below its 162 GiB disk floor/);
+    assert.match(refused.stderr, /REFUSED beelink2 has 150323855360 bytes free, below its 150 GiB disk floor/);
     assert.match(refused.stderr.trim().split("\n").at(-1), /^beelink-gate: TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor$/);
     const retried = ship();
     assert.equal(retried.status, 0, retried.stderr);
@@ -2479,7 +2479,7 @@ test("an auto gate whose host falls below its disk floor while it queued gives t
     const closed = new Promise((resolveDone) => child.on("close", resolveDone));
     for (let i = 0; i < 200 && !/waiting \d+s/.test(stderr); i++) await sleepMs(50);
     // While it waits on pressure, the disk drops below the floor; then pressure clears.
-    writeFileSync(avail, String(150 * 2 ** 30));
+    writeFileSync(avail, String(140 * 2 ** 30));
     writeFileSync(pressure, pressureLine(5));
     assert.equal(await closed, 76, stderr);
     assert.match(stderr, /beelink2 gave the gate back before checkout \(beelink2 is below its disk floor\); placing the gate again/);
