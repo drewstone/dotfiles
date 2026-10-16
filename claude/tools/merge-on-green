@@ -22,8 +22,8 @@ drewstone through gh-drew, so develop CI and release automation fire exactly
 as they do for any merge. Develop then runs the full test fan; red is fixed
 forward (docs/processes/shipping.md in agent-container).
 
-A pause holds every merge except version PRs (head changeset-release/*) and PRs
-labelled release-critical, so a release gets a clean CI window. It comes from
+A pause holds every merge except PRs labelled release-critical, so a release gets
+a clean CI window; version PRs stay with release automation, paused or not. It comes from
 <state-dir>/pause.json, written by `pause` and removed by `resume`, or from the
 repo variable MERGE_ON_GREEN_PAUSED="<until UTC ISO> [reason]", read once per
 pass. Each ends on its own at its until; a variable also ends 120 minutes after
@@ -62,8 +62,8 @@ os.environ.setdefault("GH_DREW_REVIEW_WAIT", "0")
 # only pause then was stopping the timer by hand behind a separate dead-man restart.
 PAUSE_MAX_MIN = 120
 PAUSE_VAR = "MERGE_ON_GREEN_PAUSED"
-ALLOW_BRANCH, ALLOW_LABEL = "changeset-release/", "release-critical"
-ALLOWLIST = f"head branch {ALLOW_BRANCH}* (version PRs), label {ALLOW_LABEL}"
+ALLOW_LABEL = "release-critical"
+ALLOWLIST = f"PRs labelled {ALLOW_LABEL} (version PRs stay with release.yml)"
 
 QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
 ref(qualifiedName:"refs/heads/develop"){target{oid}}
@@ -79,7 +79,7 @@ def gh(*args, input=None):
 
 
 def allowlisted(pr):
-    return pr["headRefName"].startswith(ALLOW_BRANCH) or ALLOW_LABEL in {l["name"] for l in pr["labels"]["nodes"]}
+    return ALLOW_LABEL in {l["name"] for l in pr["labels"]["nodes"]}
 
 
 def utc(s):
@@ -143,12 +143,11 @@ def control(a):
     return 0
 
 
-def decide(pr, now, paused=False):
+def decide(pr, now):
     """Return (action, reason) for one PR node: merge, conflict, or wait."""
     if pr["isDraft"]:
         return "wait", "draft"
-    # A version PR is release automation's to merge, except during a pause, which exists to land it.
-    if pr["headRefName"].startswith(RELEASE_PREFIXES) and not (paused and pr["headRefName"].startswith(ALLOW_BRANCH)):
+    if pr["headRefName"].startswith(RELEASE_PREFIXES):
         return "wait", "release branch"
     labels = {l["name"] for l in pr["labels"]["nodes"]}
     if "hold" in labels:
@@ -290,7 +289,7 @@ def main():
             records.append({"at": stamp, "pr": n, "head": head, "action": "paused", "outcome": outcome})
             status.append(f"- #{n} {pr['headRefName']}: {outcome}")
             continue
-        action, reason = decide(pr, now, paused=bool(pause))
+        action, reason = decide(pr, now)
         handled = f"{head}@{develop_tip}"
         if action != "wait" and noted.get(str(n)) == handled:
             # This head's conflict was handled against this develop; retry when either moves.
