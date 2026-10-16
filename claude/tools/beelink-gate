@@ -102,7 +102,7 @@ floor_gib() {
   local host="$1" base path line override="" found=0
   case "$host" in
     beelink1) base=100 ;;
-    beelink2) base=162 ;;
+    beelink2) base=150 ;;
     *) die "unknown remote beelink: $host" ;;
   esac
   path=$(limits_file)

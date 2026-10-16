@@ -525,7 +525,7 @@ printf 'Avail\\n%s\\n' "$available"
     assert.equal(result.error, undefined, result.error?.message);
     assert.equal(result.status, 75, result.stderr);
     assert.match(result.stderr, /lock, host slot and load .* admitted on beelink2 after \d+s/);
-    assert.match(result.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(result.stderr, /REFUSED beelink2.*below its 150 GiB disk floor/);
     assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor/);
     assert.equal(readFileSync(dfCount, "utf8").trim(), "4", "the floor changed after the cache-recovery check and admission checks");
     assert.match(result.stderr, new RegExp(`receipt: sha=${f.first} .*exit=75`));
@@ -773,7 +773,7 @@ test("refuses below the selected host's floor before creating a cache", () => {
     const available = 120 * 1024 ** 3;
     const refused = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(available) } });
     assert.equal(refused.status, 75);
-    assert.match(refused.stderr, /REFUSED beelink2.*below its 162 GiB disk floor/);
+    assert.match(refused.stderr, /REFUSED beelink2.*below its 150 GiB disk floor/);
     assert.match(refused.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ beelink2 is below its disk floor/);
     assert.equal(existsSync(f.cache), false);
     const allowed = f.call(f.first, ["true"], { host: "beelink1", env: { FAKE_AVAIL: String(available) } });
@@ -797,10 +797,10 @@ test("a host disk-floor limit refuses a gate before its cache, and one below the
     writeFileSync(limits, "disk_floor_gib=100\n");
     const clamped = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
     assert.equal(clamped.status, 0, clamped.stderr);
-    assert.match(clamped.stderr, /disk_floor_gib=100 is below beelink2's 162 GiB minimum; using 162/);
-    const stillFloored = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(160 * 1024 ** 3) } });
+    assert.match(clamped.stderr, /disk_floor_gib=100 is below beelink2's 150 GiB minimum; using 150/);
+    const stillFloored = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(140 * 1024 ** 3) } });
     assert.equal(stillFloored.status, 75, stillFloored.stderr);
-    assert.match(stillFloored.stderr, /below its 162 GiB disk floor/);
+    assert.match(stillFloored.stderr, /below its 150 GiB disk floor/);
 
     writeFileSync(limits, "disk_floor_gib=1x0\n");
     const invalid = f.call(f.first, ["true"], { env: { FAKE_AVAIL: String(211 * 1024 ** 3) } });
@@ -1351,7 +1351,7 @@ test("a host short only of a repo's install reserve applies sparse patterns to i
   try {
     // Free space falls as the cache grows, so shrinking an idle checkout reaches admission.
     writeFileSync(join(f.root, "bin", "df"), '#!/usr/bin/env bash\nused=$(du -sb "$BEELINK_GATE_CACHE_ROOT" 2>/dev/null | cut -f1)\nprintf "Avail\\n%s\\n" "$((FAKE_AVAIL_BASE - ${used:-0}))"\n');
-    const floor = 162 * 1024 ** 3;
+    const floor = 150 * 1024 ** 3;
     const reserve = 11 * 1024 ** 3;
     mkdirSync(f.env.BEELINK_GATE_STATE_DIR, { recursive: true });
     writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"),
