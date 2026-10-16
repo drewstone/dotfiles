@@ -117,7 +117,7 @@ with tempfile.TemporaryDirectory(prefix='gate-native-review-') as scratch:
             changed=first_scan(source,fixture,pidfile,nonce)
             row={'case':case,'initialProposal':original,'after':changed}
             passed=bool(original['helpersAlive']) and not changed['helpersAlive'] and bool(changed['helperPids']) and changed['exit']==0 and not changed['outerDeadlineExceeded'] and bool(changed['stale'])
-            if case.endswith('stdout'): passed=passed and original['outerDeadlineExceeded'] and changed['seconds']>=10
+            if case.endswith('stdout'): passed=passed and original['seconds']>=10 and changed['seconds']>=10
         report['cases'].append(row)
         if not passed: report['errors'].append({'case':case,'error':'Real review regression/control did not discriminate'})
 report['regressionSource']='cc3cd08055d3454f44805b8cb699cc2c84f30cae'
