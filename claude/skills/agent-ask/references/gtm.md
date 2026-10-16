@@ -19,4 +19,6 @@ Read every deliverable, including downloaded assets at full size. Give each deli
 
 Ask why the agent chose the angle and design. Return FAILs in the same thread: one succinct verdict naming the item, evidence, and unmet bar, without writing its replacement. A capability gap goes to its builder with evidence and the smallest fix; after the fix, re-ask unassisted. Show Drew passed work with the conversation link and evidence.
 
+Before showing any item to Drew, prepare one phone-readable local HTML gallery per batch under `~/reviews/`, with an openable absolute path (never claude.ai artifacts). For each item include its full-size asset, every claim with its live source, teardown against the 3 best real competitor examples, CEO and independent critic verdicts and disagreements, and the exact send/post being authorized. Hand the packet path to `op-gtm:phone-approvals` for yes/no/feedback; a yes covers only that exact send/post.
+
 After every verdict, ask the agent to record the lesson where it will use it next: `knowledge/models/operator-priorities.md`, its skills, or a profile-trial proposal. Check the next relevant output against that lesson and cite the visible correction. A saved note alone is not retention; if the correction is absent, return FAIL and continue the loop.
