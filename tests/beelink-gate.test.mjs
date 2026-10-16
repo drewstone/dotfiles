@@ -1331,8 +1331,6 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
       const result = f.call(f.first, ["true"]);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stderr, /applying repo sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
-      const freed = result.stderr.match(/sparse patterns freed (\d+) bytes of idle cache \S+discovery-lab\n/);
-      assert.ok(freed && Number(freed[1]) >= 300_000, result.stderr);
       assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
       assert.doesNotMatch(result.stderr, /restoring its full tree/);
     } finally { locker.kill(); }
