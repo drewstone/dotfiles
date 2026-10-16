@@ -115,6 +115,20 @@ test('an ask starts a turn with a client turn id, holds reads until it settles, 
   }
 })
 
+test('--json preserves the optional sandbox settlement separately from model cost before ACK', async () => {
+  const sandboxSettlement = { basis: 'agent_key_sandbox_share', consumedUsd: 0.0000007, settledAt: null }
+  const api = await startApi({ latest: baseTurn({ state: 'failed', costUsd: 0, sandboxSettlement }) })
+  try {
+    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', '--json', 'status', 'th-existing'])
+    assert.equal(result.code, 1, result.stderr)
+    const output = JSON.parse(result.stdout)
+    assert.equal(output.costUsd, 0)
+    assert.deepEqual(output.sandboxSettlement, sandboxSettlement)
+  } finally {
+    await api.close()
+  }
+})
+
 test('GTM leaves model selection to the workspace unless a flag or environment override is set', async () => {
   const api = await startApi()
   try {
