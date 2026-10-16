@@ -2557,8 +2557,9 @@ for log in root.glob("*/stderr.log"):
         at = log.stat().st_mtime
         if not start <= at <= end:
             continue
+        content = log.read_text(errors="replace")
         logs.append(at)
-        if re.search(r"TEMPFAIL[^\n]*capacity writer intent exceeded", log.read_text(errors="replace")):
+        if re.search(r"TEMPFAIL[^\n]*capacity writer intent exceeded", content):
             refused.append(log.parent.name)
     except FileNotFoundError:
         continue  # Reconnect log retention may run during this read.
@@ -2567,7 +2568,7 @@ print(json.dumps({"kind": "capacity_intent_logs", "window_from": utc(start), "wi
                   "logs_scanned": len(logs), "oldest_retained": utc(min(logs)) if logs else None,
                   "refusals": len(refused), "gate_ids": sorted(refused)}))
 PY
-  exit 0
+  exit $?
 fi
 
 # ---- launcher: runs on the Mac, GTR or a beelink ----
