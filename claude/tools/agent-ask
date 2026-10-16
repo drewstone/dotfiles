@@ -106,7 +106,7 @@ function parseArgs(argv) {
     positional.push(arg)
   }
   let command = 'ask'
-  if (COMMANDS.has(positional[0])) command = positional.shift()
+  if (!literalAsk && COMMANDS.has(positional[0])) command = positional.shift()
   if (command === 'status') {
     if (positional.length !== 1) throw new UsageError('status takes exactly one thread id')
     options.thread = positional[0]
