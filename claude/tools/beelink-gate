@@ -481,10 +481,13 @@ PY
 # A writer holds the fd lock for its brief intent and rename. If it dies,
 # flock releases that lock; a claimant can then remove its abandoned marker.
 capacity_writer_active() {
-  [ -e "$intent_file" ] || [ -L "$intent_file" ] || return 1
-  [ ! -L "$intent_file" ] && [ -f "$intent_file" ] || die "capacity writer intent is not a regular file"
+  # The lock is authoritative across marker creation/removal. Inspecting the
+  # path first races a brief writer's unlink and can reject a valid claim.
   if flock -n -x "$writer_fd"; then
-    rm -f -- "$intent_file" || die "cannot clear stale capacity writer intent"
+    if [ -e "$intent_file" ] || [ -L "$intent_file" ]; then
+      [ ! -L "$intent_file" ] && [ -f "$intent_file" ] || die "capacity writer intent is not a regular file"
+      rm -f -- "$intent_file" || die "cannot clear stale capacity writer intent"
+    fi
     flock -u "$writer_fd"
     return 1
   fi
