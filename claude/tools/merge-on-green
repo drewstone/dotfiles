@@ -38,7 +38,6 @@ import fcntl
 import getpass
 import json
 import os
-import time
 import re
 import socket
 import subprocess
@@ -54,7 +53,6 @@ RED = {"FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 # Statuses only the retired local-signoff path posted; a stale red one is not a gate.
 RETIRED = {"signoff/local"}
 MIN_HEAD_AGE_S = int(os.environ.get("MERGE_ON_GREEN_MIN_AGE_S", "120"))
-RED_REFRESH_S = int(os.environ.get("MERGE_ON_GREEN_RED_REFRESH_S", "1800"))
 # gh-drew waits for a Codex review running on the head before it merges; a tick does not wait,
 # so such a PR is refused now and tried again on the next tick.
 os.environ.setdefault("GH_DREW_REVIEW_WAIT", "0")
@@ -171,10 +169,6 @@ def decide(pr, now):
     checks = {n: [max(rs, key=lambda r: r[0])[1]] for n, rs in runs.items()}
     failed = sorted(n for n, states in checks.items() if any(s in RED for s in states))
     if failed:
-        # A red gate on a head that predates a develop fix is inherited, not the PR's own:
-        # #11084, #11088 and #11100 sat red on 2026-10-15 after develop fixed its type error.
-        if any(n in REQUIRED for n in failed):
-            return "refresh-red", "red gate: " + ", ".join(failed[:3])
         return "wait", "red: " + ", ".join(failed[:3])
     missing = [n for n in REQUIRED if not checks.get(n) or any(s != "SUCCESS" for s in checks[n])]
     never_ran = all(all(st in ("SKIPPED", "NEUTRAL") for st in checks.get(n, ["SKIPPED"])) for n in REQUIRED)
@@ -307,18 +301,6 @@ def main():
             noted[f"refresh:{n}"] = head
             if "conflict" in outcome:
                 action = "conflict"
-        elif action == "refresh-red":
-            # Re-run a red gate on a fresh develop once per (head, develop), at most every RED_REFRESH_S;
-            # a real failure fails again on the next base and then waits for its owner.
-            last = float(noted.get(f"redfresh-at:{n}", 0))
-            if a.dry_run or noted.get(f"redfresh:{n}") == handled or time.time() - last < RED_REFRESH_S:
-                action, outcome = "wait", f"{reason}; already refreshed against this develop"
-            else:
-                u = gh("api", "--method", "PUT", f"repos/{a.repo}/pulls/{n}/update-branch", "-f", f"expected_head_sha={head}")
-                outcome = f"{reason}; updated from develop" if u.returncode == 0 else f"{reason}; update refused: " + (u.stderr.strip() or u.stdout.strip())[:160]
-                noted[f"redfresh:{n}"], noted[f"redfresh-at:{n}"] = handled, time.time()
-                if "conflict" in outcome:
-                    action = "conflict"
         if action == "conflict" and not a.dry_run:
             sha, why = (None, "fork") if pr.get("isCrossRepository") else merge_develop_with_attributes(a, pr)
             if sha:
