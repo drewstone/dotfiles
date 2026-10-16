@@ -1,0 +1,127 @@
+import pathlib, subprocess, tempfile, shutil, os, json, hashlib, time, signal, uuid
+repo = pathlib.Path.cwd()
+proof = pathlib.Path('/home/drew/reviews/native-guard-10198')
+retained = proof / 'installed'
+manifest = json.loads((proof / 'installed-manifest.json').read_text())
+relative_package = pathlib.Path(manifest['retainedPackageRoot']).relative_to(retained)
+relative_native = pathlib.Path('node_modules/.pnpm/@parcel+watcher-linux-x64-glibc@2.6.0/node_modules/@parcel/watcher-linux-x64-glibc/watcher.node')
+node = '/home/drew/.nvm/versions/node/v22.23.3/bin/node'
+env = os.environ.copy(); env['PATH'] = str(pathlib.Path(node).parent) + ':' + env['PATH']; env.pop('NODE_OPTIONS', None)
+abi = subprocess.check_output([node, '-p', 'process.versions.modules'], text=True, env=env).strip()
+source = (repo / 'claude/tools/beelink-gate').read_text()
+before = subprocess.check_output(['git', 'show', '53c31d243b540875d0f2f9374ef70bd62fd81604:claude/tools/beelink-gate'], text=True)
+def guard_python(text):
+    start = text.index('stale_native_addons() {')
+    start = text.index('  python3 - "$abi" <<\'PY\'\n', start) + len('  python3 - "$abi" <<\'PY\'\n')
+    return text[start:text.index('\nPY\n}', start)]
+def guard(text, fixture, options=None):
+    child = env.copy()
+    if options: child['NODE_OPTIONS'] = options
+    start = time.monotonic()
+    result = subprocess.run(['python3', '-', abi], input=guard_python(text), cwd=fixture, env=child, capture_output=True, text=True, timeout=20)
+    return {'exit': result.returncode, 'stale': result.stdout.strip().splitlines(), 'stderr': result.stderr, 'seconds': round(time.monotonic()-start, 3)}
+load_script = r"""
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+(async()=>{const watcher=require(process.argv[1]);const dir=fs.mkdtempSync(path.join(os.tmpdir(),'native-entry-fs-'));let sub,timer;try{let yes,no;const observed=new Promise((a,b)=>{yes=a;no=b});sub=await watcher.subscribe(dir,(error,events)=>{if(error)return no(error);if(events.some(e=>e.path===path.join(dir,'proof.txt')))yes(events.map(e=>({type:e.type,name:path.basename(e.path)})))});fs.writeFileSync(path.join(dir,'proof.txt'),'actual filesystem event');const events=await Promise.race([observed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Event deadline')),5000)})]);console.log(JSON.stringify({result:'PASS',node:process.version,abi:process.versions.modules,events}));}finally{clearTimeout(timer);if(sub)await sub.unsubscribe();fs.rmSync(dir,{recursive:true,force:true})}})().catch(error=>{console.log(JSON.stringify({result:'FAIL',code:error.code,message:error.message}));process.exitCode=1});
+"""
+report = {'sourceSha':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(), 'sourceFileSha256':hashlib.sha256(source.encode()).hexdigest(), 'beforeSource':'53c31d243b540875d0f2f9374ef70bd62fd81604', 'node':subprocess.check_output([node,'-p','process.version'],text=True).strip(),'abi':abi,'cases':[],'errors':[]}
+with tempfile.TemporaryDirectory(prefix='gate-native-integration-') as scratch:
+    scratch = pathlib.Path(scratch)
+    for case in ['external-valid','external-missing','external-wrong-abi','local-fallback-valid','unrelated-preload','entrypoint-timeout']:
+        fixture=scratch/case
+        if case in ['unrelated-preload','entrypoint-timeout']:
+            pkg=fixture/'node_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control';pkg.mkdir(parents=True)
+            (pkg/'binding.gyp').write_text('{}\n');(pkg/'package.json').write_text('{"name":"entry-control","version":"1.0.0","main":"index.js"}\n')
+            (pkg/'index.js').write_text('module.exports = {}\n' if case=='unrelated-preload' else 'setInterval(() => {}, 1000)\n')
+            (fixture/'pnpm-workspace.yaml').write_text('allowBuilds:\n  entry-control: true\n')
+        else:
+            shutil.copytree(retained,fixture,symlinks=True);pkg=fixture/relative_package
+            if case=='external-missing':(fixture/relative_native).unlink()
+            if case=='external-wrong-abi':shutil.copy2(proof/'wrong-abi-original.node',fixture/relative_native)
+            if case=='local-fallback-valid':
+                destination=pkg/'build/Release/watcher.node';destination.parent.mkdir(parents=True);shutil.copy2(fixture/relative_native,destination);(fixture/relative_native).unlink()
+        options='--require='+str(retained/relative_native) if case=='unrelated-preload' else None
+        original=guard(before,fixture,options);changed=guard(source,fixture,options)
+        row={'case':case,'before':original,'after':changed}
+        if case not in ['unrelated-preload','entrypoint-timeout']:
+            runtime=subprocess.run([node,'-e',load_script,str(pkg)],env=env,capture_output=True,text=True,timeout=10)
+            row['runtime']={'exit':runtime.returncode,'stdout':runtime.stdout.strip(),'stderr':runtime.stderr}
+        report['cases'].append(row)
+        try:
+            assert original['exit']==0 and changed['exit']==0, 'Guard process failed'
+            if case=='external-valid': assert original['stale'] and not changed['stale'] and row['runtime']['exit']==0, 'Valid external binding not accepted'
+            elif case=='local-fallback-valid': assert not original['stale'] and not changed['stale'] and row['runtime']['exit']==0, 'Valid local fallback regressed'
+            else:
+                assert original['stale'] and changed['stale'], 'Invalid/unrelated entrypoint was accepted'
+                if case=='external-missing': assert row['runtime']['exit']!=0 and 'No prebuild or local build' in row['runtime']['stdout'], 'Missing module not exercised'
+                if case=='external-wrong-abi': assert row['runtime']['exit']!=0 and 'NODE_MODULE_VERSION 137' in row['runtime']['stdout'] and 'NODE_MODULE_VERSION 127' in row['runtime']['stdout'], 'Actual ABI mismatch not exercised'
+                if case=='entrypoint-timeout': assert changed['seconds']>=10, 'Probe was not bounded by its timeout'
+        except AssertionError as error: report['errors'].append({'case':case,'error':str(error)})
+# The review controls use real native modules and actual processes. They
+# compare the initially proposed source with its correction at the live
+# first-scan boundary, including the owner's existing run-token reaper.
+regression = subprocess.check_output(['git','show','cc3cd08055d3454f44805b8cb699cc2c84f30cae:claude/tools/beelink-gate'],text=True)
+def live(pid):
+    try: return pathlib.Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()[0] != 'Z'
+    except FileNotFoundError: return False
+def own_children(pidfile):
+    return [int(n) for n in pidfile.read_text().splitlines()] if pidfile.exists() else []
+def cleanup_owned(pidfile, nonce):
+    for pid in own_children(pidfile):
+        try:
+            environment=pathlib.Path('/proc',str(pid),'environ').read_bytes().split(b'\0')
+            if ('NATIVE_PROOF_NONCE='+nonce).encode() in environment: os.kill(pid,signal.SIGKILL)
+        except (FileNotFoundError, ProcessLookupError): pass
+
+def first_scan(text, fixture, pidfile, nonce):
+    start=text.index('  reap_leftovers() {');reaper=text[start:text.index('\n  stop() {',start)]
+    start=text.index('rebuild_native_addons() {');scan=text[start:text.index('  [ -n "$stale" ] || return 0',start)]
+    fn=text[text.index('stale_native_addons() {'):text.index('\n# Rebuild the stale native addons')]
+    command='run_token='+nonce+'\nreaped=0\n'+reaper+'\n'+fn+'\n'+scan+'  printf \'%s\\n\' "$stale"\n}\nrebuild_native_addons\n'
+    child=env.copy();child['NATIVE_PROOF_NONCE']=nonce
+    start=time.monotonic();proc=subprocess.Popen(['bash','-c',command],cwd=fixture,env=child,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+    timed_out=False
+    try: stdout,stderr=proc.communicate(timeout=22)
+    except subprocess.TimeoutExpired:
+        timed_out=True;os.killpg(proc.pid,signal.SIGKILL);stdout,stderr=proc.communicate(timeout=3)
+    row={'exit':proc.returncode,'stale':stdout.strip().splitlines(),'stderr':stderr,'outerDeadlineExceeded':timed_out,'seconds':round(time.monotonic()-start,3),'helperPids':own_children(pidfile),'helpersAlive':[pid for pid in own_children(pidfile) if live(pid)]}
+    cleanup_owned(pidfile,nonce)
+    return row
+
+with tempfile.TemporaryDirectory(prefix='gate-native-review-') as scratch:
+    scratch=pathlib.Path(scratch)
+    for case in ['incidental-direct-optional-native','detached-helper-exit','detached-helper-timeout-inherited-stdout']:
+        fixture=scratch/case;pkg=fixture/'node_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control';pkg.mkdir(parents=True)
+        (fixture/'pnpm-workspace.yaml').write_text('allowBuilds:\n  entry-control: true\n')
+        (pkg/'binding.gyp').write_text('{}\n')
+        package={'name':'entry-control','version':'1.0.0','main':'index.js'}
+        pidfile=fixture/'owned-helpers.pid';nonce='native-proof-'+uuid.uuid4().hex
+        if case=='incidental-direct-optional-native':
+            original=retained/relative_native.parent
+            optional=pkg.parent/'@parcel/watcher-linux-x64-glibc'
+            optional.parent.mkdir(parents=True,exist_ok=True);shutil.copytree(original,optional)
+            package['optionalDependencies']={'@parcel/watcher-linux-x64-glibc':'2.6.0'}
+            (pkg/'index.js').write_text("require('@parcel/watcher-linux-x64-glibc'); exports.lateBinding = () => require('./build/Release/entry-control.node')\n")
+        else:
+            stdio='ignore' if case=='detached-helper-exit' else 'inherit'
+            (pkg/'index.js').write_text("const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:"+json.dumps(stdio)+"});fs.appendFileSync("+json.dumps(str(pidfile))+",String(child.pid)+'\\n');child.unref();"+('setInterval(()=>{},1000);' if case.endswith('stdout') else '')+'\n')
+        (pkg/'package.json').write_text(json.dumps(package))
+        if case=='incidental-direct-optional-native':
+            original=guard(regression,fixture);changed=guard(source,fixture)
+            runtime=subprocess.run([node,'-e',"require(process.argv[1]).lateBinding()",str(pkg)],env=env,capture_output=True,text=True)
+            row={'case':case,'initialProposal':original,'after':changed,'lateBindingCall':{'exit':runtime.returncode,'stderr':runtime.stderr}}
+            passed=not original['stale'] and bool(changed['stale']) and runtime.returncode!=0 and 'MODULE_NOT_FOUND' in runtime.stderr
+        else:
+            original=first_scan(regression,fixture,pidfile,nonce)
+            pidfile.unlink(missing_ok=True)
+            changed=first_scan(source,fixture,pidfile,nonce)
+            row={'case':case,'initialProposal':original,'after':changed}
+            passed=bool(original['helpersAlive']) and not changed['helpersAlive'] and bool(changed['helperPids']) and changed['exit']==0 and not changed['outerDeadlineExceeded'] and bool(changed['stale'])
+            if case.endswith('stdout'): passed=passed and original['outerDeadlineExceeded'] and changed['seconds']>=10
+        report['cases'].append(row)
+        if not passed: report['errors'].append({'case':case,'error':'Real review regression/control did not discriminate'})
+report['regressionSource']='cc3cd08055d3454f44805b8cb699cc2c84f30cae'
+report['result']='PASS' if not report['errors'] else 'FAIL'
+(proof/'guard-proof.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps({'result':report['result'],'sourceSha':report['sourceSha'],'cases':len(report['cases']),'errors':report['errors']}))
+raise SystemExit(0 if not report['errors'] else 1)

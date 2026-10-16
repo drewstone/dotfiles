@@ -1,3 +1,17 @@
+# Native addon guard proof — #10198
+
+The original six-case experiment below covered the first proposal and missed two real review defects. It is historical evidence, not acceptance of that proposal. Review found descendant processes could survive and an incidental native dependency could mask a missing package binding. Both findings and the current nine-case raw result are retained in [PR500](https://github.com/drewstone/dotfiles/pull/500).
+
+The correction accepts only an actually loaded native module owned by a declared same-family optional platform provider whose operating system, CPU and Linux libc metadata match this Node runtime. It retains the entrypoint dependency-graph check and actual Node ABI validation. Incidental direct optional native modules remain stale.
+
+The scanner inherits the existing gate run token; the existing reaper runs after each scan, including scan errors, before proceeding. File-backed probe stdout prevents a timed-out Node's descendant from keeping a captured pipe open. No new cleanup authority, provider exception, build flag, CLI, CI gate or unit/mock maintenance is introduced.
+
+[Current historical reference](probe-review.py.raw.txt) runs the exact before/after guard bodies and live first-scan cleanup boundary against isolated real package copies and actual processes. It includes the original six cases plus an incidental direct optional native dependency with a failing deferred own binding, a detached helper after successful entrypoint return, and a detached helper inheriting stdout across timeout. Deliberately leaked control processes are identified by a unique fixture nonce and stopped before the proof ends. Current raw output/source identity and exact gate receipts are in PR500; the original consumer gate remains failed until actual installed-source recovery.
+
+The files and text below preserve the initial experiment verbatim for provenance.
+
+---
+
 # Optional native addon guard proof — #10198
 
 The gate previously rejected `@parcel/watcher` after a successful frozen install because it searched only beneath the package containing `binding.gyp`. This package selects a platform/libc optional dependency through its real entrypoint. The original installed entrypoint loaded its native binding and delivered a real filesystem create event under the failing consumer's Node runtime.
