@@ -1,0 +1,139 @@
+{
+  "sourceSha": "cc3cd08055d3454f44805b8cb699cc2c84f30cae",
+  "sourceFileSha256": "22cb20321ed3fa13eaef0b859610169e466a66edecb2ea46b2dea2459b885cc4",
+  "beforeSource": "53c31d243b540875d0f2f9374ef70bd62fd81604",
+  "node": "v22.23.3",
+  "abi": "127",
+  "cases": [
+    {
+      "case": "external-valid",
+      "before": {
+        "exit": 0,
+        "stale": [
+          "@parcel/watcher\tnode_modules/.pnpm/@parcel+watcher@2.6.0/node_modules/@parcel/watcher\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.017
+      },
+      "after": {
+        "exit": 0,
+        "stale": [],
+        "stderr": "",
+        "seconds": 0.045
+      },
+      "runtime": {
+        "exit": 0,
+        "stdout": "{\"result\":\"PASS\",\"node\":\"v22.23.3\",\"abi\":\"127\",\"events\":[{\"type\":\"create\",\"name\":\"proof.txt\"}]}",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "external-missing",
+      "before": {
+        "exit": 0,
+        "stale": [
+          "@parcel/watcher\tnode_modules/.pnpm/@parcel+watcher@2.6.0/node_modules/@parcel/watcher\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.017
+      },
+      "after": {
+        "exit": 0,
+        "stale": [
+          "@parcel/watcher\tnode_modules/.pnpm/@parcel+watcher@2.6.0/node_modules/@parcel/watcher\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.043
+      },
+      "runtime": {
+        "exit": 1,
+        "stdout": "{\"result\":\"FAIL\",\"message\":\"No prebuild or local build of @parcel/watcher found. Tried @parcel/watcher-linux-x64-glibc. Please ensure it is installed (don't use --no-optional when installing with npm). Otherwise it is possible we don't support your platform yet. If this is the case, please report an issue to https://github.com/parcel-bundler/watcher.\"}",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "external-wrong-abi",
+      "before": {
+        "exit": 0,
+        "stale": [
+          "@parcel/watcher\tnode_modules/.pnpm/@parcel+watcher@2.6.0/node_modules/@parcel/watcher\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.018
+      },
+      "after": {
+        "exit": 0,
+        "stale": [
+          "@parcel/watcher\tnode_modules/.pnpm/@parcel+watcher@2.6.0/node_modules/@parcel/watcher\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.047
+      },
+      "runtime": {
+        "exit": 1,
+        "stdout": "{\"result\":\"FAIL\",\"code\":\"ERR_DLOPEN_FAILED\",\"message\":\"The module '/tmp/gate-native-integration-056osvu3/external-wrong-abi/node_modules/.pnpm/@parcel+watcher-linux-x64-glibc@2.6.0/node_modules/@parcel/watcher-linux-x64-glibc/watcher.node'\\nwas compiled against a different Node.js version using\\nNODE_MODULE_VERSION 137. This version of Node.js requires\\nNODE_MODULE_VERSION 127. Please try re-compiling or re-installing\\nthe module (for instance, using `npm rebuild` or `npm install`).\"}",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "local-fallback-valid",
+      "before": {
+        "exit": 0,
+        "stale": [],
+        "stderr": "",
+        "seconds": 0.017
+      },
+      "after": {
+        "exit": 0,
+        "stale": [],
+        "stderr": "",
+        "seconds": 0.02
+      },
+      "runtime": {
+        "exit": 0,
+        "stdout": "{\"result\":\"PASS\",\"node\":\"v22.23.3\",\"abi\":\"127\",\"events\":[{\"type\":\"create\",\"name\":\"proof.txt\"}]}",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "unrelated-preload",
+      "before": {
+        "exit": 0,
+        "stale": [
+          "entry-control\tnode_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.016
+      },
+      "after": {
+        "exit": 0,
+        "stale": [
+          "entry-control\tnode_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.04
+      }
+    },
+    {
+      "case": "entrypoint-timeout",
+      "before": {
+        "exit": 0,
+        "stale": [
+          "entry-control\tnode_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 0.019
+      },
+      "after": {
+        "exit": 0,
+        "stale": [
+          "entry-control\tnode_modules/.pnpm/entry-control@1.0.0/node_modules/entry-control\tmissing addon"
+        ],
+        "stderr": "",
+        "seconds": 10.032
+      }
+    }
+  ],
+  "errors": [],
+  "result": "PASS"
+}
