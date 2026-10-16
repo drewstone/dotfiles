@@ -18,7 +18,7 @@ Read every deliverable, including downloaded assets at full size. Give each deli
 | Idea | A clever, product-specific insight or hook the agent can defend with buyer evidence; a rival's name cannot replace this product's without changing the idea. |
 | Campaign | Identifies the buyer, fits the channel, and leads through one clear CTA to a working buyer path and a measurable product outcome. |
 
-Cold-email writing PASS counts only after a blind judge agrees with actual Drew labels. Hide authorship, earlier CEO/critic verdicts, and Drew labels until judging; an uncalibrated critic cannot confer PASS.
+Cold-email writing PASS counts only after a blind judge agrees with actual Drew labels. Hide authorship, earlier CEO/critic verdicts, and Drew labels until judging; an uncalibrated critic cannot confer PASS. While mandatory-text treatment is unresolved, report prose-only and whole-body repetition, assume no exemption, and keep writing PASS pending Drew's interpretation.
 
 Ask why the agent chose the angle and design. Return FAILs in the same thread: one succinct verdict naming the item, evidence, and unmet bar, without writing its replacement. A capability gap goes to its builder with evidence and the smallest fix; after the fix, re-ask unassisted. Show Drew passed work with the conversation link and evidence.
 
