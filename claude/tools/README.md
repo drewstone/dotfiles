@@ -262,6 +262,21 @@ tail ~/.local/state/merge-on-green/decisions.jsonl
 
 To keep a ready PR open, add the `hold` label.
 
+To give a release a clean CI window, pause it on drew-gtr-pro, where the timer runs. While paused, each pass still runs but merges only version PRs (head `changeset-release/*`, which it otherwise leaves to release automation) and PRs labelled `release-critical`; every other PR gets one line, `paused until … (reason): skipped #N`. A pause ends on its own at its `until`; `pause` refuses more than 120 minutes, so a longer hold is a new pause.
+
+```bash
+ssh drew-gtr-pro '~/bin/merge-on-green pause --minutes 60 --reason "version PR #11196 CI window"'
+ssh drew-gtr-pro '~/bin/merge-on-green status'   # paused or not, reason, until, who, allowlist
+ssh drew-gtr-pro '~/bin/merge-on-green resume'   # ends the pause and the repo variable
+```
+
+From any host, the repo variable pauses the same way; it ends at its until or 120 minutes after it was set, whichever is first:
+
+```bash
+# GNU date; on macOS use $(date -u -v+60M +%FT%TZ)
+gh-drew variable set MERGE_ON_GREEN_PAUSED -R tangle-network/agent-container --body "$(date -u -d '+60 min' +%FT%TZ) version PR #11196"
+```
+
 ## beelink-gate
 
 From GTR, run a full-SHA gate on a beelink without creating a lane worktree there:
