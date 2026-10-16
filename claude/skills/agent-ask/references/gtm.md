@@ -13,9 +13,12 @@ Read every deliverable, including downloaded assets at full size. Give each deli
 | Brand assets | Logo, fonts, colors, and screenshots match the live product site and brand package; cite the checked sources. |
 | Pricing | Every plan, price, and limit matches the served catalog and site at check time. |
 | Copy | Names the buyer's problem and a specific benefit with sourced claims; no cringe, generic hype, filler, brand-banned vocabulary, or invented advantage. |
+| Cold email | Shared batch boilerplate ≤10%; zero AI-tell phrases, including "one risk worth naming", "the risk I'd name is quiet changes", "documents a workflow", or "squarely in your design space"; zero API identifiers in prose; ≤75 words; a first-person, specific observation a human would notice; one low-friction ask. |
 | Layout | One clear focal point, deliberate reading order, readable type, and uncluttered spacing at the intended size. Render the saved creative at full size; inspect edges, clipping, and padding, especially footer/card spacing. |
 | Idea | A clever, product-specific insight or hook the agent can defend with buyer evidence; a rival's name cannot replace this product's without changing the idea. |
 | Campaign | Identifies the buyer, fits the channel, and leads through one clear CTA to a working buyer path and a measurable product outcome. |
+
+Cold-email writing PASS counts only after a blind judge agrees with actual Drew labels. Hide authorship, earlier CEO/critic verdicts, and Drew labels until judging; an uncalibrated critic cannot confer PASS. While mandatory-text treatment is unresolved, report prose-only and whole-body repetition, assume no exemption, and keep writing PASS pending Drew's interpretation.
 
 Ask why the agent chose the angle and design. Return FAILs in the same thread: one succinct verdict naming the item, evidence, and unmet bar, without writing its replacement. A capability gap goes to its builder with evidence and the smallest fix; after the fix, re-ask unassisted. Show Drew passed work with the conversation link and evidence.
 
