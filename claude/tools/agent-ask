@@ -87,13 +87,14 @@ const COMMANDS = new Set(['status', 'file', 'journal', 'approvals', 'scorecard',
 function parseArgs(argv) {
   const options = { json: false, quiet: false }
   const positional = []
+  let literalAsk = false
   const takesValue = new Set(['--app', '--workspace', '--thread', '--title', '--model', '--wait', '--download', '--days', '--origin'])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]
     if (arg === '-h' || arg === '--help') return { help: true }
     if (arg === '--json') { options.json = true; continue }
     if (arg === '--quiet') { options.quiet = true; continue }
-    if (arg === '--') { positional.push(...argv.slice(index + 1)); break }
+    if (arg === '--') { literalAsk = true; positional.push(...argv.slice(index + 1)); break }
     const [flag, inline] = arg.startsWith('--') ? arg.split(/=(.*)/s, 2) : [arg]
     if (takesValue.has(flag)) {
       const value = inline ?? argv[++index]
@@ -114,6 +115,12 @@ function parseArgs(argv) {
     options.path = positional[0]
   } else if (command === 'ask') {
     if (positional.length === 0) throw new UsageError('give the ask as an argument, or - to read stdin')
+    // A new conversation that is one lowercase word is a mistyped command, and an
+    // ask starts a real, billed turn (`whoami` did on 2026-10-16). Replies on a
+    // --thread ("go", "yes") pass, and `--` sends anything as an ask.
+    if (!literalAsk && !options.thread && positional.length === 1 && /^[a-z][a-z0-9-]*$/.test(positional[0])) {
+      throw new UsageError(`"${positional[0]}" is not a command (${[...COMMANDS].join(', ')}); an ask is a sentence, or pass -- ${positional[0]} to send it as one`)
+    }
     options.ask = positional.join(' ')
   } else if (positional.length) {
     throw new UsageError(`${command} takes no arguments`)
