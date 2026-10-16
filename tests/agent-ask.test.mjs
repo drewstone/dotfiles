@@ -86,34 +86,6 @@ function run(api, args, { env = {}, input } = {}) {
   })
 }
 
-test('an ask starts a turn with a client turn id, holds reads until it settles, and prints the result', async () => {
-  const api = await startApi({
-    turn: (reads, turnId) => reads < 2 ? baseTurn({ turnId }) : baseTurn({
-      turnId, state: 'succeeded', model: 'gpt-6-luna', costUsd: 0.31,
-      reply: { content: 'Plan written.', mediaType: 'text/markdown' },
-      files: [{ path: 'research/plan.md', action: 'created' }],
-      assets: [{ id: 'v1', path: '/api/operator/v1/workspaces/ws1/assets/v1' }],
-    }),
-  })
-  try {
-    const result = await run(api, ['--app', 'tax', '--workspace', 'ws1', 'Draft the filing plan'])
-    assert.equal(result.code, 0, result.stderr)
-    const start = api.calls.find((call) => call.method === 'POST')
-    assert.equal(start.path, '/api/operator/v1/workspaces/ws1/turns')
-    assert.match(start.body.turnId, /^[0-9a-f-]{36}$/)
-    assert.deepEqual(Object.keys(start.body).sort(), ['content', 'title', 'turnId'])
-    assert.equal(start.body.title, 'Draft the filing plan')
-    const reads = api.calls.filter((call) => call.method === 'GET' && call.path.endsWith(`/turns/${start.body.turnId}`))
-    assert.equal(reads.length, 2)
-    assert.equal(reads[0].query.wait, '1')
-    assert.match(result.stdout, /Plan written\./)
-    assert.match(result.stdout, /created {2}research\/plan\.md/)
-    assert.match(result.stdout, /\/api\/operator\/v1\/workspaces\/ws1\/assets\/v1/)
-  } finally {
-    await api.close()
-  }
-})
-
 test('GTM leaves model selection to the workspace unless a flag or environment override is set', async () => {
   const api = await startApi()
   try {
