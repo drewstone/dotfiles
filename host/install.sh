@@ -26,10 +26,11 @@
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
 #                                          systemd-resolved's stub)
 #
-# Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only]
+# Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only|--docker-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
 #   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
 #   --gate-priority-only  Beelinks: install only the merge-gate CPU priority.
+#   --docker-only     validate and stage only daemon.json; never reload or restart Docker.
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
 set -euo pipefail
@@ -39,19 +40,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK=0
 GIT_GUARD_ONLY=0
 GATE_PRIORITY_ONLY=0
+DOCKER_ONLY=0
 case "${1:-}" in
   --check) CHECK=1 ;;
   --git-guard-only) GIT_GUARD_ONLY=1 ;;
   --gate-priority-only) GATE_PRIORITY_ONLY=1 ;;
+  --docker-only) DOCKER_ONLY=1 ;;
   '') ;;
-  *) echo "usage: host/install.sh [--check|--git-guard-only]" >&2; exit 2 ;;
+  *) echo "usage: host/install.sh [--check|--git-guard-only|--gate-priority-only|--docker-only]" >&2; exit 2 ;;
 esac
+[ "$#" -le 1 ] || { echo "choose one host installer mode" >&2; exit 2; }
 SUDO=sudo
 [ "$(id -u)" = 0 ] && SUDO=
 # --check never prompts. Without cached sudo, a root-only file reads as drift.
 if [ "$CHECK" = 1 ] && [ -n "$SUDO" ]; then SUDO="sudo -n"; fi
 DRIFT=0
 CHANGED=0
+DOCKER_CONFIG_CHANGED=0
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -74,6 +79,92 @@ want_file() {
   note changed "$dst"
   CHANGED=1
 }
+
+install_docker_config() {
+  local lifecycle owner owner_home owner_uid candidate="$TMP/daemon.json" staged backup
+  local -a emitter
+  if ! command -v dockerd >/dev/null 2>&1; then
+    if [ "$DOCKER_ONLY" = 1 ]; then echo "dockerd is required" >&2; return 1; fi
+    return 0
+  fi
+  # Match the existing user-unit owner convention, including sudo/root callers.
+  # sudo -H selects that account's HOME; never read root's copy of its policy.
+  if [ "$(id -u)" = 0 ]; then
+    owner="${SUDO_USER:-$(stat -c %U "$SCRIPT_DIR")}"
+    if ! owner_uid=$(id -u "$owner") || [ "$owner_uid" = 0 ]; then
+      echo "cannot identify a non-root lifecycle owner from sudo or checkout ownership" >&2
+      return 1
+    fi
+    owner_home=$(getent passwd "$owner" | cut -d: -f6)
+    if [[ "$owner_home" != /* ]]; then echo "lifecycle owner has no absolute home" >&2; return 1; fi
+    lifecycle="$owner_home/bin/storage-lifecycle"
+    emitter=(sudo -n -H -u "$owner" -- "$lifecycle" --config "$owner_home/.config/storage-lifecycle/config.json")
+  else
+    lifecycle=$(command -v storage-lifecycle || true)
+    emitter=("$lifecycle")
+  fi
+  # An older/missing emitter must never silently replace a previously capped config.
+  if [ -z "$lifecycle" ] || ! "${emitter[@]}" configure-docker --print-daemon-gc >"$TMP/docker-gc.json"; then
+    echo "deploy storage-lifecycle with --print-daemon-gc before this installer; Docker config unchanged" >&2
+    if [ "$CHECK" = 1 ]; then drift "cannot read lifecycle Docker GC policy"; return 0; fi
+    return 1
+  fi
+  # Canonical daemon.json owns every other field; lifecycle alone owns builder.gc.
+  python3 - "$SCRIPT_DIR/docker/daemon.json" "$TMP/docker-gc.json" "$candidate" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+base, gc = (json.loads(Path(path).read_text()) for path in sys.argv[1:3])
+if (not isinstance(base, dict) or not isinstance(gc, dict)
+        or set(gc) != {'enabled', 'defaultReservedSpace', 'defaultMaxUsedSpace'}
+        or gc['enabled'] is not True
+        or not isinstance(gc['defaultMaxUsedSpace'], str)
+        or not re.fullmatch(r'[1-9][0-9]*B', gc['defaultMaxUsedSpace'])
+        or gc['defaultReservedSpace'] != gc['defaultMaxUsedSpace']):
+    raise SystemExit('invalid lifecycle Docker GC fragment; Docker config unchanged')
+builder = base.setdefault('builder', {})
+if not isinstance(builder, dict):
+    raise SystemExit('invalid canonical Docker builder config')
+builder['gc'] = gc
+Path(sys.argv[3]).write_text(json.dumps(base, indent=2, sort_keys=True) + '\n')
+PY
+  # Validate the complete candidate BEFORE any replacement, including on --check.
+  $SUDO dockerd --validate --config-file "$candidate" >/dev/null
+  if $SUDO cmp -s "$candidate" /etc/docker/daemon.json 2>/dev/null &&
+    [ "$($SUDO stat -c '%a %U' /etc/docker/daemon.json 2>/dev/null)" = '644 root' ]; then
+    note pending "Docker GC config staged; verify serving policy with docker buildx inspect before claiming activation"
+    return 0
+  fi
+  if [ "$CHECK" = 1 ]; then drift "/etc/docker/daemon.json"; return 0; fi
+  [ ! -L /etc/docker/daemon.json ] || { echo "refusing symlink /etc/docker/daemon.json" >&2; return 1; }
+  $SUDO install -d -m 0755 -o root -g root /etc/docker
+  if $SUDO test -e /etc/docker/daemon.json; then
+    backup=$($SUDO mktemp /etc/docker/daemon.json.pre-host-guard.XXXXXX)
+    $SUDO cp -p /etc/docker/daemon.json "$backup"
+    note backup "$backup (rollback: restore this file through the host owner before a controlled restart)"
+  fi
+  staged=$($SUDO mktemp /etc/docker/.daemon.json.host-guard.XXXXXX)
+  if ! $SUDO install -m 0644 -o root -g root "$candidate" "$staged" ||
+     ! $SUDO mv -T "$staged" /etc/docker/daemon.json; then
+    $SUDO rm -f "$staged"
+    return 1
+  fi
+  CHANGED=1
+  DOCKER_CONFIG_CHANGED=1
+  note changed "/etc/docker/daemon.json validated and staged"
+  if [ "$DOCKER_ONLY" = 1 ]; then
+    note pending "Docker GC activation needs a controlled restart; no Docker reload or restart performed"
+  else
+    note pending "Docker GC and cgroup-parent require a controlled restart after the live-restore reload"
+  fi
+}
+
+if [ "$DOCKER_ONLY" = 1 ]; then
+  install_docker_config
+  exit 0
+fi
 
 # want_link TARGET LINK: LINK is a symlink to TARGET.
 want_link() {
@@ -321,14 +412,9 @@ want_file 0644 "$SCRIPT_DIR/cgroup/50-agent-cap.conf" /etc/systemd/system/user.s
 want_file 0644 "$SCRIPT_DIR/cgroup/60-writeback.conf" /etc/sysctl.d/60-host-guard-writeback.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/61-vfs-cache.conf" /etc/sysctl.d/61-host-guard-vfs-cache.conf
 # Containers that agents and CI start join user.slice, under the same cap.
-# live-restore comes first: it applies on reload, and it keeps containers
-# running when dockerd restarts. cgroup-parent applies only after a restart,
-# and only to containers created afterwards.
-if command -v dockerd >/dev/null 2>&1; then
-  docker_before=$CHANGED
-  want_file 0644 "$SCRIPT_DIR/docker/daemon.json" /etc/docker/daemon.json
-  docker_changed=$([ "$CHANGED" != "$docker_before" ] && echo 1 || echo 0)
-fi
+# Full mode retains the existing validated live-restore reload below. GC and
+# cgroup-parent still require a controlled restart. --docker-only stages only.
+install_docker_config
 if [ "$CHECK" = 1 ]; then
   [ "$(systemctl show user.slice -p MemoryMax --value)" = 115964116992 ] || drift "user.slice MemoryMax is not 108G"
   [ "$(sysctl -n vm.dirty_bytes)" = 1073741824 ] || drift "vm.dirty_bytes is not 1 GiB"
@@ -341,10 +427,9 @@ elif [ "$CHANGED" = 1 ]; then
   $SUDO sysctl -q -p /etc/sysctl.d/60-host-guard-writeback.conf
   $SUDO sysctl -q -p /etc/sysctl.d/61-host-guard-vfs-cache.conf
   note changed "user.slice: $(systemctl show user.slice -p MemoryMax -p MemorySwapMax -p CPUWeight | tr "\n" " ")"
-  if [ "${docker_changed:-0}" = 1 ]; then
-    $SUDO dockerd --validate --config-file /etc/docker/daemon.json >/dev/null
+  if [ "$DOCKER_CONFIG_CHANGED" = 1 ]; then
     $SUDO systemctl reload docker
-    note changed "dockerd reloaded (live-restore on); run sudo systemctl restart docker to apply cgroup-parent"
+    note changed "dockerd reloaded for live-restore; GC and cgroup-parent still require a controlled restart"
   fi
 fi
 [ "$CHANGED" = 1 ] || CHANGED=$cap_before
