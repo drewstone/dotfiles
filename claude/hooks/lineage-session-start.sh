@@ -11,7 +11,8 @@
 #    installed skills. inject-directive.sh adds the directive variant on the first prompt.
 
 INPUT=$(cat)
-HOOKS=$(dirname "${BASH_SOURCE[0]}")
+# The real hooks dir, so the helper is found from a checkout pulled before install.sh relinks.
+HOOKS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
 
 LINEAGE="${LINEAGE_BIN:-$HOME/.local/bin/lineage}"
 if [ -x "$LINEAGE" ]; then
