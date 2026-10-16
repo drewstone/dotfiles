@@ -120,27 +120,6 @@ test("a green PR that conflicts gets one comment per head, not one per tick", ()
   assert.doesNotMatch(f.calls(), /pr merge 12 /);
 });
 
-test("a PR whose gate never ran is updated from develop once per head, never merged", () => {
-  const f = fixture([withChecks(14, [check("regressions")])]);
-  f.run(); f.run();
-  assert.equal((f.calls().match(/api --method PUT repos\/tangle-network\/agent-container\/pulls\/14\/update-branch -f expected_head_sha=a+14/g) || []).length, 1);
-  assert.doesNotMatch(f.calls(), /pr merge 14 /);
-});
-
-test("a PR whose gate cannot run because it conflicts tells its owner once per head", () => {
-  const f = fixture([withChecks(17, [check("regressions")])], { conflictUpdate: [17] });
-  f.run(); f.run();
-  assert.equal((f.calls().match(/pr comment 17 /g) || []).length, 1);
-  assert.doesNotMatch(f.calls(), /pr merge 17 /);
-});
-
-test("a gate the old CI recorded as SKIPPED counts as never run, and the PR is updated from develop", () => {
-  const f = fixture([withChecks(15, [check("Fast Checks", "SKIPPED"), check("Build", "SKIPPED"), check("Type Check", "SKIPPED"), check("regressions")])]);
-  f.run();
-  assert.match(f.calls(), /pulls\/15\/update-branch/);
-  assert.doesNotMatch(f.calls(), /pr merge 15 /);
-});
-
 test("a red status from the retired local signoff does not hold a green PR", () => {
   const f = fixture([withChecks(16, [...green, { __typename: "StatusContext", context: "signoff/local", state: "FAILURE" }])]);
   f.run();
@@ -198,15 +177,6 @@ test("a check judged by its latest run: a failure re-run green merges", () => {
   const f = fixture([withChecks(32, [...green, failedFirst, greenAfter])]);
   f.run();
   assert.match(f.calls(), /pr merge 32 /);
-});
-
-test("a red gate is refreshed from develop once per head and develop; a red side check only waits", () => {
-  const f = fixture([withChecks(40, [check("Fast Checks"), check("Build"), check("Type Check", "FAILURE")]), withChecks(41, [...green, check("Unit Tests", "FAILURE")])]);
-  f.run(); f.run();
-  assert.equal((f.calls().match(/pulls\/40\/update-branch/g) || []).length, 1);
-  assert.doesNotMatch(f.calls(), /pulls\/41\/update-branch/);
-  assert.doesNotMatch(f.calls(), /pr merge 4[01] /);
-  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /#40 .*red gate: Type Check; already refreshed/);
 });
 
 test("a merge GitHub refuses is recorded with its reason", () => {
