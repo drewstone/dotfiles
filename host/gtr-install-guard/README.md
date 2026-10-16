@@ -53,7 +53,7 @@ package installs are not refused, since Beelinks are where they run.
   or the `FLEET_STATUS_FILE` that GTR's ssh client sends (`host/ssh/20-fleet-lane-send.conf`, accepted by
   `host/ssh/20-fleet-lane-accept.conf`). The lane is recorded as `fleet-lane` in the new worktree's admin directory.
 - A lane holding `cap` (4) recorded worktrees is refused; so is any add while the filesystem has less than
-  `floor_bytes` (200 GiB) free. The refusal lists the longest-idle trees: `OWNER_RELEASED=1 wt-remove <path>` for the lane's own,
+  `floor_bytes` (160 GiB, matching storage-lifecycle admission) free. The refusal lists the longest-idle trees: `OWNER_RELEASED=1 wt-remove <path>` for the lane's own,
   plain `wt-remove <path>` (which keeps its idle guard) for another lane's.
 - Counting, checkout and the lane record run under one per-lane lock, and the record is written whenever the tree exists,
   so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
