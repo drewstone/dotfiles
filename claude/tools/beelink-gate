@@ -292,10 +292,10 @@ import contextlib
 import fcntl
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 sparse_code = sys.argv[5]
@@ -303,12 +303,11 @@ locks = root / ".locks"
 
 @contextlib.contextmanager
 def writer_intent():
-    # Register before waiting for the exclusive capacity lock. New checkout
-    # claims then drain instead of indefinitely overtaking this pruner.
+    # Advertise only the brief namespace change, never scans or recursive work.
     writer_fd = os.open(locks / ".capacity.writer.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     intent = locks / ".capacity.writer.intent"
     try:
-        fcntl.flock(writer_fd, fcntl.LOCK_EX)
+        fcntl.flock(writer_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # The writer lock, not a PID or clock lease, proves an intent is live.
         # A process death releases it, so the next writer can clear the marker.
         intent.unlink(missing_ok=True)
@@ -345,10 +344,21 @@ def free_bytes(path):
     stat = os.statvfs(path)
     return stat.f_bavail * stat.f_frsize
 
+def remove(path):
+    # Detached paths stay counted in the cache until removal finishes. A slow
+    # removal cannot block admission; the next prune retries a timed-out path.
+    result = subprocess.run(["timeout", "-s", "KILL", "2s", "rm", "-rf", "--", str(path)], stdin=subprocess.DEVNULL)
+    if result.returncode:
+        raise OSError(f"bounded cache removal {path}: exit {result.returncode}")
+
 try:
-    with writer_intent(), (locks / ".capacity.lock").open("a+") as global_lock:
+    for pending in locks.glob(".evicted-*"):
+        if pending.is_dir() and not pending.is_symlink():
+            remove(pending)
+    with (locks / ".capacity.lock").open("a+") as global_lock:
         lock_wait_start = time.monotonic_ns()
-        fcntl.flock(global_lock, fcntl.LOCK_EX)
+        # Sizing and sparse work share capacity with new checkout claims.
+        fcntl.flock(global_lock, fcntl.LOCK_SH)
         lock_acquired = time.monotonic_ns()
         candidates = []
         for host in root.iterdir():
@@ -365,7 +375,7 @@ try:
                     stamp = used if used.is_file() and not used.is_symlink() else git_dir / "FETCH_HEAD"
                     if not stamp.exists() or stamp.is_symlink():
                         stamp = git_dir
-                    candidates.append((stamp.stat().st_mtime_ns, repo, size(repo), host.name, owner.name))
+                    candidates.append((stamp.stat().st_mtime_ns, repo, host.name, owner.name))
         total = size(root)
         initial_total = total
         initial_free = free_bytes(root)
@@ -373,8 +383,8 @@ try:
         # An idle checkout first shrinks to the sparse patterns its HEAD commits: those
         # are paths no gated command reads, and the checkout stays warm for the
         # next gate. LRU eviction then weighs what remains.
-        sparsified = 0
-        for index, (stamp_ns, repo, bytes_used, host, owner) in enumerate(candidates):
+        sparsified = False
+        for stamp_ns, repo, host, owner in candidates:
             fd = os.open(locks / f"{host}-{owner}-{repo.name}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             try:
                 if repo != current:
@@ -391,24 +401,17 @@ try:
                 if result.returncode:
                     print(f"beelink-gate: sparse patterns not applied to idle cache {repo} (exit {result.returncode})", file=sys.stderr)
                 elif result.stderr:
-                    after = size(repo)
-                    sparsified += max(0, bytes_used - after)
-                    candidates[index] = (stamp_ns, repo, after, host, owner)
-                    print(f"beelink-gate: sparse patterns freed {bytes_used - after} bytes of idle cache {repo}", file=sys.stderr)
+                    sparsified = True
+                    print(f"beelink-gate: sparse patterns applied to idle cache {repo}", file=sys.stderr)
             finally:
                 os.close(fd)
         if sparsified:
             total = size(root)
-        estimated_total = total
-        estimated_reclaimed = sparsified
+        fcntl.flock(global_lock, fcntl.LOCK_UN)
         evictions = 0
-        for _, repo, bytes_used, host, owner in sorted(candidates):
-            if estimated_total <= cap and estimated_reclaimed >= required_reclaim:
-                # Separate du calls count a hardlinked inode in both checkouts,
-                # while the cache-wide du counts it once. Verify before stopping.
-                total = size(root)
-                if total <= cap and (not required_reclaim or free_bytes(root) >= target_free):
-                    break
+        for stamp_ns, repo, host, owner in sorted(candidates):
+            if total <= cap and (not required_reclaim or free_bytes(root) >= target_free):
+                break
             lock_path = locks / f"{host}-{owner}-{repo.name}.lock"
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             try:
@@ -417,13 +420,31 @@ try:
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         continue
-                shutil.rmtree(repo)
-                estimated_total -= bytes_used
-                estimated_reclaimed += bytes_used
+                # Only detach the chosen checkout under writer intent. Neither
+                # du nor recursive removal runs here. Refuse lock contention
+                # immediately, so simultaneous pruners cannot form a convoy.
+                with writer_intent():
+                    fcntl.flock(global_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    try:
+                        git_dir = repo / ".git"
+                        if repo.is_symlink() or git_dir.is_symlink() or not git_dir.is_dir():
+                            continue
+                        used = git_dir / "beelink-gate-used"
+                        if used.is_file() and used.stat().st_mtime_ns > stamp_ns:
+                            continue  # Used since the shared snapshot; no longer LRU.
+                        removed = locks / f".evicted-{uuid.uuid4().hex}"
+                        repo.rename(removed)
+                    finally:
+                        fcntl.flock(global_lock, fcntl.LOCK_UN)
+                remove(removed)
                 evictions += 1
-                print(f"beelink-gate: evicted LRU cache {repo} ({bytes_used} bytes)", file=sys.stderr)
+                print(f"beelink-gate: evicted LRU cache {repo}", file=sys.stderr)
             finally:
                 os.close(fd)
+            fcntl.flock(global_lock, fcntl.LOCK_SH)
+            total = size(root)
+            fcntl.flock(global_lock, fcntl.LOCK_UN)
+        fcntl.flock(global_lock, fcntl.LOCK_SH)
         total = size(root)
         final_free = free_bytes(root)
         reclaimed = max(0, final_free - initial_free)
@@ -457,7 +478,7 @@ finally:
 PY
 }
 
-# A writer holds the fd lock for its whole intent and removal pass. If it dies,
+# A writer holds the fd lock for its brief intent and rename. If it dies,
 # flock releases that lock; a claimant can then remove its abandoned marker.
 capacity_writer_active() {
   [ -e "$intent_file" ] || [ -L "$intent_file" ] || return 1
@@ -2516,6 +2537,36 @@ fi
 # The beelink's receipts, for --report.
 if [ "${1:-}" = --receipts ]; then
   cat "$STATE_DIR/receipts.jsonl" 2>/dev/null
+  # Admission refusals precede the normal receipt. Keep their log-derived count
+  # in the existing report, including the source window and retained coverage.
+  python3 - "$STATE_DIR" "${2:-48}" <<'PY'
+import datetime as dt
+import json
+from pathlib import Path
+import re
+import sys
+import time
+
+root, hours = Path(sys.argv[1]) / "jobs", int(sys.argv[2])
+end = time.time()
+start = end - hours * 3600
+logs = []
+refused = []
+for log in root.glob("*/stderr.log"):
+    try:
+        at = log.stat().st_mtime
+        if not start <= at <= end:
+            continue
+        logs.append(at)
+        if re.search(r"TEMPFAIL[^\n]*capacity writer intent exceeded", log.read_text(errors="replace")):
+            refused.append(log.parent.name)
+    except FileNotFoundError:
+        continue  # Reconnect log retention may run during this read.
+utc = lambda value: dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat()
+print(json.dumps({"kind": "capacity_intent_logs", "window_from": utc(start), "window_to": utc(end),
+                  "logs_scanned": len(logs), "oldest_retained": utc(min(logs)) if logs else None,
+                  "refusals": len(refused), "gate_ids": sorted(refused)}))
+PY
   exit 0
 fi
 
@@ -2878,8 +2929,8 @@ if [ "${1:-}" = --report ]; then
   for host in beelink1 beelink2; do
     # One retry, then a loud partial: on 2026-10-14 one dropped B1 read silently
     # turned a 352-run window into a B2-only 115 runs at 1.0 runs per merged PR.
-    if heartbeat=0 on_beelink "$host" --receipts > "$host_rows" 2>/dev/null \
-      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts > "$host_rows" 2>/dev/null; }; then
+    if heartbeat=0 on_beelink "$host" --receipts "$hours" > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts "$hours" > "$host_rows" 2>/dev/null; }; then
       sed "s/^{/{\"from\": \"$host\", /" "$host_rows" >> "$receipts_file"
     else
       echo "beelink-gate: --report could not read $host's receipts" >&2
@@ -2894,12 +2945,16 @@ path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[
 now = dt.datetime.now(dt.timezone.utc)
 since = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 history = []
+capacity_logs = []
 for line in open(path):
     try:
         r = json.loads(line)
     except ValueError:
         continue
-    history.append(r)
+    if r.get("kind") == "capacity_intent_logs":
+        capacity_logs.append(r)
+    else:
+        history.append(r)
 # GitHub follows a renamed repo but its search does not, so receipts group under the
 # current name; otherwise agent-dev-container's runs after its rename had no merged count.
 canonical_names = {}
@@ -2929,6 +2984,9 @@ def merged(repo):
                          capture_output=True, text=True)
     return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
 print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
+for logs in capacity_logs:
+    print(f"CAPACITY_INTENT {logs['from']}: refusals={logs['refusals']} retained_logs={logs['logs_scanned']} "
+          f"window={logs['window_from']}..{logs['window_to']} oldest_retained={logs['oldest_retained']}; expired logs unavailable")
 if missing:
     print(f"PARTIAL missing receipts from {missing}; every count below omits that host")
 print(f"{'repo':38} {'runs':>5} {'merged':>6} {'runs/PR':>7} {'p50 wait':>8} {'repeats':>7}  modes / exits")
