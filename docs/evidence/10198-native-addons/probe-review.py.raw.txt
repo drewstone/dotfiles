@@ -85,6 +85,12 @@ def first_scan(text, fixture, pidfile, nonce):
     except subprocess.TimeoutExpired:
         timed_out=True;os.killpg(proc.pid,signal.SIGKILL);stdout,stderr=proc.communicate(timeout=3)
     row={'exit':proc.returncode,'stale':stdout.strip().splitlines(),'stderr':stderr,'outerDeadlineExceeded':timed_out,'seconds':round(time.monotonic()-start,3),'helperPids':own_children(pidfile),'helpersAlive':[pid for pid in own_children(pidfile) if live(pid)]}
+    identityfile=pathlib.Path(str(pidfile)+'.identity')
+    row['helperIdentityAtSpawn']=[json.loads(line) for line in identityfile.read_text().splitlines()] if identityfile.exists() else []
+    row['helperStateBeforeCleanup']={}
+    for pid in row['helperPids']:
+        try: row['helperStateBeforeCleanup'][str(pid)]=pathlib.Path('/proc',str(pid),'stat').read_text()
+        except FileNotFoundError: row['helperStateBeforeCleanup'][str(pid)]=None
     cleanup_owned(pidfile,nonce)
     return row
 
@@ -104,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix='gate-native-review-') as scratch:
             (pkg/'index.js').write_text("require('@parcel/watcher-linux-x64-glibc'); exports.lateBinding = () => require('./build/Release/entry-control.node')\n")
         else:
             stdio='ignore' if case=='detached-helper-exit' else 'inherit'
-            (pkg/'index.js').write_text("const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:"+json.dumps(stdio)+"});fs.appendFileSync("+json.dumps(str(pidfile))+",String(child.pid)+'\\n');child.unref();"+('setInterval(()=>{},1000);' if case.endswith('stdout') else '')+'\n')
+            (pkg/'index.js').write_text("const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:"+json.dumps(stdio)+"});fs.appendFileSync("+json.dumps(str(pidfile))+",String(child.pid)+'\\n');fs.appendFileSync("+json.dumps(str(pidfile)+'.identity')+",JSON.stringify({pid:child.pid,stat:fs.readFileSync('/proc/'+child.pid+'/stat','utf8')})+'\\n');child.unref();"+('setInterval(()=>{},1000);' if case.endswith('stdout') else '')+'\n')
         (pkg/'package.json').write_text(json.dumps(package))
         if case=='incidental-direct-optional-native':
             original=guard(regression,fixture);changed=guard(source,fixture)
@@ -114,10 +120,11 @@ with tempfile.TemporaryDirectory(prefix='gate-native-review-') as scratch:
         else:
             original=first_scan(regression,fixture,pidfile,nonce)
             pidfile.unlink(missing_ok=True)
+            pathlib.Path(str(pidfile)+'.identity').unlink(missing_ok=True)
             changed=first_scan(source,fixture,pidfile,nonce)
             row={'case':case,'initialProposal':original,'after':changed}
             passed=bool(original['helpersAlive']) and not changed['helpersAlive'] and bool(changed['helperPids']) and changed['exit']==0 and not changed['outerDeadlineExceeded'] and bool(changed['stale'])
-            if case.endswith('stdout'): passed=passed and original['seconds']>=10 and changed['seconds']>=10
+            if case.endswith('stdout'): passed=passed and not original['outerDeadlineExceeded'] and original['seconds']>=10 and changed['seconds']>=10
         report['cases'].append(row)
         if not passed: report['errors'].append({'case':case,'error':'Real review regression/control did not discriminate'})
 report['regressionSource']='cc3cd08055d3454f44805b8cb699cc2c84f30cae'
