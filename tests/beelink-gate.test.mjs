@@ -1331,8 +1331,6 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
       const result = f.call(f.first, ["true"]);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stderr, /applying repo sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
-      const freed = result.stderr.match(/sparse patterns freed (\d+) bytes of idle cache \S+discovery-lab\n/);
-      assert.ok(freed && Number(freed[1]) >= 300_000, result.stderr);
       assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
       assert.doesNotMatch(result.stderr, /restoring its full tree/);
     } finally { locker.kill(); }
@@ -1376,7 +1374,7 @@ test("a host short only of a repo's install reserve applies sparse patterns to i
     const admitted = f.call(f.first, ["true"], { env: { FAKE_AVAIL_BASE: String(floor + reserve + used() - 2_000_000) } });
     assert.equal(admitted.status, 0, admitted.stderr);
     assert.match(admitted.stderr, /install reserve needs \d+ bytes; applying sparse patterns to owned idle cache/);
-    assert.match(admitted.stderr, /sparse patterns freed \d+ bytes of idle cache \S+discovery-lab/);
+    assert.match(admitted.stderr, /sparse patterns applied to idle cache \S+discovery-lab/);
     assert.equal(existsSync(join(lab, "pursuits")), false);
     assert.equal(existsSync(join(lab, "runner", "a.mjs")), true);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -1384,6 +1382,56 @@ test("a host short only of a repo's install reserve applies sparse patterns to i
 
 const receipts = (f) => readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+test("a slow cache measurement admits a parallel gate within five seconds", async (t) => {
+  const f = fixture();
+  const measuring = join(f.root, "measuring");
+  const release = join(f.root, "release-measurement");
+  const admitted = join(f.root, "parallel-command");
+  // Delay the real du at the process boundary in just the first gate. Both
+  // gates use the real admission path, flock, Git checkouts and receipts.
+  writeFileSync(join(f.root, "bin", "du"), `#!/usr/bin/env bash
+if [[ "\${SLOW_CACHE_MEASUREMENT:-0}" == 1 && "$*" != *--total* ]]; then
+  touch '${measuring}'
+  while [[ ! -e '${release}' ]]; do sleep 0.02; done
+fi
+exec /usr/bin/du "$@"
+`);
+  chmodSync(join(f.root, "bin", "du"), 0o755);
+  const launch = (args, extra = {}) => {
+    const child = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, ...args].map(encode)],
+      { env: { ...f.env, BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS: "3", ...extra }, stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdout.resume();
+    const done = new Promise((resolveDone) => child.on("close", (status) => resolveDone({ status, stderr })));
+    return { child, done };
+  };
+  let first, second;
+  try {
+    first = launch(["true"], { SLOW_CACHE_MEASUREMENT: "1" });
+    for (let i = 0; i < 500 && !existsSync(measuring); i++) await sleepMs(20);
+    assert.equal(existsSync(measuring), true, "first gate never reached measurement");
+    const start = Date.now();
+    second = launch(["touch", admitted]);
+    while (Date.now() - start < 5000 && !existsSync(admitted)) await sleepMs(20);
+    const admissionMs = Date.now() - start;
+    assert.equal(existsSync(admitted), true, `parallel gate not admitted within 5 s (${admissionMs} ms)`);
+    assert.equal(existsSync(release), false, "measurement must still be blocked at admission");
+    writeFileSync(release, "");
+    const results = await Promise.all([first.done, second.done]);
+    for (const result of results) {
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(result.stderr, /TEMPFAIL.*capacity writer intent/);
+    }
+    assert.equal(receipts(f).filter((r) => r.exit === 0).length, 2);
+    t.diagnostic(JSON.stringify({ admission_ms: admissionMs, target_ms: 5000, capacity_intent_refusals: 0, parallel_gates: 2 }));
+  } finally {
+    writeFileSync(release, "");
+    await Promise.all([first?.done, second?.done]);
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
 
 test("the hold limit stops a hung command, frees the lock and records the timeout", () => {
   const f = fixture();
