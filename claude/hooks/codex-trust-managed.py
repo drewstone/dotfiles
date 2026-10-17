@@ -12,6 +12,10 @@ import time
 import tomllib
 
 
+class TrustPending(RuntimeError):
+    """Codex did not answer in time; trust is retried on the next install pass."""
+
+
 def find_codex():
     codex = shutil.which('codex')
     if codex:
@@ -74,7 +78,7 @@ def hook_hash(home, path, guard):
                     raise RuntimeError('Codex hooks/list failed')
                 hook = installed_hook(response, path, guard)
                 return hook['key'], hook['currentHash']
-        raise RuntimeError('Codex hooks/list did not answer within 12 seconds')
+        raise TrustPending('Codex hooks/list did not answer within 12 seconds')
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -115,6 +119,10 @@ def install(home, guard):
 if __name__ == '__main__':
     try:
         install(Path(sys.argv[1]), sys.argv[2])
+    except TrustPending as error:
+        # A slow app-server under host load is not a broken install; the next pass retries.
+        print(f'  CODEX hook trust pending (retry next pass): {error}', file=sys.stderr)
+        sys.exit(0)
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         print(f'  CODEX hook trust pending: {error}', file=sys.stderr)
         sys.exit(1)
