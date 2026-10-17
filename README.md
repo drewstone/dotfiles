@@ -54,6 +54,7 @@ Run `./host/install-cli-bridge-slice.sh` alone to install only the slice; it nee
 ## Worktree reaper
 
 `git/install.sh` installs `wt-reaper`: an hourly systemd user timer on Linux and a launchd agent at 04:15 daily on macOS.
+On a Mac migrated to the maintained tangle-tools storage-lifecycle, it skips the standalone reaper after verifying the installed LaunchAgent and its loaded job. The storage-lifecycle installer owns retiring the old reaper.
 It covers every linked worktree registered with a repository under `~/code`, `~/company`, or `~/webb`, wherever that worktree lives (for example `~/webb/_wt/*`, `~/worktrees/*`, or `/tmp`).
 It removes one only when every check passes:
 

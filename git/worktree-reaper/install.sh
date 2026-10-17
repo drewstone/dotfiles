@@ -29,6 +29,29 @@ if [ "$(uname -s)" = Linux ] && lifecycle_owns_worktrees; then
   exit 0
 fi
 
+# The old standalone mac-disk-guard uses the same label. Require the maintained
+# executable in both the installed plist and the loaded job before handing over.
+mac_lifecycle_owns_worktrees() {
+  local owner="$HOME/.local/share/tangle-tools/disk-guard/bin/storage-lifecycle"
+  local plist="$HOME/Library/LaunchAgents/com.drew.mac-disk-guard.plist"
+  local loaded
+  [ -x "$owner" ] && [ -f "$plist" ] || return 1
+  /usr/bin/python3 -c '
+import plistlib, sys
+with open(sys.argv[1], "rb") as stream:
+    args = plistlib.load(stream).get("ProgramArguments")
+sys.exit(0 if args == ["/usr/bin/python3", sys.argv[2], "run", "--apply"] else 1)
+' "$plist" "$owner" 2>/dev/null || return 1
+  loaded="$(launchctl print "gui/$(id -u)/com.drew.mac-disk-guard" 2>/dev/null)" || return 1
+  printf '%s\n' "$loaded" | grep -Fxq $'\tprogram = /usr/bin/python3' || return 1
+  printf '%s\n' "$loaded" | grep -Fxq $'\t\t'"$owner"
+}
+if [ "$(uname -s)" = Darwin ] && mac_lifecycle_owns_worktrees; then
+  # The storage-lifecycle installer owns retiring the legacy LaunchAgent.
+  echo "wt-reaper: skipped; the loaded tangle-tools storage-lifecycle owns Mac cleanup"
+  exit 0
+fi
+
 install -d "$HOME/.local/bin" "$HOME/.local/state/wt-reaper"
 install -m 0755 "$SCRIPT_DIR/wt-reaper" "$BIN"
 /usr/bin/python3 "$BIN" --help >/dev/null
