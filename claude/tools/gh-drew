@@ -543,23 +543,30 @@ parse_pr_merge() {
 # first line is the reason for every merge on the host. Drew, 2026-10-17, with the Codex seats full: "keep
 # merging no more codex review ... time to just merge and yolo". Deleting the file restores the check. Reads that fail
 # refuse. GraphQL draws on no core quota, so cap_reads and guard_reads never count these reads.
+# The same read asks merge-on-green, which owns the rule, whether the PR's author holds it (the hold
+# label, or a hold phrase such as "merge only after the pre-deploy check below"). A held PR is refused,
+# override or not: on 2026-10-17 a lane hand-merged #11312, which merge-on-green had skipped for six hours,
+# before the pre-deploy check its body names was shown. GH_DREW_PRECONDITIONS_SHOWN=<evidence> merges a
+# held PR once every precondition is shown true; the evidence is logged.
 review_wait="${GH_DREW_REVIEW_WAIT:-600}"
+merge_on_green="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/merge-on-green"
 read -r -d '' review_query <<'GRAPHQL' || true
 fragment pr on PullRequest {
-  url headRefOid createdAt
+  url headRefOid createdAt body labels(first: 20) { nodes { name } }
   timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
   reviewThreads(first: 100) { nodes { isResolved isOutdated path line originalLine
     comments(first: 50) { nodes { author { __typename login } body url } } } }
   comments(first: 100) { nodes { author { login } body } }
 }
 GRAPHQL
-# Prints "pr <url> <head>", then "finding <path:line> <title> <url>" for each unanswered Codex
-# thread, "running <review> <commit>" for each Codex review running on the head, and
+# Prints "pr <url> <head>", "held <reason>" when merge-on-green says the author holds the PR,
+# then "finding <path:line> <title> <url>" for each unanswered Codex thread, "running <review> <commit>" for each Codex review running on the head, and
 # "pending <seconds left> <seconds since>" while a just-opened or just-ready PR has no Codex comment.
 read -r -d '' review_reader <<'PY' || true
-import json, re, sys
+import json, re, subprocess, sys
 from datetime import datetime, timezone
-answer = json.load(sys.stdin)
+text = sys.stdin.read()
+answer = json.loads(text)
 if answer.get("errors"):
     sys.exit("GitHub answered: " + "; ".join(e.get("message", "?") for e in answer["errors"])[:300])
 repo = (answer.get("data") or {}).get("repository")
@@ -577,6 +584,11 @@ head = pr["headRefOid"]
 codex = lambda actor: "codex" in ((actor or {}).get("login") or "").lower()
 clean = lambda s: re.sub(r"\s+", " ", s).strip()
 print("pr", pr["url"], head, sep="\t")
+held = subprocess.run([sys.executable, sys.argv[1], "hold"], input=text, capture_output=True, text=True)
+if held.returncode == 1:
+    print("held", clean(held.stdout), sep="\t")
+elif held.returncode != 0:
+    sys.exit("cannot ask merge-on-green whether the PR is held: " + clean(held.stderr or held.stdout)[:200])
 for thread in pr["reviewThreads"]["nodes"]:
     said = thread["comments"]["nodes"]
     if thread["isResolved"] or not said or not codex(said[0]["author"]):
@@ -640,7 +652,7 @@ $review_query")
 $review_query")
   fi
   json="$(GH_TOKEN="$token" gh api graphql "${vars[@]}")" || return 1
-  printf '%s' "$json" | python3 -I -c "$review_reader"
+  printf '%s' "$json" | python3 -I -c "$review_reader" "$merge_on_green"
 }
 
 review_guard() {
@@ -652,21 +664,17 @@ review_guard() {
     IFS= read -r override < "$override_file" || true
     override="${override:-host override file $override_file}"
   fi
-  if [[ -n "$override" ]]; then
-    local reason="${override//[$'\t\n\r']/ }"
-    log_call "review-override: ${reason:0:200}" "$@"
-    echo "gh-drew: merging without the Codex review check: $reason" >&2
-    return 0
-  fi
+  local shown="${GH_DREW_PRECONDITIONS_SHOWN:-}"
+  shown="${shown//[$'\t\n\r']/ }"
   if [[ ! "$review_wait" =~ ^[0-9]+$ ]]; then
     echo "gh-drew: GH_DREW_REVIEW_WAIT must be whole seconds, got '$review_wait'" >&2
     exit 2
   fi
-  local start=$SECONDS out err kind a b c url head elapsed why told="" pending since nap
+  local start=$SECONDS out err kind a b c url head elapsed why told="" pending since nap held logged_shown=0
   local -a findings running
   err="$(mktemp)"
   while :; do
-    findings=() running=() url="" head="" pending="" since=""
+    findings=() running=() url="" head="" pending="" since="" held=""
     if ! out="$(review_state "$token" 2>"$err")"; then
       log_call refused "$@"
       echo "gh-drew: refusing to merge: cannot read the PR's reviews: $(tr '\n' ' ' <"$err" | cut -c1-300)" >&2
@@ -680,8 +688,28 @@ review_guard() {
         finding) findings+=("  $a  $b"$'\n'"    $c") ;;
         running) running+=("$a of ${b}") ;;
         pending) pending="$a" since="$b" ;;
+        held) held="$a" ;;
       esac
     done <<<"$out"
+    if [[ -n "$held" && -z "$shown" ]]; then
+      log_call refused "$@"
+      echo "gh-drew: refusing to merge $url: its author holds it ($held)." >&2
+      echo "Show every precondition its body names is true, then merge with GH_DREW_PRECONDITIONS_SHOWN=<evidence>." >&2
+      rm -f "$err"
+      exit 1
+    fi
+    if [[ -n "$held" ]] && (( ! logged_shown )); then
+      log_call "preconditions-shown: ${shown:0:200}" "$@"
+      echo "gh-drew: merging a held PR ($held); preconditions shown: $shown" >&2
+      logged_shown=1
+    fi
+    if [[ -n "$override" ]]; then
+      local reason="${override//[$'\t\n\r']/ }"
+      log_call "review-override: ${reason:0:200}" "$@"
+      echo "gh-drew: merging without the Codex review check: $reason" >&2
+      rm -f "$err"
+      return 0
+    fi
     if (( ${#findings[@]} )); then
       log_call refused "$@"
       {
