@@ -5,6 +5,7 @@ usage: merge-on-green [--repo owner/name] [--state-dir DIR] [--dry-run]
        merge-on-green pause --minutes N --reason TEXT    (N at most 120)
        merge-on-green resume
        merge-on-green status
+       merge-on-green hold < answer.json   (one PR's GraphQL answer; exit 1 and the reason if held)
 
 One tick reads every open PR into develop in one GraphQL call and merges each
 PR that is ready:
@@ -12,7 +13,7 @@ PR that is ready:
   - Fast Checks, Build and Type Check succeeded on the current head;
   - no check on the head failed;
   - no unresolved review thread opens with P0 or P1;
-  - no hold label and no hold phrase in the body;
+  - no hold label and no hold phrase in the body (a phrase that waits only for the gate is not a hold);
   - its head is at least 2 minutes old (a push may still be landing).
 A PR that conflicts gets develop merged in by git, which honors .gitattributes merge
 drivers (docs/invariants.md is merge=union) that GitHub's own merge ignores; a conflict git
@@ -46,6 +47,11 @@ import sys
 REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
 RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
 HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
+# A sentence that waits only for the gate this tool already requires is not a hold. #11327
+# (2026-10-17) said "merge only after Fast Checks, Build and Type Check finish green on this head",
+# sat green 3.5 h, and was merged by hand; the same hand pass merged #11312 past a real pre-deploy hold.
+GATE_ONLY = re.compile(r"(?i)merge only (after|when)\s+(?:(?:the|hosted|required|gate|fast checks|checks?|build|type check|and|,)\s*)+"
+                       r"(?:finish(?:es)?|pass(?:es)?|are|is|turn|go)?\s*green")
 # A cancelled run says nothing about the tree and nothing re-runs it, so it is not red;
 # #11004 sat green for 2 h on 2026-10-15 behind a cancelled "regressions" run.
 # The gate checks still have to read SUCCESS (REQUIRED below).
@@ -141,17 +147,48 @@ def control(a):
     return 0
 
 
+def hold_reason(pr):
+    """Why the PR's author holds it (the hold label, or a hold phrase asking for more than the gate), or None.
+
+    gh-drew asks the same question before a hand merge (`merge-on-green hold`).
+    """
+    if "hold" in {l["name"] for l in ((pr.get("labels") or {}).get("nodes") or [])}:
+        return "hold label"
+    body = pr.get("body") or ""
+    for m in HOLD.finditer(body):
+        if not GATE_ONLY.match(body, m.start()):
+            line = body[body.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
+            return "hold phrase in body: " + line[:160]
+    return None
+
+
+def hold_command():
+    """`merge-on-green hold`: read one PR's GraphQL answer on stdin; print why it is held and exit 1, or exit 0."""
+    try:
+        repo = json.load(sys.stdin)["data"]["repository"]
+        pr = repo.get("pullRequest") or ((repo.get("pullRequests") or {}).get("nodes") or [None])[0]
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError) as e:
+        print(f"merge-on-green: hold: unreadable PR answer: {e}", file=sys.stderr)
+        return 2
+    if not pr:
+        print("merge-on-green: hold: the answer names no pull request", file=sys.stderr)
+        return 2
+    why = hold_reason(pr)
+    if why:
+        print(why)
+        return 1
+    return 0
+
+
 def decide(pr, now):
     """Return (action, reason) for one PR node: merge, conflict, or wait."""
     if pr["isDraft"]:
         return "wait", "draft"
     if pr["headRefName"].startswith(RELEASE_PREFIXES):
         return "wait", "release branch"
-    labels = {l["name"] for l in pr["labels"]["nodes"]}
-    if "hold" in labels:
-        return "wait", "hold label"
-    if HOLD.search(pr.get("body") or ""):
-        return "wait", "hold phrase in body"
+    held = hold_reason(pr)
+    if held:
+        return "wait", held
     if any(not t["isResolved"] and re.search(r"\bP[01]\b", (t["comments"]["nodes"] or [{"body": ""}])[0]["body"])
            for t in pr["reviewThreads"]["nodes"]):
         return "wait", "unresolved P0/P1 thread"
@@ -239,10 +276,12 @@ def main():
     ap.add_argument("--state-dir", default=os.path.expanduser("~/.local/state/merge-on-green"))
     ap.add_argument("--git-url", help="clone URL for the merge mirror (default: the repo over SSH)")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("command", nargs="?", choices=["pause", "resume", "status"], help="omit to run one pass")
+    ap.add_argument("command", nargs="?", choices=["pause", "resume", "status", "hold"], help="omit to run one pass")
     ap.add_argument("--minutes", type=int, help=f"pause: how long, at most {PAUSE_MAX_MIN}")
     ap.add_argument("--reason", help="pause: why, shown in every skipped line")
     a = ap.parse_args()
+    if a.command == "hold":
+        return hold_command()
     owner, name = a.repo.split("/", 1)
     a.git_url = a.git_url or f"git@github.com:{a.repo}.git"
     os.makedirs(a.state_dir, exist_ok=True)

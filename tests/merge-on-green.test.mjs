@@ -275,3 +275,28 @@ test("the repo variable pauses from anywhere, and ends 120 minutes after it was 
   stale.run();
   assert.ok(merged(stale, 60));
 });
+
+// agent-container 2026-10-17: #11327 waited only on the gate and sat green 3.5 h as "held"; the hand
+// pass that merged it also merged #11312 past a pre-deploy hold. The sentences are the PRs' own.
+const GATE_ONLY_SENTENCE = "- Hosted checks are the merge gate; merge only after Fast Checks, Build and Type Check finish green on this head.";
+const PRE_DEPLOY_SENTENCE = "Ops item #10252. Carries the `hold` label: merge only after the pre-deploy check below.";
+
+test("a phrase that waits only for the gate does not hold a green PR; a precondition beyond it does", () => {
+  const f = fixture([pr(61, { body: `Change.\n\n${GATE_ONLY_SENTENCE}\n` }), pr(62, { body: `${PRE_DEPLOY_SENTENCE}\n\n${GATE_ONLY_SENTENCE}` })]);
+  f.run();
+  assert.ok(merged(f, 61));
+  assert.ok(!merged(f, 62));
+  assert.match(readFileSync(join(f.dir, "state", "status.md"), "utf8"), /#62 .*hold phrase in body: Ops item #10252\. Carries the `hold` label: merge only after the pre-deploy check below\./);
+});
+
+test("`hold` answers for one PR's GraphQL answer, the question gh-drew asks before a hand merge", () => {
+  const ask = (pull) => spawnSync("python3", [TOOL, "hold"], { input: JSON.stringify({ data: { repository: pull } }), encoding: "utf8" });
+  const held = ask({ pullRequest: { body: PRE_DEPLOY_SENTENCE, labels: { nodes: [] } } });
+  assert.equal(held.status, 1, held.stderr);
+  assert.equal(held.stdout.trim(), `hold phrase in body: ${PRE_DEPLOY_SENTENCE}`);
+  assert.equal(ask({ pullRequests: { nodes: [{ body: "x", labels: { nodes: [{ name: "hold" }] } }] } }).stdout.trim(), "hold label");
+  assert.equal(ask({ pullRequest: { body: GATE_ONLY_SENTENCE, labels: { nodes: [] } } }).status, 0);
+  // gh-drew's other readers send no body or labels; that is not a hold.
+  assert.equal(ask({ pullRequest: { url: "u" } }).status, 0);
+  assert.equal(ask({ pullRequest: null }).status, 2);
+});

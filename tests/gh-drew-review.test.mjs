@@ -201,14 +201,15 @@ test("a finding answered by a person or resolved carries on, also after waiting;
   }
 });
 
-test("the override merges without reading and logs its reason; a read that fails refuses", () => {
+test("the override merges past Codex findings and logs its reason; a read that fails refuses", () => {
   const s = sandbox();
   try {
     const r = run(s, ["pr", "merge", "465", "-R", "drewstone/dotfiles", "--merge"], [DONE], { GH_DREW_REVIEW_OVERRIDE: "findings fixed in #466" });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /merging without the Codex review check: findings fixed in #466/);
     assert.deepEqual(r.merged, ["pr", "merge", "465", "-R", "drewstone/dotfiles", "--merge"]);
-    assert.equal(r.reads, 0);
+    // One read still asks whether the PR's author holds it.
+    assert.equal(r.reads, 1);
     assert.deepEqual(logged(s), ["review-override: findings fixed in #466", "called"]);
 
     const s2 = sandbox();
@@ -252,6 +253,39 @@ test("the PR is read once by number, URL, -R repository or head branch; --disabl
     const r = run(s, ["pr", "merge", "465", "--disable-auto", "-R", "drewstone/dotfiles"], [DONE]);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.reads, 0);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
+// agent-container#11312 (2026-10-17): merge-on-green skipped it for six hours on "merge only after the
+// pre-deploy check below"; a lane merged it by hand, under the host-wide review override, before the
+// check was shown. A hold is refused whatever the override says, and lifted only with evidence.
+test("a held PR is refused, override or not; GH_DREW_PRECONDITIONS_SHOWN merges it and logs the evidence", () => {
+  const body = "Ops item #10252. Carries the `hold` label: merge only after the pre-deploy check below.\n\n## Pre-deploy check";
+  for (const extra of [{}, { GH_DREW_REVIEW_OVERRIDE: "Codex seats full" }]) {
+    const s = sandbox();
+    try {
+      const held = variant(s, (pr) => { pr.body = body; pr.labels = { nodes: [] }; pr.reviewThreads.nodes = []; });
+      const r = run(s, ["pr", "merge", "465", "-R", "drewstone/dotfiles", "--merge"], [held], extra);
+      assert.equal(r.status, 1, r.stderr);
+      assert.equal(r.stderr, "gh-drew: refusing to merge https://github.com/drewstone/dotfiles/pull/465: its author holds it "
+        + "(hold phrase in body: Ops item #10252. Carries the `hold` label: merge only after the pre-deploy check below.).\n"
+        + "Show every precondition its body names is true, then merge with GH_DREW_PRECONDITIONS_SHOWN=<evidence>.\n");
+      assert.equal(r.merged, null);
+      assert.deepEqual(logged(s), ["refused"]);
+    } finally {
+      rmSync(s.root, { recursive: true, force: true });
+    }
+  }
+  const s = sandbox();
+  try {
+    const held = variant(s, (pr) => { pr.body = "x"; pr.labels = { nodes: [{ name: "hold" }] }; pr.reviewThreads.nodes = []; });
+    const r = run(s, ["pr", "merge", "465", "-R", "drewstone/dotfiles", "--merge"], [held], { GH_DREW_PRECONDITIONS_SHOWN: "audit 39047733579: 0 unsettleable" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /merging a held PR \(hold label\); preconditions shown: audit 39047733579: 0 unsettleable/);
+    assert.deepEqual(r.merged, ["pr", "merge", "465", "-R", "drewstone/dotfiles", "--merge"]);
+    assert.deepEqual(logged(s), ["preconditions-shown: audit 39047733579: 0 unsettleable", "called"]);
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
