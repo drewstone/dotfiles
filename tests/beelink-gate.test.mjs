@@ -834,6 +834,37 @@ test("auto uses the repo's last install reserve before choosing a host", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("auto recovers a host's idle cache in the probe and admits there, instead of passing it by", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const floor = 200 * 1024 ** 3;
+    const availPrefix = join(f.root, "free");
+    const cachePrefix = join(f.root, "host-cache");
+    // Both hosts are short of the floor plus the 10 GiB default reserve; only beelink2 holds idle cache.
+    writeFileSync(`${availPrefix}-100.98.195.7`, String(floor + 1024 ** 3));
+    const b2cache = `${cachePrefix}-100.127.22.51`;
+    const idle = join(b2cache, "github.com", "test", "older");
+    mkdirSync(join(b2cache, ".locks"), { recursive: true });
+    f.git(["init", "-q", idle], f.root);
+    writeFileSync(join(idle, "payload"), Buffer.alloc(750_000));
+    // beelink2's df reports 7 GiB above the floor while the idle checkout exists, 20 GiB once it is gone.
+    writeFileSync(`${availPrefix}-100.127.22.51`, String(floor + 20 * 1024 ** 3));
+    writeFileSync(join(f.root, "bin", "df"), `#!/usr/bin/env bash
+if [[ -d "$FAKE_IDLE_CHECKOUT" && "$FAKE_AVAIL_FILE" == *100.127.22.51 ]]; then echo Avail; echo ${floor + 7 * 1024 ** 3}; exit; fi
+printf "Avail\\n%s\\n" "$(cat "$FAKE_AVAIL_FILE")"
+`);
+    writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
+    const result = run(gate, ["auto", f.url, f.first, "--", "true"],
+      { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: cachePrefix, FAKE_IDLE_CHECKOUT: idle }, timeout: 30_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, new RegExp(`auto chose beelink2 .*beelink1: host=beelink1 state=refused .*recovered=0 .*beelink2: host=beelink2 state=free .*recovered=${13 * 1024 ** 3} `));
+    assert.match(result.stderr, /receipt: .*host=beelink2/);
+    assert.equal(existsSync(idle), false);
+    assert.equal(existsSync(join(b2cache, ".locks", ".probe-recovery-short")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 // A fixture commit whose .beelink-gate/sparse-checkout excludes history/, gated on a named
 // beelink2 through the launcher with a 200 GiB floor; free space per host comes from free.
 function shapedReserveFixture(f, freeGiB) {
