@@ -538,7 +538,10 @@ parse_pr_merge() {
 #   finding answered carries on.
 # The default wait is 600 s: those 42 reviews took 232 s at the median and 603 s at the 90th
 # percentile from start to finish, and a merge comes at least one gate after the review starts.
-# GH_DREW_REVIEW_OVERRIDE=<reason> merges without the check; the reason is logged. Reads that fail
+# GH_DREW_REVIEW_OVERRIDE=<reason> merges without the check; the reason is logged. A host-wide override is the
+# file ~/.config/gh-drew/review-override (GH_DREW_REVIEW_OVERRIDE_FILE): while it exists and is not empty, its
+# first line is the reason for every merge on the host. Drew, 2026-10-17, with the Codex seats full: "keep
+# merging no more codex review ... time to just merge and yolo". Deleting the file restores the check. Reads that fail
 # refuse. GraphQL draws on no core quota, so cap_reads and guard_reads never count these reads.
 review_wait="${GH_DREW_REVIEW_WAIT:-600}"
 read -r -d '' review_query <<'GRAPHQL' || true
@@ -644,8 +647,13 @@ review_guard() {
   local token="$1"; shift
   parse_pr_merge "$@" || return 0
   (( ! merge_disable_auto )) || return 0
-  if [[ -n "${GH_DREW_REVIEW_OVERRIDE:-}" ]]; then
-    local reason="${GH_DREW_REVIEW_OVERRIDE//[$'\t\n\r']/ }"
+  local override="${GH_DREW_REVIEW_OVERRIDE:-}" override_file="${GH_DREW_REVIEW_OVERRIDE_FILE:-$HOME/.config/gh-drew/review-override}"
+  if [[ -z "$override" && -s "$override_file" ]]; then
+    IFS= read -r override < "$override_file" || true
+    override="${override:-host override file $override_file}"
+  fi
+  if [[ -n "$override" ]]; then
+    local reason="${override//[$'\t\n\r']/ }"
     log_call "review-override: ${reason:0:200}" "$@"
     echo "gh-drew: merging without the Codex review check: $reason" >&2
     return 0
