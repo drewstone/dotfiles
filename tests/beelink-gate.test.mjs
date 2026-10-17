@@ -54,8 +54,9 @@ function fixture() {
   // Keep ordinary fixture gates far from the synthetic weekly update window.
   const windowDay = (new Date().getUTCDay() + 3) % 7 + 1;
   const windowHour = 12;
-  // A gate running these tests exports its own Rust settings; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_CACHE_MAX_BYTES: _cacheCap, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, ...inherited } = process.env;
+  // A gate running these tests exports its own Rust settings, and the outer test runner its
+  // NODE_TEST_CONTEXT, which makes a nested `node --test` skip its files and exit 0; start clean.
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_CACHE_MAX_BYTES: _cacheCap, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, NODE_TEST_CONTEXT: _testContext, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -3471,7 +3472,7 @@ done
 exec '${join(f.root, "bin", "ssh")}' "$@"
 `);
     chmodSync(join(front, "ssh"), 0o755);
-    const env = { ...f.env, PATH: `${front}:${f.env.PATH}`, BEELINK_GATE_RETRY_SECONDS: "0" };
+    const env = { ...f.env, PATH: `${front}:${f.env.PATH}`, BEELINK_GATE_RETRY_SECONDS: "1" };
     const result = run(gate, ["--retry", "5", "--pin-host", "--no-install", "beelink2", f.url, f.first, "--", "cat", "value.txt"], { env, timeout: 60_000 });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "first\n");
@@ -3490,5 +3491,53 @@ exec '${join(f.root, "bin", "ssh")}' "$@"
     assert.equal(refused.status, 75, refused.stderr);
     assert.match(refused.stderr, /--retry 1: the next attempt could not start before the retry window ends at \S+Z; stopping after 1 attempts/);
     assert.match(refused.stderr.trim().split("\n").at(-1), /^beelink-gate: TEMPFAIL next_allowed=\S+Z cannot read the Windows Update schedule of beelink2$/);
+    // A 75 with no TEMPFAIL line, here the command's own, is not resubmitted, and the contract line still ends it.
+    const own = run(gate, ["--retry", "5", "--pin-host", "--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", "exit 75"], { env, timeout: 60_000 });
+    assert.equal(own.status, 75, own.stderr);
+    assert.doesNotMatch(own.stderr, /attempt 2/);
+    assert.match(own.stderr.trim().split("\n").at(-1), /^beelink-gate: TEMPFAIL next_allowed=\S+Z --retry 5: attempt 1 exited 75 without a TEMPFAIL line/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("--retry with --cancel-on-term cancels a gate it re-attached to when timeout stops it", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const started = join(f.root, "started");
+  const release = join(f.root, "release");
+  // Drop the first attach, so the wrapper re-attaches to the running gate.
+  const front = join(f.root, "front");
+  mkdirSync(front);
+  writeFileSync(join(front, "ssh"), `#!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == --job-attach && ! -e '${join(f.root, "attach-dropped")}' ]]; then touch '${join(f.root, "attach-dropped")}'; exit 255; fi
+done
+exec '${join(f.root, "bin", "ssh")}' "$@"
+`);
+  chmodSync(join(front, "ssh"), 0o755);
+  const env = { ...f.env, PATH: `${front}:${f.env.PATH}`, BEELINK_GATE_RETRY_SECONDS: "1" };
+  const waiter = spawn(gate, ["--retry", "5", "--cancel-on-term", "--pin-host", "--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${started}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env, detached: true });
+  const waiterDone = new Promise((done) => waiter.once("close", (code, signal) => done({ code, signal })));
+  let waiterErr = "";
+  waiter.stderr.on("data", (chunk) => { waiterErr += chunk; });
+  try {
+    for (let i = 0; i < 400 && !/re-attaches to beelink2-/.test(waiterErr); i++) await sleepMs(25);
+    const id = waiterErr.match(/re-attaches to (beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(id, waiterErr);
+    for (let i = 0; i < 400 && !existsSync(started); i++) await sleepMs(25);
+    assert.ok(existsSync(started), waiterErr);
+    await sleepMs(1500); // past the re-attach's 1 s wait: the wrapper is attached to the gate.
+    // GNU timeout's stop: TERM to the launcher, then to its whole process group.
+    process.kill(waiter.pid, "SIGTERM");
+    process.kill(-waiter.pid, "SIGTERM");
+    const { code } = await waiterDone;
+    assert.equal(code, 143, waiterErr);
+    assert.match(waiterErr, new RegExp(`manager stopped; scheduling cancellation of gate_id=${id}`));
+    const cancelMarker = join(f.root, "state", "jobs", ".canceled", id);
+    for (let i = 0; i < 400 && !existsSync(cancelMarker); i++) await sleepMs(25);
+    assert.ok(existsSync(cancelMarker), `missing cancellation marker for ${id}: ${waiterErr}`);
+  } finally {
+    writeFileSync(release, "\n");
+    try { process.kill(-waiter.pid, "SIGKILL"); } catch {}
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });

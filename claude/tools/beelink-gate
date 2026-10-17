@@ -3216,23 +3216,38 @@ PY
 }
 
 # --retry MINUTES and --summary run this launcher again as a child with the rest
-# of the request and keep each attempt's output. On TEMPFAIL, --retry waits for
-# the TEMPFAIL's next_allowed and submits again until MINUTES pass; a TEMPFAIL
+# of the request and keep each attempt's output. --retry submits again at the
+# next_allowed of each attempt's TEMPFAIL line until MINUTES pass. A TEMPFAIL
 # that names a gate still running ("run beelink-gate --attach <id>") is
-# re-attached instead, so a lost connection never starts a duplicate gate.
+# re-attached after 10 s instead, so a lost connection never starts a duplicate
+# gate, and a re-attached auto gate that gave its host back (76) is submitted
+# again at once, as the launcher itself does. A 75 without a TEMPFAIL line (a
+# canceled gate or the command's own 75) ends the retries.
 utc_at() { python3 -c 'import datetime as d, sys; print(d.datetime.fromtimestamp(int(sys.argv[1]), d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 epoch_of_utc() { python3 -c 'import datetime as d, sys; print(int(d.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=d.timezone.utc).timestamp()))' "$1" 2>/dev/null; }
+schedule_cancellation() {  # <gate id>
+  echo "beelink-gate: manager stopped; scheduling cancellation of gate_id=$1" >&2
+  # Without systemd-run (the Mac has neither it nor /usr/bin/bash) cancel inline.
+  systemd-run --user --collect --unit="beelink-gate-cancel-$1" /usr/bin/bash "$0" --cancel-job "$1" >&2 \
+    || "$BASH" "$0" --cancel-job "$1" >&2
+}
 wrap_child="" wrap_sleep="" wrap_stop=""
 wrap_signal() {  # <exit code>
+  # A repeat changes nothing: GNU timeout signals the launcher and then its process group.
+  [ -z "$wrap_stop" ] || return 0
   wrap_stop=$1
-  # A background child starts with SIGINT ignored, so every stop reaches it as TERM:
-  # without --cancel-on-term TERM ends it, with it the child cancels its gate.
-  if [ -n "$wrap_child" ]; then kill -TERM "$wrap_child" 2>/dev/null || true; return; fi
+  # A background child starts with SIGINT ignored, so every stop reaches it as TERM.
+  # With --cancel-on-term a launcher child cancels its own gate, and wrap_stopped
+  # cancels a gate the wrapper re-attached to; without it the gate runs on for --attach.
+  [ -z "$wrap_child" ] || kill -TERM "$wrap_child" 2>/dev/null || true
   [ -z "$wrap_sleep" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
+}
+wrap_stopped() {  # <exit code> <gate id this wrapper attaches to, or empty>
+  [ "$cancel_on_term" != 1 ] || [ -z "$2" ] || schedule_cancellation "$2"
   exit "$1"
 }
 run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>...
-  local minutes=$1 summary=$2 deadline=0 attempt=0 rc line next wait_s reattach="" tee_out tee_err i
+  local minutes=$1 summary=$2 deadline=0 attempt=0 rc line next wait_s reattach="" got tee_out tee_err i
   shift 2
   local dir
   dir=$(mktemp -d) || die "cannot allocate the gate transcript"
@@ -3243,6 +3258,7 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
   trap 'wrap_signal 130' INT
   [ -z "$minutes" ] || deadline=$(( $(date +%s) + minutes * 60 ))
   while :; do
+    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop" "$reattach"
     attempt=$((attempt + 1))
     rm -f "$dir/out" "$dir/err"
     mkfifo "$dir/out" "$dir/err" || die "cannot create the gate transcript pipes"
@@ -3255,6 +3271,8 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     else
       "$BASH" "$0" "$@" > "$dir/out" 2> "$dir/err" & wrap_child=$!
     fi
+    # A stop that came before the child's pid was known is forwarded here.
+    [ -z "$wrap_stop" ] || kill -TERM "$wrap_child" 2>/dev/null || true
     wait "$wrap_child"; rc=$?
     # A forwarded stop interrupts wait; keep waiting while the child handles it.
     while [ -n "$wrap_stop" ] && kill -0 "$wrap_child" 2>/dev/null; do wait "$wrap_child"; rc=$?; done
@@ -3266,28 +3284,43 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     done
     kill -KILL "$tee_out" "$tee_err" 2>/dev/null || true
     wait "$tee_out" "$tee_err" 2>/dev/null || true
-    [ -z "$wrap_stop" ] || exit "$rc"
-    [ "$rc" = "$TEMPFAIL" ] && [ -n "$minutes" ] || break
-    line=$(grep -a '^beelink-gate: TEMPFAIL next_allowed=' "$dir/err.log" | tail -n 1)
-    reattach=""
-    if [[ "$line" =~ beelink-gate\ --attach\ (beelink[12]-[0-9a-f]{32}) ]]; then reattach=${BASH_REMATCH[1]}; fi
-    next=${line#beelink-gate: TEMPFAIL next_allowed=}
-    next=$(epoch_of_utc "${next%% *}") || next=""
-    if [ -n "${BEELINK_GATE_RETRY_SECONDS:-}" ]; then
-      wait_s=$BEELINK_GATE_RETRY_SECONDS
-    elif [ -n "$next" ]; then
-      wait_s=$(( next - $(date +%s) ))
-      (( wait_s >= 30 )) || wait_s=30
+    [ -z "$wrap_stop" ] || wrap_stopped "$rc" "$reattach"
+    [ -n "$minutes" ] || break
+    line=""
+    if [ "$rc" = "$NOT_ADMITTED" ] && [ -n "$reattach" ]; then
+      reattach="" wait_s=0 got="exit $NOT_ADMITTED (the gate gave its host back)"
+    elif [ "$rc" = "$TEMPFAIL" ]; then
+      line=$(grep -a '^beelink-gate: TEMPFAIL next_allowed=' "$dir/err.log" | tail -n 1)
+      if [ -z "$line" ]; then
+        tempfail "$(utc_in_minutes 5)" "--retry $minutes: attempt $attempt exited 75 without a TEMPFAIL line (a canceled gate or the command's own 75); not retrying it"
+      fi
+      reattach="" got=TEMPFAIL
+      if [[ "$line" =~ beelink-gate\ --attach\ (beelink[12]-[0-9a-f]{32}) ]]; then
+        # The gate runs on: reconnect soon, whatever the line's next_allowed says.
+        reattach=${BASH_REMATCH[1]} wait_s=10
+      else
+        next=${line#beelink-gate: TEMPFAIL next_allowed=}
+        if next=$(epoch_of_utc "${next%% *}"); then
+          wait_s=$(( next - $(date +%s) ))
+          (( wait_s >= 30 )) || wait_s=30
+        else
+          wait_s=300
+        fi
+      fi
     else
-      wait_s=300
+      break
     fi
+    # The test suite's hook to shorten every wait; callers never set it.
+    [ -z "${BEELINK_GATE_RETRY_SECONDS:-}" ] || wait_s=$BEELINK_GATE_RETRY_SECONDS
     if (( $(date +%s) + wait_s > deadline )); then
       echo "beelink-gate: --retry $minutes: the next attempt could not start before the retry window ends at $(utc_at "$deadline"); stopping after $attempt attempts" >&2
-      [ -z "$line" ] || echo "$line" >&2
+      [ -n "$line" ] || tempfail "$(utc_in_minutes 0)" "the last gate gave its host back; submit it again"
+      echo "$line" >&2
       exit "$TEMPFAIL"
     fi
-    echo "beelink-gate: --retry $minutes: attempt $attempt got TEMPFAIL; attempt $((attempt + 1)) ${reattach:+re-attaches to $reattach and }starts at $(utc_at $(( $(date +%s) + wait_s ))) (window ends $(utc_at "$deadline"))" >&2
+    echo "beelink-gate: --retry $minutes: attempt $attempt got $got; attempt $((attempt + 1)) ${reattach:+re-attaches to $reattach and }starts at $(utc_at $(( $(date +%s) + wait_s ))) (window ends $(utc_at "$deadline"))" >&2
     sleep "$wait_s" & wrap_sleep=$!
+    [ -z "$wrap_stop" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
     wait "$wrap_sleep"
     wrap_sleep=""
   done
@@ -3326,7 +3359,7 @@ usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] 
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
 fi
-if [ -n "${BEELINK_GATE_RETRY_SECONDS:-}" ] && [[ ! "$BEELINK_GATE_RETRY_SECONDS" =~ ^[0-9]{1,5}$ ]]; then
+if [ -n "${BEELINK_GATE_RETRY_SECONDS:-}" ] && [[ ! "$BEELINK_GATE_RETRY_SECONDS" =~ ^[1-9][0-9]{0,4}$ ]]; then
   die "invalid BEELINK_GATE_RETRY_SECONDS: $BEELINK_GATE_RETRY_SECONDS"
 fi
 if [ -n "$retry_minutes" ] || [ "$summary" = 1 ]; then
@@ -3425,15 +3458,12 @@ if [ "$requested" = auto ]; then
   fi
 fi
 cancel_launcher_job() {
-  # Ignore repeats: GNU timeout signals the child and then its process group,
-  # and --retry forwards a stop the group also received, so a second TERM
-  # would otherwise end the launcher before it schedules the cancellation.
-  trap '' HUP INT TERM
-  if [ -n "${gate_id:-}" ]; then
-    echo "beelink-gate: manager stopped; scheduling cancellation of gate_id=$gate_id" >&2
-    systemd-run --user --collect --unit="beelink-gate-cancel-$gate_id" /usr/bin/bash "$0" --cancel-job "$gate_id" >&2 \
-      || /usr/bin/bash "$0" --cancel-job "$gate_id" >&2
-  fi
+  # Repeats do nothing: GNU timeout signals the child and then its process group,
+  # and --retry forwards a stop the group also received, so a second TERM would
+  # otherwise end the launcher before it schedules the cancellation. A no-op trap,
+  # unlike an ignored signal, leaves an inline --cancel-job stoppable.
+  trap : HUP INT TERM
+  [ -z "${gate_id:-}" ] || schedule_cancellation "$gate_id"
   exit 143
 }
 run_cancelable() {

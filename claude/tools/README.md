@@ -328,9 +328,11 @@ failure or, with 2, a broken request.
 TEMPFAIL's `next_allowed` (at least 30 s, or 5 minutes when the line names no
 time) and submits again, until the window passes. A TEMPFAIL for a lost
 connection to a gate that is still running (`run beelink-gate --attach <id>`)
-is re-attached, not resubmitted, so it never starts a duplicate gate. When the
-next attempt could not start inside the window, it exits 75 and repeats the
-last TEMPFAIL line as its last line.
+is re-attached after 10 s, not resubmitted, so it never starts a duplicate
+gate; a re-attached `auto` gate that gave its host back is submitted again at
+once, and with `--cancel-on-term` a stop cancels the re-attached gate too. A 75
+without a TEMPFAIL line, such as a canceled gate or the command's own 75, is
+not retried. Whenever `--retry` stops on 75, its last line is a TEMPFAIL line.
 
 `--summary` ends a red exit (not 0 or 75) with the command's test counts and
 failing tests, read from both output streams: the node test runner's spec
