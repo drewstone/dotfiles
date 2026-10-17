@@ -537,6 +537,26 @@ recover_floor_from_cache() {
   fi
 }
 
+# Bytes of checkouts no gate holds, measured in one du so hardlinks shared
+# between checkouts count once: the most an eviction pass could free.
+idle_cache_bytes() {
+  local root="$1" dir rel lock fd
+  local -a idle=()
+  for dir in "$root"/*/*/*/; do
+    dir=${dir%/}
+    [ ! -L "$dir" ] && [ -d "$dir/.git" ] || continue
+    rel=${dir#"$root"/}; lock="$root/.locks/${rel//\//-}.lock"
+    if [ -e "$lock" ]; then
+      exec {fd}<"$lock" || continue
+      if ! flock -n -s "$fd"; then exec {fd}<&-; continue; fi
+      exec {fd}<&-
+    fi
+    idle+=("$dir")
+  done
+  (( ${#idle[@]} )) || { echo 0; return; }
+  du -s -c -B1 -- "${idle[@]}" 2>/dev/null | tail -n 1 | cut -f1
+}
+
 # Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
 # cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
 # 24 h. Each sweep holds every gate lock for <repo> and cargo's own profile
@@ -1459,8 +1479,34 @@ remote_probe() {
   reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
     "${BEELINK_GATE_PEER_RESERVE:-}" "${BEELINK_GATE_PEER_WARM_RESERVE:-}" "$probe_heat" 2>/dev/null) \
     || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
-  if [ "$state" != refused ]; then
-    reason=$(check_floor "$beelink" "$reserve" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
+  # A host short of its floor plus reserve gets the recovery a gate admitted there
+  # would run, before auto passes it by: on 2026-10-17 beelink2 sat 3 GB short for
+  # hours with idle cache it never pruned, because only an admitted gate prunes.
+  # A recovery that leaves the host short is not repeated for 15 minutes, the
+  # refusal's own retry time, so polling launchers do not rescan the cache.
+  # Recovery runs only when the idle cache can close the gap: a shortfall it cannot
+  # cover would evict every idle checkout, leave the caches cold and still refuse.
+  local recovered=0 before shortfall floor_bytes stamp="$cache_root/.locks/.probe-recovery-short"
+  if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+    state=refused next=$(utc_in_minutes 15)
+    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ] \
+      && floor_bytes=$(( $(floor_gib "$beelink") * 1024 * 1024 * 1024 )); then
+      before=$(free_bytes)
+      shortfall=$(( floor_bytes + reserve - before ))
+      if (( shortfall <= $(idle_cache_bytes "$cache_root") )); then
+        mkdir -p "$STATE_DIR" 2>/dev/null
+        { echo "$(date -u +%FT%TZ) probe $beelink short $shortfall bytes; recovering idle cache"
+          recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
+            "$cache_root/.locks/no-current-checkout" "$reserve" 2>&1
+        } >> "$STATE_DIR/capacity.log" 2>/dev/null
+        recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
+      fi
+      if reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+        state=free next=""; rm -f "$stamp"
+      else
+        touch "$stamp"
+      fi
+    fi
   fi
   if [ "$state" != refused ]; then
     err=$(mktemp)
@@ -1505,8 +1551,8 @@ remote_probe() {
   if [ -n "$host_cpu" ] && over_limit "$host_cpu" "$(host_pressure_ceiling)"; then
     probe_load=$host_cpu probe_limit=$(host_pressure_ceiling)
   fi
-  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 }
 
 # After a green --ship run, sign what ran and on which tree with this beelink's
