@@ -1465,16 +1465,19 @@ remote_probe() {
   # A recovery that leaves the host short is not repeated for 15 minutes, the
   # refusal's own retry time, so polling launchers do not rescan the cache.
   local recovered=0 before stamp="$cache_root/.locks/.probe-recovery-short"
-  if [ "$state" != refused ] && ! check_floor "$beelink" "$reserve" 2>/dev/null \
-    && [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ]; then
-    before=$(free_bytes)
-    recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
-      "$cache_root/.locks/no-current-checkout" "$reserve" >/dev/null 2>&1
-    recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
-    if check_floor "$beelink" "$reserve" 2>/dev/null; then rm -f "$stamp"; else touch "$stamp"; fi
-  fi
-  if [ "$state" != refused ]; then
-    reason=$(check_floor "$beelink" "$reserve" 2>&1) || { state=refused; next=$(utc_in_minutes 15); }
+  if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+    state=refused next=$(utc_in_minutes 15)
+    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ]; then
+      before=$(free_bytes)
+      recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
+        "$cache_root/.locks/no-current-checkout" "$reserve" >/dev/null 2>&1
+      recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
+      if reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+        state=free next="" ; rm -f "$stamp"
+      else
+        touch "$stamp"
+      fi
+    fi
   fi
   if [ "$state" != refused ]; then
     err=$(mktemp)
