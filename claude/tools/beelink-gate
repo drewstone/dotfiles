@@ -537,6 +537,26 @@ recover_floor_from_cache() {
   fi
 }
 
+# Bytes of checkouts no gate holds, measured in one du so hardlinks shared
+# between checkouts count once: the most an eviction pass could free.
+idle_cache_bytes() {
+  local root="$1" dir rel lock fd
+  local -a idle=()
+  for dir in "$root"/*/*/*/; do
+    dir=${dir%/}
+    [ ! -L "$dir" ] && [ -d "$dir/.git" ] || continue
+    rel=${dir#"$root"/}; lock="$root/.locks/${rel//\//-}.lock"
+    if [ -e "$lock" ]; then
+      exec {fd}<"$lock" || continue
+      if ! flock -n -s "$fd"; then exec {fd}<&-; continue; fi
+      exec {fd}<&-
+    fi
+    idle+=("$dir")
+  done
+  (( ${#idle[@]} )) || { echo 0; return; }
+  du -s -c -B1 -- "${idle[@]}" 2>/dev/null | tail -n 1 | cut -f1
+}
+
 # Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
 # cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
 # 24 h. Each sweep holds every gate lock for <repo> and cargo's own profile
@@ -1464,16 +1484,25 @@ remote_probe() {
   # hours with idle cache it never pruned, because only an admitted gate prunes.
   # A recovery that leaves the host short is not repeated for 15 minutes, the
   # refusal's own retry time, so polling launchers do not rescan the cache.
-  local recovered=0 before stamp="$cache_root/.locks/.probe-recovery-short"
+  # Recovery runs only when the idle cache can close the gap: a shortfall it cannot
+  # cover would evict every idle checkout, leave the caches cold and still refuse.
+  local recovered=0 before shortfall floor_bytes stamp="$cache_root/.locks/.probe-recovery-short"
   if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
     state=refused next=$(utc_in_minutes 15)
-    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ]; then
+    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ] \
+      && floor_bytes=$(( $(floor_gib "$beelink") * 1024 * 1024 * 1024 )); then
       before=$(free_bytes)
-      recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
-        "$cache_root/.locks/no-current-checkout" "$reserve" >/dev/null 2>&1
-      recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
+      shortfall=$(( floor_bytes + reserve - before ))
+      if (( shortfall <= $(idle_cache_bytes "$cache_root") )); then
+        mkdir -p "$STATE_DIR" 2>/dev/null
+        { echo "$(date -u +%FT%TZ) probe $beelink short $shortfall bytes; recovering idle cache"
+          recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
+            "$cache_root/.locks/no-current-checkout" "$reserve" 2>&1
+        } >> "$STATE_DIR/capacity.log" 2>/dev/null
+        recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
+      fi
       if reason=$(check_floor "$beelink" "$reserve" 2>&1); then
-        state=free next="" ; rm -f "$stamp"
+        state=free next=""; rm -f "$stamp"
       else
         touch "$stamp"
       fi

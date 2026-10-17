@@ -834,34 +834,45 @@ test("auto uses the repo's last install reserve before choosing a host", () => {
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("auto recovers a host's idle cache in the probe and admits there, instead of passing it by", () => {
+test("auto recovers a host's idle cache in the probe only when it closes the gap, and admits there", () => {
   const f = fixture();
   try {
     installFakeSsh(f);
     const floor = 200 * 1024 ** 3;
+    const reserve = 10 * 1024 ** 3; // the default install reserve with no receipt
     const availPrefix = join(f.root, "free");
     const cachePrefix = join(f.root, "host-cache");
-    // Both hosts are short of the floor plus the 10 GiB default reserve; only beelink2 holds idle cache.
+    const idleCheckout = (cacheRoot) => {
+      const dir = join(cacheRoot, "github.com", "test", "older");
+      mkdirSync(join(cacheRoot, ".locks"), { recursive: true });
+      f.git(["init", "-q", dir], f.root);
+      writeFileSync(join(dir, "payload"), Buffer.alloc(750_000));
+      return dir;
+    };
+    // beelink1 is 9 GiB short and its idle cache is under 1 MB: recovery cannot close the gap.
+    const b1idle = idleCheckout(`${cachePrefix}-100.98.195.7`);
     writeFileSync(`${availPrefix}-100.98.195.7`, String(floor + 1024 ** 3));
+    // beelink2 is 100 KiB short while its idle checkout exists, and 20 GiB clear once it is gone.
     const b2cache = `${cachePrefix}-100.127.22.51`;
-    const idle = join(b2cache, "github.com", "test", "older");
-    mkdirSync(join(b2cache, ".locks"), { recursive: true });
-    f.git(["init", "-q", idle], f.root);
-    writeFileSync(join(idle, "payload"), Buffer.alloc(750_000));
-    // beelink2's df reports 7 GiB above the floor while the idle checkout exists, 20 GiB once it is gone.
+    const b2idle = idleCheckout(b2cache);
+    const short = floor + reserve - 100 * 1024;
     writeFileSync(`${availPrefix}-100.127.22.51`, String(floor + 20 * 1024 ** 3));
     writeFileSync(join(f.root, "bin", "df"), `#!/usr/bin/env bash
-if [[ -d "$FAKE_IDLE_CHECKOUT" && "$FAKE_AVAIL_FILE" == *100.127.22.51 ]]; then echo Avail; echo ${floor + 7 * 1024 ** 3}; exit; fi
+if [[ -d "$FAKE_IDLE_CHECKOUT" && "$FAKE_AVAIL_FILE" == *100.127.22.51 ]]; then echo Avail; echo ${short}; exit; fi
 printf "Avail\\n%s\\n" "$(cat "$FAKE_AVAIL_FILE")"
 `);
     writeFileSync(f.env.BEELINK_GATE_LIMITS_FILE, "disk_floor_gib=200\n");
     const result = run(gate, ["auto", f.url, f.first, "--", "true"],
-      { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: cachePrefix, FAKE_IDLE_CHECKOUT: idle }, timeout: 30_000 });
+      { env: { ...f.env, FAKE_AVAIL_PREFIX: availPrefix, FAKE_CACHE_PREFIX: cachePrefix, FAKE_IDLE_CHECKOUT: b2idle }, timeout: 30_000 });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, new RegExp(`auto chose beelink2 .*beelink1: host=beelink1 state=refused .*recovered=0 .*beelink2: host=beelink2 state=free .*recovered=${13 * 1024 ** 3} `));
+    assert.match(result.stderr, new RegExp(`auto chose beelink2 .*beelink1: host=beelink1 state=refused .*recovered=0 .*beelink2: host=beelink2 state=free .*recovered=${floor + 20 * 1024 ** 3 - short} `));
     assert.match(result.stderr, /receipt: .*host=beelink2/);
-    assert.equal(existsSync(idle), false);
-    assert.equal(existsSync(join(b2cache, ".locks", ".probe-recovery-short")), false);
+    assert.equal(existsSync(b2idle), false);
+    assert.equal(existsSync(b1idle), true, "a recovery that cannot close the gap keeps the cache warm");
+    const log = readFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "capacity.log"), "utf8");
+    assert.match(log, /probe beelink2 short 102400 bytes; recovering idle cache/);
+    assert.match(log, /cache prune: cache_before=\d+ cache_after=\d+ free_before=\d+ free_after=\d+/);
+    assert.doesNotMatch(log, /probe beelink1/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
