@@ -324,6 +324,27 @@ beelink-gate: TEMPFAIL next_allowed=2026-10-11T09:30:00Z no beelink can start th
 Callers retry at `next_allowed`. Any other non-zero exit is the command's own
 failure or, with 2, a broken request.
 
+`--retry <minutes>` does that retrying: on exit 75 it waits until the
+TEMPFAIL's `next_allowed` (at least 30 s, or 5 minutes when the line names no
+time) and submits again, until the window passes. A TEMPFAIL for a lost
+connection to a gate that is still running (`run beelink-gate --attach <id>`)
+is re-attached after 10 s, not resubmitted, so it never starts a duplicate
+gate; a re-attached `auto` gate that gave its host back is submitted again at
+once, and with `--cancel-on-term` a stop cancels the re-attached gate too. A 75
+without a TEMPFAIL line, such as a canceled gate or the command's own 75, is
+not retried. Whenever `--retry` stops on 75, its last line is a TEMPFAIL line.
+
+`--summary` ends a red exit (not 0 or 75) with the command's test counts and
+failing tests, read from both output streams: the node test runner's spec
+reporter (`ℹ tests` counts and the `✖ failing tests:` section) and TAP
+(`# tests` counts and each `not ok` block). It caps the failing-test lines at
+200 and prints the counts last, so a caller that keeps only the tail still sees
+the cause.
+
+```bash
+beelink-gate --retry 60 --summary auto git@github.com:owner/repo.git <full-sha> -- node --test tests/
+```
+
 `--light` is for small checks such as a shell syntax check, a linter or one
 test file. It installs no dependencies, gets no browser, and declares at most
 `BEELINK_GATE_LIGHT_CPU` core-seconds of command CPU (default and maximum 120).
