@@ -35,6 +35,9 @@ fi
 #   beelink-gate --attach <gate-id>
 #   --cancel-on-term lets a manager's TERM/HUP/INT stop its exact remote gate.
 #   Without it a lost launcher leaves the gate running for --attach.
+#   --retry <minutes> submits again on TEMPFAIL at its next_allowed until that
+#   many minutes pass, re-attaching instead when the gate is still running.
+#   --summary ends a red exit with the suite's counts and failing tests.
 #
 # auto re-places a waiting gate: on the beelink it chose, a gate that is not
 # admitted (repo checkout, host slot and load) within BEELINK_GATE_REPLACE_WAIT
@@ -3146,8 +3149,164 @@ if [ "${1:-}" = --cancel-job ]; then
   tempfail "$(utc_in_minutes 5)" "could not confirm cancellation of $2"
 fi
 
-install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0
+# --summary: a red gate's test counts and failing tests, printed last so a
+# caller's tail still shows the cause. It reads the node test runner's spec
+# reporter ("ℹ tests 3" counts, the "✖ failing tests:" section) and TAP
+# ("# tests 3" counts, each "not ok" line with its indented diagnostics).
+summarize_output() {  # <exit code> <output file>...
+  python3 - "$@" <<'PY' >&2
+import re, sys
+code, paths = sys.argv[1], sys.argv[2:]
+ansi = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+keys = "tests|suites|pass|fail|cancelled|skipped|todo|duration_ms"
+count = re.compile(rf"^(?:ℹ|#) ({keys}) (\S+)$")
+not_ok = re.compile(r"^(\s*)not ok\b")
+groups, blocks = [], []
+def close(block, kind):
+    # A suite's own "not ok" only says that a subtest failed; the subtest's block has the cause.
+    if kind == "tap" and any("failureType: 'subtestsFailed'" in l for l in block):
+        return
+    while block and not block[-1].strip():
+        block.pop()
+    blocks.append(block)
+for path in paths:
+    group, block, kind, depth = {}, None, None, 0
+    try:
+        lines = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    with lines:
+        for raw in lines:
+            line = ansi.sub("", raw.rstrip("\r\n"))
+            if block is not None:
+                indent = len(line) - len(line.lstrip())
+                if not line.strip() or (kind == "spec" and (indent or line.startswith(("test at ", "✖ ")))) \
+                        or (kind == "tap" and indent > depth):
+                    block.append(line)
+                    continue
+                close(block, kind)
+                block = None
+            match = count.match(line)
+            if match:
+                group[match[1]] = match[2]
+                continue
+            if group:
+                groups.append(group)
+                group = {}
+            if line == "✖ failing tests:":
+                block, kind = [line], "spec"
+            elif (match := not_ok.match(line)):
+                block, kind, depth = [line], "tap", len(match[1])
+    if block is not None:
+        close(block, kind)
+    if group:
+        groups.append(group)
+print(f"beelink-gate: summary of the failed command (exit {code})")
+shown = [l for b in blocks for l in b]
+limit = 200
+for l in shown[:limit]:
+    print(l)
+if len(shown) > limit:
+    print(f"beelink-gate: summary omitted {len(shown) - limit} more failing-test lines; the full output is above")
+for g in groups:
+    print("beelink-gate: summary " + " ".join(f"{k}={v}" for k, v in g.items()))
+if not blocks and not groups:
+    print("beelink-gate: summary found no test counts or failing tests in the command output")
+PY
+}
+
+# --retry MINUTES and --summary run this launcher again as a child with the rest
+# of the request and keep each attempt's output. On TEMPFAIL, --retry waits for
+# the TEMPFAIL's next_allowed and submits again until MINUTES pass; a TEMPFAIL
+# that names a gate still running ("run beelink-gate --attach <id>") is
+# re-attached instead, so a lost connection never starts a duplicate gate.
+utc_at() { python3 -c 'import datetime as d, sys; print(d.datetime.fromtimestamp(int(sys.argv[1]), d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
+epoch_of_utc() { python3 -c 'import datetime as d, sys; print(int(d.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=d.timezone.utc).timestamp()))' "$1" 2>/dev/null; }
+wrap_child="" wrap_sleep="" wrap_stop=""
+wrap_signal() {  # <exit code>
+  wrap_stop=$1
+  # A background child starts with SIGINT ignored, so every stop reaches it as TERM:
+  # without --cancel-on-term TERM ends it, with it the child cancels its gate.
+  if [ -n "$wrap_child" ]; then kill -TERM "$wrap_child" 2>/dev/null || true; return; fi
+  [ -z "$wrap_sleep" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
+  exit "$1"
+}
+run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>...
+  local minutes=$1 summary=$2 deadline=0 attempt=0 rc line next wait_s reattach="" tee_out tee_err i
+  shift 2
+  local dir
+  dir=$(mktemp -d) || die "cannot allocate the gate transcript"
+  # shellcheck disable=SC2064 # expand the directory now; it is local to this function.
+  trap "rm -rf '$dir'" EXIT
+  trap 'wrap_signal 143' TERM
+  trap 'wrap_signal 129' HUP
+  trap 'wrap_signal 130' INT
+  [ -z "$minutes" ] || deadline=$(( $(date +%s) + minutes * 60 ))
+  while :; do
+    attempt=$((attempt + 1))
+    rm -f "$dir/out" "$dir/err"
+    mkfifo "$dir/out" "$dir/err" || die "cannot create the gate transcript pipes"
+    # The copies ignore stop signals, so a TERM sent to the whole process group
+    # cannot cut off the child's own cancellation output; they end at its EOF.
+    (trap '' HUP INT TERM; exec tee "$dir/out.log" < "$dir/out") & tee_out=$!
+    (trap '' HUP INT TERM; exec tee "$dir/err.log" < "$dir/err" >&2) & tee_err=$!
+    if [ -n "$reattach" ]; then
+      "$BASH" "$0" --attach "$reattach" > "$dir/out" 2> "$dir/err" & wrap_child=$!
+    else
+      "$BASH" "$0" "$@" > "$dir/out" 2> "$dir/err" & wrap_child=$!
+    fi
+    wait "$wrap_child"; rc=$?
+    # A forwarded stop interrupts wait; keep waiting while the child handles it.
+    while [ -n "$wrap_stop" ] && kill -0 "$wrap_child" 2>/dev/null; do wait "$wrap_child"; rc=$?; done
+    wrap_child=""
+    # A process the child left behind may still hold the pipes; stop copying after 5s.
+    for ((i = 0; i < 50; i++)); do
+      kill -0 "$tee_out" 2>/dev/null || kill -0 "$tee_err" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$tee_out" "$tee_err" 2>/dev/null || true
+    wait "$tee_out" "$tee_err" 2>/dev/null || true
+    [ -z "$wrap_stop" ] || exit "$rc"
+    [ "$rc" = "$TEMPFAIL" ] && [ -n "$minutes" ] || break
+    line=$(grep -a '^beelink-gate: TEMPFAIL next_allowed=' "$dir/err.log" | tail -n 1)
+    reattach=""
+    if [[ "$line" =~ beelink-gate\ --attach\ (beelink[12]-[0-9a-f]{32}) ]]; then reattach=${BASH_REMATCH[1]}; fi
+    next=${line#beelink-gate: TEMPFAIL next_allowed=}
+    next=$(epoch_of_utc "${next%% *}") || next=""
+    if [ -n "${BEELINK_GATE_RETRY_SECONDS:-}" ]; then
+      wait_s=$BEELINK_GATE_RETRY_SECONDS
+    elif [ -n "$next" ]; then
+      wait_s=$(( next - $(date +%s) ))
+      (( wait_s >= 30 )) || wait_s=30
+    else
+      wait_s=300
+    fi
+    if (( $(date +%s) + wait_s > deadline )); then
+      echo "beelink-gate: --retry $minutes: the next attempt could not start before the retry window ends at $(utc_at "$deadline"); stopping after $attempt attempts" >&2
+      [ -z "$line" ] || echo "$line" >&2
+      exit "$TEMPFAIL"
+    fi
+    echo "beelink-gate: --retry $minutes: attempt $attempt got TEMPFAIL; attempt $((attempt + 1)) ${reattach:+re-attaches to $reattach and }starts at $(utc_at $(( $(date +%s) + wait_s ))) (window ends $(utc_at "$deadline"))" >&2
+    sleep "$wait_s" & wrap_sleep=$!
+    wait "$wrap_sleep"
+    wrap_sleep=""
+  done
+  if [ "$summary" = 1 ] && [ "$rc" != 0 ] && [ "$rc" != "$TEMPFAIL" ]; then
+    summarize_output "$rc" "$dir/out.log" "$dir/err.log"
+  fi
+  exit "$rc"
+}
+
+install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0 retry_minutes="" summary=0
+launch_options=()
 while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --retry) [[ "${2:-}" =~ ^[1-9][0-9]{0,3}$ ]] && (( 10#$2 <= 1440 )) || die "--retry needs whole minutes from 1 to 1440"
+      retry_minutes=$((10#$2)); shift 2; continue ;;
+    --summary) summary=1; shift; continue ;;
+    --urgent|--pin-host|--cancel-on-term|--no-install|--light|--dev|--ship) launch_options+=("$1") ;;
+    --branch) launch_options+=("$1" "${2:-}") ;;
+  esac
   case "$1" in
     --urgent) export BEELINK_GATE_URGENT=1; shift ;;
     --pin-host) pin_host=1; shift ;;
@@ -3162,10 +3321,16 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
-       beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>"
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+       beelink-gate --ship [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
+fi
+if [ -n "${BEELINK_GATE_RETRY_SECONDS:-}" ] && [[ ! "$BEELINK_GATE_RETRY_SECONDS" =~ ^[0-9]{1,5}$ ]]; then
+  die "invalid BEELINK_GATE_RETRY_SECONDS: $BEELINK_GATE_RETRY_SECONDS"
+fi
+if [ -n "$retry_minutes" ] || [ "$summary" = 1 ]; then
+  run_wrapped "$retry_minutes" "$summary" ${launch_options[@]+"${launch_options[@]}"} "$@"
 fi
 if [ "$install_mode" = ship ]; then
   [ "$#" -eq 3 ] || die "$usage"
@@ -3260,7 +3425,10 @@ if [ "$requested" = auto ]; then
   fi
 fi
 cancel_launcher_job() {
-  trap - HUP INT TERM
+  # Ignore repeats: GNU timeout signals the child and then its process group,
+  # and --retry forwards a stop the group also received, so a second TERM
+  # would otherwise end the launcher before it schedules the cancellation.
+  trap '' HUP INT TERM
   if [ -n "${gate_id:-}" ]; then
     echo "beelink-gate: manager stopped; scheduling cancellation of gate_id=$gate_id" >&2
     systemd-run --user --collect --unit="beelink-gate-cancel-$gate_id" /usr/bin/bash "$0" --cancel-job "$gate_id" >&2 \
