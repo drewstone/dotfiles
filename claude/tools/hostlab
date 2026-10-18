@@ -345,14 +345,16 @@ parse_opts() {
   REST=("$@")
   to_seconds "$TTL" >/dev/null
   if [ -n "$READ_ONLY_INPUT" ]; then
-    READ_ONLY_INPUT=$(python3 - "$READ_ONLY_INPUT" "$RUNS" "$CACHE/build" <<'PY'
+    READ_ONLY_INPUT=$(python3 - "$READ_ONLY_INPUT" "$RUNS" "$CACHE/build" "$ARCHIVE" "${HOSTLAB_SMALL_ARCHIVE:-}" <<'PY'
 import os,pathlib,stat,sys
 source=pathlib.Path(sys.argv[1])
 if not stat.S_ISREG(source.lstat().st_mode):
     raise SystemExit('hostlab: read-only input must be a regular file, not a symlink or device')
 source=source.resolve(strict=True)
-if any(source.is_relative_to(pathlib.Path(p).resolve()) for p in sys.argv[2:]):
-    raise SystemExit('hostlab: read-only input must be outside managed VM directories')
+managed=sys.argv[2:5]
+if sys.argv[5] and ':' not in sys.argv[5]: managed.append(sys.argv[5])
+if any(source.is_relative_to(pathlib.Path(p).resolve()) for p in managed):
+    raise SystemExit('hostlab: read-only input must be outside managed VM and archive directories')
 size=source.stat().st_size
 if not os.access(source,os.R_OK) or size<=0 or size%512 or any(c in str(source) for c in '\r\n'):
     raise SystemExit('hostlab: read-only input must be readable, nonempty and sector-aligned')
