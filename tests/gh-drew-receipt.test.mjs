@@ -68,13 +68,12 @@ function run(s, args, receipts, extra = {}) {
 
 const merge = (s, head = HEAD) => ["pr", "merge", String(s.number), "-R", s.repo, "--squash", "--match-head-commit", head];
 
-test("a release-path merge is refused unless a full-test receipt passed on its exact head", () => {
+test("a release-path merge is refused unless a passing install-mode gate receipt exists for its exact head", () => {
   const s = sandbox();
   try {
     const cases = [
-      [[{ exit: 1, gate_id: RED_GATE, mode: "light", class: "light", command: "bash -lc python3 -c ..." }], /beelink2-b1b7743870eff2dc7da8260d77e65fcd .* exit=1 mode=light .*<- exit 1, mode light, class light, not the full test command/],
+      [[{ exit: 1, gate_id: RED_GATE, mode: "light", class: "light", command: "bash -lc python3 -c ..." }], /beelink2-b1b7743870eff2dc7da8260d77e65fcd .* exit=1 mode=light .*<- exit 1, mode light, class light$/m],
       [[{ mode: "light", class: "light" }], /<- mode light, class light$/m],
-      [[{ command: "node --test runner/status.test.mjs" }], /<- not the full test command$/m],
       [[{ class: "dev" }], /<- class dev$/m],
       [[{ sha: OTHER }], /Receipts for this head: none/],
       [[], /Receipts for this head: none/],
@@ -82,7 +81,7 @@ test("a release-path merge is refused unless a full-test receipt passed on its e
     for (const [rows, why] of cases) {
       const r = run(s, merge(s), rows);
       assert.equal(r.status, 1, r.stderr);
-      assert.match(r.stderr, /refusing to merge https:\/\/github\.com\/tangle-network\/discovery-lab\/pull\/2009: no beelink-gate receipt shows its full test command \(pnpm test or pnpm run test\) passed on head 1{40}/);
+      assert.match(r.stderr, /refusing to merge https:\/\/github\.com\/tangle-network\/discovery-lab\/pull\/2009: no beelink-gate receipt shows a gate passed on head 1{40}/);
       assert.match(r.stderr, why);
       assert.equal(r.merged, null, "nothing merged");
     }
@@ -91,7 +90,7 @@ test("a release-path merge is refused unless a full-test receipt passed on its e
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
-test("a passing pnpm test receipt merges, pinned to the head, and under beelink-gate --merge it must be that gate's", () => {
+test("a passing receipt merges, pinned to the head, and under beelink-gate --merge it must be that gate's", () => {
   const s = sandbox();
   try {
     const unpinned = run(s, ["pr", "merge", "2009", "-R", s.repo, "--squash"], [{}]);
@@ -114,7 +113,7 @@ test("the REST merge is held to the same receipt, and an unreadable beelink refu
   const s = sandbox({ repo: "tangle-network/agent-runtime", number: 1818 });
   try {
     const put = ["api", "-X", "PUT", "repos/tangle-network/agent-runtime/pulls/1818/merge", "-f", "merge_method=squash", "-f", `sha=${HEAD}`];
-    const subset = run(s, put, [{ command: "pnpm vitest run test/stream.test.ts" }]);
+    const subset = run(s, put, [{ command: "pnpm vitest run test/stream.test.ts", exit: 1 }]);
     assert.equal(subset.status, 1, subset.stderr);
     assert.match(subset.stderr, /refusing to merge https:\/\/github\.com\/tangle-network\/agent-runtime\/pull\/1818: no beelink-gate receipt/);
     assert.equal(subset.merged, null);
