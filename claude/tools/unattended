@@ -56,7 +56,27 @@ done
 exec {lock}>&-
 trap 'rm -f "$state/$name.$$.pid"' EXIT
 if command -v systemd-run >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
-  systemd-run --user --scope --quiet --collect --unit "unattended-$name-$$" -p CPUWeight=20 --nice=10 -- "$@"
+  # The scope leaves the caller's cgroup, so stopping the caller would not reach the command: on
+  # 2026-10-18 stopping referral-browser-artifact-watch.service left its Python child alive in
+  # unattended-referral-browser-artifact-watch-4057190.scope, and that stale observer could overwrite
+  # the current run's receipt. A user service caller owns the scope (BindsTo: its stop, restart or
+  # SIGKILL stops the scope), and SIGTERM or SIGINT to this wrapper stops it too. A terminal or
+  # setsid caller keeps the detached behaviour, and SIGHUP is not forwarded.
+  scope="unattended-$name-$$"
+  cgroup=$(sed -n 's|^0::||p' /proc/self/cgroup 2>/dev/null)
+  owner=() caller=${cgroup##*/}
+  [[ "$cgroup" == */user@*.service/* && "$caller" == *.service ]] && owner=(-p "BindsTo=$caller" -p "After=$caller")
+  systemd-run --user --scope --quiet --collect --unit "$scope" "${owner[@]}" -p CPUWeight=20 --nice=10 -- "$@" <&0 &
+  child=$!
+  trap 'kill -TERM "$child" 2>/dev/null; systemctl --user stop "$scope.scope" 2>/dev/null' TERM INT
+  # wait returns early when a trapped signal arrives; wait again for the command's own status.
+  while :; do wait "$child"; rc=$?; kill -0 "$child" 2>/dev/null || break; done
+  # A command stopped by HUP, INT, KILL or TERM stops this wrapper by the same signal, so a stopped
+  # service reads inactive, not failed with status 143 (its scope stops first, ordered After= it).
+  case "$rc" in
+    129|130|137|143) rm -f "$state/$name.$$.pid"; trap - EXIT TERM INT; kill -s $((rc - 128)) $$ ;;
+  esac
+  exit "$rc"
 else
   nice -n 10 "$@"
 fi
