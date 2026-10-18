@@ -51,6 +51,10 @@ Run `./host/install.sh --check` to report drift without a change.
   The installer adds a deterministic systemd timer instance for that path and retains the default timer.
   The new directory needs its own matched base image and SSH key, created by `hostlab build`;
   the installer does not copy keys, move VMs, or change mounts.
+  Keep its timer enabled until its VMs have expired, `hostlab reap` has retained their logs,
+  and `hostlab status` lists no remaining VMs, using the same `HOSTLAB_HOME` for both commands.
+  Then `systemctl --user disable --now <timer-name-printed-by-installer>` stops only that
+  directory's schedule. Disabling a timer does not retire its VMs; retain the default timer.
 
 The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.
 `CPUQuota=2400%` and `CPUWeight=50` hold every cli-bridge LLM scope, including discovery-lab's kissat campaign, to 24 of 32 cores.
