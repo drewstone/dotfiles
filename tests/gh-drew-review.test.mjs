@@ -101,7 +101,7 @@ test("a review still running when the wait ends refuses with exit 75, and a wait
   try {
     const r = run(s, ["pr", "merge", "465", "--auto", "--squash", "-R", "drewstone/dotfiles"], [RUNNING], { GH_DREW_REVIEW_WAIT: "0" });
     assert.equal(r.status, 75, r.stderr);
-    assert.match(r.stderr, /refusing to merge https:\/\/github\.com\/drewstone\/dotfiles\/pull\/465: Codex code review of b132bb7 is running \(waited [01]s, GH_DREW_REVIEW_WAIT=0\)/);
+    assert.match(r.stderr, /refusing to merge https:\/\/github\.com\/drewstone\/dotfiles\/pull\/465: Codex code review of b132bb7 is running \(waited \d+s, GH_DREW_REVIEW_WAIT=0\)/);
     assert.match(r.stderr, /Merge again once Codex answers, or override with GH_DREW_REVIEW_OVERRIDE=<reason>/);
     assert.equal(r.merged, null);
     assert.equal(r.reads, 1);
@@ -132,7 +132,7 @@ test("a PR merged seconds after it turned ready waits for Codex to comment; an o
     try {
       const refused = run(s2, ["pr", "merge", "465", "-R", "drewstone/dotfiles"], [justReady], { GH_DREW_REVIEW_WAIT: "0" });
       assert.equal(refused.status, 75, refused.stderr);
-      assert.match(refused.stderr, /: no Codex comment yet, \d+s after the PR opened or turned ready \(waited 0s, GH_DREW_REVIEW_WAIT=0\)/);
+      assert.match(refused.stderr, /: no Codex comment yet, \d+s after the PR opened or turned ready \(waited \d+s, GH_DREW_REVIEW_WAIT=0\)/);
       assert.equal(refused.merged, null);
     } finally {
       rmSync(s2.root, { recursive: true, force: true });

@@ -46,6 +46,7 @@ args=("$@"); i=0
 while [[ "\${args[$i]}" == -o ]]; do i=$((i + 2)); done
 rest=("\${args[@]:$((i + 1))}")
 [[ -z "\${FAKE_SSH_DOWN:-}" ]] || exit 255
+[[ "\${args[$i]}" != "\${FAKE_SSH_DOWN_IP:-none}" ]] || exit 255
 exec "\${rest[@]:2}"
 `);
   chmodSync(join(bin, "ssh"), 0o755);
@@ -126,6 +127,16 @@ test("the REST merge is held to the same receipt, and an unreadable beelink refu
     assert.equal(down.status, 75, down.stderr);
     assert.match(down.stderr, /cannot read the beelinks' gate receipts .*could not read beelink1's receipts/);
     assert.equal(down.merged, null);
+
+    // beelink2 (100.127.22.51) off Tailscale, as for hours on 2026-10-18: a pass read on beelink1 is enough; no pass
+    // read is not "none", since beelink2 may hold it.
+    const halfRed = run(s, put, [{ exit: 1 }], { FAKE_SSH_DOWN_IP: "100.127.22.51" });
+    assert.equal(halfRed.status, 75, halfRed.stderr);
+    assert.match(halfRed.stderr, /no receipt read so far passes .*could not read beelink2's receipts/);
+    assert.equal(halfRed.merged, null);
+    const half = run(s, put, [{}], { FAKE_SSH_DOWN_IP: "100.127.22.51" });
+    assert.equal(half.status, 0, half.stderr);
+    assert.deepEqual(half.merged, put);
 
     const green = run(s, put, [{}]);
     assert.equal(green.status, 0, green.stderr);
