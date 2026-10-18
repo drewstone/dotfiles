@@ -3122,6 +3122,12 @@ PY
   done
   cat "$found"
   if [ -s "$found" ]; then rc=0; elif [ -n "$unread" ]; then rc=$TEMPFAIL; else rc=1; fi
+  # Name what was read, so a refusal is not mistaken for the down host's fault: on 2026-10-18
+  # agent-runtime#1832 refused with only "could not read beelink2" while beelink1 held no receipt either.
+  if [ ! -s "$found" ]; then
+    read_hosts=$(for host in beelink1 beelink2; do [[ " $unread " == *" $host "* ]] || printf '%s ' "$host"; done)
+    echo "beelink-gate: --receipt found no receipt for $3 on ${read_hosts:-no reachable beelink}${unread:+(unknown:$unread)}" >&2
+  fi
   rm -f "$host_rows" "$found"
   exit "$rc"
 fi
