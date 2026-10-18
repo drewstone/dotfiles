@@ -887,7 +887,10 @@ receipt_guard() {
   if [[ "${out%%$'\n'*}" != pass ]]; then
     local found="${out#*$'\n'}"; [[ "$out" == *$'\n'* ]] || found=""
     # One passing receipt is enough; a beelink left unread may hold it, so no pass with a host unread is not "none".
-    if [[ -s "$err" ]]; then
+    # Under --merge only the named gate's receipt counts, so once that row is read an unread host cannot change
+    # the verdict: on 2026-10-18 discovery-lab#2078 refused with "could not read beelink2's receipts" first,
+    # and the lane waited for beelink2 while its beelink1 receipt said mode no-install.
+    if [[ -s "$err" ]] && ! { [[ -n "${BEELINK_GATE_ID:-}" ]] && grep -qF "  $BEELINK_GATE_ID " <<<"$found"; }; then
       local why; why="$(tr '\n' ' ' <"$err" | cut -c1-300)"; rm -f "$err"
       receipt_refuse 75 "gh-drew: refusing to merge $pr: no receipt read so far passes on $head, and $why" "Receipts read: ${found:-none}"
     fi
