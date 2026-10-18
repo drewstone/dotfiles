@@ -691,6 +691,7 @@ review_guard() {
         held) held="$a" ;;
       esac
     done <<<"$out"
+    reviewed_url="$url" reviewed_head="$head"
     if [[ -n "$held" && -z "$shown" ]]; then
       log_call refused "$@"
       echo "gh-drew: refusing to merge $url: its author holds it ($held)." >&2
@@ -758,6 +759,7 @@ review_guard() {
 # beelinks by `beelink-gate --receipt`) with exit 0, mode install, class normal and the repo's full test
 # command. Under `beelink-gate --merge`, BEELINK_GATE_ID names the gate and that receipt must be the one.
 # The review override does not reach this check, and nothing overrides it.
+reviewed_url="" reviewed_head=""
 declare -A gated_repos=([tangle-network/discovery-lab]="pnpm test|pnpm run test" [tangle-network/agent-runtime]="pnpm test|pnpm run test")
 beelink_gate="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/beelink-gate"
 
@@ -811,14 +813,8 @@ receipt_guard() {
       prev="$a"
     done
     how="--match-head-commit <head>"
-    out="$(review_state "$token" 2>&1)" || {
-      local repo="${merge_repo[1]:-}"; repo="${repo%.git}"
-      [[ -n "${gated_repos[${repo#*github.com/}]:-}" || "$merge_selector" == *github.com/tangle-network/discovery-lab/* || "$merge_selector" == *github.com/tangle-network/agent-runtime/* ]] || return 0
-      receipt_refuse 1 "gh-drew: refusing to merge: cannot read the PR's head to check its gate receipt: ${out:0:300}"
-    }
-    while IFS=$'\t' read -r i a b _; do
-      if [[ "$i" == pr ]]; then path="$a"; head="$b"; fi
-    done <<<"$out"
+    # review_guard, which runs first, has read the PR's URL and head; a second read would cost every merge a call.
+    path="$reviewed_url" head="$reviewed_head"
     [[ "$path" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || return 0
     owner="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
   elif [[ "${1-}" == api ]]; then
