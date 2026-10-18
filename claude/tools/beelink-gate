@@ -3039,6 +3039,7 @@ if [ "${1:-}" = --receipt ]; then
   [ "$#" = 3 ] && [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "usage: beelink-gate --receipt <repo-url> <sha (40 hex)>"
   key=$(python3 -c 'import re,sys; u=sys.argv[1]; m=re.match(r"^(?:git@([^:]+):|ssh://git@([^/]+)/|https?://([^/]+)/)(.+?)(?:\.git)?/?$", u); print(f"{m.group(1) or m.group(2) or m.group(3)}/{m.group(4)}" if m else "")' "$2")
   [ -n "$key" ] || die "--receipt: cannot read a host/owner/repo from $2"
+  launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   host_rows=$(mktemp) found=$(mktemp)
   for host in beelink1 beelink2; do
     if heartbeat=0 on_beelink "$host" --receipts 720 > "$host_rows" 2>/dev/null \
