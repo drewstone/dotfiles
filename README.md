@@ -46,6 +46,15 @@ Run `./host/install.sh --check` to report drift without a change.
 - `claude/hooks/secret_scan.py` runs after Bash, Read and Grep calls and warns when their output or command holds a live-looking credential (`sk-tan-`, `gak_`, `lak_`, `plabs_`, `whsec_`, Stripe, GitHub, OpenAI, Anthropic shapes), with that key type's rotation steps.
   It records only the kind, length and SHA-256 in `~/.claude/logs/secret-exposures.jsonl`.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
+  For a separate storage directory, run `HOSTLAB_HOME=/absolute/private/path host/hostlab/install.sh`,
+  then use that same `HOSTLAB_HOME` for `hostlab build`, `run`, `status`, and `reap`.
+  The installer adds a deterministic systemd timer instance for that path and retains the default timer.
+  The new directory needs its own matched base image and SSH key, created by `hostlab build`;
+  the installer does not copy keys, move VMs, or change mounts.
+  Keep its timer enabled until its VMs have expired, `hostlab reap` has retained their logs,
+  and `hostlab status` lists no remaining VMs, using the same `HOSTLAB_HOME` for both commands.
+  Then `systemctl --user disable --now <timer-name-printed-by-installer>` stops only that
+  directory's schedule. Disabling a timer does not retire its VMs; retain the default timer.
 
 The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.
 `CPUQuota=2400%` and `CPUWeight=50` hold every cli-bridge LLM scope, including discovery-lab's kissat campaign, to 24 of 32 cores.
