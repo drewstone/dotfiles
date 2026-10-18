@@ -2728,11 +2728,20 @@ on_beelink() {
   [ -z "${matched_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_RESERVE=${matched_reserve[$peer_host]}")
   [ -z "${matched_warm_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_WARM_RESERVE=${matched_warm_reserve[$peer_host]}")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
-  local me=$$ rc heartbeat_fd heartbeat_pid command_pid
+  local me=$$ rc heartbeat_fd heartbeat_pid command_pid args_line=""
+  # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
+  # ("exec request failed on channel 0"); on 2026-10-18 a 23 KB patch, base64
+  # encoded in argv, became 41,676 bytes and the submit was reported as a lost
+  # connection. Large arguments ride on stdin ahead of the script instead.
+  local -a remote_args=("$@")
+  if (( $(printf '%s ' "$@" | wc -c) > 8192 )); then
+    args_line="set -- $(printf '%q ' "$@")"
+    remote_args=()
+  fi
   heartbeat_input() {
     local sleeper="" include_script=${1:-0}
     trap 'if [ -n "$sleeper" ]; then kill -TERM "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
-    [ "$include_script" = 1 ] && cat "$0"
+    if [ "$include_script" = 1 ]; then [ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$0"; fi
     while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
       sleep 5 & sleeper=$!
       wait "$sleeper" || true
@@ -2757,13 +2766,13 @@ on_beelink() {
   elif [ "${heartbeat:-0}" = 1 ]; then
     exec {heartbeat_fd}< <(heartbeat_input 1)
     heartbeat_pid=$!
-    ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "$@" <&"$heartbeat_fd" &
+    ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" <&"$heartbeat_fd" &
     command_pid=$!
     wait "$command_pid"; rc=$?
     stop_heartbeat
   else
-    ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "$@" \
-      < <(cat "$0")
+    ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
+      < <([ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$0")
     rc=$?
   fi
   return "$rc"
@@ -3634,9 +3643,17 @@ while :; do
   [ "$cancel_on_term" != 1 ] || trap cancel_launcher_job HUP INT TERM
   echo "beelink-gate: gate_id=$gate_id; reconnect with beelink-gate --attach $gate_id" >&2
   run_cancelable stage_job "$target" "$gate_id" || tempfail "$(utc_in_minutes 5)" "could not stage $gate_id on $target"
-  BEELINK_GATE_ID="$gate_id" heartbeat=0 run_cancelable on_beelink "$target" --job-submit "$gate_id" "${encoded[@]}"
+  submit_bytes="$(printf '%s ' "${encoded[@]}" | wc -c | tr -d ' ') bytes of encoded arguments"
+  submit_err=$(mktemp) || die "cannot create a temporary file"
+  BEELINK_GATE_ID="$gate_id" heartbeat=0 run_cancelable on_beelink "$target" --job-submit "$gate_id" "${encoded[@]}" 2>"$submit_err"
   rc=$?
-  [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "submit connection lost for $gate_id; run beelink-gate --attach $gate_id before retrying"
+  cat "$submit_err" >&2
+  if [ "$rc" = 255 ] && grep -q "exec request failed" "$submit_err"; then
+    rm -f "$submit_err"
+    die "$target refused the SSH exec request for $gate_id ($submit_bytes); no gate was submitted, and retrying the same command fails the same way"
+  fi
+  rm -f "$submit_err"
+  [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "submit connection lost for $gate_id ($submit_bytes); run beelink-gate --attach $gate_id before retrying"
   [ "$rc" = 0 ] || exit "$rc"
   # Keep reservations until the submitted gate itself has joined the checkout
   # queue. Its own urgent marker then survives a lost launcher or SSH session.
