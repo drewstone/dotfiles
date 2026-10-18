@@ -33,6 +33,7 @@ fi
 #   hardware-specific work such as KVM; admission limits still apply.
 #   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #   beelink-gate --attach <gate-id>
+#   beelink-gate --receipt <repo-url> <sha>   (both beelinks' receipts for that SHA, as JSON lines)
 #   --cancel-on-term lets a manager's TERM/HUP/INT stop its exact remote gate.
 #   Without it a lost launcher leaves the gate running for --attach.
 #   --retry <minutes> submits again on TEMPFAIL at its next_allowed until that
@@ -3027,6 +3028,45 @@ if [ "${1:-}" = --urgent-reserve ]; then
   exit 0
 fi
 
+# --receipt <repo-url> <sha>: every receipt both beelinks hold for that repo and
+# SHA, one JSON line each with its gate_id and the host it came from ("from").
+# gh-drew reads this before it merges a release-path PR, so a merge rests on the
+# gate's own receipt, never on a wrapper's exit code: on 2026-10-18 a lane script
+# recorded exit=0 for gate beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose
+# receipt says exit=1, and discovery-lab#2009 merged on it. Exit 0 with rows,
+# 1 with none, 75 when a beelink cannot be read (a partial read is never "none").
+if [ "${1:-}" = --receipt ]; then
+  [ "$#" = 3 ] && [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "usage: beelink-gate --receipt <repo-url> <sha (40 hex)>"
+  key=$(python3 -c 'import re,sys; u=sys.argv[1]; m=re.match(r"^(?:git@([^:]+):|ssh://git@([^/]+)/|https?://([^/]+)/)(.+?)(?:\.git)?/?$", u); print(f"{m.group(1) or m.group(2) or m.group(3)}/{m.group(4)}" if m else "")' "$2")
+  [ -n "$key" ] || die "--receipt: cannot read a host/owner/repo from $2"
+  launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+  host_rows=$(mktemp) found=$(mktemp)
+  for host in beelink1 beelink2; do
+    if heartbeat=0 on_beelink "$host" --receipts 720 > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts 720 > "$host_rows" 2>/dev/null; }; then
+      python3 - "$host_rows" "$host" "$key" "$3" >> "$found" <<'PY'
+import json, sys
+path, host, key, sha = sys.argv[1:]
+for line in open(path, errors="replace"):
+    try:
+        row = json.loads(line)
+    except ValueError:
+        continue
+    if row.get("repo") == key and row.get("sha") == sha:
+        print(json.dumps({"from": host, **row}))
+PY
+    else
+      echo "beelink-gate: --receipt could not read $host's receipts" >&2
+      rm -f "$host_rows" "$found"
+      exit "$TEMPFAIL"
+    fi
+  done
+  cat "$found"
+  [ -s "$found" ]; rc=$?
+  rm -f "$host_rows" "$found"
+  exit "$rc"
+fi
+
 # --report [hours]: gate runs per merged PR by repo, from both beelinks' receipts
 # and GitHub's merged-PR counts, with each repo's modes, exit classes and
 # exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
@@ -3288,7 +3328,8 @@ merge_gated() {  # <gate stderr log>
   local id out sha
   id=$(grep -ao 'gate_id=[A-Za-z0-9-]*' "$1" | tail -n 1)
   id=${id#gate_id=}
-  if out=$(gh-drew pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
+  # gh-drew requires this gate's own receipt for a release-path repo (its gated_repos).
+  if out=$(BEELINK_GATE_ID="$id" gh-drew pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
     sha=$(gh-drew pr view "$merge_pr" -R "$merge_repo" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null)
     echo "beelink-gate: merged #$merge_pr ${sha:-unknown} gate_id=${id:-unknown}" >&2
     return 0
