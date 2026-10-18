@@ -26,7 +26,7 @@ fi
 # Gate one commit in a reusable, locked checkout on a beelink.
 #
 # Usage:
-#   beelink-gate [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#   beelink-gate [--no-install] [--branch <name>] [--merge <pr>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --light [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   beelink-gate --dev [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
 #   Any form also takes --urgent. Use --pin-host with a named host for
@@ -38,6 +38,8 @@ fi
 #   --retry <minutes> submits again on TEMPFAIL at its next_allowed until that
 #   many minutes pass, re-attaching instead when the gate is still running.
 #   --summary ends a red exit with the suite's counts and failing tests.
+#   --merge <pr> squash-merges GitHub PR <pr> of <repo-url>, pinned to <sha>,
+#   when the gate exits 0 (not with --dev or --ship); see MERGE_REFUSED.
 #
 # auto re-places a waiting gate: on the beelink it chose, a gate that is not
 # admitted (repo checkout, host slot and load) within BEELINK_GATE_REPLACE_WAIT
@@ -3261,6 +3263,40 @@ if not blocks and not groups:
 PY
 }
 
+# --merge PR: after a green gate, `gh-drew pr merge PR -R owner/repo --squash
+# --match-head-commit SHA`, so the merge lands exactly the commit the gate ran.
+# gh-drew owns the merge preconditions (merge-on-green's hold, unanswered review
+# threads, a running Codex review), so they are not repeated here. Lanes had
+# each written a wait-for-gate-then-merge script (graph-canary flow.sh and
+# merge-1818.sh, 2026-10-17). A red or TEMPFAIL gate never merges; a merge
+# gh-drew refuses exits MERGE_REFUSED with its reason.
+MERGE_REFUSED=78
+merge_pr="" merge_repo="" merge_sha=""
+github_repo() {  # <repo-url>: prints owner/name of a GitHub URL, or fails
+  local r=$1
+  case "$r" in
+    git@github.com:*) r=${r#git@github.com:} ;;
+    ssh://git@github.com/*) r=${r#ssh://git@github.com/} ;;
+    https://github.com/*) r=${r#https://github.com/} ;;
+    *) return 1 ;;
+  esac
+  r=${r%/}; r=${r%.git}
+  [[ "$r" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s\n' "$r"
+}
+merge_gated() {  # <gate stderr log>
+  local id out sha
+  id=$(grep -ao 'gate_id=[A-Za-z0-9-]*' "$1" | tail -n 1)
+  id=${id#gate_id=}
+  if out=$(gh-drew pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
+    sha=$(gh-drew pr view "$merge_pr" -R "$merge_repo" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null)
+    echo "beelink-gate: merged #$merge_pr ${sha:-unknown} gate_id=${id:-unknown}" >&2
+    return 0
+  fi
+  echo "beelink-gate: merge of #$merge_pr refused: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" >&2
+  return "$MERGE_REFUSED"
+}
+
 # --retry MINUTES and --summary run this launcher again as a child with the rest
 # of the request and keep each attempt's output. --retry submits again at the
 # next_allowed of each attempt's TEMPFAIL line until MINUTES pass. A TEMPFAIL
@@ -3373,6 +3409,9 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
   if [ "$summary" = 1 ] && [ "$rc" != 0 ] && [ "$rc" != "$TEMPFAIL" ]; then
     summarize_output "$rc" "$dir/out.log" "$dir/err.log"
   fi
+  if [ -n "$merge_pr" ] && [ "$rc" = 0 ]; then
+    merge_gated "$dir/err.log" || rc=$?
+  fi
   exit "$rc"
 }
 
@@ -3383,6 +3422,8 @@ while [ "$#" -gt 0 ]; do
     --retry) [[ "${2:-}" =~ ^[1-9][0-9]{0,3}$ ]] && (( 10#$2 <= 1440 )) || die "--retry needs whole minutes from 1 to 1440"
       retry_minutes=$((10#$2)); shift 2; continue ;;
     --summary) summary=1; shift; continue ;;
+    --merge) [[ "${2:-}" =~ ^[1-9][0-9]{0,8}$ ]] || die "--merge needs a pull request number"
+      merge_pr=$2; shift 2; continue ;;
     --urgent|--pin-host|--cancel-on-term|--no-install|--light|--dev|--ship) launch_options+=("$1") ;;
     --branch) launch_options+=("$1" "${2:-}") ;;
   esac
@@ -3400,7 +3441,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
@@ -3408,7 +3449,14 @@ fi
 if [ -n "${BEELINK_GATE_RETRY_SECONDS:-}" ] && [[ ! "$BEELINK_GATE_RETRY_SECONDS" =~ ^[1-9][0-9]{0,4}$ ]]; then
   die "invalid BEELINK_GATE_RETRY_SECONDS: $BEELINK_GATE_RETRY_SECONDS"
 fi
-if [ -n "$retry_minutes" ] || [ "$summary" = 1 ]; then
+if [ -n "$merge_pr" ]; then
+  [ "$gate_class" != dev ] || die "--merge cannot be combined with --dev: a dev gate is not the merge gate; gate the final head without --dev"
+  [ "$install_mode" != ship ] || die "--merge cannot be combined with --ship"
+  { [ "$#" -ge 5 ] && [ "$4" = -- ]; } || die "$usage"
+  merge_repo=$(github_repo "$2") || die "--merge needs a GitHub repo URL, not $2"
+  merge_sha=$3
+fi
+if [ -n "$retry_minutes" ] || [ "$summary" = 1 ] || [ -n "$merge_pr" ]; then
   run_wrapped "$retry_minutes" "$summary" ${launch_options[@]+"${launch_options[@]}"} "$@"
 fi
 if [ "$install_mode" = ship ]; then
