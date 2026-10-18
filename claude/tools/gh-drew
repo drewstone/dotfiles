@@ -860,15 +860,21 @@ receipt_guard() {
     local why; why="$(tr '\n' ' ' <"$err" | cut -c1-300)"; rm -f "$err"
     receipt_refuse 75 "gh-drew: refusing to merge $pr: cannot read the beelinks' gate receipts for $head (exit $rc): $why"
   fi
-  rm -f "$err"
   out="$(printf '%s\n' "$rows" | python3 -I -c "$receipt_reader" "$commands" "${BEELINK_GATE_ID:-}")"
   if [[ "${out%%$'\n'*}" != pass ]]; then
     local found="${out#*$'\n'}"; [[ "$out" == *$'\n'* ]] || found=""
+    # One passing receipt is enough; a beelink left unread may hold it, so no pass with a host unread is not "none".
+    if [[ -s "$err" ]]; then
+      local why; why="$(tr '\n' ' ' <"$err" | cut -c1-300)"; rm -f "$err"
+      receipt_refuse 75 "gh-drew: refusing to merge $pr: no receipt read so far passes on $head, and $why" "Receipts read: ${found:-none}"
+    fi
+    rm -f "$err"
     receipt_refuse 1 \
       "gh-drew: refusing to merge $pr: no beelink-gate receipt shows a gate passed on head $head in mode install, class normal${BEELINK_GATE_ID:+, as gate $BEELINK_GATE_ID}." \
       "Receipts for this head: ${found:+$'\n'}${found:-none}" \
       "Gate the head on the integration tests it touches: beelink-gate --merge $number auto https://github.com/$owner/$name.git $head -- <tests>"
   fi
+  rm -f "$err"
   log_call "gate-receipt: $head" "$@"
 }
 
