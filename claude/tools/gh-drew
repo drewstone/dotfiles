@@ -806,8 +806,8 @@ receipt_guard() {
     parse_pr_merge "$@" || return 0
     (( ! merge_disable_auto )) || return 0
     for a in "$@"; do
-      [[ "$prev" == --match-head-commit ]] && pinned="$a"
-      [[ "$a" == --match-head-commit=* ]] && pinned="${a#*=}"
+      if [[ "$prev" == --match-head-commit ]]; then pinned="$a"; fi
+      if [[ "$a" == --match-head-commit=* ]]; then pinned="${a#*=}"; fi
       prev="$a"
     done
     how="--match-head-commit <head>"
@@ -816,7 +816,9 @@ receipt_guard() {
       [[ -n "${gated_repos[${repo#*github.com/}]:-}" || "$merge_selector" == *github.com/tangle-network/discovery-lab/* || "$merge_selector" == *github.com/tangle-network/agent-runtime/* ]] || return 0
       receipt_refuse 1 "gh-drew: refusing to merge: cannot read the PR's head to check its gate receipt: ${out:0:300}"
     }
-    while IFS=$'\t' read -r i a b _; do [[ "$i" == pr ]] && { path="$a"; head="$b"; }; done <<<"$out"
+    while IFS=$'\t' read -r i a b _; do
+      if [[ "$i" == pr ]]; then path="$a"; head="$b"; fi
+    done <<<"$out"
     [[ "$path" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || return 0
     owner="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
   elif [[ "${1-}" == api ]]; then
@@ -825,7 +827,7 @@ receipt_guard() {
     for a in "$@"; do
       case "$prev" in
         -X|--method) method="${a^^}" ;;
-        -f|-F|--field|--raw-field) [[ "$a" == sha=* ]] && pinned="${a#sha=}" ;;
+        -f|-F|--field|--raw-field) if [[ "$a" == sha=* ]]; then pinned="${a#sha=}"; fi ;;
       esac
       case "$a" in
         -X?*) method="${a#-X}"; method="${method^^}" ;;
@@ -833,7 +835,7 @@ receipt_guard() {
         -fsha=*|-Fsha=*) pinned="${a#-?sha=}" ;;
         --field=sha=*|--raw-field=sha=*) pinned="${a#*=sha=}" ;;
         -*) ;;
-        *) [[ "${a#/}" =~ ^repos/[^/]+/[^/]+/pulls/[0-9]+/merge/?$ ]] && path="${a#/}" ;;
+        *) if [[ "${a#/}" =~ ^repos/[^/]+/[^/]+/pulls/[0-9]+/merge/?$ ]]; then path="${a#/}"; fi ;;
       esac
       prev="$a"
     done
@@ -854,7 +856,8 @@ receipt_guard() {
     "gh-drew: refusing to merge $pr: a release-path merge is pinned to the head its gate ran on;" \
     "name it with $how (head is $head${pinned:+, the call names $pinned})."
   local err; err="$(mktemp)"
-  rows="$("$beelink_gate" --receipt "https://github.com/$owner/$name" "$head" 2>"$err")"; rc=$?
+  rc=0
+  rows="$("$beelink_gate" --receipt "https://github.com/$owner/$name" "$head" 2>"$err")" || rc=$?
   if (( rc != 0 && rc != 1 )); then
     local why; why="$(tr '\n' ' ' <"$err" | cut -c1-300)"; rm -f "$err"
     receipt_refuse 75 "gh-drew: refusing to merge $pr: cannot read the beelinks' gate receipts for $head (exit $rc): $why"
