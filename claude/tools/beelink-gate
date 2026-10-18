@@ -3054,10 +3054,12 @@ start_checkout_reservations() {
     fi
   done
   (( ${#reserved[@]} > 0 )) || tempfail "$(utc_in_minutes 5)" "cannot reserve checkout priority on either beelink"
+  local where="on both beelinks"
+  (( ${#reserved[@]} == 2 )) || where="on ${reserved[*]} only"
   if [ "$priority" = urgent ]; then
-    echo "beelink-gate: urgent priority reserved on ${reserved[*]}" >&2
+    echo "beelink-gate: urgent priority reserved $where" >&2
   else
-    echo "beelink-gate: normal FIFO place reserved on ${reserved[*]}" >&2
+    echo "beelink-gate: normal FIFO place reserved $where" >&2
   fi
 }
 
