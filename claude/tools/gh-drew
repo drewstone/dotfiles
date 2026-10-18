@@ -749,6 +749,128 @@ review_guard() {
   rm -f "$err"
 }
 
+# Release-path repos merge only on the gate's own receipt. On 2026-10-18 01:39Z discovery-lab#2009 merged
+# through a lane script that recorded exit=0 for gate beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose receipt
+# says exit=1 (the script's own quoting failed); earlier agent-runtime#1818 merged on a subset gate that never
+# ran its src/ tests and turned the Runtime release red. So a `pr merge`, or an `api -X PUT
+# repos/<o>/<r>/pulls/<n>/merge`, of a repo below needs: the merge pinned to the PR's head
+# (--match-head-commit <head>, or -f sha=<head>), and a beelink-gate receipt for that head (read from the
+# beelinks by `beelink-gate --receipt`) with exit 0, mode install, class normal and the repo's full test
+# command. Under `beelink-gate --merge`, BEELINK_GATE_ID names the gate and that receipt must be the one.
+# The review override does not reach this check, and nothing overrides it.
+declare -A gated_repos=([tangle-network/discovery-lab]="pnpm test|pnpm run test" [tangle-network/agent-runtime]="pnpm test|pnpm run test")
+beelink_gate="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/beelink-gate"
+
+# Reads `beelink-gate --receipt` rows on stdin; prints "pass" or "fail", then one line per receipt with
+# what keeps it from counting. argv: the accepted commands joined by "|", and the required gate id or "".
+read -r -d '' receipt_reader <<'PY' || true
+import json, sys
+commands, gate_id = sys.argv[1].split("|"), sys.argv[2]
+rows, passed = [], False
+for line in sys.stdin:
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    g = r.get
+    why = []
+    if g("exit") != 0:
+        why.append("exit %s" % g("exit"))
+    if g("mode") != "install":
+        why.append("mode %s" % g("mode"))
+    if g("class") != "normal":
+        why.append("class %s" % g("class"))
+    if g("command") not in commands:
+        why.append("not the full test command")
+    if gate_id and g("gate_id") != gate_id:
+        why.append("not gate %s" % gate_id)
+    passed = passed or not why
+    rows.append("  %s %s exit=%s mode=%s class=%s command=%s  <- %s" % (g("gate_id"), g("at"), g("exit"), g("mode"), g("class"),
+                str(g("command"))[:120], ", ".join(why) or "passes"))
+print("pass" if passed else "fail")
+print("\n".join(rows))
+PY
+
+receipt_refuse() {  # <exit code> <message lines>...
+  local rc="$1"; shift
+  log_call refused "${receipt_args[@]}"
+  printf '%s\n' "$@" >&2
+  exit "$rc"
+}
+
+receipt_guard() {
+  local token="$1"; shift
+  local -a receipt_args=("$@")
+  local owner="" name="" number="" head="" pinned="" how="" a b prev="" method="" path="" out rows rc i
+  if [[ "${1-}" == pr ]]; then
+    parse_pr_merge "$@" || return 0
+    (( ! merge_disable_auto )) || return 0
+    for a in "$@"; do
+      [[ "$prev" == --match-head-commit ]] && pinned="$a"
+      [[ "$a" == --match-head-commit=* ]] && pinned="${a#*=}"
+      prev="$a"
+    done
+    how="--match-head-commit <head>"
+    out="$(review_state "$token" 2>&1)" || {
+      local repo="${merge_repo[1]:-}"; repo="${repo%.git}"
+      [[ -n "${gated_repos[${repo#*github.com/}]:-}" || "$merge_selector" == *github.com/tangle-network/discovery-lab/* || "$merge_selector" == *github.com/tangle-network/agent-runtime/* ]] || return 0
+      receipt_refuse 1 "gh-drew: refusing to merge: cannot read the PR's head to check its gate receipt: ${out:0:300}"
+    }
+    while IFS=$'\t' read -r i a b _; do [[ "$i" == pr ]] && { path="$a"; head="$b"; }; done <<<"$out"
+    [[ "$path" =~ github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || return 0
+    owner="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
+  elif [[ "${1-}" == api ]]; then
+    shift
+    prev=""
+    for a in "$@"; do
+      case "$prev" in
+        -X|--method) method="${a^^}" ;;
+        -f|-F|--field|--raw-field) [[ "$a" == sha=* ]] && pinned="${a#sha=}" ;;
+      esac
+      case "$a" in
+        -X?*) method="${a#-X}"; method="${method^^}" ;;
+        --method=*) method="${a#--method=}"; method="${method^^}" ;;
+        -fsha=*|-Fsha=*) pinned="${a#-?sha=}" ;;
+        --field=sha=*|--raw-field=sha=*) pinned="${a#*=sha=}" ;;
+        -*) ;;
+        *) [[ "${a#/}" =~ ^repos/[^/]+/[^/]+/pulls/[0-9]+/merge/?$ ]] && path="${a#/}" ;;
+      esac
+      prev="$a"
+    done
+    [[ "$method" == PUT && "$path" =~ ^repos/([^/]+)/([^/]+)/pulls/([0-9]+)/merge/?$ ]] || return 0
+    owner="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
+    [[ -n "${gated_repos[$owner/$name]:-}" ]] || return 0
+    how="-f sha=<head>"
+    head="$(GH_TOKEN="$token" gh api "repos/$owner/$name/pulls/$number" --jq .head.sha 2>&1)" \
+      || receipt_refuse 1 "gh-drew: refusing to merge $owner/$name#$number: cannot read its head: ${head:0:300}"
+  else
+    return 0
+  fi
+  local commands="${gated_repos[$owner/$name]:-}"
+  [[ -n "$commands" ]] || return 0
+  local pr="https://github.com/$owner/$name/pull/$number"
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || receipt_refuse 1 "gh-drew: refusing to merge $pr: cannot read its head commit (got '${head:0:80}')."
+  [[ "$pinned" == "$head" ]] || receipt_refuse 1 \
+    "gh-drew: refusing to merge $pr: a release-path merge is pinned to the head its gate ran on;" \
+    "name it with $how (head is $head${pinned:+, the call names $pinned})."
+  local err; err="$(mktemp)"
+  rows="$("$beelink_gate" --receipt "https://github.com/$owner/$name" "$head" 2>"$err")"; rc=$?
+  if (( rc != 0 && rc != 1 )); then
+    local why; why="$(tr '\n' ' ' <"$err" | cut -c1-300)"; rm -f "$err"
+    receipt_refuse 75 "gh-drew: refusing to merge $pr: cannot read the beelinks' gate receipts for $head (exit $rc): $why"
+  fi
+  rm -f "$err"
+  out="$(printf '%s\n' "$rows" | python3 -I -c "$receipt_reader" "$commands" "${BEELINK_GATE_ID:-}")"
+  if [[ "${out%%$'\n'*}" != pass ]]; then
+    local found="${out#*$'\n'}"; [[ "$out" == *$'\n'* ]] || found=""
+    receipt_refuse 1 \
+      "gh-drew: refusing to merge $pr: no beelink-gate receipt shows its full test command (${commands//|/ or }) passed on head $head in mode install, class normal${BEELINK_GATE_ID:+, as gate $BEELINK_GATE_ID}." \
+      "Receipts for this head: ${found:+$'\n'}${found:-none}" \
+      "Gate the head: beelink-gate --merge $number auto https://github.com/$owner/$name.git $head -- pnpm test"
+  fi
+  log_call "gate-receipt: $head" "$@"
+}
+
 # A squash merge without an explicit body lets GitHub write the message, and
 # GitHub then appends "Co-authored-by:" for every PR commit whose author email
 # is not verified on the merging account (agents commit as unverified tangle
@@ -1032,6 +1154,7 @@ for key in "${token_keys[@]}"; do
     cap_reads "$@"
     guard_reads "$token" "$@"
     review_guard "$token" "$@"
+    receipt_guard "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
     add_lane_line "$@"
@@ -1049,6 +1172,7 @@ for key in "${token_keys[@]}"; do
     cap_reads "$@"
     guard_reads "$token" "$@"
     review_guard "$token" "$@"
+    receipt_guard "$token" "$@"
     add_squash_body "$token" "$@"
     log_call called "$@"
     add_lane_line "$@"
