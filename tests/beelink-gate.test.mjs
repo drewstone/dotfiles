@@ -3583,3 +3583,45 @@ exec '${join(f.root, "bin", "ssh")}' "$@"
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+test("--merge squash-merges the PR pinned to the gated SHA only after a green gate, and never from a dev gate", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    // The gate clones a GitHub URL, which git in the fixture's HOME rewrites to the local bare repo.
+    const url = "https://github.com/acme/gate-test.git";
+    f.git(["config", "--global", `url.file://${f.bare}.insteadOf`, url], f.root);
+    // gh-drew is the merge boundary: record each call, and answer the merge commit for `pr view`.
+    const calls = join(f.root, "gh-drew.calls");
+    writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${calls}'
+[ "$1 $2" != "pr view" ] || echo 1111111111111111111111111111111111111111
+exit "\${FAKE_GH_EXIT:-0}"
+`);
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    const merge = ["pr", "merge", "42", "-R", "acme/gate-test", "--squash", "--match-head-commit", f.first].join(" ");
+
+    const red = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "bash", "-c", "exit 1"], { env: f.env });
+    assert.equal(red.status, 1, red.stderr);
+    assert.equal(existsSync(calls), false, "a red gate called gh-drew");
+
+    const green = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: f.env });
+    assert.equal(green.status, 0, green.stderr);
+    assert.equal(readFileSync(calls, "utf8").split("\n")[0], merge);
+    assert.match(green.stderr.trim().split("\n").at(-1), /^beelink-gate: merged #42 1{40} gate_id=beelink2-[0-9a-f]{32}$/);
+
+    rmSync(calls);
+    const refused = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: { ...f.env, FAKE_GH_EXIT: "1" } });
+    assert.equal(refused.status, 78, refused.stderr);
+    assert.match(refused.stderr, /beelink-gate: merge of #42 refused: /);
+
+    rmSync(calls);
+    const dev = run(gate, ["--dev", "--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: f.env });
+    assert.equal(dev.status, 2);
+    assert.match(dev.stderr, /--merge cannot be combined with --dev/);
+    const local = run(gate, ["--merge", "42", "--no-install", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
+    assert.equal(local.status, 2);
+    assert.match(local.stderr, /--merge needs a GitHub repo URL/);
+    assert.equal(existsSync(calls), false, "a refused request called gh-drew");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
