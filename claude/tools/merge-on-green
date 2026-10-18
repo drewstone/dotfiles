@@ -52,6 +52,10 @@ HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hol
 # sat green 3.5 h, and was merged by hand; the same hand pass merged #11312 past a real pre-deploy hold.
 GATE_ONLY = re.compile(r"(?i)merge only (after|when)\s+(?:(?:the|hosted|required|gate|fast checks|checks?|build|type check|and|,)\s*)+"
                        r"(?:finish(?:es)?|pass(?:es)?|are|is|turn|go)?\s*green")
+# "hold until" holds only as an instruction: it opens its sentence or list item, after at most "please" or "this PR".
+# discovery-lab #2010 (2026-10-18) described behavior ("Both hold until a later start writes the journal")
+# and was refused as held.
+HOLD_UNTIL_LEAD = re.compile(r"(?i)(?:please|this|pr)?(?:\s+(?:please|this|pr))*")
 # A cancelled run says nothing about the tree and nothing re-runs it, so it is not red;
 # #11004 sat green for 2 h on 2026-10-15 behind a cancelled "regressions" run.
 # The gate checks still have to read SUCCESS (REQUIRED below).
@@ -156,6 +160,10 @@ def hold_reason(pr):
         return "hold label"
     body = pr.get("body") or ""
     for m in HOLD.finditer(body):
+        if m.group(1).lower() == "hold until":
+            lead = re.split(r"[.!?;:]\s", body[body.rfind("\n", 0, m.start()) + 1:m.start()])[-1]
+            if not HOLD_UNTIL_LEAD.fullmatch(lead.strip(" \t-*>#").strip()):
+                continue
         if not GATE_ONLY.match(body, m.start()):
             line = body[body.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
             return "hold phrase in body: " + line[:160]
