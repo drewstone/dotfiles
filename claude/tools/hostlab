@@ -24,8 +24,9 @@
 # Options for run/shell: --keep (leave the VM running, print its ID),
 #   --ttl 2h (a kept VM's lifetime; 90s, 45m, 2h, 1d), --owner NAME,
 #   --mem 4G, --cpus 4, --scratch 16G, --work DIR (default: cwd),
-#   --read-only-input FILE (raw disk at /dev/disk/by-id/virtio-hostlab-input;
-#     caller-owned, never copied or removed by VM retirement)
+#   --read-only-input NAME=FILE (repeatable raw disk at
+#     /dev/disk/by-id/virtio-hostlab-NAME; NAME is 1-12 lowercase letters,
+#     digits or hyphens; caller-owned, never copied or removed by retirement)
 # Env: HOSTLAB_HOME (default ~/.cache/hostlab),
 #   HOSTLAB_ARCHIVE (default /mnt/traces/archive/hostlab), HOSTLAB_OWNER,
 #   HOSTLAB_SMALL_ARCHIVE (a directory or host:directory; see archive_run)
@@ -60,7 +61,8 @@ TTL=2h
 OWNER="${HOSTLAB_OWNER:-}"
 KEEP=0
 WORK="$PWD"
-READ_ONLY_INPUT=""
+INPUT_NAMES=()
+INPUT_FILES=()
 
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
 
@@ -177,13 +179,14 @@ YAML
 
 qemu_start() {
   # qemu_start DIR PORT WORKDIR
-  local dir="$1" port="$2" workdir="$3"
+  local dir="$1" port="$2" workdir="$3" i input_id
   local -a input=()
-  if [ -n "$READ_ONLY_INPUT" ]; then
+  for i in "${!INPUT_NAMES[@]}"; do
+    input_id="hostlab-${INPUT_NAMES[$i]}"
     # QEMU's option parser escapes a literal comma as a doubled comma.
-    input=(-drive "if=none,id=hostlab-input,format=raw,file=${READ_ONLY_INPUT//,/,,},readonly=on"
-      -device "virtio-blk-pci,drive=hostlab-input,serial=hostlab-input")
-  fi
+    input+=(-drive "if=none,id=$input_id,format=raw,file=${INPUT_FILES[$i]//,/,,},readonly=on"
+      -device "virtio-blk-pci,drive=$input_id,serial=$input_id")
+  done
   qemu-system-x86_64 \
     -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
     -display none -serial "file:$dir/console.log" -monitor none \
@@ -284,7 +287,7 @@ vm_boot() {
   need
   [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
-  local id dir port
+  local id dir port i
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
   dir="$RUNS/$id"; mkdir -p "$dir"
   # Recorded before qemu starts, so the reaper never sees an unowned run.
@@ -292,7 +295,9 @@ vm_boot() {
   printf '%s\n' "$OWNER" > "$dir/owner"
   echo "$KEEP" > "$dir/keep"
   echo "$$ $(proc_start $$)" > "$dir/caller"
-  [ -z "$READ_ONLY_INPUT" ] || printf '%s\n' "$READ_ONLY_INPUT" > "$dir/read-only-input"
+  for i in "${!INPUT_NAMES[@]}"; do
+    printf '%s\t%s\n' "${INPUT_NAMES[$i]}" "${INPUT_FILES[$i]}" >> "$dir/read-only-inputs"
+  done
   if [ "$KEEP" = 1 ]; then echo $(( $(date +%s) + $(to_seconds "$TTL") )) > "$dir/expires"; else echo none > "$dir/expires"; fi
   qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMG" "$dir/disk.qcow2"
   qemu-img create -q -f qcow2 "$dir/scratch.qcow2" "$SCRATCH"
@@ -323,6 +328,7 @@ vm_boot() {
 }
 
 parse_opts() {
+  local input_name input_file prior i
   while [ $# -gt 0 ]; do
     case "$1" in
       --keep) KEEP=1; shift ;;
@@ -333,9 +339,13 @@ parse_opts() {
       --scratch) SCRATCH="$2"; shift 2 ;;
       --work) WORK="$(cd "$2" && pwd)"; shift 2 ;;
       --read-only-input)
-        [ $# -ge 2 ] && [ -n "$2" ] || die "--read-only-input needs a regular file"
-        [ -z "$READ_ONLY_INPUT" ] || die "only one --read-only-input is supported"
-        READ_ONLY_INPUT="$2"; shift 2 ;;
+        [ $# -ge 2 ] && [[ "$2" = *=* ]] || die "--read-only-input needs NAME=FILE"
+        input_name="${2%%=*}"; input_file="${2#*=}"
+        [[ "$input_name" =~ ^[a-z][a-z0-9-]{0,11}$ ]] && [ -n "$input_file" ] || die "invalid read-only input name or file"
+        for prior in "${INPUT_NAMES[@]}"; do
+          [ "$prior" != "$input_name" ] || die "duplicate read-only input name: $input_name"
+        done
+        INPUT_NAMES+=("$input_name"); INPUT_FILES+=("$input_file"); shift 2 ;;
       --) shift; break ;;
       -h|--help) usage; exit 0 ;;
       -*) die "unknown option $1" ;;
@@ -344,8 +354,8 @@ parse_opts() {
   done
   REST=("$@")
   to_seconds "$TTL" >/dev/null
-  if [ -n "$READ_ONLY_INPUT" ]; then
-    READ_ONLY_INPUT=$(python3 - "$READ_ONLY_INPUT" "$RUNS" "$CACHE/build" "$ARCHIVE" "${HOSTLAB_SMALL_ARCHIVE:-}" <<'PY'
+  for i in "${!INPUT_NAMES[@]}"; do
+    INPUT_FILES[i]=$(python3 - "${INPUT_FILES[$i]}" "$RUNS" "$CACHE/build" "$ARCHIVE" "${HOSTLAB_SMALL_ARCHIVE:-}" <<'PY'
 import os,pathlib,stat,sys
 source=pathlib.Path(sys.argv[1])
 if not stat.S_ISREG(source.lstat().st_mode):
@@ -356,12 +366,12 @@ if sys.argv[5] and ':' not in sys.argv[5]: managed.append(sys.argv[5])
 if any(source.is_relative_to(pathlib.Path(p).resolve()) for p in managed):
     raise SystemExit('hostlab: read-only input must be outside managed VM and archive directories')
 size=source.stat().st_size
-if not os.access(source,os.R_OK) or size<=0 or size%512 or any(c in str(source) for c in '\r\n'):
+if not os.access(source,os.R_OK) or size<=0 or size%512 or any(ord(c)<32 for c in str(source)):
     raise SystemExit('hostlab: read-only input must be readable, nonempty and sector-aligned')
 print(source)
 PY
     ) || die "invalid read-only input"
-  fi
+  done
   [ -n "$OWNER" ] || OWNER="$(id -un) pid $PPID: $(ps -o args= -p "$PPID" 2>/dev/null | cut -c1-100)"
 }
 
