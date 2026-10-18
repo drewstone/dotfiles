@@ -58,6 +58,7 @@ options:
   --download <dir>   save the asset files the reply references into <dir>
   --json             print one JSON object instead of text
   --quiet            no progress or thread line on stderr
+  --dry-run          print the parsed command and options, then exit before any network call
 
 exit: 0 completed, 1 failed, 2 usage or config, 3 still running, 4 waiting on an approval or question
 key: $<APP>_OPERATOR_API_KEY (the app's own key), else $TANGLE_AGENT_KEY (one Tangle agent key for every
@@ -87,14 +88,16 @@ const COMMANDS = new Set(['status', 'file', 'journal', 'approvals', 'scorecard',
 function parseArgs(argv) {
   const options = { json: false, quiet: false }
   const positional = []
-  let literalAsk = false
+  // Index in `positional` where the words after `--` begin; -1 when there is no `--`.
+  let literalFrom = -1
   const takesValue = new Set(['--app', '--workspace', '--thread', '--title', '--model', '--wait', '--download', '--days', '--origin'])
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]
     if (arg === '-h' || arg === '--help') return { help: true }
     if (arg === '--json') { options.json = true; continue }
     if (arg === '--quiet') { options.quiet = true; continue }
-    if (arg === '--') { literalAsk = true; positional.push(...argv.slice(index + 1)); break }
+    if (arg === '--dry-run') { options.dryRun = true; continue }
+    if (arg === '--') { literalFrom = positional.length; positional.push(...argv.slice(index + 1)); break }
     const [flag, inline] = arg.startsWith('--') ? arg.split(/=(.*)/s, 2) : [arg]
     if (takesValue.has(flag)) {
       const value = inline ?? argv[++index]
@@ -105,8 +108,11 @@ function parseArgs(argv) {
     if (arg.startsWith('--')) throw new UsageError(`unknown option ${arg}`)
     positional.push(arg)
   }
+  // Only words after `--` are literal: `whoami --` is still the whoami command,
+  // while `-- whoami` sends the word as an ask.
+  const allLiteral = literalFrom === 0
   let command = 'ask'
-  if (!literalAsk && COMMANDS.has(positional[0])) command = positional.shift()
+  if (!allLiteral && COMMANDS.has(positional[0])) command = positional.shift()
   if (command === 'status') {
     if (positional.length !== 1) throw new UsageError('status takes exactly one thread id')
     options.thread = positional[0]
@@ -118,7 +124,7 @@ function parseArgs(argv) {
     // A new conversation that is one lowercase word is a mistyped command, and an
     // ask starts a real, billed turn (`whoami` did on 2026-10-16). Replies on a
     // --thread ("go", "yes") pass, and `--` sends anything as an ask.
-    if (!literalAsk && !options.thread && positional.length === 1 && /^[a-z][a-z0-9-]*$/.test(positional[0])) {
+    if (!allLiteral && !options.thread && positional.length === 1 && /^[a-z][a-z0-9-]*$/.test(positional[0])) {
       throw new UsageError(`"${positional[0]}" is not a command (${[...COMMANDS].join(', ')}); an ask is a sentence, or pass -- ${positional[0]} to send it as one`)
     }
     options.ask = positional.join(' ')
@@ -355,6 +361,8 @@ async function main(argv) {
   const parsed = parseArgs(argv)
   if (parsed.help) { process.stdout.write(USAGE + '\n'); return EXIT.ok }
   const { command, options } = parsed
+  // Lets anyone check how arguments parse without starting a real, billed turn.
+  if (options.dryRun) { process.stdout.write(JSON.stringify({ command, options }) + '\n'); return EXIT.ok }
   if (command === 'apps') {
     for (const [id, app] of Object.entries(APPS)) process.stdout.write(`${id.padEnd(12)}${app.origin}  ${app.name}\n`)
     return EXIT.ok
