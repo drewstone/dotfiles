@@ -323,6 +323,13 @@ beelink-gate: TEMPFAIL next_allowed=2026-10-11T09:30:00Z no beelink can start th
 
 Callers retry at `next_allowed`. Any other non-zero exit is the command's own
 failure or, with 2, a broken request.
+Install-reserve hints and remote update-policy reads use the wall deadline in
+`beelink-gate`'s `bounded_read`, through GNU `timeout` or `gtimeout`. A connected
+SSH session with an unresponsive WSL read cannot hold these lookups indefinitely.
+A failed hint is reported as unavailable; the target still reads its own receipts
+and enforces its disk floor. An unavailable update policy retains its existing
+cache and TEMPFAIL behavior. Host probes can recover cache space and retain
+their existing lifecycle, as do submitted gates and attached runs.
 
 `--retry <minutes>` does that retrying: on exit 75 it waits until the
 TEMPFAIL's `next_allowed` (at least 30 s, or 5 minutes when the line names no
