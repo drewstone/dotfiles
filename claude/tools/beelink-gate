@@ -2909,14 +2909,10 @@ choose_beelink() {
   local -A seen=()
   local auto_started=$SECONDS
   while :; do
-    if [ -n "${checkout_reservation_dir:-}" ]; then
-      local reserve_pid
-      for reserve_pid in "${checkout_reservation_pids[@]}"; do
-        kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "checkout reservation disconnected before admission"
-      done
-    fi
+    check_checkout_reservations
     best="" best_rank=9 best_load="" light_busy=""
     for target in beelink1 beelink2; do
+      [ -z "${checkout_reservation_lost[$target]:-}" ] || { seen[$target]="unreachable"; continue; }
       line=$(probe_of "$target") || line=""
       [ -n "$line" ] || { seen[$target]="unreachable"; continue; }
       seen[$target]=${line#beelink-gate-probe }
@@ -2943,11 +2939,8 @@ choose_beelink() {
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     if [ -n "$best" ]; then
-      if [ -n "${checkout_reservation_dir:-}" ]; then
-        for reserve_pid in "${checkout_reservation_pids[@]}"; do
-          kill -0 "$reserve_pid" 2>/dev/null || tempfail "$(utc_in_minutes 5)" "checkout reservation disconnected before admission"
-        done
-      fi
+      check_checkout_reservations
+      [ -z "${checkout_reservation_lost[$best]:-}" ] || continue
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       echo "$best"; return 0
     fi
@@ -3001,7 +2994,8 @@ reserve_checkout() {
   trap - HUP INT TERM
 }
 
-checkout_reservation_pids=() checkout_reservation_files=() checkout_reservation_dir="" checkout_monitor_pid=""
+checkout_reservation_pids=() checkout_reservation_files=() checkout_reservation_hosts=() checkout_reservation_dir="" checkout_monitor_pid=""
+declare -A checkout_reservation_lost=()
 stop_checkout_reservations() {
   local pid file
   [ -z "$checkout_monitor_pid" ] || kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
@@ -3035,22 +3029,55 @@ start_checkout_reservations() {
     BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "${args[@]}" >"$file" 2>"$file.err" &
     checkout_reservation_pids+=("$!")
     checkout_reservation_files+=("$file")
+    checkout_reservation_hosts+=("$host")
   done
-  for file in "${checkout_reservation_files[@]}"; do
+  # One host that cannot reserve (unreachable, or its reservation died) must not
+  # stop auto: a named gate still runs on the other one, so auto keeps the hosts
+  # that reserved and places only on them. On 2026-10-17/18 a single sick
+  # Beelink made every auto gate exit 75 while named gates ran.
+  local i reserved=()
+  for i in "${!checkout_reservation_files[@]}"; do
+    file=${checkout_reservation_files[$i]} host=${checkout_reservation_hosts[$i]}
     for ((tries = 0; tries < 300; tries++)); do
       grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null && break
+      kill -0 "${checkout_reservation_pids[$i]}" 2>/dev/null || break
       sleep 0.1
     done
-    grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null || {
+    if grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null; then
+      reserved+=("$host")
+    else
       cat "$file.err" >&2
-      tempfail "$(utc_in_minutes 5)" "cannot reserve checkout priority on both beelinks"
-    }
+      : > "$file.stop"
+      kill -TERM "${checkout_reservation_pids[$i]}" 2>/dev/null || true
+      checkout_reservation_lost[$host]=1
+      echo "beelink-gate: $host did not reserve a checkout place; auto places only on the other beelink" >&2
+    fi
   done
+  (( ${#reserved[@]} > 0 )) || tempfail "$(utc_in_minutes 5)" "cannot reserve checkout priority on either beelink"
+  local where="on both beelinks"
+  (( ${#reserved[@]} == 2 )) || where="on ${reserved[*]} only"
   if [ "$priority" = urgent ]; then
-    echo "beelink-gate: urgent priority reserved on both beelinks" >&2
+    echo "beelink-gate: urgent priority reserved $where" >&2
   else
-    echo "beelink-gate: normal FIFO place reserved on both beelinks" >&2
+    echo "beelink-gate: normal FIFO place reserved $where" >&2
   fi
+}
+
+# Marks a host whose reservation ended as lost; exits 75 only when none is left.
+check_checkout_reservations() {
+  [ -n "${checkout_reservation_dir:-}" ] || return 0
+  local i host live=0
+  for i in "${!checkout_reservation_pids[@]}"; do
+    host=${checkout_reservation_hosts[$i]}
+    [ -z "${checkout_reservation_lost[$host]:-}" ] || continue
+    if kill -0 "${checkout_reservation_pids[$i]}" 2>/dev/null; then
+      live=1
+    else
+      checkout_reservation_lost[$host]=1
+      echo "beelink-gate: $host checkout reservation ended; auto places only on the other beelink" >&2
+    fi
+  done
+  (( live )) || tempfail "$(utc_in_minutes 5)" "checkout reservation disconnected before admission"
 }
 
 if [ "${1:-}" = --urgent-reserve ]; then
