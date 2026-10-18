@@ -296,6 +296,10 @@ test("`hold` answers for one PR's GraphQL answer, the question gh-drew asks befo
   assert.equal(held.stdout.trim(), `hold phrase in body: ${PRE_DEPLOY_SENTENCE}`);
   assert.equal(ask({ pullRequests: { nodes: [{ body: "x", labels: { nodes: [{ name: "hold" }] } }] } }).stdout.trim(), "hold label");
   assert.equal(ask({ pullRequest: { body: GATE_ONLY_SENTENCE, labels: { nodes: [] } } }).status, 0);
+  // discovery-lab #2010's own sentence describes behavior; an instruction that opens its item still holds.
+  assert.equal(ask({ pullRequest: { body: "- A start that throws records why. Both hold until a later start writes the journal.", labels: { nodes: [] } } }).status, 0);
+  assert.equal(ask({ pullRequest: { body: "Change.\n\n- Hold until the canary is green on this head.", labels: { nodes: [] } } }).status, 1);
+  assert.equal(ask({ pullRequest: { body: "Deploy note. Please hold until the drain finishes.", labels: { nodes: [] } } }).status, 1);
   // gh-drew's other readers send no body or labels; that is not a hold.
   assert.equal(ask({ pullRequest: { url: "u" } }).status, 0);
   assert.equal(ask({ pullRequest: null }).status, 2);
