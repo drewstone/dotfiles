@@ -3065,11 +3065,9 @@ fi
 # gate's own receipt, never on a wrapper's exit code: on 2026-10-18 a lane script
 # recorded exit=0 for gate beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose
 # receipt says exit=1, and discovery-lab#2009 merged on it. Exit 0 with rows,
-# 1 with none, 75 with none when a beelink cannot be read (a partial read is
-# never "none"). Rows found on one beelink are printed while the other is down,
-# each unread host named on stderr, so the reader can refuse 75 when none of
-# them passes: on 2026-10-18 beelink2 was off Tailscale for hours and every
-# release-path merge was refused although beelink1 held its passing receipt.
+# 1 with none, 75 when a beelink cannot be read and the others hold no row (a partial read is never "none").
+# Rows from the beelinks that answered still print with exit 0: a passing receipt is enough, and on
+# 2026-10-18 beelink2 offline for hours made every discovery-lab merge refuse despite beelink1 receipts.
 if [ "${1:-}" = --receipt ]; then
   [ "$#" = 3 ] && [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "usage: beelink-gate --receipt <repo-url> <sha (40 hex)>"
   key=$(python3 -c 'import re,sys; u=sys.argv[1]; m=re.match(r"^(?:git@([^:]+):|ssh://git@([^/]+)/|https?://([^/]+)/)(.+?)(?:\.git)?/?$", u); print(f"{m.group(1) or m.group(2) or m.group(3)}/{m.group(4)}" if m else "")' "$2")
@@ -3092,11 +3090,11 @@ for line in open(path, errors="replace"):
 PY
     else
       echo "beelink-gate: --receipt could not read $host's receipts" >&2
-      unread=1
+      unread="$unread $host"
     fi
   done
   cat "$found"
-  if [ -s "$found" ]; then rc=0; elif [ -n "${unread:-}" ]; then rc=$TEMPFAIL; else rc=1; fi
+  if [ -s "$found" ]; then rc=0; elif [ -n "$unread" ]; then rc=$TEMPFAIL; else rc=1; fi
   rm -f "$host_rows" "$found"
   exit "$rc"
 fi
