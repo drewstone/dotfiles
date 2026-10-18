@@ -3,7 +3,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import test from "node:test";
 
 const gate = resolve("claude/tools/beelink-gate");
@@ -78,6 +78,10 @@ if [[ "\${rest[0]}" == reg ]]; then
   printf '    ScheduledInstallDay    REG_DWORD    0x%x\\r\\n' "$FAKE_WU_DAY"
   printf '    ScheduledInstallTime   REG_DWORD    0x%x\\r\\n' "$FAKE_WU_HOUR"
   exit 0
+fi
+# Windows OpenSSH refuses an exec request whose command line passes about 32 KB.
+if (( $(printf '%s ' "\${rest[@]}" | wc -c) > \${FAKE_SSH_ARGV_LIMIT:-32767} )); then
+  echo "exec request failed on channel 0" >&2; exit 255
 fi
 printf '%s\\n' "$host \${rest[*]:0:3}" > '${join(f.root, "ssh-transport")}'
 printf '%s\\n' "\${rest[*]:2}" > '${join(f.root, "ssh-remote-command")}'
@@ -589,6 +593,31 @@ test("no gate, urgent included, is admitted while host-wide CPU pressure is over
     writeFileSync(host, hostLine(12));
     const calm = f.call(f.first, ["true"], { noInstall: true, env: wait });
     assert.equal(calm.status, 0, calm.stderr);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a gate command larger than Windows' SSH command line limit reaches the host intact", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    // 2026-10-18: a 23 KB patch, base64 encoded in argv, became 41,676 bytes and the exec was refused.
+    const payload = randomBytes(15_000).toString("hex").slice(0, 40_000).padEnd(40_000, "x");
+    const result = run(gate, ["--pin-host", "beelink2", f.url, f.first, "--", "bash", "-c", 'printf %s "$1" | sha256sum', "_", payload],
+      { env: f.env, timeout: 30_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(createHash("sha256").update(payload).digest("hex")));
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a refused SSH exec fails loud with its payload size, not as a lost connection", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const result = run(gate, ["--pin-host", "beelink2", f.url, f.first, "--", "true"],
+      { env: { ...f.env, FAKE_SSH_ARGV_LIMIT: "300" }, timeout: 30_000 });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /beelink2 refused the SSH exec request for beelink2-[0-9a-f]+ \(\d+ bytes of encoded arguments\); no gate was submitted/);
+    assert.doesNotMatch(result.stderr, /submit connection lost|TEMPFAIL/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
