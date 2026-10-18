@@ -30,6 +30,29 @@
 # session, or unmarked) with its status, but never touches them.
 # --dry-run reports what would happen without writing or pushing anything.
 # --parallel N bounds concurrent workers (default 8).
+# Associative arrays below require Bash 4+. macOS's system Bash 3.2 otherwise
+# fails during initialization before validating the request, which can look like
+# a successful gate to callers that do not enable errexit. Re-exec an installed
+# compatible Bash so callers using the normal CLI keep working without a new install.
+bash_major=0
+if [ -n "${BASH_VERSION:-}" ]; then bash_major=${BASH_VERSION%%.*}; fi
+case "$bash_major" in ''|*[!0-9]*) bash_major=0 ;; esac
+if [ "$bash_major" -lt 4 ]; then
+  compatible_bash=
+  path_bash=$(command -v bash 2>/dev/null || true)
+  for bash_candidate in "$path_bash" /opt/homebrew/bin/bash /usr/local/bin/bash /opt/local/bin/bash; do
+    [ -n "$bash_candidate" ] && [ -x "$bash_candidate" ] || continue
+    if "$bash_candidate" -c "test \"\${BASH_VERSINFO[0]}\" -ge 4" >/dev/null 2>&1; then
+      compatible_bash=$bash_candidate
+      break
+    fi
+  done
+  if [ -n "$compatible_bash" ]; then
+    exec "$compatible_bash" "$0" "$@"
+  fi
+  echo "wt-save: requires Bash 4 or newer; no compatible Bash was found on PATH or in standard macOS locations" >&2
+  exit 2
+fi
 set -uo pipefail
 
 if [ -n "${WT_SAVE_POOLS:-}" ]; then
@@ -48,7 +71,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY=1; shift ;;
     --parallel) PARALLEL="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do explicit+=("$1"); shift; done ;;
     -*) echo "wt-save: unknown flag $1" >&2; exit 2 ;;
