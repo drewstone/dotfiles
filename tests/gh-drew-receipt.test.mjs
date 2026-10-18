@@ -134,6 +134,13 @@ test("the REST merge is held to the same receipt, and an unreadable beelink refu
     assert.equal(halfRed.status, 75, halfRed.stderr);
     assert.match(halfRed.stderr, /no receipt read so far passes .*could not read beelink2's receipts/);
     assert.equal(halfRed.merged, null);
+    // Under --merge only the named gate counts: once its own row is read, beelink2 being down cannot change the
+    // verdict, so the refusal is final (1) and names that row's reason (discovery-lab#2078, mode no-install).
+    const gate = "beelink1-" + "c".repeat(32);
+    const named = run(s, put, [{ gate_id: gate, mode: "no-install" }], { FAKE_SSH_DOWN_IP: "100.127.22.51", BEELINK_GATE_ID: gate });
+    assert.equal(named.status, 1, named.stderr);
+    assert.match(named.stderr, /<- mode no-install/);
+    assert.equal(named.merged, null);
     const half = run(s, put, [{}], { FAKE_SSH_DOWN_IP: "100.127.22.51" });
     assert.equal(half.status, 0, half.stderr);
     assert.deepEqual(half.merged, put);
