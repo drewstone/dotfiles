@@ -2635,8 +2635,7 @@ if [ "${1:-}" = --reserve-match ]; then
   [ "$#" = 4 ] || die "invalid reserve query"
   parse_repo_url "$(decode "$3")"
   last_install_reserve_bytes "$(decode "$2")" "$host/$owner/$repo" install "$(decode "$4")" "" "" cold match-only | sed 's/^/beelink-gate-reserve /'
-  exit 0
-  exit 0
+  exit $?
 fi
 if [ "${1:-}" = --probe ]; then
   shift
@@ -2695,11 +2694,32 @@ SELF=$(self_beelink)
 # a gate on one host falls back to the other's.
 declare -A matched_reserve=() matched_warm_reserve=()
 
+# Connection timeouts and SSH keepalives do not bound a hung WSL command.
+# Only admission reads use this deadline; submitted gates keep their own hold.
+bounded_read() {
+  local label=$1 timer rc; shift
+  timer=$(command -v timeout || command -v gtimeout) || {
+    echo "beelink-gate: cannot bound $label: GNU timeout is unavailable" >&2
+    return "$TEMPFAIL"
+  }
+  "$timer" --kill-after=2s 30s "$@"; rc=$?
+  case "$rc" in
+    124|137)
+      echo "beelink-gate: $label unavailable (read exit $rc; admission deadline 30 seconds)" >&2
+      return "$TEMPFAIL"
+      ;;
+  esac
+  return "$rc"
+}
+
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
 on_beelink() {
   local target=$1; shift
-  local -a envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
+  local -a read_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
+  case "${1:-}" in
+    --reserve-match) read_prefix=(bounded_read "$target $1") ;;
+  esac
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
   [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
@@ -2761,7 +2781,7 @@ on_beelink() {
     wait "$command_pid"; rc=$?
     stop_heartbeat
   elif [ "$target" = "$SELF" ]; then
-    env "${envs[@]}" bash "$0" "$@" </dev/null
+    "${read_prefix[@]}" env "${envs[@]}" bash "$0" "$@" </dev/null
     rc=$?
   elif [ "${heartbeat:-0}" = 1 ]; then
     exec {heartbeat_fd}< <(heartbeat_input 1)
@@ -2771,7 +2791,7 @@ on_beelink() {
     wait "$command_pid"; rc=$?
     stop_heartbeat
   else
-    ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
+    "${read_prefix[@]}" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
       < <([ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$0")
     rc=$?
   fi
@@ -2813,7 +2833,7 @@ read_policy() {
     policy=$(timeout 20 "$REG_EXE" query "$key" 2>/dev/null) || policy=""
   fi
   if ! grep -q ScheduledInstallDay <<<"$policy"; then
-    policy=$(ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key" 2>/dev/null) || policy=""
+    policy=$(bounded_read "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key" 2>/dev/null) || policy=""
   fi
   if grep -q ScheduledInstallDay <<<"$policy"; then
     mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
@@ -3574,7 +3594,16 @@ case "$install_mode" in
     BEELINK_GATE_SPARSE_SPEC=$(commit_sparse_spec "$repo_url" "$sha")
     if [ -n "$BEELINK_GATE_SPARSE_SPEC" ]; then
       for reserve_host in beelink1 beelink2; do
-        reserve_lines=$(heartbeat=0 on_beelink "$reserve_host" --reserve-match "$(encode "$reserve_host")" "$(encode "$repo_url")" "$(encode "$BEELINK_GATE_SPARSE_SPEC")" 2>/dev/null)
+        reserve_lines=$(heartbeat=0 on_beelink "$reserve_host" --reserve-match "$(encode "$reserve_host")" "$(encode "$repo_url")" "$(encode "$BEELINK_GATE_SPARSE_SPEC")")
+        reserve_status=$?
+        case "$reserve_status" in
+          0) ;;
+          130|143) exit "$reserve_status" ;;
+          *)
+            echo "beelink-gate: optional install reserve hint unavailable on $reserve_host (read exit $reserve_status); target admission still reads its own receipts and enforces its disk floor" >&2
+            continue
+            ;;
+        esac
         matched_reserve[$reserve_host]=$(sed -n 's/^beelink-gate-reserve cold \([0-9]*\)$/\1/p' <<<"$reserve_lines" | tail -1)
         matched_warm_reserve[$reserve_host]=$(sed -n 's/^beelink-gate-reserve warm \([0-9]*\)$/\1/p' <<<"$reserve_lines" | tail -1)
       done
