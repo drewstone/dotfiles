@@ -2695,17 +2695,19 @@ SELF=$(self_beelink)
 declare -A matched_reserve=() matched_warm_reserve=()
 
 # Connection timeouts and SSH keepalives do not bound a hung WSL command.
-# Only admission reads use this deadline; submitted gates keep their own hold.
-bounded_read() {
+# Only short control calls use this deadline; submitted gates keep their hold.
+TRANSPORT_TIMEOUT_SECONDS=30
+TRANSPORT_KILL_GRACE_SECONDS=2
+bounded_transport() {
   local label=$1 timer rc; shift
   timer=$(command -v timeout || command -v gtimeout) || {
     echo "beelink-gate: cannot bound $label: GNU timeout is unavailable" >&2
     return "$TEMPFAIL"
   }
-  "$timer" --kill-after=2s 30s "$@"; rc=$?
+  "$timer" --kill-after="${TRANSPORT_KILL_GRACE_SECONDS}s" "${TRANSPORT_TIMEOUT_SECONDS}s" "$@"; rc=$?
   case "$rc" in
     124|137)
-      echo "beelink-gate: $label unavailable (read exit $rc; admission deadline 30 seconds)" >&2
+      echo "beelink-gate: $label unconfirmed (exit $rc; transport deadline $TRANSPORT_TIMEOUT_SECONDS seconds)" >&2
       return "$TEMPFAIL"
       ;;
   esac
@@ -2716,9 +2718,9 @@ bounded_read() {
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
 on_beelink() {
   local target=$1; shift
-  local -a read_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
+  local -a transport_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   case "${1:-}" in
-    --reserve-match) read_prefix=(bounded_read "$target $1") ;;
+    --reserve-match|--job-cancel) transport_prefix=(bounded_transport "$target $1") ;;
   esac
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
   [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
@@ -2781,7 +2783,7 @@ on_beelink() {
     wait "$command_pid"; rc=$?
     stop_heartbeat
   elif [ "$target" = "$SELF" ]; then
-    "${read_prefix[@]}" env "${envs[@]}" bash "$0" "$@" </dev/null
+    "${transport_prefix[@]}" env "${envs[@]}" bash "$0" "$@" </dev/null
     rc=$?
   elif [ "${heartbeat:-0}" = 1 ]; then
     exec {heartbeat_fd}< <(heartbeat_input 1)
@@ -2791,7 +2793,7 @@ on_beelink() {
     wait "$command_pid"; rc=$?
     stop_heartbeat
   else
-    "${read_prefix[@]}" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
+    "${transport_prefix[@]}" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
       < <([ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$0")
     rc=$?
   fi
@@ -2820,7 +2822,7 @@ BOOT
     printf "cat > \"\$dir/gate.sh\" <<'%s'\n" "$marker"
     cat "$0"
     printf '\n%s\nchmod 700 "$dir/gate.sh"\n' "$marker"
-  } | ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
+  } | bounded_transport "$target stage $id" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
 }
 
 # The policy rarely changes, so the last good read is kept per host. WSL interop
@@ -2833,7 +2835,7 @@ read_policy() {
     policy=$(timeout 20 "$REG_EXE" query "$key" 2>/dev/null) || policy=""
   fi
   if ! grep -q ScheduledInstallDay <<<"$policy"; then
-    policy=$(bounded_read "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key" 2>/dev/null) || policy=""
+    policy=$(bounded_transport "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key" 2>/dev/null) || policy=""
   fi
   if grep -q ScheduledInstallDay <<<"$policy"; then
     mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
@@ -3258,12 +3260,24 @@ if [ "${1:-}" = --cancel-job ]; then
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   target=${2%%-*}
   # A manager's cgroup can vanish immediately after scheduling this unit.
-  # Retry transport failures here, outside that cgroup, until the marker lands.
-  for ((attempt=0; attempt<60; attempt++)); do
-    if heartbeat=0 on_beelink "$target" --job-cancel "$2"; then exit 0; fi
+  # Limit the existing retry loop to five elapsed minutes. Never
+  # start a call or sleep unless its full transport bound still fits.
+  cancel_deadline=$((SECONDS + 300))
+  cancel_call_bound=$((TRANSPORT_TIMEOUT_SECONDS + TRANSPORT_KILL_GRACE_SECONDS))
+  for ((attempt=0; attempt<60 && SECONDS + cancel_call_bound <= cancel_deadline; attempt++)); do
+    heartbeat=0 on_beelink "$target" --job-cancel "$2"
+    cancel_status=$?
+    case "$cancel_status" in
+      0) exit 0 ;;
+      130|143)
+        echo "beelink-gate: cancellation unconfirmed for $2; cancellation transport interrupted, remote state unknown" >&2
+        exit "$cancel_status"
+        ;;
+    esac
+    (( SECONDS + 5 + cancel_call_bound <= cancel_deadline )) || break
     sleep 5
   done
-  tempfail "$(utc_in_minutes 5)" "could not confirm cancellation of $2"
+  tempfail "$(utc_in_minutes 5)" "cancellation unconfirmed for $2; remote gate may still be running under its existing hold; retry beelink-gate --cancel-job $2"
 fi
 
 # --summary: a red gate's test counts and failing tests, printed last so a
@@ -3671,7 +3685,7 @@ while :; do
   gate_id="$target-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
   [ "$cancel_on_term" != 1 ] || trap cancel_launcher_job HUP INT TERM
   echo "beelink-gate: gate_id=$gate_id; reconnect with beelink-gate --attach $gate_id" >&2
-  run_cancelable stage_job "$target" "$gate_id" || tempfail "$(utc_in_minutes 5)" "could not stage $gate_id on $target"
+  run_cancelable stage_job "$target" "$gate_id" || tempfail "$(utc_in_minutes 5)" "staging unconfirmed for $gate_id on $target; submission not attempted, remote staging may be partial"
   submit_bytes="$(printf '%s ' "${encoded[@]}" | wc -c | tr -d ' ') bytes of encoded arguments"
   submit_err=$(mktemp) || die "cannot create a temporary file"
   BEELINK_GATE_ID="$gate_id" heartbeat=0 run_cancelable on_beelink "$target" --job-submit "$gate_id" "${encoded[@]}" 2>"$submit_err"
