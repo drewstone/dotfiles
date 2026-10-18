@@ -3588,9 +3588,9 @@ test("--merge squash-merges the PR pinned to the gated SHA only after a green ga
   const f = fixture();
   try {
     installFakeSsh(f);
-    // The gate clones a GitHub URL, which git rewrites to the local bare repo through the environment only.
+    // The gate fetches a GitHub repo over SSH (fetch_url); git rewrites that to the local bare repo, through the environment only.
     const url = "https://github.com/acme/gate-test.git";
-    f.env = { ...f.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: url };
+    f.env = { ...f.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: "git@github.com:acme/gate-test.git" };
     // gh-drew is the merge boundary: record each call, and answer the merge commit for `pr view`.
     const calls = join(f.root, "gh-drew.calls");
     writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
