@@ -95,5 +95,11 @@ created_by=$(whoami)
 source_repo=$repo
 branch=$branch
 EOF
+# The marker is per-machine state; keep `git add -A` from committing it
+# (tangle-devops ops/gtr-fstrim-bounded carried one into a pushed commit, 2026-10-19).
+exclude="$(git -C "$dir" rev-parse --git-common-dir)/info/exclude"
+case "$exclude" in /*) ;; *) exclude="$dir/$exclude" ;; esac
+mkdir -p "$(dirname "$exclude")"
+grep -qxF '.wt-owner' "$exclude" 2>/dev/null || echo '.wt-owner' >> "$exclude"
 
 echo "$dir"
