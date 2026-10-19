@@ -1428,7 +1428,8 @@ def main(argv=None):
     parser.add_argument('--no-derived', action='store_true', help='skip the derived-file passes')
     # 2026-10-11: discovery-lab retires its beelink run roots through the Lab (archive, then sha256-checked
     # removal), so nothing under ~/code/_runs is this reaper's, whole trees or derived files.
-    parser.add_argument('--keep', action='append', help='path no pass touches (repeatable); default ~/code/_runs')
+    parser.add_argument('--keep', action='append', help='path no pass touches (repeatable); default ~/code/_runs and the '
+                        'Discovery deploy roots')
     parser.add_argument('--dependency-idle-hours', type=float, default=6.0,
                         help='idle time before a merged worktree loses its node_modules')
     parser.add_argument('--journey-state', default='~/.local/state/gtm-journeys')
@@ -1461,7 +1462,10 @@ def main(argv=None):
     if args.journey_out is None:
         args.journey_out = ['~/code/_wt/*/journeys/out']
     if args.keep is None:
-        args.keep = ['~/code/_runs']
+        # Discovery's pinned deploy checkouts are pruned by its keeper (discovery-lab runner/keeper.mjs
+        # prunePinnedCheckouts). On 2026-10-18 the reaper spent over 2 h in D state reading one 47k-file deploy
+        # on the archive drive, hit its timeout and restarted, while Discovery's per-run cost rose from 0.5 s to 5.7 s.
+        args.keep = ['~/code/_runs', '/mnt/traces/discovery-lab-deploys', '~/.local/share/discovery-lab-deploys']
     return run(args)
 
 
