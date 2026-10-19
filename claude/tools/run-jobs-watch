@@ -5,7 +5,8 @@
 # A run-level watch misses a failed job while the run waits on a later one: on 2026-10-19 agent-container
 # deploy 39274359094 failed its host-agent rollout at 15:30Z, then sat in `waiting` for 47 min.
 # Transient read errors (a GitHub 502 ended `gh run watch` on the same run) are retried.
-# --require-job <name>: exit 3 unless that job itself concluded success. A run can conclude
+# --require-job <name>: only that job decides. Other failed jobs are printed but do not stop the watch;
+# exit 0 when the run completes with that job a success, exit 3 otherwise. A run can conclude
 # success while shipping nothing: deploy 39313450494 (2026-10-19) skipped every deploy job as
 # superseded, and this tool reported "completed: success".
 verbose=0; require=""
@@ -25,7 +26,11 @@ while :; do
     seen="$seen $id"
     case $conclusion in
       success|skipped) (( verbose )) && echo "$(date -u +%H:%MZ) ok: $name" ;;
-      *) echo "$(date -u +%H:%MZ) JOB $conclusion: $name (https://github.com/$R/actions/runs/$RUN/job/$id)"; exit 1 ;;
+      *) echo "$(date -u +%H:%MZ) JOB $conclusion: $name (https://github.com/$R/actions/runs/$RUN/job/$id)"
+         # With --require-job only that job decides: deploy 39316544494's Worker build failed while
+         # its host roll, which does not need it, kept running.
+         if [ -z "$require" ]; then exit 1; fi
+         if [ "$name" = "$require" ]; then exit 3; fi ;;
     esac
   done <<<"$out"
   state=$(gh-drew api "repos/$R/actions/runs/$RUN" --jq '"\(.status) \(.conclusion)"' 2>/dev/null) || state=""
