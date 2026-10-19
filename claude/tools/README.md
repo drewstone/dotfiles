@@ -191,6 +191,16 @@ The names come from `agent-app-journeys env-names`, or `JOURNEYS_ENV_NAMES`.
 Each is read from the first file under `~/company/devops/secrets` (`TANGLE_SECRETS_DIR`) that defines it, decrypted with `dotenvx get`, and exported into the command only; a name already set is kept.
 It never prints a value, and exits 2 when a name is missing, empty or not a variable name.
 
+## run-jobs-watch
+
+`run-jobs-watch [-v] <run-id> [owner/repo]` watches a GitHub Actions run at the job level (default repo `tangle-network/agent-container`).
+It exits 1 on the first job that concludes anything other than success or skipped, and prints that job's link.
+It exits 0 when the run completes and prints the run's conclusion.
+It retries transient read errors and exits 2 after 5 failed reads in a row.
+Use it for deploys: a run-level watch misses a failed job while the run waits on a later one.
+On 2026-10-19, deploy 39274359094 failed its host-agent rollout at 15:30Z, then stayed `waiting` for 47 minutes.
+Run it as a tracked background task, so its exit reaches the session.
+
 ## wt-new, wt-save
 
 Scoped worktree lifecycle for parallel agent sessions sharing one Unix user.
