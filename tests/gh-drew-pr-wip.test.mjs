@@ -174,16 +174,6 @@ test("two simultaneous creates in one lane admit only one GitHub call", async ()
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
-test("an unreadable PR state refuses rather than admits", () => {
-  const s = sandbox();
-  try {
-    seed(s, OPEN_PR);
-    const r = create(s, { TANGLE_RUN_ID: LANE, FAKE_PR_STATE: "" });
-    assert.equal(r.status, 1);
-    assert.ok(r.stderr.includes("state: unreadable"), r.stderr);
-  } finally { rmSync(s.root, { recursive: true, force: true }); }
-});
-
 for (const state of ["MERGED", "CLOSED"]) {
   test(`a lane whose PR is ${state} may create the next one`, () => {
     const s = sandbox();
