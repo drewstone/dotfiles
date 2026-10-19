@@ -30,7 +30,7 @@ options:
   --only LIST     run only these sweeps: paths,scripts,workflows,content,boards
   --skip LIST     skip these sweeps
   --limit N       rows per section (default 10)
-  --jobs N        parallel repositories (default 6, or $HAVE_JOBS)
+  --jobs N        parallel repositories (default: a quarter of the CPUs, at least 2; or $HAVE_JOBS)
   --timeout S     stop waiting for repositories after S seconds (default 240)
 
 config file: one `key = value` per line; `#` starts a comment at the start of a line.
@@ -601,10 +601,20 @@ def workflow_candidates(files: dict[str, str], q: Query) -> list[Workflow]:
     return found
 
 
+# A sweep greps every repository on this machine. With 6 repositories at 2 threads each, one `have` held about 8 cores of a
+# 10-core laptop and, with two sessions searching at once, pushed load1 to 77 (2026-10-19 21:23Z, fleet load alert). The
+# greps run at a lower CPU priority and one thread each, and the default parallelism follows the machine.
+COURTESY = ["nice", "-n", "10"]  # not macOS taskpolicy -b: its background I/O throttle starved greps past their timeout
+
+
+def default_jobs() -> int:
+    return max(2, (os.cpu_count() or 8) // 4)
+
+
 def content_grep(path: str, ref: str, q: Query, timeout: float) -> dict[str, int] | None:
     """Files holding a word of every concept (`git grep -c --all-match`, one -e per concept),
     with the number of matching lines. None when the grep did not finish."""
-    cmd = ["git", "-C", path, "grep", "--threads=2", "-c", "-z", "-i", "-I", "-E"]
+    cmd = [*COURTESY, "git", "-C", path, "grep", "--threads=1", "-c", "-z", "-i", "-I", "-E"]
     if len(q.concepts) > 1:
         cmd.append("--all-match")
     for c in q.concepts:
@@ -1130,7 +1140,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--only")
     parser.add_argument("--skip")
     parser.add_argument("--limit", type=int, default=10)
-    parser.add_argument("--jobs", type=int, default=int(os.environ.get("HAVE_JOBS") or 6))
+    parser.add_argument("--jobs", type=int, default=int(os.environ.get("HAVE_JOBS") or default_jobs()))
     parser.add_argument("--timeout", type=float, default=240)
     try:
         args = parser.parse_args(argv)
