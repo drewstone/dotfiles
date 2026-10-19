@@ -12,6 +12,7 @@ PR that is ready:
   - not a draft, not conflicting, not a release branch;
   - Fast Checks, Build and Type Check succeeded on the current head (any other red check is
     advisory: it is named in the merge line, and develop's full fan fixes it forward);
+    MERGE_ON_GREEN_REQUIRED="" (empty) drops the CI gate entirely: merge first, gate before deploy;
   - no unresolved review thread opens with P0 or P1;
   - no hold label and no hold phrase in the body (a phrase that waits only for the gate is not a hold);
   - its head is at least 2 minutes old (a push may still be landing).
@@ -274,7 +275,8 @@ def head_to_green_s(pr):
     commit = pr["commits"]["nodes"][0]["commit"]
     done = [c.get("completedAt") for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", [])
             if c["__typename"] == "CheckRun" and c["name"] in REQUIRED and c.get("completedAt")]
-    if len(done) < len(REQUIRED):
+    # No gate (MERGE_ON_GREEN_REQUIRED empty: CI is not the merge gate) means no gate time.
+    if not REQUIRED or len(done) < len(REQUIRED):
         return None
     parse = lambda t: dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
     suites = [parse(x["createdAt"]) for x in ((commit.get("checkSuites") or {}).get("nodes") or []) if x.get("createdAt")]
