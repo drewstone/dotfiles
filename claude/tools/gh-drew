@@ -904,6 +904,85 @@ receipt_guard() {
   log_call "gate-receipt: $head" "$@"
 }
 
+# Scheduled runs of these two workflows are not cancelled through gh-drew. company-01's watchers were
+# cancelling them, through `run cancel` and through `api POST .../actions/runs/<id>/cancel`, so both forms
+# are covered; company-01 approved this refusal on 2026-10-19 at about 08:30Z and stopped the watchers.
+# A workflow_dispatch run of either workflow, and a scheduled run of any other workflow, stays cancellable.
+# The workflows are named by file; a run's file is the last component of its `path` (GitHub appends
+# `@<ref>` for some events, which is dropped).
+scheduled_cancel_refused='@benchmark-production.yml@create-waterfall.yml@'
+
+# Reads a cancel command into cancel_repo ("owner/repo", or "{owner}/{repo}" for gh to fill from the
+# checkout) and cancel_run. A cancel is `run cancel <id|url>` or a request to
+# repos/<o>/<r>/actions/runs/<id>/cancel or .../force-cancel by any method; returns 1 for anything else.
+parse_run_cancel() {
+  cancel_repo="" cancel_run=""
+  local -a words=("$@") pos=()
+  local i=0 n=$# arg
+  while (( i < n )); do
+    arg="${words[i]}"
+    case "$arg" in
+      -R|--repo) cancel_repo="${words[i+1]:-}"; i=$((i + 2)); continue ;;
+      --repo=*) cancel_repo="${arg#--repo=}" ;;
+      -R?*) cancel_repo="${arg#-R}" ;;
+      # gh api flags that take a value; the endpoint is the only positional after them.
+      -X|--method|-H|--header|-f|--raw-field|-F|--field|-q|--jq|-t|--template|--input|-p|--preview|--hostname|--cache)
+        i=$((i + 2)); continue ;;
+      -*) ;;
+      *) pos+=("$arg") ;;
+    esac
+    i=$((i + 1))
+  done
+  local url_pattern='^https?://[^/]+/([^/]+)/([^/]+)/actions/runs/([0-9]+)'
+  if [[ "${pos[0]:-}" == run && "${pos[1]:-}" == cancel && -n "${pos[2]:-}" ]]; then
+    if [[ "${pos[2]}" =~ $url_pattern ]]; then
+      cancel_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" cancel_run="${BASH_REMATCH[3]}"
+    else
+      cancel_run="${pos[2]#\#}"
+    fi
+  elif [[ "${pos[0]:-}" == api && "${pos[1]:-}" =~ ^/?repos/([^/]+)/([^/]+)/actions/runs/([0-9]+)/(force-)?cancel/?(\?.*)?$ ]]; then
+    cancel_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" cancel_run="${BASH_REMATCH[3]}"
+  else
+    return 1
+  fi
+  [[ "$cancel_run" =~ ^[0-9]+$ ]] || return 1
+  if [[ "$cancel_repo" == */* ]]; then
+    # -R takes [HOST/]OWNER/REPO or a URL.
+    cancel_repo="${cancel_repo#*://}"; cancel_repo="${cancel_repo%.git}"; cancel_repo="${cancel_repo%/}"
+    local rest="${cancel_repo%/*}"
+    cancel_repo="${rest##*/}/${cancel_repo##*/}"
+  fi
+  return 0
+}
+
+# Runs before any request that changes anything: the one request it makes is a read of the run's event
+# and workflow. A read that fails refuses too, since the event is what decides.
+cancel_guard() {
+  local token="$1"; shift
+  parse_run_cancel "$@" || return 0
+  local target="$cancel_repo" err row rc=0 event path file
+  [[ -n "$target" ]] || target='{owner}/{repo}'
+  err="$(mktemp)"
+  row="$(GH_TOKEN="$token" gh api "repos/$target/actions/runs/$cancel_run" --jq '[.event, (.path // "")] | @tsv' 2>"$err")" || rc=$?
+  if (( rc != 0 )); then
+    log_call refused "$@"
+    echo "gh-drew: refusing to cancel run $cancel_run: cannot read its event: $(tr '\n' ' ' <"$err" | cut -c1-300)" >&2
+    echo "Cancel again once GitHub answers." >&2
+    rm -f "$err"
+    exit 1
+  fi
+  rm -f "$err"
+  event="${row%%$'\t'*}" path="${row#*$'\t'}"
+  file="${path%%@*}"; file="${file##*/}"
+  if [[ "$event" == schedule && "$scheduled_cancel_refused" == *"@$file@"* ]]; then
+    log_call refused "$@"
+    echo "gh-drew: refusing to cancel run $cancel_run: it is a scheduled run of $file." >&2
+    echo "Scheduled runs of benchmark-production.yml and create-waterfall.yml are not cancelled (company-01, 2026-10-19)." >&2
+    echo "A workflow_dispatch run of either stays cancellable." >&2
+    exit 1
+  fi
+}
+
 # A squash merge without an explicit body lets GitHub write the message, and
 # GitHub then appends "Co-authored-by:" for every PR commit whose author email
 # is not verified on the merging account (agents commit as unverified tangle
@@ -1196,6 +1275,7 @@ for key in "${token_keys[@]}"; do
     pr_wip_guard "$token"
     cap_reads "$@"
     guard_reads "$token" "$@"
+    cancel_guard "$token" "$@"
     review_guard "$token" "$@"
     receipt_guard "$token" "$@"
     add_squash_body "$token" "$@"
@@ -1215,6 +1295,7 @@ for key in "${token_keys[@]}"; do
     pr_wip_guard "$token"
     cap_reads "$@"
     guard_reads "$token" "$@"
+    cancel_guard "$token" "$@"
     review_guard "$token" "$@"
     receipt_guard "$token" "$@"
     add_squash_body "$token" "$@"
