@@ -200,6 +200,7 @@ It retries transient read errors and exits 2 after 5 failed reads in a row.
 Use it for deploys: a run-level watch misses a failed job while the run waits on a later one.
 On 2026-10-19, deploy 39274359094 failed its host-agent rollout at 15:30Z, then stayed `waiting` for 47 minutes.
 Run it as a tracked background task, so its exit reaches the session.
+`--require-job <name>` exits 3 unless that job itself concluded success: a deploy can conclude success while every deploy job was skipped as superseded (39313450494, 2026-10-19). For deploys, pass `--require-job "Deploy to Production"`.
 
 ## wt-new, wt-save
 

@@ -5,8 +5,12 @@
 # A run-level watch misses a failed job while the run waits on a later one: on 2026-10-19 agent-container
 # deploy 39274359094 failed its host-agent rollout at 15:30Z, then sat in `waiting` for 47 min.
 # Transient read errors (a GitHub 502 ended `gh run watch` on the same run) are retried.
-verbose=0; [ "${1:-}" = -v ] && { verbose=1; shift; }
-RUN=${1:?usage: run-jobs-watch [-v] <run-id> [owner/repo]}; R=${2:-tangle-network/agent-container}
+# --require-job <name>: exit 3 unless that job itself concluded success. A run can conclude
+# success while shipping nothing: deploy 39313450494 (2026-10-19) skipped every deploy job as
+# superseded, and this tool reported "completed: success".
+verbose=0; require=""
+while [ $# -gt 0 ]; do case "$1" in -v) verbose=1; shift ;; --require-job) require=${2:?--require-job needs a job name}; shift 2 ;; *) break ;; esac; done
+RUN=${1:?usage: run-jobs-watch [-v] [--require-job <name>] <run-id> [owner/repo]}; R=${2:-tangle-network/agent-container}
 seen="" fails=0
 while :; do
   if ! out=$(gh-drew api "repos/$R/actions/runs/$RUN/jobs?per_page=100" \
@@ -25,6 +29,14 @@ while :; do
     esac
   done <<<"$out"
   state=$(gh-drew api "repos/$R/actions/runs/$RUN" --jq '"\(.status) \(.conclusion)"' 2>/dev/null) || state=""
-  [ "${state%% *}" = completed ] && { echo "$(date -u +%H:%MZ) run $RUN completed: ${state#* }"; exit 0; }
+  if [ "${state%% *}" = completed ]; then
+    echo "$(date -u +%H:%MZ) run $RUN completed: ${state#* }"
+    if [ -n "$require" ]; then
+      rc=$(gh-drew api "repos/$R/actions/runs/$RUN/jobs?per_page=100" --jq "[.jobs[]|select(.name==\"$require\")|.conclusion][0] // \"absent\"" 2>/dev/null) || rc=unreadable
+      [ "$rc" = success ] || { echo "REQUIRED JOB \"$require\": $rc (the run shipped nothing it requires)"; exit 3; }
+      echo "required job \"$require\": success"
+    fi
+    exit 0
+  fi
   sleep 60
 done
