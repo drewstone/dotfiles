@@ -10,8 +10,8 @@ usage: merge-on-green [--repo owner/name] [--state-dir DIR] [--dry-run]
 One tick reads every open PR into develop in one GraphQL call and merges each
 PR that is ready:
   - not a draft, not conflicting, not a release branch;
-  - Fast Checks, Build and Type Check succeeded on the current head;
-  - no check on the head failed;
+  - Fast Checks, Build and Type Check succeeded on the current head (any other red check is
+    advisory: it is named in the merge line, and develop's full fan fixes it forward);
   - no unresolved review thread opens with P0 or P1;
   - no hold label and no hold phrase in the body (a phrase that waits only for the gate is not a hold);
   - its head is at least 2 minutes old (a push may still be landing).
@@ -212,7 +212,10 @@ def decide(pr, now):
         elif c["context"] not in RETIRED:
             runs.setdefault(c["context"], []).append(("~", c["state"]))
     checks = {n: [max(rs, key=lambda r: r[0])[1]] for n, rs in runs.items()}
-    failed = sorted(n for n, states in checks.items() if any(s in RED for s in states))
+    # Only the gate blocks. A red check outside it held #11718 (4 lines, gate green) for 9 h on
+    # 2026-10-19 on "Sandbox composer browser contract"; the gate is Fast Checks, Build and
+    # Type Check (AGENTS.md), and develop's full fan fixes any other red forward.
+    failed = sorted(n for n in REQUIRED if any(s in RED for s in checks.get(n, [])))
     if failed:
         return "wait", "red: " + ", ".join(failed[:3])
     missing = [n for n in REQUIRED if not checks.get(n) or any(s != "SUCCESS" for s in checks[n])]
@@ -221,7 +224,8 @@ def decide(pr, now):
     age = (now - dt.datetime.fromisoformat(commit["committedDate"].replace("Z", "+00:00"))).total_seconds()
     if age < MIN_HEAD_AGE_S:
         return "wait", f"head {int(age)}s old"
-    return "merge", "green"
+    advisory = sorted(n for n, states in checks.items() if n not in REQUIRED and any(s in RED for s in states))
+    return "merge", "green" + (" (advisory red: " + ", ".join(advisory[:3]) + ")" if advisory else "")
 
 
 def merge_develop_with_attributes(a, pr):
