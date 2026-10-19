@@ -2561,6 +2561,11 @@ job_cancel_remote() {
   exec {lock_fd}> "$STATE_DIR/jobs/.locks/$id.lock" || return 75
   flock "$lock_fd" || return 75
   : > "$STATE_DIR/jobs/.canceled/$id" || return 75
+  # The marker is set, so a later job_submit refuses. Release before the stop:
+  # runner.sh takes this lock to publish its exit on TERM, and holding it here
+  # held every stop of a live gate to TimeoutStopSec (90 s), past the 30 s
+  # transport deadline, so each first --cancel-job was unconfirmed (10-19).
+  flock -u "$lock_fd"
   if [ -d "$dir" ] && [ ! -f "$dir/exit" ]; then
     unit="beelink-gate-$id.service"
     systemctl --user stop "$unit" >&2 || true
@@ -2586,7 +2591,9 @@ job_cancel_remote() {
     fi
     # The unit's cgroup may have killed runner.sh before it wrote its exit.
     # An attach then sees a terminal TEMPFAIL instead of waiting indefinitely.
-    printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"
+    # A gate that finished before the stop keeps the exit runner.sh published.
+    flock "$lock_fd" || return 75
+    [ -f "$dir/exit" ] || { printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"; }
   fi
   echo "beelink-gate: canceled gate_id=$id" >&2
 }
