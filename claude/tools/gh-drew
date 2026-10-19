@@ -1147,17 +1147,22 @@ pr_wip_guard() {
     printf '%s\toverride\t%s\n' "$(date -u +%FT%TZ)" "$PR_WIP_OVERRIDE" >>"$pr_wip_ledger"
     return 0
   fi
-  local _when kind url state
-  while IFS=$'\t' read -r _when kind url; do
-    [[ "$kind" == created && -n "$url" ]] || continue
+  # MERGED and CLOSED are terminal, so each is appended once as a `settled` line
+  # and never read again. Still inside the create lock, so appends do not race.
+  local url state
+  while IFS= read -r url; do
     state="$("${GH_DREW_PR_WIP_READER:-gh-read}" pr view "$url" --json state --jq .state 2>/dev/null || true)"
     if [[ -z "$state" ]]; then
       state="$(GH_TOKEN="$token" gh pr view "$url" --json state --jq .state 2>/dev/null || true)"
     fi
-    [[ "$state" == MERGED || "$state" == CLOSED ]] && continue
+    if [[ "$state" == MERGED || "$state" == CLOSED ]]; then
+      printf '%s\tsettled\t%s\t%s\n' "$(date -u +%FT%TZ)" "$url" "$state" >>"$pr_wip_ledger"
+      continue
+    fi
     echo "pr create refused: lane $pr_wip_key already has open PR $url (state: ${state:-unreadable}); land or close it first (ops-board #10097). Override: PR_WIP_OVERRIDE=<reason>" >&2
     exit 1
-  done <"$pr_wip_ledger"
+  done < <(awk -F'\t' 'FNR==NR { if ($2 == "settled") done[$3] = 1; next }
+    $2 == "created" && $3 != "" && !($3 in done) && !seen[$3]++ { print $3 }' "$pr_wip_ledger" "$pr_wip_ledger")
 }
 
 # `pr create` in a lane runs gh as a child so the new PR's URL joins the ledger.
