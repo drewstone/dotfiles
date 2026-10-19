@@ -295,6 +295,9 @@ test("`hold` answers for one PR's GraphQL answer, the question gh-drew asks befo
   assert.equal(held.status, 1, held.stderr);
   assert.equal(held.stdout.trim(), `hold phrase in body: ${PRE_DEPLOY_SENTENCE}`);
   assert.equal(ask({ pullRequests: { nodes: [{ body: "x", labels: { nodes: [{ name: "hold" }] } }] } }).stdout.trim(), "hold label");
+  const cut = ask({ pullRequest: { body: "Release 20261019-x", labels: { nodes: [{ name: "hold-promotion" }] } } });
+  assert.equal(cut.status, 1, cut.stderr);
+  assert.equal(cut.stdout.trim(), "hold-promotion label (the release owner holds this cut)");
   assert.equal(ask({ pullRequest: { body: GATE_ONLY_SENTENCE, labels: { nodes: [] } } }).status, 0);
   // discovery-lab #2010's own sentence describes behavior; an instruction that opens its item still holds.
   assert.equal(ask({ pullRequest: { body: "- A start that throws records why. Both hold until a later start writes the journal.", labels: { nodes: [] } } }).status, 0);

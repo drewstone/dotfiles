@@ -157,8 +157,13 @@ def hold_reason(pr):
 
     gh-drew asks the same question before a hand merge (`merge-on-green hold`).
     """
-    if "hold" in {l["name"] for l in ((pr.get("labels") or {}).get("nodes") or [])}:
+    labels = {l["name"] for l in ((pr.get("labels") or {}).get("nodes") or [])}
+    if "hold" in labels:
         return "hold label"
+    # A release cut held by its release owner: on 2026-10-19 a lane hand-merged
+    # cut #11993 over hold-promotion and superseded eu1's fleet roll a minute in.
+    if "hold-promotion" in labels:
+        return "hold-promotion label (the release owner holds this cut)"
     body = pr.get("body") or ""
     for m in HOLD.finditer(body):
         if m.group(1).lower() == "hold until":
