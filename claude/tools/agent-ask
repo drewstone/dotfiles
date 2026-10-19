@@ -12,9 +12,11 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { retryAfterSeconds, takeSlot } from './operator-api/rate.mjs'
 
-// Production origins and defaults; --origin or <APP>_BASE_URL overrides the origin.
+// Production origins; --origin or <APP>_BASE_URL overrides the origin. No app carries a copied default
+// workspace: it goes stale when the owner's workspaces change (GTM's b81b721c… was frozen on 2026-10-19), so the
+// workspace comes from --workspace, <APP>_WORKSPACE_ID, or the key's only workspace.
 const APPS = {
-  gtm: { name: 'GTM Agent', origin: 'https://gtm.tangle.tools', workspace: 'b81b721c078853fdd78687ee622a1e69' },
+  gtm: { name: 'GTM Agent', origin: 'https://gtm.tangle.tools' },
   tax: { name: 'Tax Agent', origin: 'https://taxes.tangle.tools' },
   legal: { name: 'Legal Agent', origin: 'https://legal.tangle.tools' },
   insurance: { name: 'Insurance Agent', origin: 'https://insurance.tangle.tools' },
@@ -47,7 +49,7 @@ const USAGE = `usage:
 apps: ${Object.keys(APPS).join(', ')} (default $AGENT_ASK_APP, else gtm)
 
 options:
-  --workspace <id>   workspace (default $<APP>_WORKSPACE_ID, the app default, or the key's only workspace)
+  --workspace <id>   workspace (default $<APP>_WORKSPACE_ID, or the key's only workspace)
   --thread <id>      continue this conversation instead of starting a new one
   --title <text>     title for a new conversation (default: the ask's first line)
   --model <id>       model for the turn (default $AGENT_ASK_MODEL, else the workspace's saved model)
