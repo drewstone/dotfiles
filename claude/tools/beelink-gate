@@ -1673,11 +1673,6 @@ remote_gate() {
     shift
   done
   if [ "${#command[@]}" -eq 0 ] || [ -z "${command[0]}" ]; then die "empty command"; fi
-  # A pipeline exits with its last stage: `sh -c 'node --test ... | tail -12'` exited 0 on a failing test, and --merge
-  # merged discovery-lab #2097 red (2026-10-19). A shell -c command runs under pipefail, so a failing stage fails the gate.
-  case "${command[0]##*/}:${command[1]:-}" in
-    sh:-c|dash:-c|bash:-c) command=(/usr/bin/bash -o pipefail "${command[@]:1}") ;;
-  esac
   [[ "$sha" =~ ^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$ ]] || die "SHA must be a full commit ID"
   max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD: ${BEELINK_GATE_MAX_HOLD:-}"
   (( light == 0 || max_hold <= 600 )) || max_hold=600
@@ -2401,7 +2396,14 @@ PY
   # The submitted user unit can inherit umask 0002. Give the requested command
   # a predictable non-group-writable default without changing the gate shell's
   # mask for receipts, bundles, and other state written after the command.
-  local -a command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${command[@]}")
+  # A pipeline exits with its last stage: `sh -c 'node --test ... | tail -12'` exited 0 on a failing test, and --merge
+  # merged discovery-lab #2097 red (2026-10-19). A shell -c command runs under pipefail, so a failing stage fails the
+  # gate; the receipt still names the command as requested.
+  local -a run_command=("${command[@]}")
+  case "${command[0]##*/}:${command[1]:-}" in
+    sh:-c|dash:-c|bash:-c) run_command=(/usr/bin/bash -o pipefail "${command[@]:1}") ;;
+  esac
+  local -a command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${run_command[@]}")
   if (( light )); then
     # No browser: Playwright finds no installed browser and fails the test that wants one.
     mkdir -p "$checkout/.git/beelink-gate-no-browsers"
