@@ -2400,9 +2400,11 @@ PY
   # merged discovery-lab #2097 red (2026-10-19). A shell -c command runs under pipefail, so a failing stage fails the
   # gate; the receipt still names the command as requested.
   local -a run_command=("${command[@]}")
-  case "${command[0]##*/}:${command[1]:-}" in
-    sh:-c|dash:-c|bash:-c) run_command=(/usr/bin/bash -o pipefail "${command[@]:1}") ;;
-  esac
+  # Any single-dash option cluster holding c counts: beelink1's receipts held 89 `bash -lc` gates (16 piped) and a
+  # `bash -euc` (gtr-disk review of dotfiles #535).
+  if [[ "${command[0]##*/}" =~ ^(sh|dash|bash)$ && "${command[1]:-}" =~ ^-[A-Za-z]*c[A-Za-z]*$ ]]; then
+    run_command=(/usr/bin/bash -o pipefail "${command[@]:1}")
+  fi
   local -a command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${run_command[@]}")
   if (( light )); then
     # No browser: Playwright finds no installed browser and fails the test that wants one.
