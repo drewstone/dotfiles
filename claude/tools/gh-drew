@@ -612,6 +612,11 @@ if held.returncode == 1:
     print("held", clean(held.stdout), sep="\t")
 elif held.returncode != 0:
     sys.exit("cannot ask merge-on-green whether the PR is held: " + clean(held.stderr or held.stdout)[:200])
+# GitHub closes what a merged body names after a closing keyword, pull requests included: on 2026-10-19
+# "placement fix #11872" in #11873 closed #11872, and "closed #11879" in #11872 closed #11879.
+# "-" stands for this repository: tab is IFS whitespace, so bash's read would drop an empty field.
+for m in re.finditer(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", pr.get("body") or ""):
+    print("closes", m.group(1) or "-", m.group(2), sep="\t")
 for thread in pr["reviewThreads"]["nodes"]:
     said = thread["comments"]["nodes"]
     if thread["isResolved"] or not said or not codex(said[0]["author"]):
@@ -693,11 +698,11 @@ review_guard() {
     echo "gh-drew: GH_DREW_REVIEW_WAIT must be whole seconds, got '$review_wait'" >&2
     exit 2
   fi
-  local start=$SECONDS out err kind a b c url head elapsed why told="" pending since nap held logged_shown=0
-  local -a findings running
+  local start=$SECONDS out err kind a b c url head elapsed why told="" pending since nap held logged_shown=0 closes_checked=0 ref repo state
+  local -a findings running closes
   err="$(mktemp)"
   while :; do
-    findings=() running=() url="" head="" pending="" since="" held=""
+    findings=() running=() closes=() url="" head="" pending="" since="" held=""
     if ! out="$(review_state "$token" 2>"$err")"; then
       log_call refused "$@"
       echo "gh-drew: refusing to merge: cannot read the PR's reviews: $(tr '\n' ' ' <"$err" | cut -c1-300)" >&2
@@ -712,6 +717,7 @@ review_guard() {
         running) running+=("$a of ${b}") ;;
         pending) pending="$a" since="$b" ;;
         held) held="$a" ;;
+        closes) closes+=("$a#$b") ;;
       esac
     done <<<"$out"
     reviewed_url="$url" reviewed_head="$head"
@@ -721,6 +727,22 @@ review_guard() {
       echo "Show every precondition its body names is true, then merge with GH_DREW_PRECONDITIONS_SHOWN=<evidence>." >&2
       rm -f "$err"
       exit 1
+    fi
+    # A closing keyword aimed at an open pull request closes it on merge. Refuse until the body says
+    # "see #N" instead, or GH_DREW_ALLOW_CLOSE lists N (space-separated) because closing it is intended.
+    if (( ! closes_checked )); then
+      closes_checked=1
+      for ref in "${closes[@]}"; do
+        repo="${ref%#*}"
+        [[ "$repo" != - ]] || { repo="${url#https://github.com/}"; repo="${repo%/pull/*}"; }
+        state="$(GH_TOKEN="$token" gh api "repos/$repo/pulls/${ref##*#}" --jq .state 2>/dev/null)" || continue  # 404: an issue
+        [[ "$state" == open && " ${GH_DREW_ALLOW_CLOSE:-} " != *" ${ref##*#} "* ]] || continue
+        log_call refused "$@"
+        echo "gh-drew: refusing to merge $url: its body names open pull request $repo#${ref##*#} after a closing keyword, so GitHub would close it." >&2
+        echo "Reword it as \"see #${ref##*#}\", or merge with GH_DREW_ALLOW_CLOSE=${ref##*#} if closing it is intended." >&2
+        rm -f "$err"
+        exit 1
+      done
     fi
     if [[ -n "$held" ]] && (( ! logged_shown )); then
       log_call "preconditions-shown: ${shown:0:200}" "$@"
