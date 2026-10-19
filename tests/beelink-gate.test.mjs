@@ -3411,15 +3411,22 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
     await new Promise((done) => holder.stdout.once("data", done));
     const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "20", BEELINK_GATE_LOAD_WAIT: "35s" };
     older = spawn(gate, ["--no-install", "auto", f.url, f.first, "--", "bash", "-c", `echo older >> '${events}'`], { env });
-    let olderErr = "", olderAdmitted = 0n, newerAdmitted = 0n;
-    older.stderr.on("data", (chunk) => { olderErr += chunk; if (!olderAdmitted && /admitted on beelink/.test(olderErr)) olderAdmitted = process.hrtime.bigint(); });
+    let olderErr = "", olderLoggedFirst;
+    older.stderr.on("data", (chunk) => { olderErr += chunk; });
+    // The older gate's admission line reaches this test through the launcher's log relay, which can lag
+    // the host under load, so order is read from its own job log at the moment the newer gate is admitted.
+    const olderLogged = () => {
+      const id = /gate_id=([\w-]+)/.exec(olderErr)?.[1];
+      const log = id && join(f.root, "state", "jobs", id, "stderr.log");
+      return Boolean(log && existsSync(log) && /admitted on beelink/.test(readFileSync(log, "utf8")));
+    };
     for (let i = 0; i < 200 && !/no beelink is both free/.test(olderErr); i++) await sleepMs(25);
     assert.match(olderErr, /no beelink is both free/);
 
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-c", `echo newer >> '${events}'`].map(encode);
     newer = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_CACHE_ROOT: join(f.root, "cache-100.127.22.51"), BEELINK_GATE_REPO_CHECKOUTS: "1" } });
     let newerErr = "";
-    newer.stderr.on("data", (chunk) => { newerErr += chunk; if (!newerAdmitted && /admitted on beelink/.test(newerErr)) newerAdmitted = process.hrtime.bigint(); });
+    newer.stderr.on("data", (chunk) => { newerErr += chunk; if (olderLoggedFirst === undefined && /admitted on beelink/.test(newerErr)) olderLoggedFirst = olderLogged(); });
     for (let i = 0; i < 200 && !/waiting \d+s for one of 1/.test(newerErr); i++) await sleepMs(25);
     assert.match(newerErr, /waiting \d+s for one of 1/);
     holder.kill("SIGKILL");
@@ -3429,7 +3436,7 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
     // The FIFO property is admission order: the newer gate is admitted only after the
     // older one. Once they run on different hosts, which echo lands first is a race
     // (it failed 3 of about 10 gate runs on 2026-10-15), so the echoes are compared as a set.
-    assert.ok(olderAdmitted > 0n && newerAdmitted > olderAdmitted, `${olderErr}\n${newerErr}`);
+    assert.equal(olderLoggedFirst, true, `${olderErr}\n${newerErr}`);
     assert.deepEqual(readFileSync(events, "utf8").trim().split("\n").sort(), ["newer", "older"]);
     for (const locks of [b1, b2]) {
       assert.deepEqual(readdirSync(locks).filter((name) => name.startsWith("queue-")), [], "normal reservation and gate tickets are removed");
@@ -3457,6 +3464,16 @@ test("a ticket whose pid now belongs to a later process does not hold the checko
     assert.equal(result.status, 0, result.stderr);
     assert.ok(Date.now() - started < 15_000, "the gate waited behind a stale ticket");
     assert.equal(existsSync(ticket), false, "the stale ticket was kept");
+
+    // The same live owner, with its start tick recorded: a clock step that dates the ticket 10 minutes
+    // before its owner's computed start (beelink1's btime moved +723 s on 2026-10-18) keeps it in line.
+    const tick = readFileSync(`/proc/${reused.pid}/stat`, "utf8").split(") ")[1].split(" ")[19];
+    writeFileSync(ticket, `\nstart=${tick}\n`);
+    const stepped = new Date(Date.now() - 600_000);
+    utimesSync(ticket, stepped, stepped);
+    const waited = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_ADMIT_WAIT: "3" } });
+    assert.equal(waited.status, 76, `a clock step dropped a live owner's ticket\n${waited.stderr}`);
+    assert.equal(existsSync(ticket), true, "the live owner's ticket was removed");
   } finally {
     reused.kill();
     rmSync(f.root, { recursive: true, force: true });
