@@ -219,6 +219,9 @@ test("a failed command reports its exit code and an unsafe repository path is re
     const result = f.call(f.first, ["bash", "-c", "exit 7"]);
     assert.equal(result.status, 7, result.stderr);
     assert.match(result.stderr, /exit=7 duration=\d+s/);
+    // A failing stage of a piped test fails the gate, as discovery-lab #2097's `node --test ... | tail` did not.
+    assert.equal(f.call(f.first, ["sh", "-c", "exit 5 | cat"]).status, 5);
+    assert.equal(f.call(f.first, ["sh", "-c", "echo piped | cat"]).status, 0);
     const invalid = run("bash", [gate, "--remote", ...["beelink2", "https://github.com/../repo.git", f.first, "install", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
     assert.equal(invalid.status, 2);
     assert.match(invalid.stderr, /unsafe repository path/);
