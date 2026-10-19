@@ -692,7 +692,7 @@ PY
 acquire_slot() {
   local slots_dir="$1" max="$2" pool="${3:-slot}" i announced="" marker
   marker="$slots_dir/urgent-$pool"
-  if [ "${urgent:-0}" = 1 ]; then : > "$marker.$$"; urgent_markers+=("$marker.$$"); fi
+  if [ "${urgent:-0}" = 1 ]; then ticket_body > "$marker.$$"; urgent_markers+=("$marker.$$"); fi
   while :; do
     if [ "${urgent:-0}" = 1 ] || ! urgent_ahead "$marker"; then
       for ((i = 0; i < max; i++)); do
@@ -820,15 +820,31 @@ give_back_host() {
 # a later process that reused that pid after the gate was killed or the host
 # rebooted; such a stale ticket would hold a checkout until that process exits.
 # Its owner is live only if the process started no later than the file was written.
+proc_start() {  # <pid>: its start time in clock ticks since boot, which no clock step moves
+  local line fields
+  line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  read -ra fields <<< "${line##*) }"
+  [[ "${fields[19]:-}" =~ ^[0-9]+$ ]] && printf '%s' "${fields[19]}"
+}
+ticket_body() {  # [token]: a ticket or marker naming its token and this gate's start tick
+  printf '%s\nstart=%s\n' "${1:-}" "$(proc_start $$)"
+}
 waiter_alive() {  # <ticket or marker file> <pid>
   kill -0 "$2" 2>/dev/null || return 1
-  local line fields btime written
-  line=$(cat "/proc/$2/stat" 2>/dev/null) || return 0
-  read -ra fields <<< "${line##*) }"
+  local fields btime written recorded started
+  recorded=$(sed -n 's/^start=\([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null)
+  started=$(proc_start "$2") || return 0
+  # A ticket that names its owner's start tick is alive only while that same process runs: a reused pid starts
+  # at another tick. Realtime is not compared, because btime is realtime minus uptime and beelink1's moved
+  # +723 s in its first 17 h on 2026-10-18; with the old 1 s slack a step dropped a live reservation's ticket
+  # and a newer gate went first (beelink-gate tests 136 and 3397).
+  [ -z "$recorded" ] || { [ "$recorded" = "$started" ]; return; }
+  # Tickets from older gates name no tick. A reused pid needs a pid_max wrap (about 5 h on beelink1 at
+  # 238 pids/s), so 60 s of slack still catches reuse and absorbs small steps.
   btime=$(awk '$1 == "btime" { print $2 }' /proc/stat 2>/dev/null)
   written=$(stat -c %Y "$1" 2>/dev/null) || return 1
-  [[ "$btime" =~ ^[0-9]+$ && "${fields[19]:-}" =~ ^[0-9]+$ ]] || return 0
-  (( btime + fields[19] / $(getconf CLK_TCK) <= written + 1 ))
+  [[ "$btime" =~ ^[0-9]+$ ]] || return 0
+  (( btime + started / $(getconf CLK_TCK) <= written + 60 ))
 }
 older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tickets from other gates
   # A gate's place is the oldest (epoch, pid) among its tickets: an auto gate holds a
@@ -840,7 +856,7 @@ older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tick
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
     [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
-    token=$(cat "$t" 2>/dev/null) || token=""
+    token=$(head -n 1 "$t" 2>/dev/null) || token=""
     [[ "$token" =~ ^[0-9a-f]{32}$ ]] || token=""
     if [ "$pid" = "$$" ] || { [ -n "$token" ] && [ "$token" = "${reservation_token:-}" ]; }; then
       if (( since < me_since || (since == me_since && pid < me_pid) )); then me_since=$since me_pid=$pid; fi
@@ -1804,7 +1820,7 @@ remote_gate() {
   local urgent_marker="$cache_root/.locks/urgent-$host-$owner-$repo"
   (( light == 0 )) || urgent_marker+=@light
   (( dev == 0 )) || urgent_marker+=@dev
-  if (( urgent )); then : > "$urgent_marker.$$"; urgent_markers+=("$urgent_marker.$$"); fi
+  if (( urgent )); then ticket_body > "$urgent_marker.$$"; urgent_markers+=("$urgent_marker.$$"); fi
   local ticket_prefix="$cache_root/.locks/queue-$host-$owner-$repo" enqueued=$(( $(date +%s) - placed_wait ))
   (( light == 0 )) || ticket_prefix+=@light
   (( dev == 0 )) || ticket_prefix+=@dev
@@ -1821,7 +1837,7 @@ remote_gate() {
     done
   fi
   local ticket="$ticket_prefix.$enqueued.$$"
-  printf '%s' "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
+  ticket_body "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
   # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
   # and markers with it; finish replaces this trap once the checkout is held.
   trap 'rm -f "${urgent_markers[@]}" 2>/dev/null' EXIT
@@ -2990,7 +3006,7 @@ reserve_checkout() {
     marker="$cache_root/.locks/urgent-$host-$owner-$repo$suffix.$$"
   fi
   mkdir -p "$cache_root/.locks" || die "cannot create checkout reservation"
-  printf '%s' "$token" > "$marker" || die "cannot create checkout reservation"
+  ticket_body "$token" > "$marker" || die "cannot create checkout reservation"
   trap 'rm -f "$marker"; exit 143' HUP INT TERM
   echo "beelink-gate-$priority-reserved $beelink"
   # The launcher keeps stdin open. EOF removes the reservation even if its
