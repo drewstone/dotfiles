@@ -1,0 +1,30 @@
+#!/bin/bash
+# run-jobs-watch [-v] <run-id> [owner/repo]: watch a GitHub Actions run at the JOB level.
+# Exits 1 on the first job that concludes anything but success or skipped, and prints that job's link;
+# exits 0 when the run completes, printing its conclusion; exits 2 after 5 failed reads in a row.
+# A run-level watch misses a failed job while the run waits on a later one: on 2026-10-19 agent-container
+# deploy 39274359094 failed its host-agent rollout at 15:30Z, then sat in `waiting` for 47 min.
+# Transient read errors (a GitHub 502 ended `gh run watch` on the same run) are retried.
+verbose=0; [ "${1:-}" = -v ] && { verbose=1; shift; }
+RUN=${1:?usage: run-jobs-watch [-v] <run-id> [owner/repo]}; R=${2:-tangle-network/agent-container}
+seen="" fails=0
+while :; do
+  if ! out=$(gh-drew api "repos/$R/actions/runs/$RUN/jobs?per_page=100" \
+      --jq '.jobs[]|select(.status=="completed")|"\(.id)\t\(.conclusion)\t\(.name)"' 2>/dev/null); then
+    fails=$((fails + 1)); (( fails < 5 )) || { echo "run-jobs-watch: 5 failed reads of run $RUN"; exit 2; }
+    sleep 60; continue
+  fi
+  fails=0
+  while IFS=$'\t' read -r id conclusion name; do
+    [ -n "$id" ] || continue
+    case " $seen " in *" $id "*) continue ;; esac
+    seen="$seen $id"
+    case $conclusion in
+      success|skipped) (( verbose )) && echo "$(date -u +%H:%MZ) ok: $name" ;;
+      *) echo "$(date -u +%H:%MZ) JOB $conclusion: $name (https://github.com/$R/actions/runs/$RUN/job/$id)"; exit 1 ;;
+    esac
+  done <<<"$out"
+  state=$(gh-drew api "repos/$R/actions/runs/$RUN" --jq '"\(.status) \(.conclusion)"' 2>/dev/null) || state=""
+  [ "${state%% *}" = completed ] && { echo "$(date -u +%H:%MZ) run $RUN completed: ${state#* }"; exit 0; }
+  sleep 60
+done
