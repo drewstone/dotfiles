@@ -3416,7 +3416,7 @@ test("a normal auto waiter keeps its place ahead of a newer gate while both host
     // The older gate's admission line reaches this test through the launcher's log relay, which can lag
     // the host under load, so order is read from its own job log at the moment the newer gate is admitted.
     const olderLogged = () => {
-      const id = /gate_id=(\S+)/.exec(olderErr)?.[1];
+      const id = /gate_id=([\w-]+)/.exec(olderErr)?.[1];
       const log = id && join(f.root, "state", "jobs", id, "stderr.log");
       return Boolean(log && existsSync(log) && /admitted on beelink/.test(readFileSync(log, "utf8")));
     };
