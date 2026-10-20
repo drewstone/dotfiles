@@ -72,6 +72,7 @@ def changes(old_ref, new_ref):
 
 
 def main():
+    merge_ref = None
     if len(sys.argv) > 1 and ".." in sys.argv[1]:
         old_ref, new_ref = sys.argv[1].split("..", 1)
         new_spec = lambda p: f"{new_ref}:{p}"
@@ -80,6 +81,9 @@ def main():
         old_ref = "HEAD" if head.returncode == 0 else git("hash-object", "-t", "tree", os.devnull).stdout.decode().strip()
         new_ref = None
         new_spec = lambda p: f":{p}"
+        merge = git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
+        if merge.returncode == 0:
+            merge_ref = merge.stdout.decode().strip()
 
     refused = []
     for status, old_path, path in changes(old_ref, new_ref):
@@ -88,6 +92,13 @@ def main():
         new_n, data = lines(new_spec(path))
         if new_n is None or new_n <= LIMIT:
             continue
+        # A normal merge inherits the incoming branch's committed blobs.
+        # Keep this commit responsible for its own edits and resolutions.
+        if merge_ref is not None:
+            incoming = git("rev-parse", "-q", "--verify", f"{merge_ref}:{path}", check=False)
+            staged = git("rev-parse", "-q", "--verify", new_spec(path), check=False)
+            if incoming.returncode == 0 and incoming.stdout == staged.stdout:
+                continue
         head = data[:2000].decode(errors="replace")
         if "@generated" in head or "DO NOT EDIT" in head or exempt_by_attr(path):
             continue
