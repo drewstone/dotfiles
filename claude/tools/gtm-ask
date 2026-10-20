@@ -14,8 +14,8 @@ import { dirname, join } from 'node:path'
 import { takeSlot } from './operator-api/rate.mjs'
 
 const DEFAULT_BASE = 'https://gtm.tangle.tools'
-// Drew's operator workspace, "GTM Agent".
-const DEFAULT_WORKSPACE = 'b81b721c078853fdd78687ee622a1e69'
+// Drew's operator workspace, "GTM Agent" (recreated 2026-10-19 when his 288 eval workspaces were deleted).
+const DEFAULT_WORKSPACE = 'b964e0c04e0b9b49f1f4dccbba1ed90c'
 const KEY_NAME = 'GTM_OPERATOR_API_KEY'
 const EXIT = { ok: 0, failed: 1, usage: 2, running: 3, waiting: 4 }
 // An ask the agent raises can be resolved by the runtime itself; one still open after this is the owner's.
