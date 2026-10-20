@@ -125,6 +125,13 @@ Each project keeps one append-only ledger:
 - Discovery Lab: `reports/climb/ledger.jsonl`;
 - elsewhere, `.agent/climb.jsonl`.
 
+Correct a retained measurement by appending a complete valid row with a new id
+and `supersedes` set to the earlier row's id. Keep the project and hill the same.
+`climb-log append` validates the correction and its earlier target;
+`climb-log check` reports superseded rows as corrected with their original
+problems, rather than failing them. Unrelated contract failures and every
+integrity error still fail. Historical bytes are never rewritten.
+
 A row is an [`evolve` experiment record](../../claude/skills/evolve/schema.md) plus four fields:
 - `layer`;
 - `hill`;
