@@ -269,7 +269,7 @@ def supersession_problems(row, prior):
         return [f"supersedes {json.dumps(target)} does not name an earlier ledger row"]
     previous = prior[target]
     return [f"supersedes must retain the corrected row's {key}" for key in ("project", "hill")
-            if previous.get(key) and row.get(key) != previous[key]]
+            if not previous.get(key) or row.get(key) != previous[key]]
 
 
 # ---------------------------------------------------------------------------------------- ledger

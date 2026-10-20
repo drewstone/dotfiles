@@ -169,6 +169,24 @@ class Contract(Ledger):
         self.assertEqual(checked.returncode, 1)
         self.assertGreater(json.loads(checked.stdout)['integrity'], 0)
 
+        for key in ('project', 'hill'):
+            for absent in (None, ''):
+                unidentified = comparison()
+                unidentified['id'] = f'unidentified-{key}-{absent}'
+                if absent is None:
+                    unidentified.pop(key)
+                else:
+                    unidentified[key] = absent
+                self.ledger.write_text(json.dumps(unidentified) + '\n')
+                before = self.ledger.read_bytes()
+                correction = comparison()
+                correction.update(id='unrelated-identity', supersedes=unidentified['id'])
+                self.assertRefused(correction, f"retain the corrected row's {key}")
+                self.assertEqual(self.ledger.read_bytes(), before)
+                checked = self.run_tool('check', '--project', str(self.root), '--json')
+                self.assertEqual(checked.returncode, 1)
+                self.assertEqual(json.loads(checked.stdout)['corrected'], [])
+
     def test_baseline_rows_name_instrument_and_calibration(self):
         self.assertRefused(baseline_row(instrument=None, calibration=None),
                            'baseline.measurement.instrument is missing', 'baseline.measurement.calibration is missing')
