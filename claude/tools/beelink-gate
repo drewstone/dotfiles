@@ -2627,6 +2627,10 @@ while True:
         unit = f"beelink-gate-{directory.name}.service"
         status = subprocess.run(["systemctl", "--user", "show", unit, "-p", "ActiveState", "--value"], capture_output=True, text=True)
         if status.returncode != 0 or status.stdout.strip() in ("failed", "inactive"):
+            # runner.sh can publish its exit between the receipt check above and this
+            # unit read; re-read it so a finished gate is never reported as TEMPFAIL.
+            if result.exists():
+                continue
             print(f"beelink-gate: {directory.name} stopped without an exit receipt; TEMPFAIL 75", file=sys.stderr)
             sys.exit(75)
         started = time.monotonic()
