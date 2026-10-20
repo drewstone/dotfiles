@@ -50,6 +50,11 @@ A side reports a number when it holds a JSON number or a numeral in its text (da
 Ledgers merge by union (`.agent/climb.jsonl merge=union` in .gitattributes), so two PRs that each append rows
 merge without a conflict. check rejects what a union merge can get wrong, at any date: a line that is not one
 whole JSON object, an exact repeat of a line, and a repeated id.
+
+Correct history by appending a complete valid row with its own id and optional "supersedes": "<earlier-row-id>".
+The earlier row stays byte-exact. check reports it as corrected, retaining its original problems in the report.
+The correction must name an earlier row of the same project and hill, and must itself pass the contract.
+Supersession never suppresses integrity errors or failures in unrelated rows.
 """
 
 from __future__ import annotations
@@ -241,6 +246,9 @@ def check_row(row):
     if not isinstance(row, dict):
         return ["the line is not a JSON object"]
     problems = [f"{key} is missing" for key in REQUIRED if row.get(key) in (None, "")]
+    if "supersedes" in row and (not isinstance(row["supersedes"], str) or not row["supersedes"].strip()
+                                or row["supersedes"] == row.get("id")):
+        problems.append("supersedes must name a different earlier row id")
     if row.get("timestamp") and parse_time(row["timestamp"]) is None:
         problems.append(f"timestamp {json.dumps(row['timestamp'])} is not ISO 8601")
     measured = [side for side in ("baseline", "result") if reports_number(row.get(side))]
@@ -251,6 +259,17 @@ def check_row(row):
     for side in measured:
         problems.extend(check_side(row, side, comparison))
     return problems
+
+
+def supersession_problems(row, prior):
+    target = row.get("supersedes")
+    if not isinstance(target, str) or not target.strip():
+        return []
+    if target not in prior:
+        return [f"supersedes {json.dumps(target)} does not name an earlier ledger row"]
+    previous = prior[target]
+    return [f"supersedes must retain the corrected row's {key}" for key in ("project", "hill")
+            if previous.get(key) and row.get(key) != previous[key]]
 
 
 # ---------------------------------------------------------------------------------------- ledger
@@ -379,6 +398,20 @@ def cmd_append(args):
                   "its own id", file=sys.stderr)
             return 1
         fresh = [r for r in rows if r["id"] not in ids]
+        prior = {}
+        for line in existing.splitlines():
+            try:
+                record = json.loads(line)
+                if isinstance(record, dict) and isinstance(record.get("id"), str):
+                    prior[record["id"]] = record
+            except ValueError:
+                continue
+        for row in fresh:
+            problems = supersession_problems(row, prior)
+            if problems:
+                print(f"climb-log: refused correction {row['id']}: {'; '.join(problems)}; nothing was written", file=sys.stderr)
+                return 1
+            prior[row["id"]] = row
         if fresh:
             lead = "\n" if existing and not existing.endswith("\n") else ""
             fh.write(lead + "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in fresh))
@@ -430,7 +463,18 @@ def cmd_check(args):
         return 2
     findings = integrity(path)
     broken = {f["line"] for f in findings}
+    prior, superseded = {}, {}
+    contextual = {}
+    for number, row, _raw in read_rows(path):
+        if number in broken or not isinstance(row, dict):
+            continue
+        contextual[number] = supersession_problems(row, prior)
+        if not check_row(row) and not contextual[number] and row.get("supersedes"):
+            superseded[row["supersedes"]] = row["id"]
+        if isinstance(row.get("id"), str):
+            prior[row["id"]] = row
     checked = 0
+    corrected = []
     for number, row, _raw in read_rows(path):
         if number in broken or not isinstance(row, dict):
             continue
@@ -438,7 +482,11 @@ def cmd_check(args):
         if when is not None and when < since:
             continue
         checked += 1
-        problems = check_row(row)
+        problems = check_row(row) + contextual.get(number, [])
+        if row.get("id") in superseded:
+            corrected.append({"line": number, "id": row["id"], "supersededBy": superseded[row["id"]],
+                              "problems": problems})
+            continue
         if problems:
             findings.append({"line": number, "id": row.get("id"), "hill": row.get("hill"), "kind": "contract",
                              "problems": problems})
@@ -447,12 +495,14 @@ def cmd_check(args):
     corrupt = sum(1 for f in findings if f["kind"] == "integrity")
     if args.json:
         print(json.dumps({"ledger": str(path), "since": args.since, "checked": checked, "failed": failed_rows,
-                          "integrity": corrupt, "rows": findings}, indent=2, ensure_ascii=False))
+                          "integrity": corrupt, "rows": findings, "corrected": corrected}, indent=2, ensure_ascii=False))
     else:
         for f in findings:
             print(f"{path}:{f['line']} {f['id'] or '(no id)'}")
             for problem in f["problems"]:
                 print(f"  - {problem}")
+        for row in corrected:
+            print(f"{path}:{row['line']} {row['id']} corrected by {row['supersededBy']}")
         print(f"climb-log check: {checked - failed_rows}/{checked} rows since {args.since} pass; "
               f"{corrupt} lines fail integrity ({path})")
     return 1 if findings else 0

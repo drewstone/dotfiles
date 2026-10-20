@@ -128,6 +128,47 @@ class RetractedNumbers(Ledger):
 
 
 class Contract(Ledger):
+    def test_appended_corrections_preserve_real_ledger_history_and_unrelated_failures(self):
+        old = comparison(selectBy='population')
+        unrelated = comparison(basis='estimated')
+        unrelated['id'] = 'unrelated-invalid'
+        original = ''.join(json.dumps(row) + '\n' for row in (old, unrelated)).encode()
+        self.ledger.write_bytes(original)
+        correction = comparison()
+        correction.update(id='corrected-sample', supersedes=old['id'], outcome='PASS')
+        self.assertAccepted(correction)
+        self.assertTrue(self.ledger.read_bytes().startswith(original))
+        checked = self.run_tool('check', '--project', str(self.root), '--json')
+        self.assertEqual(checked.returncode, 1, checked.stdout + checked.stderr)
+        report = json.loads(checked.stdout)
+        self.assertEqual([row['id'] for row in report['rows']], [unrelated['id']])
+        self.assertEqual(report['corrected'][0]['id'], old['id'])
+        self.assertEqual(report['corrected'][0]['supersededBy'], correction['id'])
+        self.assertIn('population', ' '.join(report['corrected'][0]['problems']))
+
+        invalid = comparison(selectBy='population')
+        invalid.update(id='invalid-correction', supersedes=unrelated['id'])
+        self.assertRefused(invalid, 'population')
+        missing = comparison()
+        missing.update(id='missing-target', supersedes='absent-row')
+        self.assertRefused(missing, 'earlier ledger row')
+        cross_hill = comparison()
+        cross_hill.update(id='other-hill', hill='different-hill', supersedes=unrelated['id'])
+        self.assertRefused(cross_hill, 'retain the corrected row')
+
+        second = comparison()
+        second.update(id='second-correction', supersedes=unrelated['id'])
+        self.assertAccepted(second)
+        self.assertTrue(self.ledger.read_bytes().startswith(original))
+        checked = self.run_tool('check', '--project', str(self.root), '--json')
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        self.assertEqual(len(json.loads(checked.stdout)['corrected']), 2)
+        with self.ledger.open('a') as stream:
+            stream.write(json.dumps(old) + '\n')
+        checked = self.run_tool('check', '--project', str(self.root), '--json')
+        self.assertEqual(checked.returncode, 1)
+        self.assertGreater(json.loads(checked.stdout)['integrity'], 0)
+
     def test_baseline_rows_name_instrument_and_calibration(self):
         self.assertRefused(baseline_row(instrument=None, calibration=None),
                            'baseline.measurement.instrument is missing', 'baseline.measurement.calibration is missing')
