@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Refuse a commit that makes a logic file a god object.
+
+Drew, 2026-10-20, after a census found 958 logic files over 1,000 lines across
+our repos: "files of logic never exceeding <1.5k LOC, even <1k LOC ideally".
+The process had no rule, so files only grew. This is the rule:
+
+- a new logic file may not exceed LIMIT lines;
+- a logic file already over LIMIT may not grow (a rename keeps its old count).
+
+Splitting a big file always passes: the original shrinks and each new module
+must fit. To change a big file, extract something first so it does not grow.
+
+Exempt: tests, type declarations, and files git marks linguist-generated or
+linguist-vendored (.gitattributes), or that open with "@generated" or
+"DO NOT EDIT". There is no escape variable; fixture repos set
+core.hooksPath=/dev/null like every other global hook here.
+
+Usage: loc-ratchet            check the staged changes against HEAD
+       loc-ratchet A..B       check the commits in a range (CI or pre-push)
+"""
+import os
+import re
+import subprocess
+import sys
+
+LIMIT = 1000
+LOGIC = re.compile(r"\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|sh|bash|sql|rb|java|kt|swift|sol)$")
+WORKFLOW = re.compile(r"(^|/)\.github/workflows/[^/]+\.ya?ml$")
+EXEMPT = re.compile(
+    r"(\.d\.ts$|\.min\.js$|\.(test|spec)\.[^/]+$|_test\.go$|(^|/)test_[^/]+\.py$"
+    r"|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build|migrations)/)"
+)
+
+
+def git(*args, check=True):
+    out = subprocess.run(["git", *args], capture_output=True)
+    if check and out.returncode != 0:
+        sys.stderr.write(out.stderr.decode(errors="replace"))
+        sys.exit(2)
+    return out
+
+
+def lines(spec):
+    """Line count of a blob ("HEAD:path", ":path"), or None when absent."""
+    out = git("cat-file", "-p", spec, check=False)
+    if out.returncode != 0:
+        return None, b""
+    data = out.stdout
+    return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0), data
+
+
+def exempt_by_attr(path):
+    out = git("check-attr", "linguist-generated", "linguist-vendored", "--", path, check=False)
+    return any(line.endswith((": set", ": true")) for line in out.stdout.decode().splitlines())
+
+
+def changes(old_ref, new_ref):
+    """(status, old_path, new_path) for added, copied, modified and renamed files."""
+    args = ["diff", "--name-status", "-z", "-M", "--diff-filter=ACMR"]
+    args += ["--cached", old_ref] if new_ref is None else [old_ref, new_ref]
+    parts = git(*args).stdout.decode(errors="replace").split("\0")
+    i = 0
+    while i < len(parts) and parts[i]:
+        status = parts[i]
+        if status[0] in "RC":
+            yield status[0], parts[i + 1], parts[i + 2]
+            i += 3
+        else:
+            yield status[0], parts[i + 1], parts[i + 1]
+            i += 2
+
+
+def main():
+    if len(sys.argv) > 1 and ".." in sys.argv[1]:
+        old_ref, new_ref = sys.argv[1].split("..", 1)
+        new_spec = lambda p: f"{new_ref}:{p}"
+    else:
+        head = git("rev-parse", "-q", "--verify", "HEAD", check=False)
+        old_ref = "HEAD" if head.returncode == 0 else git("hash-object", "-t", "tree", os.devnull).stdout.decode().strip()
+        new_ref = None
+        new_spec = lambda p: f":{p}"
+
+    refused = []
+    for status, old_path, path in changes(old_ref, new_ref):
+        if not (LOGIC.search(path) or WORKFLOW.search(path)) or EXEMPT.search(path):
+            continue
+        new_n, data = lines(new_spec(path))
+        if new_n is None or new_n <= LIMIT:
+            continue
+        head = data[:2000].decode(errors="replace")
+        if "@generated" in head or "DO NOT EDIT" in head or exempt_by_attr(path):
+            continue
+        old_n = None if status in "AC" else lines(f"{old_ref}:{old_path}")[0]
+        if old_n is None or new_n > old_n:
+            refused.append((path, old_n, new_n))
+
+    if not refused:
+        return 0
+    sys.stderr.write(f"loc-ratchet: refusing commit: a logic file may not end above {LIMIT} lines unless it already was and does not grow.\n")
+    for path, old_n, new_n in refused:
+        was = "new file" if old_n is None else f"was {old_n}"
+        sys.stderr.write(f"  {path}: {new_n} lines ({was})\n")
+    sys.stderr.write(
+        "  Put new logic in a new module named for what it owns. To change a file over the limit,\n"
+        "  extract a responsibility from it first so its line count does not grow.\n"
+        "  Generated or vendored files: mark them linguist-generated or linguist-vendored in .gitattributes.\n"
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
