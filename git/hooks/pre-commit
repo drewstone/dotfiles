@@ -106,6 +106,9 @@ for m in SHAPE.finditer(sys.stdin.read()):
   fi
 fi
 
+# Size ratchet: no logic file grows into a god object (git/hooks/loc-ratchet says why).
+"$(dirname "${BASH_SOURCE[0]}")/loc-ratchet"
+
 export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
 
 HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
