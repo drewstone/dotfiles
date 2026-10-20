@@ -52,7 +52,34 @@ except Exception:
 
 inp = d.get("tool_input") or {}
 cmd = inp.get("command") or ""
-if not cmd or inp.get("run_in_background"):
+if not cmd:
+    sys.exit(0)
+
+# Only loops that actually sleep are in scope; a busy loop is a different bug.
+LOOP_BODY = re.compile(r"\b(?:for|while|until)\b[^\n;]*(?:;|\n)\s*do\b(.*?)\bdone\b", re.S | re.I)
+EMIT = re.compile(r"\b(?:echo|printf|tee|cat)\b")
+SLEEP = re.compile(r"\bsleep\s+[0-9.]+")
+bodies = LOOP_BODY.findall(cmd)
+
+# A release watcher that polls `npm view` reads "not published yet" when npm is
+# missing from PATH (lanes have node in /usr/bin and npm only under ~/.nvm), so
+# it waits blind past the release. That happened 2026-10-12 (~50 min),
+# 2026-10-18 (~55 min) and 2026-10-20 (33 min, agent-knowledge 22.0.4), each
+# time in a background watcher, so this check runs before the background skip.
+if any(SLEEP.search(b) and re.search(r"\bnpm\s+(?:view|info|show)\b", b) for b in bodies):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": (
+            "npm-view watcher: this sleep loop polls `npm view`. In lanes npm is often "
+            "not on PATH, and the loop then reads every poll as 'not published yet' "
+            "(three blind waits of 33-55 min). Poll the registry instead: "
+            "curl -fsS https://registry.npmjs.org/<scope>%2F<name>/<version>, treat 404 "
+            "as not yet and any other failure as an error that exits."
+        ),
+    }}))
+    sys.exit(0)
+
+if inp.get("run_in_background"):
     sys.exit(0)
 
 # A command that already sends stdout to a file keeps its output when the call
@@ -61,12 +88,7 @@ if not cmd or inp.get("run_in_background"):
 if re.search(r"(?:&?>>?\s*(?!&|/dev/null)\S+)|(?:\|\s*tee\b)", cmd):
     sys.exit(0)
 
-# Only loops that actually sleep are in scope; a busy loop is a different bug.
-LOOP_BODY = re.compile(r"\b(?:for|while|until)\b[^\n;]*(?:;|\n)\s*do\b(.*?)\bdone\b", re.S | re.I)
-EMIT = re.compile(r"\b(?:echo|printf|tee|cat)\b")
-SLEEP = re.compile(r"\bsleep\s+[0-9.]+")
-
-if any(SLEEP.search(b) and not EMIT.search(b) for b in LOOP_BODY.findall(cmd)):
+if any(SLEEP.search(b) and not EMIT.search(b) for b in bodies):
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": (
