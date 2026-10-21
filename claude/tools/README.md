@@ -265,7 +265,7 @@ merge conflict outside CHANGELOG.md stops the gate for manual resolution.
 
 ## merge-on-green
 
-Merges every green agent-container PR into develop. It runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge. Its open-PR read goes through `gh-read`, so the heaviest GraphQL query in the fleet does not spend drewstone's quota.
+Merges every green agent-container PR into develop, and every green PR in the other product repos into their default branch (below). The agent-container instance runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge. Its open-PR read goes through `gh-read`, so the heaviest GraphQL query in the fleet does not spend drewstone's quota.
 
 A PR merges when it is not a draft, not conflicting and not a release branch; Fast Checks, Build and Type Check succeeded on its head; no check failed; no unresolved review thread opens with P0 or P1; it has no `hold` label or hold phrase ("do not merge", "merge only after"); and its head is at least 2 minutes old. The merge pins that head (`--match-head-commit`). Failed, missing or skipped gates leave the head unchanged for its author to diagnose and fix forward. Only a conflict reported by GitHub permits merging develop into the branch; a conflict git cannot resolve gets one comment per head. gh-drew's Codex review check runs on each merge without waiting (`GH_DREW_REVIEW_WAIT=0`), so a PR whose review is still running or has an unanswered Codex finding is refused and tried again on the next tick.
 
@@ -289,6 +289,19 @@ inside `gh-drew`; API debug traces stay in memory. Use `--dry-run --state-dir DI
 with a separate directory for read-only cold/warm comparisons.
 
 To keep a ready PR open, add the `hold` label.
+
+### The other product repos
+
+Every other repo in `host/agents/merge-on-green.repos` (the product stack and the agent apps) runs its own `merge-on-green@<repo>:<base>.timer` every 5 minutes on drew-gtr-pro, with `--base` set to that repo's default branch and state under `~/.local/state/merge-on-green-org/<repo>/`. Its gate is every check on the head (`MERGE_ON_GREEN_REQUIRED=*`: success, neutral or skipped; any red or pending check waits). Most of these repos run no PR CI, so a head with no checks merges only when gh-drew finds a passed beelink-gate receipt for that exact head (`GH_DREW_REQUIRE_RECEIPT=1`, the same check discovery-lab and agent-runtime always get); a refused head is asked again after 10 minutes. Drafts, holds, review threads and conflicts work as above. It uses a merge commit when the repo allows one, else squash. A PR that waits for Drew (pricing, public claims) carries the `hold` label.
+
+```bash
+# Install or add a repo: link the template from the durable checkout, then enable one timer per line.
+ln -sf ~/code/dotfiles/host/agents/merge-on-green@.service ~/code/dotfiles/host/agents/merge-on-green@.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+grep -v '^#' ~/code/dotfiles/host/agents/merge-on-green.repos | while read -r i; do systemctl --user enable --now "merge-on-green@$i.timer"; done
+merge-on-green --repo tangle-network/gtm-agent --base master --state-dir /tmp/mog-dry --dry-run   # what one repo would do
+cat ~/.local/state/merge-on-green-org/*/status.md                                                   # what each open PR waits on
+```
 
 To give a release a clean CI window, pause it on drew-gtr-pro, where the timer runs. While paused, each pass still runs but merges only PRs labelled `release-critical`; version PRs (`changeset-release/*`) stay with release.yml, paused or not, and every other PR gets one line, `paused until … (reason): skipped #N`. A pause ends on its own at its `until`; `pause` refuses more than 120 minutes, so a longer hold is a new pause.
 

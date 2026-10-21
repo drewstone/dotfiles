@@ -1,0 +1,24 @@
+# merge-on-green@<repo>:<base>.timer instances on drew-gtr-pro; agent-container runs from merge-on-green.timer.
+# The product stack, then the agent apps (company-01 order, 2026-10-21). Base is each repo's default branch.
+agent-sdk:main
+brand:main
+agent-eval:main
+sandbox-ui:main
+run-capsule:main
+agent-knowledge:main
+agent-runtime:main
+traces:main
+agent-app:main
+browser-agent-driver:main
+tangle-router:main
+gtm-agent:master
+tangle-website:master
+discovery-lab:master
+blueprint-agent:develop
+tangle-tools:main
+creative-agent:master
+tax-agent:main
+legal-agent:main
+hospitality-agent:main
+agent-builder:main
+physim:main

@@ -564,6 +564,8 @@ review_guard() {
 # full suite after merge; the Lab's full `pnpm test` failed a different unrelated test on 3 of 4 gates that night
 # (shared /tmp fixtures, OOM timing under load), blocking merges without catching a bug. Under `beelink-gate --merge`, BEELINK_GATE_ID names the gate and that receipt must be the one.
 # The review override does not reach this check, and nothing overrides it.
+# GH_DREW_REQUIRE_RECEIPT=1 applies the same check to any repo for one call: merge-on-green sets it when it
+# merges a head that ran no CI, so a repo without PR checks still merges only on a gate that passed.
 reviewed_url="" reviewed_head=""
 declare -A gated_repos=([tangle-network/discovery-lab]="*" [tangle-network/agent-runtime]="*")
 beelink_gate="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/beelink-gate"
@@ -642,14 +644,14 @@ receipt_guard() {
     done
     [[ "$method" == PUT && "$path" =~ ^repos/([^/]+)/([^/]+)/pulls/([0-9]+)/merge/?$ ]] || return 0
     owner="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
-    [[ -n "${gated_repos[$owner/$name]:-}" ]] || return 0
+    [[ -n "${gated_repos[$owner/$name]:-}${GH_DREW_REQUIRE_RECEIPT:-}" ]] || return 0
     how="-f sha=<head>"
     head="$(GH_TOKEN="$token" gh api "repos/$owner/$name/pulls/$number" --jq .head.sha 2>&1)" \
       || receipt_refuse 1 "gh-drew: refusing to merge $owner/$name#$number: cannot read its head: ${head:0:300}"
   else
     return 0
   fi
-  local commands="${gated_repos[$owner/$name]:-}"
+  local commands="${gated_repos[$owner/$name]:-${GH_DREW_REQUIRE_RECEIPT:+*}}"
   [[ -n "$commands" ]] || return 0
   local pr="https://github.com/$owner/$name/pull/$number"
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || receipt_refuse 1 "gh-drew: refusing to merge $pr: cannot read its head commit (got '${head:0:80}')."

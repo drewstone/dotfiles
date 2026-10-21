@@ -1,0 +1,11 @@
+[Unit]
+Description=Merge green tangle-network/%i PRs every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
