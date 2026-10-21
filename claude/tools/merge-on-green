@@ -42,6 +42,7 @@ import argparse
 import datetime as dt
 import fcntl
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -66,6 +67,17 @@ PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"} if ALL_CHECKS else {"SUCCESS"}
 # each ask reads both beelinks' receipts over SSH.
 RECEIPT_RETRY_S = 600
 BASE = "develop"
+# The full read costs about 1 GraphQL point per requested PR (107 at 100), on tangletools' shared gh-read quota.
+# MERGE_ON_GREEN_PAGE lowers the request for repos that never hold that many open PRs (oldest first).
+PAGE = int(os.environ.get("MERGE_ON_GREEN_PAGE", "100"))
+# --probe: a 2-point read of each open PR's head, draft, labels, rollup and update time, and the base tip, skips
+# the full read when none changed since the last full read. A ready PR still gets a full read every
+# PROBE_READY_S (a gate receipt or a Codex answer changes nothing GitHub shows here), any repo every PROBE_MAX_S.
+PROBE_READY_S, PROBE_MAX_S = 900, 3600
+PROBE = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLimit{cost remaining resetAt}
+repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}
+pullRequests(states:OPEN,baseRefName:$base,first:100){nodes{number isDraft headRefOid updatedAt mergeable
+labels(first:10){nodes{name}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}"""
 RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
 HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
 # A sentence that waits only for the gate this tool already requires is not a hold. #11327
@@ -97,14 +109,14 @@ ALLOWLIST = f"PRs labelled {ALLOW_LABEL} (version PRs stay with release.yml)"
 QUERY = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLimit{cost remaining resetAt}
 repository(owner:$owner,name:$name){mergeCommitAllowed squashMergeAllowed
 ref(qualifiedName:$ref){target{oid}}
-pullRequests(states:OPEN,baseRefName:$base,first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
+pullRequests(states:OPEN,baseRefName:$base,first:%d,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
 number isDraft mergeable isCrossRepository headRefName headRefOid updatedAt body labels(first:20){nodes{name}}
 commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt}} statusCheckRollup{contexts(first:100){nodes{__typename
 ...on CheckRun{name conclusion status completedAt} ...on StatusContext{context state}}}}}}}
 reviews(last:1){nodes{updatedAt}}
 comments(first:100){nodes{id updatedAt}}
 reviewThreads(first:100){nodes{id isResolved isOutdated
-comments(first:1){totalCount nodes{id updatedAt}}}}}}}}"""
+comments(first:1){totalCount nodes{id updatedAt}}}}}}}}""" % PAGE
 
 
 def gh(*args, input=None, via="gh-drew", env=None):
@@ -330,6 +342,7 @@ def main():
     ap.add_argument("--state-dir", default=os.path.expanduser("~/.local/state/merge-on-green"))
     ap.add_argument("--git-url", help="clone URL for the merge mirror (default: the repo over SSH)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--probe", action="store_true", help="skip the full read while a cheap read shows nothing changed")
     ap.add_argument("command", nargs="?", choices=["pause", "resume", "status", "hold"], help="omit to run one pass")
     ap.add_argument("--minutes", type=int, help=f"pause: how long, at most {PAUSE_MAX_MIN}")
     ap.add_argument("--reason", help="pause: why, shown in every skipped line")
@@ -370,7 +383,29 @@ def main():
         CLIENT.finish(a.dry_run, deferred, success)
 
 
+def unchanged(a, owner, name, now):
+    """True when --probe shows the queue as the last full read left it, so this tick can skip that read."""
+    r = gh("api", "graphql", "-f", f"query={PROBE}", "-f", f"owner={owner}", "-f", f"name={name}",
+           "-f", f"base={a.base}", "-f", f"ref=refs/heads/{a.base}", via="gh-read")
+    if r.returncode != 0:
+        return False
+    repo = (json.loads(r.stdout).get("data") or {}).get("repository") or {}
+    prs = (repo.get("pullRequests") or {}).get("nodes") or []
+    seen = hashlib.sha256(json.dumps([repo.get("ref"), prs], sort_keys=True).encode()).hexdigest()
+    path = os.path.join(a.state_dir, "probe.json")
+    last = _github.GitHub.read(Path(path))
+    ready = any(not p["isDraft"] and "hold" not in {l["name"] for l in p["labels"]["nodes"]} for p in prs)
+    age = now - last.get("at", 0)
+    if last.get("seen") == seen and age < (PROBE_READY_S if ready else PROBE_MAX_S):
+        print(f"merge-on-green: unchanged since the full read {int(age)}s ago; skipped")
+        return True
+    a.probe_seen = seen
+    return False
+
+
 def tick(a, owner, name):
+    if a.probe and unchanged(a, owner, name, dt.datetime.now(dt.timezone.utc).timestamp()):
+        return 0
     # This read is a GraphQL query every 2 minutes; on
     # drewstone it starved the merges and every lane's gh-drew, so tangletools' gh-read pays for it.
     r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}",
@@ -469,6 +504,9 @@ def tick(a, owner, name):
     with open(os.path.join(a.state_dir, "status.md"), "w") as f:
         f.write(f"# merge-on-green {stamp}\n\n" + (pause_line(pause) + "\n\n" if pause else "") + gate_line
                 + ("\n".join(status) or "Nothing waiting.") + "\n")
+    if a.probe and not a.dry_run:
+        # Saved only after the full read finished, so a failed read is retried on the next tick.
+        _github.save(os.path.join(a.state_dir, "probe.json"), {"seen": getattr(a, "probe_seen", ""), "at": now.timestamp()})
     for rec in records:
         if rec["action"] == "paused":
             print(f"{stamp} {rec['outcome']}")
