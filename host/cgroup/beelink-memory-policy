@@ -14,14 +14,14 @@ GiB=1073741824
 uid=$(id -u ghrunner-adcprod)
 # MemoryMin is used-page reclaim protection, not a preallocated reservation or
 # immunity from an ancestor OOM. Bound release compilation separately and keep
-# the former 32G deploy allowance plus two 8G release allowances in its parent.
+# the former 32G deploy allowance plus two 12G release allowances in its parent.
 properties() {
   printf '%s\n' 'deploy.slice MemoryMin 8589934592' \
     'deploy-runners.slice MemoryMin 8589934592' \
-    'deploy-runners.slice MemoryMax 51539607552'
+    'deploy-runners.slice MemoryMax 60129542144'
   for n in 01 02; do
     echo "actions.runner.tangle-network.deploy-beelink${index}-adc-${n}.service MemoryMin $((4*GiB))"
-    echo "actions.runner.tangle-network.release-beelink${index}-adc-${n}.service MemoryMax $((8*GiB))"
+    echo "actions.runner.tangle-network.release-beelink${index}-adc-${n}.service MemoryMax $((12*GiB))"
   done
   for unit in user.slice "user-${uid}.slice" "user@${uid}.service"; do
     echo "$unit MemoryMin $((8*GiB))"
@@ -57,6 +57,7 @@ while read -r unit property value; do
 done < <(properties)
 # Rootless image builds are charged to the user manager, outside runner units.
 # Carry the floor through its app slice to Docker's service, too.
+docker_floor=deferred
 if systemctl is-active --quiet "user@${uid}.service"; then
 for unit in app.slice docker.service; do
   actual=$(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show "$unit" -p MemoryMin --value)
@@ -65,6 +66,10 @@ for unit in app.slice docker.service; do
     else sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user set-property "$unit" MemoryMin=8G; fi
   fi
 done
+docker_floor=8G
+else
+  echo 'DEFERRED production Docker app/service floors: user manager inactive' >&2
+  [[ $mode != --check ]] || drift=1
 fi
 for entry in 'beelink-gate 24' 'beelink-gate-dev 8'; do
   read -r group gib <<<"$entry"
@@ -76,4 +81,4 @@ for entry in 'beelink-gate 24' 'beelink-gate-dev 8'; do
   fi
 done
 (( drift == 0 )) || exit 1
-echo "Beelink memory policy OK: gate=24G dev=8G release=8G/job deploy=4G/runner Docker=8G floor"
+echo "Beelink memory policy OK: gate=24G dev=8G release=12G/job deploy=4G/runner Docker=$docker_floor floor"
