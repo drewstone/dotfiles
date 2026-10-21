@@ -10,6 +10,7 @@ The integrating agent owns consumer proof and delivery.
 Send updates when a decision, blocking dependency, ownership conflict, finding, or completed artifact changes another owner's next action.
 Include the change, evidence pointer, and required action; use the existing task record for unchanged status.
 Delegate independently useful deliverables; keep dependent fragments and routine heartbeats with their owner.
+Brief the whole outcome and expect it finished in one go: the worker designs the shape once, carries it out, merges, and reports done. Do not slice it into small PRs, line quotas per PR, "one PR at a time" or hourly check-ins. On 2026-10-20/21, lanes briefed "PRs stay small" made 26 PRs that moved 0 of their god files, and spent their turns on per-PR receipts and watchers. Drew: "its obvioulsy cause you're dispatching terrible prompts and not expecting them to literally solve it all in one go, come on, believ ein them! they can do it in one go!"
 
 ### Brief template
 
