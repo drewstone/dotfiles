@@ -59,12 +59,24 @@ done < <(properties)
 # Carry the floor through its app slice to Docker's service, too.
 docker_floor=deferred
 if systemctl is-active --quiet "user@${uid}.service"; then
-for unit in app.slice docker.service; do
-  actual=$(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show "$unit" -p MemoryMin --value)
-  if [[ $actual != "$((8*GiB))" ]]; then
-    if [[ $mode == --check ]]; then echo "DRIFT production Docker $unit MemoryMin=$actual"; drift=1
-    else sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user set-property "$unit" MemoryMin=8G; fi
-  fi
+# Docker's systemd driver creates container scopes in the manager's user.slice,
+# separately from app.slice/docker.service. Defaults cover future scopes; apply
+# explicit floors to already-running scopes as well. The ancestor's 8G floor
+# is shared by daemon and containers, not multiplied for each container.
+units=(app.slice docker.service user.slice)
+while read -r unit _; do
+  [[ -z "$unit" ]] || units+=("$unit")
+done < <(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user list-units --type=scope --no-legend --plain 'docker-*.scope')
+for unit in "${units[@]}"; do
+  props=(MemoryMin)
+  [[ $unit != user.slice ]] || props+=(DefaultMemoryMin)
+  for property in "${props[@]}"; do
+    actual=$(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show "$unit" -p "$property" --value)
+    if [[ $actual != "$((8*GiB))" ]]; then
+      if [[ $mode == --check ]]; then echo "DRIFT production Docker $unit $property=$actual"; drift=1
+      else sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user set-property "$unit" "$property=8G"; fi
+    fi
+  done
 done
 docker_floor=8G
 else

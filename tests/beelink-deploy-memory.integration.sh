@@ -6,6 +6,11 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [[ $(id -u) == 0 ]] || { echo 'run as root' >&2; exit 77; }
 bash "$ROOT/host/cgroup/beelink-memory-policy" --check
+# A future rootless Docker scope must inherit the container-slice floor.
+uid=$(id -u ghrunner-adcprod)
+sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" \
+  systemd-run --user --quiet --scope --slice=user.slice bash -c \
+  'group=$(cut -d: -f3 /proc/self/cgroup); test "$(cat /sys/fs/cgroup$group/memory.min)" = 8589934592'
 # This integration command itself must use the maintained gate admission path.
 grep -q '^0::/beelink-gate$' /proc/self/cgroup
 [[ $(cat /sys/fs/cgroup/beelink-gate/memory.max) == 25769803776 ]]
