@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Memory owner for the Beelink gate installer. Apply live without restarting
+# Actions runners; systemctl properties persist in systemd's control drop-ins.
+set -euo pipefail
+mode=${1:---apply}
+[[ "$mode" == --apply || "$mode" == --check ]] || exit 64
+[[ $(id -u) == 0 ]] || { echo 'run as root' >&2; exit 77; }
+case $(hostname) in DESKTOP-18IR33V|beelink1) index=1;; DESKTOP-10CQNP0|beelink2) index=2;; *)
+  # WSL hostnames differ across provisioning; match the existing ADC unit.
+  if systemctl cat actions.runner.tangle-network.deploy-beelink1-adc-01.service >/dev/null 2>&1; then index=1
+  elif systemctl cat actions.runner.tangle-network.deploy-beelink2-adc-01.service >/dev/null 2>&1; then index=2
+  else echo 'no ADC deploy runner on this host' >&2; exit 69; fi;; esac
+GiB=1073741824
+uid=$(id -u ghrunner-adcprod)
+# MemoryMin is used-page reclaim protection, not a preallocated reservation or
+# immunity from an ancestor OOM. Bound release compilation separately and keep
+# the former 32G deploy allowance plus two 8G release allowances in its parent.
+properties() {
+  printf '%s\n' 'deploy.slice MemoryMin 8589934592' \
+    'deploy-runners.slice MemoryMin 8589934592' \
+    'deploy-runners.slice MemoryMax 51539607552'
+  for n in 01 02; do
+    echo "actions.runner.tangle-network.deploy-beelink${index}-adc-${n}.service MemoryMin $((4*GiB))"
+    echo "actions.runner.tangle-network.release-beelink${index}-adc-${n}.service MemoryMax $((8*GiB))"
+  done
+  for unit in user.slice "user-${uid}.slice" "user@${uid}.service"; do
+    echo "$unit MemoryMin $((8*GiB))"
+  done
+}
+# A cap below current usage could kill a live job during installation. Refuse
+# before changing anything; the operator can retry once current use is below it.
+for entry in 'beelink-gate 24' 'beelink-gate-dev 8'; do
+  read -r group gib <<<"$entry"
+  current=$(cat "/sys/fs/cgroup/$group/memory.current")
+  if (( current > gib*GiB )); then
+    echo "$group currently exceeds ${gib}G; no policy changed" >&2; exit 75
+  fi
+done
+while read -r unit property value; do
+  if [[ $property == MemoryMax ]]; then
+    current=$(systemctl show "$unit" -p MemoryCurrent --value)
+    [[ "$current" =~ ^[0-9]+$ ]] || { echo "cannot read $unit memory" >&2; exit 69; }
+    (( current <= value )) || { echo "$unit currently exceeds its cap; no policy changed" >&2; exit 75; }
+  fi
+done < <(properties)
+drift=0
+while read -r unit property value; do
+  actual=$(systemctl show "$unit" -p "$property" --value)
+  if [[ $actual != "$value" ]]; then
+    if [[ $mode == --check ]]; then echo "DRIFT $unit $property=$actual expected=$value"; drift=1
+    else systemctl set-property "$unit" "$property=$value"; fi
+  fi
+done < <(properties)
+# Rootless image builds are charged to the user manager, outside runner units.
+# Carry the floor through its app slice to Docker's service, too.
+if systemctl is-active --quiet "user@${uid}.service"; then
+for unit in app.slice docker.service; do
+  actual=$(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show "$unit" -p MemoryMin --value)
+  if [[ $actual != "$((8*GiB))" ]]; then
+    if [[ $mode == --check ]]; then echo "DRIFT production Docker $unit MemoryMin=$actual"; drift=1
+    else sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user set-property "$unit" MemoryMin=8G; fi
+  fi
+done
+fi
+for entry in 'beelink-gate 24' 'beelink-gate-dev 8'; do
+  read -r group gib <<<"$entry"
+  file="/sys/fs/cgroup/$group/memory.max"
+  value=$((gib*GiB))
+  if [[ $(cat "$file") != "$value" ]]; then
+    if [[ $mode == --check ]]; then echo "DRIFT $group memory.max expected=$value"; drift=1
+    else echo "$value" >"$file"; fi
+  fi
+done
+(( drift == 0 )) || exit 1
+echo "Beelink memory policy OK: gate=24G dev=8G release=8G/job deploy=4G/runner Docker=8G floor"

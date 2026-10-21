@@ -29,7 +29,7 @@
 # Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only|--docker-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
 #   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
-#   --gate-priority-only  Beelinks: install only the merge-gate CPU priority.
+#   --gate-priority-only  Beelinks: install gate CPU and deploy memory isolation.
 #   --docker-only     validate and stage only daemon.json; never reload or restart Docker.
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
@@ -237,6 +237,7 @@ install_beelink_gate_priority() {
     fi
   fi
   want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
+  want_file 0755 "$SCRIPT_DIR/cgroup/beelink-memory-policy" /usr/local/libexec/beelink-memory-policy
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
   if [ "$CHECK" = 1 ]; then
     [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "ci.slice cpu.weight is not $ci_weight"
@@ -256,6 +257,11 @@ install_beelink_gate_priority() {
       $SUDO systemctl restart beelink-gate-cgroup.service
       note changed "beelink-gate cgroup cpu.weight=$(cat /sys/fs/cgroup/beelink-gate/cpu.weight)"
     fi
+  fi
+  if [ "$CHECK" = 1 ]; then
+    $SUDO /usr/local/libexec/beelink-memory-policy --check || drift "Beelink memory policy"
+  else
+    $SUDO /usr/local/libexec/beelink-memory-policy --apply
   fi
   [ "$before" = 1 ] && CHANGED=1
   return 0

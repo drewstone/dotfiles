@@ -20,5 +20,8 @@ ExecStart=/bin/sh -c 'echo "$(( $(nproc) * 75000 )) 100000" > /sys/fs/cgroup/bee
 # Iterative --dev runs: lowest priority, below CI.
 ExecStart=/bin/sh -c 'mkdir -p /sys/fs/cgroup/beelink-gate-dev && echo 25 > /sys/fs/cgroup/beelink-gate-dev/cpu.weight'
 
+# Reapply memory limits after the raw groups exist; never restart a runner.
+ExecStart=/usr/local/libexec/beelink-memory-policy --apply
+
 [Install]
 WantedBy=multi-user.target
