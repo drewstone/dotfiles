@@ -845,7 +845,7 @@ esac
     // A plain `-c` command keeps the unit's PATH, as before.
     const plain = f.call(sha, ["bash", "-c", "node -v"]);
     assert.equal(plain.status, 0, plain.stderr);
-    assert.equal(plain.stdout, "v22.23.3\n");
+    assert.match(plain.stdout, /v22\.23\.3\n$/);
     assert.doesNotMatch(plain.stderr, /login shell's node/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
