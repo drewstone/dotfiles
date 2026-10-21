@@ -6,6 +6,12 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [[ $(id -u) == 0 ]] || { echo 'run as root' >&2; exit 77; }
 bash "$ROOT/host/cgroup/beelink-memory-policy" --check
+# This integration command itself must use the maintained gate admission path.
+grep -q '^0::/beelink-gate$' /proc/self/cgroup
+[[ $(cat /sys/fs/cgroup/beelink-gate/memory.max) == 25769803776 ]]
+# The synthetic allocator gets a scaled service-local limit; never exhaust the
+# real 24G aggregate shared with other lanes' active gates.
+
 work=$(mktemp -d)
 nonce="$$-$(date +%s)"
 deploy="adc-memory-proof-deploy-$nonce"
