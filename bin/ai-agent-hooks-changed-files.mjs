@@ -6,6 +6,11 @@ import { spawnSync } from "node:child_process";
 // read whole and the hook refuses rather than check a partial list.
 const MAX_GIT_OUTPUT = 256 * 1024 * 1024;
 
+// A replace ref (`refs/replace/`) would let git read one commit's or file's
+// objects as another's; every git this hook runs, here and in its checks,
+// reads the objects themselves.
+process.env.GIT_NO_REPLACE_OBJECTS = "1";
+
 function git(cwd, args, input) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: MAX_GIT_OUTPUT, input });
   if (result.error) throw new Error(`git ${args[0]} failed: ${result.error.message}`);
@@ -22,7 +27,8 @@ const ZERO = /^0+$/;
 
 /**
  * The commits a push sends: those its updates name that the destination does
- * not already reach, by its own remote-tracking refs or the tips it reported.
+ * not already reach, by its own remote-tracking refs (trackingTips) or the
+ * tips it reported.
  * A commit only another remote or a stale ref of another remote holds is
  * sent, because it is new to the destination. A localSha this repository
  * does not hold refuses the push.
@@ -40,11 +46,34 @@ function sentCommits(repoRoot, remote, updates) {
       reached.push(update.remoteSha);
   }
   if (sent.length === 0) return [];
-  // A remote name is a remote-tracking namespace; a URL pushed to directly has none.
-  const tracking = remote && !remote.includes("/") && !remote.includes(":") ? [`--remotes=${remote}`] : [];
-  const listed = git(repoRoot, ["rev-list", ...sent, "--not", ...tracking, ...reached]);
+  const tracking = trackingTips(repoRoot, remote);
+  const listed = git(repoRoot, ["rev-list", "--stdin"], [...sent, "--not", ...tracking, ...reached, ""].join("\n"));
   if (!listed.ok) throw new Error(`pre-push: cannot list the commits to send: ${listed.stderr.trim()}`);
   return lines(listed.stdout);
+}
+
+/**
+ * What the destination's remote-tracking refs point at, when they speak for
+ * it: `remote` is a configured remote whose every push URL is its fetch URL.
+ * A remote that pushes somewhere else (`remote.<name>.pushurl` naming another
+ * repository), or a URL pushed to directly, reaches nothing by its refs. The
+ * refs are matched by their literal `refs/remotes/<remote>/` prefix, so a
+ * name holding a glob character matches no other remote's.
+ */
+function trackingTips(repoRoot, remote) {
+  if (!remote) return [];
+  const fetchUrl = git(repoRoot, ["remote", "get-url", "--", remote]);
+  const pushUrls = git(repoRoot, ["remote", "get-url", "--push", "--all", "--", remote]);
+  if (!fetchUrl.ok || !pushUrls.ok) return [];
+  const pushes = lines(pushUrls.stdout);
+  if (pushes.length === 0 || pushes.some((url) => url !== fetchUrl.stdout.trim())) return [];
+  const refs = git(repoRoot, ["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/"]);
+  if (!refs.ok) throw new Error(`pre-push: cannot read the remote-tracking refs: ${refs.stderr.trim()}`);
+  const prefix = `refs/remotes/${remote}/`;
+  return lines(refs.stdout)
+    .map((line) => [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)])
+    .filter(([, ref]) => ref.startsWith(prefix))
+    .map(([sha]) => sha);
 }
 
 /**
