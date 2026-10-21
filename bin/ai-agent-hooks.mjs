@@ -1239,7 +1239,7 @@ async function runHookCommand(rawArgs) {
   const pushRefUpdates = hookName === "pre-push" ? readPrePushRefUpdates() : [];
   const barePush = isBareRepo(repoRoot) ? pushRefUpdates.find((u) => !/^0+$/.test(u.localSha)) : undefined;
   const pushContext = barePush ? barePushContext(barePush) : resolvePushDiffContext(repoRoot);
-  const files = changedFiles(repoRoot, hookName, pushContext);
+  const files = changedFiles(repoRoot, hookName, pushContext, barePush ? [] : pushRefUpdates);
   const context = {
     repoRoot,
     hookName,
