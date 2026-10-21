@@ -252,3 +252,42 @@ test("a blobless clone checks a push without fetching each destination tip it la
   assert.notEqual(refused.status, 0);
   assert.match(refused.stdout + refused.stderr, /partial\.pem:1 \(private-key\)/);
 });
+
+test("a commit the destination holds only under a hosting ref such as refs/pull vouches for nothing", () => {
+  const repo = setup();
+  ok(bare(repo, ["switch", "-q", "-c", "evil", "main"]));
+  commit(repo, { "fork.pem": `${KEY}\n` }, "a fork's key");
+  ok(bare(repo, ["push", "-q", "origin", "evil:refs/pull/7/head"]));
+  ok(bare(repo, ["switch", "-q", "feat/x"]));
+  ok(bare(repo, ["merge", "-q", "--no-edit", "evil"]));
+  ok(bare(repo, ["branch", "-q", "-D", "evil"]));
+  const result = git(repo, ["push", "origin", "feat/x:refs/heads/a5"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /fork\.pem:1 \(private-key\)/);
+});
+
+test("a push location an insteadOf lists as another repository vouches for nothing", () => {
+  const repo = setup();
+  leakOnOrigin(repo);
+  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  const publicRepo = mkdtempSync(join(tmpdir(), "push-files-rewrite-"));
+  ok(bare(publicRepo, ["init", "--bare", "-q", "-b", "main"]));
+  // Pushes go to the public repository; reads of it are rewritten back to origin.
+  ok(git(repo, ["config", `url.${publicRepo}.pushInsteadOf`, origin]));
+  ok(git(repo, ["config", `url.${origin}.insteadOf`, publicRepo]));
+  const result = git(repo, ["push", "origin", "leak"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
+});
+
+test("a destination that cannot be listed refuses the push and says to retry", () => {
+  const repo = setup();
+  const sha = ok(git(repo, ["rev-parse", "HEAD"])).stdout.trim();
+  const result = spawnSync(
+    process.execPath,
+    [resolve("bin/ai-agent-hooks.mjs"), "run", "pre-push", "origin", join(tmpdir(), "push-files-no-such-repo")],
+    { cwd: repo, encoding: "utf8", env, input: `refs/heads/feat/x ${sha} refs/heads/feat/x ${"0".repeat(40)}\n` },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /destination could not be listed; retry the push/);
+});

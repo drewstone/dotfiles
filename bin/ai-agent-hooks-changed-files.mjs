@@ -84,21 +84,30 @@ function held(repoRoot, shas) {
  * the location git is pushing to. A tip this repository lacks is fetched
  * (objects only, no ref written) when it is the destination's default branch
  * or a ref this push updates, the tips a pushed branch is built on; any other
- * unknown tip vouches for nothing, so what only it reaches is checked. When
- * the destination cannot be listed, nothing vouches: every unsent commit is
- * checked.
+ * unknown tip vouches for nothing, so what only it reaches is checked.
+ *
+ * Only branches and tags vouch: what a clone, CI run or deploy reads. A
+ * hosting ref such as `refs/pull/7/head` holds a fork's commits the
+ * repository never took. When the location git pushes to is listed under
+ * another URL (an `insteadOf` rewriting the pushed URL again), the listing
+ * speaks for another repository and nothing vouches. A destination that
+ * cannot be listed refuses the push (Unlisted): checking all of history
+ * instead takes minutes on a large repository.
  */
 function destinationTips(repoRoot, location, updates) {
-  if (!location) return [];
+  if (!location) throw new Unlisted("git named no push location");
   const env = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  const resolved = git(repoRoot, ["ls-remote", "--get-url", "--", location]);
+  if (!resolved.ok) throw new Unlisted(resolved.stderr.trim());
+  if (resolved.stdout.trim() !== location) return [];
   const listed = spawnSync("git", ["ls-remote", "--symref", "--", location], { cwd: repoRoot, encoding: "utf8", maxBuffer: MAX_GIT_OUTPUT, timeout: 60_000, env });
-  if (listed.error || listed.status !== 0) return [];
+  if (listed.error || listed.status !== 0) throw new Unlisted(listed.error?.message || (listed.stderr || "").trim());
   const tips = new Map();
   let defaultRef = "";
   for (const line of lines(listed.stdout || "")) {
     const [sha, ref] = line.split("\t");
     if (sha.startsWith("ref: ") && ref === "HEAD") defaultRef = sha.slice("ref: ".length);
-    else if (/^[0-9a-f]{40,64}$/.test(sha) && ref) tips.set(ref, sha);
+    else if (/^[0-9a-f]{40,64}$/.test(sha) && /^refs\/(heads|tags)\//.test(ref ?? "")) tips.set(ref, sha);
   }
   const wanted = new Set([defaultRef, ...updates.map((update) => update.remoteRef)]);
   const want = [...new Set([...wanted].map((ref) => tips.get(ref)).filter(Boolean))];
@@ -108,6 +117,9 @@ function destinationTips(repoRoot, location, updates) {
     spawnSync("git", ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--", location, ...fetch], { cwd: repoRoot, encoding: "utf8", timeout: 300_000, env });
   return [...new Set(tips.values())];
 }
+
+/** The destination could not be listed, so no commit is known to be there. */
+class Unlisted extends Error {}
 
 /**
  * Each sent commit with the files it changes, read at that commit: a commit
@@ -164,7 +176,15 @@ export function changedFiles(repoRoot, hookName, pushContext, { updates = [], lo
     return one(files.filter((file) => differsFromTheirs.has(file)));
   }
   if (!contentRev && updates.length > 0) {
-    const sources = commitSources(repoRoot, sentCommits(repoRoot, location, updates));
+    let sources;
+    try {
+      sources = commitSources(repoRoot, sentCommits(repoRoot, location, updates));
+    } catch (error) {
+      if (!(error instanceof Unlisted)) throw error;
+      // Each content check refuses with this; the hook's other checks still run.
+      const refusal = `destination could not be listed; retry the push (${location}: ${error.message || "no answer"})`;
+      return { files: [], sources: [{ files: [], rev: "", refusal }] };
+    }
     return { files: [...new Set(sources.flatMap((source) => source.files))], sources };
   }
   const range = pushContext?.range;
@@ -176,7 +196,9 @@ export function changedFiles(repoRoot, hookName, pushContext, { updates = [], lo
 
 /** A content check run over every source, its findings joined; ok only when every source is. */
 export function bySource(context, check) {
-  const results = context.sources.map((source) => check(source.files, source.rev));
+  const results = context.sources.map((source) =>
+    source.refusal ? { ok: false, status: 1, output: source.refusal } : check(source.files, source.rev),
+  );
   if (results.length === 0) return check([], "");
   const failed = results.filter((result) => !result.ok);
   return {
