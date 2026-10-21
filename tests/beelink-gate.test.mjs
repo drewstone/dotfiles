@@ -707,7 +707,7 @@ test("installs and runs with the repo's .nvmrc Node and rebuilds addons built fo
     // nvm selects a Node 99 whose NODE_MODULE_VERSION is 999.
     const nvmBin = join(f.root, "nvm-bin");
     mkdirSync(nvmBin);
-    writeFileSync(join(nvmBin, "node"), `#!/usr/bin/env bash\ncase "$*" in\n  -v) echo v99.0.0 ;;\n  "-p process.versions.modules") echo 999 ;;\n  *) exec '${process.execPath}' "$@" ;;\nesac\n`);
+    writeFileSync(join(nvmBin, "node"), `#!/usr/bin/env bash\ncase "$*" in\n  -v) echo v99.0.0 ;;\n  "-p process.versions.modules") echo 999 ;;\n  "-p "*process.versions.modules*) echo "999 v99.0.0 $0" ;;\n  *) exec '${process.execPath}' "$@" ;;\nesac\n`);
     chmodSync(join(nvmBin, "node"), 0o755);
     mkdirSync(join(f.home, ".nvm"));
     writeFileSync(join(f.home, ".nvm", "nvm.sh"), `nvm() { [ "$1" = use ] && export PATH='${nvmBin}':"$PATH"; }\n`);
@@ -723,6 +723,7 @@ case "$1" in
     mkdir -p $p/fake-native@1.0.0/node_modules/fake-native/build/Release
     ln -f '${storeCopy}' $p/fake-native@1.0.0/node_modules/fake-native/build/Release/fake.node
     printf '{"ignoredBuilds":[],"layoutVersion":5}' > node_modules/.modules.yaml ;;
+  exec) shift; exec "$@" ;;
   rebuild)
     shift; [ "$1" = --store-dir ] && shift 2
     for n in "$@"; do [ "$n" = "\${FAKE_REBUILD_SKIPS:-}" ] && continue; d=$(echo $p/*/node_modules/$n); mkdir -p $d/build/Release; printf 'node_register_module_v%s' "$(node -p process.versions.modules)" > $d/build/Release/addon.node; done ;;
@@ -735,13 +736,14 @@ esac
     const calls = readFileSync(f.pnpmLog, "utf8").trim().split("\n");
     assert.deepEqual(calls, [
       `install --frozen-lockfile --store-dir ${f.home}/.local/share/pnpm/store`,
+      'exec node -p process.versions.modules+" "+process.version+" "+process.execPath',
       `rebuild --store-dir ${f.home}/.local/share/pnpm/store @scope/fake-missing fake-native`,
     ]);
     assert.equal(readFileSync(storeCopy, "utf8"), "node_register_module_v1", "the store copy is untouched");
-    assert.match(result.stderr, /rebuilding native addons for node v99\.0\.0: @scope\/fake-missing missing addon fake-native abi 1->999/);
-    assert.match(result.stderr, /node=v99\.0\.0 rebuild=@scope\/fake-missing missing addon fake-native abi 1->999/);
+    assert.match(result.stderr, /rebuilding native addons for node v99\.0\.0 via pnpm: @scope\/fake-missing missing addon fake-native abi 1->999/);
+    assert.match(result.stderr, /node=v99\.0\.0 via pnpm rebuild=@scope\/fake-missing missing addon fake-native abi 1->999/);
     const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
-    assert.equal(row.node, "v99.0.0");
+    assert.equal(row.node, "v99.0.0 via pnpm");
     assert.equal(row.rebuild, "@scope/fake-missing missing addon fake-native abi 1->999");
     // The next gate installs again; its addons match the Node, so nothing rebuilds.
     writeFileSync(storeCopy, "node_register_module_v999");
@@ -760,6 +762,49 @@ esac
     const noNvm = f.call(sha, ["true"]);
     assert.equal(noNvm.status, 2, noNvm.stderr);
     assert.match(noNvm.stderr, /\.nvmrc asks for Node 99\.0\.0 and beelink2 has no nvm/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("reads the addon ABI from the Node pnpm launches, not plain node, and rebuilds with it", () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.source, "package-lock.json"));
+    writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "pnpm lock"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    // Plain node on PATH is Node 22 (ABI 127); the Node pnpm launches for scripts is Node 24 (ABI 137).
+    const stubNode = (dir, abi, version) => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "node"), `#!/usr/bin/env bash\ncase "$*" in\n  -v) echo ${version} ;;\n  "-p process.versions.modules") echo ${abi} ;;\n  "-p "*process.versions.modules*) echo "${abi} ${version} $0" ;;\n  *) exec '${process.execPath}' "$@" ;;\nesac\n`);
+      chmodSync(join(dir, "node"), 0o755);
+    };
+    stubNode(join(f.root, "bin"), 127, "v22.23.3");
+    const pnpmNode = join(f.root, "pnpm-node");
+    stubNode(pnpmNode, 137, "v24.1.0");
+    writeFileSync(join(f.root, "bin", "pnpm"), `#!/usr/bin/env bash
+printf "%s\\n" "$*" >> "$PNPM_LOG"
+d=node_modules/.pnpm/better-sqlite3@12.4.1/node_modules/better-sqlite3
+case "$1" in
+  install) mkdir -p $d/build/Release; touch $d/binding.gyp; printf 'node_register_module_v127' > $d/build/Release/better_sqlite3.node ;;
+  exec) [ -z "\${FAKE_PNPM_EXEC_FAILS:-}" ] || exit 1; shift; PATH='${pnpmNode}':"$PATH" exec "$@" ;;
+  rebuild) mkdir -p $d/build/Release; printf 'node_register_module_v%s' "$(PATH='${pnpmNode}':"$PATH" node -p process.versions.modules)" > $d/build/Release/better_sqlite3.node ;;
+esac
+`);
+    const result = f.call(sha, ["bash", "-c", "node -v"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "v22.23.3\n", "plain node on PATH is the other Node");
+    assert.match(result.stderr, /rebuilding native addons for node v24\.1\.0 via pnpm: better-sqlite3 abi 127->137/);
+    assert.match(result.stderr, /node=v24\.1\.0 via pnpm rebuild=better-sqlite3 abi 127->137/);
+    assert.deepEqual(readFileSync(f.pnpmLog, "utf8").trim().split("\n").map((line) => line.split(" ")[0]), ["install", "exec", "rebuild"]);
+    assert.match(readFileSync(f.pnpmLog, "utf8"), /^rebuild --store-dir \S+ better-sqlite3$/m);
+    const row = JSON.parse(readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").at(-1));
+    assert.equal(row.node, "v24.1.0 via pnpm");
+    assert.equal(row.rebuild, "better-sqlite3 abi 127->137");
+    // When pnpm cannot launch its Node, the gate reads plain node and says so.
+    const fallback = f.call(sha, ["true"], { env: { FAKE_PNPM_EXEC_FAILS: "1" } });
+    assert.equal(fallback.status, 0, fallback.stderr);
+    assert.match(fallback.stderr, /node=v22\.23\.3 via node \(pnpm exec failed\) rebuild=none/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1307,7 +1352,8 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
     const newer = cacheSlot(f, "newer", 2000);
     const lockPath = join(f.cache, ".locks", "github.com-test-older.lock");
     mkdirSync(join(f.cache, ".locks"), { recursive: true });
-    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; sleep 3`], { env: f.env });
+    // The lock lives until the test releases it: a fixed few seconds raced the gate's prune on a loaded host.
+    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; sleep 60`], { env: f.env, detached: true });
     try {
       for (let i = 0; i < 100 && !existsSync(marker); i++) await new Promise((resolveDone) => setTimeout(resolveDone, 20));
       assert.equal(existsSync(marker), true);
@@ -1315,7 +1361,7 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
       assert.equal(result.status, 0, result.stderr);
       assert.equal(existsSync(older), true);
       assert.equal(existsSync(newer), false);
-    } finally { locker.kill(); }
+    } finally { process.kill(-locker.pid); }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
