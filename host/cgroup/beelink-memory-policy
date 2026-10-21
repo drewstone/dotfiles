@@ -79,6 +79,7 @@ for unit in user.slice app.slice docker.service; do
 done
 # Scopes are transient; never retain a configuration file per container ID.
 # A scope disappearing while we read/write is safe; all other errors fail.
+scopes=$(userctl list-units --type=scope --no-legend --plain 'docker-*.scope')
 while read -r unit _; do
   [[ -n "$unit" ]] || continue
   load=$(userctl show "$unit" -p LoadState --value)
@@ -91,7 +92,7 @@ while read -r unit _; do
   elif ! userctl set-property --runtime "$unit" MemoryMin=8G; then
     [[ $(userctl show "$unit" -p LoadState --value) == not-found ]] || exit 1
   fi
-done < <(userctl list-units --type=scope --no-legend --plain 'docker-*.scope')
+done <<<"$scopes"
 docker_floor=8G
 else
   echo 'DEFERRED production Docker app/service floors: user manager inactive' >&2
