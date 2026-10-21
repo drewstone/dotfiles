@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
-"""Merge every green agent-container pull request into develop.
+"""Merge every green pull request into a repo's base branch (agent-container and develop by default).
 
-usage: merge-on-green [--repo owner/name] [--state-dir DIR] [--dry-run]
+usage: merge-on-green [--repo owner/name] [--base BRANCH] [--state-dir DIR] [--dry-run]
        merge-on-green pause --minutes N --reason TEXT    (N at most 120)
        merge-on-green resume
        merge-on-green status
        merge-on-green hold < answer.json   (one PR's GraphQL answer; exit 1 and the reason if held)
 
-One tick reads every open PR into develop in one GraphQL call and merges each
-PR that is ready:
+One tick reads every open PR into the base (--base, default develop) in one GraphQL call
+and merges each PR that is ready:
   - not a draft, not conflicting, not a release branch;
   - Fast Checks, Build and Type Check succeeded on the current head (any other red check is
     advisory: it is named in the merge line, and develop's full fan fixes it forward);
     MERGE_ON_GREEN_REQUIRED="" (empty) drops the CI gate entirely: merge first, gate before deploy;
+    MERGE_ON_GREEN_REQUIRED="*" requires every check on the head to pass (success, neutral or
+    skipped), and a head with no checks at all merges only on a passed beelink-gate receipt for
+    that head, which gh-drew checks (GH_DREW_REQUIRE_RECEIPT); the product repos outside
+    agent-container run this way from merge-on-green@.timer;
   - no unresolved review thread opens with P0 or P1;
   - no hold label and no hold phrase in the body (a phrase that waits only for the gate is not a hold);
   - its head is at least 2 minutes old (a push may still be landing).
-A PR that conflicts gets develop merged in by git, which honors .gitattributes merge
+A PR that conflicts gets the base merged in by git, which honors .gitattributes merge
 drivers (docs/invariants.md is merge=union) that GitHub's own merge ignores; a conflict git
 cannot resolve gets one comment per head for its owner.
-Merges pin the exact head they judged (--match-head-commit) and run as
-drewstone through gh-drew, so develop CI and release automation fire exactly
-as they do for any merge. Develop then runs the full test fan; red is fixed
+Merges pin the exact head they judged (--match-head-commit), use a merge commit
+when the repo allows one (else squash, else rebase), and run as drewstone
+through gh-drew, so base CI and release automation fire exactly as they do for any merge. Develop then runs the full test fan; red is fixed
 forward (docs/processes/shipping.md in agent-container).
 
 A pause holds every merge except PRs labelled release-critical, so a release gets
@@ -54,6 +58,14 @@ CLIENT = None
 REVIEW_FRAGMENT = Path(__file__).resolve().with_name('gh-drew-review.sh').read_text().split("<<'GRAPHQL'", 1)[1].split('\n', 1)[1].split('\nGRAPHQL', 1)[0]
 
 REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
+# "*": every check on the head is the gate. On 2026-10-21 about 60 PRs across the product repos waited for
+# a hand merge because this tool served agent-container alone; most of those repos run no PR CI.
+ALL_CHECKS = REQUIRED == ["*"]
+PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"} if ALL_CHECKS else {"SUCCESS"}
+# A no-CI head whose receipt gh-drew refused is asked again after this long, not every tick:
+# each ask reads both beelinks' receipts over SSH.
+RECEIPT_RETRY_S = 600
+BASE = "develop"
 RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
 HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
 # A sentence that waits only for the gate this tool already requires is not a hold. #11327
@@ -82,9 +94,10 @@ PAUSE_VAR = "MERGE_ON_GREEN_PAUSED"
 ALLOW_LABEL = "release-critical"
 ALLOWLIST = f"PRs labelled {ALLOW_LABEL} (version PRs stay with release.yml)"
 
-QUERY = """query($owner:String!,$name:String!){rateLimit{cost remaining resetAt} repository(owner:$owner,name:$name){
-ref(qualifiedName:"refs/heads/develop"){target{oid}}
-pullRequests(states:OPEN,baseRefName:"develop",first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
+QUERY = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLimit{cost remaining resetAt}
+repository(owner:$owner,name:$name){mergeCommitAllowed squashMergeAllowed
+ref(qualifiedName:$ref){target{oid}}
+pullRequests(states:OPEN,baseRefName:$base,first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
 number isDraft mergeable isCrossRepository headRefName headRefOid updatedAt body labels(first:20){nodes{name}}
 commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt}} statusCheckRollup{contexts(first:100){nodes{__typename
 ...on CheckRun{name conclusion status completedAt} ...on StatusContext{context state}}}}}}}
@@ -221,7 +234,7 @@ def decide(pr, now):
         return "wait", "unresolved P0/P1 thread"
     if pr["mergeable"] == "CONFLICTING":
         # GitHub runs no pull_request CI on a conflicting head, so nothing else can change.
-        return "conflict", "conflicts with develop"
+        return "conflict", f"conflicts with {BASE}"
     commit = pr["commits"]["nodes"][0]["commit"]
     # Judge each check by its latest run: a failure that was re-run green is green.
     runs = {}
@@ -231,24 +244,31 @@ def decide(pr, now):
         elif c["context"] not in RETIRED:
             runs.setdefault(c["context"], []).append(("~", c["state"]))
     checks = {n: [max(rs, key=lambda r: r[0])[1]] for n, rs in runs.items()}
+    gate = sorted(checks) if ALL_CHECKS else REQUIRED
+    age = (now - dt.datetime.fromisoformat(commit["committedDate"].replace("Z", "+00:00"))).total_seconds()
+    if ALL_CHECKS and not gate:
+        # A fresh head may not have registered its CI yet, so it waits out the same age as a green one.
+        if age < MIN_HEAD_AGE_S:
+            return "wait", f"head {int(age)}s old"
+        # No CI on this head: gh-drew merges it only on a passed beelink-gate receipt (tick sets the flag).
+        return "merge", "no CI checks; merging on its beelink-gate receipt"
     # Only the gate blocks. A red check outside it held #11718 (4 lines, gate green) for 9 h on
     # 2026-10-19 on "Sandbox composer browser contract"; the gate is Fast Checks, Build and
     # Type Check (AGENTS.md), and develop's full fan fixes any other red forward.
-    failed = sorted(n for n in REQUIRED if any(s in RED for s in checks.get(n, [])))
+    failed = sorted(n for n in gate if any(s in RED for s in checks.get(n, [])))
     if failed:
         return "wait", "red: " + ", ".join(failed[:3])
-    missing = [n for n in REQUIRED if not checks.get(n) or any(s != "SUCCESS" for s in checks[n])]
+    missing = [n for n in gate if not checks.get(n) or any(s not in PASSED for s in checks[n])]
     if missing:
         return "wait", "waiting on " + ", ".join(missing)
-    age = (now - dt.datetime.fromisoformat(commit["committedDate"].replace("Z", "+00:00"))).total_seconds()
     if age < MIN_HEAD_AGE_S:
         return "wait", f"head {int(age)}s old"
-    advisory = sorted(n for n, states in checks.items() if n not in REQUIRED and any(s in RED for s in states))
+    advisory = sorted(n for n, states in checks.items() if n not in gate and any(s in RED for s in states))
     return "merge", "green" + (" (advisory red: " + ", ".join(advisory[:3]) + ")" if advisory else "")
 
 
-def merge_develop_with_attributes(a, pr):
-    """Merge develop into a same-repo PR branch the way local git does, honoring .gitattributes.
+def merge_base_with_attributes(a, pr):
+    """Merge the base into a same-repo PR branch the way local git does, honoring .gitattributes.
 
     Returns (pushed merge sha or None, reason). Runs in a blob-less bare mirror, so no
     worktree or install; the push is a fast-forward of the judged head, so a branch that
@@ -262,18 +282,18 @@ def merge_develop_with_attributes(a, pr):
         if c.returncode != 0:
             return None, "mirror clone failed: " + c.stderr.strip()[:120]
     branch, head = pr["headRefName"], pr["headRefOid"]
-    f = git("fetch", "--quiet", "origin", "+refs/heads/develop:refs/heads/develop", f"+refs/heads/{branch}:refs/pr-head")
+    f = git("fetch", "--quiet", "origin", f"+refs/heads/{a.base}:refs/heads/{a.base}", f"+refs/heads/{branch}:refs/pr-head")
     if f.returncode != 0:
         return None, "fetch failed: " + f.stderr.strip()[:120]
     if git("rev-parse", "refs/pr-head").stdout.strip() != head:
         return None, "head moved"
-    develop = git("rev-parse", "refs/heads/develop").stdout.strip()
-    # The branch is "ours", as in `git merge develop` run on it.
-    m = git(f"--attr-source={develop}", "merge-tree", "--write-tree", head, develop)
+    base = git("rev-parse", f"refs/heads/{a.base}").stdout.strip()
+    # The branch is "ours", as in `git merge <base>` run on it.
+    m = git(f"--attr-source={base}", "merge-tree", "--write-tree", head, base)
     if m.returncode != 0:
         return None, "real conflict"
     tree = m.stdout.split("\n", 1)[0].strip()
-    c = git("commit-tree", tree, "-p", head, "-p", develop, "-m", f"Merge develop into {branch}\n\n"
+    c = git("commit-tree", tree, "-p", head, "-p", base, "-m", f"Merge {a.base} into {branch}\n\n"
             "merge-on-green: GitHub's merge ignores .gitattributes merge drivers; git's merge is clean.")
     if c.returncode != 0:
         return None, "commit failed: " + c.stderr.strip()[:120]
@@ -281,7 +301,7 @@ def merge_develop_with_attributes(a, pr):
     p = git("push", "--quiet", "origin", f"{sha}:refs/heads/{branch}")
     if p.returncode != 0:
         return None, "push refused: " + p.stderr.strip()[:120]
-    return sha, "merged develop in (git attributes)"
+    return sha, f"merged {a.base} in (git attributes)"
 
 
 def head_to_green_s(pr):
@@ -291,10 +311,11 @@ def head_to_green_s(pr):
     was pushed would otherwise count its idle hours as gate time.
     """
     commit = pr["commits"]["nodes"][0]["commit"]
-    done = [c.get("completedAt") for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", [])
-            if c["__typename"] == "CheckRun" and c["name"] in REQUIRED and c.get("completedAt")]
-    # No gate (MERGE_ON_GREEN_REQUIRED empty: CI is not the merge gate) means no gate time.
-    if not REQUIRED or len(done) < len(REQUIRED):
+    runs = [c for c in (commit.get("statusCheckRollup") or {}).get("contexts", {}).get("nodes", []) if c["__typename"] == "CheckRun"]
+    gate = {c["name"] for c in runs} if ALL_CHECKS else set(REQUIRED)
+    done = [c.get("completedAt") for c in runs if c["name"] in gate and c.get("completedAt")]
+    # No gate (MERGE_ON_GREEN_REQUIRED empty: CI is not the merge gate, or a head with no checks) means no gate time.
+    if not gate or len(done) < len(gate):
         return None
     parse = lambda t: dt.datetime.fromisoformat(t.replace("Z", "+00:00"))
     suites = [parse(x["createdAt"]) for x in ((commit.get("checkSuites") or {}).get("nodes") or []) if x.get("createdAt")]
@@ -305,6 +326,7 @@ def head_to_green_s(pr):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default="tangle-network/agent-container")
+    ap.add_argument("--base", default="develop", help="the branch PRs merge into (default develop)")
     ap.add_argument("--state-dir", default=os.path.expanduser("~/.local/state/merge-on-green"))
     ap.add_argument("--git-url", help="clone URL for the merge mirror (default: the repo over SSH)")
     ap.add_argument("--dry-run", action="store_true")
@@ -312,6 +334,8 @@ def main():
     ap.add_argument("--minutes", type=int, help=f"pause: how long, at most {PAUSE_MAX_MIN}")
     ap.add_argument("--reason", help="pause: why, shown in every skipped line")
     a = ap.parse_args()
+    global BASE
+    BASE = a.base
     if a.command == "hold":
         return hold_command()
     owner, name = a.repo.split("/", 1)
@@ -349,7 +373,8 @@ def main():
 def tick(a, owner, name):
     # This read is a GraphQL query every 2 minutes; on
     # drewstone it starved the merges and every lane's gh-drew, so tangletools' gh-read pays for it.
-    r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}", via="gh-read")
+    r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}",
+           "-f", f"base={a.base}", "-f", f"ref=refs/heads/{a.base}", via="gh-read")
     if r.returncode != 0:
         print(f"merge-on-green: read failed: {r.stderr.strip()[:200]}", file=sys.stderr)
         return 1
@@ -358,7 +383,8 @@ def tick(a, owner, name):
         raise RuntimeError(str(answer['errors']))
     repo = answer["data"]["repository"]
     prs = repo["pullRequests"]["nodes"]
-    develop_tip = ((repo.get("ref") or {}).get("target") or {}).get("oid", "")
+    base_tip = ((repo.get("ref") or {}).get("target") or {}).get("oid", "")
+    method = "--merge" if repo.get("mergeCommitAllowed", True) else "--squash" if repo.get("squashMergeAllowed") else "--rebase"
     now = dt.datetime.now(dt.timezone.utc)
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     pause = active_pause(a, now)
@@ -385,26 +411,35 @@ def tick(a, owner, name):
             answer = CLIENT.reviews(pr, REVIEW_FRAGMENT)
             pr['reviewThreads'] = answer['data']['repository']['pullRequest']['reviewThreads']
         action, reason = decide(pr, now)
-        handled = f"{head}@{develop_tip}"
+        handled = f"{head}@{base_tip}"
         if action != "wait" and noted.get(str(n)) == handled:
-            # This head's conflict was handled against this develop; retry when either moves.
-            action, reason = "wait", "conflicts with develop; owner told"
+            # This head's conflict was handled against this base; retry when either moves.
+            action, reason = "wait", f"conflicts with {a.base}; owner told"
+        receipt = action == "merge" and reason.startswith("no CI checks")
+        asked = noted.get(f"receipt:{n}") or {}
+        if action == "merge" and asked.get("head") == head and now.timestamp() - asked.get("at", 0) < RECEIPT_RETRY_S:
+            action, reason = "wait", "no CI checks and no passed beelink-gate receipt on this head yet: " + asked.get("why", "")[:120]
         outcome = reason
         if action == "merge" and not a.dry_run:
-            m = gh("pr", "merge", str(n), "-R", a.repo, "--merge", "--match-head-commit", head,
-                   env={'MOG_REVIEW_SNAPSHOT': CLIENT.snapshot(pr, answer)})
+            m = gh("pr", "merge", str(n), "-R", a.repo, method, "--match-head-commit", head,
+                   env={'MOG_REVIEW_SNAPSHOT': CLIENT.snapshot(pr, answer), **({'GH_DREW_REQUIRE_RECEIPT': '1'} if receipt else {})})
             outcome = "merged" if m.returncode == 0 else "merge refused: " + (m.stderr.strip() or m.stdout.strip())[:160]
+            # Only gh-drew's receipt refusal waits out the retry; a review or conflict refusal is asked next tick.
+            # discovery-lab and agent-runtime need a receipt even with green CI, so this is not keyed on `receipt`.
+            if m.returncode != 0 and re.search(r"beelink-gate receipt|gate receipts", outcome):
+                noted[f"receipt:{n}"] = {"head": head, "at": now.timestamp(), "why": outcome}
+                _github.save(noted_path, noted)
             if re.search(r"(?i)conflict|cannot be cleanly created", outcome):
                 # GitHub's mergeable flag lags a merge that just landed; the refusal is the fresh answer.
                 action = "conflict"
         if action == "conflict" and not a.dry_run:
-            sha, why = (None, "fork") if pr.get("isCrossRepository") else merge_develop_with_attributes(a, pr)
+            sha, why = (None, "fork") if pr.get("isCrossRepository") else merge_base_with_attributes(a, pr)
             if sha:
                 outcome = f"{why}: {sha[:10]}"
             else:
-                if noted.get(f"told:{n}") != head:  # one comment per head, however often develop moves
+                if noted.get(f"told:{n}") != head:  # one comment per head, however often the base moves
                     gh("pr", "comment", str(n), "-R", a.repo, "--body",
-                       "This conflicts with develop, so its gate cannot run. Merge develop into the branch and it merges itself once green.")
+                       f"This conflicts with {a.base}, so its gate cannot run. Merge {a.base} into the branch and it merges itself once green.")
                     noted[f"told:{n}"] = head
                 outcome = f"{outcome}; owner told ({why})"
             noted[str(n)] = handled
