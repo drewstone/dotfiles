@@ -147,3 +147,44 @@ test("a push naming a commit this repository does not hold is refused, never che
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /cannot read pushed commit/);
 });
+
+/** A branch `leak` adding a key, already on origin, so origin's tracking refs reach it. */
+function leakOnOrigin(repo) {
+  ok(bare(repo, ["switch", "-q", "-c", "leak", "main"]));
+  commit(repo, { "leak.pem": `${KEY}\n` }, "leak");
+  ok(bare(repo, ["push", "-q", "origin", "leak"]));
+}
+
+test("a remote that pushes to another repository than it fetches from vouches for nothing", () => {
+  const repo = setup();
+  leakOnOrigin(repo);
+  const publicRepo = mkdtempSync(join(tmpdir(), "push-files-public-"));
+  ok(bare(publicRepo, ["init", "--bare", "-q", "-b", "main"]));
+  ok(git(repo, ["config", "remote.origin.pushurl", publicRepo]));
+  const result = git(repo, ["push", "origin", "leak"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
+});
+
+test("a remote whose name is a glob matches no other remote's tracking refs", () => {
+  const repo = setup();
+  leakOnOrigin(repo);
+  const other = mkdtempSync(join(tmpdir(), "push-files-glob-"));
+  ok(bare(other, ["init", "--bare", "-q", "-b", "main"]));
+  // `git remote add` refuses the name; a config section does not.
+  ok(git(repo, ["config", "remote.o*.url", other]));
+  const result = git(repo, ["push", "o*", "leak"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
+});
+
+test("a replace ref cannot make a sent commit read as another", () => {
+  const repo = setup();
+  commit(repo, { "real.pem": `${KEY}\n` }, "real");
+  const real = ok(git(repo, ["rev-parse", "HEAD"])).stdout.trim();
+  const clean = ok(git(repo, ["commit-tree", "-p", "HEAD~1", "-m", "clean", "HEAD~1^{tree}"])).stdout.trim();
+  ok(git(repo, ["replace", real, clean]));
+  const result = git(repo, ["push", "origin", "feat/x"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /real\.pem:1 \(private-key\)/);
+});

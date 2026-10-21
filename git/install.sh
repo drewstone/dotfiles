@@ -18,6 +18,11 @@ set_global() {
 }
 set_global core.hooksPath "$GLOBAL_HOOKS_DIR"
 set_global init.templateDir "$TEMPLATE_DIR"
+# pre-push treats a commit a remote's tracking refs reach as already there; a
+# ref left after its branch was deleted upstream would vouch for a commit the
+# remote no longer holds, so fetches prune them. A locked ~/.gitconfig keeps
+# its value and says so.
+set_global fetch.prune true || echo "git/install.sh: could not set fetch.prune=true; set it by hand" >&2
 
 # Agent artifact dirs show up in every repo we touch, so ignore them once here
 # rather than editing each repo's .gitignore. A repo's own .gitignore still
