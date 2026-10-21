@@ -275,6 +275,19 @@ cat ~/.local/state/merge-on-green/status.md       # what each open PR waits on
 tail ~/.local/state/merge-on-green/decisions.jsonl
 ```
 
+The PR list reads review metadata; full threads and review summaries are cached by
+repository, PR, head and review activity. Resolution/reopening, original-comment edits,
+reply counts and summary edits invalidate the cache. Drafts, release branches and
+author holds need no full review read. A merge passes its fresh per-tick response to
+`gh-drew`, which still runs its normal review and author-hold checks; manual merges
+continue to read live. Secondary limits defer the queue until `Retry-After` (or an
+increasing delay) has elapsed, then retry the same PR first.
+
+Each tick logs actual GitHub HTTP calls, remaining quotas, cache hits/misses and any
+deferral to the journal and `ticks.jsonl` in the state directory. It includes calls
+inside `gh-drew`; API debug traces stay in memory. Use `--dry-run --state-dir DIR`
+with a separate directory for read-only cold/warm comparisons.
+
 To keep a ready PR open, add the `hold` label.
 
 To give a release a clean CI window, pause it on drew-gtr-pro, where the timer runs. While paused, each pass still runs but merges only PRs labelled `release-critical`; version PRs (`changeset-release/*`) stay with release.yml, paused or not, and every other PR gets one line, `paused until … (reason): skipped #N`. A pause ends on its own at its `until`; `pause` refuses more than 120 minutes, so a longer hold is a new pause.

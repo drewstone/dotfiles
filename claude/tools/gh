@@ -26,6 +26,11 @@ if [[ "${GH_DREW_SHIM:-}" == "1" ]]; then
     echo "gh shim: no real gh binary found; set GH_SHIM_REAL_GH" >&2
     exit 127
   fi
+  # merge-on-green counts every HTTP call, including reads whose stderr the
+  # identity/review guards consume. Outside a tick the shim is unchanged.
+  if [[ -n "${MOG_HTTP_METRICS:-}" ]]; then
+    exec python3 "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/merge-on-green-github.py" trace "$real_gh" "$@"
+  fi
   exec "$real_gh" "$@"
 fi
 
