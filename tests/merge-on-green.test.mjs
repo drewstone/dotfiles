@@ -1,6 +1,6 @@
 // merge-on-green against a fake gh-drew: one fixture of open PRs, one tick, the merges it makes.
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -67,6 +67,8 @@ if [ "$1 $2" = "pr merge" ]; then for r in ${refuse.join(" ")}; do [ "$3" = "$r"
 exit 0
 `);
   chmodSync(join(dir, "gh-drew"), 0o755);
+  // The PR read goes through gh-read (tangletools); it answers the same fake GitHub.
+  symlinkSync(join(dir, "gh-drew"), join(dir, "gh-read"));
   // No test reaches GitHub: the merge mirror clones gitUrl, a missing local path unless a test builds an origin.
   const run = (...args) => spawnSync("python3", [TOOL, ...args, "--state-dir", join(dir, "state"), "--git-url", gitUrl ?? join(dir, "no-origin.git")], {
     env: { ...process.env, ...GIT_ID, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8",
