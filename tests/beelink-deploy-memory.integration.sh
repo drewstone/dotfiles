@@ -28,6 +28,11 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+# Verify Docker itself does not override the slice's default floor. The
+# already-cached registry image runs one read with no network or host mounts.
+sudo -n -H -u ghrunner-adcprod env DOCKER_HOST="unix:///run/user/$uid/docker.sock" \
+  docker run --rm --pull=never --network=none --memory=64m --memory-swap=64m \
+  --entrypoint /bin/sh registry:2 -c 'test "$(cat /sys/fs/cgroup/memory.min)" = 8589934592'
 cat >"$work/load.py" <<'PY'
 import pathlib,sys,time
 kind,root=sys.argv[1:]
