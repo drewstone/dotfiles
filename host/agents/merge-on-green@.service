@@ -7,5 +7,7 @@ Type=oneshot
 Environment=FLEET_LANE=op-company:merge-on-green
 # Every check on the head is the gate; a head with no checks merges only on its beelink-gate receipt.
 Environment=MERGE_ON_GREEN_REQUIRED=*
-ExecStart=/bin/bash -lc 'i="%i"; exec %h/bin/merge-on-green --repo "tangle-network/$${i%%%%:*}" --base "$${i#*:}" --state-dir "%h/.local/state/merge-on-green-org/$${i%%%%:*}"'
+# These repos hold under 40 open PRs; with --probe a tick costs about 2 GraphQL points until something changes.
+Environment=MERGE_ON_GREEN_PAGE=40
+ExecStart=/bin/bash -lc 'i="%i"; exec %h/bin/merge-on-green --probe --repo "tangle-network/$${i%%%%:*}" --base "$${i#*:}" --state-dir "%h/.local/state/merge-on-green-org/$${i%%%%:*}"'
 TimeoutStartSec=10min
