@@ -39,6 +39,10 @@ done
 while read -r unit property value; do
   if [[ $property == MemoryMax ]]; then
     current=$(systemctl show "$unit" -p MemoryCurrent --value)
+    # Loaded but inactive units have no cgroup at boot and report [not set].
+    if [[ "$current" == '[not set]' &&
+          $(systemctl show "$unit" -p LoadState --value) == loaded &&
+          -z $(systemctl show "$unit" -p ControlGroup --value) ]]; then current=0; fi
     [[ "$current" =~ ^[0-9]+$ ]] || { echo "cannot read $unit memory" >&2; exit 69; }
     (( current <= value )) || { echo "$unit currently exceeds its cap; no policy changed" >&2; exit 75; }
   fi
