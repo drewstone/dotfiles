@@ -458,10 +458,14 @@ def tick(a, owner, name):
         if action == "merge" and not a.dry_run:
             m = gh("pr", "merge", str(n), "-R", a.repo, method, "--match-head-commit", head,
                    env={'MOG_REVIEW_SNAPSHOT': CLIENT.snapshot(pr, answer), **({'GH_DREW_REQUIRE_RECEIPT': '1'} if receipt else {})})
-            outcome = "merged" if m.returncode == 0 else "merge refused: " + (m.stderr.strip() or m.stdout.strip())[:160]
+            # gh-drew prints notices before its refusal ("merging without the Codex review check: ..."); on
+            # 2026-10-21 that notice filled every outcome's 160 characters and hid the refusal itself.
+            said = "\n".join(l for l in (m.stderr.strip() or m.stdout.strip()).splitlines()
+                             if not l.startswith("gh-drew: merging without the Codex review check"))
+            outcome = "merged" if m.returncode == 0 else "merge refused: " + said.strip()[:160]
             # Only gh-drew's receipt refusal waits out the retry; a review or conflict refusal is asked next tick.
             # discovery-lab and agent-runtime need a receipt even with green CI, so this is not keyed on `receipt`.
-            if m.returncode != 0 and re.search(r"beelink-gate receipt|gate receipts", outcome):
+            if m.returncode != 0 and re.search(r"beelink-gate receipt|gate receipts", said):
                 noted[f"receipt:{n}"] = {"head": head, "at": now.timestamp(), "why": outcome}
                 _github.save(noted_path, noted)
             if re.search(r"(?i)conflict|cannot be cleanly created", outcome):
