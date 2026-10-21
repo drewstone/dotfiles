@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { changedFiles } from "./ai-agent-hooks-changed-files.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -191,43 +192,6 @@ function resolvePushDiffContext(repoRoot) {
   };
 }
 
-function changedFiles(repoRoot, hookName, pushContext = resolvePushDiffContext(repoRoot)) {
-  if (hookName === "pre-commit") {
-    const staged = runGit(
-      repoRoot,
-      ["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB"],
-      true,
-    );
-    if (!staged.ok) {
-      return [];
-    }
-
-    return staged.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }
-
-  const range = pushContext.range;
-  if (!range) {
-    return [];
-  }
-
-  const changed = runGit(
-    repoRoot,
-    ["diff", "--name-only", "--diff-filter=ACMRTUXB", range],
-    true,
-  );
-
-  if (!changed.ok) {
-    return [];
-  }
-
-  return changed.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
 
 function diffText(repoRoot, hookName, pushContext = resolvePushDiffContext(repoRoot)) {
   if (hookName === "pre-commit") {
