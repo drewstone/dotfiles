@@ -188,3 +188,67 @@ test("a replace ref cannot make a sent commit read as another", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /real\.pem:1 \(private-key\)/);
 });
+
+test("a remote re-pointed at another repository keeps no say through its old tracking refs", () => {
+  const repo = setup();
+  leakOnOrigin(repo);
+  const publicRepo = mkdtempSync(join(tmpdir(), "push-files-repointed-"));
+  ok(bare(publicRepo, ["init", "--bare", "-q", "-b", "main"]));
+  ok(git(repo, ["remote", "set-url", "origin", publicRepo]));
+  const result = git(repo, ["push", "origin", "leak"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
+});
+
+test("a tracking ref left after its branch was deleted upstream vouches for nothing", () => {
+  const repo = setup();
+  leakOnOrigin(repo);
+  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  // Another clone deletes the branch; this one still holds refs/remotes/origin/leak.
+  ok(bare(origin, ["update-ref", "-d", "refs/heads/leak"]));
+  const result = git(repo, ["push", "origin", "leak:refs/heads/leak-again"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
+});
+
+test("a branch built on a base that moved upstream since the last fetch pushes without checking the base", () => {
+  const repo = setup();
+  ok(bare(repo, ["merge", "-q", "--no-edit", "main"]));
+  // Another clone advances main; this repository has not fetched it.
+  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  const other = mkdtempSync(join(tmpdir(), "push-files-other-"));
+  ok(bare(tmpdir(), ["clone", "-q", origin, other]));
+  for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.invalid"], ["commit.gpgsign", "false"]])
+    ok(git(other, ["config", k, v]));
+  commit(other, { "later.txt": "later\n" }, "main moves on");
+  ok(bare(other, ["push", "-q", "origin", "main"]));
+  const result = ok(git(repo, ["push", "origin", "feat/x"]));
+  assert.doesNotMatch(result.stdout + result.stderr, /redact\.ts/);
+});
+
+test("a blobless clone checks a push without fetching each destination tip it lacks", () => {
+  const repo = setup();
+  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  ok(bare(origin, ["config", "uploadpack.allowFilter", "true"]));
+  // 300 destination tips this clone has never seen, each its own commit.
+  const tree = ok(bare(origin, ["rev-parse", "main^{tree}"])).stdout.trim();
+  const refs = [];
+  for (let i = 0; i < 300; i++) {
+    const sha = ok(bare(origin, ["commit-tree", "-p", "main", "-m", `other ${i}`, tree])).stdout.trim();
+    refs.push(`create refs/heads/other-${i} ${sha}`);
+  }
+  ok(spawnSync("git", ["update-ref", "--stdin"], { cwd: origin, encoding: "utf8", env, input: `${refs.join("\n")}\n` }));
+  const partial = mkdtempSync(join(tmpdir(), "push-files-partial-"));
+  ok(bare(tmpdir(), ["clone", "-q", "--filter=blob:none", "--single-branch", "-b", "feat/x", `file://${origin}`, partial]));
+  for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.invalid"], ["commit.gpgsign", "false"]])
+    ok(git(partial, ["config", k, v]));
+  ok(git(partial, ["config", "core.hooksPath", hooksPath]));
+  commit(partial, { "clean.txt": "clean\n" }, "clean");
+  const started = Date.now();
+  ok(git(partial, ["push", "origin", "feat/x"]));
+  assert.ok(Date.now() - started < 20_000, `push took ${Date.now() - started} ms`);
+  commit(partial, { "partial.pem": `${KEY}\n` }, "key");
+  const refused = git(partial, ["push", "origin", "feat/x"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stdout + refused.stderr, /partial\.pem:1 \(private-key\)/);
+});
