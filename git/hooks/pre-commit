@@ -106,14 +106,8 @@ for m in SHAPE.finditer(sys.stdin.read()):
   fi
 fi
 
-# Size ratchet: no logic file grows into a god object (git/hooks/loc-ratchet says why).
-"$(dirname "${BASH_SOURCE[0]}")/loc-ratchet"
-
-# Docs follow moves: no current doc may name a file this commit moves or deletes (git/hooks/doc-ref-ratchet says why).
-"$(dirname "${BASH_SOURCE[0]}")/doc-ref-ratchet"
-
-# One name, one implementation: no commit adds a second export of a name the repo already exports (git/hooks/dup-export-ratchet says why).
-"$(dirname "${BASH_SOURCE[0]}")/dup-export-ratchet"
+# Ratchets: no god objects, no docs naming moved files, no second export of a name (git/hooks/ratchets lists them).
+"$(dirname "${BASH_SOURCE[0]}")/ratchets"
 
 export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
 
