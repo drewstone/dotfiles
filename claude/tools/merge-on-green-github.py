@@ -36,6 +36,8 @@ class GitHub:
         self.repo = repo
         self.calls = 0
         self.quota_probes = 0
+        self.graphql_cost = 0
+        self.graphql_cost_samples = 0
         self.quota = {}
         self.hits = self.misses = 0
         self.pr = None
@@ -81,9 +83,17 @@ class GitHub:
             # Only sanitized limit metadata leaves the child; the debug trace
             # itself is consumed there even when a guard suppresses stderr.
             if request['limited']:
-                trace += '\nsecondary rate limit\n' + request['limit_headers']
+                trace += '\nAPI rate limit exceeded\n' + request['limit_headers']
+                if request['secondary']:
+                    trace += '\nsecondary rate limit\n'
         # A gh-drew review error is printed after the nested debug request ends.
         r.stderr = re.sub(r'\* Request at .*?\* Request took [^\n]*\n?', '', trace, flags=re.S)
+        try:
+            cost = json.loads(r.stdout)['data']['rateLimit']['cost']
+            self.graphql_cost += cost
+            self.graphql_cost_samples += 1
+        except (ValueError, KeyError, TypeError):
+            pass
         # Match failures only: a successful PR body can discuss rate limits.
         failed = r.returncode != 0 or bool(re.search(r'"errors"\s*:', r.stdout)) or any(x['limited'] for x in requests)
         limited = failed and re.search(r'secondary rate limit|API rate limit (?:already )?exceeded|abuse detection',
@@ -93,7 +103,8 @@ class GitHub:
             attempt = self.backoff.get('attempt', 0) + 1
             delay = int(retry[1]) if retry else min(3600, 60 * 2 ** min(attempt - 1, 6))
             resets = re.findall(r'< x-ratelimit-reset:\s*(\d+)', trace, re.I)
-            if (remaining == 0 or re.search(r'< x-ratelimit-remaining:\s*0\b', trace, re.I)) and resets:
+            primary = not retry and not re.search(r'secondary rate limit|abuse detection', trace, re.I)
+            if resets and (primary or remaining == 0 or re.search(r'< x-ratelimit-remaining:\s*0\b', trace, re.I)):
                 delay = max(delay, int(resets[-1]) - int(time.time()))
             self.backoff = {'until': time.time() + delay, 'attempt': attempt,
                             'pr': self.pr or self.backoff.get('pr'),
@@ -112,7 +123,7 @@ class GitHub:
         else:
             self.misses += 1
             owner, name = self.repo.split('/')
-            query = ('query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name)'
+            query = ('query($owner:String!,$name:String!,$number:Int!){rateLimit{cost remaining resetAt} repository(owner:$owner,name:$name)'
                      '{pullRequest(number:$number){...pr}}}\n' + fragment)
             r = self.run('api', 'graphql', '-f', f'query={query}', '-f', f'owner={owner}',
                          '-f', f'name={name}', '-F', f'number={pr["number"]}', via='gh-read')
@@ -140,6 +151,7 @@ class GitHub:
         rec = {'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'repo': self.repo,
                'dry_run': dry_run, 'github_calls': self.calls, 'remaining': self.quota,
                'quota_probe_calls': self.quota_probes,
+               'graphql_cost': self.graphql_cost, 'graphql_cost_samples': self.graphql_cost_samples,
                'review_cache_hits': self.hits, 'review_cache_misses': self.misses,
                'decisions': self.decisions, 'deferred': deferred}
         with (self.root / 'ticks.jsonl').open('a') as f:
@@ -176,6 +188,7 @@ if __name__ == '__main__':
         failure = r.returncode != 0 or bool(re.search(rb'"errors"\s*:', r.stdout))
         limited = failure and bool(re.search(r'secondary rate limit|API rate limit (?:already )?exceeded|abuse detection',
                                               trace + r.stdout.decode(errors='replace'), re.I))
+        secondary = bool(re.search(r'secondary rate limit|abuse detection', trace, re.I))
         headers = '\n'.join(line for line in trace.splitlines()
                             if re.match(r'< (?:retry-after|x-ratelimit-(?:remaining|reset)):', line, re.I))
         if failure and re.search(r'\b(?:403|429)\b', trace) and re.search(r'retry-after:', headers, re.I):
@@ -183,7 +196,8 @@ if __name__ == '__main__':
         with open(os.environ['MOG_HTTP_METRICS'], 'a') as f:
             f.write(json.dumps({'calls': len(re.findall(r'^> (?:GET|POST|PUT|PATCH|DELETE|HEAD) ', trace, re.M)),
                                'quota_probes': len(re.findall(r'^> GET /rate_limit(?:\s|\?)', trace, re.M)),
-                               'quota': quota, 'limited': limited, 'limit_headers': headers if limited else ''}) + '\n')
+                               'quota': quota, 'limited': limited, 'secondary': secondary,
+                               'limit_headers': headers if limited else ''}) + '\n')
         sys.stdout.buffer.write(r.stdout)
         sys.stderr.write(re.sub(r'\* Request at .*?\* Request took [^\n]*\n?', '', trace, flags=re.S))
         sys.exit(r.returncode)

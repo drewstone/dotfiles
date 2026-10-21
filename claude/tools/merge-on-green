@@ -82,7 +82,7 @@ PAUSE_VAR = "MERGE_ON_GREEN_PAUSED"
 ALLOW_LABEL = "release-critical"
 ALLOWLIST = f"PRs labelled {ALLOW_LABEL} (version PRs stay with release.yml)"
 
-QUERY = """query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
+QUERY = """query($owner:String!,$name:String!){rateLimit{cost remaining resetAt} repository(owner:$owner,name:$name){
 ref(qualifiedName:"refs/heads/develop"){target{oid}}
 pullRequests(states:OPEN,baseRefName:"develop",first:100,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
 number isDraft mergeable isCrossRepository headRefName headRefOid updatedAt body labels(first:20){nodes{name}}
@@ -91,7 +91,7 @@ commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt
 reviews(last:1){nodes{updatedAt}}
 comments(first:100){nodes{id updatedAt}}
 reviewThreads(first:100){nodes{id isResolved isOutdated
-comments(first:1){totalCount nodes{id updatedAt}} latest:comments(last:1){nodes{id updatedAt}}}}}}}}"""
+comments(first:1){totalCount nodes{id updatedAt}}}}}}}}"""
 
 
 def gh(*args, input=None, via="gh-drew", env=None):
