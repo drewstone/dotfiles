@@ -83,3 +83,67 @@ test("a secret a merge adds while resolving is refused", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /feature\.txt:2 \(private-key\)/);
 });
+
+function remoteNamed(repo, name) {
+  const path = mkdtempSync(join(tmpdir(), `push-files-${name}-`));
+  ok(bare(path, ["init", "--bare", "-q", "-b", "main"]));
+  ok(git(repo, ["remote", "add", name, path]));
+  return path;
+}
+
+test("a merged branch only another remote holds is checked when it is sent", () => {
+  const repo = setup();
+  remoteNamed(repo, "fork");
+  ok(bare(repo, ["switch", "-q", "-c", "evil", "main"]));
+  commit(repo, { "fork.pem": `${KEY}\n` }, "fork adds a key");
+  ok(bare(repo, ["push", "-q", "fork", "evil"]));
+  ok(bare(repo, ["switch", "-q", "feat/x"]));
+  ok(bare(repo, ["branch", "-q", "-D", "evil"]));
+  ok(bare(repo, ["fetch", "-q", "fork"]));
+  ok(bare(repo, ["merge", "-q", "--no-edit", "fork/evil"]));
+  const result = git(repo, ["push", "origin", "feat/x"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /fork\.pem:1 \(private-key\)/);
+});
+
+test("a pushed branch is read at its own commit, not from the working tree", () => {
+  const repo = setup();
+  commit(repo, { "feat.pem": `${KEY}\n` }, "feat adds a key");
+  ok(bare(repo, ["switch", "-q", "main"]));
+  const result = git(repo, ["push", "origin", "feat/x"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /feat\.pem:1 \(private-key\)/);
+});
+
+test("a key added and removed again in the pushed history is refused", () => {
+  const repo = setup();
+  commit(repo, { "gone.pem": `${KEY}\n` }, "add");
+  ok(git(repo, ["rm", "-q", "gone.pem"]));
+  ok(bare(repo, ["commit", "-q", "-m", "remove"]));
+  const result = git(repo, ["push", "origin", "feat/x"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /gone\.pem:1 \(private-key\)/);
+});
+
+test("a commit one remote holds is checked when pushed to another", () => {
+  const repo = setup();
+  remoteNamed(repo, "public");
+  ok(bare(repo, ["switch", "-q", "-c", "leak", "main"]));
+  commit(repo, { "leak.pem": `${KEY}\n` }, "leak");
+  ok(bare(repo, ["push", "-q", "origin", "leak"]));
+  const result = git(repo, ["push", "public", "leak"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
+});
+
+test("a push naming a commit this repository does not hold is refused, never checked as empty", () => {
+  const repo = setup();
+  const missing = "1".repeat(40);
+  const result = spawnSync(
+    process.execPath,
+    [resolve("bin/ai-agent-hooks.mjs"), "run", "pre-push", "origin", "/nowhere"],
+    { cwd: repo, encoding: "utf8", env, input: `refs/heads/feat/x ${missing} refs/heads/feat/x ${"0".repeat(40)}\n` },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /cannot read pushed commit/);
+});

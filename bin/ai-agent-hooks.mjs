@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { changedFiles } from "./ai-agent-hooks-changed-files.mjs";
+import { bySource, changedFiles } from "./ai-agent-hooks-changed-files.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -532,11 +532,11 @@ function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
 
 function runBuiltin(builtin, context) {
   if (builtin === "merge-conflict-markers") {
-    return checkMergeConflictMarkers(context.repoRoot, context.files, context.contentRev);
+    return bySource(context, (files, rev) => checkMergeConflictMarkers(context.repoRoot, files, rev));
   }
 
   if (builtin === "suspicious-secrets") {
-    return checkSuspiciousSecrets(context.repoRoot, context.files, context.contentRev);
+    return bySource(context, (files, rev) => checkSuspiciousSecrets(context.repoRoot, files, rev));
   }
 
   if (builtin === "mergeable-with-base") {
@@ -1239,13 +1239,13 @@ async function runHookCommand(rawArgs) {
   const pushRefUpdates = hookName === "pre-push" ? readPrePushRefUpdates() : [];
   const barePush = isBareRepo(repoRoot) ? pushRefUpdates.find((u) => !/^0+$/.test(u.localSha)) : undefined;
   const pushContext = barePush ? barePushContext(barePush) : resolvePushDiffContext(repoRoot);
-  const files = changedFiles(repoRoot, hookName, pushContext, barePush ? [] : pushRefUpdates);
+  const { files, sources } = changedFiles(repoRoot, hookName, pushContext, { updates: pushRefUpdates, remote: positionals[1] || "", contentRev: barePush?.localSha || "" });
   const context = {
     repoRoot,
     hookName,
     branch: currentBranch(repoRoot),
     pushContext,
-    contentRev: barePush?.localSha || "",
+    sources,
     pushRefUpdates,
     // git runs pre-push with <remote name> <push location>.
     pushRemoteUrl: hookName === "pre-push" ? positionals[2] || "" : "",
