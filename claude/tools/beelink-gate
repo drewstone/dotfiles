@@ -1244,11 +1244,10 @@ valid_branch_name() {
 # the repo keeps from building is never reported, and N-API addons load under
 # any Node.
 stale_native_addons() {
-  local abi
-  abi=$(node -p process.versions.modules 2>/dev/null) || return 0
-  python3 - "$abi" <<'PY'
+  [ -n "$gate_abi" ] || { echo "beelink-gate: cannot read the NODE_MODULE_VERSION of node $gate_node to check native addons" >&2; return 1; }
+  python3 - "$gate_abi" "${gate_node_bin:-node}" <<'PY'
 import json, os, re, subprocess, sys, tempfile
-abi = sys.argv[1]
+abi, node = sys.argv[1], sys.argv[2]
 root = "node_modules/.pnpm"
 allowed, denied = set(), set()
 
@@ -1353,7 +1352,7 @@ console.log(JSON.stringify(native));
         # A helper may inherit stdout after Node exits; a file avoids waiting
         # forever for a descendant to close a captured pipe after timeout.
         with tempfile.TemporaryFile(mode="w+") as output:
-            result = subprocess.run(["node", "-e", probe, os.path.abspath(path)],
+            result = subprocess.run([node, "-e", probe, os.path.abspath(path)],
                                     stdin=subprocess.DEVNULL, stdout=output,
                                     stderr=subprocess.DEVNULL, text=True, timeout=10)
             output.seek(0)
@@ -1388,6 +1387,23 @@ for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
                     print(f"{pkg}\t{path}\tabi {built.group(1).decode()}->{abi}")
                     break
 PY
+}
+
+# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm")
+# and gate_node_bin. pnpm may launch its own Node, so on 2026-10-21 a gate read
+# plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3
+# (ABI 127 vs 137). pnpm exec needs the installed tree; npm uses the PATH node.
+resolve_gate_node() {
+  local probe='process.versions.modules+" "+process.version+" "+process.execPath' out="" via=node
+  if [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
+    out=$(timeout 120 pnpm exec node -p "$probe" </dev/null 2>/dev/null) || out=""
+    out=${out##*$'\n'}
+    if [[ $out =~ ^[0-9]+\ v[0-9] ]]; then via=pnpm; else via="node (pnpm exec failed)" out=""; fi
+  fi
+  [ -n "$out" ] || out=$(node -p "$probe" </dev/null 2>/dev/null) || out=""
+  read -r gate_abi gate_node gate_node_bin <<< "$out"
+  [[ $gate_abi =~ ^[0-9]+$ ]] || gate_abi=""
+  gate_node="${gate_node:-unknown} via $via"
 }
 
 # Rebuild the stale native addons for the gate's Node before the command runs.
@@ -1753,7 +1769,7 @@ remote_gate() {
   fi
   [[ "$gate_lane" =~ ^[A-Za-z0-9._:-]{0,128}$ ]] || gate_lane=""
   unset BEELINK_GATE_LANE
-  preview_result="" default_branch="" base_sha="" gate_node="" native_rebuild=""
+  preview_result="" default_branch="" base_sha="" gate_node="" gate_abi="" gate_node_bin="" native_rebuild=""
   # --branch: check the named branch out at the SHA with its upstream set, for
   # merge gates such as ADC's `pnpm signoff` that require HEAD == @{push}.
   local gate_branch=${BEELINK_GATE_BRANCH:-} branch_head=""
@@ -2347,7 +2363,6 @@ PY
       die ".nvmrc asks for Node $(cat .nvmrc) and $beelink has no nvm to select it"
     fi
   fi
-  gate_node=$(node -v 2>/dev/null || true)
   # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces
   # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
   # that CI on 11 refused. The shim covers the install, the command and ship.sh.
@@ -2378,7 +2393,8 @@ PY
     (( workers >= 4 )) || workers=4
     if [ "${starved:-0}" = 1 ]; then workers=$(( workers / 2 )); (( workers >= 2 )) || workers=2; fi
     export SHIP_MAX_WORKERS=$workers
-    echo "beelink-gate: --ship runs scripts/ship.sh verify with node $(node -v 2>/dev/null) and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
+    resolve_gate_node
+    echo "beelink-gate: --ship runs scripts/ship.sh verify with node $gate_node and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
   elif [ "$install_mode" = no-install ] || [ "$install_mode" = light ]; then
     echo "beelink-gate: skipping dependency install for this check" >&2
   elif [ -f pnpm-lock.yaml ]; then
@@ -2394,6 +2410,7 @@ PY
       || die "package.json has dependencies but no pnpm/npm lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
   fi
+  [ "$install_mode" = ship ] || resolve_gate_node
   if [ "$install_mode" != ship ] && [ -d node_modules/.pnpm ]; then
     rebuild_native_addons || exit $?
   fi
