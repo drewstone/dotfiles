@@ -55,6 +55,23 @@ def main():
     # A declaration this commit only edits in place (it removes and re-adds the same name in the same file)
     # is not new; the ratchet refuses only duplicates the commit creates.
     added = {n: {p for p in ps if (p, n) not in removed} for n, ps in added.items()}
+    # A merge brings in what the other branch already declares; only a declaration neither parent holds in
+    # that file is one this commit creates. Without this, every conflicted merge of develop is refused for
+    # duplicates other authors already landed.
+    if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:
+        theirs = {}
+
+        def declared_in_merge_head(path, name):
+            if path not in theirs:
+                shown = git("show", f"MERGE_HEAD:{path}")
+                theirs[path] = shown.stdout if shown.returncode == 0 else ""
+            return re.search(
+                rf"^export (default )?(declare )?(async )?(abstract )?(function\*?|class|interface|type|const|let|enum) {re.escape(name)}([^A-Za-z0-9_$]|$)",
+                theirs[path],
+                re.M,
+            )
+
+        added = {n: {p for p in ps if not declared_in_merge_head(p, n)} for n, ps in added.items()}
     added = {n: ps for n, ps in added.items() if ps}
     clashes = []
     for name, paths in sorted(added.items()):
