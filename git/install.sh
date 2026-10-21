@@ -8,7 +8,7 @@ TEMPLATE_DIR="$SCRIPT_DIR/templates"
 GLOBAL_IGNORE_FILE="$SCRIPT_DIR/gitignore_global"
 GLOBAL_ATTRIBUTES_FILE="$SCRIPT_DIR/gitattributes_global"
 
-chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg" "$GLOBAL_HOOKS_DIR/loc-ratchet"
+chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg" "$GLOBAL_HOOKS_DIR/loc-ratchet" "$GLOBAL_HOOKS_DIR/doc-ref-ratchet"
 chmod +x "$TEMPLATE_DIR/hooks/pre-commit" "$TEMPLATE_DIR/hooks/pre-push"
 
 # Write a global setting only when it changes, so a host whose ~/.gitconfig is
@@ -60,7 +60,7 @@ echo "  core.excludesfile=$(git config --global --get core.excludesfile)"
 echo "  core.attributesFile=$(git config --global --get core.attributesFile)"
 echo
 echo "Global baseline checks:"
-echo "  pre-commit: conflict markers, suspicious secrets, logic files over 1,000 lines (loc-ratchet)"
+echo "  pre-commit: conflict markers, suspicious secrets, logic files over 1,000 lines (loc-ratchet), docs naming moved or deleted files (doc-ref-ratchet)"
 echo "  commit-msg: credentials in the commit MESSAGE (diffs scanners miss these)"
 echo "  pre-push: conflict markers, mergeable with origin/main, suspicious secrets"
 echo

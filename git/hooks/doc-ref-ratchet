@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Refuse a commit that moves or deletes a file while a current doc still names its old path.
+
+Drew, 2026-10-21, while the split lanes were moving thousands of files: "make the repo much more
+friendly to work in for agents, no miscommunication or confusion should be allowed". That day a third
+of the file paths named in agent-container's current docs (594 of 1,683) pointed at nothing, and every
+split made it worse. A doc that names a missing file sends the next agent looking for code that is gone.
+
+The rule: when the staged change deletes or renames a file, no staged Markdown file outside dated
+history may still contain the old path. Update the doc in the same commit, or delete the claim.
+
+Not checked: dated history (.agent/, .evolve/, .agents/, archive/, pursuits/, reports/, CHANGELOG.md),
+which records what was true on its day, and paths that still exist after the commit. There is no
+escape variable; fixture repos set core.hooksPath=/dev/null like every other global hook here.
+"""
+import re
+import subprocess
+import sys
+
+HISTORY = (".agent/", ".evolve/", ".agents/", "archive/", "pursuits/", "reports/")
+
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True)
+
+
+def history(path):
+    return path.startswith(HISTORY) or "/archive/" in path or path.endswith("CHANGELOG.md")
+
+
+def main():
+    if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
+        return 0
+    status = git("diff", "--cached", "--name-status", "-M", "--diff-filter=DR", "-z").stdout.split("\0")
+    gone, i = [], 0
+    while i < len(status) and status[i]:
+        kind = status[i][0]
+        gone.append(status[i + 1])
+        i += 3 if kind == "R" else 2
+    staged = set(git("ls-files", "--cached", "-z").stdout.split("\0"))
+    gone = [p for p in gone if p not in staged and "/" in p]
+    stale = []
+    for path in gone:
+        # The whole path, not the tail of a longer one: deleting lib/x.ts says nothing about pkg/lib/x.ts.
+        whole = re.compile(r"(?<![\w./-])" + re.escape(path) + r"(?![\w/-]|\.\w)")
+        hits = git("grep", "--cached", "-n", "-F", path, "--", "*.md").stdout.splitlines()
+        stale += [(path, hit) for hit in hits if not history(hit.split(":", 1)[0]) and whole.search(hit.split(":", 2)[2])]
+    if not stale:
+        return 0
+    sys.stderr.write("doc-ref-ratchet: refusing commit: a doc still names a file this commit moves or deletes.\n")
+    for path, hit in stale[:40]:
+        sys.stderr.write(f"  {path} <- {hit[:200]}\n")
+    if len(stale) > 40:
+        sys.stderr.write(f"  ... and {len(stale) - 40} more\n")
+    sys.stderr.write("  Update each doc to the file's new path in this commit, or delete the claim if the code is gone.\n")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
