@@ -30,14 +30,15 @@ while :; do
          # With --require-job only that job decides: deploy 39316544494's Worker build failed while
          # its host roll, which does not need it, kept running.
          if [ -z "$require" ]; then exit 1; fi
-         if [ "$name" = "$require" ]; then exit 3; fi ;;
+         # A job in a reusable workflow is named "<caller> / <callee>".
+         if [ "$name" = "$require" ] || [ "${name%% / *}" = "$require" ]; then exit 3; fi ;;
     esac
   done <<<"$out"
   state=$(gh-drew api "repos/$R/actions/runs/$RUN" --jq '"\(.status) \(.conclusion)"' 2>/dev/null) || state=""
   if [ "${state%% *}" = completed ]; then
     echo "$(date -u +%H:%MZ) run $RUN completed: ${state#* }"
     if [ -n "$require" ]; then
-      rc=$(gh-drew api "repos/$R/actions/runs/$RUN/jobs?per_page=100" --jq "[.jobs[]|select(.name==\"$require\")|.conclusion][0] // \"absent\"" 2>/dev/null) || rc=unreadable
+      rc=$(gh-drew api "repos/$R/actions/runs/$RUN/jobs?per_page=100" --jq "[.jobs[]|select(.name==\"$require\" or (.name|startswith(\"$require / \")))|.conclusion][0] // \"absent\"" 2>/dev/null) || rc=unreadable
       [ "$rc" = success ] || { echo "REQUIRED JOB \"$require\": $rc (the run shipped nothing it requires)"; exit 3; }
       echo "required job \"$require\": success"
     fi
