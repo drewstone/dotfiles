@@ -21,7 +21,7 @@ import sys
 
 SOURCE = re.compile(r"\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$")
 SKIP = re.compile(
-    r"(\.d\.ts$|\.(test|spec)\.[^/]+$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build)/)"
+    r"(\.d\.[cm]?ts$|\.(test|spec)\.[^/]+$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build)/)"
 )
 DECL = re.compile(r"^[+-]export (?:default )?(?:declare )?(?:async )?(?:abstract )?(?:function\*?|class|interface|type|const|let|enum) ([A-Za-z_$][\w$]*)")
 CONVENTION = {
