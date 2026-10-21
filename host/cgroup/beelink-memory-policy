@@ -63,21 +63,35 @@ if systemctl is-active --quiet "user@${uid}.service"; then
 # separately from app.slice/docker.service. Defaults cover future scopes; apply
 # explicit floors to already-running scopes as well. The ancestor's 8G floor
 # is shared by daemon and containers, not multiplied for each container.
-units=(app.slice docker.service user.slice)
-while read -r unit _; do
-  [[ -z "$unit" ]] || units+=("$unit")
-done < <(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user list-units --type=scope --no-legend --plain 'docker-*.scope')
-for unit in "${units[@]}"; do
+userctl() { sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user "$@"; }
+# Install the default before listing scopes so a concurrent container cannot
+# start unprotected between the inventory read and the property write.
+for unit in user.slice app.slice docker.service; do
   props=(MemoryMin)
   [[ $unit != user.slice ]] || props+=(DefaultMemoryMin)
   for property in "${props[@]}"; do
-    actual=$(sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show "$unit" -p "$property" --value)
+    actual=$(userctl show "$unit" -p "$property" --value)
     if [[ $actual != "$((8*GiB))" ]]; then
       if [[ $mode == --check ]]; then echo "DRIFT production Docker $unit $property=$actual"; drift=1
-      else sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user set-property "$unit" "$property=8G"; fi
+      else userctl set-property "$unit" "$property=8G"; fi
     fi
   done
 done
+# Scopes are transient; never retain a configuration file per container ID.
+# A scope disappearing while we read/write is safe; all other errors fail.
+while read -r unit _; do
+  [[ -n "$unit" ]] || continue
+  load=$(userctl show "$unit" -p LoadState --value)
+  [[ $load != not-found ]] || continue
+  actual=$(userctl show "$unit" -p MemoryMin --value)
+  [[ $actual != "$((8*GiB))" ]] || continue
+  if [[ $mode == --check ]]; then
+    [[ $(userctl show "$unit" -p LoadState --value) != not-found ]] || continue
+    echo "DRIFT production Docker $unit MemoryMin=$actual"; drift=1
+  elif ! userctl set-property --runtime "$unit" MemoryMin=8G; then
+    [[ $(userctl show "$unit" -p LoadState --value) == not-found ]] || exit 1
+  fi
+done < <(userctl list-units --type=scope --no-legend --plain 'docker-*.scope')
 docker_floor=8G
 else
   echo 'DEFERRED production Docker app/service floors: user manager inactive' >&2
