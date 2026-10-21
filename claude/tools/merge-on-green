@@ -245,7 +245,11 @@ def decide(pr, now):
             runs.setdefault(c["context"], []).append(("~", c["state"]))
     checks = {n: [max(rs, key=lambda r: r[0])[1]] for n, rs in runs.items()}
     gate = sorted(checks) if ALL_CHECKS else REQUIRED
+    age = (now - dt.datetime.fromisoformat(commit["committedDate"].replace("Z", "+00:00"))).total_seconds()
     if ALL_CHECKS and not gate:
+        # A fresh head may not have registered its CI yet, so it waits out the same age as a green one.
+        if age < MIN_HEAD_AGE_S:
+            return "wait", f"head {int(age)}s old"
         # No CI on this head: gh-drew merges it only on a passed beelink-gate receipt (tick sets the flag).
         return "merge", "no CI checks; merging on its beelink-gate receipt"
     # Only the gate blocks. A red check outside it held #11718 (4 lines, gate green) for 9 h on
@@ -257,7 +261,6 @@ def decide(pr, now):
     missing = [n for n in gate if not checks.get(n) or any(s not in PASSED for s in checks[n])]
     if missing:
         return "wait", "waiting on " + ", ".join(missing)
-    age = (now - dt.datetime.fromisoformat(commit["committedDate"].replace("Z", "+00:00"))).total_seconds()
     if age < MIN_HEAD_AGE_S:
         return "wait", f"head {int(age)}s old"
     advisory = sorted(n for n, states in checks.items() if n not in gate and any(s in RED for s in states))
@@ -414,14 +417,16 @@ def tick(a, owner, name):
             action, reason = "wait", f"conflicts with {a.base}; owner told"
         receipt = action == "merge" and reason.startswith("no CI checks")
         asked = noted.get(f"receipt:{n}") or {}
-        if receipt and asked.get("head") == head and now.timestamp() - asked.get("at", 0) < RECEIPT_RETRY_S:
+        if action == "merge" and asked.get("head") == head and now.timestamp() - asked.get("at", 0) < RECEIPT_RETRY_S:
             action, reason = "wait", "no CI checks and no passed beelink-gate receipt on this head yet: " + asked.get("why", "")[:120]
         outcome = reason
         if action == "merge" and not a.dry_run:
             m = gh("pr", "merge", str(n), "-R", a.repo, method, "--match-head-commit", head,
                    env={'MOG_REVIEW_SNAPSHOT': CLIENT.snapshot(pr, answer), **({'GH_DREW_REQUIRE_RECEIPT': '1'} if receipt else {})})
             outcome = "merged" if m.returncode == 0 else "merge refused: " + (m.stderr.strip() or m.stdout.strip())[:160]
-            if receipt and m.returncode != 0:
+            # Only gh-drew's receipt refusal waits out the retry; a review or conflict refusal is asked next tick.
+            # discovery-lab and agent-runtime need a receipt even with green CI, so this is not keyed on `receipt`.
+            if m.returncode != 0 and re.search(r"beelink-gate receipt|gate receipts", outcome):
                 noted[f"receipt:{n}"] = {"head": head, "at": now.timestamp(), "why": outcome}
                 _github.save(noted_path, noted)
             if re.search(r"(?i)conflict|cannot be cleanly created", outcome):
