@@ -8,7 +8,7 @@ TEMPLATE_DIR="$SCRIPT_DIR/templates"
 GLOBAL_IGNORE_FILE="$SCRIPT_DIR/gitignore_global"
 GLOBAL_ATTRIBUTES_FILE="$SCRIPT_DIR/gitattributes_global"
 
-chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg" "$GLOBAL_HOOKS_DIR/loc-ratchet" "$GLOBAL_HOOKS_DIR/doc-ref-ratchet" "$GLOBAL_HOOKS_DIR/dup-export-ratchet"
+chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg" "$GLOBAL_HOOKS_DIR/loc-ratchet" "$GLOBAL_HOOKS_DIR/doc-ref-ratchet" "$GLOBAL_HOOKS_DIR/dup-export-ratchet" "$GLOBAL_HOOKS_DIR/ratchets"
 chmod +x "$TEMPLATE_DIR/hooks/pre-commit" "$TEMPLATE_DIR/hooks/pre-push"
 
 # Write a global setting only when it changes, so a host whose ~/.gitconfig is
