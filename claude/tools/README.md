@@ -265,7 +265,7 @@ merge conflict outside CHANGELOG.md stops the gate for manual resolution.
 
 ## merge-on-green
 
-Merges every green agent-container PR into develop. It runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge.
+Merges every green agent-container PR into develop. It runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge. Its open-PR read goes through `gh-read`, so the heaviest GraphQL query in the fleet does not spend drewstone's quota.
 
 A PR merges when it is not a draft, not conflicting and not a release branch; Fast Checks, Build and Type Check succeeded on its head; no check failed; no unresolved review thread opens with P0 or P1; it has no `hold` label or hold phrase ("do not merge", "merge only after"); and its head is at least 2 minutes old. The merge pins that head (`--match-head-commit`). Failed, missing or skipped gates leave the head unchanged for its author to diagnose and fix forward. Only a conflict reported by GitHub permits merging develop into the branch; a conflict git cannot resolve gets one comment per head. gh-drew's Codex review check runs on each merge without waiting (`GH_DREW_REVIEW_WAIT=0`), so a PR whose review is still running or has an unanswered Codex finding is refused and tried again on the next tick.
 

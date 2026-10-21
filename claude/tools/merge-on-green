@@ -83,8 +83,8 @@ commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt
 reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{body}}}}}}}}"""
 
 
-def gh(*args, input=None):
-    return subprocess.run(["gh-drew", *args], input=input, capture_output=True, text=True)
+def gh(*args, input=None, via="gh-drew"):
+    return subprocess.run([via, *args], input=input, capture_output=True, text=True)
 
 
 def allowlisted(pr):
@@ -312,7 +312,9 @@ def main():
     except BlockingIOError:
         return 0
 
-    r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}")
+    # This read is a heavy GraphQL query (add rateLimit{cost} to see it) every 2 minutes; on
+    # drewstone it starved the merges and every lane's gh-drew, so tangletools' gh-read pays for it.
+    r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}", via="gh-read")
     if r.returncode != 0:
         print(f"merge-on-green: read failed: {r.stderr.strip()[:200]}", file=sys.stderr)
         return 1
