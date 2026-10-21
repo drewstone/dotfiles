@@ -73,7 +73,9 @@ PAGE = int(os.environ.get("MERGE_ON_GREEN_PAGE", "100"))
 # --probe: a 2-point read of each open PR's head, draft, labels, rollup and update time, and the base tip, skips
 # the full read when none changed since the last full read. A ready PR still gets a full read every
 # PROBE_READY_S (a gate receipt or a Codex answer changes nothing GitHub shows here), any repo every PROBE_MAX_S.
-PROBE_READY_S, PROBE_MAX_S = 900, 3600
+# 2026-10-21 21:00-22:00Z: 22 product repos (1706 points, first full reads included) plus agent-container (2161)
+# spent tangletools' 5000-point hour and every lane's gh-read failed; a ready PR's forced re-read is half-hourly.
+PROBE_READY_S, PROBE_MAX_S = 1800, 3600
 PROBE = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLimit{cost remaining resetAt}
 repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}
 pullRequests(states:OPEN,baseRefName:$base,first:100){nodes{number isDraft headRefOid updatedAt mergeable
