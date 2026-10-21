@@ -112,6 +112,9 @@ fi
 # Docs follow moves: no current doc may name a file this commit moves or deletes (git/hooks/doc-ref-ratchet says why).
 "$(dirname "${BASH_SOURCE[0]}")/doc-ref-ratchet"
 
+# One name, one implementation: no commit adds a second export of a name the repo already exports (git/hooks/dup-export-ratchet says why).
+"$(dirname "${BASH_SOURCE[0]}")/dup-export-ratchet"
+
 export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
 
 HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
