@@ -808,6 +808,48 @@ esac
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a login-shell command installs, probes and runs with the Node its profile selects", () => {
+  const f = fixture();
+  try {
+    rmSync(join(f.source, "package-lock.json"));
+    writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    f.git(["add", "-A"]); f.git(["commit", "-qm", "pnpm lock, no .nvmrc"]);
+    const sha = f.git(["rev-parse", "HEAD"]);
+    f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+    // 2026-10-21, both Beelinks: the unit's PATH starts at /usr/local/bin/node 22 (ABI 127); a login shell's profile
+    // puts nvm's default 24 (ABI 137) first, so agent-knowledge's `sh -lc` tests could not load better-sqlite3.
+    const stubNode = (dir, abi, version) => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "node"), `#!/usr/bin/env bash\ncase "$*" in\n  -v) echo ${version} ;;\n  "-p process.versions.modules") echo ${abi} ;;\n  "-p "*process.versions.modules*) echo "${abi} ${version} $0" ;;\n  *) exec '${process.execPath}' "$@" ;;\nesac\n`);
+      chmodSync(join(dir, "node"), 0o755);
+    };
+    stubNode(join(f.root, "bin"), 127, "v22.23.3");
+    const loginNode = join(f.root, "login-node");
+    stubNode(loginNode, 137, "v24.21.0");
+    writeFileSync(join(f.home, ".bash_profile"), `export PATH='${loginNode}':"$PATH"\n`);
+    // Install builds the addon for whichever Node is first on PATH, as pnpm does.
+    writeFileSync(join(f.root, "bin", "pnpm"), `#!/usr/bin/env bash
+printf "%s\\n" "$*" >> "$PNPM_LOG"
+d=node_modules/.pnpm/better-sqlite3@12.4.1/node_modules/better-sqlite3
+case "$1" in
+  install) mkdir -p $d/build/Release; touch $d/binding.gyp; printf 'node_register_module_v%s' "$(node -p process.versions.modules)" > $d/build/Release/better_sqlite3.node ;;
+  exec) shift; exec "$@" ;;
+  rebuild) mkdir -p $d/build/Release; printf 'node_register_module_v%s' "$(node -p process.versions.modules)" > $d/build/Release/better_sqlite3.node ;;
+esac
+`);
+    const result = f.call(sha, ["sh", "-lc", "node -v; cat node_modules/.pnpm/better-sqlite3@12.4.1/node_modules/better-sqlite3/build/Release/better_sqlite3.node"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "v24.21.0\nnode_register_module_v137", "the command and the install use the login shell's Node");
+    assert.match(result.stderr, /using the login shell's node v24\.21\.0 for the install and the command/);
+    assert.match(result.stderr, /node=v24\.21\.0 via pnpm rebuild=none/);
+    // A plain `-c` command keeps the unit's PATH, as before.
+    const plain = f.call(sha, ["bash", "-c", "node -v"]);
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.equal(plain.stdout, "v22.23.3\n");
+    assert.doesNotMatch(plain.stderr, /login shell's node/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("docs-only gate verifies the requested SHA without installing dependencies", () => {
   const f = fixture();
   try {

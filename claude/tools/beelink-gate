@@ -2362,6 +2362,16 @@ PY
     else
       die ".nvmrc asks for Node $(cat .nvmrc) and $beelink has no nvm to select it"
     fi
+  elif [[ "${command[0]##*/}" =~ ^(sh|dash|bash)$ && "${command[1]:-}" =~ ^-[A-Za-z]*l[A-Za-z]*$ && "${command[1]}" == *c* ]]; then
+    # A login-shell command runs under the Node its profile selects (nvm's default, 24, on both Beelinks), while this
+    # unit's PATH starts at /usr/local/bin/node (22). On 2026-10-21 agent-knowledge installed better-sqlite3 for ABI 127
+    # and its `sh -lc` tests ran under 137, three rounds in a row. Install and probe with the login shell's Node.
+    local login_node
+    login_node=$(/usr/bin/bash -lc 'command -v node' </dev/null 2>/dev/null | tail -1)
+    if [ -x "$login_node" ] && [ "$login_node" != "$(command -v node)" ]; then
+      export PATH="${login_node%/*}:$PATH"
+      echo "beelink-gate: using the login shell's node $("$login_node" -v 2>/dev/null) for the install and the command" >&2
+    fi
   fi
   # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces
   # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
