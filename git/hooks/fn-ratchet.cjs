@@ -8,50 +8,19 @@
 // The rule, for staged TypeScript and JavaScript outside tests: no new function longer than LIMIT lines, and no
 // function already longer than LIMIT may grow. A function moved to another file in the same commit is compared with
 // its old self. Functions are named by declaration, by the variable or property they are assigned to, or by the call
-// they are passed to. Parsing needs the typescript package: the repo's own, else the one git/install.sh puts in
-// ~/.local/share/dotfiles-node; with neither, the hook says so and passes. Fixture repos set core.hooksPath=/dev/null.
+// they are passed to (git/census/functions.cjs). Parsing needs the typescript package: the repo's own, else the one
+// git/install.sh puts in ~/.local/share/dotfiles-node; with neither, the hook says so and passes. Fixture repos set core.hooksPath=/dev/null.
 "use strict";
-const LIMIT = 300;
 const { execFileSync } = require("child_process");
-const os = require("os"), path = require("path");
+// The census owns the function counter and the source classification, so this hook and the census count alike.
+const { loadTs, functionSpans, SOURCE, SKIP, LIMIT } = require("../census/functions.cjs");
 const git = (...a) => execFileSync("git", a, { encoding: "utf8", maxBuffer: 1 << 30 });
 const tryGit = (...a) => { try { return git(...a); } catch { return null; } };
-const SRC = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
-const SKIP = /(\.d\.ts$|\.min\.js$|\.(test|spec)\.[^/]+$|(^|\/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build)\/)/;
 
-function loadTs() {
-  const root = git("rev-parse", "--show-toplevel").trim();
-  // TypeScript 7 (the native compiler) publishes no JavaScript compiler API, so a repo on it falls back to ours.
-  for (const base of [root, path.join(os.homedir(), ".local/share/dotfiles-node")]) {
-    try {
-      const ts = require(require.resolve("typescript", { paths: [base] }));
-      if (typeof ts.createSourceFile === "function" && ts.ScriptTarget) return ts;
-    } catch {}
-  }
-  return null;
-}
-
+/** Each function name's longest span in a file: a name defined twice is compared by its longest copy. */
 function spans(ts, file, text) {
   const out = new Map();
-  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const line = (pos) => sf.getLineAndCharacterOfPosition(pos).line;
-  const keyOf = (n) => {
-    if (n.name && n.name.getText) return n.name.getText(sf);
-    const p = n.parent;
-    if (p && (ts.isVariableDeclaration(p) || ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p)) && p.name) return p.name.getText(sf);
-    if (p && ts.isCallExpression(p)) return `<arg of ${p.expression.getText(sf).slice(0, 60)}>`;
-    if (ts.isConstructorDeclaration(n)) return "constructor";
-    return "<anonymous>";
-  };
-  const visit = (n) => {
-    if (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isConstructorDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n)) {
-      const span = line(n.end) - line(n.getStart(sf)) + 1;
-      const key = keyOf(n);
-      out.set(key, Math.max(out.get(key) || 0, span));
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
+  for (const { key, span } of functionSpans(ts, file, text).fns) out.set(key, Math.max(out.get(key) || 0, span));
   return out;
 }
 
@@ -64,16 +33,16 @@ function main() {
     if (s === "R" || s === "C") { before.push(parts[i + 1]); changed.push(parts[i + 2]); i += 3; }
     else { if (s !== "A") before.push(parts[i + 1]); if (s !== "D") changed.push(parts[i + 1]); i += 2; }
   }
-  const after = changed.filter((p) => SRC.test(p) && !SKIP.test(p));
+  const after = changed.filter((p) => SOURCE.test(p) && !SKIP.test(p));
   if (!after.length) return 0;
-  const ts = loadTs();
+  const ts = loadTs([git("rev-parse", "--show-toplevel").trim()]);
   if (!ts) { process.stderr.write("fn-ratchet: no typescript package found (repo or ~/.local/share/dotfiles-node); function sizes not checked.\n"); return 0; }
   // A merge is compared with every parent: a function the incoming branch already grew is not this commit's growth.
   const mergeHeads = (tryGit("rev-parse", "-q", "--verify", "MERGE_HEAD") || "").split("\n").filter(Boolean);
   const bases = [["HEAD", before], ...mergeHeads.map((h) => [h, after])];
   const old = new Map();
   for (const [ref, paths] of bases) {
-    for (const p of paths.filter((p) => SRC.test(p))) {
+    for (const p of paths.filter((p) => SOURCE.test(p))) {
       const text = tryGit("show", `${ref}:${p}`);
       if (text !== null) for (const [k, v] of spans(ts, p, text)) old.set(k, Math.max(old.get(k) || 0, v));
     }

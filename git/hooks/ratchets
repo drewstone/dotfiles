@@ -3,7 +3,8 @@
 # its own core.hooksPath: agent-container, agent-runtime and agent-eval call "$(git config --global
 # core.hooksPath)/ratchets". A new ratchet added here then reaches every repo without a repo change. Until
 # 2026-10-21 those repos called loc-ratchet directly, so doc-ref-ratchet and dup-export-ratchet never ran there,
-# and agent-runtime #1965 deleted files that docs still named.
+# and agent-runtime #1965 deleted files that docs still named. What each ratchet counts comes from ../census, the one
+# owner the hourly scoreboard and factory's census checks also read.
 set -euo pipefail
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "$dir/loc-ratchet"

@@ -13,19 +13,21 @@ Not checked: dated history (.agent/, .evolve/, .agents/, archive/, pursuits/, re
 which records what was true on its day, and paths that still exist after the commit. There is no
 escape variable; fixture repos set core.hooksPath=/dev/null like every other global hook here.
 """
+import os
 import re
 import subprocess
 import sys
 
-HISTORY = (".agent/", ".evolve/", ".agents/", "archive/", "pursuits/", "reports/")
+sys.dont_write_bytecode = True  # the installed checkout stays clean
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census"))
+import classify  # noqa: E402  the census owns the classification, so this hook and the census count alike
 
 
 def git(*args):
     return subprocess.run(["git", *args], capture_output=True, text=True)
 
 
-def history(path):
-    return path.startswith(HISTORY) or "/archive/" in path or path.endswith("CHANGELOG.md")
+history = classify.history
 
 
 def main():

@@ -1,0 +1,24 @@
+{
+  "about": "The one classification every census instrument and ratchet reads (git/census/README.md). Patterns are regular expressions both Python and JavaScript accept.",
+  "logic": "\\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|sh|bash|sql|rb|java|kt|swift|sol)$",
+  "workflow": "(^|/)\\.github/workflows/[^/]+\\.ya?ml$",
+  "exempt": "(\\.d\\.ts$|\\.min\\.js$|\\.(test|spec)\\.[^/]+$|_test\\.go$|(^|/)test_[^/]+\\.py$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build|migrations)/)",
+  "test": "(\\.(test|spec)\\.[^/]+$|_test\\.go$|(^|/)test_[^/]+\\.py$|(^|/)(__tests__|tests?|e2e)/)",
+  "source": "\\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$",
+  "skip": "(\\.d\\.[cm]?ts$|\\.min\\.js$|\\.(test|spec)\\.[^/]+$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build)/)",
+  "declaration": "^export (?:default )?(?:declare )?(?:async )?(?:abstract )?(?:function\\*?|class|interface|type|const|let|enum) ([A-Za-z_$][\\w$]*)",
+  "conventionNames": [
+    "main", "default", "config", "handler", "runtime", "dynamic", "revalidate", "metadata", "viewport",
+    "generateMetadata", "generateStaticParams", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+    "loader", "action", "meta", "links", "headers", "handle", "ErrorBoundary", "HydrateFallback",
+    "clientLoader", "clientAction", "shouldRevalidate", "Route", "Props"
+  ],
+  "history": [".agent/", ".evolve/", ".agents/", "archive/", "pursuits/", "reports/"],
+  "trivial": "^([{}()\\[\\];,]+|\\}\\)?;?|\\)\\s*;?|\\]\\s*;?|//.*|/\\*.*|\\*.*|\\*/|import .*|export \\* from .*|export \\{[^}]*\\} from .*|\\} from .*)$",
+  "window": 10,
+  "fileLimit": 1000,
+  "functionLimit": 300,
+  "classMembers": 40,
+  "fileHug": [951, 1000],
+  "functionHug": [271, 300]
+}

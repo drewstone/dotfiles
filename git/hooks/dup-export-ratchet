@@ -15,21 +15,18 @@ the staged tree, and so does editing a declaration in place, even one that is al
 default and similar) are not checked. Tests, type declarations and generated or vendored paths are skipped.
 There is no escape variable; fixture repos set core.hooksPath=/dev/null like every other global hook here.
 """
+import os
 import re
 import subprocess
 import sys
 
-SOURCE = re.compile(r"\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$")
-SKIP = re.compile(
-    r"(\.d\.[cm]?ts$|\.(test|spec)\.[^/]+$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build)/)"
-)
-DECL = re.compile(r"^[+-]export (?:default )?(?:declare )?(?:async )?(?:abstract )?(?:function\*?|class|interface|type|const|let|enum) ([A-Za-z_$][\w$]*)")
-CONVENTION = {
-    "main", "default", "config", "handler", "runtime", "dynamic", "revalidate", "metadata", "viewport",
-    "generateMetadata", "generateStaticParams", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
-    "loader", "action", "meta", "links", "headers", "handle", "ErrorBoundary", "HydrateFallback",
-    "clientLoader", "clientAction", "shouldRevalidate", "Route", "Props",
-}
+sys.dont_write_bytecode = True  # the installed checkout stays clean
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census"))
+import classify  # noqa: E402  the census owns the classification, so this hook and the census count alike
+
+SOURCE, SKIP, CONVENTION = classify.SOURCE, classify.SKIP, classify.CONVENTION
+# A diff line adds or removes an export when it is the declaration with its +/- prefix.
+DECL = re.compile("^[+-]" + classify.DECLARATION.pattern[1:])
 
 
 def git(*args):
