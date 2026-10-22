@@ -78,8 +78,9 @@ def attr_exempt(checkout, tree, paths):
     return {out[k] for k in range(0, len(out) - 2, 3) if out[k + 2] in ("set", "true")}
 
 
-def functions(checkout, tree):
-    run = subprocess.run(["node", os.path.join(HERE, "functions.cjs"), checkout, tree], capture_output=True, text=True)
+def functions(checkout, paths, blobs):
+    run = subprocess.run(["node", os.path.join(HERE, "functions.cjs"), checkout], capture_output=True, text=True,
+                         input=json.dumps([{"file": p, "text": blobs[p].decode()} for p in paths]))
     if run.returncode != 0:
         raise Refused(run.stderr.strip() or "functions.cjs failed")
     found = json.loads(run.stdout)
@@ -161,7 +162,7 @@ def exports(sources):
 
 def cache_file(tree):
     digest = hashlib.sha256()
-    for name in ("census", "classify.py", "functions.cjs", "patterns.json"):
+    for name in ("census", "classify.py", "functions.cjs", "patterns.json", "python_functions.py"):
         digest.update(open(os.path.join(HERE, name), "rb").read())
     root = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "census")
     return os.path.join(root, digest.hexdigest()[:12], f"{tree}.json")
@@ -197,13 +198,14 @@ def measure(checkout, rev, scopes=()):
         pass
     paths = git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1]
     logic, source = [p for p in paths if C.logic(p)], [p for p in paths if C.source(p)]
+    function_paths = [p for p in paths if C.function_source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
-    blobs = read_blobs(checkout, tree, sorted(set(logic + source + docs)))
+    blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
     sizes = production_sizes(checkout, tree, {p: blobs[p] for p in logic})
     if not sizes:
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
     texts = {p: blobs[p].decode(errors="replace") for p in source}
-    fn = functions(checkout, tree) if source else {"fns": [], "classes": []}
+    fn = functions(checkout, function_paths, blobs)
     spans, defs, copies = [f[0] for f in fn["fns"]], exports(texts), duplicated(texts)
     dup = sum(f["dup_lines"] for f in copies["files"].values())
     normalized = sum(f["normalized_lines"] for f in copies["files"].values())
@@ -221,7 +223,7 @@ def measure(checkout, rev, scopes=()):
     lists = {"prod_lines": sizes, "dup_lines": copies, "files_over_1000": big_files, "hug_files": hug_files,
              "stale_doc_refs": stale, "fns_over_150": [f for f in fn["fns"] if f[0] > 150], "hug_fns": hug_fns,
              "classes_over_40": classes, "dup_exports": duplicate_exports}
-    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "docs": len(docs)}, "metrics": m, "lists": lists}
+    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)}, "metrics": m, "lists": lists}
     remember(cached, result)
     return measurement_view(result, rev, scopes)
 
