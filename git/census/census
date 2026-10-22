@@ -293,7 +293,7 @@ def xrepo(specs):
         texts = source_texts(checkout, tree_of(checkout, rev))
         files[name] = len(texts)
         for n, paths in exports(texts).items():
-            names[n][name] = len(paths)
+            names[n][name] += len(paths)
         for p, text in texts.items():
             for h in windows(text):
                 seen[h].add((name, p))
