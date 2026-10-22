@@ -95,3 +95,59 @@ test("a scan that reads no logic file, or has no parser, is refused rather than 
   assert.equal(noParser.status, 2);
   assert.match(noParser.stderr, /CENSUS REFUSED: functions\.cjs: refused: no typescript package/);
 });
+
+
+test("scoped census counts covered lines against outside peers and preserves cached whole-tree metrics", () => {
+  const body = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
+  const repeat = lines(12, (i) => `  total += values[${i}] * ${i + 30}`);
+  const lane = `// original source positions\n\nexport function lane(values: number[]) {\n  let total = 0\n${body}  return total\n}\n`;
+  const peer = lane.replace("function lane", "function peer");
+  const { dir, git } = repo({
+    "scripts/lane.ts": lane,
+    "packages/peer.ts": peer,
+    "services/repeat.ts": `export function repeat(values: number[]) {\n  let total = 0\n${repeat}  total += 999\n${repeat}  return total\n}\n`,
+    "products/sandbox/evals/plain.ts": "export const plain = 7\n",
+    "scripts-extra/unrelated.ts": "export const unrelated = 8\n",
+  });
+  const measure = (...scopes) => {
+    const r = run(dir, census, ["measure", ".", "HEAD", ...scopes.flatMap((p) => ["--scope", p])]);
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  // Start with a scoped request: it must cache the complete peer population.
+  const selected = measure("scripts/", "services/", "products/sandbox/evals/");
+  assert.equal(selected.metrics.dup_lines, 52);
+  assert.equal(selected.scope.metrics.dup_lines, 38);
+  assert.equal(selected.scope.files_read.source, 3);
+  assert.equal(selected.files_read.source, 5);
+  assert.equal(selected.scope.metrics.prod_lines, 18 + 29 + 1);
+  assert.equal(selected.scope.lists.dup_lines.files["services/repeat.ts"].dup_lines, 24);
+  assert.equal(selected.scope.lists.dup_lines.files["scripts/lane.ts"].dup_lines, 14);
+  const occurrences = Object.values(selected.scope.lists.dup_lines.windows).flat();
+  assert(occurrences.some((o) => o.path === "packages/peer.ts"));
+  assert(!occurrences.some((o) => o.path.startsWith("scripts-extra/")));
+  const first = occurrences.find((o) => o.path === "scripts/lane.ts" && o.normalized_start === 2);
+  assert.deepEqual(first, { path: "scripts/lane.ts", normalized_start: 2, start_line: 4, end_line: 13 });
+  assert.equal(lane.split("\n")[first.start_line - 1].trim(), "let total = 0");
+  assert.equal(lane.split("\n")[first.end_line - 1].trim(), "total += values[8] * 10");
+  const global = measure();
+  assert.deepEqual(global.metrics, selected.metrics);
+  assert.equal(global.scope, undefined);
+  assert.deepEqual(global.lists.dup_lines, selected.lists.dup_lines);
+  const scriptsOnly = measure("scripts", "scripts/");
+  assert.equal(scriptsOnly.scope.metrics.dup_lines, 14);
+  assert.equal(scriptsOnly.scope.files_read.source, 1);
+  assert.deepEqual(scriptsOnly.metrics, global.metrics);
+  for (const invalid of ["missing", "../scripts", "/scripts", ""]) {
+    const r = run(dir, census, ["measure", ".", "HEAD", "--scope", invalid]);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /CENSUS REFUSED:/);
+  }
+  // Removing the only outside peer must reduce scope coverage on the next tree.
+  git("rm", "packages/peer.ts");
+  git("commit", "-qm", "remove outside peer");
+  const after = measure("scripts/", "services/");
+  assert.equal(after.scope.metrics.dup_lines, 24);
+  assert.equal(after.scope.lists.dup_lines.files["scripts/lane.ts"].dup_lines, 0);
+  assert.notEqual(after.tree, global.tree);
+});

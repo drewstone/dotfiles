@@ -52,8 +52,8 @@ def line_count(data):
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
-def normalized(text):
+def normalized(text, *, locations=False):
     """A file's lines as the duplicate counters compare them: whitespace collapsed; blanks, comments, imports and lone
     braces dropped."""
-    lines = (re.sub(r"\s+", " ", line.strip()) for line in text.splitlines())
-    return [line for line in lines if line and not TRIVIAL.match(line)]
+    lines = ((n, re.sub(r"\s+", " ", line.strip())) for n, line in enumerate(text.splitlines(), 1))
+    return [(n, line) if locations else line for n, line in lines if line and not TRIVIAL.match(line)]
