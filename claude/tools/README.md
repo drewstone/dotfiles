@@ -283,6 +283,8 @@ author holds need no full review read. A merge passes its fresh per-tick respons
 continue to read live. Secondary limits defer the queue until `Retry-After` (or an
 increasing delay) has elapsed, then retry the same PR first.
 
+A commit pushed to a branch after its PR merged never reaches the base on its own. Each tick reads the PRs merged in the last 6 hours; for a branch that moved since, with no open PR on it, `git cherry` in the merge mirror keeps the commits whose patch the base lacks, and the bot opens one follow-up PR from that branch ("<title> (commits pushed after #N merged)") and comments on #N. Judged (PR, head) pairs are kept in `stranded.json` in the state directory.
+
 Each tick logs actual GitHub HTTP calls, remaining quotas, cache hits/misses and any
 deferral to the journal and `ticks.jsonl` in the state directory. It includes calls
 inside `gh-drew`; API debug traces stay in memory. Use `--dry-run --state-dir DIR`
