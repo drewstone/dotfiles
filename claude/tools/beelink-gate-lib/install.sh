@@ -24,15 +24,23 @@ repo_pnpm_version() {
 # Corepack owns the repository's exact Yarn version/hash. The shim also keeps
 # later `yarn` commands on that version without changing host-wide shims or
 # letting Corepack add packageManager to an otherwise unchanged repository.
-install_yarn_dependencies() {
-  [ -f yarn.lock ] || die "Yarn packageManager requires yarn.lock for a frozen install"
-  local corepack_bin yarn_version yarn_major classic=0
+prepare_yarn_launcher() {
+  local corepack_bin
   corepack_bin=$(command -v corepack) || die "corepack unavailable on beelink for Yarn"
   mkdir -p "$checkout/.git/beelink-gate-bin" || return $?
   printf '#!/usr/bin/env bash\nexport COREPACK_ENABLE_AUTO_PIN=0 COREPACK_ENABLE_PROJECT_SPEC=1 COREPACK_ENABLE_STRICT=1\nexec %q yarn "$@"\n' "$corepack_bin" > "$checkout/.git/beelink-gate-bin/yarn" || return $?
   chmod +x "$checkout/.git/beelink-gate-bin/yarn" || return $?
   export PATH="$checkout/.git/beelink-gate-bin:$PATH"
-  yarn_version=$(yarn --version) || return $?
+}
+
+install_yarn_dependencies() {
+  [ -f yarn.lock ] || die "Yarn packageManager requires yarn.lock for a frozen install"
+  local yarn_version yarn_major classic=0 version_file="$checkout/.git/beelink-gate-bin/yarn-version"
+  prepare_yarn_launcher || return $?
+  # Corepack can download or prompt on its first invocation: keep this inside
+  # the admitted step budget, with closed stdin, process reaping and timing.
+  install_step timeout 120 yarn --version > "$version_file" || return $?
+  yarn_version=$(cat "$version_file") || return $?
   [[ "$yarn_version" =~ ^([0-9]+)\.[0-9]+\.[0-9]+ ]] || die "cannot determine the repository's Yarn version"
   yarn_major=${BASH_REMATCH[1]}
   grep -q '^# yarn lockfile v1' yarn.lock && classic=1
@@ -100,7 +108,13 @@ prepare_gate_dependencies() {
   # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
   # that CI on 11 refused. The shim covers the install, the command and ship.sh.
   local want_pnpm have_pnpm repo_manager
+  # This private cache directory survives git clean; never reuse another
+  # revision's package-manager shim, even when its manager has changed.
+  rm -f "$checkout/.git/beelink-gate-bin/pnpm" "$checkout/.git/beelink-gate-bin/yarn" "$checkout/.git/beelink-gate-bin/yarn-version" || return $?
   repo_manager=$(node -e 'const p=require("./package.json"); console.log((p.packageManager||"").split("@")[0] || p.devEngines?.packageManager?.name || "")' 2>/dev/null) || repo_manager=""
+  if [ -n "$repo_manager" ] && [ "$repo_manager" != yarn ] && [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
+    die "packageManager declares $repo_manager but only yarn.lock exists; provide its matching lockfile or declare Yarn"
+  fi
   if [ "$repo_manager" != yarn ] && [ -f pnpm-lock.yaml ] && want_pnpm=$(repo_pnpm_version); then
     have_pnpm=$(pnpm --version 2>/dev/null || true)
     if [ "$want_pnpm" != "$have_pnpm" ]; then
@@ -127,6 +141,7 @@ prepare_gate_dependencies() {
     (( workers >= 4 )) || workers=4
     if [ "${starved:-0}" = 1 ]; then workers=$(( workers / 2 )); (( workers >= 2 )) || workers=2; fi
     export SHIP_MAX_WORKERS=$workers
+    if [ "$repo_manager" = yarn ]; then prepare_yarn_launcher || return $?; fi
     resolve_gate_node
     echo "beelink-gate: --ship runs scripts/ship.sh verify with node $gate_node and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
   elif [ "$install_mode" = no-install ] || [ "$install_mode" = light ]; then

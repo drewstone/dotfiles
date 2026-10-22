@@ -98,24 +98,17 @@ die() { echo "beelink-gate: $*" >&2; exit 2; }
 TEMPFAIL=75
 
 # Resolve installed symlinks here; staging replaces this block with the helper
-# itself so submitted gates depend only on their own immutable source file.
+# and source helper so submitted gates depend only on their immutable source file.
 # BEELINK_GATE_INSTALLER_START
-gate_installer_source=$(python3 -c 'import os,sys; print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), "beelink-gate-lib", "install.sh"))' "${BASH_SOURCE[0]}") || exit $?
+gate_source_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "${BASH_SOURCE[0]}") || exit $?
+gate_installer_source="$gate_source_root/beelink-gate-lib/install.sh"
+gate_staging_source="$gate_source_root/beelink-gate-lib/source.sh"
 # shellcheck source=beelink-gate-lib/install.sh
 . "$gate_installer_source" || exit $?
+# shellcheck source=beelink-gate-lib/source.sh
+. "$gate_staging_source" || exit $?
 # BEELINK_GATE_INSTALLER_END
-emit_gate_source() {
-  awk -v helper="${gate_installer_source:-}" '
-    $0 == "# BEELINK_GATE_INSTALLER_START" {
-      while ((status = getline line < helper) > 0) print line
-      close(helper)
-      if (status < 0) exit 1
-      skip = 1; next
-    }
-    $0 == "# BEELINK_GATE_INSTALLER_END" { skip = 0; next }
-    !skip { print }
-  ' "$0"
-}
+
 tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
 tempfail() { tempfail_line "$1" "$2"; exit "$TEMPFAIL"; }
 utc_in_minutes() {
@@ -1591,7 +1584,7 @@ publish_proof() {
   [ -f "$key" ] || { echo "beelink-gate: no proof published: $beelink has no ship-proof key" >&2; return 0; }
   [ -x "$gh" ] || gh=$(command -v gh-drew) || { echo "beelink-gate: no proof published: gh-drew unavailable on $beelink" >&2; return 0; }
   tree=$(git rev-parse 'HEAD^{tree}') || return 0
-  version=$(declare -f remote_gate publish_proof | sha256sum | cut -d' ' -f1)
+  version=$(declare -f remote_gate publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
   tmp=$(mktemp -d) || return 0
   printf 'ship-proof v1\nrepo=%s\ntree=%s\ncommit=%s\ncommand=%s\ngate=%s\nhost=%s\nat=%s\nexit=0\n' \
     "$host/$owner/$repo" "$tree" "$(git rev-parse HEAD)" "${command[*]}" "$version" "$beelink" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp/receipt"
@@ -1648,7 +1641,7 @@ run_preview() {
 install_step() {
   local begin=$SECONDS status
   step "$@"; status=$?
-  export BEELINK_GATE_INSTALL_S=$((SECONDS - begin))
+  export BEELINK_GATE_INSTALL_S=$(( ${BEELINK_GATE_INSTALL_S:-0} + SECONDS - begin ))
   return "$status"
 }
 
@@ -2771,7 +2764,11 @@ on_beelink() {
   [ -z "${matched_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_RESERVE=${matched_reserve[$peer_host]}")
   [ -z "${matched_warm_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_WARM_RESERVE=${matched_warm_reserve[$peer_host]}")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
-  local me=$$ rc heartbeat_fd heartbeat_pid command_pid args_line=""
+  local me=$$ rc heartbeat_fd heartbeat_pid command_pid args_line="" source_file=""
+  if [ "$target" != "$SELF" ]; then
+    source_file=$(mktemp) || return "$TEMPFAIL"
+    emit_gate_source > "$source_file" || { rm -f "$source_file"; return "$TEMPFAIL"; }
+  fi
   # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
   # ("exec request failed on channel 0"); on 2026-10-18 a 23 KB patch, base64
   # encoded in argv, became 41,676 bytes and the submit was reported as a lost
@@ -2784,7 +2781,12 @@ on_beelink() {
   heartbeat_input() {
     local sleeper="" include_script=${1:-0}
     trap 'if [ -n "$sleeper" ]; then kill -TERM "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
-    if [ "$include_script" = 1 ]; then [ -z "$args_line" ] || printf '%s\n' "$args_line"; emit_gate_source; fi
+    if [ "$include_script" = 1 ]; then
+      declare -f receive_gate_source
+      printf 'receive_gate_source "$@"; exit $?\n'
+      [ -z "$args_line" ] || printf '%s\n' "$args_line"
+      cat "$source_file"
+    fi
     while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
       sleep 5 & sleeper=$!
       wait "$sleeper" || true
@@ -2815,36 +2817,13 @@ on_beelink() {
     stop_heartbeat
   else
     "${transport_prefix[@]}" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
-      < <([ -z "$args_line" ] || printf '%s\n' "$args_line"; emit_gate_source)
+      < <(declare -f receive_gate_source; printf 'receive_gate_source "$@"; exit $?\n'; [ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$source_file")
     rc=$?
   fi
+  [ -z "$source_file" ] || rm -f "$source_file"
   return "$rc"
 }
 
-stage_job() {
-  local target=$1 id=$2 dir marker
-  dir="$STATE_DIR/jobs/$id"
-  if [ "$target" = "$SELF" ]; then
-    mkdir -p "$STATE_DIR/jobs" && mkdir -m 700 "$dir" || return 1
-    emit_gate_source > "$dir/gate.sh" && chmod 700 "$dir/gate.sh"
-    return $?
-  fi
-  marker="__BEELINK_GATE_SOURCE_${id//-/_}__"
-  {
-    printf 'id=%q\n' "$id"
-    cat <<'BOOT'
-set -euo pipefail
-umask 077
-root="${BEELINK_GATE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/beelink-gate}/jobs"
-mkdir -p "$root"
-dir="$root/$id"
-mkdir -m 700 "$dir"
-BOOT
-    printf "cat > \"\$dir/gate.sh\" <<'%s'\n" "$marker"
-    emit_gate_source
-    printf '\n%s\nchmod 700 "$dir/gate.sh"\n' "$marker"
-  } | bounded_transport "$target stage $id" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
-}
 
 # The policy rarely changes, so the last good read is kept per host. WSL interop
 # (reg.exe) fails under load, and SSH can time out; a read up to seven days old
@@ -3693,3 +3672,4 @@ while :; do
   placements=$((placements + 1))
   echo "beelink-gate: placement $placements on $target gave the host back after waiting; probing both again" >&2
 done
+# BEELINK_GATE_SOURCE_END
