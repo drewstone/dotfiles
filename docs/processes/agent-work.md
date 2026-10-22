@@ -165,7 +165,7 @@ Default security and data integrity to fail-closed.
 
 ## Protect the host
 
-Start unattended chains, watchers, measurements and mirrors through `unattended --name <lane> -- <command>`: CPUWeight 20 and nice 10 under interactive sessions and gates, and at most 12 per host (`UNATTENDED_MAX`). Stopping a user service that started it, or sending SIGTERM to the wrapper, stops the command's scope too; a terminal or `setsid` start stays detached. I/O heavy jobs also carry their own limits (`rsync --bwlimit`, restic `--limit-upload`), because the hosts' disk schedulers ignore `ionice`.
+Start unattended chains, watchers, measurements and mirrors through `unattended --name <lane> -- <command>`: CPUWeight 20 and nice 10 under interactive sessions and gates, and at most 12 per host (`UNATTENDED_MAX`). A watcher that only polls and sleeps adds `--watch` and counts against its own limit of 48 (`UNATTENDED_WATCH_MAX`), so idle watchers never queue a build, test or measurement; a watcher that builds, tests or moves data stays a job. Stopping a user service that started it, or sending SIGTERM to the wrapper, stops the command's scope too; a terminal or `setsid` start stays detached. I/O heavy jobs also carry their own limits (`rsync --bwlimit`, restic `--limit-upload`), because the hosts' disk schedulers ignore `ionice`.
 Keep scratch, logs, and evidence outside repository checkouts, in `~/.local/state/agent-work/<repo>/` (`skill-run-log --dir`), the session scratch directory, or /tmp.
 A checkout holds only files its next pull request commits; a main checkout stays clean and on its default branch.
 For existing screenshots, check ~/.claude/image-cache/ and ~/.tmux/clipboard/images/.

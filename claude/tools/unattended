@@ -2,7 +2,7 @@
 # Run long unattended work (chains, watchers, measurements, mirrors) below
 # interactive sessions and gates, and cap how many run on one host.
 #
-# usage: unattended [--name NAME] [--max N] -- <command> [args...]
+# usage: unattended [--name NAME] [--watch] [--max N] -- <command> [args...]
 #
 # On 2026-10-11 GTR ran at load 87-114 on 32 cores and dropped off the network:
 # 55 Claude processes shared it with mirrors, archive extraction, a local model
@@ -14,27 +14,39 @@
 # finish and says so; it never kills anything. ionice is not used: these disks
 # run the none and mq-deadline schedulers, which ignore I/O priority, so I/O
 # heavy jobs need their own limits (rsync --bwlimit, restic --limit-*).
+#
+# --watch marks a watcher: a loop that polls and sleeps. Watchers count against
+# their own limit (UNATTENDED_WATCH_MAX, default 48), not the job limit. On
+# 2026-10-22 twelve idle watchers at 0% CPU (load 1.24 per core) filled GTR's 12
+# job places, and three lanes queued 2.8-5.0 min, one of them a customer-failure
+# watch. A watcher that builds, tests or moves data is a job; leave --watch off.
 set -uo pipefail
-name=job max=${UNATTENDED_MAX:-12}
+name=job class=job max=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --name) name=$2; shift 2 ;;
     --max) max=$2; shift 2 ;;
+    --watch) class=watch; shift ;;
     --) shift; break ;;
-    *) echo "unattended: usage: unattended [--name NAME] [--max N] -- <command> [args...]" >&2; exit 2 ;;
+    *) echo "unattended: usage: unattended [--name NAME] [--watch] [--max N] -- <command> [args...]" >&2; exit 2 ;;
   esac
 done
 [ "$#" -gt 0 ] || { echo "unattended: no command" >&2; exit 2; }
+if [ -z "$max" ]; then if [ "$class" = watch ]; then max=${UNATTENDED_WATCH_MAX:-48}; else max=${UNATTENDED_MAX:-12}; fi; fi
 [[ "$max" =~ ^[1-9][0-9]*$ ]] || { echo "unattended: --max must be a positive integer" >&2; exit 2; }
 [[ "$name" =~ ^[A-Za-z0-9_.-]{1,40}$ ]] || { echo "unattended: --name must be letters, digits, . _ or -" >&2; exit 2; }
 state="${XDG_STATE_HOME:-$HOME/.local/state}/unattended"
 mkdir -p "$state" || exit 2
 
-# One pid file per running job; a pid file whose process is gone is stale.
+# One pid file per running job: <name>.<pid>.pid for jobs, <name>.<pid>.watch.pid for watchers.
+# A pid file whose process is gone is stale.
+pidfile="$state/$name.$$.pid"
+[ "$class" = watch ] && pidfile="$state/$name.$$.watch.pid"
 running() {
   local f n=0 pid
   for f in "$state"/*.pid; do
     [ -e "$f" ] || continue
+    if [[ "$f" == *.watch.pid ]]; then [ "$class" = watch ] || continue; else [ "$class" = job ] || continue; fi
     pid=$(cat "$f" 2>/dev/null)
     if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then n=$((n + 1)); else rm -f "$f"; fi
   done
@@ -45,16 +57,16 @@ exec {lock}>"$state/.admit.lock"
 while :; do
   flock -x "$lock"
   if [ "$(running)" -lt "$max" ]; then
-    echo $$ > "$state/$name.$$.pid"
+    echo $$ > "$pidfile"
     flock -u "$lock"
     break
   fi
   flock -u "$lock"
-  [ $((waited % 300)) -eq 0 ] && echo "unattended: $max jobs already run on $(hostname); $name waits (${waited}s)" >&2
+  [ $((waited % 300)) -eq 0 ] && echo "unattended: $max $([ "$class" = watch ] && echo watchers || echo jobs) already run on $(hostname); $name waits (${waited}s)" >&2
   sleep 15; waited=$((waited + 15))
 done
 exec {lock}>&-
-trap 'rm -f "$state/$name.$$.pid"' EXIT
+trap 'rm -f "$pidfile"' EXIT
 if command -v systemd-run >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
   # The scope leaves the caller's cgroup, so stopping the caller would not reach the command: on
   # 2026-10-18 stopping referral-browser-artifact-watch.service left its Python child alive in
@@ -74,7 +86,7 @@ if command -v systemd-run >/dev/null && systemctl --user show-environment >/dev/
   # A command stopped by HUP, INT, KILL or TERM stops this wrapper by the same signal, so a stopped
   # service reads inactive, not failed with status 143 (its scope stops first, ordered After= it).
   case "$rc" in
-    129|130|137|143) rm -f "$state/$name.$$.pid"; trap - EXIT TERM INT; kill -s $((rc - 128)) $$ ;;
+    129|130|137|143) rm -f "$pidfile"; trap - EXIT TERM INT; kill -s $((rc - 128)) $$ ;;
   esac
   exit "$rc"
 else
