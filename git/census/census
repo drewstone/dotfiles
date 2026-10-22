@@ -89,8 +89,9 @@ def attr_exempt(checkout, tree, paths):
     return {out[k] for k in range(0, len(out) - 2, 3) if out[k + 2] in ("set", "true")}
 
 
-def functions(checkout, tree):
-    run = subprocess.run(["node", os.path.join(HERE, "functions.cjs"), checkout, tree], capture_output=True, text=True)
+def functions(checkout, paths, blobs):
+    run = subprocess.run(["node", os.path.join(HERE, "functions.cjs"), checkout], capture_output=True, text=True,
+                         input=json.dumps([{"file": p, "text": blobs[p].decode()} for p in paths]))
     if run.returncode != 0:
         raise Refused(run.stderr.strip() or "functions.cjs failed")
     found = json.loads(run.stdout)
@@ -148,7 +149,7 @@ def exports(sources):
 def cache_file(tree):
     digest = hashlib.sha256()
     for name in sorted(os.listdir(HERE)):
-        if name in ("census", "classify.py", "functions.cjs", "patterns.json"):
+        if name in ("census", "classify.py", "functions.cjs", "python_functions.py", "patterns.json"):
             digest.update(open(os.path.join(HERE, name), "rb").read())
     root = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "census")
     return os.path.join(root, digest.hexdigest()[:12], f"{tree}.json")
@@ -185,8 +186,9 @@ def measure(checkout, rev):
     paths = git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1]
     logic = [p for p in paths if C.logic(p)]
     source = [p for p in paths if C.source(p)]
+    function_paths = [p for p in paths if C.function_source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
-    blobs = read_blobs(checkout, tree, sorted(set(logic + source + docs)))
+    blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
     exempt = attr_exempt(checkout, tree, logic) | {p for p in logic if C.generated(blobs[p][:2000].decode(errors="replace"))}
     sizes = {p: C.line_count(blobs[p]) for p in logic if p not in exempt}
     if not sizes:
@@ -199,28 +201,25 @@ def measure(checkout, rev):
     stale = stale_refs(set(paths), {p: blobs[p].decode(errors="replace") for p in docs})
     m["stale_doc_refs"] = len(stale)
     lists["stale_doc_refs"] = stale
-    # A repo with no TypeScript or JavaScript has none of these: a measured 0 from a complete tree listing. A source
-    # file that cannot be read or parsed still refuses.
-    m.update({k: 0 for k in ("fns_over_300", "hug_fns", "classes_over_40", "dup_lines", "dup_exports", "fns_over_150",
-                             "fns_over_500", "mean_fn_lines", "exported_names", "dup_pct")})
-    if source:
-        texts = {p: blobs[p].decode(errors="replace") for p in source}
-        fn = functions(checkout, tree)
-        spans = [f[0] for f in fn["fns"]]
-        lo, hi = C.FUNCTION_HUG
-        dup, normalized = duplicated(texts)
-        defs = exports(texts)
-        m.update({"fns_over_300": sum(s > C.FUNCTION_LIMIT for s in spans), "hug_fns": sum(lo <= s <= hi for s in spans),
-                  "classes_over_40": sum(c[0] > C.CLASS_MEMBERS for c in fn["classes"]), "dup_lines": dup,
-                  "dup_exports": sum(len(f) > 1 for f in defs.values()),
-                  "fns_over_150": sum(s > 150 for s in spans), "fns_over_500": sum(s > 500 for s in spans),
-                  "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2), "exported_names": len(defs),
-                  "dup_pct": round(100 * dup / max(normalized, 1), 2)})
-        lists.update({"fns_over_150": [f for f in fn["fns"] if f[0] > 150],
-                      "hug_fns": [f for f in fn["fns"] if lo <= f[0] <= hi],
-                      "classes_over_40": [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS],
-                      "dup_exports": {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}})
-    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "docs": len(docs)},
+    # Function spans cover Python as well as JavaScript/TypeScript. Duplication and exported
+    # names retain their existing JavaScript/TypeScript population and normalization.
+    fn = functions(checkout, function_paths, blobs)
+    spans = [f[0] for f in fn["fns"]]
+    lo, hi = C.FUNCTION_HUG
+    texts = {p: blobs[p].decode(errors="replace") for p in source}
+    dup, normalized = duplicated(texts)
+    defs = exports(texts)
+    m.update({"fns_over_300": sum(s > C.FUNCTION_LIMIT for s in spans), "hug_fns": sum(lo <= s <= hi for s in spans),
+              "classes_over_40": sum(c[0] > C.CLASS_MEMBERS for c in fn["classes"]), "dup_lines": dup,
+              "dup_exports": sum(len(f) > 1 for f in defs.values()),
+              "fns_over_150": sum(s > 150 for s in spans), "fns_over_500": sum(s > 500 for s in spans),
+              "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2), "exported_names": len(defs),
+              "dup_pct": round(100 * dup / max(normalized, 1), 2)})
+    lists.update({"fns_over_150": [f for f in fn["fns"] if f[0] > 150],
+                  "hug_fns": [f for f in fn["fns"] if lo <= f[0] <= hi],
+                  "classes_over_40": [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS],
+                  "dup_exports": {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}})
+    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)},
               "metrics": m, "lists": lists}
     remember(cached, result)
     return {**result, "rev": rev}
