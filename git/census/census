@@ -89,34 +89,35 @@ def functions(checkout, paths, blobs):
     return found
 
 
-def windows(text, *, lines=None):
+def windows(text):
     """Hashes of every WINDOW consecutive normalized lines, in order."""
-    lines = C.normalized(text) if lines is None else lines
+    lines = C.normalized(text)
     return [hashlib.blake2b("\n".join(lines[j:j + C.WINDOW]).encode(), digest_size=8).digest()
             for j in range(len(lines) - C.WINDOW + 1)]
 
 
 def duplicated(texts):
     """One whole-repo occurrence index supplies coverage, scoped views and original source locations."""
-    lines = {p: C.normalized(t, locations=True) for p, t in texts.items()}
-    per_file = {p: windows("", lines=[line for _, line in ls]) for p, ls in lines.items()}
+    per_file = {p: windows(t) for p, t in texts.items()}
     seen = collections.Counter(h for hs in per_file.values() for h in hs)
     files, groups = {}, collections.defaultdict(list)
     for p, hs in per_file.items():
+        lines = C.normalized(texts[p], locations=True)
         covered = set()
         for j, h in enumerate(hs):
             if seen[h] > 1:
                 covered.update(range(j, j + C.WINDOW))
                 groups[h.hex()].append({"path": p, "normalized_start": j + 1,
-                                        "start_line": lines[p][j][0], "end_line": lines[p][j + C.WINDOW - 1][0]})
-        files[p] = {"normalized_lines": len(lines[p]), "dup_lines": len(covered)}
+                                        "start_line": lines[j][0], "end_line": lines[j + C.WINDOW - 1][0]})
+        files[p] = {"normalized_lines": len(lines), "dup_lines": len(covered)}
     return {"files": files, "windows": dict(sorted(groups.items()))}
 
 
 def measurement_view(result, rev, scopes):
     """Scope selects covered locations only; the cached peer population always remains the entire tree."""
     view = {**result, "rev": rev}
-    if not scopes: return view
+    if not scopes:
+        return view
     paths = sorted(set(os.path.normpath(p) for p in scopes))
     if not all(scopes) or any(os.path.isabs(p) or p == ".." or p.startswith("../") for p in paths):
         raise Refused("--scope must name repository-relative prefixes")
