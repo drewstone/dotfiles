@@ -5,6 +5,7 @@ Documentation=file://%h/bin/merge-on-green
 [Service]
 Type=oneshot
 Environment=FLEET_LANE=op-company:merge-on-green
+Environment=MERGE_ON_GREEN_SECURITY_UPDATES=1
 # Every check on the head is the gate; a head with no checks merges only on its beelink-gate receipt.
 Environment=MERGE_ON_GREEN_REQUIRED=*
 # These repos hold under 25 open PRs (oldest first past that); a full read costs about 28 GraphQL points, and

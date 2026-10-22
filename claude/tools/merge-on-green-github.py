@@ -58,6 +58,44 @@ class GitHub:
         if self.backoff.get('until', 0) > time.time():
             raise RateLimited(self.backoff['reason'])
 
+    def security_updates(self, dry_run):
+        """Keep product security alerts and updates enabled, checking once a day."""
+        path = self.root / 'security-updates.json'
+        prior = self.read(path)
+        if (prior.get('repo') == self.repo and prior.get('enabled') is True
+                and prior.get('paused') is False and 0 <= time.time() - prior.get('checked_at', 0) < 86400):
+            return True
+        endpoint = f'repos/{self.repo}'
+        alerts = self.run('api', endpoint + '/vulnerability-alerts', '--include')
+        if alerts.returncode:
+            if not re.search(r'HTTP/\S+ 404\b', alerts.stdout):
+                raise RuntimeError(f'security alerts read failed: {alerts.stderr.strip()}')
+            if dry_run:
+                print(f'merge-on-green: would enable security alerts and updates for {self.repo}')
+                return True
+            enabled = self.run('api', endpoint + '/vulnerability-alerts', '--method', 'PUT')
+            if enabled.returncode:
+                raise RuntimeError(f'enabling security alerts failed: {enabled.stderr.strip()}')
+        result = self.run('api', endpoint + '/automated-security-fixes')
+        if result.returncode:
+            raise RuntimeError(f'security updates read failed: {result.stderr.strip()}')
+        state = json.loads(result.stdout)
+        if state.get('enabled') is not True or state.get('paused') is not False:
+            if dry_run:
+                print(f'merge-on-green: would enable security updates for {self.repo}')
+                return True
+            enabled = self.run('api', endpoint + '/automated-security-fixes', '--method', 'PUT')
+            if enabled.returncode:
+                raise RuntimeError(f'enabling security updates failed: {enabled.stderr.strip()}')
+            result = self.run('api', endpoint + '/automated-security-fixes')
+            state = json.loads(result.stdout) if result.returncode == 0 else {}
+            if state.get('enabled') is not True or state.get('paused') is not False:
+                raise RuntimeError(f'security updates did not enable: {result.stderr.strip()}')
+        if not dry_run:
+            save(path, {'repo': self.repo, 'checked_at': time.time(), **state})
+        print(f'merge-on-green: security alerts and updates enabled for {self.repo}')
+        return True
+
     def run(self, *args, input=None, via='gh-drew', env=None):
         self.ready()
         # gh's API trace supplies actual nested calls (identity, review guard and

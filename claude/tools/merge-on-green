@@ -480,9 +480,17 @@ def main():
     success = False
     try:
         CLIENT.ready()
+        security_ok = True
+        if os.environ.get('MERGE_ON_GREEN_SECURITY_UPDATES') == '1':
+            try:
+                CLIENT.security_updates(a.dry_run)
+            except (RuntimeError, ValueError, KeyError) as e:
+                # Settings failure is visible without holding otherwise mergeable fixes.
+                security_ok = False
+                print(f'merge-on-green: security updates failed: {e}', file=sys.stderr)
         result = tick(a, owner, name)
-        success = result == 0
-        return result
+        success = result == 0 and security_ok
+        return result or int(not security_ok)
     except _github.RateLimited as e:
         deferred = str(e)
         print(f"merge-on-green: deferred #{CLIENT.pr or CLIENT.backoff.get('pr') or 'queue'}: {e}")
