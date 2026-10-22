@@ -243,6 +243,12 @@ export function parseInput(text) {
   const lines = t.split(/\r?\n/).filter((line) => line.trim() && !line.startsWith('#'))
   const header = lines[0].split('\t').map((h) => h.trim())
   if (header.length < 1) throw new VizError('TSV needs a header line')
+  // A first line of numbers under a non-key label is a data row; reading it as a header
+  // silently drops that row from the chart (a 319-box bar once printed as "unaccounted").
+  // Year-named series ("label\t2025\t2026") keep working because their first cell is a key.
+  if (header.length > 1 && !['label', 't'].includes(header[0]) && header.slice(1).every((h) => typeof tsvCell(h) === 'number')) {
+    throw new VizError(`TSV line 1 looks like data, not a header (${JSON.stringify(lines[0])}): add a header line such as "label\\tvalue"`)
+  }
   const rows = lines.slice(1).map((line, i) => {
     const cells = line.split('\t')
     if (cells.length > header.length) throw new VizError(`TSV line ${i + 2} has ${cells.length} cells but the header has ${header.length}`)
