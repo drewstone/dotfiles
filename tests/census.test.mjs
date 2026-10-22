@@ -41,6 +41,10 @@ function write(dir, files) {
 }
 const lines = (n, line) => Array.from({ length: n }, (_, i) => line(i)).join("\n") + "\n";
 const run = (cwd, cmd, args) => spawnSync(cmd, args, { cwd, encoding: "utf8", env });
+const pythonFunction = (name, span) => `def ${name}():\n${lines(span - 1, (i) => `    value_${i} = ${i}`)}`;
+const withoutTypescript = { ...env, NODE_PATH: "", HOME: join(scratch, "python-only-home"),
+  XDG_CACHE_HOME: join(scratch, "python-cache") };
+const runPythonOnly = (cwd, cmd, args) => spawnSync(cmd, args, { cwd, encoding: "utf8", env: withoutTypescript });
 
 test("each ratchet refuses its violation through the shared classification, and passes a clean change", () => {
   const { dir, git } = repo({ "src/a.ts": "export const shared = 1\n", "src/old.ts": "x\n", "docs/x.md": "see `src/old.ts`\n" });
@@ -94,4 +98,108 @@ test("a scan that reads no logic file, or has no parser, is refused rather than 
     env: { ...env, NODE_PATH: "", HOME: join(scratch, "no-home"), XDG_CACHE_HOME: join(scratch, "cache-2") } });
   assert.equal(noParser.status, 2);
   assert.match(noParser.stderr, /CENSUS REFUSED: functions\.cjs: refused: no typescript package/);
+});
+
+test("Python-only census measures exact async and nested spans, excludes tests, and gates a real tree without TypeScript", () => {
+  const nested = "def outer():\n    def inner():\n        pass\n    async def async_inner():\n        pass\n    return inner\n";
+  const { dir, git } = repo({ "src/main.py": pythonFunction("large", 301) + nested,
+    "test_ignored.py": pythonFunction("ignored", 321), "tests/more.py": pythonFunction("also_ignored", 322) });
+  const raw = spawnSync("node", [resolve("git/census/functions.cjs"), "."], {
+    cwd: dir, encoding: "utf8", env: withoutTypescript,
+    input: JSON.stringify([{ file: "src/main.py", text: git("show", "HEAD:src/main.py") }]),
+  });
+  assert.equal(raw.status, 0, raw.stderr);
+  const parsed = JSON.parse(raw.stdout);
+  assert.equal(parsed.files, 1);
+  assert.deepEqual(parsed.fns.map(([span, file, name]) => [name, span, file]), [
+    ["large", 301, "src/main.py"], ["outer", 6, "src/main.py"],
+    ["inner", 2, "src/main.py"], ["async_inner", 2, "src/main.py"],
+  ]);
+  const measured = runPythonOnly(dir, census, ["measure", ".", "HEAD"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const result = JSON.parse(measured.stdout);
+  assert.equal(result.metrics.fns_over_300, 1);
+  assert.equal(result.files_read.functions, 1);
+  assert.equal(result.metrics.exported_names, 0);
+  assert.equal(result.metrics.dup_exports, 0);
+  assert.equal(result.metrics.dup_lines, 0);
+  write(dir, { "src/new.py": pythonFunction("new_large", 301) });
+  git("add", "-A");
+  const floor = runPythonOnly(dir, census, ["floors", ".", "HEAD", "WORKTREE", "--floor", "god"]);
+  assert.equal(floor.status, 1, floor.stderr);
+  assert.match(floor.stdout, /fns_over_300\s+1 -> 2\s+\+1\s+REFUSED/);
+});
+
+test("staged Python ratchet rejects growth and new functions, permits reduction and moves, and ignores test files", () => {
+  const { dir, git } = repo({ "src/old.py": pythonFunction("existing", 305), "src/small.py": pythonFunction("small", 2),
+    "test_removed.py": pythonFunction("from_test", 500) });
+  const check = () => runPythonOnly(dir, "node", [join(hooks, "fn-ratchet.cjs")]);
+  write(dir, { "src/old.py": pythonFunction("existing", 306) });
+  git("add", "-A");
+  let result = check();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /existing is 306 lines \(was 305\)/);
+  write(dir, { "src/old.py": pythonFunction("existing", 305), "src/new.py": pythonFunction("introduced", 301) });
+  git("add", "-A");
+  result = check();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /introduced is 301 lines \(new\)/);
+  git("reset", "-q", "--hard");
+  git("clean", "-fdq");
+  git("mv", "src/old.py", "src/moved.py");
+  assert.equal(check().status, 0);
+  write(dir, { "src/moved.py": pythonFunction("existing", 304),
+    "test_large.py": pythonFunction("test_large", 500), "tests/large.py": pythonFunction("test_other", 500) });
+  git("add", "-A");
+  assert.equal(check().status, 0);
+  git("reset", "-q", "--hard");
+  git("clean", "-fdq");
+  git("rm", "-q", "test_removed.py");
+  write(dir, { "src/from_test.py": pythonFunction("from_test", 500) });
+  git("add", "-A");
+  result = check();
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /from_test is 500 lines \(new\)/);
+});
+
+test("a missing TypeScript dependency cannot disable staged Python enforcement in a mixed commit", () => {
+  const { dir, git } = repo({ "src/start.py": pythonFunction("small", 2), "src/deleted.js": "const previous = 1;\n" });
+  write(dir, { "src/new.py": pythonFunction("large", 301), "src/also.js": "const small = 1;\n" });
+  git("add", "-A");
+  const result = runPythonOnly(dir, "node", [join(hooks, "fn-ratchet.cjs")]);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /src\/new\.py: large is 301 lines \(new\)/);
+  git("reset", "-q", "--hard");
+  git("clean", "-fdq");
+  git("rm", "-q", "src/deleted.js");
+  write(dir, { "src/start.py": pythonFunction("small", 3) });
+  git("add", "-A");
+  const removal = runPythonOnly(dir, "node", [join(hooks, "fn-ratchet.cjs")]);
+  assert.equal(removal.status, 0, `deleted JavaScript needs no parser: ${removal.stderr}`);
+});
+
+test("malformed Python refuses both a complete census and a staged hook instead of measuring zero", () => {
+  const { dir, git } = repo({ "src/main.py": pythonFunction("valid", 2) });
+  write(dir, { "src/main.py": "def broken(:\n    pass\n" });
+  git("add", "-A");
+  const measure = runPythonOnly(dir, census, ["measure", ".", "WORKTREE"]);
+  assert.equal(measure.status, 2, measure.stderr);
+  assert.match(measure.stderr, /CENSUS REFUSED:.*python functions refused:/s);
+  const hook = runPythonOnly(dir, "node", [join(hooks, "fn-ratchet.cjs")]);
+  assert.notEqual(hook.status, 0);
+  assert.match(hook.stderr, /python functions refused:/);
+});
+
+test("Python function coverage leaves the JavaScript export and duplicate population unchanged", () => {
+  const block = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
+  const { dir, git } = repo({ "src/a.ts": `export function shared(values: number[]) {\n  let total = 0\n${block}  return total\n}\n`,
+    "src/b.ts": `export function shared(values: number[]) {\n  let total = 0\n${block}  return total\n}\n` });
+  const before = JSON.parse(run(dir, census, ["measure", ".", "HEAD"]).stdout).metrics;
+  write(dir, { "src/python.py": pythonFunction("shared", 301), "src/copy.py": pythonFunction("shared", 301) });
+  git("add", "-A");
+  const measured = run(dir, census, ["measure", ".", "WORKTREE"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const after = JSON.parse(measured.stdout).metrics;
+  for (const metric of ["dup_exports", "dup_lines", "exported_names", "dup_pct"]) assert.equal(after[metric], before[metric], metric);
+  assert.equal(after.fns_over_300, before.fns_over_300 + 2);
 });

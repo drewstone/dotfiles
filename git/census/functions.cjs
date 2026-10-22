@@ -1,18 +1,27 @@
 #!/usr/bin/env node
-// Function and class sizes from the TypeScript AST: the one counter fn-ratchet and the census share.
+// Function and class sizes from TypeScript and Python ASTs, shared by the ratchet and census.
 //
 // A function is a declaration, method, arrow, function expression, constructor or accessor; its span is the lines from
 // its first token to its last. It is named by declaration, by the variable or property it is assigned to, or by the
 // call it is passed to. A class's size is its member count.
 //
-// Usage: functions.cjs <checkout> <tree-ish>   prints {files, parsed, fns: [[span, path, name]], classes: [[members, path, name]]}
+// Internal: functions.cjs <checkout> reads JSON [{file,text}] on stdin; prints {files, parsed, fns: [[span, path, name]], classes: [[members, path, name]]}
 // over every source file outside tests (patterns.json), and exits 2 when no typescript package can be loaded or a file
 // could not be read: a scan that read nothing is refused, never reported as 0.
 "use strict";
 const { spawnSync } = require("child_process");
+const { readFileSync } = require("fs");
 const os = require("os"), path = require("path");
 const P = require("./patterns.json");
-const SOURCE = new RegExp(P.source), SKIP = new RegExp(P.skip);
+const SOURCE = new RegExp(P.functionSource), SKIP = new RegExp(P.skip);
+
+function pythonSpans(items) {
+  const run = spawnSync("python3", [path.join(__dirname, "python_functions.py")], {
+    input: JSON.stringify(items), encoding: "utf8", maxBuffer: 1 << 30,
+  });
+  if (run.status !== 0) throw new Error(run.stderr || run.error || "Python parser failed");
+  return JSON.parse(run.stdout);
+}
 
 /** The typescript compiler API from the first root that has one: the measured repo, the dotfiles copy that
  *  git/install.sh puts in ~/.local/share/dotfiles-node, then each NODE_PATH entry. TypeScript 7 publishes no
@@ -29,6 +38,7 @@ function loadTs(roots) {
 }
 
 function functionSpans(ts, file, text) {
+  if (file.endsWith(".py")) return pythonSpans([{ file, text }])[0];
   const fns = [], classes = [];
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const line = (pos) => sf.getLineAndCharacterOfPosition(pos).line;
@@ -51,36 +61,22 @@ function functionSpans(ts, file, text) {
   return { fns, classes };
 }
 
-/** Every blob of `paths` at `tree`, read in one `git cat-file --batch`. */
-function readBlobs(checkout, tree, paths) {
-  const run = spawnSync("git", ["-C", checkout, "cat-file", "--batch"], { input: paths.map((p) => `${tree}:${p}\n`).join(""), maxBuffer: 2 ** 31 });
-  if (run.status !== 0) throw new Error(`git cat-file failed: ${run.stderr}`);
-  const out = new Map();
-  let i = 0;
-  for (const p of paths) {
-    const nl = run.stdout.indexOf(10, i);
-    const header = run.stdout.subarray(i, nl).toString().split(" ");
-    i = nl + 1;
-    if (header[1] !== "blob") continue;
-    const n = Number(header[2]);
-    out.set(p, run.stdout.subarray(i, i + n).toString("utf8"));
-    i += n + 1;
-  }
-  return out;
-}
-
-function main([checkout, tree]) {
-  if (!checkout || !tree) { process.stderr.write("usage: functions.cjs <checkout> <tree-ish>\n"); return 2; }
+// Private census subprocess: the owner supplies blobs once, including sparse checkout paths.
+function main([checkout]) {
   const ts = loadTs([checkout]);
-  if (!ts) { process.stderr.write("functions.cjs: refused: no typescript package (measured repo, ~/.local/share/dotfiles-node or NODE_PATH)\n"); return 2; }
-  const ls = spawnSync("git", ["-C", checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree], { encoding: "utf8", maxBuffer: 1 << 30 });
-  if (ls.status !== 0) { process.stderr.write(`functions.cjs: refused: ${ls.stderr}`); return 2; }
-  const paths = ls.stdout.split("\0").filter((p) => SOURCE.test(p) && !SKIP.test(p));
-  const blobs = readBlobs(checkout, tree, paths);
-  if (blobs.size !== paths.length) { process.stderr.write(`functions.cjs: refused: read ${blobs.size} of ${paths.length} source files\n`); return 2; }
+  const items = JSON.parse(readFileSync(0, "utf8"));
+  if (!Array.isArray(items) || items.some((v) => typeof v.file !== "string" || typeof v.text !== "string"))
+    throw new Error("functions.cjs: refused: expected file/text blobs");
+  const blobs = new Map(items.map(({file, text}) => [file, text]));
+  const paths = [...blobs.keys()];
+  if (!ts && paths.some((p) => !p.endsWith(".py")))
+    throw new Error("functions.cjs: refused: no typescript package (measured repo, ~/.local/share/dotfiles-node or NODE_PATH)");
   const fns = [], classes = [];
+  const python = paths.filter((p) => p.endsWith(".py"));
+  const parsedPython = pythonSpans(python.map((file) => ({ file, text: blobs.get(file) })));
+  const pythonByFile = new Map(python.map((p, i) => [p, parsedPython[i]]));
   for (const [p, text] of blobs) {
-    const found = functionSpans(ts, p, text);
+    const found = pythonByFile.get(p) || functionSpans(ts, p, text);
     for (const f of found.fns) fns.push([f.span, p, f.key]);
     for (const c of found.classes) classes.push([c.members, p, c.name]);
   }
@@ -91,4 +87,7 @@ function main([checkout, tree]) {
 }
 
 module.exports = { loadTs, functionSpans, SOURCE, SKIP, LIMIT: P.functionLimit };
-if (require.main === module) process.exitCode = main(process.argv.slice(2));
+if (require.main === module) {
+  try { process.exitCode = main(process.argv.slice(2)); }
+  catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 2; }
+}
