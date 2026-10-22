@@ -63,6 +63,9 @@ REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast C
 # a hand merge because this tool served agent-container alone; most of those repos run no PR CI.
 ALL_CHECKS = REQUIRED == ["*"]
 PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"} if ALL_CHECKS else {"SUCCESS"}
+# Under "*", a head whose passing checks include none that builds or tests is treated as a head with no CI:
+# agent-eval#1047 merged on 2026-10-22 00:57Z on its only check, "adopt / adopt", which runs no typecheck or test.
+TESTING = re.compile(os.environ.get("MERGE_ON_GREEN_TESTING", r"(?i)build|test|type|lint|check|verify|ci\b|gate|sign-?off|e2e"))
 # A no-CI head whose receipt gh-drew refused is asked again after this long, not every tick:
 # each ask reads both beelinks' receipts over SSH.
 RECEIPT_RETRY_S = 600
@@ -277,6 +280,8 @@ def decide(pr, now):
         return "wait", "waiting on " + ", ".join(missing)
     if age < MIN_HEAD_AGE_S:
         return "wait", f"head {int(age)}s old"
+    if ALL_CHECKS and not any(TESTING.search(n) for n in gate):
+        return "merge", "no CI checks that build or test (only " + ", ".join(gate[:3]) + "); merging on its beelink-gate receipt"
     advisory = sorted(n for n, states in checks.items() if n not in gate and any(s in RED for s in states))
     return "merge", "green" + (" (advisory red: " + ", ".join(advisory[:3]) + ")" if advisory else "")
 
