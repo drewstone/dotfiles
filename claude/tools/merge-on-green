@@ -65,6 +65,25 @@ _spec = importlib.util.spec_from_file_location('mog_github', Path(__file__).reso
 _github = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_github)
 CLIENT = None
+SLOT_GRANT_LABEL = 'release-slot-granted'
+
+
+def slot_repositories():
+    """Read release-slot ownership from the same inventory that installs the timers."""
+    path = Path(__file__).resolve().parents[2] / 'host/agents/merge-on-green.repos'
+    repos = set()
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        instance, *options = line.split()
+        if options not in ([], ['slot']):
+            raise ValueError(f'Unsupported merge-on-green inventory options: {line}')
+        if options:
+            repos.add(instance.split(':')[0])
+    return repos
+
+
+SLOT_REPOS = slot_repositories()
 REVIEW_FRAGMENT = Path(__file__).resolve().with_name('gh-drew-review.sh').read_text().split("<<'GRAPHQL'", 1)[1].split('\n', 1)[1].split('\nGRAPHQL', 1)[0]
 
 REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
@@ -90,7 +109,7 @@ PAGE = int(os.environ.get("MERGE_ON_GREEN_PAGE", "100"))
 PROBE_READY_S, PROBE_MAX_S = 1800, 3600
 PROBE = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLimit{cost remaining resetAt}
 repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}
-pullRequests(states:OPEN,baseRefName:$base,first:100){nodes{number isDraft headRefOid updatedAt mergeable
+pullRequests(states:OPEN,baseRefName:$base,first:100){nodes{number isDraft headRefOid updatedAt mergeable author{__typename login}
 labels(first:10){nodes{name}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}"""
 RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
 HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
@@ -124,7 +143,7 @@ QUERY = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLi
 repository(owner:$owner,name:$name){mergeCommitAllowed squashMergeAllowed
 ref(qualifiedName:$ref){target{oid}}
 pullRequests(states:OPEN,baseRefName:$base,first:%d,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
-number isDraft mergeable isCrossRepository headRefName headRefOid updatedAt body labels(first:20){nodes{name}}
+number isDraft mergeable isCrossRepository headRefName headRefOid updatedAt body author{__typename login} labels(first:20){nodes{name}}
 commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt}} statusCheckRollup{contexts(first:100){nodes{__typename
 ...on CheckRun{name conclusion status completedAt} ...on StatusContext{context state}}}}}}}
 reviews(last:1){nodes{updatedAt}}
@@ -231,6 +250,41 @@ def hold_reason(pr):
         if not GATE_ONLY.match(body, m.start()):
             line = body[body.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
             return "hold phrase in body: " + line[:160]
+    return None
+
+
+def bot_slot_hold(a, pr, noted, noted_path, now):
+    """Hold each bot head until an operator grants that revision a release slot."""
+    if a.repo.split('/')[-1] not in SLOT_REPOS:
+        return None
+    author = pr.get('author') or {}
+    login = author.get('login', '')
+    if not login:
+        return 'release-slot PR author identity unavailable; cannot establish bot authorization'
+    if author.get('__typename') != 'Bot' and not re.search(r'(?i)(\[bot\]$|-bot$|^(?:dependabot|renovate|github-actions)$)', login):
+        return None
+    labels = {item['name'] for item in pr['labels']['nodes']}
+    key = f"slot-seen:{pr['number']}"
+    if (noted.get(key) or {}).get('head') != pr['headRefOid']:
+        reason = f'bot PR head needs an operator release slot; add hold and clear any earlier grant; grant with {SLOT_GRANT_LABEL} and remove hold'
+        if a.dry_run:
+            return reason
+        if 'hold' not in labels:
+            result = gh('api', f"repos/{a.repo}/issues/{pr['number']}/labels", '--method', 'POST',
+                        '--input', '-', input=json.dumps({'labels': ['hold']}))
+            if result.returncode:
+                return 'bot release-slot PR cannot merge; adding hold failed: ' + result.stderr.strip()[:160]
+            pr['labels']['nodes'].append({'name': 'hold'})
+        if SLOT_GRANT_LABEL in labels:
+            result = gh('api', f"repos/{a.repo}/issues/{pr['number']}/labels/{SLOT_GRANT_LABEL}", '--method', 'DELETE')
+            if result.returncode:
+                return 'bot release-slot PR held; clearing the earlier grant failed: ' + result.stderr.strip()[:160]
+            pr['labels']['nodes'] = [item for item in pr['labels']['nodes'] if item['name'] != SLOT_GRANT_LABEL]
+        noted[key] = {'at': now.isoformat(), 'head': pr['headRefOid']}
+        _github.save(noted_path, noted)
+        return reason
+    if SLOT_GRANT_LABEL not in labels:
+        return f'bot PR needs operator release-slot grant label {SLOT_GRANT_LABEL}'
     return None
 
 
@@ -556,6 +610,15 @@ def tick(a, owner, name):
     for pr in prs:
         n, head = pr["number"], pr["headRefOid"]
         CLIENT.pr = n
+        slot_hold = bot_slot_hold(a, pr, noted, noted_path, now)
+        if slot_hold:
+            rec = {'at': stamp, 'pr': n, 'head': head, 'action': 'slot-hold', 'outcome': slot_hold}
+            records.append(rec)
+            status.append(f"- #{n} {pr['headRefName']}: {slot_hold}")
+            if not a.dry_run:
+                with open(os.path.join(a.state_dir, 'decisions.jsonl'), 'a') as f:
+                    f.write(json.dumps(rec) + '\n')
+            continue
         if pause and not allowlisted(pr):
             outcome = f"paused until {pause['until']} ({pause['reason']}): skipped #{n}"
             records.append({"at": stamp, "pr": n, "head": head, "action": "paused", "outcome": outcome})

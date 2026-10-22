@@ -10,15 +10,15 @@ agent-runtime:main
 traces:main
 agent-app:main
 browser-agent-driver:main
-tangle-router:main
-gtm-agent:master
+tangle-router:main slot
+gtm-agent:master slot
 tangle-website:master
 discovery-lab:master
 blueprint-agent:develop
 tangle-tools:main
-creative-agent:master
-tax-agent:main
-legal-agent:main
+creative-agent:master slot
+tax-agent:main slot
+legal-agent:main slot
 hospitality-agent:main
 agent-builder:main
 ph0ny:main
