@@ -1,20 +1,24 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 
-// The ratchets and the census through one classification, on throwaway repos. TypeScript comes from a private prefix,
-// installed the way git/install.sh installs it, so the function counter is exercised, never skipped.
+// The ratchets and census use throwaway Git repos and a private fixture prefix linked to the maintained compiler.
+// No dependency installation occurs; missing-parser cases still use their own isolated HOME and NODE_PATH.
 const hooks = resolve("git/hooks");
 const census = resolve("git/census/census");
 const scratch = mkdtempSync(join(tmpdir(), "census-test-"));
 const env = { ...process.env, NODE_PATH: join(scratch, "ts/node_modules"), XDG_CACHE_HOME: join(scratch, "cache") };
 after(() => rmSync(scratch, { recursive: true, force: true }));
 before(() => {
-  const npm = spawnSync("npm", ["install", "--prefix", join(scratch, "ts"), "--no-audit", "--no-fund", "--silent", "typescript@5.6.3"], { encoding: "utf8" });
-  assert.equal(npm.status, 0, npm.stderr);
+  const require = createRequire(import.meta.url);
+  const compiler = require.resolve("typescript/package.json", { paths: [join(homedir(), ".local/share/dotfiles-node")] });
+  assert.equal(typeof require(dirname(compiler)).createSourceFile, "function", "git/install.sh must provide the TypeScript compiler API");
+  mkdirSync(join(scratch, "ts/node_modules"), { recursive: true });
+  symlinkSync(dirname(compiler), join(scratch, "ts/node_modules/typescript"), "dir");
 });
 
 let repos = 0;
@@ -317,4 +321,45 @@ test("an incomplete installed instrument refuses with exit 2 rather than a floor
   const result = run(dir, join(installed, "census"), ["measure", ".", "HEAD"]);
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /CENSUS REFUSED: cannot read instrument python_functions\.py/);
+});
+
+
+test("Storybook CSF suffixes are outside production while stories routes and modules remain enforced", () => {
+  const stories = Object.fromEntries(["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"].map((ext, i) => [
+    `src/component-${i}.stories.${ext}`,
+    `export const Default = {}\nexport function story${i}() {\n${lines(305, n => `  const value${n} = ${n}`)}}\n`,
+  ]));
+  const production = {
+    "src/owner.ts": "export const Default = 1\n",
+    "src/routes/stories.tsx": "export const route = 1\n",
+    "src/stories/service.ts": "export const service = 1\n",
+  };
+  const { dir, git } = repo({ ...production, ...stories });
+  const measured = run(dir, census, ["measure", ".", "HEAD"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const report = JSON.parse(measured.stdout);
+  assert.equal(report.metrics.prod_lines, 3, "CSF bodies are not production logic");
+  assert.equal(report.files_read.source, 3);
+  assert.equal(report.files_read.functions, 3);
+  assert.equal(report.metrics.dup_exports, 0, "CSF registry state names are not production API collisions");
+  assert.equal(report.metrics.fns_over_300, 0);
+  write(dir, { "src/new.stories.tsx": `export const Default = {}\nexport function longStory() {\n${lines(1005, n => `  const value${n} = ${n}`)}}\n` });
+  git("add", "-A");
+  const hooksPass = run(dir, join(hooks, "ratchets"), []);
+  assert.equal(hooksPass.status, 0, hooksPass.stderr);
+  const floor = run(dir, census, ["floors", ".", "HEAD", "WORKTREE", "--floor", "lines", "--floor", "copies", "--floor", "god"]);
+  assert.equal(floor.status, 0, floor.stderr);
+  for (const path of ["src/routes/stories.tsx", "src/stories/service.ts"]) {
+    write(dir, { [path]: production[path] + "export const Default = 2\n" });
+    git("add", "-A");
+    const rejected = run(dir, join(hooks, "dup-export-ratchet"), []);
+    assert.equal(rejected.status, 1, rejected.stderr);
+    assert.match(rejected.stderr, /Default: new in/);
+    assert(rejected.stderr.includes(path), rejected.stderr);
+    const counted = run(dir, census, ["measure", ".", "WORKTREE"]);
+    assert.equal(counted.status, 0, counted.stderr);
+    assert.equal(JSON.parse(counted.stdout).metrics.dup_exports, 1);
+    write(dir, { [path]: production[path] });
+    git("add", "-A");
+  }
 });
