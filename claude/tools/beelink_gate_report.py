@@ -148,7 +148,7 @@ if cpu_missing:
 for sample in samples:
     print(f"CPU_NOW {sample.get('from')}: at={sample.get('observed_at')} "
           f"sample={sample.get('interval_seconds')}s cores={sample.get('cores')} cpu={sample.get('cpu')} "
-          f"runnable_threads={sample.get('runnable_threads')} pressure={sample.get('cpu_pressure')} "
+          f"runnable_threads={sample.get('runnable_threads')} pressure={sample.get('cpu_pressure')} admission={sample.get('admission')} "
           f"unattributed_cpu_pct={sample.get('unattributed_cpu_pct')} error={sample.get('error')}")
     for process in sample.get("processes", [])[:5]:
         print(f"CPU_PROCESS {sample.get('from')}: {json.dumps(process, sort_keys=True)}")

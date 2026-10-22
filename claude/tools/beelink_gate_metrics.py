@@ -46,7 +46,7 @@ def throughput(history, since, until):
         row = dict(row, timing=timing)
         groups[key].append(row)
         # Commands can contain private caller inputs; the live instrument exports only timings.
-        records.append({k: row.get(k) for k in ("gate_id", "host", "repo", "sha", "class", "exit", "waited_s", "ran_s", "timing")}
+        records.append({k: row.get(k) for k in ("gate_id", "host", "repo", "sha", "class", "exit", "waited_s", "ran_s", "timing", "admission")}
                        | {"submitted_at": submitted.isoformat(), "finished_at": finish.isoformat()})
     summary = []
     for (repo, gate_class), rows in sorted(groups.items()):
