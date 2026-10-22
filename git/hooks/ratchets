@@ -9,3 +9,4 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "$dir/loc-ratchet"
 "$dir/doc-ref-ratchet"
 "$dir/dup-export-ratchet"
+if command -v node >/dev/null 2>&1; then node "$dir/fn-ratchet.cjs"; fi

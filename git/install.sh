@@ -11,6 +11,13 @@ GLOBAL_ATTRIBUTES_FILE="$SCRIPT_DIR/gitattributes_global"
 chmod +x "$GLOBAL_HOOKS_DIR/pre-commit" "$GLOBAL_HOOKS_DIR/pre-push" "$GLOBAL_HOOKS_DIR/commit-msg" "$GLOBAL_HOOKS_DIR/loc-ratchet" "$GLOBAL_HOOKS_DIR/doc-ref-ratchet" "$GLOBAL_HOOKS_DIR/dup-export-ratchet" "$GLOBAL_HOOKS_DIR/ratchets"
 chmod +x "$TEMPLATE_DIR/hooks/pre-commit" "$TEMPLATE_DIR/hooks/pre-push"
 
+# fn-ratchet parses TypeScript with the compiler's JavaScript API, which TypeScript 7 no longer publishes, so pin
+# TypeScript 5 next to the hooks. Linux hosts only (gtr, the Beelinks), where agents commit; the Mac refuses installs.
+npm_bin="$(command -v npm 2>/dev/null || ls -1 "$HOME"/.nvm/versions/node/*/bin/npm 2>/dev/null | tail -n1)"
+if [ "$(uname -s)" = Linux ] && [ -n "$npm_bin" ] && [ ! -f "$HOME/.local/share/dotfiles-node/node_modules/typescript/package.json" ]; then
+  PATH="$(dirname "$npm_bin"):$PATH" "$npm_bin" install --prefix "$HOME/.local/share/dotfiles-node" --no-audit --no-fund --silent typescript@5.6.3 || echo "warning: fn-ratchet parser not installed; function sizes go unchecked on this host" >&2
+fi
+
 # Write a global setting only when it changes, so a host whose ~/.gitconfig is
 # locked (gtr's is immutable) reinstalls without touching it.
 set_global() {
