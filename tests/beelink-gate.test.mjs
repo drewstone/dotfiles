@@ -3627,6 +3627,15 @@ test("--summary ends a red gate with the suite's counts and failing tests from s
       assert.doesNotMatch(summary, /\bpasses\b/);
       assert.match(summary.trim().split("\n").at(-1), /^beelink-gate: summary tests=2 suites=0 pass=1 fail=1 /);
     }
+    // vitest: a real red run's colored output (agent-container gate, 2026-10-22), replayed as the gate command.
+    const vitestOut = resolve("tests/fixtures/beelink-gate/vitest-red.txt");
+    const vitest = run(gate, ["--summary", "--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `cat ${JSON.stringify(vitestOut)}; exit 1`], { env: f.env });
+    assert.equal(vitest.status, 1, vitest.stderr);
+    const vitestSummary = vitest.stderr.slice(vitest.stderr.indexOf("beelink-gate: summary of the failed command (exit 1)"));
+    assert.match(vitestSummary, /^FAIL {2}tests\/integration\/native-session-export-conservation\.test\.ts > .* > conserves a workspace/m);
+    assert.match(vitestSummary, /^AssertionError: Internal Server Error: expected 500 to be 200/m);
+    assert.doesNotMatch(vitestSummary, /excludes FIFOs|- Expected|❯ exportOf/);
+    assert.equal(vitestSummary.trim().split("\n").at(-1), "beelink-gate: summary files=7 files_failed=4 files_passed=3 tests=54 failed=10 passed=44");
     const green = run(gate, ["--summary", "--no-install", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
     assert.equal(green.status, 0, green.stderr);
     assert.doesNotMatch(green.stderr, /summary/);

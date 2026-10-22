@@ -1,0 +1,37 @@
+ [32m✓[39m tests/integration/native-session-export-missing.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 14213[2mms[22m[39m
+     [33m[2m✓[22m[39m excludes FIFOs as special files, so a workspace whose only odd entries are FIFOs is complete [33m 6471[2mms[22m[39m
+     [33m[2m✓[22m[39m names every entry the workspace part counts missing, so the count and the rows agree [33m 7655[2mms[22m[39m
+
+[2m Test Files [22m [1m[31m4 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[90m (7)[39m
+[2m      Tests [22m [1m[31m10 failed[39m[22m[2m | [22m[1m[32m44 passed[39m[22m[90m (54)[39m
+[2m   Start at [22m 20:56:44
+[2m   Duration [22m 433.55s[2m (transform 2.98s, setup 8.97s, import 3.10s, tests 419.84s, environment 1ms)[22m
+
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 10 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/integration/native-session-export-conservation.test.ts[2m > [22mparked native session export conservation[2m > [22mconserves a workspace whose entries leave by every named route
+[31m[1mAssertionError[22m: Internal Server Error: expected 500 to be 200 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 200[39m
+[31m+ 500[39m
+
+[36m [2m❯[22m exportOf tests/integration/native-session-export-conservation.test.ts:[2m137:60[22m[39m
+    [90m135|[39m       { headers[33m:[39m { [32m"x-user-id"[39m[33m:[39m [32m"owner"[39m } }[33m,[39m
+    [90m136|[39m     )[33m;[39m
+    [90m137|[39m     [34mexpect[39m(response[33m.[39mstatus[33m,[39m [35mawait[39m response[33m.[39m[34mclone[39m()[33m.[39m[34mtext[39m())[33m.[39m[34mtoBe[39m([34m200[39m)[33m;[39m
+    [90m   |[39m                                                            [31m^[39m
+    [90m138|[39m     [35mconst[39m tarPath [33m=[39m [34mjoin[39m(root[33m,[39m [32m`[39m[36m${[39mprojectRef[36m}[39m[32m.tar`[39m)[33m;[39m
+    [90m139|[39m     [34mwriteFileSync[39m(tarPath[33m,[39m [33mBuffer[39m[33m.[39m[35mfrom[39m([35mawait[39m response[33m.[39m[34marrayBuffer[39m()))[33m;[39m
+[90m [2m❯[22m tests/integration/native-session-export-conservation.test.ts:[2m165:36[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/integration/native-session-export-conservation.test.ts[2m > [22mparked native session export conservation[2m > [22mnames the root of an entry a restore drops without naming, and the part is incomplete
+[31m[1mAssertionError[22m: Internal Server Error: expected 500 to be 200 // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
