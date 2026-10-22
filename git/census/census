@@ -303,32 +303,43 @@ def floors(checkout, base, head, names, peers):
 
 
 def xrepo(specs):
-    """Exported names defined in two or more repos, and normalized blocks copied across repos."""
-    names = collections.defaultdict(lambda: collections.defaultdict(int))
-    seen = collections.defaultdict(set)
-    files = {}
+    """Complete cross-repository export and located-copy evidence, with the existing ranked previews."""
+    names = collections.defaultdict(dict)
+    files, texts = {}, {}
     for name, checkout, rev in map(peer, specs):
-        texts = source_texts(checkout, tree_of(checkout, rev))
-        files[name] = len(texts)
-        for n, paths in exports(texts).items():
-            names[n][name] += len(paths)
-        for p, text in texts.items():
-            for h in windows(text):
-                seen[h].add((name, p))
-    cross = {n: dict(rs) for n, rs in names.items() if len(rs) >= 2}
-    pairs, by_repo = collections.Counter(), collections.Counter()
-    for occ in seen.values():
-        occ = sorted(occ)
-        for a in range(len(occ)):
-            for b in range(a + 1, len(occ)):
-                if occ[a][0] != occ[b][0]:
-                    pairs[(occ[a], occ[b])] += 1
-                    by_repo[(occ[a][0], occ[b][0])] += 1
-    ranked = sorted(cross.items(), key=lambda kv: (-len(kv[1]), -sum(kv[1].values())))
+        sources = source_texts(checkout, tree_of(checkout, rev))
+        files[name] = len(sources)
+        for n, paths in exports(sources).items():
+            names[n][name] = sorted(paths)
+        texts.update({(name, p): text for p, text in sources.items()})
+    cross = {n: rs for n, rs in names.items() if len(rs) >= 2}
+    counts = {n: {r: len(paths) for r, paths in rs.items()} for n, rs in cross.items()}
+    order = {p: i for i, p in enumerate(texts)}
+    groups = duplicated(texts)["windows"]
+    pairs, by_repo, located = collections.defaultdict(list), collections.Counter(), {}
+    # First-occurrence order preserves preview ties; repeated occurrences remain in the evidence.
+    for h, occurrences in sorted(groups.items(), key=lambda item: min((order[o["path"]], o["normalized_start"]) for o in item[1])):
+        paths = sorted({o["path"] for o in occurrences})
+        if len({repo for repo, _ in paths}) < 2:
+            continue
+        located[h] = [{**o, "repo": o["path"][0], "path": o["path"][1]} for o in occurrences]
+        for a, left in enumerate(paths):
+            for right in paths[a + 1:]:
+                if left[0] != right[0]:
+                    pairs[(left, right)].append(h)
+                    by_repo[(left[0], right[0])] += 1
+    ranked = sorted(counts.items(), key=lambda kv: (-len(kv[1]), -sum(kv[1].values())))
+    pair_counts = collections.Counter({pair: len(hashes) for pair, hashes in pairs.items()})
+    repo_pairs = {f"{a}~{b}": n for (a, b), n in by_repo.most_common()}
     return {"per_repo_files": files, "names_in_2plus_repos": len(cross), "names_in_3plus_repos": sum(len(v) >= 3 for v in cross.values()),
             "top_names": [[n, rs] for n, rs in ranked[:40]],
-            "cross_repo_shared_windows_by_repo_pair": {f"{a}~{b}": n for (a, b), n in by_repo.most_common(20)},
-            "top_cross_file_pairs": [[n + C.WINDOW - 1, f"{a[0]}/{a[1]}", f"{b[0]}/{b[1]}"] for (a, b), n in pairs.most_common(25)]}
+            "cross_repo_shared_windows_by_repo_pair": dict(list(repo_pairs.items())[:20]),
+            "top_cross_file_pairs": [[n + C.WINDOW - 1, f"{a[0]}/{a[1]}", f"{b[0]}/{b[1]}"] for (a, b), n in pair_counts.most_common(25)],
+            "top_cross_file_pairs_unit": "shared window hashes + window size - 1; not contiguous copied LOC",
+            "window_normalized_lines": C.WINDOW,
+            "lists": {"names": cross, "repo_pairs": repo_pairs, "windows": located,
+                      "cross_file_pairs": [{"a": {"repo": a[0], "path": a[1]}, "b": {"repo": b[0], "path": b[1]},
+                                            "shared_windows": len(hashes), "window_hashes": hashes} for (a, b), hashes in pairs.items()]}}
 
 
 def production_sizes(checkout, tree, blobs):
