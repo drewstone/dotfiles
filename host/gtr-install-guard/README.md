@@ -27,6 +27,15 @@ new entrypoints; rerun the installer or provision check after installing one.
 This is a PATH guard for ordinary package manager commands, not a replacement
 for the fleet rule to run dependency installs and gates on a Beelink.
 
+Node provisioning can pass repeatable `--prefix` paths to install or check only
+its prepared or installed nvm versions. Each path must be a directory within
+this user's `~/.nvm/versions/node` store. A prepared prefix may be in a hidden
+extraction directory: finish guard enrollment and `--check` there before
+publishing a new canonical version, since a broad nvm default alias selects the
+highest version as soon as it appears. Other global managers and their retained
+originals are outside this scoped operation; the default full check still
+reports their drift.
+
 `~/bin/git` also refuses direct `git worktree add` destinations under either GTR `_wt` root.
 The budgeted `storage-lifecycle create` path passes its scoped marker to Git; other Git
 commands and pinned checkouts outside `_wt` delegate to `/usr/bin/git`.
