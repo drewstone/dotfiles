@@ -345,6 +345,19 @@ zero. CPU samples are current observations; cgroup rows overlap and must not
 be summed. Process accounting excludes short-lived tasks, with coverage and
 unattributed CPU reported.
 
+When the gate verifies membership in the maintained priority cgroup, admission
+uses its live effective CPU budget (ancestor quotas, cpuset and affinity),
+current runnable threads, prospective worker budget, and cgroup `full avg10`.
+The full-stall threshold comes from the existing CPU-pressure limit owner.
+Default workers share that quota and fit its measured headroom; explicit caller
+worker overrides retain their existing semantics. The forecast is a default budget. Host
+`some` pressure remains context: lower-priority CI waiting does not by itself
+block a gate with capacity. Urgent/starved gates cannot bypass quota or full
+stalls. A probe marks this mode tentative; admission verifies the actual join.
+Missing quota, priority or readable thread evidence retains the complete
+legacy cgroup/host PSI and load guards. `--dev` retains those guards too.
+Receipts and report CPU samples include the decision inputs and join proof.
+
 Receipts measure frozen installation separately. A compound gate command can
 record its own typecheck/test spans in `$BEELINK_GATE_PHASE_FILE`: append one
 line `typecheck <start> <end>` or `tests <start> <end>`, with both times from
