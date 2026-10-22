@@ -16,6 +16,7 @@ Brief the whole outcome and expect it finished in one go: the worker designs the
 
 Every delegated task carries this brief, and the worker's report answers it field by field.
 Early briefs without the constraints led to a force-push, an `--admin` merge, keys printed into a session, builds that overloaded the Mac, and an affected-tests gate that turned master red.
+On 2026-10-22, 9 of 13 reviewed delete, credential and release PRs had a HIGH that only the independent review found, because their briefs named the feature but not the laws it had to keep. Drew: "how are building and improving this so brittle, sounds like skill issue on your part". The Safety block makes the brief the spec, so the review confirms it rather than writing it.
 
 ```text
 Outcome:  <the user-visible result, in the requester's words>
@@ -28,6 +29,11 @@ Constraints, all binding:
   [ ] a chat or prompt change runs the full suite before merge, not only affected tests
   [ ] no new unit or mock tests, and a unit or mock test broken by a new API is deleted, not updated; prove with integration tests and a live proof
   [ ] <this task's limits: spend, production state, who approves what>
+Safety, required when the change can delete data, send bytes off a box, or change a release gate:
+  Invariants:   <each law the change must keep, e.g. "no box deleted without a whole-workspace export">
+  Do not undo:  <earlier decisions this change must not reverse, each with its link>
+  Red first:    <each failure the change must prevent, as a test the worker shows failing before the fix>
+  Review:       opens with `hold`; an independent adversarial review passes before `hold` comes off
 Done when: <observable condition>, proven by <command and output, URL, receipt or SHA>
 Report back:
   status:      done | partial | blocked

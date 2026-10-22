@@ -1,20 +1,24 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 
-// The ratchets and the census through one classification, on throwaway repos. TypeScript comes from a private prefix,
-// installed the way git/install.sh installs it, so the function counter is exercised, never skipped.
+// The ratchets and census use throwaway Git repos and a private fixture prefix linked to the maintained compiler.
+// No dependency installation occurs; missing-parser cases still use their own isolated HOME and NODE_PATH.
 const hooks = resolve("git/hooks");
 const census = resolve("git/census/census");
 const scratch = mkdtempSync(join(tmpdir(), "census-test-"));
 const env = { ...process.env, NODE_PATH: join(scratch, "ts/node_modules"), XDG_CACHE_HOME: join(scratch, "cache") };
 after(() => rmSync(scratch, { recursive: true, force: true }));
 before(() => {
-  const npm = spawnSync("npm", ["install", "--prefix", join(scratch, "ts"), "--no-audit", "--no-fund", "--silent", "typescript@5.6.3"], { encoding: "utf8" });
-  assert.equal(npm.status, 0, npm.stderr);
+  const require = createRequire(import.meta.url);
+  const compiler = require.resolve("typescript/package.json", { paths: [join(homedir(), ".local/share/dotfiles-node")] });
+  assert.equal(typeof require(dirname(compiler)).createSourceFile, "function", "git/install.sh must provide the TypeScript compiler API");
+  mkdirSync(join(scratch, "ts/node_modules"), { recursive: true });
+  symlinkSync(dirname(compiler), join(scratch, "ts/node_modules/typescript"), "dir");
 });
 
 let repos = 0;
@@ -202,4 +206,210 @@ test("Python function coverage leaves the JavaScript export and duplicate popula
   const after = JSON.parse(measured.stdout).metrics;
   for (const metric of ["dup_exports", "dup_lines", "exported_names", "dup_pct"]) assert.equal(after[metric], before[metric], metric);
   assert.equal(after.fns_over_300, before.fns_over_300 + 2);
+});
+
+
+test("scoped census counts covered lines against outside peers and preserves cached whole-tree metrics", () => {
+  const body = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
+  const repeat = lines(12, (i) => `  total += values[${i}] * ${i + 30}`);
+  const lane = `// original source positions\n\nexport function lane(values: number[]) {\n  let total = 0\n${body}  return total\n}\n`;
+  const peer = lane.replace("function lane", "function peer");
+  const { dir, git } = repo({
+    "scripts/lane.ts": lane,
+    "packages/peer.ts": peer,
+    "services/repeat.ts": `export function repeat(values: number[]) {\n  let total = 0\n${repeat}  total += 999\n${repeat}  return total\n}\n`,
+    "products/sandbox/evals/plain.ts": "export const plain = 7\n",
+    "scripts-extra/unrelated.ts": "export const unrelated = 8\n",
+  });
+  const measure = (...scopes) => {
+    const r = run(dir, census, ["measure", ".", "HEAD", ...scopes.flatMap((p) => ["--scope", p])]);
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  // Start with a scoped request: it must cache the complete peer population.
+  const selected = measure("scripts/", "services/", "products/sandbox/evals/");
+  assert.deepEqual(measure("scripts/", "services/", "products/sandbox/evals/"), selected, "cold and cached scoped JSON agree");
+  assert.equal(selected.metrics.dup_lines, 52);
+  assert.equal(selected.scope.metrics.dup_lines, 38);
+  assert.equal(selected.scope.files_read.source, 3);
+  assert.equal(selected.files_read.source, 5);
+  assert.equal(selected.scope.metrics.prod_lines, 18 + 29 + 1);
+  assert.equal(selected.scope.lists.dup_lines.files["services/repeat.ts"].dup_lines, 24);
+  assert.equal(selected.scope.lists.dup_lines.files["scripts/lane.ts"].dup_lines, 14);
+  const occurrences = Object.values(selected.scope.lists.dup_lines.windows).flat();
+  assert(occurrences.some((o) => o.path === "packages/peer.ts"));
+  assert(!occurrences.some((o) => o.path.startsWith("scripts-extra/")));
+  const first = occurrences.find((o) => o.path === "scripts/lane.ts" && o.normalized_start === 2);
+  assert.deepEqual(first, { path: "scripts/lane.ts", normalized_start: 2, start_line: 4, end_line: 13 });
+  assert.equal(lane.split("\n")[first.start_line - 1].trim(), "let total = 0");
+  assert.equal(lane.split("\n")[first.end_line - 1].trim(), "total += values[8] * 10");
+  const global = measure();
+  assert.deepEqual(global.metrics, selected.metrics);
+  assert.equal(global.scope, undefined);
+  assert.deepEqual(global.lists.dup_lines, selected.lists.dup_lines);
+  const single = measure("scripts/lane.ts");
+  assert.deepEqual(Object.keys(single.scope.lists.dup_lines.files), ["scripts/lane.ts"]);
+  assert.equal(single.scope.metrics.prod_lines, 18);
+  const equals = run(dir, census, ["measure", ".", "HEAD", "--scope=scripts/lane.ts"]);
+  assert.equal(equals.status, 0, equals.stderr);
+  assert.deepEqual(JSON.parse(equals.stdout), single);
+  const scriptsOnly = measure("scripts", "scripts/");
+  assert.equal(scriptsOnly.scope.metrics.dup_lines, 14);
+  assert.equal(scriptsOnly.scope.files_read.source, 1);
+  assert.deepEqual(scriptsOnly.metrics, global.metrics);
+  for (const invalid of ["missing", "../scripts", "/scripts", ""]) {
+    const r = run(dir, census, ["measure", ".", "HEAD", "--scope", invalid]);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /CENSUS REFUSED:/);
+  }
+  // Removing the only outside peer must reduce scope coverage on the next tree.
+  git("rm", "packages/peer.ts");
+  git("commit", "-qm", "remove outside peer");
+  const after = measure("scripts/", "services/");
+  assert.equal(after.scope.metrics.dup_lines, 24);
+  assert.equal(after.scope.lists.dup_lines.files["scripts/lane.ts"].dup_lines, 0);
+  assert.notEqual(after.tree, global.tree);
+});
+
+
+test("scope syntax and unknown options refuse before cold measurement and leave no cache", () => {
+  const { dir } = repo({ "scripts/a.ts": "export const a = 1\n" });
+  for (const [i, options] of [["--scope", "../scripts"], ["--scope", "/scripts"], ["--scope="],
+    ["--scope"], ["--scope", "--scope", "scripts"], ["--unknown=scripts"], ["--floor", "lines"]].entries()) {
+    const cache = join(scratch, `invalid-scope-${i}`);
+    // An invalid revision proves validation happens before even resolving the tree.
+    const result = spawnSync(census, ["measure", ".", "not-a-revision", ...options], {
+      cwd: dir, encoding: "utf8", env: { ...env, XDG_CACHE_HOME: cache },
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /CENSUS REFUSED: (?:--scope|unknown option)/);
+    assert.equal(existsSync(cache), false);
+  }
+  const cache = join(scratch, "unmatched-scope");
+  const result = spawnSync(census, ["measure", ".", "HEAD", "--scope", "missing"], {
+    cwd: dir, encoding: "utf8", env: { ...env, XDG_CACHE_HOME: cache },
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /matched no measured/);
+  assert.equal(existsSync(cache), false);
+});
+
+test("Python-only scope has no JS/TS copies and source coordinates count LF across Unicode separators", () => {
+  const body = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
+  const source = `const separator = "before\u2028after";\nexport function lane(values: number[]) {\n  let total = 0\n${body}  return total\n}\n`;
+  const { dir, git } = repo({ "scripts/lane.ts": source,
+    "packages/peer.ts": source.replace("function lane", "function peer"), "tools/only.py": "def useful():\n    return 1\n" });
+  const result = run(dir, census, ["measure", ".", "HEAD", "--scope", "scripts/lane.ts"]);
+  assert.equal(result.status, 0, result.stderr);
+  const measured = JSON.parse(result.stdout);
+  const occurrence = Object.values(measured.scope.lists.dup_lines.windows).flat()
+    .find((item) => item.path === "scripts/lane.ts" && item.normalized_start === 4);
+  assert.equal(occurrence.start_line, 3);
+  assert.equal(occurrence.end_line, 12);
+  assert.match(git("grep", "-n", "let total", "HEAD", "--", "scripts/lane.ts"), /:3:/);
+  const python = run(dir, census, ["measure", ".", "HEAD", "--scope=tools/only.py"]);
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(JSON.parse(python.stdout).scope, { paths: ["tools/only.py"], files_read: { logic: 1, source: 0 },
+    metrics: { prod_lines: 2, dup_lines: 0, dup_pct: 0 }, lists: { dup_lines: { files: {}, windows: {} } } });
+});
+
+test("an incomplete installed instrument refuses with exit 2 rather than a floor failure", () => {
+  const { dir } = repo({ "scripts/a.ts": "export const a = 1\n" });
+  const installed = join(scratch, "incomplete-instrument");
+  cpSync(resolve("git/census"), installed, { recursive: true });
+  rmSync(join(installed, "python_functions.py"));
+  const result = run(dir, join(installed, "census"), ["measure", ".", "HEAD"]);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /CENSUS REFUSED: cannot read instrument python_functions\.py/);
+});
+
+
+test("Storybook CSF suffixes are outside production while stories routes and modules remain enforced", () => {
+  const stories = Object.fromEntries(["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"].map((ext, i) => [
+    `src/component-${i}.stories.${ext}`,
+    `export const Default = {}\nexport function story${i}() {\n${lines(305, n => `  const value${n} = ${n}`)}}\n`,
+  ]));
+  const production = {
+    "src/owner.ts": "export const Default = 1\n",
+    "src/routes/stories.tsx": "export const route = 1\n",
+    "src/stories/service.ts": "export const service = 1\n",
+  };
+  const { dir, git } = repo({ ...production, ...stories });
+  const measured = run(dir, census, ["measure", ".", "HEAD"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const report = JSON.parse(measured.stdout);
+  assert.equal(report.metrics.prod_lines, 3, "CSF bodies are not production logic");
+  assert.equal(report.files_read.source, 3);
+  assert.equal(report.files_read.functions, 3);
+  assert.equal(report.metrics.dup_exports, 0, "CSF registry state names are not production API collisions");
+  assert.equal(report.metrics.fns_over_300, 0);
+  write(dir, { "src/new.stories.tsx": `export const Default = {}\nexport function longStory() {\n${lines(1005, n => `  const value${n} = ${n}`)}}\n` });
+  git("add", "-A");
+  const hooksPass = run(dir, join(hooks, "ratchets"), []);
+  assert.equal(hooksPass.status, 0, hooksPass.stderr);
+  const floor = run(dir, census, ["floors", ".", "HEAD", "WORKTREE", "--floor", "lines", "--floor", "copies", "--floor", "god"]);
+  assert.equal(floor.status, 0, floor.stderr);
+  for (const path of ["src/routes/stories.tsx", "src/stories/service.ts"]) {
+    write(dir, { [path]: production[path] + "export const Default = 2\n" });
+    git("add", "-A");
+    const rejected = run(dir, join(hooks, "dup-export-ratchet"), []);
+    assert.equal(rejected.status, 1, rejected.stderr);
+    assert.match(rejected.stderr, /Default: new in/);
+    assert(rejected.stderr.includes(path), rejected.stderr);
+    const counted = run(dir, census, ["measure", ".", "WORKTREE"]);
+    assert.equal(counted.status, 0, counted.stderr);
+    assert.equal(JSON.parse(counted.stdout).metrics.dup_exports, 1);
+    write(dir, { [path]: production[path] });
+    git("add", "-A");
+  }
+});
+
+test("xrepo JSON retains every name, file pair and located window beyond its legacy previews", () => {
+  const left = lines(10, (i) => `console.log("gap-left-${i}")`);
+  const right = lines(10, (i) => `console.log("gap-right-${i}")`);
+  const peers = Array.from({ length: 7 }, (_, index) => {
+    const files = { "src/names.ts": lines(50, (i) => `export const name${i} = ${index * 100 + i}`) };
+    for (let file = 0; file < 30; file++) {
+      files[`src/shared-${file}.ts`] = lines(12, (i) => `console.log("shared-${file}-${i}")`);
+    }
+    if (index < 2) {
+      files["src/gap.ts"] = `// banner\nimport "./names"\n${left}\n// ignored separator comment\nconsole.log("bridge-${index}")\n${right}` +
+        (index === 0 ? `console.log("repeat-only-here")\n${left}` : "");
+    }
+    return { name: `peer${index}`, ...repo(files) };
+  });
+  const result = run(peers[0].dir, census, ["xrepo", ...peers.map(({ name, dir }) => `${name}=${dir}:HEAD`)]);
+  assert.equal(result.status, 0, result.stderr);
+  const value = JSON.parse(result.stdout);
+  assert.equal(value.names_in_2plus_repos, 50);
+  assert.equal(value.top_names.length, 40);
+  assert.equal(value.top_cross_file_pairs.length, 25);
+  assert.equal(Object.keys(value.cross_repo_shared_windows_by_repo_pair).length, 20);
+  const repoPairs = peers.flatMap((a, i) => peers.slice(i + 1).map((b) => [a.name, b.name]));
+  assert.deepEqual(value.top_names, Array.from({ length: 40 }, (_, i) =>
+    [`name${i}`, Object.fromEntries(peers.map(({ name }) => [name, 1]))]));
+  assert.deepEqual(value.top_cross_file_pairs, Array.from({ length: 30 }, (_, file) => `src/shared-${file}.ts`).sort()
+    .flatMap((path) => repoPairs.map(([a, b]) => [12, `${a}/${path}`, `${b}/${path}`])).slice(0, 25));
+  assert.deepEqual(value.cross_repo_shared_windows_by_repo_pair,
+    Object.fromEntries(repoPairs.slice(0, 20).map(([a, b]) => [`${a}~${b}`, a === "peer0" && b === "peer1" ? 92 : 90])));
+  assert.equal(Object.keys(value.lists?.names ?? {}).length, 50, "full name inventory must survive the 40-name preview");
+  assert.equal(Object.keys(value.lists.repo_pairs).length, 21);
+  assert.equal(value.lists.cross_file_pairs.length, 631, "all 30 shared files across 21 repository pairs, plus the disconnected copy");
+  assert.equal(Object.keys(value.lists.windows).length, 92);
+  assert.equal(Object.values(value.lists.windows).flat().length, 635, "repeated occurrences in one file remain distinct evidence");
+  assert.equal(value.window_normalized_lines, 10);
+  assert.match(value.top_cross_file_pairs_unit, /not.*(?:LOC|lines)/i);
+  assert.deepEqual(value.lists.names.name49, Object.fromEntries(peers.map(({ name }) => [name, ["src/names.ts"]])));
+  const gap = value.lists.cross_file_pairs.find(({ a, b }) => a.path === "src/gap.ts" && b.path === "src/gap.ts");
+  assert.equal(gap.shared_windows, 2, "disconnected hashes are windows, not shared_windows+9 copied lines");
+  assert.equal(gap.window_hashes.length, 2);
+  const occurrences = gap.window_hashes.flatMap((hash) => value.lists.windows[hash]);
+  assert.deepEqual(occurrences.filter((o) => o.repo === "peer0").map(({ normalized_start, start_line, end_line }) =>
+    [normalized_start, start_line, end_line]).sort((a, b) => a[0] - b[0]), [[1, 3, 12], [12, 16, 25], [23, 27, 36]]);
+  assert.deepEqual(occurrences.filter((o) => o.repo === "peer1").map(({ normalized_start, start_line, end_line }) =>
+    [normalized_start, start_line, end_line]).sort((a, b) => a[0] - b[0]), [[1, 3, 12], [12, 16, 25]]);
+  const measured = run(peers[0].dir, census, ["measure", ".", "HEAD", "--scope", "src/gap.ts"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  assert.deepEqual(JSON.parse(measured.stdout).scope.lists.dup_lines.files["src/gap.ts"],
+    { normalized_lines: 32, dup_lines: 20 }, "the existing per-file coverage owner remains authoritative");
 });

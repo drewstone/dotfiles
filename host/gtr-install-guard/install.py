@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 """Install reversible PATH entrypoint guards on GTR without touching Beelinks."""
+import argparse
 import os
 import shutil
 import sys
@@ -13,18 +14,20 @@ MANAGERS = ("pnpm", "npm", "yarn", "uv", "corepack")
 GIT_ENTRY = HOME / "bin/git"
 
 
-def entries():
-    dirs = [HOME / ".local/bin", HOME / ".local/share/pnpm", HOME / "bin"]
-    dirs.extend(sorted((HOME / ".nvm/versions/node").glob("*/bin")))
+def entries(prefixes=()):
+    dirs = [prefix / "bin" for prefix in prefixes]
+    if not prefixes:
+        dirs = [HOME / ".local/bin", HOME / ".local/share/pnpm", HOME / "bin"]
+        dirs.extend(sorted((HOME / ".nvm/versions/node").glob("*/bin")))
     paths = [directory / name for directory in dirs for name in MANAGERS]
-    return [path for path in paths if path.exists() or path.is_symlink() or Path(str(path) + ".gtr-original").exists()] + [GIT_ENTRY]
+    return [path for path in paths if path.exists() or path.is_symlink() or Path(str(path) + ".gtr-original").exists()] + ([] if prefixes else [GIT_ENTRY])
 
 
 def guarded(path: Path) -> bool:
     return path.is_symlink() and path.resolve(strict=False) == DEST
 
 
-def install() -> int:
+def install(prefixes=()) -> int:
     DEST.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=DEST.parent, delete=False) as output:
         temp = Path(output.name)
@@ -33,7 +36,7 @@ def install() -> int:
     temp.chmod(0o755)
     os.replace(temp, DEST)
     changed = 0
-    for path in entries():
+    for path in entries(prefixes):
         original = Path(str(path) + ".gtr-original")
         if guarded(path):
             if not original.exists():
@@ -54,24 +57,24 @@ def install() -> int:
         temporary.symlink_to(DEST)
         os.replace(temporary, path)
         changed += 1
-    print(f"gtr-install-guard: installed {changed} entrypoints; {len(entries())} guarded")
+    print(f"gtr-install-guard: installed {changed} entrypoints; {len(entries(prefixes))} guarded")
     return 0
 
 
-def check() -> int:
-    bad = [str(path) for path in entries() if not guarded(path) or not Path(str(path) + ".gtr-original").exists()]
+def check(prefixes=()) -> int:
+    bad = [str(path) for path in entries(prefixes) if not guarded(path) or not Path(str(path) + ".gtr-original").exists()]
     if not DEST.exists() or DEST.read_bytes() != (HERE / "guard.py").read_bytes():
         bad.append(str(DEST))
     if bad:
         print("gtr-install-guard: drift: " + ", ".join(bad), file=sys.stderr)
         return 1
-    print(f"gtr-install-guard: {len(entries())} entrypoints guarded")
+    print(f"gtr-install-guard: {len(entries(prefixes))} entrypoints guarded")
     return 0
 
 
-def uninstall() -> int:
+def uninstall(prefixes=()) -> int:
     restored = 0
-    for path in entries():
+    for path in entries(prefixes):
         original = Path(str(path) + ".gtr-original")
         if original.exists() and (guarded(path) or not path.exists() and not path.is_symlink()):
             os.replace(original, path)
@@ -81,15 +84,27 @@ def uninstall() -> int:
 
 
 def main() -> int:
-    if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] not in {"--check", "--uninstall"}):
-        print("usage: install.py [--check|--uninstall]", file=sys.stderr)
-        return 2
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--check", action="store_const", const="--check", dest="action")
+    action.add_argument("--uninstall", action="store_const", const="--uninstall", dest="action")
+    parser.add_argument("--prefix", action="append", type=Path, default=[],
+                        help="enroll only a prepared/installed prefix within this user's nvm version store; repeatable")
+    args = parser.parse_args()
+    prefixes = []
+    store = (HOME / ".nvm/versions/node").resolve()
+    for prefix in args.prefix:
+        prefix = prefix.expanduser().resolve()
+        if (store not in prefix.parents or not (prefix / "bin").is_dir() or (prefix / "bin").is_symlink()
+                or (prefix / "bin").resolve().parent != prefix):
+            parser.error("--prefix must be a prepared or installed directory within the nvm version store")
+        prefixes.append(prefix)
     if os.uname().nodename.split(".")[0] != "drew-GTR-Pro":
         print("gtr-install-guard: not GTR; no changes")
         return 0
-    action = sys.argv[1] if len(sys.argv) == 2 else "--install"
+    selected = args.action or "--install"
     try:
-        return {"--install": install, "--check": check, "--uninstall": uninstall}[action]()
+        return {"--install": install, "--check": check, "--uninstall": uninstall}[selected](prefixes)
     except (OSError, RuntimeError) as error:
         print(f"gtr-install-guard: {error}", file=sys.stderr)
         return 1
