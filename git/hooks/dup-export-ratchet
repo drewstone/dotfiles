@@ -58,7 +58,7 @@ def blobs(specs, *, missing=False):
 def declarations(texts):
     if not texts:
         return {}
-    run = subprocess.run(["node", AST_OWNER, os.getcwd(), "--exports-only"], capture_output=True, text=True,
+    run = subprocess.run(["node", AST_OWNER, os.getcwd()], capture_output=True, text=True,
                          input=json.dumps([{"file": path, "text": text} for path, text in texts.items()]))
     if run.returncode:
         raise RuntimeError(run.stderr.strip() or "functions.cjs failed")
@@ -97,7 +97,11 @@ def main():
     # The staged tree is authoritative: deleted/moved copies and unstaged edits must not change this decision.
     peers = [p for p in git("ls-files", "--cached", "-z").stdout.split("\0")
              if classify.source(p) and p not in changed]
-    peers_found = declarations(blobs([f":{p}" for p in peers]))
+    # An escaped identifier may contain none of its decoded spelling. Keep all Unicode escapes conservatively;
+    # comments/literals can add candidates here, but only the AST can establish a declaration.
+    peer_texts = blobs([f":{p}" for p in peers])
+    peers_found = declarations({spec: text for spec, text in peer_texts.items()
+                               if "\u" in text or any(name in text for name in added)})
     owners = collections.defaultdict(set)
     for spec, names in {**peers_found, **{f":{p}": found.get(f":{p}", set()) for p in changed}}.items():
         for name in names:

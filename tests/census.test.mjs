@@ -326,6 +326,9 @@ test("AST export census and staged hook ignore declaration text in literals, com
     "src/example.tsx": "const example = `\nexport async function writeWithRetry() {}\nexport const templateOnly = 1;\n`;\n",
     "src/comment.ts": "/*\nexport function writeWithRetry() {}\nexport const commentOnly = 1;\n*/\n",
     "src/barrel.ts": "export { writeWithRetry } from './owner';\nexport * from './owner';\n",
+    "src/nested.ts": "namespace Hidden { export const writeWithRetry = 1; }\n" +
+      "export namespace Published { export const writeWithRetry = 2; }\n" +
+      "export import writeWithRetry = require('./owner');\n",
     "src/alias.ts": "import { writeWithRetry } from './owner';\nexport { writeWithRetry };\nexport default writeWithRetry;\n",
     "tests/example.ts": "export const writeWithRetry = 1;\n",
     "src/types.d.mts": "export declare function writeWithRetry(): void;\n",
@@ -350,7 +353,7 @@ test("AST export census and staged hook ignore declaration text in literals, com
 });
 
 test("all direct exported variable bindings and their source positions reach both CLI consumers", () => {
-  const { dir, git } = repo({ "src/owner.ts": "export const later = 0;\nexport const renamed = 0;\n" });
+  const { dir, git } = repo({ "src/owner.ts": "export const \\u006cater = 0;\nexport const renamed = 0;\n" });
   const text = "export const first = 1, later = 2;\nexport let { key: renamed, nested: [leaf, , ...tail] } = value;\n" +
     "export var legacyVar = 0;\nexport default function namedDefault() {}\nexport function GET() {}\n";
   write(dir, { "src/bindings.ts": text });
@@ -365,7 +368,7 @@ test("all direct exported variable bindings and their source positions reach bot
   assert.equal(refused.status, 1, refused.stderr);
   assert.match(refused.stderr, /later: new in src\/bindings\.ts/);
   assert.match(refused.stderr, /renamed: new in src\/bindings\.ts/);
-  const raw = spawnSync("node", [resolve("git/census/functions.cjs"), dir, "--exports-only"], {
+  const raw = spawnSync("node", [resolve("git/census/functions.cjs"), dir], {
     encoding: "utf8", env, input: JSON.stringify([{ file: "src/bindings.ts", text }]),
   });
   assert.equal(raw.status, 0, raw.stderr);
