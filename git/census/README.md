@@ -44,6 +44,18 @@ A source span may include ignored comments, imports or blank lines; its physical
 the duplicate count. Full evidence is cached before projection, so scoped and unscoped requests
 share the same tree/instrument cache without changing global results.
 
+`xrepo` retains its ranked `top_names`, `top_cross_file_pairs`, and repository-pair previews.
+Its complete `lists.names` maps every shared export name to repository names and defining paths;
+`lists.cross_file_pairs` identifies both files structurally, their shared window count, and every
+window hash. `lists.windows` supplies all occurrences of each cross-repository hash, including
+repeated occurrences within one file, with repository, path and the same source locations as `measure`.
+`lists.repo_pairs` retains every repository pair; its values count file-pair/window combinations,
+so a window in several files can contribute more than once. `window_normalized_lines` gives the
+window size. The legacy file-pair preview score adds window size minus one to the shared-hash count;
+`top_cross_file_pairs_unit` labels that score explicitly: disconnected or overlapping matches mean
+it is not a contiguous copied-line count. Use the located windows or existing `measure` coverage
+when auditing actual duplicated lines.
+
 Every metric is better smaller. `floors` refuses a head that is worse than its base on any metric of a group:
 
 | Group | Metrics |
