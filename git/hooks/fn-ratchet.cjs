@@ -68,10 +68,15 @@ function main() {
   if (!after.length) return 0;
   const ts = loadTs();
   if (!ts) { process.stderr.write("fn-ratchet: no typescript package found (repo or ~/.local/share/dotfiles-node); function sizes not checked.\n"); return 0; }
+  // A merge is compared with every parent: a function the incoming branch already grew is not this commit's growth.
+  const mergeHeads = (tryGit("rev-parse", "-q", "--verify", "MERGE_HEAD") || "").split("\n").filter(Boolean);
+  const bases = [["HEAD", before], ...mergeHeads.map((h) => [h, after])];
   const old = new Map();
-  for (const p of before.filter((p) => SRC.test(p))) {
-    const text = tryGit("show", `HEAD:${p}`);
-    if (text !== null) for (const [k, v] of spans(ts, p, text)) old.set(k, Math.max(old.get(k) || 0, v));
+  for (const [ref, paths] of bases) {
+    for (const p of paths.filter((p) => SRC.test(p))) {
+      const text = tryGit("show", `${ref}:${p}`);
+      if (text !== null) for (const [k, v] of spans(ts, p, text)) old.set(k, Math.max(old.get(k) || 0, v));
+    }
   }
   const refused = [];
   for (const p of after) {
