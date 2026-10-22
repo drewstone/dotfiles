@@ -1,20 +1,24 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 
-// The ratchets and the census through one classification, on throwaway repos. TypeScript comes from a private prefix,
-// installed the way git/install.sh installs it, so the function counter is exercised, never skipped.
+// The ratchets and census use throwaway Git repos and a private fixture prefix linked to the maintained compiler.
+// No dependency installation occurs; missing-parser cases still use their own isolated HOME and NODE_PATH.
 const hooks = resolve("git/hooks");
 const census = resolve("git/census/census");
 const scratch = mkdtempSync(join(tmpdir(), "census-test-"));
 const env = { ...process.env, NODE_PATH: join(scratch, "ts/node_modules"), XDG_CACHE_HOME: join(scratch, "cache") };
 after(() => rmSync(scratch, { recursive: true, force: true }));
 before(() => {
-  const npm = spawnSync("npm", ["install", "--prefix", join(scratch, "ts"), "--no-audit", "--no-fund", "--silent", "typescript@5.6.3"], { encoding: "utf8" });
-  assert.equal(npm.status, 0, npm.stderr);
+  const require = createRequire(import.meta.url);
+  const compiler = require.resolve("typescript/package.json", { paths: [join(homedir(), ".local/share/dotfiles-node")] });
+  assert.equal(typeof require(dirname(compiler)).createSourceFile, "function", "git/install.sh must provide the TypeScript compiler API");
+  mkdirSync(join(scratch, "ts/node_modules"), { recursive: true });
+  symlinkSync(dirname(compiler), join(scratch, "ts/node_modules/typescript"), "dir");
 });
 
 let repos = 0;
