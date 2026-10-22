@@ -171,8 +171,10 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
     [ -f "$tool" ] || continue
     base="$(basename "$tool")"
     [[ "$base" == "README.md" ]] && continue
+    # Git's file mode decides what is a tool: library modules (beelink_gate_*.py) stay 644.
+    # A chmod here dirtied the installed checkout, and tangle-tools-deploy then refused every update.
+    if [ ! -x "$tool" ]; then echo "  SKIP $tool (not executable in git: a module, not a tool)"; continue; fi
     link "$tool" "$HOME/bin/$base"
-    chmod +x "$tool"
   done
 fi
 
