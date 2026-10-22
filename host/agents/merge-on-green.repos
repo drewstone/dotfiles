@@ -21,6 +21,7 @@ tax-agent:main slot
 legal-agent:main slot
 hospitality-agent:main
 agent-builder:main
+physim:main
 ph0ny:main slot
 dapp:develop
 docs:main
@@ -57,3 +58,6 @@ playproof:main
 robotics:main slot
 chatgpt-plugins:main
 charts:main
+frost-blueprint:main
+wsts-blueprint:main
+agent-lab:main
