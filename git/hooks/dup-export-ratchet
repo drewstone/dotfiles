@@ -103,7 +103,7 @@ def main():
     # comments/literals can add candidates here, but only the AST can establish a declaration.
     peer_texts = blobs([f":{p}" for p in peers])
     peers_found = declarations({spec: text for spec, text in peer_texts.items()
-                               if "\u" in text or any(name in text for name in added)})
+                               if r"\u" in text or any(name in text for name in added)})
     owners = collections.defaultdict(set)
     for spec, names in {**peers_found, **{f":{p}": found.get(f":{p}", set()) for p in changed}}.items():
         for name in names:
