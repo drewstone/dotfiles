@@ -23,16 +23,24 @@ def run_owner_live_proof():
         cold = json.loads((state / 'ticks.jsonl').read_text().splitlines()[-1])
         # Independent CLI query at the exact same birthday boundary: a truncated or
         # accidentally base-filtered sweep must not pass on its own count.
-        expected = set()
+        expected, expected_archived = set(), set()
         for org in report['orgs']:
-            search = subprocess.run(['gh-read', 'api', '--method', 'GET', 'search/issues', '--paginate',
+            search = subprocess.run(['gh-drew', 'api', '--method', 'GET', 'search/issues', '--paginate',
                                      '-f', f'q=is:pr is:open user:{org} created:<={report["cutoff"]}',
                                      '-f', 'per_page=100', '--jq', '.items[].html_url'],
                                     capture_output=True, text=True, check=True)
             expected.update(search.stdout.splitlines())
+            archived = subprocess.run(['gh-drew', 'api', '--method', 'GET', 'search/issues', '--paginate',
+                                       '-f', f'q=is:pr is:open user:{org} created:<={report["cutoff"]} archived:true',
+                                       '-f', 'per_page=100', '--jq', '.items[].html_url'],
+                                      capture_output=True, text=True, check=True)
+            expected_archived.update(archived.stdout.splitlines())
         actual = {row['url'] for row in report['prs']}
         assert actual == expected, f'Live PR set moved or sweep differs: {actual ^ expected}'
-        assert report['aged'] == len(actual) == report['owned'] + len(report['ownerless'])
+        assert report['aged'] == len(actual) == report['owned'] + len(report['unassigned'])
+        assert report['aged'] == report['actionable'] + len(report['archived'])
+        assert all(not row['archived'] for row in report['ownerless'])
+        assert {row['url'] for row in report['archived']} == expected_archived
         assert cold['github_calls'] >= 2 and cold['decisions'] == []
         # Validate assignment provenance against the real comment endpoint, rather
         # than only accepting the sweep's parsed fields.
@@ -41,7 +49,7 @@ def run_owner_live_proof():
         for row in owned[:3]:
             assignment = row['assignment']
             comment_id = assignment['comment'].rsplit('-', 1)[1]
-            result = subprocess.run(['gh-read', 'api', f'repos/{row["repo"]}/issues/comments/{comment_id}'],
+            result = subprocess.run(['gh-drew', 'api', f'repos/{row["repo"]}/issues/comments/{comment_id}'],
                                     capture_output=True, text=True, check=True)
             comment = json.loads(result.stdout)
             assert comment['author_association'] in {'OWNER', 'MEMBER', 'COLLABORATOR'}
@@ -55,7 +63,9 @@ def run_owner_live_proof():
         assert not (state / 'security-updates.json').exists(), 'owner-only touched security settings'
         result = {'at': report['at'], 'aged': report['aged'], 'owned': report['owned'],
                   'ownerless': len(report['ownerless']), 'cold_github_calls': cold['github_calls'],
+                  'archived': len(report['archived']), 'strict_unassigned': len(report['unassigned']),
                   'warm_github_calls': warm['github_calls'], 'independent_search_matches': True,
+                  'independent_archived_membership_matches': True,
                   'live_assignment_provenance_checks': min(3, len(owned)), 'merge_decisions': 0,
                   'dry_run_no_notice': True, 'owner_only_no_security_updates': True}
         Path(args.output).write_text(json.dumps(result, indent=2) + '\n')
