@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""The census: every codebase instrument, owned once beside the ratchets (git/census/README.md).
+"""The census: every codebase instrument, owned beside the ratchets (git/census/README.md).
 
-  census measure <checkout> <rev>                    one repo's metrics at a revision, as JSON
+  census measure <checkout> <rev> [--scope prefix ...]   whole-repo metrics, with an optional scoped view
   census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...]
-                                                     refuse a change whose head is worse than its base
   census xrepo name=checkout:rev [name=checkout:rev ...]
-                                                     shared-primitive candidates across repos, as JSON
-  census files <checkout> <rev>                      path, lines and class of every logic file, as TSV
+  census files <checkout> <rev>                         path, lines and class of every logic file, as TSV
 
-<rev> is any tree-ish, or WORKTREE: the checkout's files as they are now, untracked ones included.
-A floor is a group (lines, copies, god, hug, confusion) or one metric name; every metric is better smaller.
-Exit 0: measured, or every floor held. Exit 1: a floor refused. Exit 2: the census refused to measure, because a
-scan read no file, a file could not be read or the parser is missing; it never reports such a scan as 0.
+Floor groups: lines, copies, god, hug, confusion; individual metric names also work.
+WORKTREE includes untracked edits and sparse paths using a copied index; the real index is untouched.
+Exit 0: measured, or every floor held. Exit 1: a floor rose. Exit 2: measurement refused, never a reported zero.
 """
 import collections
 import hashlib
@@ -51,8 +48,7 @@ def git(checkout, *args, data=None, env=None):
 
 
 def tree_of(checkout, rev):
-    """The tree a revision names. WORKTREE writes the files as they are now through a copy of the checkout's index, so a
-    sparse checkout keeps the files it never checked out instead of reading them as deleted."""
+    """WORKTREE uses a copied index: untracked edits count, sparse paths remain, the real index is untouched."""
     if rev != "WORKTREE":
         return git(checkout, "rev-parse", "--verify", "-q", f"{rev}^{{tree}}").decode().strip()
     with tempfile.TemporaryDirectory(prefix="census-index-") as scratch:
@@ -108,17 +104,49 @@ def windows(text):
 
 
 def duplicated(texts):
-    """Normalized lines inside a window that appears twice or more (PMD CPD's line-window method), and their total."""
+    """One whole-repo occurrence index supplies coverage, scoped views and original source locations."""
     per_file = {p: windows(t) for p, t in texts.items()}
     seen = collections.Counter(h for hs in per_file.values() for h in hs)
-    dup = 0
-    for hs in per_file.values():
+    files, groups = {}, collections.defaultdict(list)
+    for p, hs in per_file.items():
+        lines = C.normalized(texts[p], locations=True)
         covered = set()
         for j, h in enumerate(hs):
             if seen[h] > 1:
                 covered.update(range(j, j + C.WINDOW))
-        dup += len(covered)
-    return dup, sum(len(C.normalized(t)) for t in texts.values())
+                groups[h.hex()].append({"path": p, "normalized_start": j + 1,
+                                        "start_line": lines[j][0], "end_line": lines[j + C.WINDOW - 1][0]})
+        files[p] = {"normalized_lines": len(lines), "dup_lines": len(covered)}
+    return {"files": files, "windows": dict(sorted(groups.items()))}
+
+
+def scope_paths(scopes):
+    paths = sorted(set(os.path.normpath(p) for p in scopes))
+    if not all(scopes) or any(os.path.isabs(p) or p == ".." or p.startswith("../") for p in paths):
+        raise Refused("--scope must name repository-relative prefixes")
+    return paths
+
+
+def measurement_view(result, rev, scopes):
+    """Scope selects covered locations only; the cached peer population always remains the entire tree."""
+    view = {**result, "rev": rev}
+    if not scopes:
+        return view
+    paths = scopes
+    belongs = lambda p: any(root == "." or p == root or p.startswith(root + "/") for root in paths)
+    sizes, copies = result["lists"]["prod_lines"], result["lists"]["dup_lines"]
+    for root in paths:
+        if not any(root == "." or p == root or p.startswith(root + "/") for p in sizes.keys() | copies["files"].keys()):
+            raise Refused(f"--scope {root}: matched no measured logic or source file")
+    selected = {p: counts for p, counts in copies["files"].items() if belongs(p)}
+    dup = sum(f["dup_lines"] for f in selected.values())
+    normalized = sum(f["normalized_lines"] for f in selected.values())
+    view["scope"] = {"paths": paths, "files_read": {"logic": sum(belongs(p) for p in sizes), "source": len(selected)},
+                     "metrics": {"prod_lines": sum(n for p, n in sizes.items() if belongs(p)), "dup_lines": dup,
+                                 "dup_pct": round(100 * dup / max(normalized, 1), 2)},
+                     "lists": {"dup_lines": {"files": selected, "windows": {h: occ for h, occ in copies["windows"].items()
+                               if any(belongs(o["path"]) for o in occ)}}}}
+    return view
 
 
 def stale_refs(tree_paths, docs):
@@ -140,17 +168,19 @@ def exports(sources):
     defs = collections.defaultdict(set)
     for p, text in sources.items():
         for line in text.splitlines():
-            m = C.DECLARATION.match(line)
-            if m and m.group(1) not in C.CONVENTION:
+            if (m := C.DECLARATION.match(line)) and m.group(1) not in C.CONVENTION:
                 defs[m.group(1)].add(p)
     return defs
 
 
 def cache_file(tree):
     digest = hashlib.sha256()
-    for name in sorted(os.listdir(HERE)):
-        if name in ("census", "classify.py", "functions.cjs", "python_functions.py", "patterns.json"):
-            digest.update(open(os.path.join(HERE, name), "rb").read())
+    for name in ("census", "classify.py", "functions.cjs", "patterns.json", "python_functions.py"):
+        try:
+            with open(os.path.join(HERE, name), "rb") as instrument:
+                digest.update(instrument.read())
+        except OSError as why:
+            raise Refused(f"cannot read instrument {name}: {why}") from why
     root = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "census")
     return os.path.join(root, digest.hexdigest()[:12], f"{tree}.json")
 
@@ -176,61 +206,56 @@ def remember(file, value):
     os.replace(tmp, file)
 
 
-def measure(checkout, rev):
+def measure(checkout, rev, scopes=()):
+    scopes = scope_paths(scopes)
     tree = tree_of(checkout, rev)
     cached = cache_file(tree)
     try:
-        return {**json.load(open(cached)), "rev": rev}
+        return measurement_view(json.load(open(cached)), rev, scopes)
     except (OSError, ValueError):
-        pass  # absent or unreadable: measure again
+        pass
     paths = git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1]
-    logic = [p for p in paths if C.logic(p)]
-    source = [p for p in paths if C.source(p)]
+    logic, source = [p for p in paths if C.logic(p)], [p for p in paths if C.source(p)]
     function_paths = [p for p in paths if C.function_source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
     blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
-    exempt = attr_exempt(checkout, tree, logic) | {p for p in logic if C.generated(blobs[p][:2000].decode(errors="replace"))}
-    sizes = {p: C.line_count(blobs[p]) for p in logic if p not in exempt}
+    sizes = production_sizes(checkout, tree, {p: blobs[p] for p in logic})
     if not sizes:
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
-    lo, hi = C.FILE_HUG
-    m = {"prod_lines": sum(sizes.values()), "files_over_1000": sum(n > C.FILE_LIMIT for n in sizes.values()),
-         "hug_files": sum(lo <= n <= hi for n in sizes.values()), "logic_files": len(sizes)}
-    lists = {"files_over_1000": sorted(([n, p] for p, n in sizes.items() if n > C.FILE_LIMIT), reverse=True),
-             "hug_files": sorted(([n, p] for p, n in sizes.items() if lo <= n <= hi), reverse=True)}
-    stale = stale_refs(set(paths), {p: blobs[p].decode(errors="replace") for p in docs})
-    m["stale_doc_refs"] = len(stale)
-    lists["stale_doc_refs"] = stale
-    # Function spans cover Python as well as JavaScript/TypeScript. Duplication and exported
-    # names retain their existing JavaScript/TypeScript population and normalization.
-    fn = functions(checkout, function_paths, blobs)
-    spans = [f[0] for f in fn["fns"]]
-    lo, hi = C.FUNCTION_HUG
     texts = {p: blobs[p].decode(errors="replace") for p in source}
-    dup, normalized = duplicated(texts)
-    defs = exports(texts)
-    m.update({"fns_over_300": sum(s > C.FUNCTION_LIMIT for s in spans), "hug_fns": sum(lo <= s <= hi for s in spans),
-              "classes_over_40": sum(c[0] > C.CLASS_MEMBERS for c in fn["classes"]), "dup_lines": dup,
-              "dup_exports": sum(len(f) > 1 for f in defs.values()),
-              "fns_over_150": sum(s > 150 for s in spans), "fns_over_500": sum(s > 500 for s in spans),
-              "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2), "exported_names": len(defs),
-              "dup_pct": round(100 * dup / max(normalized, 1), 2)})
-    lists.update({"fns_over_150": [f for f in fn["fns"] if f[0] > 150],
-                  "hug_fns": [f for f in fn["fns"] if lo <= f[0] <= hi],
-                  "classes_over_40": [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS],
-                  "dup_exports": {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}})
-    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)},
-              "metrics": m, "lists": lists}
+    fn = functions(checkout, function_paths, blobs)
+    spans, defs, copies = [f[0] for f in fn["fns"]], exports(texts), duplicated(texts)
+    dup = sum(f["dup_lines"] for f in copies["files"].values())
+    normalized = sum(f["normalized_lines"] for f in copies["files"].values())
+    stale = stale_refs(set(paths), {p: blobs[p].decode(errors="replace") for p in docs})
+    big_files = sorted(([n, p] for p, n in sizes.items() if n > C.FILE_LIMIT), reverse=True)
+    hug_files = sorted(([n, p] for p, n in sizes.items() if C.FILE_HUG[0] <= n <= C.FILE_HUG[1]), reverse=True)
+    hug_fns = [f for f in fn["fns"] if C.FUNCTION_HUG[0] <= f[0] <= C.FUNCTION_HUG[1]]
+    classes = [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS]
+    duplicate_exports = {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}
+    m = {"prod_lines": sum(sizes.values()), "files_over_1000": len(big_files), "hug_files": len(hug_files),
+         "logic_files": len(sizes), "stale_doc_refs": len(stale), "hug_fns": len(hug_fns), "classes_over_40": len(classes),
+         "dup_lines": dup, "dup_exports": len(duplicate_exports), "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2),
+         "exported_names": len(defs), "dup_pct": round(100 * dup / max(normalized, 1), 2)}
+    m.update({f"fns_over_{n}": sum(s > limit for s in spans) for n, limit in ((150, 150), (300, C.FUNCTION_LIMIT), (500, 500))})
+    lists = {"prod_lines": sizes, "dup_lines": copies, "files_over_1000": big_files, "hug_files": hug_files,
+             "stale_doc_refs": stale, "fns_over_150": [f for f in fn["fns"] if f[0] > 150], "hug_fns": hug_fns,
+             "classes_over_40": classes, "dup_exports": duplicate_exports}
+    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)}, "metrics": m, "lists": lists}
+    view = measurement_view(result, rev, scopes)
     remember(cached, result)
-    return {**result, "rev": rev}
+    return view
+
+
+def source_texts(checkout, tree):
+    paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
+    if not paths:
+        raise Refused(f"read 0 source files at {tree[:12]} in {checkout}")
+    return {p: b.decode(errors="replace") for p, b in read_blobs(checkout, tree, paths).items()}
 
 
 def window_set(checkout, rev):
-    tree = tree_of(checkout, rev)
-    paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
-    if not paths:
-        raise Refused(f"read 0 source files at {rev} in {checkout}")
-    return {h for b in read_blobs(checkout, tree, paths).values() for h in windows(b.decode(errors="replace"))}
+    return {h for text in source_texts(checkout, tree_of(checkout, rev)).values() for h in windows(text)}
 
 
 def peer(spec):
@@ -283,15 +308,11 @@ def xrepo(specs):
     seen = collections.defaultdict(set)
     files = {}
     for name, checkout, rev in map(peer, specs):
-        tree = tree_of(checkout, rev)
-        paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
-        if not paths:
-            raise Refused(f"read 0 source files in {name} at {rev}")
-        files[name] = len(paths)
-        for p, blob in read_blobs(checkout, tree, paths).items():
-            text = blob.decode(errors="replace")
-            for n in exports({p: text}):
-                names[n][name] += 1
+        texts = source_texts(checkout, tree_of(checkout, rev))
+        files[name] = len(texts)
+        for n, paths in exports(texts).items():
+            names[n][name] += len(paths)
+        for p, text in texts.items():
             for h in windows(text):
                 seen[h].add((name, p))
     cross = {n: dict(rs) for n, rs in names.items() if len(rs) >= 2}
@@ -310,21 +331,40 @@ def xrepo(specs):
             "top_cross_file_pairs": [[n + C.WINDOW - 1, f"{a[0]}/{a[1]}", f"{b[0]}/{b[1]}"] for (a, b), n in pairs.most_common(25)]}
 
 
+def production_sizes(checkout, tree, blobs):
+    exempt = attr_exempt(checkout, tree, list(blobs)) | {p for p, b in blobs.items() if C.generated(b[:2000].decode(errors="replace"))}
+    return {p: C.line_count(b) for p, b in blobs.items() if p not in exempt}
+
+
 def files(checkout, rev):
     tree = tree_of(checkout, rev)
     logic = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.logic(p)]
     blobs = read_blobs(checkout, tree, logic)
-    exempt = attr_exempt(checkout, tree, logic) | {p for p in logic if C.generated(blobs[p][:2000].decode(errors="replace"))}
-    return "".join(f"{p}\t{C.line_count(blobs[p])}\t{'exempt' if p in exempt else 'logic'}\n" for p in logic)
+    sizes = production_sizes(checkout, tree, blobs)
+    return "".join(f"{p}\t{C.line_count(b)}\t{'logic' if p in sizes else 'exempt'}\n" for p, b in blobs.items())
 
 
 def main(argv):
     command, args = (argv[0], argv[1:]) if argv else ("", [])
-    flag = lambda name: [args[i + 1] for i, a in enumerate(args) if a == name and i + 1 < len(args)]
-    plain = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--floor", "--peer"))]
+    allowed = {"measure": ("--scope",), "floors": ("--floor", "--peer")}.get(command, ())
+    options, plain = {name: [] for name in allowed}, []
     try:
+        arguments = iter(args)
+        for arg in arguments:
+            if not arg.startswith("--"):
+                plain.append(arg)
+                continue
+            name, equal, value = arg.partition("=")
+            if name not in options:
+                raise Refused(f"unknown option for {command or 'census'}: {name}")
+            if not equal:
+                value = next(arguments, None)
+            if value is None or value.startswith("--"):
+                raise Refused(f"{name} requires a value for every occurrence")
+            options[name].append(value)
+        flag = lambda name: options.get(name, [])
         if command == "measure" and len(plain) == 2:
-            print(json.dumps(measure(*plain)))
+            print(json.dumps(measure(*plain, scopes=flag("--scope"))))
             return 0
         if command == "floors" and len(plain) == 3 and flag("--floor"):
             return floors(*plain, flag("--floor"), flag("--peer"))
