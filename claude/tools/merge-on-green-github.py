@@ -30,6 +30,90 @@ def fingerprint(pr):
     return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 
+def trace_metrics(trace, account, *, graphql_stdout=None):
+    """Summarize each real HTTP exchange before callers filter its stdout."""
+    account = account if re.fullmatch(r'[A-Za-z0-9-]{1,39}', account) else 'unknown'
+    requests = list(re.finditer(r'^> (?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\S+) ', trace, re.M))
+    result = {'transport_version': 2, 'calls': len(requests), 'quota_probes': 0,
+              'graphql_calls': 0, 'graphql_known_cost': 0, 'graphql_cost_samples': 0,
+              'graphql_unknown_cost_calls': 0, 'graphql_parse_failures': 0,
+              'cost_complete': True, 'quota': {}, 'quota_observations': [],
+              'quota_observation_gaps': 0}
+    response_count = 0
+    for index, request in enumerate(requests):
+        path = request[1].split('?', 1)[0]
+        result['quota_probes'] += int(path == '/rate_limit')
+        exchange = trace[request.end():requests[index + 1].start() if index + 1 < len(requests) else len(trace)]
+        responses = re.split(r'^< HTTP/\S+ (\d{3})[^\n]*\n', exchange, flags=re.M)
+        final = [(int(responses[i]), responses[i + 1]) for i in range(1, len(responses), 2)
+                 if int(responses[i]) >= 200]
+        response_count += len(final)
+        graphql = path.rstrip('/').endswith('/graphql')
+        known = 0
+        for _, response in final:
+            header = lambda name: re.search(r'^< ' + name + r':\s*(\S+)', response, re.M | re.I)
+            resource = header('x-ratelimit-resource')
+            resource = resource[1].lower() if resource and re.fullmatch(r'[a-z_]{1,40}', resource[1], re.I) else None
+            graphql = graphql or resource == 'graphql'
+            observation = {'account': account, 'resource': resource, 'observed_at': time.time()}
+            for field in ('used', 'remaining', 'reset', 'limit'):
+                value = header('x-ratelimit-' + field)
+                if value and value[1].isdigit():
+                    observation[field] = int(value[1])
+            complete = resource is not None and all(k in observation for k in ('used', 'remaining', 'reset', 'limit'))
+            result['quota_observation_gaps'] += int(not complete)
+            if resource is not None:
+                result['quota_observations'].append(observation)
+                if 'remaining' in observation:
+                    result['quota'][f'{account}/{resource}'] = observation['remaining']
+            if not graphql:
+                continue
+            body = re.search(r'^\s*[\[{]', response, re.M)
+            try:
+                payload, _ = json.JSONDecoder().raw_decode(response[body.start():].lstrip()) if body else (None, 0)
+                if not isinstance(payload, dict):
+                    raise ValueError('GraphQL response body unavailable')
+            except ValueError:
+                # gh omits large bodies from its debug trace. The caller may
+                # supply the unfiltered stdout for exactly one GraphQL HTTP
+                # exchange; never use it for an ambiguous or malformed body.
+                if body is not None or len(requests) != 1 or len(final) != 1 or graphql_stdout is None:
+                    result['graphql_parse_failures'] += 1
+                    continue
+                try:
+                    payload = json.loads(graphql_stdout)
+                    if not isinstance(payload, dict):
+                        raise ValueError('GraphQL stdout unavailable')
+                except ValueError:
+                    result['graphql_parse_failures'] += 1
+                    continue
+            data = payload.get('data')
+            rate = data.get('rateLimit') if isinstance(data, dict) else None
+            cost = rate.get('cost') if isinstance(rate, dict) else None
+            if isinstance(cost, int) and not isinstance(cost, bool) and cost >= 0:
+                result['graphql_known_cost'] += cost
+                result['graphql_cost_samples'] += 1
+                known += 1
+        if graphql:
+            result['graphql_calls'] += 1
+            result['graphql_unknown_cost_calls'] += int(known == 0)
+            result['cost_complete'] &= len(final) == 1 and known == 1
+        elif not final:
+            # No response headers/body are available to verify its resource.
+            result['cost_complete'] = False
+    # A changed trace format must not silently discard responses or calls.
+    observed_responses = len(re.findall(r'^< HTTP/\S+ [2-5]\d\d\b', trace, re.M))
+    result['cost_complete'] &= (response_count == observed_responses and account != 'unknown'
+                                and len(re.findall(r'^\* Request at ', trace, re.M)) == len(requests))
+    return result
+
+
+def without_api_trace(trace):
+    """Discard complete and interrupted debug blocks; never return request bodies."""
+    return re.sub(r'^\* Request at .*?(?:^\* Request took [^\n]*\n?|\Z)', '', trace,
+                  flags=re.S | re.M)
+
+
 class GitHub:
     def __init__(self, state_dir, repo):
         self.root = Path(state_dir)
@@ -38,6 +122,11 @@ class GitHub:
         self.quota_probes = 0
         self.graphql_cost = 0
         self.graphql_cost_samples = 0
+        self.graphql_calls = self.graphql_unknown_cost_calls = self.graphql_parse_failures = 0
+        self.cost_complete = True
+        self.transport_metric_errors = self.unclassified_calls = 0
+        self.quota_observations = []
+        self.quota_observation_gaps = 0
         self.quota = {}
         self.hits = self.misses = 0
         self.pr = None
@@ -98,40 +187,76 @@ class GitHub:
 
     def run(self, *args, input=None, via='gh-drew', env=None):
         self.ready()
-        # gh's API trace supplies actual nested calls (identity, review guard and
-        # merge included). Keep it only in memory; never persist credentials/bodies.
+        # The shim enables API tracing only inside each captured real-CLI child.
+        # Wrappers must not emit raw traces beside their own refusal diagnostics:
+        # an interrupted trace cannot safely be separated from a response body.
         with tempfile.NamedTemporaryFile(dir=self.root, prefix='http-', mode='r+') as metrics:
             r = subprocess.run([via, *args], input=input, capture_output=True, text=True,
-                               env={**os.environ, **(env or {}), 'GH_DEBUG': 'api',
+                               env={**os.environ, **(env or {}), 'GH_DEBUG': '',
                                     'MOG_HTTP_METRICS': metrics.name})
-            requests = [json.loads(line) for line in metrics.read().splitlines()]
+            requests = []
+            for line in metrics.read().splitlines():
+                try:
+                    record = json.loads(line)
+                    if not isinstance(record, dict):
+                        raise ValueError('Invalid transport record')
+                    requests.append(record)
+                except ValueError:
+                    self.transport_metric_errors += 1
+                    self.cost_complete = False
         trace = r.stderr
         self.calls += (sum(x['calls'] for x in requests) if requests else
                        len(re.findall(r'^> (?:GET|POST|PUT|PATCH|DELETE|HEAD) ', trace, re.M)))
         self.quota_probes += sum(x['quota_probes'] for x in requests)
         remaining = None
-        for response in re.split(r'^< HTTP/', trace, flags=re.M)[1:]:
-            resource = re.search(r'^< x-ratelimit-resource:\s*(\S+)', response, re.M | re.I)
-            quota = re.search(r'^< x-ratelimit-remaining:\s*(\d+)', response, re.M | re.I)
-            if resource and quota:
-                remaining = int(quota[1])
-                self.quota[f'{via}/{resource[1]}'] = remaining
+        instrumented = [x for x in requests if x.get('transport_version') == 2]
+        if instrumented:
+            # Every real CLI response is accounted here, including nested calls.
+            # Outer stdout may repeat that response or may have discarded its cost.
+            for request in instrumented:
+                self.graphql_calls += request['graphql_calls']
+                self.graphql_cost += request['graphql_known_cost']
+                self.graphql_cost_samples += request['graphql_cost_samples']
+                self.graphql_unknown_cost_calls += request['graphql_unknown_cost_calls']
+                self.graphql_parse_failures += request['graphql_parse_failures']
+                self.cost_complete &= request['cost_complete']
+                self.quota_observations.extend(request['quota_observations'])
+                self.quota_observation_gaps += request['quota_observation_gaps']
+            legacy = [x for x in requests if x.get('transport_version') != 2]
+            self.unclassified_calls += sum(x['calls'] for x in legacy)
+            self.cost_complete &= not legacy
+        else:
+            # Compatibility only: this cannot establish complete nested costs.
+            self.cost_complete = False
+            fallback = trace_metrics(trace, 'unknown')
+            for observation in fallback['quota_observations']:
+                if 'remaining' in observation:
+                    remaining = observation['remaining']
+                    self.quota[f"{via}/{observation['resource']}"] = remaining
+            calls = fallback['graphql_calls']
+            samples = 0
+            try:
+                cost = json.loads(r.stdout)['data']['rateLimit']['cost']
+                if isinstance(cost, int) and not isinstance(cost, bool) and cost >= 0:
+                    self.graphql_cost += cost
+                    self.graphql_cost_samples += 1
+                    samples = 1
+            except (ValueError, KeyError, TypeError):
+                pass
+            self.graphql_calls += max(calls, samples)
+            self.graphql_unknown_cost_calls += max(0, calls - samples)
+            self.unclassified_calls += max(0, (sum(x['calls'] for x in requests) if requests else fallback['calls']) - max(calls, samples))
         for request in requests:
             self.quota.update(request['quota'])
+            if request['quota']:
+                remaining = list(request['quota'].values())[-1]
             # Only sanitized limit metadata leaves the child; the debug trace
             # itself is consumed there even when a guard suppresses stderr.
             if request['limited']:
                 trace += '\nAPI rate limit exceeded\n' + request['limit_headers']
                 if request['secondary']:
                     trace += '\nsecondary rate limit\n'
-        # A gh-drew review error is printed after the nested debug request ends.
-        r.stderr = re.sub(r'\* Request at .*?\* Request took [^\n]*\n?', '', trace, flags=re.S)
-        try:
-            cost = json.loads(r.stdout)['data']['rateLimit']['cost']
-            self.graphql_cost += cost
-            self.graphql_cost_samples += 1
-        except (ValueError, KeyError, TypeError):
-            pass
+        r.stderr = without_api_trace(trace)
         # Match failures only: a successful PR body can discuss rate limits.
         failed = r.returncode != 0 or bool(re.search(r'"errors"\s*:', r.stdout)) or any(x['limited'] for x in requests)
         limited = failed and re.search(r'secondary rate limit|API rate limit (?:already )?exceeded|abuse detection',
@@ -189,7 +314,12 @@ class GitHub:
         rec = {'at': dt.datetime.now(dt.timezone.utc).isoformat(), 'repo': self.repo,
                'dry_run': dry_run, 'github_calls': self.calls, 'remaining': self.quota,
                'quota_probe_calls': self.quota_probes,
-               'graphql_cost': self.graphql_cost, 'graphql_cost_samples': self.graphql_cost_samples,
+               'graphql_cost': self.graphql_cost, 'graphql_known_cost': self.graphql_cost,
+               'graphql_cost_samples': self.graphql_cost_samples, 'graphql_calls': self.graphql_calls,
+               'graphql_unknown_cost_calls': self.graphql_unknown_cost_calls,
+               'graphql_parse_failures': self.graphql_parse_failures, 'cost_complete': self.cost_complete,
+               'transport_metric_errors': self.transport_metric_errors, 'unclassified_calls': self.unclassified_calls,
+               'quota_observations': self.quota_observations, 'quota_observation_gaps': self.quota_observation_gaps,
                'review_cache_hits': self.hits, 'review_cache_misses': self.misses,
                'decisions': self.decisions, 'deferred': deferred}
         with (self.root / 'ticks.jsonl').open('a') as f:
@@ -216,28 +346,29 @@ if __name__ == '__main__':
         r = subprocess.run(sys.argv[2:], capture_output=True,
                            env={**os.environ, 'GH_DEBUG': 'api'})
         trace = r.stderr.decode(errors='replace')
-        quota = {}
         account = os.environ.get('GH_DREW_EXPECTED_LOGIN', 'drewstone')
-        for response in re.split(r'^< HTTP/', trace, flags=re.M)[1:]:
-            resource = re.search(r'^< x-ratelimit-resource:\s*(\S+)', response, re.M | re.I)
-            left = re.search(r'^< x-ratelimit-remaining:\s*(\d+)', response, re.M | re.I)
-            if resource and left:
-                quota[f'{account}/{resource[1]}'] = int(left[1])
+        args = sys.argv[3:]
+        fields = args[2:]
+        # Only this canonical API form returns one unfiltered response. Native
+        # commands, formatting flags, pagination and unfamiliar argument forms
+        # cannot supply a fallback, even if their stdout resembles GraphQL JSON.
+        unfiltered_graphql = (args[:2] == ['api', 'graphql'] and len(fields) % 2 == 0
+                              and all(fields[i] in ('-f', '-F', '--field', '--raw-field')
+                                      for i in range(0, len(fields), 2)))
+        metrics = trace_metrics(trace, account, graphql_stdout=r.stdout if unfiltered_graphql else None)
         failure = r.returncode != 0 or bool(re.search(rb'"errors"\s*:', r.stdout))
         limited = failure and bool(re.search(r'secondary rate limit|API rate limit (?:already )?exceeded|abuse detection',
                                               trace + r.stdout.decode(errors='replace'), re.I))
         secondary = bool(re.search(r'secondary rate limit|abuse detection', trace, re.I))
-        headers = '\n'.join(line for line in trace.splitlines()
-                            if re.match(r'< (?:retry-after|x-ratelimit-(?:remaining|reset)):', line, re.I))
+        headers = '\n'.join(f'< {name.lower()}: {value}' for name, value in
+                            re.findall(r'^< (retry-after|x-ratelimit-(?:remaining|reset)):\s*(\d+)\s*$', trace, re.M | re.I))
         if failure and re.search(r'\b(?:403|429)\b', trace) and re.search(r'retry-after:', headers, re.I):
             limited = True
         with open(os.environ['MOG_HTTP_METRICS'], 'a') as f:
-            f.write(json.dumps({'calls': len(re.findall(r'^> (?:GET|POST|PUT|PATCH|DELETE|HEAD) ', trace, re.M)),
-                               'quota_probes': len(re.findall(r'^> GET /rate_limit(?:\s|\?)', trace, re.M)),
-                               'quota': quota, 'limited': limited, 'secondary': secondary,
-                               'limit_headers': headers if limited else ''}) + '\n')
+            f.write(json.dumps({**metrics, 'limited': limited, 'secondary': secondary,
+                                'limit_headers': headers if limited else ''}) + '\n')
         sys.stdout.buffer.write(r.stdout)
-        sys.stderr.write(re.sub(r'\* Request at .*?\* Request took [^\n]*\n?', '', trace, flags=re.S))
+        sys.stderr.write(without_api_trace(trace))
         sys.exit(r.returncode)
     answer = snapshot_answer(*sys.argv[1:])
     if answer is None:
