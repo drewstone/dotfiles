@@ -363,3 +363,46 @@ test("Storybook CSF suffixes are outside production while stories routes and mod
     git("add", "-A");
   }
 });
+
+test("xrepo JSON retains every name, file pair and located window beyond its legacy previews", () => {
+  const left = lines(10, (i) => `console.log("gap-left-${i}")`);
+  const right = lines(10, (i) => `console.log("gap-right-${i}")`);
+  const peers = Array.from({ length: 7 }, (_, index) => {
+    const files = { "src/names.ts": lines(50, (i) => `export const name${i} = ${index * 100 + i}`) };
+    for (let file = 0; file < 30; file++) {
+      files[`src/shared-${file}.ts`] = lines(12, (i) => `console.log("shared-${file}-${i}")`);
+    }
+    if (index < 2) {
+      files["src/gap.ts"] = `// banner\nimport "./names"\n${left}\n// ignored separator comment\nconsole.log("bridge-${index}")\n${right}` +
+        (index === 0 ? `console.log("repeat-only-here")\n${left}` : "");
+    }
+    return { name: `peer${index}`, ...repo(files) };
+  });
+  const result = run(peers[0].dir, census, ["xrepo", ...peers.map(({ name, dir }) => `${name}=${dir}:HEAD`)]);
+  assert.equal(result.status, 0, result.stderr);
+  const value = JSON.parse(result.stdout);
+  assert.equal(value.names_in_2plus_repos, 50);
+  assert.equal(value.top_names.length, 40);
+  assert.equal(value.top_cross_file_pairs.length, 25);
+  assert.equal(Object.keys(value.cross_repo_shared_windows_by_repo_pair).length, 20);
+  assert.equal(Object.keys(value.lists?.names ?? {}).length, 50, "full name inventory must survive the 40-name preview");
+  assert.equal(Object.keys(value.lists.repo_pairs).length, 21);
+  assert.equal(value.lists.cross_file_pairs.length, 631, "all 30 pairs across 21 repository pairs, plus the disconnected copy");
+  assert.equal(Object.keys(value.lists.windows).length, 92);
+  assert.equal(Object.values(value.lists.windows).flat().length, 635, "repeated occurrences in one file remain distinct evidence");
+  assert.equal(value.window_normalized_lines, 10);
+  assert.match(value.top_cross_file_pairs_unit, /not.*(?:LOC|lines)/i);
+  assert.deepEqual(value.lists.names.name49, Object.fromEntries(peers.map(({ name }) => [name, ["src/names.ts"]])));
+  const gap = value.lists.cross_file_pairs.find(({ a, b }) => a.path === "src/gap.ts" && b.path === "src/gap.ts");
+  assert.equal(gap.shared_windows, 2, "disconnected hashes are windows, not shared_windows+9 copied lines");
+  assert.equal(gap.window_hashes.length, 2);
+  const occurrences = gap.window_hashes.flatMap((hash) => value.lists.windows[hash]);
+  assert.deepEqual(occurrences.filter((o) => o.repo === "peer0").map(({ normalized_start, start_line, end_line }) =>
+    [normalized_start, start_line, end_line]).sort((a, b) => a[0] - b[0]), [[1, 3, 12], [12, 16, 25], [23, 27, 36]]);
+  assert.deepEqual(occurrences.filter((o) => o.repo === "peer1").map(({ normalized_start, start_line, end_line }) =>
+    [normalized_start, start_line, end_line]).sort((a, b) => a[0] - b[0]), [[1, 3, 12], [12, 16, 25]]);
+  const measured = run(peers[0].dir, census, ["measure", ".", "HEAD", "--scope", "src/gap.ts"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  assert.deepEqual(JSON.parse(measured.stdout).scope.lists.dup_lines.files["src/gap.ts"],
+    { normalized_lines: 32, dup_lines: 20 }, "the existing per-file coverage owner remains authoritative");
+});
