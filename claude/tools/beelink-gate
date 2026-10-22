@@ -2453,9 +2453,9 @@ PYTURBO
     export BEELINK_GATE_INSTALL_S=0
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
-  # Keep Turbo hashes inside the LRU cap, separated by actual script Node version.
-  export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$checkout/.git/beelink-gate-turbo/${gate_node%% *}}"
-  export BEELINK_GATE_TURBO_REQUESTED_DIR="$TURBO_CACHE_DIR"
+  # Ship owns its install/runtime; other modes retain hashes under the LRU cap.
+  [ "$install_mode" = ship ] || export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$checkout/.git/beelink-gate-turbo/${gate_node%% *}}"
+  export BEELINK_GATE_TURBO_REQUESTED_DIR="${TURBO_CACHE_DIR:-}"
   export TURBO_RUN_SUMMARY="${TURBO_RUN_SUMMARY:-true}"
   if [ "$install_mode" != ship ] && [ -d node_modules/.pnpm ]; then
     rebuild_native_addons || exit $?
