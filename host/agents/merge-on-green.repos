@@ -22,3 +22,15 @@ legal-agent:main
 hospitality-agent:main
 agent-builder:main
 physim:main
+dapp:develop
+docs:main
+blueprint:main
+tnt-core:main
+ai-agent-sandbox-blueprint:main
+redteam:main
+tangle-inference-core:master
+agent-gateway:main
+agent-client:main
+agent-integrations:main
+autoresearch-competitions:main
+agent-docs:main
