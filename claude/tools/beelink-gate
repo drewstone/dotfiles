@@ -1382,10 +1382,7 @@ for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
 PY
 }
 
-# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm")
-# and gate_node_bin. pnpm may launch its own Node, so on 2026-10-21 a gate read
-# plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3
-# (ABI 127 vs 137). pnpm exec needs the installed tree; npm uses the PATH node.
+# Resolve the scripts' Node and ABI through pnpm after install; npm uses PATH.
 resolve_gate_node() {
   local probe='process.versions.modules+" "+process.version+" "+process.execPath' out="" via=node
   if [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
@@ -1674,6 +1671,7 @@ install_step() {
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
+from pathlib import Path
 path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature, reserve_gate_bytes, reserve_host_drop, reserve_basis, reserve_du_ms = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
@@ -1744,6 +1742,10 @@ for phase, intervals in spans.items():
         elapsed += max(0, end - max(begin, right))
         right = max(right, end)
     timing[phase + "_s"] = round(elapsed, 3)
+try:
+    timing["turbo_cache"] = json.loads(os.environ.get("BEELINK_GATE_TURBO_OBSERVATIONS") or "null")
+except ValueError:
+    timing["turbo_cache"] = None
 row["timing"] = timing
 with open(path, "a+") as out:
     fcntl.flock(out, fcntl.LOCK_EX)
@@ -1784,7 +1786,6 @@ with open(path, "a+") as out:
         row["reason"] = "after_green"
     out.write(json.dumps(row) + "\n")
 if gate_id:
-    from pathlib import Path
     receipt = Path(path).parent / "jobs" / gate_id / "receipt.json"
     temporary = receipt.with_suffix(".tmp")
     temporary.write_text(json.dumps(row) + "\n")
@@ -1794,7 +1795,7 @@ PY
   }
 
 remote_gate() {
-  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_ADMISSION_SAMPLE
+  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_ADMISSION_SAMPLE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS BEELINK_GATE_TURBO_REQUESTED_DIR
   [ "$#" -ge 7 ] || die "invalid remote request"
   # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
   # that trap only after unwinding every function, so the state they read is
@@ -2149,14 +2150,8 @@ remote_gate() {
     echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
     return 0
   }
-  # A command that commits and then fails to push leaves the only copy of its
-  # commits in a shared checkout that the next gate resets: on 2026-10-12 a
-  # --dev observer's push hit 'closed by remote host' and its commit was gone
-  # once the next gate took the checkout. Commits reachable from HEAD or a local
-  # branch but not from the gated SHA or any remote ref go into a bundle first.
-  # Only commits this gate's command made count: refs the checkout already held
-  # when the command started (a branch an earlier --branch gate left behind)
-  # are excluded, so they are not bundled again by every later gate.
+  # Bundle command-created commits unreachable from remotes before checkout reuse.
+  # Exclude refs present before the command, so later gates do not save them again.
   save_unpushed() {
     [ -d "$checkout/.git" ] && [ "$gate_refs_taken" = 1 ] || return 0
     local new stamp heads h restore=""
@@ -2190,28 +2185,42 @@ remote_gate() {
     timing_phase=cleanup
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
     reap_leftovers
+    # Snapshot this command's summaries before releasing or evicting its checkout.
+    export BEELINK_GATE_TURBO_OBSERVATIONS="$(python3 - "$checkout/.turbo/runs" <<'PYTURBO'
+import json, math, os, sys
+from pathlib import Path
+result = {"source": "turbo_run_summary", "requested_dir": os.environ.get("BEELINK_GATE_TURBO_REQUESTED_DIR"), "location_source": "gate_environment", "runs": [], "unreadable": 0}
+begin = int(os.environ.get("BEELINK_GATE_COMMAND_STARTED_MS", "0"))
+for path in Path(sys.argv[1]).glob("*.json") if begin else []:
+    try:
+        summary = json.loads(path.read_text())
+        tasks, execution = summary["tasks"], summary["execution"]
+        start, end = execution["startTime"], execution["endTime"]
+        if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) for n in (start, end)) or not 0 <= start <= end:
+            raise ValueError("invalid execution interval")
+        if start < begin:
+            continue
+        if not isinstance(tasks, list) or any(not isinstance(t, dict) or not isinstance(t.get("cache", {}), dict) for t in tasks):
+            raise ValueError("invalid tasks")
+        result["runs"].append({"cached_tasks": sum(t.get("cache", {}).get("status") == "HIT" for t in tasks),
+                               "total_tasks": len(tasks), "wall_ms": end - start})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        result["unreadable"] += 1
+print(json.dumps(result))
+PYTURBO
+)"
     save_unpushed
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
-    # A gate whose launcher is gone frees its lock now; the next gate prunes
-    # before it fetches.
     if [ "$watchdog" = 1 ]; then
       :
     elif cd "$cache_root"; then
-      # The command is done: hand the checkout to the next gate before the cache
-      # prune, which sizes the whole cache and took minutes under load (an ADC
-      # checkout sat held for ~9 min after its signoff passed, 2026-10-12). The
-      # prune then treats this checkout like any other: evicted only if free.
-      # After the unlock the holder file and the checkout belong to the next
-      # gate: nothing below removes the holder or exempts the checkout's lock.
+      # Release before global cache work; the next gate owns the checkout and holder.
       rm -f "$lock.holder"
       [ -z "${lock_fd:-}" ] || flock -u "$lock_fd"
       lock_released=1
-      # The cache cap is a capacity condition, not the command's result: on
-      # 2026-10-11 a Hospitality train passed pnpm check (780 tests) and was
-      # reported as exit 3 because the cache stood 66 MB over its cap with only
-      # active checkouts left. The disk floor guards real disk shortage.
+      # Cache capacity cannot turn a successful command red; the disk floor guards starts.
       if ! prune_cache "$cache_root" "" "$cache_max"; then
         cache_note=unpruned
         echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
@@ -2365,20 +2374,11 @@ remote_gate() {
   # Rust output lives inside .git, which checkout and clean leave alone, so it
   # survives between gates and the LRU cap counts and evicts it with its repo.
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$checkout/.git/beelink-gate-target}"
-  # Incremental state is a third of a debug target and gates rarely reuse it.
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
-  # Every pnpm the command runs (a repo's own signoff install, say) uses the
-  # store the gate installed from, and never stops on a purge prompt: the
-  # checkout is a disposable cache with no TTY. On 2026-10-11 ADC's signoff.sh
-  # re-ran pnpm install, which aborted with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY
-  # after a green 18-minute run (ADC #10346, beelink1).
+  # Nested installs use the same store and cannot wait for a purge prompt.
   export npm_config_store_dir="${npm_config_store_dir:-$HOME/.local/share/pnpm/store}"
   export npm_config_confirm_modules_purge=false
-  # Workers inside the gate share the host with the other running gates. On
-  # 2026-10-12 beelink1 sat at load 93.7 with about 5 gates, because one ADC
-  # signoff alone fanned out to about 39 node workers. Each test runner,
-  # monorepo task runner and cargo build gets cores / running gates (at least 2)
-  # unless the caller already chose.
+  # Divide workers across active gates, preserving caller overrides.
   gate_workers=$(gate_worker_budget "$cache_root/.locks")
   export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$gate_workers}"
   export VITEST_MAX_THREADS="${VITEST_MAX_THREADS:-$gate_workers}"
@@ -2386,12 +2386,7 @@ remote_gate() {
   export TURBO_CONCURRENCY="${TURBO_CONCURRENCY:-$gate_workers}"
   export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$gate_workers}"
   cd "$checkout" || exit $?
-  # Install and run with the repo's Node (.nvmrc), as its CI does, so the install
-  # and the command load the same native addon ABI. pnpm keys a native package's
-  # build on the Node that installs it: on 2026-10-11 agent-app#1036 installed under
-  # the beelink's default Node 22, its `bash -lc` command ran under nvm's default 24,
-  # and better-sqlite3 failed with "Module did not self-register". With an nvm Node
-  # first on PATH, a login shell keeps it.
+  # Install and run with the repo's Node so native addon ABIs agree.
   if [ -s .nvmrc ]; then
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
       # shellcheck disable=SC1091
@@ -2411,9 +2406,7 @@ remote_gate() {
       echo "beelink-gate: using the login shell's node $("$login_node" -v 2>/dev/null) for the install and the command" >&2
     fi
   fi
-  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces
-  # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
-  # that CI on 11 refused. The shim covers the install, the command and ship.sh.
+  # The repo's pnpm enforces its install policy in every nested command.
   local want_pnpm have_pnpm
   if [ -f pnpm-lock.yaml ] && want_pnpm=$(repo_pnpm_version); then
     have_pnpm=$(pnpm --version 2>/dev/null || true)
@@ -2460,6 +2453,10 @@ remote_gate() {
     export BEELINK_GATE_INSTALL_S=0
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
+  # Ship owns its install/runtime; other modes retain hashes under the LRU cap.
+  [ "$install_mode" = ship ] || export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$checkout/.git/beelink-gate-turbo/${gate_node%% *}}"
+  export BEELINK_GATE_TURBO_REQUESTED_DIR="${TURBO_CACHE_DIR:-}"
+  export TURBO_RUN_SUMMARY="${TURBO_RUN_SUMMARY:-true}"
   if [ "$install_mode" != ship ] && [ -d node_modules/.pnpm ]; then
     rebuild_native_addons || exit $?
   fi
@@ -2472,6 +2469,7 @@ remote_gate() {
   export BEELINK_GATE_PHASE_FILE="$timing_file"
   echo "beelink-gate: running ${display% }" >&2
   pre_command_s=$((SECONDS - started))
+  export BEELINK_GATE_COMMAND_STARTED_MS=$(date +%s%3N)
   local command_started=$SECONDS
   local tick cpu_before cpu_after
   tick=$(getconf CLK_TCK 2>/dev/null || echo 100)
@@ -2597,7 +2595,7 @@ mv -- "$dir/exit.tmp" "$dir/exit"
 RUNNER
   chmod 700 "$dir/runner.sh"
   local -a vars=("BEELINK_GATE_ID=$id")
-  for name in BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_BRANCH BEELINK_GATE_LOAD_WAIT BEELINK_GATE_CACHE_MAX_BYTES \
+  for name in TURBO_CACHE_DIR TURBO_RUN_SUMMARY BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_BRANCH BEELINK_GATE_LOAD_WAIT BEELINK_GATE_CACHE_MAX_BYTES \
     BEELINK_GATE_MAX_CPU_PRESSURE BEELINK_GATE_HOST_PRESSURE_CEILING BEELINK_GATE_STARVE_AFTER \
     BEELINK_GATE_CLASS BEELINK_GATE_SHIP_WORKERS BEELINK_GATE_PR BEELINK_GATE_LANE BEELINK_GATE_RESERVATION_TOKEN BEELINK_GATE_MAX_CONCURRENT \
     BEELINK_GATE_REPO_CHECKOUTS BEELINK_GATE_LIGHT_CPU BEELINK_GATE_LIGHT_SLOTS \
@@ -2839,6 +2837,7 @@ on_beelink() {
   [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
   [ -z "${BEELINK_GATE_CACHE_MAX_BYTES:-}" ] || envs+=("BEELINK_GATE_CACHE_MAX_BYTES=$BEELINK_GATE_CACHE_MAX_BYTES")
+  [ -z "${TURBO_RUN_SUMMARY:-}" ] || envs+=("TURBO_RUN_SUMMARY=$TURBO_RUN_SUMMARY")
   [ -z "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ] || envs+=("BEELINK_GATE_MAX_CPU_PRESSURE=$BEELINK_GATE_MAX_CPU_PRESSURE")
   [ -z "${BEELINK_GATE_HOST_PRESSURE_CEILING:-}" ] || envs+=("BEELINK_GATE_HOST_PRESSURE_CEILING=$BEELINK_GATE_HOST_PRESSURE_CEILING")
   [ -z "${BEELINK_GATE_STARVE_AFTER:-}" ] || envs+=("BEELINK_GATE_STARVE_AFTER=$BEELINK_GATE_STARVE_AFTER")

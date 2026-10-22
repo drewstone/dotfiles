@@ -140,7 +140,7 @@ for group in performance["groups"]:
     print(f"THROUGHPUT {group['repo']} {group['class']}: n={group['n']} "
           f"wait p90={group['wait_p90_s']}s wall p50={group['wall_p50_s']}s "
           f"passed={group['passed_n']} passed wait p90={group['passed_wait_p90_s']}s passed wall p50={group['passed_wall_p50_s']}s "
-          f"install/typecheck/tests coverage={group['phase_coverage']}")
+          f"install/typecheck/tests coverage={group['phase_coverage']} turbo_cache={group['turbo_cache']}")
 print("TIMING submission-start cohort; nearest-rank percentiles; incomplete/unadmitted attempts excluded and counted; missing phases stay unknown")
 cpu_missing = sorted(set(("beelink1", "beelink2")) - {s.get("from") for s in samples if not s.get("error")})
 if cpu_missing:
