@@ -71,19 +71,21 @@ SLOT_GRANT_LABEL = 'release-slot-granted'
 def slot_repositories():
     """Read release-slot ownership from the same inventory that installs the timers."""
     path = Path(__file__).resolve().parents[2] / 'host/agents/merge-on-green.repos'
-    repos = set()
+    repos, invalid = set(), set()
     for line in path.read_text().splitlines():
         if not line.strip() or line.lstrip().startswith('#'):
             continue
         instance, *options = line.split()
         if options not in ([], ['slot']):
-            raise ValueError(f'Unsupported merge-on-green inventory options: {line}')
+            invalid.add(instance.split(':')[0])
+            print(f'merge-on-green: invalid inventory policy for {instance}; that repository is held: {options}', file=sys.stderr)
+            continue
         if options:
             repos.add(instance.split(':')[0])
-    return repos
+    return repos, invalid
 
 
-SLOT_REPOS = slot_repositories()
+SLOT_REPOS, INVALID_POLICY_REPOS = slot_repositories()
 REVIEW_FRAGMENT = Path(__file__).resolve().with_name('gh-drew-review.sh').read_text().split("<<'GRAPHQL'", 1)[1].split('\n', 1)[1].split('\nGRAPHQL', 1)[0]
 
 REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
@@ -255,13 +257,15 @@ def hold_reason(pr):
 
 def bot_slot_hold(a, pr, noted, noted_path, now):
     """Hold each bot head until an operator grants that revision a release slot."""
+    if a.repo.split('/')[-1] in INVALID_POLICY_REPOS:
+        return 'repository inventory policy is invalid; fix its options before merging'
     if a.repo.split('/')[-1] not in SLOT_REPOS:
         return None
     author = pr.get('author') or {}
     login = author.get('login', '')
     if not login:
         return 'release-slot PR author identity unavailable; cannot establish bot authorization'
-    if author.get('__typename') != 'Bot' and not re.search(r'(?i)(\[bot\]$|-bot$|^(?:dependabot|renovate|github-actions)$)', login):
+    if author.get('__typename') != 'Bot' and not login.endswith('[bot]'):
         return None
     labels = {item['name'] for item in pr['labels']['nodes']}
     key = f"slot-seen:{pr['number']}"
