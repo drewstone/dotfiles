@@ -30,7 +30,7 @@ def fingerprint(pr):
     return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 
-def trace_metrics(trace, account):
+def trace_metrics(trace, account, *, graphql_stdout=None):
     """Summarize each real HTTP exchange before callers filter its stdout."""
     account = account if re.fullmatch(r'[A-Za-z0-9-]{1,39}', account) else 'unknown'
     requests = list(re.finditer(r'^> (?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (\S+) ', trace, re.M))
@@ -74,8 +74,19 @@ def trace_metrics(trace, account):
                 if not isinstance(payload, dict):
                     raise ValueError('GraphQL response body unavailable')
             except ValueError:
-                result['graphql_parse_failures'] += 1
-                continue
+                # gh omits large bodies from its debug trace. The caller may
+                # supply the unfiltered stdout for exactly one GraphQL HTTP
+                # exchange; never use it for an ambiguous or malformed body.
+                if body is not None or len(requests) != 1 or len(final) != 1 or graphql_stdout is None:
+                    result['graphql_parse_failures'] += 1
+                    continue
+                try:
+                    payload = json.loads(graphql_stdout)
+                    if not isinstance(payload, dict):
+                        raise ValueError('GraphQL stdout unavailable')
+                except ValueError:
+                    result['graphql_parse_failures'] += 1
+                    continue
             data = payload.get('data')
             rate = data.get('rateLimit') if isinstance(data, dict) else None
             cost = rate.get('cost') if isinstance(rate, dict) else None
@@ -335,7 +346,15 @@ if __name__ == '__main__':
                            env={**os.environ, 'GH_DEBUG': 'api'})
         trace = r.stderr.decode(errors='replace')
         account = os.environ.get('GH_DREW_EXPECTED_LOGIN', 'drewstone')
-        metrics = trace_metrics(trace, account)
+        args = sys.argv[3:]
+        fields = args[2:]
+        # Only this canonical API form returns one unfiltered response. Native
+        # commands, formatting flags, pagination and unfamiliar argument forms
+        # cannot supply a fallback, even if their stdout resembles GraphQL JSON.
+        unfiltered_graphql = (args[:2] == ['api', 'graphql'] and len(fields) % 2 == 0
+                              and all(fields[i] in ('-f', '-F', '--field', '--raw-field')
+                                      for i in range(0, len(fields), 2)))
+        metrics = trace_metrics(trace, account, graphql_stdout=r.stdout if unfiltered_graphql else None)
         failure = r.returncode != 0 or bool(re.search(rb'"errors"\s*:', r.stdout))
         limited = failure and bool(re.search(r'secondary rate limit|API rate limit (?:already )?exceeded|abuse detection',
                                               trace + r.stdout.decode(errors='replace'), re.I))
