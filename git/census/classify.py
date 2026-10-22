@@ -1,8 +1,4 @@
-"""The census classification in Python: patterns.json read once, for the ratchets in git/hooks and for census.
-
-A ratchet imports this module by path, so a hook and the census decide alike what counts as a logic file, a test,
-a source file, an exported declaration or dated history.
-"""
+"""Classification shared by census and the ratchets; patterns.json owns the definitions."""
 import json
 import os
 import re
@@ -59,7 +55,11 @@ def line_count(data):
 
 
 def normalized(text, *, locations=False):
-    """A file's lines as the duplicate counters compare them: whitespace collapsed; blanks, comments, imports and lone
-    braces dropped."""
-    lines = ((n, re.sub(r"\s+", " ", line.strip())) for n, line in enumerate(text.splitlines(), 1))
-    return [(n, line) if locations else line for n, line in lines if line and not TRIVIAL.match(line)]
+    """Nontrivial normalized lines, optionally paired with physical LF line numbers."""
+    lines, number = [], 1
+    for piece in text.splitlines(keepends=True):
+        line = re.sub(r"\s+", " ", piece.strip())
+        if line and not TRIVIAL.match(line):
+            lines.append((number, line) if locations else line)
+        number += piece.count("\n")
+    return lines

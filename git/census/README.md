@@ -65,3 +65,7 @@ reported as 0. `typescript` is loaded from the measured repo, then `~/.local/sha
 Function metrics cover JavaScript, TypeScript and Python, including nested and async functions.
 `files_read.functions` names that population; `source`, duplicate lines and exported names retain
 their JavaScript/TypeScript population. Compare both revisions with the same instrument version.
+
+Both `--scope prefix` and `--scope=prefix` work. Unknown options and missing option values are refused.
+Scope syntax is checked before reading the tree; a refused selection never writes a measurement cache.
+Source locations count physical LF lines, including when normalized content contains Unicode line separators.

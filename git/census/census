@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""census measure <checkout> <rev> [--scope prefix ...]; floors <checkout> <base> <head> --floor F [--peer name=checkout:rev ...]
-  census xrepo name=checkout:rev ...; files <checkout> <rev>
-WORKTREE includes untracked files. Exit 0: measured; 1: floor rose; 2: refused. Full usage: git/census/README.md.
+"""The census: every codebase instrument, owned beside the ratchets (git/census/README.md).
+
+  census measure <checkout> <rev> [--scope prefix ...]   whole-repo metrics, with an optional scoped view
+  census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...]
+  census xrepo name=checkout:rev [name=checkout:rev ...]
+  census files <checkout> <rev>                         path, lines and class of every logic file, as TSV
+
+Floor groups: lines, copies, god, hug, confusion; individual metric names also work.
+WORKTREE includes untracked edits and sparse paths using a copied index; the real index is untouched.
+Exit 0: measured, or every floor held. Exit 1: a floor rose. Exit 2: measurement refused, never a reported zero.
 """
 import collections
 import hashlib
@@ -113,14 +120,19 @@ def duplicated(texts):
     return {"files": files, "windows": dict(sorted(groups.items()))}
 
 
+def scope_paths(scopes):
+    paths = sorted(set(os.path.normpath(p) for p in scopes))
+    if not all(scopes) or any(os.path.isabs(p) or p == ".." or p.startswith("../") for p in paths):
+        raise Refused("--scope must name repository-relative prefixes")
+    return paths
+
+
 def measurement_view(result, rev, scopes):
     """Scope selects covered locations only; the cached peer population always remains the entire tree."""
     view = {**result, "rev": rev}
     if not scopes:
         return view
-    paths = sorted(set(os.path.normpath(p) for p in scopes))
-    if not all(scopes) or any(os.path.isabs(p) or p == ".." or p.startswith("../") for p in paths):
-        raise Refused("--scope must name repository-relative prefixes")
+    paths = scopes
     belongs = lambda p: any(root == "." or p == root or p.startswith(root + "/") for root in paths)
     sizes, copies = result["lists"]["prod_lines"], result["lists"]["dup_lines"]
     for root in paths:
@@ -164,7 +176,11 @@ def exports(sources):
 def cache_file(tree):
     digest = hashlib.sha256()
     for name in ("census", "classify.py", "functions.cjs", "patterns.json", "python_functions.py"):
-        digest.update(open(os.path.join(HERE, name), "rb").read())
+        try:
+            with open(os.path.join(HERE, name), "rb") as instrument:
+                digest.update(instrument.read())
+        except OSError as why:
+            raise Refused(f"cannot read instrument {name}: {why}") from why
     root = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "census")
     return os.path.join(root, digest.hexdigest()[:12], f"{tree}.json")
 
@@ -191,6 +207,7 @@ def remember(file, value):
 
 
 def measure(checkout, rev, scopes=()):
+    scopes = scope_paths(scopes)
     tree = tree_of(checkout, rev)
     cached = cache_file(tree)
     try:
@@ -225,8 +242,9 @@ def measure(checkout, rev, scopes=()):
              "stale_doc_refs": stale, "fns_over_150": [f for f in fn["fns"] if f[0] > 150], "hug_fns": hug_fns,
              "classes_over_40": classes, "dup_exports": duplicate_exports}
     result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)}, "metrics": m, "lists": lists}
+    view = measurement_view(result, rev, scopes)
     remember(cached, result)
-    return measurement_view(result, rev, scopes)
+    return view
 
 
 def source_texts(checkout, tree):
@@ -328,11 +346,23 @@ def files(checkout, rev):
 
 def main(argv):
     command, args = (argv[0], argv[1:]) if argv else ("", [])
-    flag = lambda name: [args[i + 1] for i, a in enumerate(args) if a == name and i + 1 < len(args)]
-    plain = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--floor", "--peer", "--scope"))]
+    allowed = {"measure": ("--scope",), "floors": ("--floor", "--peer")}.get(command, ())
+    options, plain = {name: [] for name in allowed}, []
     try:
-        if "--scope" in args and (command != "measure" or len(flag("--scope")) != args.count("--scope")):
-            raise Refused("--scope requires measure and a prefix for every occurrence")
+        arguments = iter(args)
+        for arg in arguments:
+            if not arg.startswith("--"):
+                plain.append(arg)
+                continue
+            name, equal, value = arg.partition("=")
+            if name not in options:
+                raise Refused(f"unknown option for {command or 'census'}: {name}")
+            if not equal:
+                value = next(arguments, None)
+            if value is None or value.startswith("--"):
+                raise Refused(f"{name} requires a value for every occurrence")
+            options[name].append(value)
+        flag = lambda name: options.get(name, [])
         if command == "measure" and len(plain) == 2:
             print(json.dumps(measure(*plain, scopes=flag("--scope"))))
             return 0

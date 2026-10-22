@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -224,6 +224,7 @@ test("scoped census counts covered lines against outside peers and preserves cac
   };
   // Start with a scoped request: it must cache the complete peer population.
   const selected = measure("scripts/", "services/", "products/sandbox/evals/");
+  assert.deepEqual(measure("scripts/", "services/", "products/sandbox/evals/"), selected, "cold and cached scoped JSON agree");
   assert.equal(selected.metrics.dup_lines, 52);
   assert.equal(selected.scope.metrics.dup_lines, 38);
   assert.equal(selected.scope.files_read.source, 3);
@@ -242,6 +243,12 @@ test("scoped census counts covered lines against outside peers and preserves cac
   assert.deepEqual(global.metrics, selected.metrics);
   assert.equal(global.scope, undefined);
   assert.deepEqual(global.lists.dup_lines, selected.lists.dup_lines);
+  const single = measure("scripts/lane.ts");
+  assert.deepEqual(Object.keys(single.scope.lists.dup_lines.files), ["scripts/lane.ts"]);
+  assert.equal(single.scope.metrics.prod_lines, 18);
+  const equals = run(dir, census, ["measure", ".", "HEAD", "--scope=scripts/lane.ts"]);
+  assert.equal(equals.status, 0, equals.stderr);
+  assert.deepEqual(JSON.parse(equals.stdout), single);
   const scriptsOnly = measure("scripts", "scripts/");
   assert.equal(scriptsOnly.scope.metrics.dup_lines, 14);
   assert.equal(scriptsOnly.scope.files_read.source, 1);
@@ -258,4 +265,56 @@ test("scoped census counts covered lines against outside peers and preserves cac
   assert.equal(after.scope.metrics.dup_lines, 24);
   assert.equal(after.scope.lists.dup_lines.files["scripts/lane.ts"].dup_lines, 0);
   assert.notEqual(after.tree, global.tree);
+});
+
+
+test("scope syntax and unknown options refuse before cold measurement and leave no cache", () => {
+  const { dir } = repo({ "scripts/a.ts": "export const a = 1\n" });
+  for (const [i, options] of [["--scope", "../scripts"], ["--scope", "/scripts"], ["--scope="],
+    ["--scope"], ["--scope", "--scope", "scripts"], ["--unknown=scripts"], ["--floor", "lines"]].entries()) {
+    const cache = join(scratch, `invalid-scope-${i}`);
+    // An invalid revision proves validation happens before even resolving the tree.
+    const result = spawnSync(census, ["measure", ".", "not-a-revision", ...options], {
+      cwd: dir, encoding: "utf8", env: { ...env, XDG_CACHE_HOME: cache },
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /CENSUS REFUSED: (?:--scope|unknown option)/);
+    assert.equal(existsSync(cache), false);
+  }
+  const cache = join(scratch, "unmatched-scope");
+  const result = spawnSync(census, ["measure", ".", "HEAD", "--scope", "missing"], {
+    cwd: dir, encoding: "utf8", env: { ...env, XDG_CACHE_HOME: cache },
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /matched no measured/);
+  assert.equal(existsSync(cache), false);
+});
+
+test("Python-only scope has no JS/TS copies and source coordinates count LF across Unicode separators", () => {
+  const body = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
+  const source = `const separator = "before\u2028after";\nexport function lane(values: number[]) {\n  let total = 0\n${body}  return total\n}\n`;
+  const { dir, git } = repo({ "scripts/lane.ts": source,
+    "packages/peer.ts": source.replace("function lane", "function peer"), "tools/only.py": "def useful():\n    return 1\n" });
+  const result = run(dir, census, ["measure", ".", "HEAD", "--scope", "scripts/lane.ts"]);
+  assert.equal(result.status, 0, result.stderr);
+  const measured = JSON.parse(result.stdout);
+  const occurrence = Object.values(measured.scope.lists.dup_lines.windows).flat()
+    .find((item) => item.path === "scripts/lane.ts" && item.normalized_start === 4);
+  assert.equal(occurrence.start_line, 3);
+  assert.equal(occurrence.end_line, 12);
+  assert.match(git("grep", "-n", "let total", "HEAD", "--", "scripts/lane.ts"), /:3:/);
+  const python = run(dir, census, ["measure", ".", "HEAD", "--scope=tools/only.py"]);
+  assert.equal(python.status, 0, python.stderr);
+  assert.deepEqual(JSON.parse(python.stdout).scope, { paths: ["tools/only.py"], files_read: { logic: 1, source: 0 },
+    metrics: { prod_lines: 2, dup_lines: 0, dup_pct: 0 }, lists: { dup_lines: { files: {}, windows: {} } } });
+});
+
+test("an incomplete installed instrument refuses with exit 2 rather than a floor failure", () => {
+  const { dir } = repo({ "scripts/a.ts": "export const a = 1\n" });
+  const installed = join(scratch, "incomplete-instrument");
+  cpSync(resolve("git/census"), installed, { recursive: true });
+  rmSync(join(installed, "python_functions.py"));
+  const result = run(dir, join(installed, "census"), ["measure", ".", "HEAD"]);
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /CENSUS REFUSED: cannot read instrument python_functions\.py/);
 });
