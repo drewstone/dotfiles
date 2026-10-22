@@ -9,57 +9,17 @@
   "skip": "(\\.stories\\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$|\\.d\\.[cm]?ts$|\\.min\\.js$|\\.(test|spec)\\.[^/]+$|(^|/)test_[^/]+\\.py$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build)/)",
   "declaration": "^export (?:default )?(?:declare )?(?:async )?(?:abstract )?(?:function\\*?|class|interface|type|const|let|enum) ([A-Za-z_$][\\w$]*)",
   "conventionNames": [
-    "main",
-    "default",
-    "config",
-    "handler",
-    "runtime",
-    "dynamic",
-    "revalidate",
-    "metadata",
-    "viewport",
-    "generateMetadata",
-    "generateStaticParams",
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "HEAD",
-    "OPTIONS",
-    "loader",
-    "action",
-    "meta",
-    "links",
-    "headers",
-    "handle",
-    "ErrorBoundary",
-    "HydrateFallback",
-    "clientLoader",
-    "clientAction",
-    "shouldRevalidate",
-    "Route",
-    "Props"
+    "main", "default", "config", "handler", "runtime", "dynamic", "revalidate", "metadata", "viewport",
+    "generateMetadata", "generateStaticParams", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+    "loader", "action", "meta", "links", "headers", "handle", "ErrorBoundary", "HydrateFallback",
+    "clientLoader", "clientAction", "shouldRevalidate", "Route", "Props"
   ],
-  "history": [
-    ".agent/",
-    ".evolve/",
-    ".agents/",
-    "archive/",
-    "pursuits/",
-    "reports/"
-  ],
+  "history": [".agent/", ".evolve/", ".agents/", "archive/", "pursuits/", "reports/"],
   "trivial": "^([{}()\\[\\];,]+|\\}\\)?;?|\\)\\s*;?|\\]\\s*;?|//.*|/\\*.*|\\*.*|\\*/|import .*|export \\* from .*|export \\{[^}]*\\} from .*|\\} from .*)$",
   "window": 10,
   "fileLimit": 1000,
   "functionLimit": 300,
   "classMembers": 40,
-  "fileHug": [
-    951,
-    1000
-  ],
-  "functionHug": [
-    271,
-    300
-  ]
+  "fileHug": [951, 1000],
+  "functionHug": [271, 300]
 }
