@@ -318,3 +318,44 @@ test("an incomplete installed instrument refuses with exit 2 rather than a floor
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /CENSUS REFUSED: cannot read instrument python_functions\.py/);
 });
+
+
+test("Storybook CSF suffixes are outside production while stories routes and modules remain enforced", () => {
+  const stories = Object.fromEntries(["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"].map((ext, i) => [
+    `src/component-${i}.stories.${ext}`,
+    `export const Default = {}\nexport function story${i}() {\n${lines(305, n => `  const value${n} = ${n}`)}}\n`,
+  ]));
+  const production = {
+    "src/owner.ts": "export const Default = 1\n",
+    "src/routes/stories.tsx": "export const route = 1\n",
+    "src/stories/service.ts": "export const service = 1\n",
+  };
+  const { dir, git } = repo({ ...production, ...stories });
+  const measured = run(dir, census, ["measure", ".", "HEAD"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const report = JSON.parse(measured.stdout);
+  assert.equal(report.metrics.prod_lines, 3, "CSF bodies are not production logic");
+  assert.equal(report.files_read.source, 3);
+  assert.equal(report.files_read.functions, 3);
+  assert.equal(report.metrics.dup_exports, 0, "CSF registry state names are not production API collisions");
+  assert.equal(report.metrics.fns_over_300, 0);
+  write(dir, { "src/new.stories.tsx": `export const Default = {}\nexport function longStory() {\n${lines(1005, n => `  const value${n} = ${n}`)}}\n` });
+  git("add", "-A");
+  const hooksPass = run(dir, join(hooks, "ratchets"), []);
+  assert.equal(hooksPass.status, 0, hooksPass.stderr);
+  const floor = run(dir, census, ["floors", ".", "HEAD", "WORKTREE", "--floor", "lines", "--floor", "copies", "--floor", "god"]);
+  assert.equal(floor.status, 0, floor.stderr);
+  for (const path of ["src/routes/stories.tsx", "src/stories/service.ts"]) {
+    write(dir, { [path]: production[path] + "export const Default = 2\n" });
+    git("add", "-A");
+    const rejected = run(dir, join(hooks, "dup-export-ratchet"), []);
+    assert.equal(rejected.status, 1, rejected.stderr);
+    assert.match(rejected.stderr, /Default: new in/);
+    assert(rejected.stderr.includes(path), rejected.stderr);
+    const counted = run(dir, census, ["measure", ".", "WORKTREE"]);
+    assert.equal(counted.status, 0, counted.stderr);
+    assert.equal(JSON.parse(counted.stdout).metrics.dup_exports, 1);
+    write(dir, { [path]: production[path] });
+    git("add", "-A");
+  }
+});
