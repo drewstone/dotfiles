@@ -109,9 +109,18 @@ def trace_metrics(trace, account, *, graphql_stdout=None):
 
 
 def without_api_trace(trace):
-    """Discard complete and interrupted debug blocks; never return request bodies."""
-    return re.sub(r'^\* Request at .*?(?:^\* Request took [^\n]*\n?|\Z)', '', trace,
-                  flags=re.S | re.M)
+    """Discard HTTP payloads while retaining wrapper refusals after interruption."""
+    clean = re.sub(r'^\* Request at .*?^\* Request took [^\n]*\n?', '', trace,
+                   flags=re.S | re.M)
+    interrupted = re.search(r'^\* Request at ', clean, re.M)
+    if interrupted is None:
+        return clean
+    # An interrupted body may be multiline or malformed JSON. Only wrapper
+    # diagnostic prefixes can safely leave that ambiguous tail; line-by-line
+    # removal of HTTP headers alone could expose request/response body fields.
+    diagnostics = ''.join(line for line in clean[interrupted.start():].splitlines(keepends=True)
+                          if re.match(r'^(?:gh(?:-drew|-read)?|gh shim|merge-on-green): ', line))
+    return clean[:interrupted.start()] + diagnostics
 
 
 class GitHub:
