@@ -21,7 +21,6 @@ tax-agent:main slot
 legal-agent:main slot
 hospitality-agent:main
 agent-builder:main
-physim:main
 ph0ny:main slot
 dapp:develop
 docs:main
