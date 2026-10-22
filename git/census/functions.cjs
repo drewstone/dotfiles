@@ -38,10 +38,6 @@ function loadTs(roots) {
   return null;
 }
 
-function sourceFile(ts, file, text) {
-  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-}
-
 /** Direct exported declarations only: export lists, barrels and assignments do not declare an implementation.
  * Every variable binding counts, including later declarators and destructuring, rather than just the first name. */
 function exportDeclarations(ts, sf) {
@@ -67,10 +63,10 @@ function exportDeclarations(ts, sf) {
   return declarations;
 }
 
-function functionSpans(ts, file, text) {
+function functionSpans(ts, file, text, exportsOnly = false) {
   if (file.endsWith(".py")) return pythonSpans([{ file, text }])[0];
   const fns = [], classes = [];
-  const sf = sourceFile(ts, file, text);
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const line = (pos) => sf.getLineAndCharacterOfPosition(pos).line;
   const keyOf = (n) => {
     if (n.name && n.name.getText) return n.name.getText(sf);
@@ -81,13 +77,12 @@ function functionSpans(ts, file, text) {
     return "<anonymous>";
   };
   const visit = (n) => {
-    if (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isArrowFunction(n) || ts.isFunctionExpression(n)
-      || ts.isConstructorDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n))
+    if (ts.isFunctionLikeDeclaration(n))
       fns.push({ key: keyOf(n), span: line(n.end) - line(n.getStart(sf)) + 1 });
     if (ts.isClassDeclaration(n)) classes.push({ name: n.name ? n.name.getText(sf) : "<anonymous>", members: n.members.length });
     ts.forEachChild(n, visit);
   };
-  visit(sf);
+  if (!exportsOnly) visit(sf);
   return { fns, classes, exports: exportDeclarations(ts, sf) };
 }
 
@@ -98,25 +93,21 @@ function main([checkout, mode]) {
   const items = JSON.parse(readFileSync(0, "utf8"));
   if (!Array.isArray(items) || items.some((v) => typeof v.file !== "string" || typeof v.text !== "string"))
     throw new Error("functions.cjs: refused: expected file/text blobs");
-  const blobs = new Map(items.map(({file, text}) => [file, text]));
-  const paths = [...blobs.keys()];
-  if (!ts && paths.some((p) => !p.endsWith(".py")))
+  if (!ts && items.some(({ file }) => !file.endsWith(".py")))
     throw new Error("functions.cjs: refused: no typescript package (measured repo, ~/.local/share/dotfiles-node or NODE_PATH)");
   const fns = [], classes = [], exports = [];
-  const python = paths.filter((p) => p.endsWith(".py"));
-  const parsedPython = pythonSpans(python.map((file) => ({ file, text: blobs.get(file) })));
-  const pythonByFile = new Map(python.map((p, i) => [p, parsedPython[i]]));
-  for (const [p, text] of blobs) {
-    const found = pythonByFile.get(p) || (mode === "--exports-only"
-      ? { fns: [], classes: [], exports: exportDeclarations(ts, sourceFile(ts, p, text)) }
-      : functionSpans(ts, p, text));
+  const python = items.filter(({ file }) => file.endsWith(".py"));
+  const parsedPython = pythonSpans(python);
+  const pythonByFile = new Map(python.map(({ file }, i) => [file, parsedPython[i]]));
+  for (const { file: p, text } of items) {
+    const found = pythonByFile.get(p) || functionSpans(ts, p, text, mode === "--exports-only");
     for (const f of found.fns) fns.push([f.span, p, f.key]);
     for (const c of found.classes) classes.push([c.members, p, c.name]);
     for (const declaration of found.exports || []) exports.push([declaration.line, declaration.column, p, declaration.name]);
   }
   fns.sort((a, b) => b[0] - a[0]);
   classes.sort((a, b) => b[0] - a[0]);
-  process.stdout.write(JSON.stringify({ files: paths.length, parsed: blobs.size, fns, classes, exports }));
+  process.stdout.write(JSON.stringify({ files: items.length, parsed: items.length, fns, classes, exports }));
   return 0;
 }
 
