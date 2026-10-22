@@ -318,3 +318,106 @@ test("an incomplete installed instrument refuses with exit 2 rather than a floor
   assert.equal(result.status, 2, result.stderr);
   assert.match(result.stderr, /CENSUS REFUSED: cannot read instrument python_functions\.py/);
 });
+
+
+test("AST export census and staged hook ignore declaration text in literals, comments and barrels", () => {
+  const { dir, git } = repo({ "src/owner.ts": "export function writeWithRetry() { return 1; }\n" });
+  write(dir, {
+    "src/example.tsx": "const example = `\nexport async function writeWithRetry() {}\nexport const templateOnly = 1;\n`;\n",
+    "src/comment.ts": "/*\nexport function writeWithRetry() {}\nexport const commentOnly = 1;\n*/\n",
+    "src/barrel.ts": "export { writeWithRetry } from './owner';\nexport * from './owner';\n",
+    "src/alias.ts": "import { writeWithRetry } from './owner';\nexport { writeWithRetry };\nexport default writeWithRetry;\n",
+    "tests/example.ts": "export const writeWithRetry = 1;\n",
+    "src/types.d.mts": "export declare function writeWithRetry(): void;\n",
+  });
+  git("add", "-A");
+  const measured = run(dir, census, ["measure", ".", "WORKTREE"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const result = JSON.parse(measured.stdout);
+  assert.equal(result.metrics.exported_names, 1);
+  assert.deepEqual(result.lists.dup_exports, {});
+  assert.equal(run(dir, join(hooks, "dup-export-ratchet"), []).status, 0);
+  // A real declaration split across lines is still a second implementation.
+  write(dir, { "src/real.ts": "export\nasync function writeWithRetry() { return 2; }\n" });
+  git("add", "-A");
+  const refused = run(dir, join(hooks, "dup-export-ratchet"), []);
+  assert.equal(refused.status, 1, refused.stderr);
+  assert.match(refused.stderr, /writeWithRetry: new in src\/real\.ts; already exported by src\/owner\.ts/);
+  const duplicate = run(dir, census, ["measure", ".", "WORKTREE"]);
+  assert.equal(duplicate.status, 0, duplicate.stderr);
+  assert.deepEqual(JSON.parse(duplicate.stdout).lists.dup_exports,
+    { writeWithRetry: ["src/owner.ts", "src/real.ts"] });
+});
+
+test("all direct exported variable bindings and their source positions reach both CLI consumers", () => {
+  const { dir, git } = repo({ "src/owner.ts": "export const later = 0;\nexport const renamed = 0;\n" });
+  const text = "export const first = 1, later = 2;\nexport let { key: renamed, nested: [leaf, , ...tail] } = value;\n" +
+    "export var legacyVar = 0;\nexport default function namedDefault() {}\nexport function GET() {}\n";
+  write(dir, { "src/bindings.ts": text });
+  git("add", "-A");
+  const measured = run(dir, census, ["measure", ".", "WORKTREE"]);
+  assert.equal(measured.status, 0, measured.stderr);
+  const result = JSON.parse(measured.stdout);
+  assert.equal(result.metrics.exported_names, 6);
+  assert.deepEqual(result.lists.dup_exports, { later: ["src/bindings.ts", "src/owner.ts"],
+    renamed: ["src/bindings.ts", "src/owner.ts"] });
+  const refused = run(dir, join(hooks, "dup-export-ratchet"), []);
+  assert.equal(refused.status, 1, refused.stderr);
+  assert.match(refused.stderr, /later: new in src\/bindings\.ts/);
+  assert.match(refused.stderr, /renamed: new in src\/bindings\.ts/);
+  const raw = spawnSync("node", [resolve("git/census/functions.cjs"), dir, "--exports-only"], {
+    encoding: "utf8", env, input: JSON.stringify([{ file: "src/bindings.ts", text }]),
+  });
+  assert.equal(raw.status, 0, raw.stderr);
+  assert.deepEqual(JSON.parse(raw.stdout).exports, [
+    [1, 14, "src/bindings.ts", "first"], [1, 25, "src/bindings.ts", "later"],
+    [2, 19, "src/bindings.ts", "renamed"], [2, 37, "src/bindings.ts", "leaf"],
+    [2, 48, "src/bindings.ts", "tail"], [4, 25, "src/bindings.ts", "namedDefault"],
+    [5, 17, "src/bindings.ts", "GET"],
+  ]);
+});
+
+test("export ratchet uses staged owners, permits edits and moves, and checks sparse peers", () => {
+  const { dir, git } = repo({ "src/a.ts": "export const shared = 1;\n", "src/b.ts": "export const shared = 2;\n" });
+  const check = () => run(dir, join(hooks, "dup-export-ratchet"), []);
+  write(dir, { "src/b.ts": "export const shared = 3;\n" });
+  git("add", "-A");
+  assert.equal(check().status, 0, "editing an existing duplicate is permitted");
+  git("reset", "-q", "--hard");
+  git("rm", "-q", "src/b.ts");
+  git("commit", "-qm", "one owner");
+  git("mv", "src/a.ts", "src/moved.ts");
+  assert.equal(check().status, 0, "the old owner is absent from the staged tree");
+  git("commit", "-qm", "move owner");
+  const clone = join(scratch, "export-sparse");
+  assert.equal(spawnSync("git", ["clone", "-q", "--no-checkout", dir, clone]).status, 0);
+  for (const args of [["sparse-checkout", "set", "--no-cone", "/scripts/"], ["checkout", "-q", "main"]])
+    assert.equal(run(clone, "git", args).status, 0);
+  write(clone, { "scripts/new.ts": "export const shared = 4;\n" });
+  assert.equal(run(clone, "git", ["add", "scripts/new.ts"]).status, 0);
+  const sparse = run(clone, join(hooks, "dup-export-ratchet"), []);
+  assert.equal(sparse.status, 1, sparse.stderr);
+  assert.match(sparse.stderr, /already exported by src\/moved\.ts/);
+  write(dir, { "src/new.ts": "export const shared = 4;\n" });
+  git("add", "src/new.ts");
+  write(dir, { "src/moved.ts": "const example = `export const shared = 1;`;\n" });
+  assert.equal(check().status, 1, "unstaged edits cannot hide the indexed owner");
+  git("rm", "-q", "--cached", "src/moved.ts");
+  assert.equal(check().status, 0, "removing the indexed owner leaves one implementation");
+});
+
+test("export ratchet accepts incoming parent declarations while refusing new merge duplicates", () => {
+  const { dir, git } = repo({ "src/owner.ts": "export const shared = 1;\n" });
+  git("checkout", "-qb", "incoming");
+  write(dir, { "src/incoming.ts": "export const shared = 2;\n" });
+  git("add", "-A");
+  git("commit", "-qm", "incoming declaration");
+  git("checkout", "-q", "main");
+  git("merge", "--no-ff", "--no-commit", "incoming");
+  assert.equal(run(dir, join(hooks, "dup-export-ratchet"), []).status, 0);
+  write(dir, { "src/new.ts": "export const shared = 3;\n" });
+  git("add", "src/new.ts");
+  const refused = run(dir, join(hooks, "dup-export-ratchet"), []);
+  assert.equal(refused.status, 1, refused.stderr);
+  assert.match(refused.stderr, /shared: new in src\/new\.ts/);
+});

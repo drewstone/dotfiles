@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// Function and class sizes from TypeScript and Python ASTs, shared by the ratchet and census.
+// Source declarations from TypeScript and Python ASTs, shared by the ratchets and census.
 //
 // A function is a declaration, method, arrow, function expression, constructor or accessor; its span is the lines from
 // its first token to its last. It is named by declaration, by the variable or property it is assigned to, or by the
 // call it is passed to. A class's size is its member count.
 //
-// Internal: functions.cjs <checkout> reads JSON [{file,text}] on stdin; prints {files, parsed, fns: [[span, path, name]], classes: [[members, path, name]]}
+// Internal: functions.cjs <checkout> [--exports-only] reads JSON [{file,text}] on stdin; prints
+// {files, parsed, fns: [[span, path, name]], classes: [[members, path, name]], exports: [[line, column, path, name]]}
 // over every source file outside tests (patterns.json), and exits 2 when no typescript package can be loaded or a file
 // could not be read: a scan that read nothing is refused, never reported as 0.
 "use strict";
@@ -37,10 +38,39 @@ function loadTs(roots) {
   return null;
 }
 
+function sourceFile(ts, file, text) {
+  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+}
+
+/** Direct exported declarations only: export lists, barrels and assignments do not declare an implementation.
+ * Every variable binding counts, including later declarators and destructuring, rather than just the first name. */
+function exportDeclarations(ts, sf) {
+  const declarations = [];
+  const record = (name) => {
+    if (ts.isIdentifier(name)) {
+      const position = sf.getLineAndCharacterOfPosition(name.getStart(sf));
+      declarations.push({ name: name.text, line: position.line + 1, column: position.character + 1 });
+    } else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+      for (const element of name.elements) if (ts.isBindingElement(element)) record(element.name);
+    }
+  };
+  for (const statement of sf.statements) {
+    if (!statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    if (ts.isVariableStatement(statement)) {
+      if (statement.declarationList.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let))
+        for (const declaration of statement.declarationList.declarations) record(declaration.name);
+    } else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)
+      || ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement)) && statement.name) {
+      record(statement.name);
+    }
+  }
+  return declarations;
+}
+
 function functionSpans(ts, file, text) {
   if (file.endsWith(".py")) return pythonSpans([{ file, text }])[0];
   const fns = [], classes = [];
-  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const sf = sourceFile(ts, file, text);
   const line = (pos) => sf.getLineAndCharacterOfPosition(pos).line;
   const keyOf = (n) => {
     if (n.name && n.name.getText) return n.name.getText(sf);
@@ -58,11 +88,12 @@ function functionSpans(ts, file, text) {
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return { fns, classes };
+  return { fns, classes, exports: exportDeclarations(ts, sf) };
 }
 
 // Private census subprocess: the owner supplies blobs once, including sparse checkout paths.
-function main([checkout]) {
+function main([checkout, mode]) {
+  if (mode && mode !== "--exports-only") throw new Error(`functions.cjs: refused: unknown mode ${mode}`);
   const ts = loadTs([checkout]);
   const items = JSON.parse(readFileSync(0, "utf8"));
   if (!Array.isArray(items) || items.some((v) => typeof v.file !== "string" || typeof v.text !== "string"))
@@ -71,18 +102,21 @@ function main([checkout]) {
   const paths = [...blobs.keys()];
   if (!ts && paths.some((p) => !p.endsWith(".py")))
     throw new Error("functions.cjs: refused: no typescript package (measured repo, ~/.local/share/dotfiles-node or NODE_PATH)");
-  const fns = [], classes = [];
+  const fns = [], classes = [], exports = [];
   const python = paths.filter((p) => p.endsWith(".py"));
   const parsedPython = pythonSpans(python.map((file) => ({ file, text: blobs.get(file) })));
   const pythonByFile = new Map(python.map((p, i) => [p, parsedPython[i]]));
   for (const [p, text] of blobs) {
-    const found = pythonByFile.get(p) || functionSpans(ts, p, text);
+    const found = pythonByFile.get(p) || (mode === "--exports-only"
+      ? { fns: [], classes: [], exports: exportDeclarations(ts, sourceFile(ts, p, text)) }
+      : functionSpans(ts, p, text));
     for (const f of found.fns) fns.push([f.span, p, f.key]);
     for (const c of found.classes) classes.push([c.members, p, c.name]);
+    for (const declaration of found.exports || []) exports.push([declaration.line, declaration.column, p, declaration.name]);
   }
   fns.sort((a, b) => b[0] - a[0]);
   classes.sort((a, b) => b[0] - a[0]);
-  process.stdout.write(JSON.stringify({ files: paths.length, parsed: blobs.size, fns, classes }));
+  process.stdout.write(JSON.stringify({ files: paths.length, parsed: blobs.size, fns, classes, exports }));
   return 0;
 }
 

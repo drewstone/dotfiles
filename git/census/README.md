@@ -7,9 +7,9 @@ so a number means the same thing wherever it is read.
 
 | File | Owns |
 |---|---|
-| `patterns.json` | The classification: what is a logic file, a test, a source file, an exported declaration, dated history; the limits and hugging bands. |
+| `patterns.json` | The classification: what is a logic file, a test, a source file, convention export names, dated history; the limits and hugging bands. |
 | `classify.py` | `patterns.json` for Python. `loc-ratchet`, `dup-export-ratchet` and `doc-ref-ratchet` import it. |
-| `functions.cjs` | Function spans and class member counts from TypeScript and Python ASTs. `fn-ratchet.cjs` imports it. |
+| `functions.cjs` | Function spans, class member counts and direct TypeScript/JavaScript export declarations from ASTs. Both declaration ratchets use it. |
 | `python_functions.py` | Python AST parsing for both the census and staged function ratchet; a syntax error refuses the scan. |
 | `census` | `measure`, `floors`, `xrepo` and `files` (below). |
 | `census.sh` | Logic-file sizes across this host's clones, into `files.tsv`. |
@@ -69,3 +69,12 @@ their JavaScript/TypeScript population. Compare both revisions with the same ins
 Both `--scope prefix` and `--scope=prefix` work. Unknown options and missing option values are refused.
 Scope syntax is checked before reading the tree; a refused selection never writes a measurement cache.
 Source locations count physical LF lines, including when normalized content contains Unicode line separators.
+
+Export counts come from direct TypeScript/JavaScript AST declarations, never text inside comments or literals.
+Function, class, interface, type alias, enum and const/let declarations count; convention names in
+`patterns.json` remain excluded. Export lists, barrels, export assignments and anonymous default declarations
+do not declare a named implementation. Every binding of an exported const/let counts, including later
+comma-separated declarators and destructuring names; the former text matcher counted only the first
+identifier. Compare both revisions with this corrected instrument rather than attributing its correction
+to source cleanup. The export ratchet compares HEAD, the index and the merge parent, so existing declarations
+can be edited and moved without treating their new text positions as new implementations.

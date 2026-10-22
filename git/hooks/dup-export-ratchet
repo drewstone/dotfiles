@@ -6,17 +6,19 @@ simple and succinct", and "no miscommunication or confusion should be allowed". 
 agent-container exported 659 names from two or more files (logger from 24, JsonValue from 11, shellQuote
 from 6), so an agent could not tell which one to use, and every copy drifted on its own.
 
-The rule: a staged TypeScript or JavaScript declaration `export function|class|interface|type|const|enum X`
+The rule: a staged TypeScript or JavaScript declaration `export function|class|interface|type|const|let|enum X`
 is refused when another non-test file in the staged tree already declares `export ... X`. Import the
 existing one, move it into its owner, or give the new one a name that says how it differs.
 
 Moving an export from one file to another in the same commit passes, because the old copy is gone from
 the staged tree, and so does editing a declaration in place, even one that is already duplicated. Names that frameworks require in every route or entry file (GET, loader, metadata, main,
 default and similar) are not checked. Tests, type declarations and generated or vendored paths are skipped.
+The TypeScript AST owner ignores comments, literals, export lists and barrels, and counts every const/let binding.
 There is no escape variable; fixture repos set core.hooksPath=/dev/null like every other global hook here.
 """
 import os
-import re
+import collections
+import json
 import subprocess
 import sys
 
@@ -24,58 +26,85 @@ sys.dont_write_bytecode = True  # the installed checkout stays clean
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census"))
 import classify  # noqa: E402  the census owns the classification, so this hook and the census count alike
 
-SOURCE, SKIP, CONVENTION = classify.SOURCE, classify.SKIP, classify.CONVENTION
-# A diff line adds or removes an export when it is the declaration with its +/- prefix.
-DECL = re.compile("^[+-]" + classify.DECLARATION.pattern[1:])
+AST_OWNER = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "functions.cjs")
 
 
 def git(*args):
     return subprocess.run(["git", *args], capture_output=True, text=True)
 
 
+def blobs(specs, *, missing=False):
+    """Read the requested Git blobs in one process, including index paths outside a sparse checkout."""
+    if not specs:
+        return {}
+    run = subprocess.run(["git", "cat-file", "--batch"], input="".join(f"{spec}\n" for spec in specs).encode(),
+                         capture_output=True)
+    if run.returncode:
+        raise RuntimeError(run.stderr.decode(errors="replace").strip())
+    result, offset = {}, 0
+    for spec in specs:
+        end = run.stdout.index(b"\n", offset)
+        header, offset = run.stdout[offset:end].split(), end + 1
+        if header[-1:] == [b"missing"] and missing:
+            continue
+        if len(header) != 3 or header[1] != b"blob":
+            raise RuntimeError(f"cannot read {spec} as a blob")
+        size = int(header[2])
+        result[spec] = run.stdout[offset:offset + size].decode(errors="replace")
+        offset += size + 1
+    return result
+
+
+def declarations(texts):
+    if not texts:
+        return {}
+    run = subprocess.run(["node", AST_OWNER, os.getcwd(), "--exports-only"], capture_output=True, text=True,
+                         input=json.dumps([{"file": path, "text": text} for path, text in texts.items()]))
+    if run.returncode:
+        raise RuntimeError(run.stderr.strip() or "functions.cjs failed")
+    result = json.loads(run.stdout)
+    if result["parsed"] != len(texts):
+        raise RuntimeError("functions.cjs did not parse every blob")
+    found = collections.defaultdict(set)
+    for _line, _column, path, name in result["exports"]:
+        if name not in classify.CONVENTION:
+            found[path].add(name)
+    return found
+
+
 def main():
     if git("rev-parse", "-q", "--verify", "HEAD").returncode != 0:
         return 0
-    added, removed = {}, set()
-    path = None
-    for line in git("diff", "--cached", "--no-color", "--no-ext-diff", "-U0", "--diff-filter=ACMR").stdout.splitlines():
-        if line.startswith("+++ "):
-            path = line[6:] if line.startswith("+++ b/") else None
-            continue
-        if not path or not SOURCE.search(path) or SKIP.search(path):
-            continue
-        m = DECL.match(line)
-        if m and line[0] == "-":
-            removed.add((path, m.group(1)))
-        elif m and m.group(1) not in CONVENTION:
-            added.setdefault(m.group(1), set()).add(path)
-    # A declaration this commit only edits in place (it removes and re-adds the same name in the same file)
-    # is not new; the ratchet refuses only duplicates the commit creates.
-    added = {n: {p for p in ps if (p, n) not in removed} for n, ps in added.items()}
-    # A merge brings in what the other branch already declares; only a declaration neither parent holds in
-    # that file is one this commit creates. Without this, every conflicted merge of develop is refused for
-    # duplicates other authors already landed.
+    changed = [p for p in git("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR").stdout.split("\0")
+               if classify.source(p)]
+    if not changed:
+        return 0
+    # Compare declarations, not changed text: literals/comments cannot introduce exports, and an initializer edit
+    # leaves the same declaration in place. During a merge either parent's declaration is already established.
+    parents = ["HEAD"]
     if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:
-        theirs = {}
-
-        def declared_in_merge_head(path, name):
-            if path not in theirs:
-                shown = git("show", f"MERGE_HEAD:{path}")
-                theirs[path] = shown.stdout if shown.returncode == 0 else ""
-            return re.search(
-                rf"^export (default )?(declare )?(async )?(abstract )?(function\*?|class|interface|type|const|let|enum) {re.escape(name)}([^A-Za-z0-9_$]|$)",
-                theirs[path],
-                re.M,
-            )
-
-        added = {n: {p for p in ps if not declared_in_merge_head(p, n)} for n, ps in added.items()}
-    added = {n: ps for n, ps in added.items() if ps}
+        parents.append("MERGE_HEAD")
+    texts = blobs([f":{p}" for p in changed])
+    texts.update(blobs([f"{ref}:{p}" for ref in parents for p in changed], missing=True))
+    found = declarations(texts)
+    added = collections.defaultdict(set)
+    for path in changed:
+        previous = set().union(*(found.get(f"{ref}:{path}", set()) for ref in parents))
+        for name in found.get(f":{path}", set()) - previous:
+            added[name].add(path)
+    if not added:
+        return 0
+    # The staged tree is authoritative: deleted/moved copies and unstaged edits must not change this decision.
+    peers = [p for p in git("ls-files", "--cached", "-z").stdout.split("\0")
+             if classify.source(p) and p not in changed]
+    peers_found = declarations(blobs([f":{p}" for p in peers]))
+    owners = collections.defaultdict(set)
+    for spec, names in {**peers_found, **{f":{p}": found.get(f":{p}", set()) for p in changed}}.items():
+        for name in names:
+            owners[name].add(spec[1:])
     clashes = []
     for name, paths in sorted(added.items()):
-        # POSIX ERE (git grep -E) has no \b on every platform, so the name ends at a non-identifier character.
-        pattern = rf"^export (default )?(declare )?(async )?(abstract )?(function\*?|class|interface|type|const|let|enum) {re.escape(name)}([^A-Za-z0-9_$]|$)"
-        hits = git("grep", "--cached", "-l", "-E", pattern, "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.mts", "*.cts").stdout.split()
-        others = sorted(h for h in hits if h not in paths and not SKIP.search(h))
+        others = sorted(owners[name] - paths)
         if others or len(paths) > 1:
             clashes.append((name, sorted(paths), others or ["another file in this commit"]))
     if not clashes:
@@ -90,4 +119,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (RuntimeError, ValueError, OSError) as error:
+        sys.stderr.write(f"dup-export-ratchet: refused: {error}\n")
+        sys.exit(2)

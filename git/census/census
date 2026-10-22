@@ -163,13 +163,12 @@ def stale_refs(tree_paths, docs):
     return stale
 
 
-def exports(sources):
-    """Exported declaration names and the files that declare each, as dup-export-ratchet reads them."""
+def exports(declarations):
+    """Direct AST declaration names and their files, using the same owner as dup-export-ratchet."""
     defs = collections.defaultdict(set)
-    for p, text in sources.items():
-        for line in text.splitlines():
-            if (m := C.DECLARATION.match(line)) and m.group(1) not in C.CONVENTION:
-                defs[m.group(1)].add(p)
+    for _line, _column, path, name in declarations:
+        if C.source(path) and name not in C.CONVENTION:
+            defs[name].add(path)
     return defs
 
 
@@ -224,7 +223,7 @@ def measure(checkout, rev, scopes=()):
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
     texts = {p: blobs[p].decode(errors="replace") for p in source}
     fn = functions(checkout, function_paths, blobs)
-    spans, defs, copies = [f[0] for f in fn["fns"]], exports(texts), duplicated(texts)
+    spans, defs, copies = [f[0] for f in fn["fns"]], exports(fn["exports"]), duplicated(texts)
     dup = sum(f["dup_lines"] for f in copies["files"].values())
     normalized = sum(f["normalized_lines"] for f in copies["files"].values())
     stale = stale_refs(set(paths), {p: blobs[p].decode(errors="replace") for p in docs})
