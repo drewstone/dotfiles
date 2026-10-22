@@ -5,7 +5,7 @@
 // logic file under 1,000 lines, but god objects moved inside files: a 953-line function filled tangle-router's 999-line
 // failover/dispatch.ts, and agent-container had 171 functions over 500 lines. loc-ratchet cannot see that.
 //
-// The rule, for staged TypeScript and JavaScript outside tests: no new function longer than LIMIT lines, and no
+// The rule, for staged TypeScript, JavaScript and Python outside tests: no new function longer than LIMIT lines, and no
 // function already longer than LIMIT may grow. A function moved to another file in the same commit is compared with
 // its old self. Functions are named by declaration, by the variable or property they are assigned to, or by the call
 // they are passed to (git/census/functions.cjs). Parsing needs the typescript package: the repo's own, else the one
@@ -33,16 +33,19 @@ function main() {
     if (s === "R" || s === "C") { before.push(parts[i + 1]); changed.push(parts[i + 2]); i += 3; }
     else { if (s !== "A") before.push(parts[i + 1]); if (s !== "D") changed.push(parts[i + 1]); i += 2; }
   }
-  const after = changed.filter((p) => SOURCE.test(p) && !SKIP.test(p));
+  let after = changed.filter((p) => SOURCE.test(p) && !SKIP.test(p));
   if (!after.length) return 0;
   const ts = loadTs([git("rev-parse", "--show-toplevel").trim()]);
-  if (!ts) { process.stderr.write("fn-ratchet: no typescript package found (repo or ~/.local/share/dotfiles-node); function sizes not checked.\n"); return 0; }
+  if (!ts) {
+    if (after.some((p) => !p.endsWith(".py"))) process.stderr.write("fn-ratchet: no typescript package found; JavaScript/TypeScript sizes not checked.\n");
+    after = after.filter((p) => p.endsWith(".py"));
+  }
   // A merge is compared with every parent: a function the incoming branch already grew is not this commit's growth.
   const mergeHeads = (tryGit("rev-parse", "-q", "--verify", "MERGE_HEAD") || "").split("\n").filter(Boolean);
   const bases = [["HEAD", before], ...mergeHeads.map((h) => [h, after])];
   const old = new Map();
   for (const [ref, paths] of bases) {
-    for (const p of paths.filter((p) => SOURCE.test(p))) {
+    for (const p of paths.filter((p) => SOURCE.test(p) && !SKIP.test(p) && (ts || p.endsWith(".py")))) {
       const text = tryGit("show", `${ref}:${p}`);
       if (text !== null) for (const [k, v] of spans(ts, p, text)) old.set(k, Math.max(old.get(k) || 0, v));
     }

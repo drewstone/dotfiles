@@ -14,6 +14,7 @@ WORKFLOW = re.compile(_P["workflow"])
 EXEMPT = re.compile(_P["exempt"])
 TEST = re.compile(_P["test"])
 SOURCE = re.compile(_P["source"])
+FUNCTION_SOURCE = re.compile(_P["functionSource"])
 SKIP = re.compile(_P["skip"])
 DECLARATION = re.compile(_P["declaration"])
 CONVENTION = frozenset(_P["conventionNames"])
@@ -33,8 +34,13 @@ def logic(path):
 
 
 def source(path):
-    """A TypeScript or JavaScript file outside tests: what functions, duplicates and exports are counted in."""
+    """A TypeScript or JavaScript file outside tests: the duplication/export population."""
     return bool(SOURCE.search(path) and not SKIP.search(path))
+
+
+def function_source(path):
+    """A supported AST source outside tests, including Python."""
+    return bool(FUNCTION_SOURCE.search(path) and not SKIP.search(path))
 
 
 def history(path):
