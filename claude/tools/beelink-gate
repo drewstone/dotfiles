@@ -326,6 +326,7 @@ import uuid
 root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 sparse_code = sys.argv[5]
 locks = root / ".locks"
+size_scans = 0
 
 @contextlib.contextmanager
 def writer_intent():
@@ -347,6 +348,8 @@ def writer_intent():
         os.close(writer_fd)
 
 def size(path):
+    global size_scans
+    size_scans += 1
     result = subprocess.run(
         ["du", "-s", "-B1", "--", str(path)],
         text=True, capture_output=True, env={**os.environ, "LC_ALL": "C"},
@@ -402,8 +405,9 @@ try:
                     if not stamp.exists() or stamp.is_symlink():
                         stamp = git_dir
                     candidates.append((stamp.stat().st_mtime_ns, repo, host.name, owner.name))
-        total = size(root)
-        initial_total = total
+        # Size after sparse maintenance, once. A second identical tree walk
+        # without a mutation costs CPU/IO but proves no stronger capacity bound.
+        initial_total = None
         initial_free = free_bytes(root)
         target_free = initial_free + required_reclaim
         # An idle checkout first shrinks to the sparse patterns its HEAD commits: those
@@ -431,8 +435,7 @@ try:
                     print(f"beelink-gate: sparse patterns applied to idle cache {repo}", file=sys.stderr)
             finally:
                 os.close(fd)
-        if sparsified:
-            total = size(root)
+        total = size(root)
         fcntl.flock(global_lock, fcntl.LOCK_UN)
         evictions = 0
         for stamp_ns, repo, host, owner in sorted(candidates):
@@ -471,7 +474,6 @@ try:
             total = size(root)
             fcntl.flock(global_lock, fcntl.LOCK_UN)
         fcntl.flock(global_lock, fcntl.LOCK_SH)
-        total = size(root)
         final_free = free_bytes(root)
         reclaimed = max(0, final_free - initial_free)
         if evictions or sparsified or required_reclaim or total > cap:
@@ -499,6 +501,7 @@ finally:
                     f"{(lock_acquired - lock_wait_start) // 1_000_000} "
                     f"{(time.monotonic_ns() - lock_acquired) // 1_000_000}\n"
                 )
+                timing.write(f"cache_scans {os.environ.get('BEELINK_GATE_TIMING_PHASE', 'precheck')} {size_scans}\n")
         except OSError:
             pass  # Measurement must not change the gate result.
 PY
@@ -1641,7 +1644,141 @@ run_preview() {
   esac
 }
 
+# Keep install timing on failure too; no inference from the surrounding precheck.
+install_step() {
+  local begin=$SECONDS status
+  step "$@"; status=$?
+  export BEELINK_GATE_INSTALL_S=$((SECONDS - begin))
+  return "$status"
+}
+
+  receipt() {
+    local status="$1" ran=$((SECONDS - started))
+    local preview_verdict
+    preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s sparse=%s checkout=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s\n' \
+      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
+      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${checkout_temperature:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
+    mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
+      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
+import fcntl, json, mmap, os, sys, time
+path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature, reserve_gate_bytes, reserve_host_drop, reserve_basis, reserve_du_ms = sys.argv[1:]
+row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
+       "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
+       "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
+       "start_load": float(load) if load else None,
+       "start_cpu_pressure": float(pressure) if pressure else None,
+       "starved": starved == "1", "cgroup": cgroup or None, "cache_unpruned": cache_note == "unpruned",
+       "class": gate_class, "cpu_s": float(cpu) if cpu else None,
+       "node": node or None, "rebuild": rebuild or None, "reaped": int(reaped), "bundle": bundle or None,
+       "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
+       "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
+       "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "checkout_temperature": checkout_temperature or None, "reason_scope": "host_last_10000_receipts"}
+if int(install_reserve):
+    row["install_reserve_bytes"] = int(install_reserve)
+    # The gate's own bytes against the host's free-space drop over the same window.
+    row["reserve_basis"] = reserve_basis or None
+    for key, value in (("reserve_gate_bytes", reserve_gate_bytes), ("reserve_host_free_drop", reserve_host_drop), ("reserve_du_ms", reserve_du_ms)):
+        row[key] = int(value) if value.lstrip("-").isdigit() else None
+if preview:
+    try:
+        row["preview"] = json.loads(preview)
+    except ValueError:
+        row["preview"] = {"unreadable": True}
+install_s = os.environ.get("BEELINK_GATE_INSTALL_S")
+spans = {}
+timing = {"fetch_s": int(fetch_s) if fetch_s else None,
+          "install_s": int(install_s) if install_s else None,
+          "typecheck_s": None, "tests_s": None,
+          "pre_command_s": int(pre_command_s) if pre_command_s else None,
+          "command_s": int(command_s) if command_s else None,
+          "cleanup_s": int(cleanup_s) if cleanup_s else None,
+          "capacity_claim_wait_ms": int(capacity_claim_wait_ms),
+          "cache_lock_wait_ms": None,
+          "cache_size_scans": None,
+          "cache_prune_work_ms": None}
+# pre_command_s includes fetch and precheck prune; cleanup_s includes cleanup
+# prune. These nested spans must not be added to ran_s as separate phases.
+if timing_file:
+    try:
+        with open(timing_file, encoding="utf-8") as phases:
+            timing["cache_lock_wait_ms"] = {"precheck": 0, "cleanup": 0}
+            timing["cache_size_scans"] = {"precheck": 0, "cleanup": 0}
+            timing["cache_prune_work_ms"] = {"precheck": 0, "cleanup": 0}
+            for line in phases:
+                fields = line.split()
+                phase = fields[0] if fields else ""
+                if phase in ("precheck", "cleanup"):
+                    _, wait, work = fields
+                    timing["cache_lock_wait_ms"][phase] += int(wait)
+                    timing["cache_prune_work_ms"][phase] += int(work)
+                elif phase == "cache_scans" and len(fields) == 3 and fields[1] in ("precheck", "cleanup"):
+                    timing["cache_size_scans"][fields[1]] += int(fields[2])
+                elif phase in ("typecheck", "tests") and len(fields) == 3:
+                    # Caller-owned monotonic spans; union overlaps rather than double-counting parallel checks.
+                    begin, end = map(float, fields[1:])
+                    if 0 <= begin <= end < float("inf"):
+                        spans.setdefault(phase, []).append((begin, end))
+    except (OSError, ValueError):
+        pass  # A missing measurement must not change the gate result.
+for phase, intervals in spans.items():
+    elapsed = 0
+    right = 0
+    for begin, end in sorted(intervals):
+        elapsed += max(0, end - max(begin, right))
+        right = max(right, end)
+    timing[phase + "_s"] = round(elapsed, 3)
+row["timing"] = timing
+with open(path, "a+") as out:
+    fcntl.flock(out, fcntl.LOCK_EX)
+    prior_head = prior_exact = None
+    if os.fstat(out.fileno()).st_size:
+        # Read backward so receipt writes do not grow linearly with years of
+        # history. --report uses the full history across both hosts.
+        with mmap.mmap(out.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            pos = len(data)
+            for _ in range(10000):
+                if pos == 0:
+                    break
+                if data[pos - 1:pos] == b"\n":
+                    pos -= 1
+                start = data.rfind(b"\n", 0, pos) + 1
+                line = data[start:pos]
+                pos = start
+                try:
+                    prior = json.loads(line)
+                except ValueError:
+                    continue
+                if prior.get("repo") != repo or prior.get("sha") != sha:
+                    continue
+                if prior_head is None:
+                    prior_head = prior
+                if prior.get("mode") == mode and prior.get("command") == command:
+                    prior_exact = prior
+                    break
+    if prior_exact is None:
+        row["reason"] = "different_command" if prior_head else "first"
+    elif prior_exact.get("exit") == 0 and base_sha and prior_exact.get("base_sha") and prior_exact["base_sha"] != base_sha:
+        row["reason"] = "after_base_move"
+    elif prior_exact.get("exit") != 0:
+        row["reason"] = "after_red"
+    elif not base_sha or not prior_exact.get("base_sha"):
+        row["reason"] = "after_green_base_unknown"
+    else:
+        row["reason"] = "after_green"
+    out.write(json.dumps(row) + "\n")
+if gate_id:
+    from pathlib import Path
+    receipt = Path(path).parent / "jobs" / gate_id / "receipt.json"
+    temporary = receipt.with_suffix(".tmp")
+    temporary.write_text(json.dumps(row) + "\n")
+    temporary.replace(receipt)
+print("beelink-gate timing: " + json.dumps(timing, sort_keys=True), file=sys.stderr)
+PY
+  }
+
 remote_gate() {
+  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE
   [ "$#" -ge 7 ] || die "invalid remote request"
   # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
   # that trap only after unwinding every function, so the state they read is
@@ -1702,8 +1839,9 @@ remote_gate() {
   [ -z "$reservation_token" ] || [[ "$reservation_token" =~ ^[0-9a-f]{32}$ ]] || die "invalid checkout reservation token"
   unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
-  local install_reserve_bytes observed_install_reserve_bytes=0 admitted_shape="" reserve_heat=cold
-  local reserve_bytes_before="" reserve_free_before="" reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
+  local install_reserve_bytes admitted_shape="" reserve_heat=cold
+  observed_install_reserve_bytes=0 reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
+  local reserve_bytes_before="" reserve_free_before=""
   # The frozen install always writes the fixed store; a store the environment names is measured too.
   local -a package_stores=("$HOME/.local/share/pnpm/store" "$HOME/.npm")
   [ -z "${npm_config_store_dir:-}" ] || [ "$npm_config_store_dir" = "${package_stores[0]}" ] || package_stores+=("$npm_config_store_dir")
@@ -1744,10 +1882,11 @@ remote_gate() {
     ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
   fi
   # The launcher's settings are this gate's; a gate the command starts gets its own.
-  local ship_workers=${BEELINK_GATE_SHIP_WORKERS:-} gate_pr=${BEELINK_GATE_PR:-}
+  local ship_workers=${BEELINK_GATE_SHIP_WORKERS:-}
+  gate_pr=${BEELINK_GATE_PR:-}
   [[ "$gate_pr" =~ ^[0-9]*$ ]] || gate_pr=""
   unset BEELINK_GATE_PR
-  local gate_lane=${BEELINK_GATE_LANE:-${FLEET_LANE:-}}
+  gate_lane=${BEELINK_GATE_LANE:-${FLEET_LANE:-}}
   if [ -z "$gate_lane" ] && [[ "${FLEET_STATUS_FILE:-}" =~ /([^/]+)--([^/]+)\.md$ ]]; then
     gate_lane="${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"
   fi
@@ -1815,7 +1954,8 @@ remote_gate() {
   exec {capacity_fd}>>"$cache_root/.locks/.capacity.lock" || die "cannot open capacity lock"
   exec {writer_fd}>>"$cache_root/.locks/.capacity.writer.lock" || die "cannot open capacity writer lock"
   lock=""
-  local waiting_since=$SECONDS last_report=-60 capacity_claim_wait_ms=0 claim_started_ms
+  local waiting_since=$SECONDS last_report=-60 claim_started_ms
+  capacity_claim_wait_ms=0
   checkout=""
   local urgent_marker="$cache_root/.locks/urgent-$host-$owner-$repo"
   (( light == 0 )) || urgent_marker+=@light
@@ -1992,108 +2132,6 @@ remote_gate() {
     (( observed > observed_install_reserve_bytes )) && observed_install_reserve_bytes=$observed
     echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
     return 0
-  }
-  receipt() {
-    local status="$1" ran=$((SECONDS - started))
-    local preview_verdict
-    preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s sparse=%s checkout=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s\n' \
-      "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
-      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${checkout_temperature:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
-    mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
-      "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
-import fcntl, json, mmap, os, sys, time
-path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature, reserve_gate_bytes, reserve_host_drop, reserve_basis, reserve_du_ms = sys.argv[1:]
-row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
-       "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
-       "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
-       "start_load": float(load) if load else None,
-       "start_cpu_pressure": float(pressure) if pressure else None,
-       "starved": starved == "1", "cgroup": cgroup or None, "cache_unpruned": cache_note == "unpruned",
-       "class": gate_class, "cpu_s": float(cpu) if cpu else None,
-       "node": node or None, "rebuild": rebuild or None, "reaped": int(reaped), "bundle": bundle or None,
-       "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
-       "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
-       "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "checkout_temperature": checkout_temperature or None, "reason_scope": "host_last_10000_receipts"}
-if int(install_reserve):
-    row["install_reserve_bytes"] = int(install_reserve)
-    # The gate's own bytes against the host's free-space drop over the same window.
-    row["reserve_basis"] = reserve_basis or None
-    for key, value in (("reserve_gate_bytes", reserve_gate_bytes), ("reserve_host_free_drop", reserve_host_drop), ("reserve_du_ms", reserve_du_ms)):
-        row[key] = int(value) if value.lstrip("-").isdigit() else None
-if preview:
-    try:
-        row["preview"] = json.loads(preview)
-    except ValueError:
-        row["preview"] = {"unreadable": True}
-timing = {"fetch_s": int(fetch_s) if fetch_s else None,
-          "pre_command_s": int(pre_command_s) if pre_command_s else None,
-          "command_s": int(command_s) if command_s else None,
-          "cleanup_s": int(cleanup_s) if cleanup_s else None,
-          "capacity_claim_wait_ms": int(capacity_claim_wait_ms),
-          "cache_lock_wait_ms": None,
-          "cache_prune_work_ms": None}
-# pre_command_s includes fetch and precheck prune; cleanup_s includes cleanup
-# prune. These nested spans must not be added to ran_s as separate phases.
-if timing_file:
-    try:
-        with open(timing_file, encoding="utf-8") as phases:
-            timing["cache_lock_wait_ms"] = {"precheck": 0, "cleanup": 0}
-            timing["cache_prune_work_ms"] = {"precheck": 0, "cleanup": 0}
-            for line in phases:
-                phase, wait, work = line.split()
-                if phase in ("precheck", "cleanup"):
-                    timing["cache_lock_wait_ms"][phase] += int(wait)
-                    timing["cache_prune_work_ms"][phase] += int(work)
-    except (OSError, ValueError):
-        pass  # A missing measurement must not change the gate result.
-row["timing"] = timing
-with open(path, "a+") as out:
-    fcntl.flock(out, fcntl.LOCK_EX)
-    prior_head = prior_exact = None
-    if os.fstat(out.fileno()).st_size:
-        # Read backward so receipt writes do not grow linearly with years of
-        # history. --report uses the full history across both hosts.
-        with mmap.mmap(out.fileno(), 0, access=mmap.ACCESS_READ) as data:
-            pos = len(data)
-            for _ in range(10000):
-                if pos == 0:
-                    break
-                if data[pos - 1:pos] == b"\n":
-                    pos -= 1
-                start = data.rfind(b"\n", 0, pos) + 1
-                line = data[start:pos]
-                pos = start
-                try:
-                    prior = json.loads(line)
-                except ValueError:
-                    continue
-                if prior.get("repo") != repo or prior.get("sha") != sha:
-                    continue
-                if prior_head is None:
-                    prior_head = prior
-                if prior.get("mode") == mode and prior.get("command") == command:
-                    prior_exact = prior
-                    break
-    if prior_exact is None:
-        row["reason"] = "different_command" if prior_head else "first"
-    elif prior_exact.get("exit") == 0 and base_sha and prior_exact.get("base_sha") and prior_exact["base_sha"] != base_sha:
-        row["reason"] = "after_base_move"
-    elif prior_exact.get("exit") != 0:
-        row["reason"] = "after_red"
-    elif not base_sha or not prior_exact.get("base_sha"):
-        row["reason"] = "after_green_base_unknown"
-    else:
-        row["reason"] = "after_green"
-    out.write(json.dumps(row) + "\n")
-if gate_id:
-    from pathlib import Path
-    receipt = Path(path).parent / "jobs" / gate_id / "receipt.json"
-    temporary = receipt.with_suffix(".tmp")
-    temporary.write_text(json.dumps(row) + "\n")
-    temporary.replace(receipt)
-print("beelink-gate timing: " + json.dumps(timing, sort_keys=True), file=sys.stderr)
-PY
   }
   # A command that commits and then fails to push leaves the only copy of its
   # commits in a shared checkout that the next gate resets: on 2026-10-12 a
@@ -2339,6 +2377,7 @@ PY
   observe_install_reserve "after install"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   cancel_if_requested
+  export BEELINK_GATE_PHASE_FILE="$timing_file"
   echo "beelink-gate: running ${display% }" >&2
   pre_command_s=$((SECONDS - started))
   local command_started=$SECONDS
@@ -2616,7 +2655,10 @@ if [ "${1:-}" = --probe ]; then
 fi
 # The beelink's receipts, for --report.
 if [ "${1:-}" = --receipts ]; then
-  cat "$STATE_DIR/receipts.jsonl" 2>/dev/null
+  cat "$STATE_DIR/receipts.jsonl" 2>/dev/null || exit 75
+  if [ -n "${3:-}" ]; then
+    python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
+  fi
   # Admission refusals precede the normal receipt. Keep their log-derived count
   # in the existing report, including the source window and retained coverage.
   python3 - "$STATE_DIR" "${2:-48}" <<'PY'
@@ -2632,6 +2674,7 @@ end = time.time()
 start = end - hours * 3600
 logs = []
 refused = []
+active = []
 for log in root.glob("*/stderr.log"):
     try:
         at = log.stat().st_mtime
@@ -2639,6 +2682,12 @@ for log in root.glob("*/stderr.log"):
             continue
         content = log.read_text(errors="replace")
         logs.append(at)
+        if not (log.parent / "exit").exists():
+            submitted = log.parent / "submitted"
+            age = max(0, end - submitted.stat().st_mtime) if submitted.exists() else None
+            admitted = bool(re.search(r"lock, host slot and .* admitted on", content))
+            active.append({"gate_id": log.parent.name, "admitted": admitted,
+                           "submitted_age_s": round(age, 1) if age is not None else None})
         if re.search(r"TEMPFAIL[^\n]*capacity writer intent exceeded", content):
             refused.append(log.parent.name)
     except FileNotFoundError:
@@ -2646,7 +2695,7 @@ for log in root.glob("*/stderr.log"):
 utc = lambda value: dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat()
 print(json.dumps({"kind": "capacity_intent_logs", "window_from": utc(start), "window_to": utc(end),
                   "logs_scanned": len(logs), "oldest_retained": utc(min(logs)) if logs else None,
-                  "refusals": len(refused), "gate_ids": sorted(refused)}))
+                  "refusals": len(refused), "gate_ids": sorted(refused), "nonterminal_jobs": active}))
 PY
   exit $?
 fi
@@ -3109,15 +3158,25 @@ fi
 # and GitHub's merged-PR counts, with each repo's modes, exit classes and
 # exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
 if [ "${1:-}" = --report ]; then
-  hours=${2:-24}
-  [[ "$hours" =~ ^[1-9][0-9]*$ ]] || die "usage: beelink-gate --report [hours]"
+  shift
+  hours=24 report_format= report_since=
+  if [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; then hours=$1; shift; fi
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) report_format=--json; shift ;;
+      --since) [ "$#" -ge 2 ] || die "--since needs a UTC timestamp"; report_since=$2; shift 2 ;;
+      *) die "usage: beelink-gate --report [hours] [--json] [--since timestamp]" ;;
+    esac
+  done
+  report_dir=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")
+  cpu_source=$(encode "$(cat "$report_dir/beelink_gate_cpu.py")") || die "cannot load CPU sampler"
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   receipts_file=$(mktemp) host_rows=$(mktemp) missing=""
   for host in beelink1 beelink2; do
     # One retry, then a loud partial: on 2026-10-14 one dropped B1 read silently
     # turned a 352-run window into a B2-only 115 runs at 1.0 runs per merged PR.
-    if heartbeat=0 on_beelink "$host" --receipts "$hours" > "$host_rows" 2>/dev/null \
-      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts "$hours" > "$host_rows" 2>/dev/null; }; then
+    if heartbeat=0 on_beelink "$host" --receipts "$hours" "$cpu_source" > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts "$hours" "$cpu_source" > "$host_rows" 2>/dev/null; }; then
       sed "s/^{/{\"from\": \"$host\", /" "$host_rows" >> "$receipts_file"
     else
       echo "beelink-gate: --report could not read $host's receipts" >&2
@@ -3126,123 +3185,8 @@ if [ "${1:-}" = --report ]; then
   done
   rm -f "$host_rows"
   merged_lookup=$(command -v gh-drew || command -v gh || true)
-  python3 - "$receipts_file" "$hours" "$merged_lookup" "$missing" <<'PY'
-import collections, datetime as dt, json, subprocess, sys
-path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
-now = dt.datetime.now(dt.timezone.utc)
-since = (now - dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
-history = []
-capacity_logs = []
-for line in open(path):
-    try:
-        r = json.loads(line)
-    except ValueError:
-        continue
-    if r.get("kind") == "capacity_intent_logs":
-        capacity_logs.append(r)
-    else:
-        history.append(r)
-# GitHub follows a renamed repo but its search does not, so receipts group under the
-# current name; otherwise agent-dev-container's runs after its rename had no merged count.
-canonical_names = {}
-def canonical(repo):
-    if not gh or not repo.startswith("github.com/"):
-        return repo
-    if repo not in canonical_names:
-        out = subprocess.run([gh, "api", f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"],
-                             capture_output=True, text=True)
-        name = out.stdout.strip()
-        canonical_names[repo] = f"github.com/{name}" if out.returncode == 0 and name.count("/") == 1 else repo
-    return canonical_names[repo]
-for r in history:
-    if r.get("repo"):
-        r["repo"] = canonical(r["repo"])
-rows = [r for r in history if r.get("at", "") >= since]
-def exit_class(code):
-    return {0: "pass", 1: "fail", 2: "usage", 3: "refused", 75: "tempfail", 76: "replaced", 124: "timeout", 143: "stopped"}.get(code, "other")
-by_repo = collections.defaultdict(list)
-for r in rows:
-    by_repo[r.get("repo", "?")].append(r)
-def merged(repo):
-    if not gh or not repo.startswith("github.com/"):
-        return None
-    q = f"repo:{repo[len('github.com/'):]} is:pr is:merged merged:>={since}"
-    out = subprocess.run([gh, "api", "-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"],
-                         capture_output=True, text=True)
-    return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
-print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
-for logs in capacity_logs:
-    print(f"CAPACITY_INTENT {logs['from']}: refusals={logs['refusals']} retained_logs={logs['logs_scanned']} "
-          f"window={logs['window_from']}..{logs['window_to']} oldest_retained={logs['oldest_retained']}; expired logs unavailable")
-if missing:
-    print(f"PARTIAL missing receipts from {missing}; every count below omits that host")
-print(f"{'repo':38} {'runs':>5} {'merged':>6} {'runs/PR':>7} {'p50 wait':>8} {'repeats':>7}  modes / exits")
-total_runs = total_merged = 0
-for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
-    m = merged(repo)
-    waits = sorted(r.get("waited_s", 0) for r in rs)
-    keys = collections.Counter((r.get("sha"), r.get("mode"), r.get("command")) for r in rs)
-    repeats = sum(n - 1 for n in keys.values())
-    modes = collections.Counter(r.get("class") if r.get("class") in ("dev", "light") else r.get("mode") for r in rs)
-    exits = collections.Counter(exit_class(r.get("exit")) for r in rs)
-    ratio = f"{len(rs) / m:.1f}" if m else "-"
-    total_runs += len(rs)
-    total_merged += m or 0
-    print(f"{repo[len('github.com/'):] if repo.startswith('github.com/') else repo:38} {len(rs):5} {m if m is not None else '?':>6} {ratio:>7} {waits[len(waits) // 2]:7}s {repeats:7}  "
-          + " ".join(f"{k}={v}" for k, v in modes.most_common()) + " / " + " ".join(f"{k}={v}" for k, v in exits.most_common()))
-if total_merged:
-    print(f"TOTAL {total_runs} runs / {total_merged} merged PRs = {total_runs / total_merged:.1f} runs per merged PR (target <= 1.5)"
-          + (f" PARTIAL missing {missing}" if missing else ""))
-# Recompute across both hosts: a receipt's own reason only sees its host's
-# history. A prior checkout on the other Beelink must not look like a first run.
-last_head, last_exact = {}, {}
-reasons = collections.Counter()
-repeat_repos, repeat_lanes = collections.Counter(), collections.Counter()
-for r in sorted(history, key=lambda item: item.get("at", "")):
-    head = (r.get("repo"), r.get("sha"))
-    exact = head + (r.get("mode"), r.get("command"))
-    prior = last_exact.get(exact)
-    if prior is None:
-        reason = "different_command" if head in last_head else "first"
-    elif prior.get("exit") == 0 and r.get("base_sha") and prior.get("base_sha") and r["base_sha"] != prior["base_sha"]:
-        reason = "after_base_move"
-    elif prior.get("exit") != 0:
-        reason = "after_red"
-    elif not r.get("base_sha") or not prior.get("base_sha"):
-        reason = "after_green_base_unknown"
-    else:
-        reason = "after_green"
-    if r.get("at", "") >= since:
-        reasons[reason] += 1
-        if reason != "first":
-            repeat_repos[r.get("repo") or "?"] += 1
-            repeat_lanes[r.get("lane") or "unknown"] += 1
-    last_head[head], last_exact[exact] = r, r
-measured = sum("base_sha" in r for r in rows)
-print(f"METADATA base_sha={sum(bool(r.get('base_sha')) for r in rows)}/{len(rows)} "
-      f"pr_number={sum(r.get('pr_number') is not None for r in rows)}/{len(rows)} "
-      f"lane={sum(bool(r.get('lane')) for r in rows)}/{len(rows)}")
-print(f"REASONS {measured}/{len(rows)} receipts have new metadata; "
-      + " ".join(f"{key}={reasons[key]}" for key in ("first", "different_command", "after_red", "after_green", "after_base_move", "after_green_base_unknown")))
-print(f"AVOIDABLE CANDIDATES {reasons['after_green'] + reasons['after_base_move']} "
-      "(same head + command after green, with unchanged or moved base; a moved base alone does not prove motive)")
-for label, counts in (("REPEAT_REPO", repeat_repos), ("REPEAT_LANE", repeat_lanes)):
-    for name, count in counts.most_common(5):
-        print(f"{label} {name} {count}")
-# Host pressure at admission, per host: the numbers to beat are host some avg60 < 40
-# while gates run, and no gate admitted above that.
-by_host = collections.defaultdict(list)
-for r in rows:
-    by_host[r.get("host", "?")].append(r)
-for host, rs in sorted(by_host.items()):
-    hp = sorted(r["start_host_cpu_pressure"] for r in rs if isinstance(r.get("start_host_cpu_pressure"), (int, float)))
-    waits = sorted(r.get("waited_s", 0) for r in rs)
-    over = sum(1 for v in hp if v > 40)
-    p50 = f"{hp[len(hp) // 2]:.1f}" if hp else "-"
-    print(f"HOST {host}: {len(rs)} runs, p50 wait {waits[len(waits) // 2]}s, host cpu avg60 at admission p50 {p50} "
-          f"({len(hp)} measured, {over} over 40), timeouts {sum(1 for r in rs if r.get('exit') == 124 or r.get('timed_out'))}")
-sys.exit(75 if missing else 0)
-PY
+  report_module=$report_dir/beelink_gate_report.py
+  python3 "$report_module" "$receipts_file" "$hours" "$merged_lookup" "$missing" "$report_format" "$report_since"
   status=$?
   rm -f "$receipts_file"
   exit "$status"

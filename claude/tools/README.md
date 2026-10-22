@@ -335,6 +335,31 @@ beelink-gate --no-install beelink2 git@github.com:owner/repo.git <full-sha> -- n
 ```
 
 The command streams output and a receipt with the SHA, command, exit code, and duration.
+`beelink-gate --report 24` reads both hosts' records and current process/cgroup
+CPU samples. Add `--json` for per-gate wait, wall and phase timings, sample
+coverage, runnable threads and cgroup quotas; add `--since <UTC timestamp>` for
+an after cohort. Timing percentiles use nearest rank and select completed,
+admitted gates by inferred submission time (receipt finish minus wall and
+cumulative admission wait), separately by repo and gate class. Passed-only
+figures and exclusions remain visible. Pending gates and time before recorded
+remote waiting are not in those percentiles. A missing host is partial, never
+zero. CPU samples are current observations; cgroup rows overlap and must not
+be summed. Process accounting excludes short-lived tasks, with coverage and
+unattributed CPU reported.
+
+Receipts measure frozen installation separately. A compound gate command can
+record its own typecheck/test spans in `$BEELINK_GATE_PHASE_FILE`: append one
+line `typecheck <start> <end>` or `tests <start> <end>`, with both times from
+the same monotonic clock in seconds. Parallel spans are unioned per phase;
+they are nested in command time, not extra wall time. These are caller-declared
+phases, not an inference from a command's spelling. Missing historical or
+unreported phases stay null, rather than becoming zero. Fetch and cleanup
+timings are also retained. Cache pruning records its tree-walk count; it measures
+after sparse maintenance and again after each eviction. The removed pre-sparse
+size is reported as unmeasured. Reporting lives in `beelink_gate_report.py`, timing
+populations in `beelink_gate_metrics.py`, and the bounded read-only CPU sample
+in `beelink_gate_cpu.py`; the shell owns transport and execution.
+
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen

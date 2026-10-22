@@ -38,10 +38,10 @@ install_yarn_dependencies() {
   grep -q '^# yarn lockfile v1' yarn.lock && classic=1
   if (( yarn_major == 1 )); then
     (( classic )) || die "Yarn 1 cannot freeze a modern yarn.lock; declare packageManager in package.json"
-    step yarn install --frozen-lockfile || return $?
+    install_step yarn install --frozen-lockfile || return $?
   else
     (( ! classic )) || die "modern Yarn cannot freeze a Yarn 1 lock; declare the matching packageManager in package.json"
-    step yarn install --immutable || return $?
+    install_step yarn install --immutable || return $?
   fi
   echo "beelink-gate: frozen Yarn $yarn_version install completed" >&2
 }
@@ -130,22 +130,24 @@ prepare_gate_dependencies() {
     resolve_gate_node
     echo "beelink-gate: --ship runs scripts/ship.sh verify with node $gate_node and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
   elif [ "$install_mode" = no-install ] || [ "$install_mode" = light ]; then
+    export BEELINK_GATE_INSTALL_S=0
     echo "beelink-gate: skipping dependency install for this check" >&2
   elif [ "$repo_manager" = yarn ] || { [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; }; then
     repo_manager=yarn
     install_yarn_dependencies || return $?
   elif [ -f pnpm-lock.yaml ]; then
     command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
-    step pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
+    install_step pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
   elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
     command -v npm >/dev/null || die "npm unavailable on beelink"
-    step npm ci --cache "$HOME/.npm" || exit $?
+    install_step npm ci --cache "$HOME/.npm" || exit $?
   elif [ -f package.json ]; then
     # A dependency-free package needs no install. A package with dependencies
     # and no lock cannot have a frozen install, so fail the gate.
     node -e 'const p=require("./package.json"); process.exit(Object.keys(p.dependencies||{}).length || Object.keys(p.devDependencies||{}).length || Object.keys(p.optionalDependencies||{}).length ? 1 : 0)' \
       || die "package.json has dependencies but no pnpm/npm/Yarn lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
+    export BEELINK_GATE_INSTALL_S=0
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
   if [ "$install_mode" != ship ] && [ "$repo_manager" != yarn ] && [ -d node_modules/.pnpm ]; then

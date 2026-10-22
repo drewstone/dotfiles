@@ -9,7 +9,8 @@ so a number means the same thing wherever it is read.
 |---|---|
 | `patterns.json` | The classification: what is a logic file, a test, a source file, an exported declaration, dated history; the limits and hugging bands. |
 | `classify.py` | `patterns.json` for Python. `loc-ratchet`, `dup-export-ratchet` and `doc-ref-ratchet` import it. |
-| `functions.cjs` | Function spans and class member counts from the TypeScript AST. `fn-ratchet.cjs` imports it. |
+| `functions.cjs` | Function spans and class member counts from TypeScript and Python ASTs. `fn-ratchet.cjs` imports it. |
+| `python_functions.py` | Python AST parsing for both the census and staged function ratchet; a syntax error refuses the scan. |
 | `census` | `measure`, `floors`, `xrepo` and `files` (below). |
 | `census.sh` | Logic-file sizes across this host's clones, into `files.tsv`. |
 | `score.sh` | The hourly scoreboard row in `~/.local/state/agent-work/loc-census/score.jsonl`. |
@@ -44,3 +45,7 @@ A floor may also name one metric, such as a promoted shadow metric (`fns_over_15
 A scan that reads no logic file, a blob that does not come back, a parse that misses a file or a missing
 `typescript` package exits 2 with `CENSUS REFUSED:` and the reason. A metric no instrument read is refused, never
 reported as 0. `typescript` is loaded from the measured repo, then `~/.local/share/dotfiles-node`, then `NODE_PATH`.
+
+Function metrics cover JavaScript, TypeScript and Python, including nested and async functions.
+`files_read.functions` names that population; `source`, duplicate lines and exported names retain
+their JavaScript/TypeScript population. Compare both revisions with the same instrument version.
