@@ -666,8 +666,11 @@ def tick(a, owner, name):
                    env={'MOG_REVIEW_SNAPSHOT': CLIENT.snapshot(pr, answer), **({'GH_DREW_REQUIRE_RECEIPT': '1'} if receipt else {})})
             # gh-drew prints notices before its refusal ("merging without the Codex review check: ..."); on
             # 2026-10-21 that notice filled every outcome's 160 characters and hid the refusal itself.
-            said = "\n".join(l for l in (m.stderr.strip() or m.stdout.strip()).splitlines()
-                             if not l.startswith("gh-drew: merging without the Codex review check"))
+            # Both streams, minus JSON documents: from 10-21 to 10-22, 99 refusals recorded only a GraphQL
+            # schema dump ({"data":{"PullRequest":{"fields":...}}}) printed ahead of the real error.
+            said = "\n".join(l for l in "\n".join((m.stderr.strip(), m.stdout.strip())).splitlines()
+                             if l.strip() and not re.match(r'\s*[\[\]{}"]', l)
+                             and not l.startswith("gh-drew: merging without the Codex review check"))
             outcome = "merged" if m.returncode == 0 else "merge refused: " + said.strip()[:160]
             # Only gh-drew's receipt refusal waits out the retry; a review or conflict refusal is asked next tick.
             # discovery-lab and agent-runtime need a receipt even with green CI, so this is not keyed on `receipt`.
