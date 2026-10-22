@@ -21,8 +21,12 @@ const SKIP = /(\.d\.ts$|\.min\.js$|\.(test|spec)\.[^/]+$|(^|\/)(__tests__|tests?
 
 function loadTs() {
   const root = git("rev-parse", "--show-toplevel").trim();
+  // TypeScript 7 (the native compiler) publishes no JavaScript compiler API, so a repo on it falls back to ours.
   for (const base of [root, path.join(os.homedir(), ".local/share/dotfiles-node")]) {
-    try { return require(require.resolve("typescript", { paths: [base] })); } catch {}
+    try {
+      const ts = require(require.resolve("typescript", { paths: [base] }));
+      if (typeof ts.createSourceFile === "function" && ts.ScriptTarget) return ts;
+    } catch {}
   }
   return null;
 }
