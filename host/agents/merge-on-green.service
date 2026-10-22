@@ -6,5 +6,5 @@ Documentation=file://%h/bin/merge-on-green
 Type=oneshot
 Environment=FLEET_LANE=op-company:merge-on-green
 Environment=MERGE_ON_GREEN_SECURITY_UPDATES=1
-ExecStart=/bin/bash -lc '%h/bin/merge-on-green'
+ExecStart=/bin/bash -lc '%h/bin/merge-on-green --owner-org tangle-network --owner-org drewstone'
 TimeoutStartSec=10min

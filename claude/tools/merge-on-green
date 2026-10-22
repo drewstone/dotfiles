@@ -64,6 +64,9 @@ from pathlib import Path
 _spec = importlib.util.spec_from_file_location('mog_github', Path(__file__).resolve().with_name('merge-on-green-github.py'))
 _github = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_github)
+_owner_spec = importlib.util.spec_from_file_location('mog_owners', Path(__file__).resolve().with_name('merge-on-green-owners.py'))
+_owners = importlib.util.module_from_spec(_owner_spec)
+_owner_spec.loader.exec_module(_owners)
 CLIENT = None
 REVIEW_FRAGMENT = Path(__file__).resolve().with_name('gh-drew-review.sh').read_text().split("<<'GRAPHQL'", 1)[1].split('\n', 1)[1].split('\nGRAPHQL', 1)[0]
 
@@ -455,10 +458,14 @@ def main():
     ap.add_argument("--git-url", help="clone URL for the merge mirror (default: the repo over SSH)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--probe", action="store_true", help="skip the full read while a cheap read shows nothing changed")
+    ap.add_argument("--owner-org", action="append", default=[], help="also flag PRs aged >=24h without an owner comment in this org/user (repeatable)")
+    ap.add_argument("--owner-only", action="store_true", help="run only the ownership sweep; no merge queue or security-setting writes")
     ap.add_argument("command", nargs="?", choices=["pause", "resume", "status", "hold"], help="omit to run one pass")
     ap.add_argument("--minutes", type=int, help=f"pause: how long, at most {PAUSE_MAX_MIN}")
     ap.add_argument("--reason", help="pause: why, shown in every skipped line")
     a = ap.parse_args()
+    if a.owner_only and not a.owner_org:
+        ap.error('--owner-only requires --owner-org')
     global BASE
     BASE = a.base
     if a.command == "hold":
@@ -480,6 +487,18 @@ def main():
     success = False
     try:
         CLIENT.ready()
+        owner_ok = True
+        if a.owner_org:
+            try:
+                _owners.pr_owner_sweep(CLIENT, a.owner_org, a.state_dir, a.dry_run, _github.save)
+                Path(a.state_dir, 'ownership-error.txt').unlink(missing_ok=True)
+            except (RuntimeError, ValueError, KeyError, OSError, subprocess.TimeoutExpired) as e:
+                owner_ok = False
+                Path(a.state_dir, 'ownership-error.txt').write_text(f'{dt.datetime.now(dt.timezone.utc).isoformat()} {e}\n')
+                print(f'merge-on-green: ownership failed (last snapshot is stale): {e}', file=sys.stderr)
+        if a.owner_only:
+            success = owner_ok
+            return int(not owner_ok)
         security_ok = True
         if os.environ.get('MERGE_ON_GREEN_SECURITY_UPDATES') == '1':
             try:
@@ -489,8 +508,8 @@ def main():
                 security_ok = False
                 print(f'merge-on-green: security updates failed: {e}', file=sys.stderr)
         result = tick(a, owner, name)
-        success = result == 0 and security_ok
-        return result or int(not security_ok)
+        success = result == 0 and security_ok and owner_ok
+        return result or int(not security_ok or not owner_ok)
     except _github.RateLimited as e:
         deferred = str(e)
         print(f"merge-on-green: deferred #{CLIENT.pr or CLIENT.backoff.get('pr') or 'queue'}: {e}")

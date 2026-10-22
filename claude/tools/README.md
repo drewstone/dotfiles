@@ -272,8 +272,11 @@ A PR merges when it is not a draft, not conflicting and not a release branch; Fa
 ```bash
 merge-on-green --dry-run                 # print decisions, merge nothing
 cat ~/.local/state/merge-on-green/status.md       # what each open PR waits on
+cat ~/.local/state/merge-on-green/ownership.md    # org-wide aged PR ownership, from the primary timer
 tail ~/.local/state/merge-on-green/decisions.jsonl
 ```
+
+The primary timer also passes `--owner-org tangle-network --owner-org drewstone`. Before the merge queue's probe, it searches both owners for every open PR aged at least 24 hours, reads all comment pages, and records the complete sample in `ownership.json` and `ownership.md`. The two org searches use the owner's visibility through `gh-drew`: the machine reader cannot see every private repository. Comment reads use `gh-read`, falling back to the owner only for permission failures. A trusted owner/member/collaborator comment has separate `Owner:`, `Blocker:`, and `Next action:` lines. This establishes assignment text; the closer still verifies that the named lane is live and receives the handoff. Missing assignments go to `op-company:pr-closer` through Fleet's durable inbox when the breach set changes; the initial status, changed breach sets and clearance notices are deduplicated after durable acceptance. The sweep refreshes within the timer's half-hour budget; incomplete searches and failed reads leave a visible `ownership-error.txt` beside the last successful snapshot. `--owner-only` runs this sweep without touching the merge queue or security settings; add `--dry-run --state-dir /tmp/mog-owner-proof` for read-only GitHub verification without an inbox notice. Archived repositories stay read-only: their PRs are listed as `archived: read-only, no action` and excluded from actionable alerts. The report retains the total aged and strict unassigned counts, so this operational exclusion does not silently change a task that included archived PRs. The sweep never comments on PRs, removes holds, or changes merge eligibility.
 
 The PR list reads review metadata; full threads and review summaries are cached by
 repository, PR, head and review activity. Resolution/reopening, original-comment edits,
