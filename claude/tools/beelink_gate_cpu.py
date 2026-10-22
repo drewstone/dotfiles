@@ -2,7 +2,8 @@
 
 Process accounting is a lower bound: exited processes cannot be sampled. Cgroup
 counters retain their CPU use, so report those alongside the process sample.
-No command arguments, environment, cwd or user details are read or retained.
+No command arguments, cwd or user details are read or retained. The shell supplies
+only its own admission measurement through a dedicated environment field.
 """
 import collections
 import datetime as dt
@@ -204,6 +205,7 @@ def sample():
             'observed_at': observed_at, 'interval_seconds': round(interval, 3),
             'collector_seconds': round(time.monotonic() - started, 3), 'cores': os.cpu_count(),
             'loadavg': list(os.getloadavg()), 'cpu_pressure': pressure(PROC / 'pressure/cpu'),
+            'admission': json.loads(os.environ.get('BEELINK_GATE_ADMISSION_SAMPLE', 'null')),
             'cpu': cpu, 'coverage': coverage, 'groups': groups[:30], 'processes': processes[:20],
             'runnable_threads': sum(states['R'] for states in group_states.values()),
             'blocked_threads': sum(states['D'] for states in group_states.values()),

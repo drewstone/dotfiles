@@ -140,6 +140,10 @@ prepare_gate_dependencies() {
     # the relief now that the real-browser test has a budget sized to load.
     (( workers >= 4 )) || workers=4
     if [ "${starved:-0}" = 1 ]; then workers=$(( workers / 2 )); (( workers >= 2 )) || workers=2; fi
+    # Ship's default pool must fit the same verified budget as other commands.
+    if [ "${gate_cgroup_joined:-}" = "$(basename "$(gate_cgroup)")" ] && quota_capacity 1 >/dev/null; then
+      (( workers <= gate_workers )) || workers=$gate_workers
+    fi
     export SHIP_MAX_WORKERS=$workers
     if [ "$repo_manager" = yarn ]; then prepare_yarn_launcher || return $?; fi
     resolve_gate_node
@@ -165,6 +169,10 @@ prepare_gate_dependencies() {
     export BEELINK_GATE_INSTALL_S=0
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
+  # Ship owns its install/runtime; other modes retain hashes under the LRU cap.
+  [ "$install_mode" = ship ] || export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$checkout/.git/beelink-gate-turbo/${gate_node%% *}}"
+  export BEELINK_GATE_TURBO_REQUESTED_DIR="${TURBO_CACHE_DIR:-}"
+  export TURBO_RUN_SUMMARY="${TURBO_RUN_SUMMARY:-true}"
   if [ "$install_mode" != ship ] && [ "$repo_manager" != yarn ] && [ -d node_modules/.pnpm ]; then
     rebuild_native_addons || exit $?
   fi

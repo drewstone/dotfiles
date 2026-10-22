@@ -46,11 +46,18 @@ def throughput(history, since, until):
         row = dict(row, timing=timing)
         groups[key].append(row)
         # Commands can contain private caller inputs; the live instrument exports only timings.
-        records.append({k: row.get(k) for k in ("gate_id", "host", "repo", "sha", "class", "exit", "waited_s", "ran_s", "timing")}
+        records.append({k: row.get(k) for k in ("gate_id", "host", "repo", "sha", "class", "exit", "waited_s", "ran_s", "timing", "admission")}
                        | {"submitted_at": submitted.isoformat(), "finished_at": finish.isoformat()})
     summary = []
     for (repo, gate_class), rows in sorted(groups.items()):
         phases = {}
+        observations = [row["timing"].get("turbo_cache") for row in rows]
+        measured = [o for o in observations if isinstance(o, dict) and o.get("source") == "turbo_run_summary"]
+        turbo_runs = [run for o in measured if isinstance(o.get("runs"), list) for run in o["runs"]
+                      if isinstance(run, dict) and all(isinstance(run.get(k), int) and not isinstance(run[k], bool) and run[k] >= 0 for k in ("cached_tasks", "total_tasks"))
+                      and run["cached_tasks"] <= run["total_tasks"]]
+        turbo = {"measured_gates": len(measured), "runs": len(turbo_runs),
+                 "cached_tasks": sum(run["cached_tasks"] for run in turbo_runs), "total_tasks": sum(run["total_tasks"] for run in turbo_runs)}
         for phase in ("fetch_s", "pre_command_s", "install_s", "typecheck_s", "tests_s", "command_s", "cleanup_s"):
             values = [(r.get("timing") or {}).get(phase) for r in rows]
             measured = [v for v in values if seconds(v)]
@@ -63,6 +70,7 @@ def throughput(history, since, until):
                         "wait_p90_s": percentile([r["waited_s"] for r in rows], .9),
                         "wall_p50_s": percentile([r["ran_s"] for r in rows], .5),
                         "phases": phases,
+                        "turbo_cache": turbo,
                         "phase_coverage": {k: phases[k]["n"] for k in ("install_s", "typecheck_s", "tests_s")}})
     return {"groups": summary, "records": records, "excluded": dict(excluded),
             "selection": "completed admitted gates whose inferred submission (receipt finish minus wall minus cumulative wait) is in window",

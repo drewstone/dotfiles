@@ -23,76 +23,21 @@ if [ "$bash_major" -lt 4 ]; then
   exit 2
 fi
 # shellcheck disable=SC2317 # receipt, finish and signal handlers run through traps.
-# Gate one commit in a reusable, locked checkout on a beelink.
-#
-# Usage:
-#   beelink-gate [--no-install] [--branch <name>] [--merge <pr>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
-#   beelink-gate --light [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
-#   beelink-gate --dev [--no-install] [--branch <name>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
-#   Any form also takes --urgent. Use --pin-host with a named host for
-#   hardware-specific work such as KVM; admission limits still apply.
-#   beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
-#   beelink-gate --attach <gate-id>
-#   beelink-gate --receipt <repo-url> <sha>   (both beelinks' receipts for that SHA, as JSON lines)
-#   --cancel-on-term lets a manager's TERM/HUP/INT stop its exact remote gate.
-#   Without it a lost launcher leaves the gate running for --attach.
-#   --retry <minutes> submits again on TEMPFAIL at its next_allowed until that
-#   many minutes pass, re-attaching instead when the gate is still running.
-#   --summary ends a red exit with the suite's counts and failing tests.
-#   --merge <pr> squash-merges GitHub PR <pr> of <repo-url>, pinned to <sha>,
-#   when the gate exits 0 (not with --dev or --ship); see MERGE_REFUSED.
-#
-# auto re-places a waiting gate: on the beelink it chose, a gate that is not
-# admitted (repo checkout, host slot and load) within BEELINK_GATE_REPLACE_WAIT
-# (default 60s) gives the host back, and the launcher probes both again and
-# goes to whichever admits it first. Admission comes before any checkout work.
-# --urgent (for a fix to a red default branch) goes ahead of every waiting gate
-# for the next free checkout of its repo and the next free host slot. An urgent
-# auto gate reserves priority on both hosts while it probes for a checkout.
-#
-# --light declares a small check: no dependency install, no browser, and at most
-# BEELINK_GATE_LIGHT_CPU core-seconds of command CPU (default and maximum 120).
-# It cannot be the timing-sensitive suite the load limit protects, so it is
-# admitted up to 2.5x the cores, takes one of its own host slots
-# (BEELINK_GATE_LIGHT_SLOTS, default 2) and its own <repo>@light checkout, and
-# holds for at most 10 minutes. A light command that uses more CPU than it
-# declared fails the gate (exit 1, "LIGHT GATE OVER BUDGET"). Every other gate's
-# admission is unchanged.
-#
-# --dev marks an iterative "does it pass yet" run (affected tests, not the
-# merge gate). It never takes a merge gate's checkout or slot: it has its own
-# <repo>@dev checkout and host slots (BEELINK_GATE_DEV_SLOTS, default 2), runs
-# in the weight-25 beelink-gate-dev cgroup, so merge gates (weight 400) and CI
-# win the CPU, and gets no starvation backstop. Run the final head without it.
-#
-# auto probes both beelinks and runs on a free one, preferring one under its
-# load limit (1-minute load at most 1.5x its cores), then one that already
-# caches the repo; when both are busy it waits for whichever frees first.
-# A named beelink over its load limit hands the gate to the other one when that
-# one is under its limit. On the beelink, a gate starts only under the load limit;
-# it waits up to BEELINK_GATE_LOAD_WAIT (default 30m), printing why, then refuses.
-# --branch <name> checks out that branch at <sha> with origin/<name> as its
-# upstream instead of a detached HEAD, and refuses unless origin's <name> is at
-# <sha>; merge gates such as ADC's `pnpm signoff` need HEAD == @{push}.
-# --ship runs exactly the repo's `scripts/ship.sh verify` (the release's own
-# verification) with the repo's .nvmrc Node and SHIP_MAX_WORKERS sized to the
-# host; ship verify does its own frozen install, so the gate does not.
-#
-# Runs from any host: the Mac, GTR or either beelink. On the target beelink
-# itself it runs locally; elsewhere it pipes itself over SSH into WSL.
-# A submitted gate runs in its own session on the beelink. Its ID, log and exit
-# status survive a lost launcher; --attach replays the log and returns its exit.
-# Every step runs under one hold budget (BEELINK_GATE_MAX_HOLD, default 45m).
-# Each gate appends a JSON line to ~/.local/state/beelink-gate/receipts.jsonl
-# on the beelink: host, repo, sha, waited_s, ran_s, exit, timed_out, watchdog.
-#
-# Exit codes: the command's own, 2 for a broken request or cache, and 75
-# (EX_TEMPFAIL) when the gate could not start or prove its result now: the
-# Windows Update window, load that stayed over the limit, a disk floor, no
-# beelink reachable or no readable update policy, or a preempted or
-# inconclusive preview. A 75 is never a red result. Its last line says when to
-# ask again, and callers retry then:
-#   beelink-gate: TEMPFAIL next_allowed=<UTC, ISO 8601> <reason>
+# Gate a pushed revision in a locked Beelink cache; see README.md for the full contract.
+# Usage: beelink-gate [--no-install|--light|--dev] [--branch NAME] [--merge PR]
+#                    [--urgent] [--pin-host] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
+#        beelink-gate --attach <gate-id>
+#        beelink-gate --receipt <repo-url> <sha>
+#        beelink-gate --report [hours] [--json] [--since timestamp]
+# --cancel-on-term cancels an exact submitted gate; --retry MINUTES retries TEMPFAIL.
+# --light is dependency/browser free and capped at120 command core-seconds and10minutes.
+# --dev has separate checkout/slots at low priority; gate the final head without it.
+# --ship runs the release owner's scripts/ship.sh verify with the repository's Node.
+# Each gate keeps its checkout locked through install and command under one hold budget.
+# Quota-aware admission needs a verified priority group; other hosts retain PSI/load fallback.
+# Host update windows, disk floors, checkout locks and slots always apply.
+# Exit: the command's status,2 for invalid requests/cache,75 for a temporary inability to prove.
 set -uo pipefail
 die() { echo "beelink-gate: $*" >&2; exit 2; }
 TEMPFAIL=75
@@ -735,17 +680,8 @@ acquire_slot() {
   done
 }
 
-# Admission measures CPU contention: Linux CPU pressure (/proc/pressure/cpu,
-# some avg10: the share of the last 10 s in which a runnable task waited for a
-# CPU), as jobmap does since tangle-tools #1027. The load average also counts
-# tasks blocked on disk and long-lived niced work: at 21:20Z on 2026-10-11
-# beelink2 sat at load 28 with CPU pressure 6.9%, and every gate waited. Where
-# the pressure file is missing, the load-average limit (1.5x the cores) applies.
-# The pressure that counts is the one the gate's own tasks feel: the top-level
-# cgroup it runs in (/non-systemd for a gate reached over SSH into WSL), where
-# cgroup CPU weights already apply. At 21:40Z beelink1 showed 44% system-wide,
-# but 1.9% in /non-systemd; the rest was lane work in user.slice and CI in
-# ci.slice. Without cgroup pressure, the host-wide file is used.
+# Legacy fallback measures the pressure the gate's cgroup feels; without
+# cgroup PSI it uses host PSI, then load average when PSI is unavailable.
 pressure_file() {
   local f top
   if [ -n "${BEELINK_GATE_CPU_PRESSURE:-}" ]; then f=$BEELINK_GATE_CPU_PRESSURE
@@ -760,21 +696,96 @@ pressure_file() {
   [ -r "$f" ] && echo "$f"
 }
 loadavg_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
-# A top-level cgroup with a high CPU weight (400 against ci.slice's 25), created
-# on the beelinks by host/install.sh --gate-priority-only. The gate moves itself
-# there once admitted, so its command wins CPU over CI runners and lane work.
+# The maintained host role owns gate quota and priority; this code only reads them.
 gate_cgroup() {
   if [ "${dev:-0}" = 1 ]; then echo "${BEELINK_GATE_DEV_CGROUP:-/sys/fs/cgroup/beelink-gate-dev}"
   else echo "${BEELINK_GATE_CGROUP:-/sys/fs/cgroup/beelink-gate}"; fi
 }
 join_gate_cgroup() {
   local cg; cg=$(gate_cgroup)
+  if grep -qxF "0::/${cg#/sys/fs/cgroup/}" /proc/self/cgroup 2>/dev/null; then
+    gate_cgroup_joined=${cg##*/}; return 0
+  fi
   [ -w "$cg/cgroup.procs" ] || [ -e "$cg/cgroup.procs" ] || return 0
   # Moving a process between top-level cgroups needs root; without sudo the gate
   # keeps running unprioritized rather than failing.
   if sudo -n /bin/sh -c 'echo "$1" > "$2/cgroup.procs"' sh "$$" "$cg" 2>/dev/null; then
     gate_cgroup_joined=${cg##*/}
   fi
+}
+
+# One capacity reader for admission, placement, worker sizing and reporting.
+# Group full stalls all gate work; group some needs only one stalled gate task.
+# Host some also includes lower-priority work waiting outside the gate group.
+quota_capacity() {
+  [ "${dev:-0}" = 0 ] || return 1
+  python3 - "$(gate_cgroup)" "${cache_root:-${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}}/.locks" "${slot_fd:-}" "$(max_cpu_pressure)" "${1:-0}" <<'PY'
+import fcntl, json, math, os, pathlib, sys, time
+group, locks, held, pressure_limit = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), bool(sys.argv[3]), float(sys.argv[4])
+root = pathlib.Path('/sys/fs/cgroup')
+try:
+    group = group.resolve(strict=True)
+    joined = pathlib.Path('/proc/self/cgroup').read_text().strip() == '0::/' + str(group.relative_to(root))
+    if sys.argv[5] == '1' and not joined:
+        raise ValueError('membership unverified')
+    weight = int((group / 'cpu.weight').read_text())
+    # The policy is valid only for a maintained priority group, never the
+    # caller's ordinary user cgroup or the lower-priority --dev group.
+    others = [int((p / 'cpu.weight').read_text()) for p in root.iterdir()
+              if p.is_dir() and p != group and (p / 'cpu.weight').is_file()]
+    if group.parent != root or weight <= max(others, default=weight):
+        raise ValueError('priority unverified')
+    cpus, finite = float(len(os.sched_getaffinity(0))), False
+    for path in (group, *group.parents):
+        if path == root.parent:
+            break
+        raw = (path / 'cpu.max').read_text().split()
+        if raw[0] != 'max':
+            cpus, finite = min(cpus, int(raw[0]) / int(raw[1])), True
+        spec = (path / 'cpuset.cpus.effective').read_text().strip()
+        if spec:
+            allowed = sum(int(part.split('-')[-1]) - int(part.split('-')[0]) + 1 for part in spec.split(','))
+            cpus = min(cpus, allowed)
+        if path == root:
+            break
+    if not finite or cpus <= 0:
+        raise ValueError('quota unverified')
+    running = 0
+    for pattern in ('slot-*.lock', 'light-slot-*.lock'):
+        for lock in locks.glob(pattern):
+            with lock.open('rb') as fd:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    running += 1
+    workers = max(1, math.floor(cpus / max(1, running + (not held))))
+    runnable, read, expired = 0, 0, time.monotonic() + 1
+    for membership in group.rglob('cgroup.threads'):
+        for tid in membership.read_text().split():
+            if time.monotonic() > expired:
+                raise ValueError('thread scan budget')
+            try:
+                stat = pathlib.Path('/proc', tid, 'stat').read_text()
+            except FileNotFoundError:
+                continue  # A completed task contributes no runnable work.
+            runnable += tid != str(os.getpid()) and stat[stat.rindex(')') + 2:].split()[0] == 'R'
+            read += 1
+    workers = max(1, min(workers, math.floor(cpus - runnable)))
+    lines = dict((line.split()[0], line.split()[1:]) for line in (group / 'cpu.pressure').read_text().splitlines())
+    full = float(dict(field.split('=') for field in lines['full'])['avg10'])
+    if not math.isfinite(full):
+        raise ValueError('pressure unreadable')
+    print(json.dumps({'mode': 'quota', 'observed_at': time.time(), 'cgroup': str(group), 'weight': weight,
+                     'effective_cpus': cpus, 'runnable_threads': runnable, 'threads_read': read, 'workers': workers,
+                     'verified_join': joined,
+                     'projected_runnable': runnable + workers, 'full_avg10': full, 'full_limit': pressure_limit,
+                     'held': runnable + workers > cpus or full > pressure_limit}, separators=(',', ':')))
+except (OSError, ValueError, KeyError, IndexError):
+    sys.exit(1)  # Missing evidence uses the complete legacy admission path.
+PY
+}
+capacity_fields() {
+  python3 -c 'import json,sys; x=json.loads(sys.argv[1]); print(x["projected_runnable"], x["effective_cpus"], int(x["held"]), x["workers"], x["full_avg10"], x["full_limit"])' "$1"
 }
 load_now() {
   local f value
@@ -902,12 +913,7 @@ urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
   return 1
 }
 
-# A light gate (--light) is admitted up to twice the normal CPU pressure limit,
-# or 2.5x the cores on the load-average fallback; see the header.
-# The host's limit lives in a file on the beelink, read at every admission
-# check, so a change reaches gates that are already waiting. A caller's
-# BEELINK_GATE_MAX_CPU_PRESSURE overrides it. An unreadable or invalid file
-# leaves the default.
+# Legacy PSI limits are read live from the host owner; light gets twice the normal ceiling.
 limits_file() { echo "${BEELINK_GATE_LIMITS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/beelink-gate/limits}"; }
 host_max_cpu_pressure() {
   local v
@@ -936,11 +942,12 @@ over_limit() {
   [ "$?" -ne 1 ]
 }
 
-# Holds a gate that has its lock and slot until the host is under its load
-# limit, the way the disk floor refuses: bounded, with the reason printed.
-# Cores per running gate, at least 2: every held slot (merge, light or dev) is
-# one running gate, this one included.
 gate_worker_budget() {
+  local capacity workers _projected _cpus _held _full _limit
+  if capacity=$(quota_capacity 1); then
+    read -r _projected _cpus _held workers _full _limit < <(capacity_fields "$capacity")
+    echo "$workers"; return 0
+  fi
   local locks=$1 running=0 f fd
   for f in "$locks"/slot-*.lock "$locks"/light-slot-*.lock "$locks"/dev-slot-*.lock; do
     [ -e "$f" ] || continue
@@ -954,15 +961,8 @@ gate_worker_budget() {
   echo "$each"
 }
 
-# Host-wide ceiling. The limit above reads the gate cgroup, which the GitHub
-# runners and other services do not share, so it can admit a gate onto a host
-# that is already saturated: on 2026-10-12 beelink1 sat at host CPU pressure
-# (some avg60) ~90% with two local LLM jobs outside the gates, and #10322's
-# signoff failed 1 of 5618 tests on a 15 s timeout at load 119. While host-wide
-# avg60 is over this ceiling no gate is admitted, urgent and starving ones
-# included; they keep their place in line and the load-wait budget still ends
-# the wait. BEELINK_GATE_HOST_PRESSURE_CEILING, else host_pressure_ceiling= in
-# the limits file, else 40. An unreadable pressure file sets no ceiling.
+# Legacy host guard: retain it whenever maintained priority/quota capacity
+# cannot be proved. Its threshold remains owned by the host limits file.
 host_pressure_now() {
   sed -n 's/^some avg10=[0-9.]* avg60=\([0-9.]*\).*/\1/p' "${BEELINK_GATE_HOST_PRESSURE:-/proc/pressure/cpu}" 2>/dev/null
 }
@@ -973,13 +973,8 @@ host_pressure_ceiling() {
   echo "$v"
 }
 
-# Starvation backstop clock: everything this gate has waited, across
-# re-placements (BEELINK_GATE_PLACED_WAIT) and on this host since its first wait.
 starving() {
   [ "${dev:-0}" = 0 ] || return 1  # a dev run waits; only merge gates get the backstop
-  # An --urgent gate (a fix for a red default branch or a customer outage) never
-  # waits on pressure or a full slot pool: on 2026-10-12 a customer-facing ADC
-  # fix (#10366) waited 344+ s in urgent admission at pressure 62-65.
   [ "${urgent:-0}" = 0 ] || return 0
   local after
   after=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
@@ -987,33 +982,32 @@ starving() {
 }
 
 wait_for_load() {
-  # One budget across both calls: before the checkout lock and after the slot.
   : "${load_wait_started:=$SECONDS}"
-  local beelink=$1 budget limit load since=$load_wait_started reported=-60 host ceiling held why
+  local beelink=$1 budget limit load since=$load_wait_started reported=-60 host ceiling held why capacity workers full full_limit quota_mode
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die "invalid BEELINK_GATE_LOAD_WAIT: ${BEELINK_GATE_LOAD_WAIT:-}"
-  while limit=$(load_limit) && load=$(load_now); do
-    host=$(host_pressure_now) ceiling=$(host_pressure_ceiling) held=0
-    [ -n "$host" ] && over_limit "$host" "$ceiling" && held=1
-    (( held )) || over_limit "$load" "$limit" || break
-    if (( held )); then why="host CPU pressure (some avg60) $host over its ceiling of $ceiling"
-    else why="$(metric_name) $load is over its limit of $limit ($(limit_basis))"; fi
-    # Starvation backstop: a gate that has waited this long in total, across
-    # re-placements, runs now on the host auto ranked lowest, with fewer test
-    # workers. On 2026-10-11 the L1 ship gate for gtm-agent #1527 was re-placed
-    # 56 times in 2 h without admission. It never overrides the host ceiling.
-    if (( ! held )) && starving; then
+  join_gate_cgroup
+  while :; do
+    host=$(host_pressure_now) ceiling=$(host_pressure_ceiling) held=0 capacity="" quota_mode=0
+    if [ "${gate_cgroup_joined:-}" = "$(basename "$(gate_cgroup)")" ] && capacity=$(quota_capacity 1); then
+      quota_mode=1
+      read -r load limit held workers full full_limit < <(capacity_fields "$capacity")
+      why="quota runnable $load (including $workers prospective workers) / $limit CPUs, group full avg10 $full / $full_limit"
+      (( held )) || break
+    else
+      limit=$(load_limit) load=$(load_now)
+      [ -n "$host" ] && over_limit "$host" "$ceiling" && held=1
+      (( held )) || over_limit "$load" "$limit" || break
+      if (( held )); then why="host CPU pressure (some avg60) $host over its ceiling of $ceiling"
+      else why="$(metric_name) $load over its limit of $limit ($(limit_basis))"; fi
+    fi
+    # Quota/full capacity is a hard bound, including urgent/starved gates.
+    if (( ! quota_mode && ! held )) && starving; then
       starved=1
-      echo "beelink-gate: $( [ "${urgent:-0}" = 1 ] && echo URGENT || echo STARVED ): admitting on $beelink after $(( ${placed_wait:-0} + SECONDS - since ))s with $(metric_name) $load over its limit of $limit; SHIP_MAX_WORKERS is halved" >&2
+      echo "beelink-gate: STARVED: admitting on $beelink after $(( ${placed_wait:-0} + SECONDS - since ))s: $why; SHIP_MAX_WORKERS is halved" >&2
       break
     fi
     if (( SECONDS - since >= budget )); then
-      if (( held )); then
-        printf 'beelink-gate: REFUSED %s host CPU pressure (some avg60) %s stayed over its ceiling of %s for %ss; use the other beelink or retry later\n' \
-          "$beelink" "$host" "$ceiling" "$((SECONDS - since))" >&2
-      else
-        printf 'beelink-gate: REFUSED %s %s %s stayed over its limit of %s (%s) for %ss; use the other beelink or retry later\n' \
-          "$beelink" "$(metric_name)" "$load" "$limit" "$(limit_basis)" "$((SECONDS - since))" >&2
-      fi
+      echo "beelink-gate: REFUSED $beelink $why for $((SECONDS - since))s; use the other beelink or retry later" >&2
       return 3
     fi
     if (( SECONDS - reported >= 60 )); then
@@ -1023,15 +1017,11 @@ wait_for_load() {
     admission_expired && not_admitted "$why"
     sleep "${BEELINK_GATE_LOAD_POLL_SECONDS:-15}" & wait $!
   done
-  start_load=$(loadavg_now)
-  start_pressure="" start_host_pressure=${host:-}
-  join_gate_cgroup
-  # Tell the command it already passed admission, so a repo script with its own
-  # load-average guard (ADC's signoff.sh waits for load <= 1.5x cores) does not
-  # wait again on a metric the gate replaced: on 2026-10-11 an admitted ADC
-  # signoff sat at load 34-52 while its priority cgroup had pressure 0.
+  start_load=$(loadavg_now) start_host_pressure=${host:-} start_pressure=$(load_now)
+  [ -n "$capacity" ] || capacity='{"mode":"legacy"}'
+  export BEELINK_GATE_ADMISSION_SAMPLE="$capacity"
+  echo "beelink-gate: admission $BEELINK_GATE_ADMISSION_SAMPLE" >&2
   export BEELINK_GATE_ADMITTED=1
-  ! pressure_file >/dev/null || start_pressure=$load
 }
 
 declare -A BEELINK_IPS=([beelink1]=100.98.195.7 [beelink2]=100.127.22.51)
@@ -1559,15 +1549,21 @@ remote_probe() {
     flock -n -s "$fd" && free_slots=$((free_slots + 1))
     exec {fd}<&-
   done
-  # A host over its host-wide ceiling admits no gate, so auto ranks it by that
-  # pressure and ceiling instead of the gate cgroup's, which can look idle there.
-  local probe_load probe_limit host_cpu
-  probe_load=$(load_now) probe_limit=$(load_limit) host_cpu=$(host_pressure_now)
-  if [ -n "$host_cpu" ] && over_limit "$host_cpu" "$(host_pressure_ceiling)"; then
-    probe_load=$host_cpu probe_limit=$(host_pressure_ceiling)
+  local probe_load probe_limit host_cpu capacity mode=legacy held workers full full_limit
+  host_cpu=$(host_pressure_now)
+  if capacity=$(quota_capacity); then
+    mode=quota-tentative
+    read -r probe_load probe_limit held workers full full_limit < <(capacity_fields "$capacity")
+    if over_limit "$full" "$full_limit"; then probe_load=$full probe_limit=$full_limit; fi
+  else
+    capacity=null probe_load=$(load_now) probe_limit=$(load_limit)
+    if [ -n "$host_cpu" ] && over_limit "$host_cpu" "$(host_pressure_ceiling)"; then
+      probe_load=$host_cpu probe_limit=$(host_pressure_ceiling)
+    fi
   fi
-  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s admission=%s capacity=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$mode" "$capacity" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+
 }
 
 # After a green --ship run, sign what ran and on which tree with this beelink's
@@ -1655,6 +1651,7 @@ install_step() {
     mkdir -p "$STATE_DIR" 2>/dev/null && python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
+from pathlib import Path
 path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature, reserve_gate_bytes, reserve_host_drop, reserve_basis, reserve_du_ms = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
@@ -1667,6 +1664,10 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink
        "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
        "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
        "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "checkout_temperature": checkout_temperature or None, "reason_scope": "host_last_10000_receipts"}
+try:
+    row["admission"] = json.loads(os.environ.get("BEELINK_GATE_ADMISSION_SAMPLE", "null"))
+except ValueError:
+    row["admission"] = None
 if int(install_reserve):
     row["install_reserve_bytes"] = int(install_reserve)
     # The gate's own bytes against the host's free-space drop over the same window.
@@ -1721,6 +1722,10 @@ for phase, intervals in spans.items():
         elapsed += max(0, end - max(begin, right))
         right = max(right, end)
     timing[phase + "_s"] = round(elapsed, 3)
+try:
+    timing["turbo_cache"] = json.loads(os.environ.get("BEELINK_GATE_TURBO_OBSERVATIONS") or "null")
+except ValueError:
+    timing["turbo_cache"] = None
 row["timing"] = timing
 with open(path, "a+") as out:
     fcntl.flock(out, fcntl.LOCK_EX)
@@ -1761,7 +1766,6 @@ with open(path, "a+") as out:
         row["reason"] = "after_green"
     out.write(json.dumps(row) + "\n")
 if gate_id:
-    from pathlib import Path
     receipt = Path(path).parent / "jobs" / gate_id / "receipt.json"
     temporary = receipt.with_suffix(".tmp")
     temporary.write_text(json.dumps(row) + "\n")
@@ -1771,7 +1775,7 @@ PY
   }
 
 remote_gate() {
-  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE
+  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_ADMISSION_SAMPLE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS BEELINK_GATE_TURBO_REQUESTED_DIR
   [ "$#" -ge 7 ] || die "invalid remote request"
   # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
   # that trap only after unwinding every function, so the state they read is
@@ -2064,7 +2068,7 @@ remote_gate() {
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since + placed_wait))
-  echo "beelink-gate: lock, host slot and $(metric_name) (${start_pressure:-$start_load}, limit $(load_limit)) admitted on $beelink after ${waited}s${gate_id:+ gate_id=$gate_id}$( (( urgent )) && echo ' (urgent)')" >&2
+  echo "beelink-gate: lock, host slot and admission ${BEELINK_GATE_ADMISSION_SAMPLE:-legacy} admitted on $beelink after ${waited}s${gate_id:+ gate_id=$gate_id}$( (( urgent )) && echo ' (urgent)')" >&2
   started=$SECONDS display=""
   timing_file="" timing_phase=precheck fetch_s="" pre_command_s="" command_s="" cleanup_s=""
   local deadline=$((SECONDS + max_hold))
@@ -2126,14 +2130,8 @@ remote_gate() {
     echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
     return 0
   }
-  # A command that commits and then fails to push leaves the only copy of its
-  # commits in a shared checkout that the next gate resets: on 2026-10-12 a
-  # --dev observer's push hit 'closed by remote host' and its commit was gone
-  # once the next gate took the checkout. Commits reachable from HEAD or a local
-  # branch but not from the gated SHA or any remote ref go into a bundle first.
-  # Only commits this gate's command made count: refs the checkout already held
-  # when the command started (a branch an earlier --branch gate left behind)
-  # are excluded, so they are not bundled again by every later gate.
+  # Bundle command-created commits unreachable from remotes before checkout reuse.
+  # Exclude refs present before the command, so later gates do not save them again.
   save_unpushed() {
     [ -d "$checkout/.git" ] && [ "$gate_refs_taken" = 1 ] || return 0
     local new stamp heads h restore=""
@@ -2167,28 +2165,42 @@ remote_gate() {
     timing_phase=cleanup
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
     reap_leftovers
+    # Snapshot this command's summaries before releasing or evicting its checkout.
+    export BEELINK_GATE_TURBO_OBSERVATIONS="$(python3 - "$checkout/.turbo/runs" <<'PYTURBO'
+import json, math, os, sys
+from pathlib import Path
+result = {"source": "turbo_run_summary", "requested_dir": os.environ.get("BEELINK_GATE_TURBO_REQUESTED_DIR"), "location_source": "gate_environment", "runs": [], "unreadable": 0}
+begin = int(os.environ.get("BEELINK_GATE_COMMAND_STARTED_MS", "0"))
+for path in Path(sys.argv[1]).glob("*.json") if begin else []:
+    try:
+        summary = json.loads(path.read_text())
+        tasks, execution = summary["tasks"], summary["execution"]
+        start, end = execution["startTime"], execution["endTime"]
+        if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) for n in (start, end)) or not 0 <= start <= end:
+            raise ValueError("invalid execution interval")
+        if start < begin:
+            continue
+        if not isinstance(tasks, list) or any(not isinstance(t, dict) or not isinstance(t.get("cache", {}), dict) for t in tasks):
+            raise ValueError("invalid tasks")
+        result["runs"].append({"cached_tasks": sum(t.get("cache", {}).get("status") == "HIT" for t in tasks),
+                               "total_tasks": len(tasks), "wall_ms": end - start})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        result["unreadable"] += 1
+print(json.dumps(result))
+PYTURBO
+)"
     save_unpushed
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
-    # A gate whose launcher is gone frees its lock now; the next gate prunes
-    # before it fetches.
     if [ "$watchdog" = 1 ]; then
       :
     elif cd "$cache_root"; then
-      # The command is done: hand the checkout to the next gate before the cache
-      # prune, which sizes the whole cache and took minutes under load (an ADC
-      # checkout sat held for ~9 min after its signoff passed, 2026-10-12). The
-      # prune then treats this checkout like any other: evicted only if free.
-      # After the unlock the holder file and the checkout belong to the next
-      # gate: nothing below removes the holder or exempts the checkout's lock.
+      # Release before global cache work; the next gate owns the checkout and holder.
       rm -f "$lock.holder"
       [ -z "${lock_fd:-}" ] || flock -u "$lock_fd"
       lock_released=1
-      # The cache cap is a capacity condition, not the command's result: on
-      # 2026-10-11 a Hospitality train passed pnpm check (780 tests) and was
-      # reported as exit 3 because the cache stood 66 MB over its cap with only
-      # active checkouts left. The disk floor guards real disk shortage.
+      # Cache capacity cannot turn a successful command red; the disk floor guards starts.
       if ! prune_cache "$cache_root" "" "$cache_max"; then
         cache_note=unpruned
         echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
@@ -2342,20 +2354,11 @@ remote_gate() {
   # Rust output lives inside .git, which checkout and clean leave alone, so it
   # survives between gates and the LRU cap counts and evicts it with its repo.
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$checkout/.git/beelink-gate-target}"
-  # Incremental state is a third of a debug target and gates rarely reuse it.
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
-  # Every pnpm the command runs (a repo's own signoff install, say) uses the
-  # store the gate installed from, and never stops on a purge prompt: the
-  # checkout is a disposable cache with no TTY. On 2026-10-11 ADC's signoff.sh
-  # re-ran pnpm install, which aborted with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY
-  # after a green 18-minute run (ADC #10346, beelink1).
+  # Nested installs use the same store and cannot wait for a purge prompt.
   export npm_config_store_dir="${npm_config_store_dir:-$HOME/.local/share/pnpm/store}"
   export npm_config_confirm_modules_purge=false
-  # Workers inside the gate share the host with the other running gates. On
-  # 2026-10-12 beelink1 sat at load 93.7 with about 5 gates, because one ADC
-  # signoff alone fanned out to about 39 node workers. Each test runner,
-  # monorepo task runner and cargo build gets cores / running gates (at least 2)
-  # unless the caller already chose.
+  # Divide workers across active gates, preserving caller overrides.
   gate_workers=$(gate_worker_budget "$cache_root/.locks")
   export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$gate_workers}"
   export VITEST_MAX_THREADS="${VITEST_MAX_THREADS:-$gate_workers}"
@@ -2373,6 +2376,7 @@ remote_gate() {
   export BEELINK_GATE_PHASE_FILE="$timing_file"
   echo "beelink-gate: running ${display% }" >&2
   pre_command_s=$((SECONDS - started))
+  export BEELINK_GATE_COMMAND_STARTED_MS=$(date +%s%3N)
   local command_started=$SECONDS
   local tick cpu_before cpu_after
   tick=$(getconf CLK_TCK 2>/dev/null || echo 100)
@@ -2498,7 +2502,7 @@ mv -- "$dir/exit.tmp" "$dir/exit"
 RUNNER
   chmod 700 "$dir/runner.sh"
   local -a vars=("BEELINK_GATE_ID=$id")
-  for name in BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_BRANCH BEELINK_GATE_LOAD_WAIT BEELINK_GATE_CACHE_MAX_BYTES \
+  for name in TURBO_CACHE_DIR TURBO_RUN_SUMMARY BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_BRANCH BEELINK_GATE_LOAD_WAIT BEELINK_GATE_CACHE_MAX_BYTES \
     BEELINK_GATE_MAX_CPU_PRESSURE BEELINK_GATE_HOST_PRESSURE_CEILING BEELINK_GATE_STARVE_AFTER \
     BEELINK_GATE_CLASS BEELINK_GATE_SHIP_WORKERS BEELINK_GATE_PR BEELINK_GATE_LANE BEELINK_GATE_RESERVATION_TOKEN BEELINK_GATE_MAX_CONCURRENT \
     BEELINK_GATE_REPO_CHECKOUTS BEELINK_GATE_LIGHT_CPU BEELINK_GATE_LIGHT_SLOTS \
@@ -2650,7 +2654,7 @@ fi
 if [ "${1:-}" = --receipts ]; then
   cat "$STATE_DIR/receipts.jsonl" 2>/dev/null || exit 75
   if [ -n "${3:-}" ]; then
-    python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
+    BEELINK_GATE_ADMISSION_SAMPLE="$(quota_capacity || echo '{"mode":"legacy"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
   fi
   # Admission refusals precede the normal receipt. Keep their log-derived count
   # in the existing report, including the source window and retained coverage.
@@ -2730,100 +2734,6 @@ bounded_transport() {
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
-on_beelink() {
-  local target=$1; shift
-  local -a transport_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
-  case "${1:-}" in
-    --reserve-match|--job-cancel) transport_prefix=(bounded_transport "$target $1") ;;
-  esac
-  [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
-  [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
-  [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
-  [ -z "${BEELINK_GATE_CACHE_MAX_BYTES:-}" ] || envs+=("BEELINK_GATE_CACHE_MAX_BYTES=$BEELINK_GATE_CACHE_MAX_BYTES")
-  [ -z "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ] || envs+=("BEELINK_GATE_MAX_CPU_PRESSURE=$BEELINK_GATE_MAX_CPU_PRESSURE")
-  [ -z "${BEELINK_GATE_HOST_PRESSURE_CEILING:-}" ] || envs+=("BEELINK_GATE_HOST_PRESSURE_CEILING=$BEELINK_GATE_HOST_PRESSURE_CEILING")
-  [ -z "${BEELINK_GATE_STARVE_AFTER:-}" ] || envs+=("BEELINK_GATE_STARVE_AFTER=$BEELINK_GATE_STARVE_AFTER")
-  [ "${gate_class:-}" != dev ] || envs+=("BEELINK_GATE_CLASS=dev")
-  [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
-  [[ "${BEELINK_GATE_PR:-}" =~ ^[0-9]+$ ]] && envs+=("BEELINK_GATE_PR=$BEELINK_GATE_PR")
-  [ -z "${BEELINK_GATE_LANE:-}" ] || envs+=("BEELINK_GATE_LANE=$BEELINK_GATE_LANE")
-  [ -z "${BEELINK_GATE_RESERVATION_TOKEN:-}" ] || envs+=("BEELINK_GATE_RESERVATION_TOKEN=$BEELINK_GATE_RESERVATION_TOKEN")
-  [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
-  [ -z "${BEELINK_GATE_REPO_CHECKOUTS:-}" ] || envs+=("BEELINK_GATE_REPO_CHECKOUTS=$BEELINK_GATE_REPO_CHECKOUTS")
-  [ -z "${BEELINK_GATE_LIGHT_CPU:-}" ] || envs+=("BEELINK_GATE_LIGHT_CPU=$BEELINK_GATE_LIGHT_CPU")
-  [ -z "${BEELINK_GATE_LIGHT_SLOTS:-}" ] || envs+=("BEELINK_GATE_LIGHT_SLOTS=$BEELINK_GATE_LIGHT_SLOTS")
-  [ "${BEELINK_GATE_URGENT:-0}" != 1 ] || envs+=("BEELINK_GATE_URGENT=1")
-  [ -z "${BEELINK_GATE_ID:-}" ] || envs+=("BEELINK_GATE_ID=$BEELINK_GATE_ID")
-  [ "${requested:-}" != auto ] || envs+=("BEELINK_GATE_AUTO=1")
-  [ -z "${admit_wait_launch:-}" ] || envs+=("BEELINK_GATE_ADMIT_WAIT=$admit_wait_launch")
-  # The wait so far rides along even when the gate may no longer move, so it keeps its
-  # age in the checkout queue and its starvation clock.
-  (( ${placed_wait_launch:-0} == 0 )) || envs+=("BEELINK_GATE_PLACED_WAIT=$placed_wait_launch")
-  [ -z "${BEELINK_GATE_SPARSE_SPEC:-}" ] || envs+=("BEELINK_GATE_SPARSE_SPEC=$BEELINK_GATE_SPARSE_SPEC")
-  local peer_host=beelink1; [ "$target" != beelink1 ] || peer_host=beelink2
-  [ -z "${matched_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_RESERVE=${matched_reserve[$peer_host]}")
-  [ -z "${matched_warm_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_WARM_RESERVE=${matched_warm_reserve[$peer_host]}")
-  [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
-  local me=$$ rc heartbeat_fd heartbeat_pid command_pid args_line="" source_file=""
-  if [ "$target" != "$SELF" ]; then
-    source_file=$(mktemp) || return "$TEMPFAIL"
-    emit_gate_source > "$source_file" || { rm -f "$source_file"; return "$TEMPFAIL"; }
-  fi
-  # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
-  # ("exec request failed on channel 0"); on 2026-10-18 a 23 KB patch, base64
-  # encoded in argv, became 41,676 bytes and the submit was reported as a lost
-  # connection. Large arguments ride on stdin ahead of the script instead.
-  local -a remote_args=("$@")
-  if (( $(printf '%s ' "$@" | wc -c) > 8192 )); then
-    args_line="set -- $(printf '%q ' "$@")"
-    remote_args=()
-  fi
-  heartbeat_input() {
-    local sleeper="" include_script=${1:-0}
-    trap 'if [ -n "$sleeper" ]; then kill -TERM "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
-    if [ "$include_script" = 1 ]; then
-      declare -f receive_gate_source
-      printf 'receive_gate_source "$@"; exit $?\n'
-      [ -z "$args_line" ] || printf '%s\n' "$args_line"
-      cat "$source_file"
-    fi
-    while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
-      sleep 5 & sleeper=$!
-      wait "$sleeper" || true
-      sleeper=""
-    done
-  }
-  stop_heartbeat() {
-    kill -TERM "$heartbeat_pid" 2>/dev/null || true
-    wait "$heartbeat_pid" 2>/dev/null || true
-    exec {heartbeat_fd}<&-
-  }
-  if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
-    exec {heartbeat_fd}< <(heartbeat_input)
-    heartbeat_pid=$!
-    env "${envs[@]}" bash "$0" "$@" <&"$heartbeat_fd" &
-    command_pid=$!
-    wait "$command_pid"; rc=$?
-    stop_heartbeat
-  elif [ "$target" = "$SELF" ]; then
-    "${transport_prefix[@]}" env "${envs[@]}" bash "$0" "$@" </dev/null
-    rc=$?
-  elif [ "${heartbeat:-0}" = 1 ]; then
-    exec {heartbeat_fd}< <(heartbeat_input 1)
-    heartbeat_pid=$!
-    ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" <&"$heartbeat_fd" &
-    command_pid=$!
-    wait "$command_pid"; rc=$?
-    stop_heartbeat
-  else
-    "${transport_prefix[@]}" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
-      < <(declare -f receive_gate_source; printf 'receive_gate_source "$@"; exit $?\n'; [ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$source_file")
-    rc=$?
-  fi
-  [ -z "$source_file" ] || rm -f "$source_file"
-  return "$rc"
-}
-
 
 # The policy rarely changes, so the last good read is kept per host. WSL interop
 # (reg.exe) fails under load, and SSH can time out; a read up to seven days old
@@ -3138,7 +3048,7 @@ fi
 # exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
 if [ "${1:-}" = --report ]; then
   shift
-  hours=24 report_format= report_since=
+  hours=24 report_format="" report_since=""
   if [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]; then hours=$1; shift; fi
   while [ "$#" -gt 0 ]; do
     case "$1" in
