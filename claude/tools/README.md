@@ -272,8 +272,11 @@ A PR merges when it is not a draft, not conflicting and not a release branch; Fa
 ```bash
 merge-on-green --dry-run                 # print decisions, merge nothing
 cat ~/.local/state/merge-on-green/status.md       # what each open PR waits on
+cat ~/.local/state/merge-on-green/ownership.md    # org-wide aged PR ownership, from the primary timer
 tail ~/.local/state/merge-on-green/decisions.jsonl
 ```
+
+The primary timer also passes `--owner-org tangle-network --owner-org drewstone`. Before the merge queue's probe, it searches both owners for every open PR aged at least 24 hours, reads all comment pages, and records the complete sample in `ownership.json` and `ownership.md`. The two org searches use the owner's visibility through `gh-drew`: the machine reader cannot see every private repository. Comment reads use `gh-read`, falling back to the owner only for permission failures. A trusted owner/member/collaborator comment has separate `Owner:`, `Blocker:`, and `Next action:` lines. This establishes assignment text; the closer still verifies that the named lane is live and receives the handoff. Missing assignments go to `op-company:pr-closer` through Fleet's durable inbox when the breach set changes; the initial status, changed breach sets and clearance notices are deduplicated after durable acceptance. The sweep refreshes within the timer's half-hour budget; incomplete searches and failed reads leave a visible `ownership-error.txt` beside the last successful snapshot. `--owner-only` runs this sweep without touching the merge queue or security settings; add `--dry-run --state-dir /tmp/mog-owner-proof` for read-only GitHub verification without an inbox notice. Archived repositories stay read-only: their PRs are listed as `archived: read-only, no action` and excluded from actionable alerts. The report retains the total aged and strict unassigned counts, so this operational exclusion does not silently change a task that included archived PRs. The sweep never comments on PRs, removes holds, or changes merge eligibility.
 
 The PR list reads review metadata; full threads and review summaries are cached by
 repository, PR, head and review activity. Resolution/reopening, original-comment edits,
@@ -294,15 +297,17 @@ To keep a ready PR open, add the `hold` label.
 
 ### The other product repos
 
-Every other repo in `host/agents/merge-on-green.repos` (the product stack and the agent apps) runs its own `merge-on-green@<repo>:<base>.timer` every 5 minutes on drew-gtr-pro, with `--base` set to that repo's default branch and state under `~/.local/state/merge-on-green-org/<repo>/`. Its gate is every check on the head (`MERGE_ON_GREEN_REQUIRED=*`: success, neutral or skipped; any red or pending check waits). Most of these repos run no PR CI, so a head with no checks merges only when gh-drew finds a passed beelink-gate receipt for that exact head (`GH_DREW_REQUIRE_RECEIPT=1`, the same check discovery-lab and agent-runtime always get); a refused head is asked again after 10 minutes. Drafts, holds, review threads and conflicts work as above. It uses a merge commit when the repo allows one, else squash. A PR that waits for Drew (pricing, public claims) carries the `hold` label. Each tick first runs `--probe`, a 2-point GraphQL read of every open PR's head, draft flag, labels, check rollup and update time; the full read (about 28 points at `MERGE_ON_GREEN_PAGE=25`) runs only when that changed, every 30 minutes while a ready PR is open, and hourly otherwise, so 22 repos stay well inside tangletools' shared `gh-read` quota.
+Every other repo in `host/agents/merge-on-green.repos` (the product stack and the agent apps) runs its own `merge-on-green@<repo>:<base>.timer` every 5 minutes on drew-gtr-pro, with `--base` set to that repo's default branch and state under `~/.local/state/merge-on-green-org/<repo>/`. Its gate is every check on the head (`MERGE_ON_GREEN_REQUIRED=*`: success, neutral or skipped; any red or pending check waits). Most of these repos run no PR CI, so a head with no checks merges only when gh-drew finds a passed beelink-gate receipt for that exact head (`GH_DREW_REQUIRE_RECEIPT=1`, the same check discovery-lab and agent-runtime always get); a refused head is asked again after 10 minutes. Drafts, holds, review threads and conflicts work as above. It uses a merge commit when the repo allows one, else squash. A PR that waits for Drew (pricing, public claims) carries the `hold` label. Each tick first runs `--probe`, a 2-point GraphQL read of every open PR's head, draft flag, labels, check rollup and update time; the full read (about 28 points at `MERGE_ON_GREEN_PAGE=25`) runs only when that changed, every 30 minutes while a ready PR is open, and hourly otherwise, so the inventory stays inside tangletools' shared `gh-read` quota.
 
 Both timer services set `MERGE_ON_GREEN_SECURITY_UPDATES=1`. The existing bot checks security alerts and Dependabot security updates daily and enables either setting when disabled. Its per-repo `security-updates.json` records the verified result. Dry runs report needed changes without writing settings. Dependabot PRs use the same head checks, reviews, holds, and receipts as other PRs. A settings error is reported and retried without holding otherwise mergeable fixes.
+
+The timer inventory owns release-slot policy: a `slot` field after an instance marks a repository whose default merge deploys. On those repositories, a bot-authored PR receives `hold` on first sight and whenever its head changes; any earlier grant is cleared. An operator must grant that revision a slot with `release-slot-granted` and remove `hold` before the normal gate can merge it. The reviewed head is persisted per PR. Every slot hold is recorded in the existing decision log. Dry runs make no label changes. Manual invocations read the same inventory.
 
 ```bash
 # Install or add a repo: link the template from the durable checkout, then enable one timer per line.
 ln -sf ~/code/dotfiles/host/agents/merge-on-green@.service ~/code/dotfiles/host/agents/merge-on-green@.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-grep -v '^#' ~/code/dotfiles/host/agents/merge-on-green.repos | while read -r i; do systemctl --user enable --now "merge-on-green@$i.timer"; done
+grep -v '^#' ~/code/dotfiles/host/agents/merge-on-green.repos | while read -r i policy; do systemctl --user enable --now "merge-on-green@$i.timer"; done
 merge-on-green --repo tangle-network/gtm-agent --base master --state-dir /tmp/mog-dry --dry-run   # what one repo would do
 cat ~/.local/state/merge-on-green-org/*/status.md                                                   # what each open PR waits on
 ```
@@ -333,6 +338,31 @@ beelink-gate --no-install beelink2 git@github.com:owner/repo.git <full-sha> -- n
 ```
 
 The command streams output and a receipt with the SHA, command, exit code, and duration.
+`beelink-gate --report 24` reads both hosts' records and current process/cgroup
+CPU samples. Add `--json` for per-gate wait, wall and phase timings, sample
+coverage, runnable threads and cgroup quotas; add `--since <UTC timestamp>` for
+an after cohort. Timing percentiles use nearest rank and select completed,
+admitted gates by inferred submission time (receipt finish minus wall and
+cumulative admission wait), separately by repo and gate class. Passed-only
+figures and exclusions remain visible. Pending gates and time before recorded
+remote waiting are not in those percentiles. A missing host is partial, never
+zero. CPU samples are current observations; cgroup rows overlap and must not
+be summed. Process accounting excludes short-lived tasks, with coverage and
+unattributed CPU reported.
+
+Receipts measure frozen installation separately. A compound gate command can
+record its own typecheck/test spans in `$BEELINK_GATE_PHASE_FILE`: append one
+line `typecheck <start> <end>` or `tests <start> <end>`, with both times from
+the same monotonic clock in seconds. Parallel spans are unioned per phase;
+they are nested in command time, not extra wall time. These are caller-declared
+phases, not an inference from a command's spelling. Missing historical or
+unreported phases stay null, rather than becoming zero. Fetch and cleanup
+timings are also retained. Cache pruning records its tree-walk count; it measures
+after sparse maintenance and again after each eviction. The removed pre-sparse
+size is reported as unmeasured. Reporting lives in `beelink_gate_report.py`, timing
+populations in `beelink_gate_metrics.py`, and the bounded read-only CPU sample
+in `beelink_gate_cpu.py`; the shell owns transport and execution.
+
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen

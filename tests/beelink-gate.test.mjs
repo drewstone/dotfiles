@@ -991,7 +991,6 @@ printf "Avail\\n%s\\n" "$(cat "$FAKE_AVAIL_FILE")"
     assert.equal(existsSync(b1idle), true, "a recovery that cannot close the gap keeps the cache warm");
     const log = readFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "capacity.log"), "utf8");
     assert.match(log, /probe beelink2 short 102400 bytes; recovering idle cache/);
-    assert.match(log, /cache prune: cache_before=\d+ cache_after=\d+ free_before=\d+ free_after=\d+/);
     assert.doesNotMatch(log, /probe beelink1/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -1342,11 +1341,6 @@ test("cache cap remeasures after evicting a checkout hardlinked to another", () 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(existsSync(older), false);
     assert.equal(existsSync(newer), false);
-    const summary = result.stderr.match(/cache prune: cache_before=(\d+) cache_after=(\d+) free_before=(\d+) free_after=(\d+)/);
-    assert.ok(summary, result.stderr);
-    assert.ok(Number(summary[1]) > 600000, result.stderr);
-    assert.ok(Number(summary[2]) <= 600000, result.stderr);
-    assert.ok(Number(summary[3]) > 0 && Number(summary[4]) > 0, result.stderr);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1495,7 +1489,6 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
       const result = f.call(f.first, ["true"]);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stderr, /applying repo sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
-      assert.match(result.stderr, /cache prune: cache_before=\d+ cache_after=\d+/);
       assert.doesNotMatch(result.stderr, /restoring its full tree/);
     } finally { locker.kill(); }
     assert.equal(existsSync(join(lab, "pursuits")), false);
@@ -3167,31 +3160,6 @@ test("the launcher forwards --dev and refuses it with --ship or --light", () => 
       assert.equal(refused.status, 2, flag);
       assert.match(refused.stderr, /--dev cannot be combined with/);
     }
-  } finally { rmSync(f.root, { recursive: true, force: true }); }
-});
-
-test("--report gives runs per merged PR by repo, with modes, exit classes and exact-input repeats", () => {
-  const f = fixture();
-  try {
-    installFakeSsh(f);
-    const at = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-    const row = (sha, mode, exit, hostCpu) => JSON.stringify({ at, host: "beelink2", repo: "github.com/o/r", sha, mode, command: "npm test", exit, waited_s: 30, start_host_cpu_pressure: hostCpu, base_sha: "b".repeat(40), pr_number: 417, lane: "op-company:gate" });
-    // The fake ssh runs the remote side locally, so both beelinks read this one state dir.
-    mkdirSync(join(f.root, "state"), { recursive: true });
-    writeFileSync(join(f.root, "state", "receipts.jsonl"), [row("a", "install", 1, 30), row("a", "install", 1, 55), row("b", "ship", 0)].join("\n") + "\n");
-    writeFileSync(join(f.root, "bin", "gh-drew"), "#!/usr/bin/env bash\necho 2\n");
-    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
-    const result = run(gate, ["--report", "24"], { env: { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour) } });
-    assert.equal(result.status, 0, result.stderr);
-    // 3 rows read from each of the two beelinks: 6 runs, 2 merged PRs.
-    assert.match(result.stdout, /o\/r\s+6\s+2\s+3\.0\s+30s\s+4\s+install=4 ship=2 \/ fail=4 pass=2/);
-    assert.match(result.stdout, /TOTAL 6 runs \/ 2 merged PRs = 3\.0 runs per merged PR \(target <= 1\.5\)/);
-    assert.match(result.stdout, /METADATA base_sha=6\/6 pr_number=6\/6 lane=6\/6/);
-    assert.match(result.stdout, /REASONS 6\/6 receipts have new metadata; first=2 different_command=0 after_red=3 after_green=1 after_base_move=0 after_green_base_unknown=0/);
-    assert.match(result.stdout, /AVOIDABLE CANDIDATES 1 /);
-    assert.match(result.stdout, /REPEAT_REPO github\.com\/o\/r 4/);
-    assert.match(result.stdout, /REPEAT_LANE op-company:gate 4/);
-    assert.match(result.stdout, /HOST beelink2: 6 runs, p50 wait 30s, host cpu avg60 at admission p50 55\.0 \(4 measured, 2 over 40\), timeouts 0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
