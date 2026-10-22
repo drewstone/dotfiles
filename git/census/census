@@ -163,11 +163,16 @@ def remember(file, value):
             shutil.rmtree(os.path.join(root, old), ignore_errors=True)
     for old in os.listdir(os.path.dirname(file)):
         path = os.path.join(os.path.dirname(file), old)
-        if time.time() - os.path.getmtime(path) > 30 * 86400:
-            os.remove(path)
-    with open(file + ".tmp", "w") as f:
+        try:
+            if time.time() - os.path.getmtime(path) > 30 * 86400:
+                os.remove(path)
+        except FileNotFoundError:
+            pass
+    # A private temporary name: two runs measuring the same tree at once both write, and either result is the same.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(file), suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
         json.dump(value, f)
-    os.replace(file + ".tmp", file)
+    os.replace(tmp, file)
 
 
 def measure(checkout, rev):
@@ -203,7 +208,7 @@ def measure(checkout, rev):
                   "fns_over_150": sum(s > 150 for s in spans), "fns_over_500": sum(s > 500 for s in spans),
                   "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2), "exported_names": len(defs),
                   "dup_pct": round(100 * dup / max(normalized, 1), 2)})
-        lists.update({"fns_over_300": [f for f in fn["fns"] if f[0] > C.FUNCTION_LIMIT],
+        lists.update({"fns_over_150": [f for f in fn["fns"] if f[0] > 150],
                       "hug_fns": [f for f in fn["fns"] if lo <= f[0] <= hi],
                       "classes_over_40": [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS], "stale_doc_refs": stale,
                       "dup_exports": {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}})

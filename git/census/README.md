@@ -17,7 +17,7 @@ so a number means the same thing wherever it is read.
 ## Commands
 
 ```bash
-census measure <checkout> <rev>          # one repo's metrics at a revision, as JSON, with the lists behind them
+census measure <checkout> <rev>          # one repo's metrics at a revision, as JSON, with the lists behind them (functions over 150, hugging files and functions, classes over 40, stale paths, duplicate exports)
 census floors <checkout> <base> <head> --floor lines --floor copies --floor god --floor hug --floor confusion \
   [--peer agent-runtime=/home/drew/code/agent-runtime:origin/main]
 census xrepo name=checkout:rev ...        # exported names in 2+ repos and blocks copied across repos
