@@ -82,8 +82,10 @@ def main():
     # Compare declarations, not changed text: literals/comments cannot introduce exports, and an initializer edit
     # leaves the same declaration in place. During a merge either parent's declaration is already established.
     parents = ["HEAD"]
-    if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:
-        parents.append("MERGE_HEAD")
+    merge_heads = git("rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
+    if os.path.isfile(merge_heads):
+        with open(merge_heads) as refs:
+            parents.extend(ref.strip() for ref in refs if ref.strip())
     texts = blobs([f":{p}" for p in changed])
     texts.update(blobs([f"{ref}:{p}" for ref in parents for p in changed], missing=True))
     found = declarations(texts)

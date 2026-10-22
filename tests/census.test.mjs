@@ -455,14 +455,18 @@ test("export ratchet uses staged owners, permits edits and moves, and checks spa
   assert.equal(check().status, 0, "removing the indexed owner leaves one implementation");
 });
 
-test("export ratchet accepts incoming parent declarations while refusing new merge duplicates", () => {
+test("export ratchet accepts every octopus merge parent while refusing new merge duplicates", () => {
   const { dir, git } = repo({ "src/owner.ts": "export const shared = 1;\n" });
   git("checkout", "-qb", "incoming");
   write(dir, { "src/incoming.ts": "export const shared = 2;\n" });
   git("add", "-A");
   git("commit", "-qm", "incoming declaration");
+  git("checkout", "-qb", "second", "main");
+  write(dir, { "src/second.ts": "export const shared = 3;\n" });
+  git("add", "-A");
+  git("commit", "-qm", "second parent declaration");
   git("checkout", "-q", "main");
-  git("merge", "--no-ff", "--no-commit", "incoming");
+  git("merge", "--no-ff", "--no-commit", "incoming", "second");
   assert.equal(run(dir, join(hooks, "dup-export-ratchet"), []).status, 0);
   write(dir, { "src/new.ts": "export const shared = 3;\n" });
   git("add", "src/new.ts");
