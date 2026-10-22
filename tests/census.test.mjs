@@ -398,7 +398,8 @@ test("AST export census and staged hook ignore declaration text in literals, com
 });
 
 test("all direct exported variable bindings and their source positions reach both CLI consumers", () => {
-  const { dir, git } = repo({ "src/owner.ts": "export const \\u006cater = 0;\nexport const renamed = 0;\n" });
+  const { dir, git } = repo({ "src/owner.ts": "export const renamed = 0;\n",
+    "src/escaped.ts": "export const \\u006cater = 0;\n" });
   const text = "export const first = 1, later = 2;\nexport let { key: renamed, nested: [leaf, , ...tail] } = value;\n" +
     "export var legacyVar = 0;\nexport default function namedDefault() {}\nexport function GET() {}\n";
   write(dir, { "src/bindings.ts": text });
@@ -407,7 +408,7 @@ test("all direct exported variable bindings and their source positions reach bot
   assert.equal(measured.status, 0, measured.stderr);
   const result = JSON.parse(measured.stdout);
   assert.equal(result.metrics.exported_names, 6);
-  assert.deepEqual(result.lists.dup_exports, { later: ["src/bindings.ts", "src/owner.ts"],
+  assert.deepEqual(result.lists.dup_exports, { later: ["src/bindings.ts", "src/escaped.ts"],
     renamed: ["src/bindings.ts", "src/owner.ts"] });
   const refused = run(dir, join(hooks, "dup-export-ratchet"), []);
   assert.equal(refused.status, 1, refused.stderr);
