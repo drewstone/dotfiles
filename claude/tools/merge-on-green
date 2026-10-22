@@ -144,17 +144,19 @@ PAUSE_VAR = "MERGE_ON_GREEN_PAUSED"
 ALLOW_LABEL = "release-critical"
 ALLOWLIST = f"PRs labelled {ALLOW_LABEL} (version PRs stay with release.yml)"
 
-QUERY = """query($owner:String!,$name:String!,$base:String!,$ref:String!){rateLimit{cost remaining resetAt}
+QUERY = """query($owner:String!,$name:String!,$base:String!,$ref:String!,$page:Int!){rateLimit{cost remaining resetAt}
 repository(owner:$owner,name:$name){mergeCommitAllowed squashMergeAllowed
 ref(qualifiedName:$ref){target{oid}}
-pullRequests(states:OPEN,baseRefName:$base,first:%d,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
+pullRequests(states:OPEN,baseRefName:$base,first:$page,orderBy:{field:CREATED_AT,direction:ASC}){nodes{
 number isDraft mergeable isCrossRepository headRefName headRefOid updatedAt body author{__typename login} labels(first:20){nodes{name}}
 commits(last:1){nodes{commit{committedDate checkSuites(first:20){nodes{createdAt}} statusCheckRollup{contexts(first:100){nodes{__typename
 ...on CheckRun{name conclusion status completedAt} ...on StatusContext{context state}}}}}}}
 reviews(last:1){nodes{updatedAt}}
 comments(first:100){nodes{id updatedAt}}
 reviewThreads(first:100){nodes{id isResolved isOutdated
-comments(first:1){totalCount nodes{id updatedAt}}}}}}}}""" % PAGE
+comments(first:1){totalCount nodes{id updatedAt}}}}}}}}"""
+QUEUE_COUNT = """query($owner:String!,$name:String!,$base:String!){rateLimit{cost remaining resetAt}
+repository(owner:$owner,name:$name){pullRequests(states:OPEN,baseRefName:$base){totalCount}}}"""
 # A merged PR keeps the head it merged on (headRefOid); headRef is the branch as it is now.
 MERGED = """query($owner:String!,$name:String!,$base:String!){rateLimit{cost remaining resetAt}
 repository(owner:$owner,name:$name){pullRequests(states:MERGED,baseRefName:$base,first:%d,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
@@ -582,12 +584,19 @@ def main():
 
 def unchanged(a, owner, name, now):
     """True when --probe shows the queue as the last full read left it, so this tick can skip that read."""
+    a.probe_count = None
     r = gh("api", "graphql", "-f", f"query={PROBE}", "-f", f"owner={owner}", "-f", f"name={name}",
            "-f", f"base={a.base}", "-f", f"ref=refs/heads/{a.base}", via="gh-read")
     if r.returncode != 0:
         return False
-    repo = (json.loads(r.stdout).get("data") or {}).get("repository") or {}
-    prs = (repo.get("pullRequests") or {}).get("nodes") or []
+    answer = json.loads(r.stdout)
+    repo = (answer.get("data") or {}).get("repository")
+    if answer.get("errors") or not isinstance(repo, dict):
+        return False
+    prs = (repo.get("pullRequests") or {}).get("nodes")
+    if not isinstance(prs, list):
+        return False
+    a.probe_count = len(prs)
     seen = hashlib.sha256(json.dumps([repo.get("ref"), prs], sort_keys=True).encode()).hexdigest()
     path = os.path.join(a.state_dir, "probe.json")
     last = _github.GitHub.read(Path(path))
@@ -600,13 +609,30 @@ def unchanged(a, owner, name, now):
     return False
 
 
+def queue_page(a, owner, name):
+    """Bound expensive nested metadata by this tick's observed open queue, preserving its configured cap."""
+    count = getattr(a, 'probe_count', None) if a.probe else None
+    if count is None:
+        r = gh('api', 'graphql', '-f', f'query={QUEUE_COUNT}', '-f', f'owner={owner}',
+               '-f', f'name={name}', '-f', f'base={a.base}', via='gh-read')
+        answer = json.loads(r.stdout) if r.returncode == 0 else {}
+        repo = (answer.get('data') or {}).get('repository')
+        if answer.get('errors') or not isinstance(repo, dict):
+            raise RuntimeError('open queue count failed; retry next tick')
+        connection = repo.get('pullRequests')
+        count = connection.get('totalCount') if isinstance(connection, dict) else None
+        if type(count) is not int or count < 0:
+            raise RuntimeError('open queue count failed; retry next tick')
+    return min(PAGE, max(1, count))
+
+
 def tick(a, owner, name):
     if a.probe and unchanged(a, owner, name, dt.datetime.now(dt.timezone.utc).timestamp()):
         return 0
     # This read is a GraphQL query every 2 minutes; on
     # drewstone it starved the merges and every lane's gh-drew, so tangletools' gh-read pays for it.
     r = gh("api", "graphql", "-f", f"query={QUERY}", "-f", f"owner={owner}", "-f", f"name={name}",
-           "-f", f"base={a.base}", "-f", f"ref=refs/heads/{a.base}", via="gh-read")
+           "-f", f"base={a.base}", "-f", f"ref=refs/heads/{a.base}", "-F", f"page={queue_page(a, owner, name)}", via="gh-read")
     if r.returncode != 0:
         print(f"merge-on-green: read failed: {r.stderr.strip()[:200]}", file=sys.stderr)
         return 1
