@@ -25,16 +25,6 @@ set_global() {
 }
 set_global core.hooksPath "$GLOBAL_HOOKS_DIR"
 set_global init.templateDir "$TEMPLATE_DIR"
-# A ref left after its branch was deleted upstream misleads every tool that
-# reads remote-tracking refs, so fetches prune them. A locked global config
-# (gtr's ~/.gitconfig is immutable) gets it in the XDG config, which Git reads
-# too while ~/.gitconfig does not set it.
-if ! set_global fetch.prune true 2>/dev/null; then
-  xdg_config="${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
-  mkdir -p "$(dirname "$xdg_config")"
-  git config --file "$xdg_config" fetch.prune true
-  echo "  set fetch.prune=true in $xdg_config (the global config is not writable)"
-fi
 
 # Agent artifact dirs show up in every repo we touch, so ignore them once here
 # rather than editing each repo's .gitignore. A repo's own .gitignore still
