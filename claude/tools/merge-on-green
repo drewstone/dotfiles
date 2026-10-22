@@ -35,6 +35,15 @@ repo variable MERGE_ON_GREEN_PAUSED="<until UTC ISO> [reason]", read once per
 pass. Each ends on its own at its until; a variable also ends 120 minutes after
 it was last set. While paused the pass runs and logs one line per skipped PR.
 
+Each pass also reads the PRs merged into the base in the last 6 hours. A branch that moved after its
+PR merged, with no open PR on it, holds commits the base never got. The pass opens one follow-up PR
+from that branch (title "<title> (commits pushed after #N merged)"), which merges like any other PR,
+and comments on #N. `git cherry` in the merge mirror drops each commit the base reaches or already
+carries as an equal patch (a cherry-pick in another PR), and a head a later merged PR carries is
+skipped. Each (PR, head) is judged once, recorded in <state-dir>/stranded.json. On 2026-10-22 two fixes were pushed after their
+PRs merged and reached the base only by hand: #13426's cascade guard (#13437) and #13395's cold
+classes (#13443).
+
 Each decision is appended to <state-dir>/decisions.jsonl and the open queue is
 written to <state-dir>/status.md. Run it from a timer; it holds a lock.
 """
@@ -122,6 +131,12 @@ reviews(last:1){nodes{updatedAt}}
 comments(first:100){nodes{id updatedAt}}
 reviewThreads(first:100){nodes{id isResolved isOutdated
 comments(first:1){totalCount nodes{id updatedAt}}}}}}}}""" % PAGE
+# A merged PR keeps the head it merged on (headRefOid); headRef is the branch as it is now.
+MERGED = """query($owner:String!,$name:String!,$base:String!){rateLimit{cost remaining resetAt}
+repository(owner:$owner,name:$name){pullRequests(states:MERGED,baseRefName:$base,first:%d,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
+number title mergedAt isCrossRepository headRefName headRefOid
+headRef{target{oid} associatedPullRequests(states:OPEN,first:5){nodes{number}}}}}}}""" % PAGE
+STRANDED_WINDOW_S = 6 * 3600
 
 
 def gh(*args, input=None, via="gh-drew", env=None):
@@ -286,6 +301,17 @@ def decide(pr, now):
     return "merge", "green" + (" (advisory red: " + ", ".join(advisory[:3]) + ")" if advisory else "")
 
 
+def mirror(a):
+    """A git runner for the repo's blob-less bare mirror in the state dir, cloned on first use; or (None, why)."""
+    path = os.path.join(a.state_dir, "mirror.git")
+    if not os.path.isdir(path):
+        c = subprocess.run(["git", "clone", "--quiet", "--bare", "--filter=blob:none", a.git_url, path],
+                           capture_output=True, text=True)
+        if c.returncode != 0:
+            return None, "mirror clone failed: " + c.stderr.strip()[:120]
+    return (lambda *args: subprocess.run(["git", "-C", path, *args], capture_output=True, text=True)), ""
+
+
 def merge_base_with_attributes(a, pr):
     """Merge the base into a same-repo PR branch the way local git does, honoring .gitattributes.
 
@@ -293,13 +319,9 @@ def merge_base_with_attributes(a, pr):
     worktree or install; the push is a fast-forward of the judged head, so a branch that
     moved since is refused rather than overwritten.
     """
-    mirror = os.path.join(a.state_dir, "mirror.git")
-    git = lambda *args: subprocess.run(["git", "-C", mirror, *args], capture_output=True, text=True)
-    if not os.path.isdir(mirror):
-        c = subprocess.run(["git", "clone", "--quiet", "--bare", "--filter=blob:none", a.git_url, mirror],
-                           capture_output=True, text=True)
-        if c.returncode != 0:
-            return None, "mirror clone failed: " + c.stderr.strip()[:120]
+    git, why = mirror(a)
+    if not git:
+        return None, why
     branch, head = pr["headRefName"], pr["headRefOid"]
     f = git("fetch", "--quiet", "origin", f"+refs/heads/{a.base}:refs/heads/{a.base}", f"+refs/heads/{branch}:refs/pr-head")
     if f.returncode != 0:
@@ -340,6 +362,89 @@ def head_to_green_s(pr):
     suites = [parse(x["createdAt"]) for x in ((commit.get("checkSuites") or {}).get("nodes") or []) if x.get("createdAt")]
     start = max(parse(commit["committedDate"]), min(suites)) if suites else parse(commit["committedDate"])
     return int((max(map(parse, done)) - start).total_seconds())
+
+
+def stranded_commits(a, n, branch, merged_head, current, merged_heads):
+    """Return (commits, why): the (sha, subject) pairs pushed to a merged PR's branch whose change the base lacks.
+
+    `git cherry` drops a commit the base reaches and marks one whose patch the base already carries:
+    on 2026-10-22 the late commits on #13407's and #13395's branches reached develop as cherry-picks
+    in new PRs from other branches (#13436, #13443), and are not stranded.
+    """
+    if current in merged_heads:
+        return None, "a later merged PR carries this head"
+    git, why = mirror(a)
+    if not git:
+        return None, why
+    f = git("fetch", "--quiet", "origin", f"+refs/heads/{a.base}:refs/heads/{a.base}",
+            f"+refs/heads/{branch}:refs/stranded-head", f"+refs/pull/{n}/head:refs/stranded-merged")
+    if f.returncode != 0:
+        return None, "fetch failed: " + f.stderr.strip()[:120]
+    if git("rev-parse", "refs/stranded-head").stdout.strip() != current:
+        return None, "head moved"
+    c = git("cherry", "-v", f"refs/heads/{a.base}", "refs/stranded-head", merged_head)
+    if c.returncode != 0:
+        return None, "cherry failed: " + c.stderr.strip()[:120]
+    commits = [l[2:].partition(" ")[::2] for l in c.stdout.splitlines() if l.startswith("+ ")]
+    return (commits, "stranded") if commits else (None, f"already in {a.base}")
+
+
+def stranded_pass(a, owner, name, now, records):
+    """Open one follow-up PR for each branch that got commits after its PR merged into the base."""
+    r = gh("api", "graphql", "-f", f"query={MERGED}", "-f", f"owner={owner}", "-f", f"name={name}",
+           "-f", f"base={a.base}", via="gh-read")
+    answer = json.loads(r.stdout) if r.returncode == 0 else {}
+    if answer.get("errors") or not answer.get("data"):
+        print(f"merge-on-green: stranded check: read failed: {(r.stderr.strip() or str(answer.get('errors')))[:160]}", file=sys.stderr)
+        return
+    prs = [p for p in answer["data"]["repository"]["pullRequests"]["nodes"]
+           if (now - utc(p["mergedAt"])).total_seconds() <= STRANDED_WINDOW_S]
+    path = os.path.join(a.state_dir, "stranded.json")
+    # (PR, head) -> follow-up URL, or why nothing was stranded: the base only grows, so the answer holds.
+    judged = _github.GitHub.read(Path(path))
+    merged_heads = {p["headRefOid"] for p in prs}
+    stamp, found = now.strftime("%Y-%m-%dT%H:%M:%SZ"), 0
+    for pr in prs:
+        n, branch, ref = pr["number"], pr["headRefName"], pr.get("headRef")
+        # A deleted branch, a fork, a release branch, or a branch reused by an open PR strands nothing here.
+        if not ref or pr["isCrossRepository"] or branch.startswith(RELEASE_PREFIXES) or ref["associatedPullRequests"]["nodes"]:
+            continue
+        current = ref["target"]["oid"]
+        key = f"{n}@{current}"
+        if current == pr["headRefOid"] or key in judged:
+            continue
+        commits, why = stranded_commits(a, n, branch, pr["headRefOid"], current, merged_heads)
+        if not commits:
+            if " failed" in why:
+                print(f"merge-on-green: stranded check #{n}: {why}", file=sys.stderr)
+            elif why != "head moved" and not a.dry_run:
+                judged[key] = why
+                _github.save(path, judged)
+            continue
+        found += 1
+        listed = "\n".join(f"- {sha[:10]} {subject}" for sha, subject in commits)
+        outcome = f"stranded: {len(commits)} commit(s) pushed to {branch} after #{n} merged on {pr['headRefOid'][:10]}"
+        if a.dry_run:
+            outcome += "; dry run, would open a follow-up: " + "; ".join(f"{s[:10]} {t[:60]}" for s, t in commits[:5])
+        else:
+            body = (f"#{n} merged at {pr['mergedAt']} on {pr['headRefOid'][:10]}. These commits were pushed to `{branch}` "
+                    f"after that and never reached `{a.base}`:\n\n{listed}\n\n"
+                    "merge-on-green opened this follow-up; it merges like any other PR.")
+            c = gh("pr", "create", "-R", a.repo, "--base", a.base, "--head", branch,
+                   "--title", f"{pr['title']} (commits pushed after #{n} merged)", "--body", body)
+            if c.returncode != 0:
+                outcome += "; follow-up refused: " + (c.stderr.strip() or c.stdout.strip())[:160]
+            else:
+                url = c.stdout.strip().splitlines()[-1]
+                gh("pr", "comment", str(n), "-R", a.repo, "--body",
+                   f"{len(commits)} commit(s) pushed to `{branch}` after this PR merged never reached `{a.base}`:\n\n{listed}\n\nFollow-up: {url}")
+                judged[key] = url
+                _github.save(path, judged)
+                outcome += f"; follow-up {url}"
+            with open(os.path.join(a.state_dir, "decisions.jsonl"), "a") as f:
+                f.write(json.dumps({"at": stamp, "pr": n, "head": current, "action": "stranded", "outcome": outcome}) + "\n")
+        records.append({"at": stamp, "pr": n, "head": current, "action": "stranded", "outcome": outcome})
+    print(f"merge-on-green: stranded check: {len(prs)} merged into {a.base} in the last {STRANDED_WINDOW_S // 3600} h, {found} stranded")
 
 
 def main():
@@ -518,6 +623,8 @@ def tick(a, owner, name):
     if a.probe and not a.dry_run:
         # Saved only after the full read finished, so a failed read is retried on the next tick.
         _github.save(os.path.join(a.state_dir, "probe.json"), {"seen": getattr(a, "probe_seen", ""), "at": now.timestamp()})
+    # After the queue's own decisions are saved, so a failed or rate-limited read here costs no merge.
+    stranded_pass(a, owner, name, now, records)
     for rec in records:
         if rec["action"] == "paused":
             print(f"{stamp} {rec['outcome']}")
