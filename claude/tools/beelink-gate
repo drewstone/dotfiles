@@ -1795,7 +1795,7 @@ PY
   }
 
 remote_gate() {
-  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS
+  unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS BEELINK_GATE_TURBO_REQUESTED_DIR
   [ "$#" -ge 7 ] || die "invalid remote request"
   # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
   # that trap only after unwinding every function, so the state they read is
@@ -2189,7 +2189,7 @@ remote_gate() {
     export BEELINK_GATE_TURBO_OBSERVATIONS="$(python3 - "$checkout/.turbo/runs" <<'PYTURBO'
 import json, math, os, sys
 from pathlib import Path
-result = {"source": "turbo_run_summary", "runs": [], "unreadable": 0}
+result = {"source": "turbo_run_summary", "requested_dir": os.environ.get("BEELINK_GATE_TURBO_REQUESTED_DIR"), "location_source": "gate_environment", "runs": [], "unreadable": 0}
 begin = int(os.environ.get("BEELINK_GATE_COMMAND_STARTED_MS", "0"))
 for path in Path(sys.argv[1]).glob("*.json") if begin else []:
     try:
@@ -2454,9 +2454,9 @@ PYTURBO
     export BEELINK_GATE_INSTALL_S=0
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
-  # Turbo owns content hashes; .git survives clean and remains inside the LRU cap.
-  # Separate script Node versions because a repo need not hash .nvmrc itself.
+  # Keep Turbo hashes inside the LRU cap, separated by actual script Node version.
   export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$checkout/.git/beelink-gate-turbo/${gate_node%% *}}"
+  export BEELINK_GATE_TURBO_REQUESTED_DIR="$TURBO_CACHE_DIR"
   export TURBO_RUN_SUMMARY="${TURBO_RUN_SUMMARY:-true}"
   if [ "$install_mode" != ship ] && [ -d node_modules/.pnpm ]; then
     rebuild_native_addons || exit $?

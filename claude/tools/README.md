@@ -374,6 +374,8 @@ Turbo owns task inputs, outputs and cache policy. The gate enables
 `TURBO_RUN_SUMMARY` unless overridden and snapshots current-command summaries
 before releasing the checkout. Receipts and both report formats expose
 `timing.turbo_cache`: source, run observations and unreadable-summary count.
+The requested directory comes from the gate environment; a command's Turbo
+flags can override it, so this field alone does not establish actual placement.
 Counts describe tasks per invocation, including nested runs, rather than unique
 tasks or passing evidence. An empty or unreadable summary does not prove a check
 ran or passed; the command exit remains authoritative.
