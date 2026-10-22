@@ -380,6 +380,21 @@ It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` 
 locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen
 pnpm or npm install against that user's shared package store.
+Outside `--ship`, Turbo's content-hash cache lives in `.git/beelink-gate-turbo/<script-node-version>`
+and is counted and evicted with the checkout. Target-local `TURBO_CACHE_DIR`
+overrides remain supported, including an explicit `env TURBO_CACHE_DIR=...` in
+the gated command. A launcher's path on another host is not forwarded.
+Ship mode retains its existing install/runtime and cache ownership.
+`node_modules` and generated working-tree outputs are cleaned;
+Turbo owns task inputs, outputs and cache policy. The gate enables
+`TURBO_RUN_SUMMARY` unless overridden and snapshots current-command summaries
+before releasing the checkout. Receipts and both report formats expose
+`timing.turbo_cache`: source, run observations and unreadable-summary count.
+The requested directory comes from the gate environment; a command's Turbo
+flags can override it, so this field alone does not establish actual placement.
+Counts describe tasks per invocation, including nested runs, rather than unique
+tasks or passing evidence. An empty or unreadable summary does not prove a check
+ran or passed; the command exit remains authoritative.
 Use `--no-install` only for dependency-free checks, such as docs content or
 structure checks. The gate still fetches and verifies the exact SHA, and its
 receipt records `install=no-install`.
