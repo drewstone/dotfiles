@@ -385,9 +385,16 @@ test("xrepo JSON retains every name, file pair and located window beyond its leg
   assert.equal(value.top_names.length, 40);
   assert.equal(value.top_cross_file_pairs.length, 25);
   assert.equal(Object.keys(value.cross_repo_shared_windows_by_repo_pair).length, 20);
+  const repoPairs = peers.flatMap((a, i) => peers.slice(i + 1).map((b) => [a.name, b.name]));
+  assert.deepEqual(value.top_names, Array.from({ length: 40 }, (_, i) =>
+    [`name${i}`, Object.fromEntries(peers.map(({ name }) => [name, 1]))]));
+  assert.deepEqual(value.top_cross_file_pairs, Array.from({ length: 30 }, (_, file) => `src/shared-${file}.ts`).sort()
+    .flatMap((path) => repoPairs.map(([a, b]) => [12, `${a}/${path}`, `${b}/${path}`])).slice(0, 25));
+  assert.deepEqual(value.cross_repo_shared_windows_by_repo_pair,
+    Object.fromEntries(repoPairs.slice(0, 20).map(([a, b]) => [`${a}~${b}`, a === "peer0" && b === "peer1" ? 92 : 90])));
   assert.equal(Object.keys(value.lists?.names ?? {}).length, 50, "full name inventory must survive the 40-name preview");
   assert.equal(Object.keys(value.lists.repo_pairs).length, 21);
-  assert.equal(value.lists.cross_file_pairs.length, 631, "all 30 pairs across 21 repository pairs, plus the disconnected copy");
+  assert.equal(value.lists.cross_file_pairs.length, 631, "all 30 shared files across 21 repository pairs, plus the disconnected copy");
   assert.equal(Object.keys(value.lists.windows).length, 92);
   assert.equal(Object.values(value.lists.windows).flat().length, 635, "repeated occurrences in one file remain distinct evidence");
   assert.equal(value.window_normalized_lines, 10);
