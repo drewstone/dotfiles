@@ -96,6 +96,26 @@ fi
 set -uo pipefail
 die() { echo "beelink-gate: $*" >&2; exit 2; }
 TEMPFAIL=75
+
+# Resolve installed symlinks here; staging replaces this block with the helper
+# itself so submitted gates depend only on their own immutable source file.
+# BEELINK_GATE_INSTALLER_START
+gate_installer_source=$(python3 -c 'import os,sys; print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), "beelink-gate-lib", "install.sh"))' "${BASH_SOURCE[0]}") || exit $?
+# shellcheck source=beelink-gate-lib/install.sh
+. "$gate_installer_source" || exit $?
+# BEELINK_GATE_INSTALLER_END
+emit_gate_source() {
+  awk -v helper="${gate_installer_source:-}" '
+    $0 == "# BEELINK_GATE_INSTALLER_START" {
+      while ((status = getline line < helper) > 0) print line
+      close(helper)
+      if (status < 0) exit 1
+      skip = 1; next
+    }
+    $0 == "# BEELINK_GATE_INSTALLER_END" { skip = 0; next }
+    !skip { print }
+  ' "$0"
+}
 tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
 tempfail() { tempfail_line "$1" "$2"; exit "$TEMPFAIL"; }
 utc_in_minutes() {
@@ -1392,23 +1412,6 @@ for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
 PY
 }
 
-# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm")
-# and gate_node_bin. pnpm may launch its own Node, so on 2026-10-21 a gate read
-# plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3
-# (ABI 127 vs 137). pnpm exec needs the installed tree; npm uses the PATH node.
-resolve_gate_node() {
-  local probe='process.versions.modules+" "+process.version+" "+process.execPath' out="" via=node
-  if [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
-    out=$(timeout 120 pnpm exec node -p "$probe" </dev/null 2>/dev/null) || out=""
-    out=${out##*$'\n'}
-    if [[ $out =~ ^[0-9]+\ v[0-9] ]]; then via=pnpm; else via="node (pnpm exec failed)" out=""; fi
-  fi
-  [ -n "$out" ] || out=$(node -p "$probe" </dev/null 2>/dev/null) || out=""
-  read -r gate_abi gate_node gate_node_bin <<< "$out"
-  [[ $gate_abi =~ ^[0-9]+$ ]] || gate_abi=""
-  gate_node="${gate_node:-unknown} via $via"
-}
-
 # Rebuild the stale native addons for the gate's Node before the command runs.
 # Each one's build directory is unlinked first: pnpm links build output from its
 # store, and a rebuild in place overwrites the store's shared copy for every
@@ -1434,25 +1437,6 @@ rebuild_native_addons() {
     return 1
   fi
   native_rebuild="${reasons[*]}"
-}
-
-# The pnpm version the repo's own CI installs with: package.json packageManager
-# (what corepack and pnpm/action-setup read), else the version pinned on
-# pnpm/action-setup in a workflow. Only an exact x.y.z is used.
-repo_pnpm_version() {
-  local version
-  version=$(node -e 'const m = /^pnpm@([^+]+)/.exec(require("./package.json").packageManager || ""); if (m) console.log(m[1])' 2>/dev/null)
-  local -a workflows=()
-  local had_nullglob=0
-  shopt -q nullglob && had_nullglob=1
-  shopt -s nullglob; workflows=(.github/workflows/*.yml .github/workflows/*.yaml)
-  [ "$had_nullglob" = 1 ] || shopt -u nullglob
-  if [ -z "$version" ] && [ "${#workflows[@]}" -gt 0 ]; then
-    version=$(awk '/uses:[[:space:]]*pnpm\/action-setup/ { inside = 1; next }
-      inside && /^[[:space:]]*-[[:space:]]/ { inside = 0 }
-      inside && $1 == "version:" { gsub(/["\047]/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
-  fi
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] && echo "$version"
 }
 
 # One line describing the holder of a lock, from the metadata its gate wrote.
@@ -2386,84 +2370,7 @@ remote_gate() {
   export TURBO_CONCURRENCY="${TURBO_CONCURRENCY:-$gate_workers}"
   export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$gate_workers}"
   cd "$checkout" || exit $?
-  # Install and run with the repo's Node (.nvmrc), as its CI does, so the install
-  # and the command load the same native addon ABI. pnpm keys a native package's
-  # build on the Node that installs it: on 2026-10-11 agent-app#1036 installed under
-  # the beelink's default Node 22, its `bash -lc` command ran under nvm's default 24,
-  # and better-sqlite3 failed with "Module did not self-register". With an nvm Node
-  # first on PATH, a login shell keeps it.
-  if [ -s .nvmrc ]; then
-    if [ -s "$HOME/.nvm/nvm.sh" ]; then
-      # shellcheck disable=SC1091
-      . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
-      nvm use >/dev/null 2>&1 || nvm install >/dev/null 2>&1 || die "cannot select Node $(cat .nvmrc) with nvm on $beelink"
-    else
-      die ".nvmrc asks for Node $(cat .nvmrc) and $beelink has no nvm to select it"
-    fi
-  elif [[ "${command[0]##*/}" =~ ^(sh|dash|bash)$ && "${command[1]:-}" =~ ^-[A-Za-z]*l[A-Za-z]*$ && "${command[1]}" == *c* ]]; then
-    # A login-shell command runs under the Node its profile selects (nvm's default, 24, on both Beelinks), while this
-    # unit's PATH starts at /usr/local/bin/node (22). On 2026-10-21 agent-knowledge installed better-sqlite3 for ABI 127
-    # and its `sh -lc` tests ran under 137, three rounds in a row. Install and probe with the login shell's Node.
-    local login_node
-    login_node=$(/usr/bin/bash -lc 'command -v node' </dev/null 2>/dev/null | tail -1)
-    if [ -x "$login_node" ] && [ "$login_node" != "$(command -v node)" ]; then
-      export PATH="${login_node%/*}:$PATH"
-      echo "beelink-gate: using the login shell's node $("$login_node" -v 2>/dev/null) for the install and the command" >&2
-    fi
-  fi
-  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces
-  # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
-  # that CI on 11 refused. The shim covers the install, the command and ship.sh.
-  local want_pnpm have_pnpm
-  if [ -f pnpm-lock.yaml ] && want_pnpm=$(repo_pnpm_version); then
-    have_pnpm=$(pnpm --version 2>/dev/null || true)
-    if [ "$want_pnpm" != "$have_pnpm" ]; then
-      mkdir -p "$checkout/.git/beelink-gate-bin" || exit $?
-      printf '#!/usr/bin/env bash\nexec npx --yes "pnpm@%s" "$@"\n' "$want_pnpm" > "$checkout/.git/beelink-gate-bin/pnpm" || exit $?
-      chmod +x "$checkout/.git/beelink-gate-bin/pnpm" || exit $?
-      export PATH="$checkout/.git/beelink-gate-bin:$PATH"
-      echo "beelink-gate: using the repo's pnpm $want_pnpm (beelink has ${have_pnpm:-none})" >&2
-    fi
-  fi
-  if [ "$install_mode" = ship ]; then
-    [ -f scripts/ship.sh ] || die "--ship: $owner/$repo at ${sha:0:12} has no scripts/ship.sh"
-    # Size the test pool to the cores the host has spare: other gates and lanes
-    # share it, and a real-browser test starved beside eight workers on a host
-    # at load 50 timed out at 120 s.
-    local cores load spare workers
-    cores=$(nproc)
-    load=${BEELINK_GATE_LOAD:-$(cut -d' ' -f1 /proc/loadavg)}
-    spare=$(( cores - ${load%.*} ))
-    workers=${ship_workers:-$spare}
-    (( workers <= cores / 2 )) || workers=$(( cores / 2 ))
-    # Two workers stretched a GTM verify to 15 min at load 23; four keeps most of
-    # the relief now that the real-browser test has a budget sized to load.
-    (( workers >= 4 )) || workers=4
-    if [ "${starved:-0}" = 1 ]; then workers=$(( workers / 2 )); (( workers >= 2 )) || workers=2; fi
-    export SHIP_MAX_WORKERS=$workers
-    resolve_gate_node
-    echo "beelink-gate: --ship runs scripts/ship.sh verify with node $gate_node and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
-  elif [ "$install_mode" = no-install ] || [ "$install_mode" = light ]; then
-    export BEELINK_GATE_INSTALL_S=0
-    echo "beelink-gate: skipping dependency install for this check" >&2
-  elif [ -f pnpm-lock.yaml ]; then
-    command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
-    install_step pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
-  elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
-    command -v npm >/dev/null || die "npm unavailable on beelink"
-    install_step npm ci --cache "$HOME/.npm" || exit $?
-  elif [ -f package.json ]; then
-    # A dependency-free package needs no install. A package with dependencies
-    # and no lock cannot have a frozen install, so fail the gate.
-    node -e 'const p=require("./package.json"); process.exit(Object.keys(p.dependencies||{}).length || Object.keys(p.devDependencies||{}).length || Object.keys(p.optionalDependencies||{}).length ? 1 : 0)' \
-      || die "package.json has dependencies but no pnpm/npm lockfile"
-    echo "beelink-gate: dependency-free package; no frozen install needed" >&2
-    export BEELINK_GATE_INSTALL_S=0
-  fi
-  [ "$install_mode" = ship ] || resolve_gate_node
-  if [ "$install_mode" != ship ] && [ -d node_modules/.pnpm ]; then
-    rebuild_native_addons || exit $?
-  fi
+  prepare_gate_dependencies || exit $?
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   floor_ok=0
   check_floor "$beelink" || floor_ok=1
@@ -2877,7 +2784,7 @@ on_beelink() {
   heartbeat_input() {
     local sleeper="" include_script=${1:-0}
     trap 'if [ -n "$sleeper" ]; then kill -TERM "$sleeper" 2>/dev/null || true; wait "$sleeper" 2>/dev/null || true; fi; exit 0' TERM INT
-    if [ "$include_script" = 1 ]; then [ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$0"; fi
+    if [ "$include_script" = 1 ]; then [ -z "$args_line" ] || printf '%s\n' "$args_line"; emit_gate_source; fi
     while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
       sleep 5 & sleeper=$!
       wait "$sleeper" || true
@@ -2908,7 +2815,7 @@ on_beelink() {
     stop_heartbeat
   else
     "${transport_prefix[@]}" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- env "${envs[@]}" bash -s -- "${remote_args[@]}" \
-      < <([ -z "$args_line" ] || printf '%s\n' "$args_line"; cat "$0")
+      < <([ -z "$args_line" ] || printf '%s\n' "$args_line"; emit_gate_source)
     rc=$?
   fi
   return "$rc"
@@ -2919,7 +2826,7 @@ stage_job() {
   dir="$STATE_DIR/jobs/$id"
   if [ "$target" = "$SELF" ]; then
     mkdir -p "$STATE_DIR/jobs" && mkdir -m 700 "$dir" || return 1
-    cp -- "$0" "$dir/gate.sh" && chmod 700 "$dir/gate.sh"
+    emit_gate_source > "$dir/gate.sh" && chmod 700 "$dir/gate.sh"
     return $?
   fi
   marker="__BEELINK_GATE_SOURCE_${id//-/_}__"
@@ -2934,7 +2841,7 @@ dir="$root/$id"
 mkdir -m 700 "$dir"
 BOOT
     printf "cat > \"\$dir/gate.sh\" <<'%s'\n" "$marker"
-    cat "$0"
+    emit_gate_source
     printf '\n%s\nchmod 700 "$dir/gate.sh"\n' "$marker"
   } | bounded_transport "$target stage $id" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
 }
