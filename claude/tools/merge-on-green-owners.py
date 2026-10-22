@@ -52,9 +52,7 @@ def pr_owner_notice(root, report, save):
     signature = hashlib.sha256(json.dumps([report['orgs'], urls]).encode()).hexdigest()
     path = root / 'ownership-notice.json'
     prior = json.loads(path.read_text()) if path.exists() else {}
-    if prior.get('sent') == signature or not urls:
-        if not urls:
-            save(path, {'sent': signature})
+    if prior.get('sent') == signature:
         return
     if prior.get('signature') != signature:
         prior = {'signature': signature, 'id': 'mog-owners-' + hashlib.sha256(
@@ -62,8 +60,10 @@ def pr_owner_notice(root, report, save):
         save(path, prior)
     message = (f"merge-on-green ownership: {len(urls)} of {report['actionable']} non-archived PRs aged >=24h lack a trusted "
                f"Owner / Blocker / Next action comment. Target 0. Read {root / 'ownership.md'}; "
-               "read each PR fully, close with supersession proof or hand to a live owner via PR + inbox. "
+               + ("Read each PR fully, close with supersession proof or hand to a live owner via PR + inbox. "
+                  if urls else "No actionable ownership breach remains. ") +
                f"Archived: {len(report['archived'])} read-only PRs listed separately; no action. "
+               f"Strict unassigned: {len(report['unassigned'])} / {report['aged']} total aged. "
                "No hold removal or merge is authorized by this alert.\n" + '\n'.join(urls[:10]))
     sent = subprocess.run(['fleet', 'send', '--id', prior['id'], '--enqueue', 'op-company:pr-closer', message],
                           capture_output=True, text=True, timeout=30)
