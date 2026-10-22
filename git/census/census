@@ -60,7 +60,7 @@ def tree_of(checkout, rev):
         env = dict(os.environ, GIT_INDEX_FILE=os.path.join(scratch, "index"))
         if os.path.exists(index):
             shutil.copyfile(index, env["GIT_INDEX_FILE"])
-        git(checkout, "add", "-A", env=env)
+        git(checkout, "add", "-A", "--sparse", env=env)
         return git(checkout, "write-tree", env=env).decode().strip()
 
 
@@ -178,9 +178,11 @@ def remember(file, value):
 def measure(checkout, rev):
     tree = tree_of(checkout, rev)
     cached = cache_file(tree)
-    if os.path.exists(cached):
+    try:
         return {**json.load(open(cached)), "rev": rev}
-    paths = git(checkout, "ls-tree", "-r", "-z", "--name-only", tree).decode().split("\0")[:-1]
+    except (OSError, ValueError):
+        pass  # absent or unreadable: measure again
+    paths = git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1]
     logic = [p for p in paths if C.logic(p)]
     source = [p for p in paths if C.source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
@@ -194,23 +196,29 @@ def measure(checkout, rev):
          "hug_files": sum(lo <= n <= hi for n in sizes.values()), "logic_files": len(sizes)}
     lists = {"files_over_1000": sorted(([n, p] for p, n in sizes.items() if n > C.FILE_LIMIT), reverse=True),
              "hug_files": sorted(([n, p] for p, n in sizes.items() if lo <= n <= hi), reverse=True)}
+    stale = stale_refs(set(paths), {p: blobs[p].decode(errors="replace") for p in docs})
+    m["stale_doc_refs"] = len(stale)
+    lists["stale_doc_refs"] = stale
+    # A repo with no TypeScript or JavaScript has none of these: a measured 0 from a complete tree listing. A source
+    # file that cannot be read or parsed still refuses.
+    m.update({k: 0 for k in ("fns_over_300", "hug_fns", "classes_over_40", "dup_lines", "dup_exports", "fns_over_150",
+                             "fns_over_500", "mean_fn_lines", "exported_names", "dup_pct")})
     if source:
         texts = {p: blobs[p].decode(errors="replace") for p in source}
         fn = functions(checkout, tree)
         spans = [f[0] for f in fn["fns"]]
         lo, hi = C.FUNCTION_HUG
         dup, normalized = duplicated(texts)
-        stale = stale_refs(set(paths), {p: blobs[p].decode(errors="replace") for p in docs})
         defs = exports(texts)
         m.update({"fns_over_300": sum(s > C.FUNCTION_LIMIT for s in spans), "hug_fns": sum(lo <= s <= hi for s in spans),
                   "classes_over_40": sum(c[0] > C.CLASS_MEMBERS for c in fn["classes"]), "dup_lines": dup,
-                  "stale_doc_refs": len(stale), "dup_exports": sum(len(f) > 1 for f in defs.values()),
+                  "dup_exports": sum(len(f) > 1 for f in defs.values()),
                   "fns_over_150": sum(s > 150 for s in spans), "fns_over_500": sum(s > 500 for s in spans),
                   "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2), "exported_names": len(defs),
                   "dup_pct": round(100 * dup / max(normalized, 1), 2)})
         lists.update({"fns_over_150": [f for f in fn["fns"] if f[0] > 150],
                       "hug_fns": [f for f in fn["fns"] if lo <= f[0] <= hi],
-                      "classes_over_40": [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS], "stale_doc_refs": stale,
+                      "classes_over_40": [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS],
                       "dup_exports": {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}})
     result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "docs": len(docs)},
               "metrics": m, "lists": lists}
@@ -220,7 +228,7 @@ def measure(checkout, rev):
 
 def window_set(checkout, rev):
     tree = tree_of(checkout, rev)
-    paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
+    paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
     if not paths:
         raise Refused(f"read 0 source files at {rev} in {checkout}")
     return {h for b in read_blobs(checkout, tree, paths).values() for h in windows(b.decode(errors="replace"))}
@@ -241,9 +249,13 @@ def floors(checkout, base, head, names, peers):
             shared = set().union(*(window_set(c, r) for _, c, r in map(peer, peers)))
             before["metrics"]["xrepo_windows"] = len(window_set(checkout, before["tree"]) & shared)
             after["metrics"]["xrepo_windows"] = len(window_set(checkout, after["tree"]) & shared)
+        elif "xrepo_windows" in names:
+            raise Refused("xrepo_windows needs a --peer to measure against")
         else:
             wanted.remove("xrepo_windows")
             notes.append("xrepo_windows: not measured, no --peer named")
+    if not wanted:
+        raise Refused(f"no metric to compare for --floor {' '.join(names)}")
     rows, refused, unmeasured = [], [], []
     for metric in wanted:
         b, h = before["metrics"].get(metric), after["metrics"].get(metric)
@@ -273,7 +285,7 @@ def xrepo(specs):
     files = {}
     for name, checkout, rev in map(peer, specs):
         tree = tree_of(checkout, rev)
-        paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
+        paths = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.source(p)]
         if not paths:
             raise Refused(f"read 0 source files in {name} at {rev}")
         files[name] = len(paths)
@@ -301,7 +313,7 @@ def xrepo(specs):
 
 def files(checkout, rev):
     tree = tree_of(checkout, rev)
-    logic = [p for p in git(checkout, "ls-tree", "-r", "-z", "--name-only", tree).decode().split("\0")[:-1] if C.logic(p)]
+    logic = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.logic(p)]
     blobs = read_blobs(checkout, tree, logic)
     exempt = attr_exempt(checkout, tree, logic) | {p for p in logic if C.generated(blobs[p][:2000].decode(errors="replace"))}
     return "".join(f"{p}\t{C.line_count(blobs[p])}\t{'exempt' if p in exempt else 'logic'}\n" for p in logic)
@@ -323,7 +335,7 @@ def main(argv):
         if command == "files" and len(plain) == 2:
             sys.stdout.write(files(*plain))
             return 0
-    except Refused as why:
+    except Exception as why:  # Refused, or anything else: never exit 1, which callers read as a refused floor
         sys.stdout.flush()
         print(f"CENSUS REFUSED: {why}", file=sys.stderr)
         return 2

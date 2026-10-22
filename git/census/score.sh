@@ -11,6 +11,7 @@ cp "$D/files.tsv" "$D/files.prev.tsv" 2>/dev/null
 # Each core repo's metrics at its default branch: god functions and classes, duplication, stale doc paths, duplicate exports.
 for spec in "agent-container /home/drew/code/adc-t09-rebase origin/develop" "agent-runtime /home/drew/code/agent-runtime origin/main" "agent-eval /home/drew/code/agent-eval origin/main" "tangle-router /home/drew/code/tangle-router origin/main"; do
   set -- $spec; git -C "$2" fetch -q origin 2>/dev/null
+  rm -f "$D/measure-$1.json"  # a refused or timed-out measure leaves no stale row behind
   timeout 1500 "$here/census" measure "$2" "$3" > "$D/measure-$1.json.tmp" 2>/dev/null && mv "$D/measure-$1.json.tmp" "$D/measure-$1.json"
 done
 # Shared-primitive gap across the focus repos: exported names defined in 2+ repos, code blocks copied across repos.

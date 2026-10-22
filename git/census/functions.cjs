@@ -73,7 +73,7 @@ function main([checkout, tree]) {
   if (!checkout || !tree) { process.stderr.write("usage: functions.cjs <checkout> <tree-ish>\n"); return 2; }
   const ts = loadTs([checkout]);
   if (!ts) { process.stderr.write("functions.cjs: refused: no typescript package (measured repo, ~/.local/share/dotfiles-node or NODE_PATH)\n"); return 2; }
-  const ls = spawnSync("git", ["-C", checkout, "ls-tree", "-r", "-z", "--name-only", tree], { encoding: "utf8", maxBuffer: 1 << 30 });
+  const ls = spawnSync("git", ["-C", checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree], { encoding: "utf8", maxBuffer: 1 << 30 });
   if (ls.status !== 0) { process.stderr.write(`functions.cjs: refused: ${ls.stderr}`); return 2; }
   const paths = ls.stdout.split("\0").filter((p) => SOURCE.test(p) && !SKIP.test(p));
   const blobs = readBlobs(checkout, tree, paths);
