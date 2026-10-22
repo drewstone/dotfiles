@@ -10,18 +10,18 @@ agent-runtime:main
 traces:main
 agent-app:main
 browser-agent-driver:main
-tangle-router:main
-gtm-agent:master
+tangle-router:main slot
+gtm-agent:master slot
 tangle-website:master
 discovery-lab:master
 blueprint-agent:develop
 tangle-tools:main
-creative-agent:master
-tax-agent:main
-legal-agent:main
+creative-agent:master slot
+tax-agent:main slot
+legal-agent:main slot
 hospitality-agent:main
 agent-builder:main
-physim:main
+ph0ny:main slot
 dapp:develop
 docs:main
 blueprint:main
@@ -34,3 +34,26 @@ agent-client:main
 agent-integrations:main
 autoresearch-competitions:main
 agent-docs:main
+protocol-solidity:main slot
+blueprint-template:main
+ai-trading-blueprint:main slot
+blueprint-ui:main
+llm-inference-blueprint:main
+voice-inference-blueprint:master
+modal-inference-blueprint:master
+starter-foundry:main
+tcloud:main
+image-gen-inference-blueprint:main
+embedding-inference-blueprint:main
+video-gen-inference-blueprint:main
+distributed-inference-blueprint:main
+training-blueprint:main
+avatar-inference-blueprint:main
+vector-store-blueprint:main
+hardware-agent:main slot
+inference-bazaar:main slot
+braid:main
+playproof:main
+robotics:main slot
+chatgpt-plugins:main
+charts:main
