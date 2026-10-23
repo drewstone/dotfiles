@@ -2,78 +2,13 @@
 # Host admission policy, bundled into immutable gates. Running commands never
 # recheck this owner: a release hold stops new work and lets admitted work finish.
 release_priority_reason() {
-  python3 - "$(limits_file)" "$1" <<'PYTHON'
-import fnmatch
-import os
-from pathlib import Path
-import stat
-import sys
-import time
-
-limits, host = Path(sys.argv[1]), sys.argv[2]
-def held(reason):
-    print(reason)
-    raise SystemExit(3)
-try:
-    try:
-        info = limits.lstat()
-    except FileNotFoundError:
-        info = None
-    if info is not None:
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
-            held('release priority limits file is ambiguous')
-        with limits.open() as source:
-            opened = os.fstat(source.fileno())
-            if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                held('release priority limits changed while opening')
-            lines = source.read(65537).splitlines()
-        if sum(len(line) + 1 for line in lines) > 65536:
-            held('release priority limits exceed read bound')
-        entries = [line for line in lines
-                   if line.lstrip().startswith('release_critical')]
-        if entries:
-            if len(entries) != 1 or entries[0] not in ('release_critical=0', 'release_critical=1'):
-                held('release_critical is malformed or duplicated')
-            if entries[0] == 'release_critical=1':
-                held('release_critical host hold; release owner clears only after publisher terminal')
-    # Native systemd membership avoids argv/env reads and a duplicate host CPU
-    # scan. The runner service owns its Worker PID. The persistent key above
-    # covers the Build-to-publisher gap, queued publishers and ambiguous exits.
-    root = Path('/sys/fs/cgroup/deploy.slice/deploy-runners.slice')
-    deadline = time.monotonic() + 0.25
-    if not stat.S_ISDIR(root.lstat().st_mode):
-        held('release runner cgroup root is ambiguous')
-    groups = []
-    for index, entry in enumerate(root.iterdir()):
-        if index >= 128 or time.monotonic() > deadline:
-            held('release runner cgroup inventory exceeds bound')
-        if fnmatch.fnmatchcase(entry.name, f'actions.runner.*.release-{host}-adc-*.service'):
-            groups.append(entry)
-    if len(groups) > 16:
-        held('release runner cgroup inventory exceeds bound')
-    for group in groups:
-        pids = (group / 'cgroup.procs').read_text().split()
-        if len(pids) > 1024:
-            held('release runner process inventory exceeds bound')
-        for pid in pids:
-            if time.monotonic() > deadline:
-                held('release runner visibility budget exhausted')
-            try:
-                comm = Path('/proc', pid, 'comm').read_text().strip()
-                if comm != 'Runner.Worker':
-                    continue
-                member = Path('/proc', pid, 'cgroup').read_text()
-            except FileNotFoundError:
-                continue
-            expected = '/' + str(group.relative_to('/sys/fs/cgroup'))
-            memberships = [line[3:] for line in member.splitlines() if line.startswith('0::')]
-            if len(memberships) != 1:
-                held('release Worker cgroup identity is ambiguous')
-            if memberships[0] == expected or memberships[0].startswith(expected + '/'):
-                held('native release Runner.Worker active on this host')
-except (OSError, ValueError) as error:
-    held(f'release priority evidence unavailable ({type(error).__name__})')
-PYTHON
+  local observation status=0
+  observation=$(python3 -c "$beelink_gate_release_source" "$1" "$(limits_file)" "$STATE_DIR" "$(command -v gh-drew || true)") || status=$?
+  if [ "$status" != 0 ]; then
+    python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("release priority " + r["state"] + ": " + r["reason"])' "$observation" \
+      || echo 'release priority evidence unavailable'
+  fi
+  return "$status"
 }
 
 admit_release_priority() {

@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import stat
 import time
 
 SAMPLE_SECONDS = 2.0
@@ -145,6 +146,41 @@ def states_row(states):
             'blocked_threads': states['D']}
 
 
+
+def release_priority_observation():
+    """Read the admission owner's last result; never refresh GitHub from reports."""
+    path = os.environ.get('BEELINK_GATE_RELEASE_STATE')
+    result = {'source': 'last_gate_admission', 'state': 'unobserved', 'age_s': None}
+    if not path:
+        return result
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor) as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 262144:
+                raise ValueError('observation is not a bounded regular file')
+            raw = source.read(262145)
+        if len(raw) > 262144:
+            raise ValueError('observation exceeds read bound')
+        value = json.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError('observation is not an object')
+        result['observation'] = value
+        result['state'] = 'recorded'
+        stamp = value.get('observed_at')
+        observed = dt.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+        if observed.tzinfo is None:
+            raise ValueError('observation has no timezone')
+        age = (dt.datetime.now(dt.timezone.utc) - observed).total_seconds()
+        if age < 0:
+            raise ValueError('observation clock is in the future')
+        result['age_s'] = age
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        result['state'] = 'unreadable_or_undated'
+        result['error'] = type(error).__name__
+    return result
+
+
 def sample():
     started = time.monotonic()
     deadline = started + BUDGET_SECONDS
@@ -206,6 +242,7 @@ def sample():
             'collector_seconds': round(time.monotonic() - started, 3), 'cores': os.cpu_count(),
             'loadavg': list(os.getloadavg()), 'cpu_pressure': pressure(PROC / 'pressure/cpu'),
             'admission': json.loads(os.environ.get('BEELINK_GATE_ADMISSION_SAMPLE', 'null')),
+            'release_priority': release_priority_observation(),
             'cpu': cpu, 'coverage': coverage, 'groups': groups[:30], 'processes': processes[:20],
             'runnable_threads': sum(states['R'] for states in group_states.values()),
             'blocked_threads': sum(states['D'] for states in group_states.values()),

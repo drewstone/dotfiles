@@ -51,6 +51,8 @@ gate_staging_source="$gate_source_root/beelink-gate-lib/source.sh"
 gate_cache_source="$gate_source_root/beelink-gate-lib/cache.sh"
 gate_admission_source="$gate_source_root/beelink-gate-lib/admission.sh"
 gate_disk_source="$gate_source_root/beelink_gate_disk.py"
+gate_release_source="$gate_source_root/beelink_gate_release.py"
+beelink_gate_release_source=$(cat "$gate_release_source") || exit $?
 beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 # shellcheck source=beelink-gate-lib/install.sh
 . "$gate_installer_source" || exit $?
@@ -69,6 +71,12 @@ utc_in_minutes() {
 }
 
 decode() { printf '%s' "$1" | base64 --decode; }
+
+# Older launchers can emit a newly deployed main file with an older helper list.
+# A missing admission owner must refuse before any probe, reserve or cache work.
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ]; then
+  tempfail "$(utc_in_minutes 5)" "complete release admission source unavailable; use the maintained gate launcher"
+fi
 
 floor_gib() {
   local host="$1" base path line override="" found=0
@@ -2386,7 +2394,7 @@ fi
 if [ "${1:-}" = --receipts ]; then
   cat "$STATE_DIR/receipts.jsonl" 2>/dev/null || exit 75
   if [ -n "${3:-}" ]; then
-    BEELINK_GATE_ADMISSION_SAMPLE="$(quota_capacity || echo '{"mode":"legacy"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
+    BEELINK_GATE_RELEASE_STATE="$STATE_DIR/release-priority.json" BEELINK_GATE_ADMISSION_SAMPLE="$(quota_capacity || echo '{"mode":"legacy"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
   fi
   # Admission refusals precede the normal receipt. Keep their log-derived count
   # in the existing report, including the source window and retained coverage.

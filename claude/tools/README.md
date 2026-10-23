@@ -404,17 +404,27 @@ No-install/light directory sizes stay unknown. Docker queries are bounded,
 read-only and optional: remote/unreadable/changed contexts remain unknown, and
 `docker system df` reports logical daemon usage, not allocated filesystem bytes.
 
-Host release priority is a hard admission guard in
-[`beelink-gate-lib/admission.sh`](beelink-gate-lib/admission.sh). The existing
-host limits file's `release_critical=1` blocks new normal, light, dev, urgent
-and starved gates. Its owning host operator keeps that hold through the release
-Build, the coordination gap and the publisher's terminal result; it has no
-automatic expiry. A malformed or duplicate key, ambiguous limits file or
-unreadable release-worker evidence refuses admission. Native release-runner
-cgroup membership also refuses admission while its `Runner.Worker` is active,
-without reading arguments, environments or GitHub. Running gate commands and
-installs finish normally. Older immutable staged scripts retain their prior
-policy, so the operator keeps its existing pressure fence until they drain.
+Host release priority is a hard admission guard. The existing host limits
+file's `release_critical=1` blocks new normal, light, dev, urgent and starved
+gates. Its owning release/host operator keeps the hold through the owned Build,
+coordination gap and publisher/deploy terminal result; it has no automatic
+expiry. A malformed or duplicate key or ambiguous limits file refuses admission.
+
+[`beelink_gate_release.py`](beelink_gate_release.py) owns the release owner's
+exact workflow/job priority list and joins active GitHub job identities to native
+ADC release/deploy Worker identities. Other jobs on the same runners keep normal
+gate priority. A cached permit requires the same Worker PID/start ticks, a unique
+complete API join and the native system setup step strictly after Worker birth.
+Unknown identity, missing evidence or overlapping clock intervals hold admission;
+this is temporal evidence, not a native job UUID claim. Arguments, environments
+and protected runner logs are never read. The shared cache policy is exported by
+that owner; the existing receipt report shows its last sanitized decision, age,
+API work and explicit unknowns without refreshing GitHub. `admission.sh` bundles
+this owner once alongside the existing Windows update guard.
+
+Running gate commands and installs finish normally. Older immutable staged
+scripts retain their prior policy, so the operator keeps its existing pressure
+fence until they drain. A mixed old/new source bundle refuses before cache work.
 
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's

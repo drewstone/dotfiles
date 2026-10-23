@@ -3,6 +3,7 @@ import collections, datetime as dt, json, math, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from beelink_gate_metrics import throughput
 from beelink_gate_disk import disk_summary
+from beelink_gate_release import GITHUB_CACHE_SECONDS
 path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 json_output = len(sys.argv) > 5 and sys.argv[5] == "--json"
 if json_output:
@@ -35,7 +36,7 @@ for line in open(path):
 # current name; otherwise agent-dev-container's runs after its rename had no merged count.
 # gh owns persistence/expiry. Cache age is not returned by its API command, so
 # expose the maximum possible staleness without calling a cached response fresh.
-GITHUB_METADATA_CACHE_SECONDS = 300
+GITHUB_METADATA_CACHE_SECONDS = GITHUB_CACHE_SECONDS
 canonical_names = {}
 canonical_unknown = set()
 def github(args):
