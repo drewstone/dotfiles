@@ -3,6 +3,7 @@
 import argparse
 import ast
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -66,6 +67,18 @@ def current_queue(client, owner):
     return read_queue(client, owner['QUERY'], page=page)
 
 
+def input_snapshot(pr):
+    return {'head': pr['headRefOid'],
+            'sha256': hashlib.sha256(json.dumps(pr, sort_keys=True).encode()).hexdigest()}
+
+
+def private_decisions(decisions):
+    # A hold reason can quote a PR body. Retain its identity, never that text.
+    return {number: {'action': action,
+                     'reason_sha256': hashlib.sha256(reason.encode()).hexdigest()}
+            for number, (action, reason) in decisions.items()}
+
+
 def prove_live():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-ref', required=True,
@@ -81,11 +94,18 @@ def prove_live():
     fragment = owner['REVIEW_FRAGMENT']
     reader = (root / 'claude/tools/gh-drew-review.sh').read_text().split("<<'PY'", 1)[1].split('\n', 1)[1].split('\nPY', 1)[0]
     now = dt.datetime.now(dt.timezone.utc)
+    result = {'at': now.isoformat(), 'baseline_ref': args.baseline_ref, 'qualified': False}
+
+    def record(stage, **values):
+        result.update(stage=stage, **values)
+        Path(args.output).write_text(json.dumps(result, indent=2) + '\n')
+
     with tempfile.TemporaryDirectory(prefix='mog-live-') as scratch:
         state = Path(scratch)
         baseline = module.GitHub(state, 'tangle-network/agent-container')
         prs = read_queue(baseline, baseline_query(root, args.baseline_ref))
         before = {pr['number']: owner['decide'](pr, now) for pr in prs}
+        record('baseline', baseline_inputs={pr['number']: input_snapshot(pr) for pr in prs})
         # Compare the current guard on independent live reads, including PRs
         # whose checks wait. Do not execute historical merge-policy code.
         old_answers = {pr['number']: baseline.reviews(pr, fragment)
@@ -94,28 +114,62 @@ def prove_live():
         cold = module.GitHub(state / 'current', baseline.repo)
         cold.root.mkdir()
         compact = current_queue(cold, owner)
-        assert {pr['number'] for pr in compact} == set(before), 'open set moved during comparison'
-        after, guards = {}, {}
+        record('cold-list', baseline_inputs={pr['number']: input_snapshot(pr) for pr in prs},
+               cold_list_inputs={pr['number']: input_snapshot(pr) for pr in compact},
+               cold_added=sorted({pr['number'] for pr in compact} - set(before)),
+               cold_removed=sorted(set(before) - {pr['number'] for pr in compact}))
+        assert {pr['number'] for pr in compact} == set(before), 'open set moved; see safe diagnostics'
+        after, guards, cold_guard_output, review_versions = {}, {}, {}, {}
         for pr in compact:
             if eligible(pr, owner):
+                review_versions[pr['number']] = module.fingerprint(pr)
                 answer = cold.reviews(pr, fragment)
                 pr['reviewThreads'] = answer['data']['repository']['pullRequest']['reviewThreads']
-                guards[pr['number']] = guard_read(reader, answer, root) == guard_read(reader, old_answers[pr['number']], root)
+                cold_guard_output[pr['number']] = guard_read(reader, answer, root)
+                guards[pr['number']] = cold_guard_output[pr['number']] == guard_read(reader, old_answers[pr['number']], root)
             after[pr['number']] = owner['decide'](pr, now)
-        assert before == after, 'live decisions differ between full and compact payloads'
+        cold_inputs = {pr['number']: input_snapshot(pr) for pr in compact}
+        record('cold-comparison', cold_inputs=cold_inputs,
+               baseline_decisions=private_decisions(before), cold_decisions=private_decisions(after),
+               cold_decision_changes=sorted(n for n in before if before[n] != after[n]),
+               cold_guard_changes=sorted(n for n, equal in guards.items() if not equal))
+        assert before == after, 'live full/compact decisions differ; see safe diagnostics'
         assert guards and all(guards.values()), 'live review guard changed during comparison'
         warm = module.GitHub(cold.root, cold.repo)
         warm_prs = current_queue(warm, owner)
-        warm_decisions, warm_guards = {}, {}
+        warm_decisions, warm_guards, warm_inputs = {}, {}, {}
+        expected_hits, expected_misses, changed_review_versions = [], [], []
         for pr in warm_prs:
+            number = pr['number']
             if eligible(pr, owner):
+                version = module.fingerprint(pr)
+                same_review = review_versions.get(number) == version
+                (expected_hits if same_review else expected_misses).append(number)
+                if number in review_versions and not same_review:
+                    changed_review_versions.append(number)
                 answer = warm.reviews(pr, fragment)
                 pr['reviewThreads'] = answer['data']['repository']['pullRequest']['reviewThreads']
-                warm_guards[pr['number']] = guard_read(reader, answer, root) == guard_read(reader, old_answers[pr['number']], root)
-            warm_decisions[pr['number']] = owner['decide'](pr, now)
-        assert before == warm_decisions, 'live PR set or decisions moved during warm read'
-        assert warm_guards and all(warm_guards.values()), 'live warm review guard changed'
-        assert warm.hits == len(old_answers) and warm.misses == 0, 'live review fingerprints changed; retry proof'
+                if same_review:
+                    warm_guards[number] = guard_read(reader, answer, root) == cold_guard_output[number]
+            warm_inputs[number] = input_snapshot(pr)
+            warm_decisions[number] = owner['decide'](pr, now)
+        common = set(cold_inputs) & set(warm_inputs)
+        stable = {number for number in common if cold_inputs[number] == warm_inputs[number]}
+        stable_guards = stable & set(warm_guards)
+        decision_changes = sorted(n for n in stable if after[n] != warm_decisions[n])
+        record('warm-comparison', warm_inputs=warm_inputs, warm_decisions=private_decisions(warm_decisions),
+               warm_added=sorted(set(warm_inputs) - set(cold_inputs)),
+               warm_removed=sorted(set(cold_inputs) - set(warm_inputs)),
+               warm_input_changed=sorted(common - stable), warm_stable=sorted(stable),
+               stable_decision_changes=decision_changes, stable_guard_numbers=sorted(stable_guards),
+               changed_review_fingerprints=sorted(changed_review_versions),
+               expected_cache_hits=sorted(expected_hits), expected_cache_misses=sorted(expected_misses),
+               cache_hits=warm.hits, cache_misses=warm.misses,
+               stable_guard_changes=sorted(n for n in stable_guards if not warm_guards[n]))
+        assert stable_guards, 'no stable eligible guard/cache input; see safe diagnostics'
+        assert not decision_changes, 'same current input changed decision; see safe diagnostics'
+        assert all(warm_guards[n] for n in stable_guards), 'stable live review guard changed'
+        assert warm.hits == len(expected_hits) and warm.misses == len(expected_misses), 'cache invalidation differs from actual review fingerprints'
         # Exercise the actual CLI, persisted state and real clock. No HTTP cost
         # is fabricated, and --dry-run prevents merges/comments/settings writes.
         backoff = state / 'backoff'
@@ -127,23 +181,27 @@ def prove_live():
                    '--dry-run', '--state-dir', str(backoff)]
         subprocess.run(command, check=True, capture_output=True, text=True)
         held = json.loads((backoff / 'ticks.jsonl').read_text().splitlines()[-1])
+        record('backoff-held', held_calls=held['github_calls'], held_deferred=bool(held['deferred']))
         assert held['github_calls'] == 0 and held['deferred']
         time.sleep(2)
         subprocess.run(command, check=True, capture_output=True, text=True)
         resumed = json.loads((backoff / 'ticks.jsonl').read_text().splitlines()[-1])
+        record('backoff-resumed', resumed_calls=resumed['github_calls'],
+               resumed_deferred=bool(resumed['deferred']))
         assert resumed['github_calls'] > 0 and not resumed['deferred']
         assert not (backoff / 'github-backoff.json').exists()
-        result = {'at': now.isoformat(), 'baseline_ref': args.baseline_ref,
+        result.update({'qualified': True,
                   'decision_policy': 'current owner on both live payloads',
-                  'open_prs': len(prs), 'decisions_unchanged': len(before),
+                  'open_prs': len(prs), 'cold_decisions_unchanged': len(before),
                   'baseline_live_calls': baseline.calls, 'new_cold_calls': cold.calls,
                   'new_warm_calls': warm.calls, 'cache_hits': warm.hits, 'cache_misses': warm.misses,
-                  'merge_guard_comparisons': len(guards), 'warm_guard_comparisons': len(warm_guards),
+                  'merge_guard_comparisons': len(guards), 'warm_guard_comparisons': len(stable_guards),
+                  'warm_stable_decisions': len(stable),
                   'backoff_zero_calls_then_resumed': True,
                   'resumed_graphql_cost': resumed['graphql_cost'],
                   'resumed_cost_complete': resumed['cost_complete'],
-                  'mutations_attempted': False, 'raw_api_payloads_retained': False}
-    Path(args.output).write_text(json.dumps(result, indent=2) + '\n')
+                  'mutations_attempted': False, 'raw_api_payloads_retained': False})
+    record('complete')
     print(json.dumps(result))
 
 
