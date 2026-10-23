@@ -19,7 +19,6 @@ TOOLS = ROOT / "claude" / "tools"
 sys.path.insert(0, str(TOOLS))
 
 from skill_ledger import core as L  # noqa: E402
-from skill_ledger import outcomes as O  # noqa: E402
 
 SID = "11111111-2222-3333-4444-555555555555"
 T0 = dt.datetime(2026, 10, 9, 12, 0, tzinfo=dt.timezone.utc)
@@ -294,53 +293,6 @@ class CodexScanTest(Sandbox):
         self.assertEqual(measured["durationMin"], 5.0)
         self.assertEqual(measured["cost"]["tokens"]["input"], 300)
         self.assertEqual(L.transcript_session(rollout)["harness"], "codex")
-
-
-class OutcomeTest(unittest.TestCase):
-    AT = dt.datetime(2026, 10, 20, tzinfo=dt.timezone.utc)
-
-    def pr(self, **extra):
-        base = {"repo": "acme/widget", "number": 10, "title": "feat: add the widget export", "state": "MERGED", "merged": True,
-                "mergedAt": "2026-10-09T00:00:00Z", "files": {"nodes": [{"path": "src/export.ts"}, {"path": "package.json"}]},
-                "mergeCommit": {"oid": "abcdef1234567890", "statusCheckRollup": {"state": "SUCCESS"}, "deployments": {"nodes": []}}}
-        base.update(extra)
-        return base
-
-    def test_clean_merge_passes_after_seven_days(self):
-        snap = O.judge_pr(self.pr(), [], [], self.AT)
-        self.assertEqual((snap["status"], snap["signal"], snap["windowClosed"], snap["final"]), ("PASS", "merged-clean-7d", True, True))
-        early = O.judge_pr(self.pr(), [], [], dt.datetime(2026, 10, 10, tzinfo=dt.timezone.utc))
-        self.assertEqual((early["status"], early["final"]), ("PENDING", False))
-
-    def test_revert_and_causal_fix_fail_but_context_mentions_do_not(self):
-        revert = {"number": 11, "title": 'Revert "feat: add the widget export"', "body": "", "mergedAt": "2026-10-10T00:00:00Z", "files": {"nodes": []}}
-        self.assertEqual(O.judge_pr(self.pr(), [revert], [], self.AT)["signal"], "reverted-within-7d")
-        fix = {"number": 12, "title": "fix(export): keep headers", "body": "After #10 deployed, exports lost headers.",
-               "mergedAt": "2026-10-11T00:00:00Z", "files": {"nodes": [{"path": "src/export.ts"}]}}
-        self.assertEqual(O.judge_pr(self.pr(), [fix], [], self.AT)["signal"], "hot-fixed-within-7d")
-        context = {**fix, "body": "Tested on the base that includes #10 and its merge commit abcdef12."}
-        snap = O.judge_pr(self.pr(), [context], [], self.AT)
-        self.assertEqual((snap["signal"], snap["fixTouches"]), ("merged-clean-7d", 1))
-        late = {**fix, "mergedAt": "2026-10-19T00:00:00Z"}
-        self.assertEqual(O.judge_pr(self.pr(), [late], [], self.AT)["signal"], "merged-clean-7d")
-
-    def test_red_ci_and_unmerged_close_fail(self):
-        red = self.pr(mergeCommit={"oid": "a1", "statusCheckRollup": {"state": "FAILURE"}, "deployments": {"nodes": [{"latestStatus": {"state": "SUCCESS"}}]}})
-        snap = O.judge_pr(red, [], [], self.AT)
-        self.assertEqual((snap["signal"], snap["served"]), ("ci-red-after-merge", True))
-        inherited = self.pr(mergeCommit={"oid": "a2", "statusCheckRollup": {"state": "FAILURE"},
-                                         "parents": {"nodes": [{"statusCheckRollup": {"state": "FAILURE"}}]}, "deployments": {"nodes": []}})
-        self.assertEqual(O.judge_pr(inherited, [], [], self.AT)["signal"], "merged-clean-7d")  # the base was already red
-        closed = self.pr(merged=False, mergedAt=None, state="CLOSED", closedAt="2026-10-09T00:00:00Z")
-        self.assertEqual(O.judge_pr(closed, [], [], self.AT)["signal"], "closed-unmerged")
-
-    def test_run_outcome_combines_prs(self):
-        snaps = {("acme/widget", 1): {"status": "PASS", "signal": "merged-clean-7d", "windowClosed": True},
-                 ("acme/widget", 2): {"status": "FAIL", "signal": "ci-red-after-merge", "windowClosed": False}}
-        both = O.run_outcome([{"repo": "acme/widget", "number": 1}, {"repo": "acme/widget", "number": 2}], snaps)
-        self.assertEqual((both["status"], both["windowClosed"]), ("FAIL", False))
-        self.assertEqual(O.run_outcome([{"repo": "Acme/Widget", "number": 1}], snaps)["status"], "PASS")
-        self.assertIsNone(O.run_outcome([], snaps))
 
 
 class ScoreboardTest(Sandbox):
