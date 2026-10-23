@@ -23,6 +23,7 @@ def main():
     # Load the actual owner functions; no alternative implementation or fake executables.
     functions = source[source.index("sparse_normalize() {"):source.index("# The checkout shape")]
     functions += source[source.index("sparse_apply() {"):source.index("# A writer holds")]
+    functions += (owner.parent / "beelink-gate-lib/cache.sh").read_text()
     with tempfile.TemporaryDirectory(prefix="gate-cache-integration-") as directory:
         root = Path(directory)
         repo = root / "source"

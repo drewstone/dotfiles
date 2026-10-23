@@ -5,7 +5,7 @@
 emit_gate_source() {
   local generated status
   generated=$(mktemp) || return "$TEMPFAIL"
-  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" '
+  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" '
     function append(file, line, status, count) {
       while ((status = getline line < file) > 0) { print line; count++ }
       close(file)
@@ -13,7 +13,7 @@ emit_gate_source() {
     }
     { last = $0 }
     $0 == "# BEELINK_GATE_INSTALLER_START" {
-      starts++; append(installer); append(staging)
+      starts++; append(installer); append(staging); append(cache)
       skip = 1; next
     }
     $0 == "# BEELINK_GATE_INSTALLER_END" { ends++; skip = 0; next }
