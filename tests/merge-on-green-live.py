@@ -68,7 +68,7 @@ def current_queue(client, owner):
 
 
 def input_snapshot(pr):
-    return {'head': pr['headRefOid'],
+    return {'head': pr['headRefOid'], 'mergeable': pr['mergeable'],
             'sha256': hashlib.sha256(json.dumps(pr, sort_keys=True).encode()).hexdigest()}
 
 
@@ -129,12 +129,25 @@ def prove_live():
                 guards[pr['number']] = cold_guard_output[pr['number']] == guard_read(reader, old_answers[pr['number']], root)
             after[pr['number']] = owner['decide'](pr, now)
         cold_inputs = {pr['number']: input_snapshot(pr) for pr in compact}
+        baseline_inputs = {pr['number']: input_snapshot(pr) for pr in prs}
+        # GitHub can finish mergeability computation between reads of one head.
+        # Exclude only observed head/mergeability movement; every other cold
+        # decision or guard difference remains an error.
+        cold_moved = {n for n in before
+                      if any(baseline_inputs[n][key] != cold_inputs[n][key]
+                             for key in ('head', 'mergeable'))}
+        cold_stable = set(before) - cold_moved
+        cold_stable_guards = set(guards) & cold_stable
         record('cold-comparison', cold_inputs=cold_inputs,
                baseline_decisions=private_decisions(before), cold_decisions=private_decisions(after),
-               cold_decision_changes=sorted(n for n in before if before[n] != after[n]),
-               cold_guard_changes=sorted(n for n, equal in guards.items() if not equal))
-        assert before == after, 'live full/compact decisions differ; see safe diagnostics'
-        assert guards and all(guards.values()), 'live review guard changed during comparison'
+               cold_input_movement={n: {'before': baseline_inputs[n], 'after': cold_inputs[n]}
+                                    for n in sorted(cold_moved)},
+               cold_compared_numbers=sorted(cold_stable), cold_compared_guard_numbers=sorted(cold_stable_guards),
+               cold_decision_changes=sorted(n for n in cold_stable if before[n] != after[n]),
+               cold_guard_changes=sorted(n for n in cold_stable_guards if not guards[n]))
+        assert cold_stable_guards, 'no stable eligible cold guard; see safe diagnostics'
+        assert all(before[n] == after[n] for n in cold_stable), 'stable full/compact decisions differ; see safe diagnostics'
+        assert all(guards[n] for n in cold_stable_guards), 'stable live review guard changed'
         warm = module.GitHub(cold.root, cold.repo)
         warm_prs = current_queue(warm, owner)
         warm_decisions, warm_guards, warm_inputs = {}, {}, {}
@@ -192,10 +205,10 @@ def prove_live():
         assert not (backoff / 'github-backoff.json').exists()
         result.update({'qualified': True,
                   'decision_policy': 'current owner on both live payloads',
-                  'open_prs': len(prs), 'cold_decisions_unchanged': len(before),
+                  'open_prs': len(prs), 'cold_decisions_unchanged': len(cold_stable),
                   'baseline_live_calls': baseline.calls, 'new_cold_calls': cold.calls,
                   'new_warm_calls': warm.calls, 'cache_hits': warm.hits, 'cache_misses': warm.misses,
-                  'merge_guard_comparisons': len(guards), 'warm_guard_comparisons': len(stable_guards),
+                  'merge_guard_comparisons': len(cold_stable_guards), 'warm_guard_comparisons': len(stable_guards),
                   'warm_stable_decisions': len(stable),
                   'backoff_zero_calls_then_resumed': True,
                   'resumed_graphql_cost': resumed['graphql_cost'],
