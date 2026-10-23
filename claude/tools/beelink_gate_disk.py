@@ -4,6 +4,7 @@ Filesystem highwater is sampled host-wide, not an exact transient or attributabl
 per-gate peak. Directory bytes are bounded du checkpoints, never sampled peaks.
 """
 from concurrent.futures import ThreadPoolExecutor
+import copy
 import json
 import math
 import os
@@ -124,8 +125,14 @@ def docker_usage(identity):
 
 
 def docker_snapshot():
-    identity = docker_identity()
-    return identity, docker_usage(identity)
+    try:
+        identity = docker_identity()
+        return identity, docker_usage(identity)
+    except Exception as error:
+        # Optional metadata, including subprocess text decoding, must not
+        # unwind into a blocked progress writer's executor shutdown.
+        unknown = {"status": "unknown", "reason": "docker_metadata_failed", "error": type(error).__name__}
+        return unknown, dict(unknown)
 
 
 def process_info(pid):
@@ -237,13 +244,17 @@ def observe(directory, parent, budget, paths):
                                      "start_ticks": process_identity(os.getpid()), "parent_pid": parent})
     docker = {"status": "unknown", "reason": "docker_metadata_pending"}
     usage_before, usage_after = None, None
-    work = {"completed_loops": 0, "max_loop_work_s": 0.0, "max_write_s": 0.0}
+    work = {"completed_loops": 0, "max_loop_work_s": 0.0, "max_write_s": 0.0,
+            "progress_writes_submitted": 0, "progress_writes_completed": 0,
+            "progress_writes_skipped_busy": 0, "write_errors": 0}
     reason = "running"
+    finishing_started = None
     # Optional daemon queries must never pause filesystem sampling. One worker
     # bounds before+after work to the same query budget as the serial owner.
-    with ThreadPoolExecutor(max_workers=1) as metadata:
+    with ThreadPoolExecutor(max_workers=1) as metadata, ThreadPoolExecutor(max_workers=1) as writer:
         before = metadata.submit(docker_snapshot)
         after = None
+        progress = None
         while True:
             now = time.monotonic()
             if before is not None and before.done():
@@ -265,17 +276,37 @@ def observe(directory, parent, budget, paths):
                 reason = "terminated"
             elif reason == "running" and (stop or (directory / "stop").exists()):
                 reason = "finished"
+            if reason != "running" and finishing_started is None:
+                finishing_started = now
             if reason != "running" and after is None:
                 after = metadata.submit(docker_snapshot)
-            if after is not None and after.done() and before is None:
+            if progress is not None and progress.done():
+                result = progress.result()
+                work["progress_writes_completed"] += 1
+                work["max_write_s"] = max(work["max_write_s"], result["duration_s"])
+                work["write_errors"] += int(result["error"] is not None)
+                progress = None
+            metadata_complete = after is not None and after.done() and before is None
+            if metadata_complete:
                 docker_after, usage_after = after.result()
-                break
+                if progress is None:
+                    break
+                if time.monotonic() >= finishing_started + STOP_GRACE_S:
+                    # A blocked Python thread cannot be cancelled safely. All
+                    # native metadata children are now reaped: exit only this
+                    # observer and its threads, retaining incomplete progress.
+                    os._exit(1)
             # A killed observer must not leave a qualified finished snapshot
             # while final metadata or a queued initial snapshot is incomplete.
             phase = "running" if reason == "running" else "finishing"
-            write_started = time.monotonic()
-            write_observation(directory, start, now, phase, filesystems, unknown, docker, usage_before, None, work)
-            work["max_write_s"] = max(work["max_write_s"], time.monotonic() - write_started)
+            if not metadata_complete:
+                if progress is None:
+                    work["progress_writes_submitted"] += 1
+                    snapshot = observation_snapshot(start, now, phase, filesystems, unknown,
+                                                    docker, usage_before, None, work)
+                    progress = writer.submit(write_observation, directory, snapshot)
+                else:
+                    work["progress_writes_skipped_busy"] += 1
             work["max_loop_work_s"] = max(work["max_loop_work_s"], time.monotonic() - now)
             work["completed_loops"] += 1
             # Work and JSON I/O consume this interval; do not add a full interval
@@ -290,12 +321,18 @@ def observe(directory, parent, budget, paths):
                     alias["error"] = "docker_context_changed"
     end = time.monotonic()
     sample(filesystems, end)
-    write_observation(directory, start, end, reason, filesystems, unknown, docker, usage_before, usage_after, work)
+    # Both executors have joined. No older progress snapshot can overwrite this
+    # final publication; its filesystem write is outside the sampled boundary.
+    snapshot = observation_snapshot(start, end, reason, filesystems, unknown,
+                                    docker, usage_before, usage_after, work)
+    result = write_observation(directory, snapshot)
     for fs in filesystems.values():
         os.close(fs["descriptor"])
+    return int(result["error"] is not None or work["write_errors"] > 0)
 
 
-def write_observation(directory, start, end, reason, filesystems, unknown, docker, before, after, work):
+def observation_snapshot(start, end, reason, filesystems, unknown, docker, before, after, work):
+    """Detach every mutable alias/metadata/work value before the writer sees it."""
     rows = []
     for fs in filesystems.values():
         row = {key: value for key, value in fs.items() if key != "descriptor"}
@@ -306,18 +343,28 @@ def write_observation(directory, start, end, reason, filesystems, unknown, docke
         row["full_window"] = (reason == "finished" and row["samples"] >= 2 and row["read_errors"] == 0
                               and first - start < INTERVAL_S and end - row["last_monotonic_s"] < INTERVAL_S
                               and row["missed_intervals"] == 0 and row["max_gap_s"] <= MAX_SAMPLE_GAP_S
-                              and not row.get("late_discovery", False))
+                              and not row.get("late_discovery", False) and work["write_errors"] == 0)
         rows.append(row)
-    write_json(directory / "observation.json", {
+    return copy.deepcopy({
         "schema": SCHEMA, "source": "statvfs", "scope": "shared_host_filesystems",
         "sampler_pid": os.getpid(), "sampler_start_ticks": process_identity(os.getpid()),
         "boundary": "admission_to_checkout_release; post-unlock global cache reclaim excluded",
         "interval_s": INTERVAL_S, "max_qualified_gap_s": MAX_SAMPLE_GAP_S,
         "start_monotonic_s": start, "end_monotonic_s": end,
         "termination": reason, "filesystems": rows, "unknown_paths": unknown,
-        "work": dict(work, scope="completed sampling loops; final observation write excluded"),
+        "work": dict(work, scope="completed sampling loops and progress writes; final publication excluded"),
         "docker": dict(docker, usage_before=before, usage_after=after),
         "limits": "Sampled lower bound, not exact transient peak. Concurrent gates, CI, Docker, and reclaim affect host free space. Deduplicate filesystems; never sum aliases. f_bavail is process-available; f_bfree also includes reserved blocks."})
+
+
+def write_observation(directory, snapshot):
+    started = time.monotonic()
+    error = None
+    try:
+        write_json(directory / "observation.json", snapshot)
+    except (OSError, ValueError, TypeError) as failure:
+        error = type(failure).__name__
+    return {"duration_s": time.monotonic() - started, "error": error}
 
 
 def collect(directory):
@@ -349,7 +396,7 @@ def disk_summary(history, since):
         rows = sorted((r for r in history if r.get("host") == host and r.get("at", "") >= since
                        and admitted(r)),
                       key=lambda r: r.get("at", ""))[-20:]
-        values, records = [], []
+        values, observed, records = [], [], []
         for row in rows:
             observation = row.get("disk_observation")
             filesystems = observation.get("filesystems") if isinstance(observation, dict) else None
@@ -357,15 +404,23 @@ def disk_summary(history, since):
             home = next((fs for fs in filesystems if isinstance(fs, dict) and isinstance(fs.get("aliases"), list)
                          and any(isinstance(a, dict) and a.get("kind") == "home" for a in fs["aliases"])), {})
             value = home.get("sampled_highwater_bytes")
-            valid = home.get("full_window") is True and type(value) is int and value >= 0
+            numeric = type(value) is int and value >= 0
+            valid = home.get("full_window") is True and numeric
+            if numeric:
+                observed.append(value)
             if valid:
                 values.append(value)
             records.append({"gate_id": row.get("gate_id"), "at": row.get("at"), "measured": valid,
-                            "sampled_highwater_bytes": value if valid else None, "disk_observation": observation})
+                            "observed": numeric, "sampled_highwater_bytes": value if numeric else None,
+                            "disk_observation": observation})
         groups[host] = {"n": len(rows), "measured_n": len(values), "unknown_n": len(rows) - len(values),
-                        "sampled_highwater_p99_bytes": max(values) if values else None, "records": records}
+                        "missing_history_n": 20 - len(rows), "observed_n": len(observed),
+                        "sampled_highwater_p99_bytes": max(values) if len(values) == 20 else None,
+                        "qualified_subset_p99_bytes": max(values) if values else None,
+                        "observed_highwater_lower_bound_max_bytes": max(observed) if observed else None,
+                        "records": records}
     return {"selection": "last20 completed admitted receipt rows per host in report window; missing history remains unknown",
-            "scope": "shared home filesystem sampled highwater; nearest-rank p99 with at most20 samples is the observed maximum, not an assured transient peak or a new floor",
+            "scope": "Shared home filesystem sampled lower bounds, not assured transient peaks or a new floor. Whole-last20 p99 requires20 qualified rows; otherwise unknown. Qualified-subset p99 excludes partial rows; observed maximum includes their numeric lower bounds. Never use a subset as whole-window coverage.",
             "hosts": groups}
 
 
@@ -377,7 +432,7 @@ if __name__ == "__main__":
         sys.exit(scan(directory, phase, int(seconds), paths))
     elif action == "observe":
         directory, parent, budget, *paths = arguments
-        observe(directory, int(parent), int(budget), paths)
+        sys.exit(observe(directory, int(parent), int(budget), paths))
     elif action == "collect":
         collect(arguments[0])
     elif action == "signal":

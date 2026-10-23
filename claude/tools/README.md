@@ -384,8 +384,14 @@ identity; checkout, pnpm, npm and a verified local Docker root are aliases, neve
 additive disk use. Available bytes use `f_bavail`; free bytes also show `f_bfree`
 including reserved blocks. Coverage includes sample counts, gaps, read errors,
 termination and unavailable paths. Samples with read errors, missed intervals or
-gaps beyond the owner's bound stay out of p99. Interval and gap bound belong to
-that module. The ready handshake precedes checkout work; stop signals use a pidfd
+gaps beyond the owner's bound stay out of the qualified subset. Interval and gap
+bound belong to that module. One asynchronous progress writer receives detached
+snapshots, with at most one write in flight and no backlog. Sampling continues
+while a write is slow and while the writer drains at finish; write errors remain
+unqualified. The writer joins before the final synchronous publication so an
+older progress snapshot cannot overwrite it. If a writer exceeds the existing
+stop grace after all native metadata children finish, only the observer exits,
+leaving incomplete progress. The ready handshake precedes checkout work; stop signals use a pidfd
 and captured PID/start-time/parent identity, never a reusable PID alone. A
 cooperative stop marker and the module-owned grace bound keep finish bounded
 even when pidfd is unavailable; an observer that cannot be reaped leaves partial
@@ -394,8 +400,14 @@ state and stays out of p99.
 This is sampled host highwater, affected by concurrent gates, CI, Docker and
 reclaim, not an exact transient peak or attributable per-gate allocation. The
 report retains the last twenty admitted rows per host with missing history as
-unknown; nearest-rank p99 for that population is its observed maximum. The floor
-stays unchanged until representative observations support a change. Existing
+unknown. `sampled_highwater_p99_bytes` is the whole-twenty p99 and stays null unless
+all twenty rows qualify. `qualified_subset_p99_bytes` names the subset's maximum
+explicitly. `observed_highwater_lower_bound_max_bytes` includes numeric lower
+bounds from partial rows; each record retains its raw numeric observation even
+when unqualified. Observed, qualified, unknown and missing-history counts remain
+separate. None is an assured transient peak, and a low qualified subset cannot
+justify lowering a floor. The floor stays unchanged until representative
+observations support a change. Existing
 bounded `du` scans retain allocated per-path bytes before fetch, after install
 and at the end; the redundant post-checkout scan moved to the end without adding
 a tree walk. Hardlinks count once in argument order, and shared-store growth
