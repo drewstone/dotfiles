@@ -501,7 +501,9 @@ completed gates. Its `admission_wait` field shows per-host retained/missing
 coverage; UTC begin selects the window, with labeled submitted/directory timestamp
 fallback for missing observations. Expired/no-ID history is unknown. Interrupted
 or failed measurements retain a partial prefix and unknown tail; open intervals
-are never extended to a guessed exit time. Observation failures cannot change the
+are never extended to a guessed exit time. Complete coverage also requires a
+confirmed terminal observation; an admitted snapshot alone remains partial.
+Observation failures cannot change the
 gate's policy or command exit.
 Normal frozen-install gates share Turbo archives across their checkout slots in
 `~/.cache/beelink-gate/.turbo/<host>/<owner>/<repo>/normal/<script-node-version>`.

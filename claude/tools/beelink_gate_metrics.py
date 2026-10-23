@@ -211,7 +211,7 @@ def _read_admission_state(path):
 
 def admission_observe(args):
     """Private admission owner's single monotonic state producer; no policy effects."""
-    import json, os, stat, tempfile, time
+    import fcntl, json, os, stat, tempfile, time
     from pathlib import Path
     path, action, value, tainted, status, outcome, reason, gate, host, repo, sha, gate_class, carried = args
     target = Path(path)
@@ -221,6 +221,10 @@ def admission_observe(args):
         owner = os.fstat(directory)
         if owner.st_uid != os.getuid() or owner.st_mode & 0o077:
             raise ValueError("admission directory must be private")
+        # Serialize interrupted writers on the existing stable job directory.
+        # The caller bounds lock/IO time; read only after acquiring the lock so
+        # a late transition cannot overwrite a terminal or admitted snapshot.
+        fcntl.flock(directory, fcntl.LOCK_EX)
         now, utc = time.monotonic_ns(), dt.datetime.now(dt.timezone.utc).isoformat()
         if action == "begin":
             if os.path.lexists(target):
@@ -282,7 +286,9 @@ def admission_observation(row):
     """The one sanitized optional receipt/report representation."""
     row = _admission_state(row)
     scale = lambda ns: round(ns / 1e9, 6) if ns is not None else None
-    complete = row["end_ns"] is not None and not row["tainted"]
+    # An admitted writer can finish after its shell was interrupted. Only a
+    # confirmed finalizer makes that snapshot eligible for complete coverage.
+    complete = row["end_ns"] is not None and not row["tainted"] and row["exit"] is not None and row["terminal_outcome"] is not None
     return {k: row[k] for k in ("gate_id", "host", "repo", "sha", "class", "began_at", "updated_at", "outcome", "exit", "reason", "placed_wait_s", "boundary", "terminal_outcome", "terminal_reason")} | {
         "source": "native_admission_monotonic", "clock_scope": "one native placement CLOCK_MONOTONIC; UTC is selection context only",
         "coverage": "complete" if complete else "partial", "active_stage": row["active_stage"],

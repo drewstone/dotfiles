@@ -418,6 +418,7 @@ PY
 admission_begin() {
   admission_path="" admission_done=0 admission_tainted=0 admission_signal=""
   admission_outcome=incomplete admission_reason="" admission_observer_pid="" admission_observer_birth=""
+  admission_observer_waiting=0
   admission_current_stage=checks
   admission_context=("${gate_id:-}" "${beelink:-}" "$host/$owner/$repo" "$sha" "$( (( light )) && echo light || { (( dev )) && echo dev || echo normal; } )" "${placed_wait:-0}")
   [[ "${gate_id:-}" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || return 0
@@ -435,6 +436,10 @@ admission_begin() {
 
 admission_observer_stop() {
   local actual
+  # A signal may unwind wait before admission_record can observe its status,
+  # including the short interval before the child's PID has been captured.
+  [ "${admission_observer_waiting:-0}" != 1 ] || admission_tainted=1
+  admission_observer_waiting=0
   [ -n "${admission_observer_pid:-}" ] || return 0
   actual=$(proc_start "$admission_observer_pid") || actual=""
   if [ -n "$actual" ] && [ "$actual" = "${admission_observer_birth:-}" ]; then
@@ -453,6 +458,7 @@ admission_record() {
   # A canceled in-flight writer cannot retain checkout/slot descriptors or run
   # beyond its own short timeout. Metadata IO never changes the gate's status.
   admission_observer_stop
+  admission_observer_waiting=1
   (
     for admission_fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do
       exec {admission_fd}>&-
@@ -464,6 +470,7 @@ admission_record() {
   admission_observer_pid=$!
   admission_observer_birth=$(proc_start "$admission_observer_pid") || admission_observer_birth=""
   wait "$admission_observer_pid" || rc=$?
+  admission_observer_waiting=0
   admission_observer_stop
   if [ "$rc" != 0 ]; then
     admission_tainted=1
