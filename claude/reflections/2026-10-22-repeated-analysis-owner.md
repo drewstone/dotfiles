@@ -20,7 +20,7 @@ This is a guidance change, not evidence that all existing tools are incremental 
 
 ## Verification and next decision
 
-Preserve every passing base operator scenario, qualify the documentation, and verify installed guidance resolves to the merged source. The delivery PR records the reader/grader scores and receipts.
+Preserve the existing scenario directions, qualify the documentation, and verify installed guidance resolves to the merged source. The delivery PR records native documentation and changed-boundary checks with independent source review; no fresh model-reader or grader score is claimed.
 
 Consolidation starts with current default-branch implementations and their actual consumers. Keep historical evidence and required behavior; compare the candidate through the same consumer before deleting the replaced implementation. Runtime latency and freshness remain unknown until measured at that owner.
 
