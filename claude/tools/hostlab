@@ -40,6 +40,9 @@
 # of disk on drew-gtr-pro, and one run's copy of /nix filled 36 GB.
 set -euo pipefail
 
+HOSTLAB_SOURCE="$(readlink -f -- "$0")"
+BOOT_DIAGNOSTICS="$(dirname "$HOSTLAB_SOURCE")/hostlab_boot_diagnostics.py"
+DIAGNOSTIC_SECONDS=5
 CACHE="${HOSTLAB_HOME:-$HOME/.cache/hostlab}"
 CLOUD_IMG="$CACHE/noble-server-cloudimg-amd64.img"
 CLOUD_URL="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
@@ -178,26 +181,71 @@ write_files:
 YAML
 }
 
+qmp_socket_path() {
+  # qmp_socket_path DIR -> prints a socket path in a new 0700 dir, or fails.
+  local base="${XDG_RUNTIME_DIR:-}" hash qdir
+  [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ] || base=/tmp
+  hash="$(printf '%s' "$1" | sha256sum | cut -c1-12)"
+  qdir="$(mktemp -d "$base/hostlab-qmp-$hash.XXXXXX" 2>/dev/null)" ||
+    { [ "$base" != /tmp ] && qdir="$(mktemp -d "/tmp/hostlab-qmp-$hash.XXXXXX" 2>/dev/null)"; } || return 1
+  chmod 700 "$qdir" || { rmdir "$qdir"; return 1; }
+  if (( ${#qdir} + 10 >= 108 )); then rmdir "$qdir"; return 1; fi
+  printf '%s\n' "$qdir/qmp.sock"
+}
+
+qmp_socket_remove() {
+  # Removes only the private dir qmp_socket_path made for this run.
+  local sock qdir
+  sock="$(cat "$1/qmp.path" 2>/dev/null)" || return 0
+  case "$sock" in /*/hostlab-qmp-*/qmp.sock) ;; *) return 0 ;; esac
+  qdir="${sock%/qmp.sock}"
+  [ -d "$qdir" ] && [ ! -L "$qdir" ] && [ -O "$qdir" ] || return 0
+  rm -f "$sock"; rmdir "$qdir" 2>/dev/null || true
+}
+
 qemu_start() {
   # qemu_start DIR PORT WORKDIR
-  local dir="$1" port="$2" workdir="$3" i input_id
-  local -a input=()
+  local dir="$1" port="$2" workdir="$3" i input_id LC_ALL=C
+  sha256sum "$HOSTLAB_SOURCE" "$BOOT_DIAGNOSTICS" \
+    "$(dirname "$HOSTLAB_SOURCE")/beelink_gate_cpu.py" | awk '{print $1}' > "$dir/source-sha256"
+  local -a input=() qmp=()
+  local sock
+  # QMP lives in a short private dir, because a Unix socket path must stay under
+  # 108 bytes and real run dirs exceed that (113 bytes for tangle-devops #585).
+  # Diagnostics never block a boot: without a socket, QEMU starts without QMP.
+  if sock="$(qmp_socket_path "$dir")"; then
+    qmp=(-qmp "unix:${sock//,/,,},server=on,wait=off")
+  else
+    sock=unavailable
+  fi
+  (umask 077; printf '%s\n' "$sock" > "$dir/qmp.path"); chmod 600 "$dir/qmp.path"
   for i in "${!INPUT_NAMES[@]}"; do
     input_id="hostlab-${INPUT_NAMES[$i]}"
     # QEMU's option parser escapes a literal comma as a doubled comma.
     input+=(-drive "if=none,id=$input_id,format=raw,file=${INPUT_FILES[$i]//,/,,},readonly=on"
       -device "virtio-blk-pci,drive=$input_id,serial=$input_id")
   done
-  qemu-system-x86_64 \
+  # Explicit devices preserve root/scratch/seed/input order. Mixing implicit
+  # if=virtio drives with explicit inputs lets QEMU realize the inputs first.
+  # Prefer the OS disk in firmware instead of an unindexed raw input disk.
+  (umask 077; qemu-system-x86_64 \
     -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
     -display none -serial "file:$dir/console.log" -monitor none \
-    -drive if=virtio,format=qcow2,file="$dir/disk.qcow2" \
-    -drive if=virtio,format=qcow2,file="$dir/scratch.qcow2" \
-    -drive if=virtio,format=raw,file="$dir/seed.img",readonly=on \
+    "${qmp[@]}" \
+    -drive "if=none,id=hostlab-internal-root,format=qcow2,file=${dir//,/,,}/disk.qcow2" \
+    -device virtio-blk-pci,drive=hostlab-internal-root,bootindex=1 \
+    -drive "if=none,id=hostlab-internal-scratch,format=qcow2,file=${dir//,/,,}/scratch.qcow2" \
+    -device virtio-blk-pci,drive=hostlab-internal-scratch \
+    -drive "if=none,id=hostlab-internal-seed,format=raw,file=${dir//,/,,}/seed.img,readonly=on" \
+    -device virtio-blk-pci,drive=hostlab-internal-seed \
     "${input[@]}" \
     -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$port"-:22 -device virtio-net-pci,netdev=n0 \
     -virtfs local,path="$workdir",mount_tag=work,security_model=none,id=work \
-    -pidfile "$dir/qemu.pid" -daemonize
+    -pidfile "$dir/qemu.pid" -daemonize)
+  [ "$sock" = unavailable ] || chmod 600 "$sock" 2>/dev/null || true
+  local pid start
+  pid="$(cat "$dir/qemu.pid")"; start="$(proc_start "$pid")"
+  printf '%s %s\n' "$pid" "$start" > "$dir/qemu.identity"
 }
 
 wait_ssh() {
@@ -238,36 +286,10 @@ wait_ssh() {
 
 vm_boot_diagnostics() {
   local dir="$1" stage="$2" dest="$CACHE/diagnostics/$(basename "$1")"
-  mkdir -p "$dest"
-  python3 - "$dir" "$dest" "$stage" <<'PY'
-import pathlib, re, sys
-source, dest = map(pathlib.Path, sys.argv[1:3])
-def tail(path, limit):
-    try:
-        with path.open('rb') as stream:
-            stream.seek(0, 2)
-            stream.seek(max(0, stream.tell() - limit))
-            return stream.read(limit).decode(errors='replace')
-    except OSError as error:
-        return 'hostlab: diagnostic unavailable: ' + type(error).__name__
-def clean(text):
-    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
-    text = re.sub(r'(?s)-----BEGIN[^\n]*KEY[^\n]*-----.*?(?:-----END[^\n]*KEY[^\n]*-----|\Z)', '[redacted key material]', text)
-    return ''.join(c for c in text if c in '\n\t' or ord(c) >= 32)
-sensitive = re.compile(r'(?i)private key|offering public key|will attempt key|identity file|fingerprint|\b(?:password|token|secret|credential|authorization|cookie)\s*[:=]|(?:^|\s)(?:ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+)\s+[A-Za-z0-9+/=]+|^[A-Za-z0-9+/=]{32,}$')
-error = source / (sys.argv[3] + '-ssh.stderr')
-lines = [line for line in clean(tail(error, 262144)).splitlines() if not sensitive.search(line)]
-(dest / 'ssh.stderr').write_text('\n'.join(lines) + '\n')
-display = lines if len(lines) <= 60 else lines[:20] + ['... all attempt summaries retained in ssh.stderr ...'] + lines[-40:]
-(dest / 'ssh-display.txt').write_text('\n'.join(display) + '\n')
-console = source / 'console.log'
-lines = clean(tail(console, 32768)).splitlines()
-lines = [line for line in lines if not sensitive.search(line)]
-(dest / 'console.txt').write_text('\n'.join(lines) + '\n')
-display = lines if len(lines) <= 60 else lines[:20] + ['... complete bounded tail retained in console.txt ...'] + lines[-40:]
-(dest / 'console-display.txt').write_text('\n'.join(display) + '\n')
-(dest / 'stage').write_text(sys.argv[3] + '\n')
-PY
+  (umask 077; mkdir -p "$dest"; chmod 700 "$dest")
+  timeout --foreground --signal=KILL "$((DIAGNOSTIC_SECONDS + 1))s" \
+    python3 "$BOOT_DIAGNOSTICS" "$dir" "$dest" "$stage" "$HOSTLAB_SOURCE" "$DIAGNOSTIC_SECONDS" ||
+    echo 'hostlab: boot-state observation incomplete; existing readiness result retained' >&2
   echo "hostlab: boot diagnostics retained at $dest" >&2
   cat "$dest/ssh-display.txt" "$dest/console-display.txt" >&2
 }
@@ -285,6 +307,7 @@ vm_stop() {
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
     fi
   fi
+  qmp_socket_remove "$dir"
 }
 
 cmd_build() {
@@ -295,7 +318,7 @@ cmd_build() {
     mv "$CLOUD_IMG.part" "$CLOUD_IMG"
   fi
   local dir="$CACHE/build"
-  rm -rf "$dir"; mkdir -p "$dir"
+  qmp_socket_remove "$dir"; rm -rf "$dir"; mkdir -m 700 "$dir"
   qemu-img create -q -f qcow2 -F qcow2 -b "$CLOUD_IMG" "$dir/disk.qcow2"
   qemu-img resize -q "$dir/disk.qcow2" "$DISK"
   qemu-img create -q -f qcow2 "$dir/scratch.qcow2" 1G
@@ -334,7 +357,7 @@ cmd_build() {
   fi
   mv "$dir/disk.qcow2" "$BASE_IMG"
   date -u +%FT%TZ > "$BASE_IMG.built"
-  rm -rf "$dir"
+  qmp_socket_remove "$dir"; rm -rf "$dir"
   echo "hostlab: base image ready at $BASE_IMG"
 }
 
@@ -346,7 +369,7 @@ vm_boot() {
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
   local id dir port i
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
-  dir="$RUNS/$id"; mkdir -p "$dir"
+  dir="$RUNS/$id"; mkdir -m 700 "$dir"
   # Recorded before qemu starts, so the reaper never sees an unowned run.
   # Command substitution keeps $$ as the hostlab process: the caller.
   printf '%s\n' "$OWNER" > "$dir/owner"
@@ -383,6 +406,8 @@ vm_boot() {
     vm_stop "$dir" || true
     rm -rf "$dir"; die "/work did not mount in 30 s"
   fi
+  # Preserve positive QMP/identity evidence too; observation never gates readiness.
+  vm_boot_diagnostics "$dir" ready >/dev/null 2>&1 || true
   echo "$dir"
 }
 
