@@ -480,12 +480,18 @@ Running gate commands and installs finish normally. Older immutable staged
 scripts retain their prior policy, so the operator keeps its existing pressure
 fence until they drain. A mixed old/new source bundle refuses before cache work.
 
-It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
-locks that checkout through the install and command. It cleans the prior run's
+It uses cached, detached checkout slots per host/repo in `~/.cache/beelink-gate/` and
+locks each checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen
 pnpm or npm install against that user's shared package store.
-Outside `--ship`, Turbo's content-hash cache lives in `.git/beelink-gate-turbo/<script-node-version>`
-and is counted and evicted with the checkout. Target-local `TURBO_CACHE_DIR`
+Normal frozen-install gates share Turbo archives across their checkout slots in
+`~/.cache/beelink-gate/.turbo/<host>/<owner>/<repo>/normal/<script-node-version>`.
+The existing gate cache cap and LRU count these bytes alongside checkouts. Shared
+leases permit concurrent consumers; eviction also requires every recorded managed
+unit to be absent or kernel-empty. Unknown unit visibility keeps the pool, including
+after its Bash owner dies. Dev, light and no-install gates retain the private
+`.git/beelink-gate-turbo/<script-node-version>` cache and do not feed the normal pool.
+Old private archives are not imported into it. Target-local `TURBO_CACHE_DIR`
 overrides remain supported, including an explicit `env TURBO_CACHE_DIR=...` in
 the gated command. A launcher's path on another host is not forwarded.
 Ship mode retains its existing install/runtime and cache ownership.
@@ -502,7 +508,7 @@ ran or passed; the command exit remains authoritative.
 Use `--no-install` only for dependency-free checks, such as docs content or
 structure checks. The gate still fetches and verifies the exact SHA, and its
 receipt records `install=no-install`.
-Different repos can gate in parallel; gates for the same repo wait. The cache is independent of main
+Different repos and separate checkout slots can gate in parallel; each slot remains locked. The cache is independent of main
 checkouts and lane worktrees. An older partial cache is rebuilt once under its
 repo lock so history checks do not fetch missing blobs one at a time. The gate
 refreshes `origin/` refs for the remote default branch, `main` or `develop`,

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Repository Node/package-manager selection and frozen dependency installation.
 # Sourced by beelink-gate and bundled into its staged source; never run alone.
+gate_shared_turbo_install=1
 
 # The pnpm version the repo's own CI installs with: package.json packageManager
 # (what corepack and pnpm/action-setup read), else the version pinned on
@@ -169,8 +170,13 @@ prepare_gate_dependencies() {
     export BEELINK_GATE_INSTALL_S=0
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
-  # Ship owns its install/runtime; other modes retain hashes under the LRU cap.
-  [ "$install_mode" = ship ] || export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$checkout/.git/beelink-gate-turbo/${gate_node%% *}}"
+  # Only normal frozen-install gates share archives across checkout slots.
+  # Other modes retain their private cache; Turbo alone owns invalidation.
+  local turbo_default="$checkout/.git/beelink-gate-turbo/${gate_node%% *}"
+  if [ -n "${gate_turbo_root:-}" ] && [[ "${gate_node%% *}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$ ]]; then
+    turbo_default=$(gate_turbo_node_cache "${gate_node%% *}") || return 75
+  fi
+  [ "$install_mode" = ship ] || export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$turbo_default}"
   export BEELINK_GATE_TURBO_REQUESTED_DIR="${TURBO_CACHE_DIR:-}"
   export TURBO_RUN_SUMMARY="${TURBO_RUN_SUMMARY:-true}"
   if [ "$install_mode" != ship ] && [ "$repo_manager" != yarn ] && [ -d node_modules/.pnpm ]; then
