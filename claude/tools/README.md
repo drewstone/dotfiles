@@ -376,6 +376,59 @@ size is reported as unmeasured. Reporting lives in `beelink_gate_report.py`, tim
 populations in `beelink_gate_metrics.py`, and the bounded read-only CPU sample
 in `beelink_gate_cpu.py`; the shell owns transport and execution.
 
+`beelink_gate_disk.py` owns `disk_observation` in each receipt and the report's
+`disk` field. Its bounded `statvfs` sampler covers admission through local cleanup
+and the end store scan, before the checkout unlocks; subsequent global LRU reclaim
+is outside that boundary. Filesystems are deduplicated by device and filesystem
+identity; checkout, pnpm, npm and a verified local Docker root are aliases, never
+additive disk use. Available bytes use `f_bavail`; free bytes also show `f_bfree`
+including reserved blocks. Coverage includes sample counts, gaps, read errors,
+termination and unavailable paths. Samples with read errors, missed intervals or
+gaps beyond the owner's bound stay out of p99. Interval and gap bound belong to
+that module. The ready handshake precedes checkout work; stop signals use a pidfd
+and captured PID/start-time/parent identity, never a reusable PID alone. A
+cooperative stop marker and the module-owned grace bound keep finish bounded
+even when pidfd is unavailable; an observer that cannot be reaped leaves partial
+state and stays out of p99.
+
+This is sampled host highwater, affected by concurrent gates, CI, Docker and
+reclaim, not an exact transient peak or attributable per-gate allocation. The
+report retains the last twenty admitted rows per host with missing history as
+unknown; nearest-rank p99 for that population is its observed maximum. The floor
+stays unchanged until representative observations support a change. Existing
+bounded `du` scans retain allocated per-path bytes before fetch, after install
+and at the end; the redundant post-checkout scan moved to the end without adding
+a tree walk. Hardlinks count once in argument order, and shared-store growth
+includes other gates. Failed installs retain the conservative cold reserve.
+No-install/light directory sizes stay unknown. Docker queries are bounded,
+read-only and optional: remote/unreadable/changed contexts remain unknown, and
+`docker system df` reports logical daemon usage, not allocated filesystem bytes.
+
+Host release priority is a hard admission guard. The existing host limits
+file's `release_critical=1` blocks new normal, light, dev, urgent and starved
+gates. Its owning release/host operator keeps the hold through the owned Build,
+coordination gap and publisher/deploy terminal result; it has no automatic
+expiry. Unknown release evidence, including malformed or unreadable release
+policy, is logged and falls back to the existing quota and host admission checks.
+
+[`beelink_gate_release.py`](beelink_gate_release.py) owns the release owner's
+exact workflow/job priority list and joins active GitHub job identities to native
+ADC release/deploy Worker identities. Other jobs on the same runners keep normal
+gate priority. A cached classification requires the same Worker PID/start ticks,
+a unique complete API join and the native system setup step strictly after Worker
+birth. Only a positively matched critical job holds admission. Changed Workers,
+missing evidence and overlapping clock intervals are recorded as unknown and
+use the unchanged preexisting admission path; they never waive its checks.
+This is temporal evidence, not a native job UUID claim. Arguments, environments
+and protected runner logs are never read. The shared cache policy is exported by
+that owner; the existing receipt report shows its last sanitized decision, age,
+API work and explicit unknowns without refreshing GitHub. `admission.sh` bundles
+this owner once alongside the existing Windows update guard.
+
+Running gate commands and installs finish normally. Older immutable staged
+scripts retain their prior policy, so the operator keeps its existing pressure
+fence until they drain. A mixed old/new source bundle refuses before cache work.
+
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen

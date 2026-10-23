@@ -49,12 +49,19 @@ gate_source_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.real
 gate_installer_source="$gate_source_root/beelink-gate-lib/install.sh"
 gate_staging_source="$gate_source_root/beelink-gate-lib/source.sh"
 gate_cache_source="$gate_source_root/beelink-gate-lib/cache.sh"
+gate_admission_source="$gate_source_root/beelink-gate-lib/admission.sh"
+gate_disk_source="$gate_source_root/beelink_gate_disk.py"
+gate_release_source="$gate_source_root/beelink_gate_release.py"
+beelink_gate_release_source=$(cat "$gate_release_source") || exit $?
+beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 # shellcheck source=beelink-gate-lib/install.sh
 . "$gate_installer_source" || exit $?
 # shellcheck source=beelink-gate-lib/source.sh
 . "$gate_staging_source" || exit $?
 # shellcheck source=beelink-gate-lib/cache.sh
 . "$gate_cache_source" || exit $?
+# shellcheck source=beelink-gate-lib/admission.sh
+. "$gate_admission_source" || exit $?
 # BEELINK_GATE_INSTALLER_END
 
 tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
@@ -64,6 +71,12 @@ utc_in_minutes() {
 }
 
 decode() { printf '%s' "$1" | base64 --decode; }
+
+# Older launchers can emit a newly deployed main file with an older helper list.
+# A missing admission owner must refuse before any probe, reserve or cache work.
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ]; then
+  tempfail "$(utc_in_minutes 5)" "complete release admission source unavailable; use the maintained gate launcher"
+fi
 
 floor_gib() {
   local host="$1" base path line override="" found=0
@@ -135,75 +148,6 @@ check_floor() {
   fi
 }
 
-# Windows owns the update policy; WSL owns the local clock and time-zone rules.
-# Check again after waiting for the repo lock, before any checkout is touched.
-# A gate admitted before the window keeps running, including its install.
-check_update_window() {
-  python3 - "$@" <<'PY'
-from datetime import datetime, time, timedelta, timezone
-import os
-from pathlib import Path
-import sys
-from zoneinfo import ZoneInfo
-
-host, raw_day, raw_hour = sys.argv[1:4]
-try:
-    day, hour = int(raw_day), int(raw_hour)
-    if not 0 <= day <= 7 or not 0 <= hour <= 23:
-        raise ValueError("day or hour out of range")
-    if len(sys.argv) > 4:
-        zone = ZoneInfo(sys.argv[4])
-    elif os.environ.get("TZ"):
-        zone = ZoneInfo(os.environ["TZ"])
-    else:
-        with Path("/etc/localtime").open("rb") as zonefile:
-            zone = ZoneInfo.from_file(zonefile)
-    now = (datetime.fromisoformat(sys.argv[5].replace("Z", "+00:00"))
-           if len(sys.argv) > 5 else datetime.now(timezone.utc))
-    if now.tzinfo is None:
-        raise ValueError("probe time requires a UTC offset")
-    now = now.astimezone(timezone.utc)
-except (OSError, ValueError, IndexError) as exc:
-    print(f"beelink-gate: cannot evaluate Windows Update window: {exc}", file=sys.stderr)
-    sys.exit(2)
-
-local_day = now.astimezone(zone).date()
-for offset in range(-7, 8):
-    candidate = local_day + timedelta(days=offset)
-    # Registry day 0 is daily; 1=Sunday through 7=Saturday.
-    if day and candidate.isoweekday() % 7 + 1 != day:
-        continue
-    scheduled_local = datetime.combine(candidate, time(hour), zone)
-    scheduled = scheduled_local.astimezone(timezone.utc)
-    start = scheduled - timedelta(minutes=60)
-    end = scheduled + timedelta(minutes=30)
-    if start <= now < end:
-        next_local = end.astimezone(zone)
-        print(
-            f"beelink-gate: REFUSED {host} Windows Update is scheduled "
-            f"{scheduled.astimezone(zone):%A %Y-%m-%d %H:%M %Z}; "
-            f"new gates are blocked from {start.astimezone(zone):%Y-%m-%d %H:%M %Z} "
-            f"until {next_local:%Y-%m-%d %H:%M %Z}; "
-            f"next allowed {next_local:%Y-%m-%d %H:%M %Z} "
-            f"({end:%Y-%m-%d %H:%M} UTC)",
-            file=sys.stderr,
-        )
-        print(f"{end:%Y-%m-%dT%H:%M:%SZ}")
-        sys.exit(3)
-PY
-}
-
-# Starts only outside the update window; inside it, a TEMPFAIL until it ends.
-admit_window() {
-  local next rc
-  next=$(check_update_window "$@"); rc=$?
-  case "$rc" in
-    0) ;;
-    3) tempfail "$next" "$1 is in its Windows Update window" ;;
-    *) exit "$rc" ;;
-  esac
-}
-
 # A .beelink-gate/sparse-checkout file's patterns, without comments, blank
 # lines or trailing spaces (stdin to stdout).
 sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
@@ -268,6 +212,7 @@ capacity_writer_active() {
 }
 
 wait_for_capacity_writer() {
+  admit_release_priority "$beelink"
   local now_ms elapsed_ms
   now_ms=$(date +%s%3N)
   (( intent_started_ms )) || intent_started_ms=$now_ms
@@ -461,6 +406,7 @@ acquire_slot() {
   marker="$slots_dir/urgent-$pool"
   if [ "${urgent:-0}" = 1 ]; then ticket_body > "$marker.$$"; urgent_markers+=("$marker.$$"); fi
   while :; do
+    admit_release_priority "$beelink"
     if [ "${urgent:-0}" = 1 ] || ! urgent_ahead "$marker"; then
       for ((i = 0; i < max; i++)); do
         exec {slot_fd}>"$slots_dir/$pool-$i.lock" || die "cannot open host slot"
@@ -793,6 +739,7 @@ wait_for_load() {
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die "invalid BEELINK_GATE_LOAD_WAIT: ${BEELINK_GATE_LOAD_WAIT:-}"
   join_gate_cgroup
   while :; do
+    admit_release_priority "$beelink"
     host=$(host_pressure_now) ceiling=$(host_pressure_ceiling) held=0 capacity="" quota_mode=0
     if [ "${gate_cgroup_joined:-}" = "$(basename "$(gate_cgroup)")" ] && capacity=$(quota_capacity 1); then
       quota_mode=1
@@ -978,18 +925,12 @@ PY
 # files) took 1.1-2.7 s. Prints nothing when du fails, warns about anything but a
 # file that vanished mid-scan, or runs past <seconds> (the caller passes 60 s or the
 # gate's remaining hold, whichever is less, so a scan never holds the lock past it).
+gate_disk() { python3 -c "$beelink_gate_disk_source" "$@"; }
 gate_bytes() {  # <seconds> <checkout> <store>...
-  local limit=$1 out err rc
+  local limit=$1
   shift
   (( limit > 0 )) || return 1
-  err=$(mktemp) || return 1
-  # KILL at the limit itself: du needs no cleanup, and a grace after TERM would let
-  # a du that ignores TERM keep the lock past the hold.
-  out=$(LC_ALL=C timeout -s KILL "$limit" du -s --total -B1 -- "$@" 2>"$err"); rc=$?
-  if (( rc == 1 )) && ! grep -qv '^du: cannot access .*: No such file or directory$' "$err"; then rc=0; fi
-  rm -f -- "$err"
-  out=$(tail -n 1 <<<"$out"); out=${out%%[[:space:]]*}
-  (( rc == 0 )) && [[ "$out" =~ ^[0-9]+$ ]] && echo "$out"
+  gate_disk scan "${disk_dir:-}" "${disk_snapshot_phase:-before}" "$limit" "$@"
 }
 
 # The shape a cached checkout has now: full, or the digest of its applied
@@ -1285,6 +1226,11 @@ remote_probe() {
   [ "$probe_mode" = dev ] && dev=1
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  if ! reason=$(release_priority_reason "$beelink"); then
+    printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=release-held capacity=null reason=%s\n' \
+      "$beelink" "$(utc_in_minutes 5)" "$reason"
+    return 0
+  fi
   local probe_heat=cold
   ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
   reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
@@ -1474,6 +1420,11 @@ try:
     row["admission"] = json.loads(os.environ.get("BEELINK_GATE_ADMISSION_SAMPLE", "null"))
 except ValueError:
     row["admission"] = None
+try:
+    disk = json.loads(os.environ.get("BEELINK_GATE_DISK_OBSERVATION") or "null")
+    row["disk_observation"] = disk if isinstance(disk, dict) else None
+except ValueError:
+    row["disk_observation"] = None
 if int(install_reserve):
     row["install_reserve_bytes"] = int(install_reserve)
     # The gate's own bytes against the host's free-space drop over the same window.
@@ -1643,6 +1594,8 @@ remote_gate() {
   unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
   local install_reserve_bytes admitted_shape="" reserve_heat=cold
+  disk_dir="" disk_pid="" disk_ready=0 disk_deadline=0 disk_grace_s=0 disk_paths=()
+  unset BEELINK_GATE_DISK_OBSERVATION
   observed_install_reserve_bytes=0 reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
   local reserve_bytes_before="" reserve_free_before=""
   # The frozen install always writes the fixed store; a store the environment names is measured too.
@@ -1725,6 +1678,7 @@ remote_gate() {
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi
+  admit_release_priority "$beelink"
   ! any_copy_warm "$cache_root/$host/$owner/$repo" "$reserve_spec" || reserve_heat=warm
   install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" "$reserve_heat") \
     || die "cannot read install reserve receipts"
@@ -1789,12 +1743,14 @@ remote_gate() {
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   while [ -z "$lock" ]; do
+    admit_release_priority "$beelink"
     # Cleanup and the cache pruner hold this lock exclusively before inspecting
     # repo locks. A shared claim prevents either from racing a new checkout,
     # while other gates can claim their own repos at the same time. Release it
     # as soon as the repo flock is held; the command keeps only its repo lock.
     claim_started_ms=$(date +%s%3N)
     while :; do
+      admit_release_priority "$beelink"
       if capacity_writer_active; then
         wait_for_capacity_writer
         continue
@@ -1910,32 +1866,6 @@ remote_gate() {
     (( left < 60 )) || left=60
     gate_bytes "$left" "$checkout" "${package_stores[@]}"
   }
-  # The reserve a receipt records is the 10 GiB headroom plus the most this gate's
-  # own bytes grew since just before its fetch (gate_bytes); host free space also
-  # moves with other lanes' writes and decides only the floor. A measurement that
-  # fails records the cold reserve, never less.
-  observe_install_reserve() {  # <when>
-    (( install_reserve_bytes > 0 )) || return 0
-    local now started grown observed
-    started=$(date +%s%3N)
-    if [ -n "$reserve_bytes_before" ] && now=$(measure_gate_bytes); then
-      reserve_du_ms=$(( $(date +%s%3N) - started ))
-      grown=$((now - reserve_bytes_before))
-      (( grown > ${reserve_gate_bytes:-0} )) && reserve_gate_bytes=$grown
-      : "${reserve_gate_bytes:=0}"
-      observed=$((10 * 1024 * 1024 * 1024 + reserve_gate_bytes))
-      [ "$reserve_basis" = cold_fallback ] || reserve_basis=measured
-    else
-      reserve_basis=cold_fallback
-      echo "beelink-gate: could not measure this gate's own bytes $1; recording the cold reserve" >&2
-      observed=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" cold) \
-        || observed=$((10 * 1024 * 1024 * 1024))
-    fi
-    [ -z "$reserve_free_before" ] || reserve_host_drop=$((reserve_free_before - last_floor_available))
-    (( observed > observed_install_reserve_bytes )) && observed_install_reserve_bytes=$observed
-    echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
-    return 0
-  }
   # Bundle command-created commits unreachable from remotes before checkout reuse.
   # Exclude refs present before the command, so later gates do not save them again.
   save_unpushed() {
@@ -1999,6 +1929,7 @@ PYTURBO
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
+    finish_disk_observation
     if [ "$watchdog" = 1 ]; then
       :
     elif cd "$cache_root"; then
@@ -2022,6 +1953,7 @@ PYTURBO
     exit "$status"
   }
   trap finish EXIT
+  start_disk_observation
   if mkdir -p "$STATE_DIR" 2>/dev/null; then
     timing_file=$(mktemp "$STATE_DIR/phase.XXXXXXXX" 2>/dev/null) || timing_file=""
   fi
@@ -2030,6 +1962,7 @@ PYTURBO
   # binding: this gate holds its checkout's lock from here through its install,
   # so the checkout is warm only if it is here now with the gated commit's
   # shape, and it stays warm only while it survives to the install (below).
+  admit_release_priority "$beelink"
   admitted_shape=$(checkout_shape "$checkout") || admitted_shape=""
   reserve_heat=cold
   [ -z "$reserve_spec" ] || [ "$admitted_shape" != "$reserve_spec" ] || reserve_heat=warm
@@ -2046,6 +1979,7 @@ PYTURBO
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
+  admit_release_priority "$beelink"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
     echo "beelink-gate: WARNING cache over its cap with only active checkouts left; running anyway (the disk floor guards disk space)" >&2
@@ -2054,6 +1988,7 @@ PYTURBO
   if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
     die "cache path is not an owned checkout: $checkout"
   fi
+  admit_release_priority "$beelink"
   if [ -e "$checkout/.git" ]; then
     adopt_origin "$checkout" "$repo_url" || exit $?
     # A blame or history check can otherwise fetch hundreds of missing blobs
@@ -2154,7 +2089,6 @@ PYTURBO
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   local floor_ok=0
   check_floor "$beelink" || floor_ok=1
-  observe_install_reserve "after checkout"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it
@@ -2460,7 +2394,7 @@ fi
 if [ "${1:-}" = --receipts ]; then
   cat "$STATE_DIR/receipts.jsonl" 2>/dev/null || exit 75
   if [ -n "${3:-}" ]; then
-    BEELINK_GATE_ADMISSION_SAMPLE="$(quota_capacity || echo '{"mode":"legacy"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
+    BEELINK_GATE_RELEASE_STATE="$STATE_DIR/release-priority.json" BEELINK_GATE_ADMISSION_SAMPLE="$(quota_capacity || echo '{"mode":"legacy"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
   fi
   # Admission refusals precede the normal receipt. Keep their log-derived count
   # in the existing report, including the source window and retained coverage.
