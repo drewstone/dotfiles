@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import runpy
 import subprocess
@@ -53,11 +54,23 @@ def eligible(pr, owner):
                 or owner['hold_reason'](pr))
 
 
-def guard_read(reader, answer, root):
+def guard_read(reader, answer, root, pending_observations):
     result = subprocess.run([sys.executable, '-I', '-c', reader,
                              str(root / 'claude/tools/merge-on-green')],
                             input=json.dumps(answer), capture_output=True, text=True, check=True)
-    return result.stdout
+    # The real reader owns its clock. Exclude only its validated dynamic line;
+    # every other byte (including findings, running reviews and holds) is exact.
+    stable_lines = []
+    for line in result.stdout.splitlines(keepends=True):
+        if line.startswith('pending'):
+            match = re.fullmatch(r'pending\t([0-9]+)\t([0-9]+)\n', line)
+            assert match, 'unexpected pending guard format'
+            left, since = map(int, match.groups())
+            assert left > 0 and since >= 0, 'invalid pending countdown'
+            pending_observations['lines'] += 1
+        else:
+            stable_lines.append(line)
+    return ''.join(stable_lines)
 
 
 def current_queue(client, owner):
@@ -95,9 +108,11 @@ def prove_live():
     reader = (root / 'claude/tools/gh-drew-review.sh').read_text().split("<<'PY'", 1)[1].split('\n', 1)[1].split('\nPY', 1)[0]
     now = dt.datetime.now(dt.timezone.utc)
     result = {'at': now.isoformat(), 'baseline_ref': args.baseline_ref, 'qualified': False}
+    pending_observations = {'lines': 0}
+    result['time_policy_comparison'] = 'validated pending countdown excluded; real clock policy not qualified'
 
     def record(stage, **values):
-        result.update(stage=stage, **values)
+        result.update(stage=stage, pending_countdown_observations=pending_observations['lines'], **values)
         Path(args.output).write_text(json.dumps(result, indent=2) + '\n')
 
     with tempfile.TemporaryDirectory(prefix='mog-live-') as scratch:
@@ -125,24 +140,27 @@ def prove_live():
                 review_versions[pr['number']] = module.fingerprint(pr)
                 answer = cold.reviews(pr, fragment)
                 pr['reviewThreads'] = answer['data']['repository']['pullRequest']['reviewThreads']
-                cold_guard_output[pr['number']] = guard_read(reader, answer, root)
-                guards[pr['number']] = cold_guard_output[pr['number']] == guard_read(reader, old_answers[pr['number']], root)
+                cold_guard_output[pr['number']] = guard_read(reader, answer, root, pending_observations)
+                guards[pr['number']] = cold_guard_output[pr['number']] == guard_read(reader, old_answers[pr['number']], root, pending_observations)
             after[pr['number']] = owner['decide'](pr, now)
         cold_inputs = {pr['number']: input_snapshot(pr) for pr in compact}
         baseline_inputs = {pr['number']: input_snapshot(pr) for pr in prs}
         # GitHub can finish mergeability computation between reads of one head.
         # Exclude only observed head/mergeability movement; every other cold
-        # decision or guard difference remains an error.
+        # decision difference remains an error. Guards depend on the head,
+        # not mergeability: same-head guards remain strict even when it moves.
         cold_moved = {n for n in before
                       if any(baseline_inputs[n][key] != cold_inputs[n][key]
                              for key in ('head', 'mergeable'))}
         cold_stable = set(before) - cold_moved
-        cold_stable_guards = set(guards) & cold_stable
+        cold_same_head = {n for n in before if baseline_inputs[n]['head'] == cold_inputs[n]['head']}
+        cold_stable_guards = set(guards) & cold_same_head
         record('cold-comparison', cold_inputs=cold_inputs,
                baseline_decisions=private_decisions(before), cold_decisions=private_decisions(after),
                cold_input_movement={n: {'before': baseline_inputs[n], 'after': cold_inputs[n]}
                                     for n in sorted(cold_moved)},
                cold_compared_numbers=sorted(cold_stable), cold_compared_guard_numbers=sorted(cold_stable_guards),
+               cold_guard_head_exclusions=sorted(set(guards) - cold_same_head),
                cold_decision_changes=sorted(n for n in cold_stable if before[n] != after[n]),
                cold_guard_changes=sorted(n for n in cold_stable_guards if not guards[n]))
         assert cold_stable_guards, 'no stable eligible cold guard; see safe diagnostics'
@@ -163,18 +181,23 @@ def prove_live():
                 answer = warm.reviews(pr, fragment)
                 pr['reviewThreads'] = answer['data']['repository']['pullRequest']['reviewThreads']
                 if same_review:
-                    warm_guards[number] = guard_read(reader, answer, root) == cold_guard_output[number]
+                    warm_guards[number] = guard_read(reader, answer, root, pending_observations) == cold_guard_output[number]
             warm_inputs[number] = input_snapshot(pr)
             warm_decisions[number] = owner['decide'](pr, now)
         common = set(cold_inputs) & set(warm_inputs)
         stable = {number for number in common if cold_inputs[number] == warm_inputs[number]}
-        stable_guards = stable & set(warm_guards)
+        # Queue changes affect decision comparisons, but do not excuse a
+        # review guard mismatch at the same head and review fingerprint.
+        same_head = {n for n in common if cold_inputs[n]['head'] == warm_inputs[n]['head']}
+        stable_guards = same_head & set(warm_guards)
         decision_changes = sorted(n for n in stable if after[n] != warm_decisions[n])
         record('warm-comparison', warm_inputs=warm_inputs, warm_decisions=private_decisions(warm_decisions),
                warm_added=sorted(set(warm_inputs) - set(cold_inputs)),
                warm_removed=sorted(set(cold_inputs) - set(warm_inputs)),
                warm_input_changed=sorted(common - stable), warm_stable=sorted(stable),
                stable_decision_changes=decision_changes, stable_guard_numbers=sorted(stable_guards),
+               warm_guard_head_exclusions=sorted((set(expected_hits + expected_misses) & common) - same_head),
+               warm_guard_fingerprint_exclusions=sorted(expected_misses),
                changed_review_fingerprints=sorted(changed_review_versions),
                expected_cache_hits=sorted(expected_hits), expected_cache_misses=sorted(expected_misses),
                cache_hits=warm.hits, cache_misses=warm.misses,
