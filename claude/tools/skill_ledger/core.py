@@ -10,7 +10,7 @@ Files in each repository's state directory, ${XDG_STATE_HOME:-~/.local/state}/ag
   skill-runs.v2.jsonl     derived: each schema-1 original normalized and linked to its transcript
                           (skill-run-log --backfill rewrites it; originals are never edited)
   skill-run-events.jsonl  append-only: operator corrections settled after a run
-and per host, agent-work/_outcomes/prs.jsonl holds machine-checked pull request snapshots.
+and per host, skill-outcomes/pr-signals.json holds the maintained current PR signals.
 
 A schema-2 row keeps every schema-1 field with its old meaning, except that `verdict` holds one
 of VERDICTS and the skill's own label moves to `verdictDetail`. The verdict is the author's own
@@ -919,7 +919,7 @@ def judge_override(run: dict, invoking: list[Event], human: list[Event], *, ende
 
 
 NON_REPO_DIRS = {"_outcomes", "_lead", "_guards"}  # state directories that are not a repository's ledger
-LEDGER_GLOBS = ("*/skill-runs.jsonl", "*/skill-runs.v2.jsonl", "*/skill-run-events.jsonl", "_outcomes/prs.jsonl")
+LEDGER_GLOBS = ("*/skill-runs.jsonl", "*/skill-runs.v2.jsonl", "*/skill-run-events.jsonl", "../skill-outcomes/pr-signals.json")
 
 
 def _collect_script(globs) -> str:
