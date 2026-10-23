@@ -157,8 +157,12 @@ def signal_sampler(directory, pid, name):
         return 0
     except ProcessLookupError:
         return 1  # Already exited; a finished observation remains valid.
-    except (AttributeError, OSError, ValueError):
-        (directory / "ownership_lost").write_text("sampler identity or pidfd unavailable; no signal sent\n")
+    except ValueError:
+        (directory / "ownership_lost").write_text("sampler identity lost; no signal sent\n")
+        return 1
+    except (AttributeError, OSError):
+        # Cooperative stop can still finish and be reaped without pidfds. The
+        # caller records incomplete ownership only if the child remains live.
         return 1
     finally:
         if descriptor is not None:

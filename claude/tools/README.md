@@ -404,6 +404,18 @@ No-install/light directory sizes stay unknown. Docker queries are bounded,
 read-only and optional: remote/unreadable/changed contexts remain unknown, and
 `docker system df` reports logical daemon usage, not allocated filesystem bytes.
 
+Host release priority is a hard admission guard in
+[`beelink-gate-lib/admission.sh`](beelink-gate-lib/admission.sh). The existing
+host limits file's `release_critical=1` blocks new normal, light, dev, urgent
+and starved gates. Its owning host operator keeps that hold through the release
+Build, the coordination gap and the publisher's terminal result; it has no
+automatic expiry. A malformed or duplicate key, ambiguous limits file or
+unreadable release-worker evidence refuses admission. Native release-runner
+cgroup membership also refuses admission while its `Runner.Worker` is active,
+without reading arguments, environments or GitHub. Running gate commands and
+installs finish normally. Older immutable staged scripts retain their prior
+policy, so the operator keeps its existing pressure fence until they drain.
+
 It uses one cached, detached checkout per host/repo in `~/.cache/beelink-gate/` and
 locks that checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen

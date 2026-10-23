@@ -49,6 +49,7 @@ gate_source_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.real
 gate_installer_source="$gate_source_root/beelink-gate-lib/install.sh"
 gate_staging_source="$gate_source_root/beelink-gate-lib/source.sh"
 gate_cache_source="$gate_source_root/beelink-gate-lib/cache.sh"
+gate_admission_source="$gate_source_root/beelink-gate-lib/admission.sh"
 gate_disk_source="$gate_source_root/beelink_gate_disk.py"
 beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 # shellcheck source=beelink-gate-lib/install.sh
@@ -57,6 +58,8 @@ beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 . "$gate_staging_source" || exit $?
 # shellcheck source=beelink-gate-lib/cache.sh
 . "$gate_cache_source" || exit $?
+# shellcheck source=beelink-gate-lib/admission.sh
+. "$gate_admission_source" || exit $?
 # BEELINK_GATE_INSTALLER_END
 
 tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
@@ -137,75 +140,6 @@ check_floor() {
   fi
 }
 
-# Windows owns the update policy; WSL owns the local clock and time-zone rules.
-# Check again after waiting for the repo lock, before any checkout is touched.
-# A gate admitted before the window keeps running, including its install.
-check_update_window() {
-  python3 - "$@" <<'PY'
-from datetime import datetime, time, timedelta, timezone
-import os
-from pathlib import Path
-import sys
-from zoneinfo import ZoneInfo
-
-host, raw_day, raw_hour = sys.argv[1:4]
-try:
-    day, hour = int(raw_day), int(raw_hour)
-    if not 0 <= day <= 7 or not 0 <= hour <= 23:
-        raise ValueError("day or hour out of range")
-    if len(sys.argv) > 4:
-        zone = ZoneInfo(sys.argv[4])
-    elif os.environ.get("TZ"):
-        zone = ZoneInfo(os.environ["TZ"])
-    else:
-        with Path("/etc/localtime").open("rb") as zonefile:
-            zone = ZoneInfo.from_file(zonefile)
-    now = (datetime.fromisoformat(sys.argv[5].replace("Z", "+00:00"))
-           if len(sys.argv) > 5 else datetime.now(timezone.utc))
-    if now.tzinfo is None:
-        raise ValueError("probe time requires a UTC offset")
-    now = now.astimezone(timezone.utc)
-except (OSError, ValueError, IndexError) as exc:
-    print(f"beelink-gate: cannot evaluate Windows Update window: {exc}", file=sys.stderr)
-    sys.exit(2)
-
-local_day = now.astimezone(zone).date()
-for offset in range(-7, 8):
-    candidate = local_day + timedelta(days=offset)
-    # Registry day 0 is daily; 1=Sunday through 7=Saturday.
-    if day and candidate.isoweekday() % 7 + 1 != day:
-        continue
-    scheduled_local = datetime.combine(candidate, time(hour), zone)
-    scheduled = scheduled_local.astimezone(timezone.utc)
-    start = scheduled - timedelta(minutes=60)
-    end = scheduled + timedelta(minutes=30)
-    if start <= now < end:
-        next_local = end.astimezone(zone)
-        print(
-            f"beelink-gate: REFUSED {host} Windows Update is scheduled "
-            f"{scheduled.astimezone(zone):%A %Y-%m-%d %H:%M %Z}; "
-            f"new gates are blocked from {start.astimezone(zone):%Y-%m-%d %H:%M %Z} "
-            f"until {next_local:%Y-%m-%d %H:%M %Z}; "
-            f"next allowed {next_local:%Y-%m-%d %H:%M %Z} "
-            f"({end:%Y-%m-%d %H:%M} UTC)",
-            file=sys.stderr,
-        )
-        print(f"{end:%Y-%m-%dT%H:%M:%SZ}")
-        sys.exit(3)
-PY
-}
-
-# Starts only outside the update window; inside it, a TEMPFAIL until it ends.
-admit_window() {
-  local next rc
-  next=$(check_update_window "$@"); rc=$?
-  case "$rc" in
-    0) ;;
-    3) tempfail "$next" "$1 is in its Windows Update window" ;;
-    *) exit "$rc" ;;
-  esac
-}
-
 # A .beelink-gate/sparse-checkout file's patterns, without comments, blank
 # lines or trailing spaces (stdin to stdout).
 sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
@@ -270,6 +204,7 @@ capacity_writer_active() {
 }
 
 wait_for_capacity_writer() {
+  admit_release_priority "$beelink"
   local now_ms elapsed_ms
   now_ms=$(date +%s%3N)
   (( intent_started_ms )) || intent_started_ms=$now_ms
@@ -463,6 +398,7 @@ acquire_slot() {
   marker="$slots_dir/urgent-$pool"
   if [ "${urgent:-0}" = 1 ]; then ticket_body > "$marker.$$"; urgent_markers+=("$marker.$$"); fi
   while :; do
+    admit_release_priority "$beelink"
     if [ "${urgent:-0}" = 1 ] || ! urgent_ahead "$marker"; then
       for ((i = 0; i < max; i++)); do
         exec {slot_fd}>"$slots_dir/$pool-$i.lock" || die "cannot open host slot"
@@ -795,6 +731,7 @@ wait_for_load() {
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die "invalid BEELINK_GATE_LOAD_WAIT: ${BEELINK_GATE_LOAD_WAIT:-}"
   join_gate_cgroup
   while :; do
+    admit_release_priority "$beelink"
     host=$(host_pressure_now) ceiling=$(host_pressure_ceiling) held=0 capacity="" quota_mode=0
     if [ "${gate_cgroup_joined:-}" = "$(basename "$(gate_cgroup)")" ] && capacity=$(quota_capacity 1); then
       quota_mode=1
@@ -1281,6 +1218,11 @@ remote_probe() {
   [ "$probe_mode" = dev ] && dev=1
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  if ! reason=$(release_priority_reason "$beelink"); then
+    printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=release-held capacity=null reason=%s\n' \
+      "$beelink" "$(utc_in_minutes 5)" "$reason"
+    return 0
+  fi
   local probe_heat=cold
   ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
   reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
@@ -1728,6 +1670,7 @@ remote_gate() {
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi
+  admit_release_priority "$beelink"
   ! any_copy_warm "$cache_root/$host/$owner/$repo" "$reserve_spec" || reserve_heat=warm
   install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" "$reserve_heat") \
     || die "cannot read install reserve receipts"
@@ -1792,12 +1735,14 @@ remote_gate() {
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   while [ -z "$lock" ]; do
+    admit_release_priority "$beelink"
     # Cleanup and the cache pruner hold this lock exclusively before inspecting
     # repo locks. A shared claim prevents either from racing a new checkout,
     # while other gates can claim their own repos at the same time. Release it
     # as soon as the repo flock is held; the command keeps only its repo lock.
     claim_started_ms=$(date +%s%3N)
     while :; do
+      admit_release_priority "$beelink"
       if capacity_writer_active; then
         wait_for_capacity_writer
         continue
@@ -2009,6 +1954,7 @@ PYTURBO
   # binding: this gate holds its checkout's lock from here through its install,
   # so the checkout is warm only if it is here now with the gated commit's
   # shape, and it stays warm only while it survives to the install (below).
+  admit_release_priority "$beelink"
   admitted_shape=$(checkout_shape "$checkout") || admitted_shape=""
   reserve_heat=cold
   [ -z "$reserve_spec" ] || [ "$admitted_shape" != "$reserve_spec" ] || reserve_heat=warm
@@ -2025,6 +1971,7 @@ PYTURBO
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
+  admit_release_priority "$beelink"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
     echo "beelink-gate: WARNING cache over its cap with only active checkouts left; running anyway (the disk floor guards disk space)" >&2
@@ -2033,6 +1980,7 @@ PYTURBO
   if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
     die "cache path is not an owned checkout: $checkout"
   fi
+  admit_release_priority "$beelink"
   if [ -e "$checkout/.git" ]; then
     adopt_origin "$checkout" "$repo_url" || exit $?
     # A blame or history check can otherwise fetch hundreds of missing blobs
