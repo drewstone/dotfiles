@@ -157,9 +157,13 @@ for host, rs in sorted(by_host.items()):
           f"({len(hp)} measured), timeouts {sum(1 for r in rs if r.get('exit') == 124 or r.get('timed_out'))}")
 disk = disk_summary(history, since)
 for host, summary in disk["hosts"].items():
-    print(f"DISK {host}: last20 admitted n={summary['n']} sampled={summary['measured_n']} "
-          f"unknown={summary['unknown_n']} sampled highwater p99={summary['sampled_highwater_p99_bytes']} bytes; "
-          "host-shared sampled lower bound, not exact transient peak or floor")
+    print(f"DISK {host}: last20 admitted n={summary['n']} qualified={summary['measured_n']} "
+          f"unknown={summary['unknown_n']} missing_history={summary['missing_history_n']} "
+          f"whole20 p99={summary['sampled_highwater_p99_bytes']} "
+          f"qualified-subset p99={summary['qualified_subset_p99_bytes']} "
+          f"observed lower-bound max={summary['observed_highwater_lower_bound_max_bytes']} bytes "
+          f"({summary['observed_n']} numeric rows including partials); "
+          "host-shared sampled lower bounds, not exact transient peaks or a floor")
 performance = throughput(history, since, now)
 for group in performance["groups"]:
     print(f"THROUGHPUT {group['repo']} {group['class']}: n={group['n']} "
