@@ -2,6 +2,7 @@
 import collections, datetime as dt, json, math, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from beelink_gate_metrics import throughput
+from beelink_gate_disk import disk_summary
 path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 json_output = len(sys.argv) > 5 and sys.argv[5] == "--json"
 if json_output:
@@ -32,19 +33,30 @@ for line in open(path):
         history.append(r)
 # GitHub follows a renamed repo but its search does not, so receipts group under the
 # current name; otherwise agent-dev-container's runs after its rename had no merged count.
+# gh owns persistence/expiry. Cache age is not returned by its API command, so
+# expose the maximum possible staleness without calling a cached response fresh.
+GITHUB_METADATA_CACHE_SECONDS = 300
 canonical_names = {}
+canonical_unknown = set()
 def github(args):
     try:
-        return subprocess.run([gh, *args], capture_output=True, text=True, timeout=15)
-    except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 124, "", "timeout")
+        return subprocess.run([gh, "api", "--cache", f"{GITHUB_METADATA_CACHE_SECONDS}s", *args], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return subprocess.CompletedProcess(args, 124 if isinstance(error, subprocess.TimeoutExpired) else 127, "", "metadata unavailable")
 def canonical(repo):
-    if not gh or not repo.startswith("github.com/"):
+    if not repo.startswith("github.com/"):
+        return repo
+    if not gh:
+        canonical_unknown.add(repo)
         return repo
     if repo not in canonical_names:
-        out = github(["api", f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"])
+        out = github([f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"])
         name = out.stdout.strip()
-        canonical_names[repo] = f"github.com/{name}" if out.returncode == 0 and name.count("/") == 1 else repo
+        if out.returncode == 0 and name.count("/") == 1:
+            canonical_names[repo] = f"github.com/{name}"
+        else:
+            canonical_unknown.add(repo)
+            canonical_names[repo] = repo
     return canonical_names[repo]
 with ThreadPoolExecutor(max_workers=4) as pool:
     list(pool.map(canonical, {r["repo"] for r in history if r.get("repo")}))
@@ -61,7 +73,7 @@ def merged(repo):
     if not gh or not repo.startswith("github.com/"):
         return None
     q = f"repo:{repo[len('github.com/'):]} is:pr is:merged merged:>={since}"
-    out = github(["api", "-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"])
+    out = github(["-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"])
     return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
 print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
 for logs in capacity_logs:
@@ -72,8 +84,15 @@ if missing:
     print(f"PARTIAL missing receipts from {missing}; every count below omits that host")
 print(f"{'repo':38} {'runs':>5} {'merged':>6} {'runs/PR':>7} {'p50 wait':>8} {'repeats':>7}  modes / exits")
 total_runs = total_merged = 0
-with ThreadPoolExecutor(max_workers=4) as pool:
-    merged_counts = dict(zip(by_repo, pool.map(merged, by_repo)))
+# The JSON consumer never includes merged counts. Do not spend search quota on
+# text that its print sink discards; canonical grouping still runs above.
+merged_counts = dict.fromkeys(by_repo)
+if not json_output:
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        merged_counts = dict(zip(by_repo, pool.map(merged, by_repo)))
+print(f"GITHUB_METADATA enabled={bool(gh)} cache_max_age_s={GITHUB_METADATA_CACHE_SECONDS} "
+      f"actual_cache_age=unknown canonical_unknown={sorted(canonical_unknown)} "
+      f"merged_unknown={sorted(repo for repo, count in merged_counts.items() if count is None)}")
 for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
     m = merged_counts[repo]
     waits = sorted(r.get("waited_s", 0) for r in rs)
@@ -135,6 +154,11 @@ for host, rs in sorted(by_host.items()):
     p50 = f"{hp[len(hp) // 2]:.1f}" if hp else "-"
     print(f"HOST {host}: {len(rs)} runs, p50 wait {waits[len(waits) // 2]}s, host cpu avg60 at admission p50 {p50} "
           f"({len(hp)} measured), timeouts {sum(1 for r in rs if r.get('exit') == 124 or r.get('timed_out'))}")
+disk = disk_summary(history, since)
+for host, summary in disk["hosts"].items():
+    print(f"DISK {host}: last20 admitted n={summary['n']} sampled={summary['measured_n']} "
+          f"unknown={summary['unknown_n']} sampled highwater p99={summary['sampled_highwater_p99_bytes']} bytes; "
+          "host-shared sampled lower bound, not exact transient peak or floor")
 performance = throughput(history, since, now)
 for group in performance["groups"]:
     print(f"THROUGHPUT {group['repo']} {group['class']}: n={group['n']} "
@@ -157,7 +181,13 @@ for sample in samples:
 if json_output:
     sys.stdout.write(json.dumps({"window_from": since, "window_to": now.isoformat(),
                                 "missing_hosts": missing.split(",") if missing else [],
-                                "performance": performance, "host_cpu_samples": samples,
+                                "performance": performance, "disk": disk, "host_cpu_samples": samples,
                                 "missing_cpu_hosts": cpu_missing,
-                                "retained_job_logs": capacity_logs}, sort_keys=True) + "\n")
+                                "retained_job_logs": capacity_logs,
+                                "github_metadata": {"enabled": bool(gh),
+                                                    "cache_max_age_s": GITHUB_METADATA_CACHE_SECONDS,
+                                                    "cache_age_s": None,
+                                                    "canonical_names": {repo: name for repo, name in canonical_names.items() if repo not in canonical_unknown},
+                                                    "canonical_unknown": sorted(canonical_unknown),
+                                                    "merged_counts_requested": False}}, sort_keys=True) + "\n")
 sys.exit(75 if missing or cpu_missing else 0)
