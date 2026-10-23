@@ -2,9 +2,222 @@
 # Owned gate-cache reclamation; sourced locally and bundled for remote gates.
 # Cache directories are owned by this command. A global lock serializes size
 # decisions; per-repo locks keep active gates out of the eviction set.
+# shellcheck disable=SC2154 # State is initialized by the parent remote_gate.
+# One private helper for pool layout, validation and managed-consumer lifetime.
+# Empty gate-ID markers outlive a killed Bash owner: only the kernel unit's
+# absence or populated=0 permits reclamation, never a missing PID or free flock.
+gate_turbo_cache_python=$(cat <<'PYTURBOCACHE'
+import hashlib
+import os
+from pathlib import Path
+import re
+import stat
+
+def turbo_directory(path, create=False):
+    if create:
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError(f"unsafe shared Turbo directory: {path}")
+
+def turbo_layout(root, identity):
+    parts = identity.split('/')
+    if len(parts) != 3 or any(not part or part in ('.', '..') or '\\' in part for part in parts):
+        raise ValueError('invalid shared Turbo repository identity')
+    pool = root / '.turbo' / parts[0] / parts[1] / parts[2] / 'normal'
+    key = hashlib.sha256((identity + '/normal').encode()).hexdigest()
+    return pool, root / '.locks' / f'turbo-{key}.lock'
+
+def turbo_regular(path, descriptor=None):
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise ValueError(f"unsafe shared Turbo metadata: {path}")
+    if descriptor is not None:
+        opened = os.fstat(descriptor)
+        if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError('shared Turbo lock changed')
+    return info
+
+def turbo_prepare_lock(root, identity):
+    _, lock = turbo_layout(root, identity)
+    turbo_directory(root)
+    turbo_directory(lock.parent)
+    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        turbo_regular(lock, fd)
+    finally:
+        os.close(fd)
+
+def turbo_register(root, identity, gate_id, normal_group, descriptor):
+    pool, lock = turbo_layout(root, identity)
+    turbo_regular(lock, descriptor)
+    if not re.fullmatch(r'beelink[12]-[0-9a-f]{32}', gate_id):
+        raise ValueError('invalid shared Turbo gate ID')
+    expected = str(normal_group / f'beelink-gate-{gate_id}.service')
+    joined = Path('/proc/self/cgroup').read_text().strip()
+    if joined != '0::' + expected.removeprefix('/sys/fs/cgroup'):
+        raise ValueError('shared Turbo requires the actual managed normal unit')
+    turbo_directory(root)
+    for part in pool.relative_to(root).parts:
+        root = root / part
+        turbo_directory(root, create=True)
+    users = pool / '.users'
+    turbo_directory(users, create=True)
+    marker = users / gate_id
+    try:
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        pass
+    if turbo_regular(marker).st_size:
+        raise ValueError('shared Turbo consumer marker must be empty')
+    turbo_idle(pool, normal_group, clean=True)
+    used = pool / 'beelink-gate-used'
+    fd = os.open(used, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        turbo_regular(used, fd)
+        os.utime(fd, None)
+    finally:
+        os.close(fd)
+    return pool
+
+def turbo_idle(pool, normal_group, clean=False):
+    try:
+        turbo_directory(pool)
+        users = pool / '.users'
+        turbo_directory(users)
+        # A missing class root is incomplete visibility, not an empty unit.
+        if normal_group.is_symlink() or not normal_group.is_dir():
+            return False
+        stale, idle = [], True
+        for marker in users.iterdir():
+            if not re.fullmatch(r'beelink[12]-[0-9a-f]{32}', marker.name) or turbo_regular(marker).st_size:
+                return False
+            unit = normal_group / f'beelink-gate-{marker.name}.service'
+            try:
+                if unit.is_symlink():
+                    return False
+                with (unit / 'cgroup.events').open() as stream:
+                    events = stream.read(4097)
+                values = [line.split()[1:] for line in events.splitlines() if line.split()[:1] == ['populated']]
+                if len(events) <= 4096 and values == [['1']]:
+                    idle = False
+                    continue
+                if len(events) > 4096 or values != [['0']]:
+                    return False
+            except FileNotFoundError:
+                if os.path.lexists(unit):
+                    return False
+            stale.append(marker)
+        if clean:
+            for marker in stale:
+                marker.unlink(missing_ok=True)
+        return idle
+    except (OSError, ValueError):
+        return False  # Unreadable/unsafe unit or marker keeps the entire pool.
+
+def turbo_pools(root):
+    base = root / '.turbo'
+    if not base.exists():
+        return
+    turbo_directory(base)
+    for host in base.iterdir():
+        turbo_directory(host)
+        for owner in host.iterdir():
+            turbo_directory(owner)
+            for repo in owner.iterdir():
+                try:
+                    turbo_directory(repo)
+                    pool, lock = turbo_layout(root, '/'.join((host.name, owner.name, repo.name)))
+                    turbo_directory(pool)
+                    used = pool / 'beelink-gate-used'
+                    stamp = turbo_regular(used).st_mtime_ns
+                    yield stamp, pool, lock
+                except (OSError, ValueError):
+                    # A newly registering or incomplete pool is still in the
+                    # root du, but cannot yet be an eviction candidate.
+                    continue
+
+def turbo_idle_paths(root, normal_group):
+    import fcntl
+    for _, pool, lock in turbo_pools(root):
+        fd = os.open(lock, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            turbo_regular(lock, fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            if turbo_idle(pool, normal_group):
+                print(str(pool), end='\0')
+        finally:
+            os.close(fd)
+PYTURBOCACHE
+)
+
+prepare_gate_turbo_cache() {
+  # Development, light and no-install outputs retain their private namespace.
+  [ "$install_mode" = install ] && [ "${dev:-0}" = 0 ] && [ "${light:-0}" = 0 ] && [ -z "${TURBO_CACHE_DIR:-}" ] || return 0
+  [ "${BEELINK_GATE_SYSTEMD_MANAGER:-}" = system ] && [ -n "${gate_cgroup_joined:-}" ] || return 0
+  local pool lease normal_group left
+  normal_group=$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup) || return 75
+  IFS=$'\t' read -r pool lease < <(python3 -c "$gate_turbo_cache_python"$'\n''import sys; root=Path(sys.argv[1]); turbo_prepare_lock(root, sys.argv[2]); print(*turbo_layout(root, sys.argv[2]), sep="\t")' "$cache_root" "$host/$owner/$repo")
+  [ -n "$pool" ] && [ -n "$lease" ] && [ ! -L "$lease" ] || return 75
+  exec {gate_turbo_fd}>>"$lease" || return 75
+  left=$((deadline - SECONDS))
+  if (( left <= 0 )) || ! flock -w "$left" -s "$gate_turbo_fd" ||
+    ! python3 -c "$gate_turbo_cache_python"$'\n''import sys; turbo_register(Path(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4]), int(sys.argv[5]))' "$cache_root" "$host/$owner/$repo" "$gate_id" "$normal_group" "$gate_turbo_fd"; then
+    exec {gate_turbo_fd}>&-
+    gate_turbo_fd=""
+    return 75
+  fi
+  gate_turbo_root=$pool
+  package_stores+=("$gate_turbo_root")
+}
+
+gate_turbo_node_cache() {
+  python3 -c "$gate_turbo_cache_python"$'\n''import sys; root=Path(sys.argv[1]); turbo_directory(root); path=root/sys.argv[2]; turbo_directory(path, create=True); print(path)' "$gate_turbo_root" "$1"
+}
+
+release_gate_turbo_cache() {
+  [ -z "${gate_turbo_fd:-}" ] || {
+    touch "$gate_turbo_root/beelink-gate-used" || true
+    # LOCK_UN would also unlock inherited descriptors. Close only this copy;
+    # the persistent unit marker remains authoritative after an owner death.
+    exec {gate_turbo_fd}>&-
+    gate_turbo_fd=""
+  }
+}
+
+# A forecast only: floors remain binding before any install. One du counts
+# hardlinks once across idle checkouts and unleased, kernel-idle shared pools.
+idle_cache_bytes() {
+  local root="$1" dir rel lock fd
+  local -a idle=()
+  for dir in "$root"/*/*/*/; do
+    dir=${dir%/}
+    if [ -L "$dir" ] || [ ! -d "$dir/.git" ]; then continue; fi
+    rel=${dir#"$root"/}; lock="$root/.locks/${rel//\//-}.lock"
+    if [ -e "$lock" ]; then
+      exec {fd}<"$lock" || continue
+      if ! flock -n -s "$fd"; then exec {fd}<&-; continue; fi
+      exec {fd}<&-
+    fi
+    idle+=("$dir")
+  done
+  while IFS= read -r -d '' dir; do idle+=("$dir"); done < <(
+    python3 -c "$gate_turbo_cache_python"$'\n''import sys; turbo_idle_paths(Path(sys.argv[1]), Path(sys.argv[2]))' "$root" "$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup)"
+  )
+  (( ${#idle[@]} )) || { echo 0; return; }
+  du -s -c -B1 -- "${idle[@]}" 2>/dev/null | tail -n 1 | cut -f1
+}
+
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
-    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_normalize sparse_apply)" <<'PY'
+    python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_normalize sparse_apply)" "$gate_turbo_cache_python" "$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup)" <<'PY'
 import contextlib
 import fcntl
 import os
@@ -16,6 +229,8 @@ import uuid
 
 root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 sparse_code = sys.argv[5]
+exec(sys.argv[6])  # The same private pool/marker owner used by admission.
+normal_group = Path(sys.argv[7])
 locks = root / ".locks"
 size_scans = 0
 removal_deadline = None
@@ -122,7 +337,7 @@ try:
         lock_acquired = time.monotonic_ns()
         candidates = []
         for host in root.iterdir():
-            if host.name == ".locks" or host.is_symlink() or not host.is_dir():
+            if host.name in (".locks", ".turbo") or host.is_symlink() or not host.is_dir():
                 continue
             for owner in host.iterdir():
                 if owner.is_symlink() or not owner.is_dir():
@@ -135,7 +350,8 @@ try:
                     stamp = used if used.is_file() and not used.is_symlink() else git_dir / "FETCH_HEAD"
                     if not stamp.exists() or stamp.is_symlink():
                         stamp = git_dir
-                    candidates.append((stamp.stat().st_mtime_ns, repo, host.name, owner.name))
+                    candidates.append((stamp.stat().st_mtime_ns, repo, locks / f"{host.name}-{owner.name}-{repo.name}.lock", False))
+        candidates.extend((stamp, pool, lock, True) for stamp, pool, lock in turbo_pools(root))
         # Size after sparse maintenance, once. A second identical tree walk
         # without a mutation costs CPU/IO but proves no stronger capacity bound.
         initial_total = None
@@ -145,8 +361,10 @@ try:
         # are paths no gated command reads, and the checkout stays warm for the
         # next gate. LRU eviction then weighs what remains.
         sparsified = False
-        for stamp_ns, repo, host, owner in candidates:
-            fd = os.open(locks / f"{host}-{owner}-{repo.name}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        for stamp_ns, repo, lock_path, shared in candidates:
+            if shared:
+                continue  # Archives have no Git sparse-checkout work.
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             try:
                 if repo != current:
                     try:
@@ -169,7 +387,7 @@ try:
         total = size(root)
         fcntl.flock(global_lock, fcntl.LOCK_UN)
         evictions = 0
-        for stamp_ns, repo, host, owner in sorted(candidates):
+        for stamp_ns, repo, lock_path, shared in sorted(candidates):
             if total <= cap and (not required_reclaim or free_bytes(root) >= target_free):
                 break
             # Wait without taking a candidate repo lock. Writer intent stops
@@ -177,18 +395,24 @@ try:
             with writer_intent() as deadline:
                 wait_capacity_lock(global_lock, locks / ".capacity.lock", deadline)
                 try:
-                    lock_path = locks / f"{host}-{owner}-{repo.name}.lock"
-                    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+                    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | (os.O_NONBLOCK if shared else 0), 0o600)
                     try:
-                        if repo != current:
+                        if shared or repo != current:
                             try:
                                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                             except BlockingIOError:
                                 continue
-                        git_dir = repo / ".git"
-                        if repo.is_symlink() or git_dir.is_symlink() or not git_dir.is_dir():
-                            continue
-                        used = git_dir / "beelink-gate-used"
+                        if shared:
+                            turbo_regular(lock_path, fd)
+                            if not turbo_idle(repo, normal_group, clean=True):
+                                print(f"beelink-gate: keeping shared Turbo pool {repo}: managed consumer active or unknown", file=sys.stderr)
+                                continue
+                            used = repo / "beelink-gate-used"
+                        else:
+                            git_dir = repo / ".git"
+                            if repo.is_symlink() or git_dir.is_symlink() or not git_dir.is_dir():
+                                continue
+                            used = git_dir / "beelink-gate-used"
                         if used.is_file() and used.stat().st_mtime_ns > stamp_ns:
                             continue  # Used since the shared snapshot; no longer LRU.
                         removed = locks / f".evicted-{uuid.uuid4().hex}"
