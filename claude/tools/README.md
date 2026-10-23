@@ -350,18 +350,39 @@ zero. CPU samples are current observations; cgroup rows overlap and must not
 be summed. Process accounting excludes short-lived tasks, with coverage and
 unattributed CPU reported.
 
-When the gate verifies membership in the maintained priority cgroup, admission
-uses its live effective CPU budget (ancestor quotas, cpuset and affinity),
-current runnable threads, prospective worker budget, and cgroup `full avg10`.
-The full-stall threshold comes from the existing CPU-pressure limit owner.
-Default workers share that quota and fit its measured headroom; explicit caller
-worker overrides retain their existing semantics. The forecast is a default budget. Host
-`some` pressure remains context: lower-priority CI waiting does not by itself
-block a gate with capacity. Urgent/starved gates cannot bypass quota or full
-stalls. A probe marks this mode tentative; admission verifies the actual join.
-Missing quota, priority or readable thread evidence retains the complete
-legacy cgroup/host PSI and load guards. `--dev` retains those guards too.
-Receipts and report CPU samples include the decision inputs and join proof.
+Every gate class runs as the caller's unprivileged UID in a SYSTEM-managed
+unit beneath the top-level `beelinkgate.slice`. Its low aggregate CPU and IO
+weights, normal quota and normal/dev memory limits have one source:
+[`host/cgroup/beelink-gate-policy.json`](../../host/cgroup/beelink-gate-policy.json).
+The maintained host installer renders and checks that policy through the host
+role; no runner restart or process migration is needed. Per-gate unit counts do
+not multiply the aggregate weight. Cancellation stops the owned system unit and
+its descendants; retained old user units keep their original cancellation path.
+Missing sudo authority or unverified containment refuses work rather than using
+an unprioritized fallback. Receipts retain the actual cgroup path, system manager
+and unit name.
+Probe-triggered cache recovery re-executes the immutable probe source in the
+same managed slice, with a bounded synchronous lifetime and the same PSI/drain
+checks before scanning or pruning. A failed launch cannot recover outside it.
+
+Admission reads host CPU PSI `some avg10` against the existing host limits
+file's `max_cpu_pressure`. Caller overrides may lower that ceiling, never raise
+it. Normal, light, dev, urgent and starved gates share this hard guard. Missing
+or malformed PSI/limits evidence refuses admission; load average is context
+only. Quotas, cpuset, affinity and active slots inform the default worker
+forecast, never permission to bypass host PSI. Explicit worker overrides retain
+their existing semantics. The guard is rechecked before fetch; an admitted
+install or command finishes normally.
+
+The host policy also lowers retained raw gate groups so already-running old
+sources yield without moving or killing them. A new managed class cannot begin
+while its legacy kernel group is recursively populated or an old user gate unit
+is active. Unknown drain evidence refuses. New submissions reject retained old
+source and require restaging through the maintained CLI. Empty legacy groups
+are an observed handoff boundary, not a claim that arbitrary externally pinned
+old scripts can never run again. Old and new caps are separate during transition;
+there is no invented combined allowance. IO weights are configured policy;
+without an effective IO controller/scheduler, bandwidth priority remains unknown.
 
 Receipts measure frozen installation separately. A compound gate command can
 record its own typecheck/test spans in `$BEELINK_GATE_PHASE_FILE`: append one
@@ -421,7 +442,7 @@ file's `release_critical=1` blocks new normal, light, dev, urgent and starved
 gates. Its owning release/host operator keeps the hold through the owned Build,
 coordination gap and publisher/deploy terminal result; it has no automatic
 expiry. Unknown release evidence, including malformed or unreadable release
-policy, is logged and falls back to the existing quota and host admission checks.
+policy, is logged and falls back to host PSI admission and the existing disk, lock and slot checks.
 
 [`beelink_gate_release.py`](beelink_gate_release.py) owns the release owner's
 exact workflow/job priority list and joins active GitHub job identities to native
@@ -537,8 +558,8 @@ at most 10 minutes. A light command that uses more CPU than it declared fails
 the gate with "LIGHT GATE OVER BUDGET"; run that check as a normal gate.
 Normal gates are admitted exactly as before.
 
-`auto` re-places a waiting gate. If the beelink it chose does not admit it (repo checkout, host slot and load) within `BEELINK_GATE_REPLACE_WAIT` (default 60s), the gate gives that host back before any checkout work. The launcher then probes both hosts again and goes to whichever admits it first, and the receipt's `waited_s` covers every placement. A named beelink keeps waiting where it is.
-`--urgent`, for a fix to a red default branch, goes ahead of every waiting gate for the next free checkout of its repo and the next free host slot. It polls faster, and other waiters step aside while its marker is live. It does not raise the load limit.
+`auto` re-places a waiting gate. If the beelink it chose does not admit it (repo checkout, host slot and host PSI) within `BEELINK_GATE_REPLACE_WAIT` (default 60s), the gate gives that host back before any checkout work. The launcher then probes both hosts again and goes to whichever admits it first, and the receipt's `waited_s` covers every placement. A named beelink keeps waiting where it is.
+`--urgent`, for a fix to a red default branch, goes ahead of every waiting gate for the next free checkout of its repo and the next free host slot. It polls faster, and other waiters step aside while its marker is live. It cannot raise the host PSI ceiling.
 
 ```bash
 beelink-gate --light auto git@github.com:owner/repo.git <full-sha> -- bash -c 'bash -n bin/tool && python3 -m pytest -q tests/test_tool.py'

@@ -1,0 +1,7 @@
+{
+  "cpu_weight": 1,
+  "io_weight": 1,
+  "normal_cpu_percent_per_host_cpu": 75,
+  "normal_memory_bytes": 25769803776,
+  "dev_memory_bytes": 8589934592
+}

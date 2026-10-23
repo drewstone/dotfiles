@@ -39,6 +39,44 @@ def pressure(path):
     return result or None
 
 
+def io_counters(path):
+    raw = read_text(path)
+    if raw is None:
+        return None
+    result = {}
+    try:
+        for line in raw.splitlines():
+            device, *fields = line.split()
+            major, minor = device.split(':')
+            if not major.isdigit() or not minor.isdigit():
+                return None
+            values = {key: int(value) for key, value in
+                      (field.split('=', 1) for field in fields)}
+            if any(value < 0 for value in values.values()):
+                return None
+            result[device] = values
+    except (ValueError, TypeError):
+        return None
+    return result
+
+
+def io_delta(before, after):
+    if before is None or after is None:
+        return None
+    result = {}
+    for device in before.keys() | after.keys():
+        previous, current = before.get(device, {}), after.get(device, {})
+        fields = {}
+        for key in previous.keys() | current.keys():
+            value = current.get(key)
+            start = previous.get(key, 0)
+            if value is None or value < start:
+                return None
+            fields[key] = value - start
+        result[device] = fields
+    return result
+
+
 def process_snapshot(deadline):
     rows = {}
     counts = collections.Counter()
@@ -73,7 +111,11 @@ def process_snapshot(deadline):
 
 def group_snapshot(groups, deadline):
     # Read only groups the process sample encountered, plus their ancestors.
-    names = {'/'}
+    names = {'/', '/beelinkgate.slice',
+             '/beelinkgate.slice/beelinkgate-normal.slice',
+             '/beelinkgate.slice/beelinkgate-dev.slice',
+             '/beelink-gate', '/beelink-gate-dev',
+             '/deploy.slice', '/deploy.slice/deploy-runners.slice'}
     for name in groups:
         path = Path(name)
         names.update(str(parent) for parent in (path, *path.parents))
@@ -84,16 +126,25 @@ def group_snapshot(groups, deadline):
             counts['budget_exhausted'] += 1
             break
         path = CGROUP / name.lstrip('/')
-        raw = read_text(path / 'cpu.stat')
         counts['groups_seen'] += 1
         try:
+            identity = path.stat().st_ino
+            raw = read_text(path / 'cpu.stat')
             values = dict(line.split() for line in (raw or '').splitlines())
-            result[name] = {'usage_usec': int(values['usage_usec']),
+            row = {'identity': identity,
+                            'usage_usec': int(values['usage_usec']),
                             'throttled_usec': int(values.get('throttled_usec', 0)),
                             'cpu_max': read_text(path / 'cpu.max'),
                             'cpu_weight': read_text(path / 'cpu.weight'),
-                            'cpu_pressure': pressure(path / 'cpu.pressure')}
-        except (KeyError, ValueError):
+                            'cpu_pressure': pressure(path / 'cpu.pressure'),
+                            'io_weight': read_text(path / 'io.weight'),
+                            'io_pressure': pressure(path / 'io.pressure'),
+                            'io_counters': io_counters(path / 'io.stat')}
+            if path.stat().st_ino != identity:
+                counts['identity_changed_during_read'] += 1
+                continue
+            result[name] = row
+        except (OSError, KeyError, ValueError):
             counts['unreadable_or_removed'] += 1
     counts['groups_read'] = len(result)
     return result, dict(counts)
@@ -211,14 +262,23 @@ def sample():
                           'cpu_pct': round(cpu, 2),
                           **states_row(process_states.get(pid, collections.Counter()))})
     groups = []
+    reset_groups = []
     for name, row in second_groups.items():
         previous = first_groups.get(name)
         if previous is None:
             continue
+        if (previous['identity'] != row['identity'] or
+                row['usage_usec'] < previous['usage_usec'] or
+                row['throttled_usec'] < previous['throttled_usec']):
+            reset_groups.append(name)
+            continue
         cpu = max(0, row['usage_usec'] - previous['usage_usec']) / 10000 / interval
         groups.append({'cgroup': name, 'cpu_pct': round(cpu, 2),
+                       'cgroup_inode': row['identity'],
                        'cpu_max': row['cpu_max'], 'cpu_weight': row['cpu_weight'],
                        'cpu_pressure': row['cpu_pressure'],
+                       'io_weight': row['io_weight'], 'io_pressure': row['io_pressure'],
+                       'io_delta': io_delta(previous['io_counters'], row['io_counters']),
                        'throttled_pct': round(max(0, row['throttled_usec'] - previous['throttled_usec']) / 10000 / interval, 2),
                        **states_row(group_states.get(name, collections.Counter()))})
     groups.sort(key=lambda row: row['cpu_pct'], reverse=True)
@@ -237,17 +297,26 @@ def sample():
                                                for pid, row in second.items()),
                 'process_rows': len(processes), 'process_rows_retained': min(20, len(processes)),
                 'group_rows': len(groups), 'group_rows_retained': min(30, len(groups))}
+    coverage['groups_recreated_or_counter_reset'] = reset_groups
+    priority_names = {'/beelinkgate.slice',
+                      '/beelinkgate.slice/beelinkgate-normal.slice',
+                      '/beelinkgate.slice/beelinkgate-dev.slice',
+                      '/beelink-gate', '/beelink-gate-dev',
+                      '/deploy.slice', '/deploy.slice/deploy-runners.slice'}
+    priority_groups = [row for row in groups if row['cgroup'] in priority_names]
     return {'kind': 'host_cpu_sample', 'schema_version': 1, 'host': os.uname().nodename,
             'observed_at': observed_at, 'interval_seconds': round(interval, 3),
             'collector_seconds': round(time.monotonic() - started, 3), 'cores': os.cpu_count(),
             'loadavg': list(os.getloadavg()), 'cpu_pressure': pressure(PROC / 'pressure/cpu'),
+            'io_pressure': pressure(PROC / 'pressure/io'),
             'admission': json.loads(os.environ.get('BEELINK_GATE_ADMISSION_SAMPLE', 'null')),
             'release_priority': release_priority_observation(),
-            'cpu': cpu, 'coverage': coverage, 'groups': groups[:30], 'processes': processes[:20],
+            'cpu': cpu, 'coverage': coverage, 'groups': groups[:30],
+            'priority_groups': priority_groups, 'processes': processes[:20],
             'runnable_threads': sum(states['R'] for states in group_states.values()),
             'blocked_threads': sum(states['D'] for states in group_states.values()),
             'unattributed_cpu_pct': round(max(0, (cpu or {}).get('busy_pct', 0) - sum(row['cpu_pct'] for row in processes)), 2),
-            'limits': 'Current sample, not 24-hour history. CPU pct uses 100 per core. Process CPU excludes exited, new or reused PIDs; missing CPU is explicit. Cgroup CPU includes descendants: overlapping rows must not be summed. Thread counts are direct membership at the end, not an atomic host census. Unreadable/exited entries and budget exhaustion are recorded in coverage. CPU pressure is a cgroup/host signal, not a per-process causal measure.'}
+            'limits': 'Current sample, not 24-hour history. CPU pct uses 100 per core. Process CPU excludes exited, new or reused PIDs; missing CPU is explicit. Cgroup CPU and block I/O include descendants: overlapping rows must not be summed. I/O deltas are kernel-accounted device counters over interval_seconds; page-cache hits are excluded. Missing/reset counters are unknown, not zero. IOWeight is configured policy, not evidence the backing-device controller enforces it. Thread counts are direct membership at the end, not an atomic host census. Unreadable/exited entries and budget exhaustion are recorded in coverage. CPU pressure is a cgroup/host signal, not a per-process causal measure.'}
 
 
 if __name__ == '__main__':
