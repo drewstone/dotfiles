@@ -4,6 +4,7 @@ Imported reports reuse the metadata TTL; import performs no reads or API calls.
 The shell embeds this source once and invokes main before admitting new work.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime as dt
 import fcntl
 import hashlib
@@ -18,12 +19,14 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 GITHUB_CACHE_SECONDS = 300
 READ_BUDGET_SECONDS = 15.0
 MAX_API_BYTES = 2 * 1024 * 1024
 MAX_API_REQUESTS = 32
+MAX_CONCURRENT_JOB_READS = 3
 MAX_PAGES = 4
 CACHE_SCHEMA = 2
 REPOSITORY = "tangle-network/agent-container"
@@ -63,9 +66,11 @@ def utc(epoch=None):
                                      dt.timezone.utc).isoformat()
 
 
-def check_deadline(deadline):
+def check_deadline(deadline, abort=None):
     if _cancelled:
         raise Unknown("read_cancelled")
+    if abort is not None and abort.is_set():
+        raise Unknown("github_inventory_aborted")
     if time.monotonic() >= deadline:
         raise Unknown("read_deadline")
 
@@ -298,8 +303,8 @@ def terminate_child(child):
     raise Unknown("github_descendants_not_reaped")
 
 
-def bounded_read(argv, deadline):
-    check_deadline(deadline)
+def bounded_read(argv, deadline, abort=None):
+    check_deadline(deadline, abort)
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True)
     output = bytearray()
@@ -310,7 +315,7 @@ def bounded_read(argv, deadline):
                 os.set_blocking(stream.fileno(), False)
                 selector.register(stream, selectors.EVENT_READ)
             while selector.get_map():
-                check_deadline(deadline)
+                check_deadline(deadline, abort)
                 for key, _ in selector.select(min(0.1, max(0, deadline - time.monotonic()))):
                     data = os.read(key.fd, 65536)
                     if not data:
@@ -324,7 +329,7 @@ def bounded_read(argv, deadline):
             # WNOWAIT preserves PID ownership until finally kills any remaining
             # descendants. Popen.wait/poll here would free the PID too early.
             while True:
-                check_deadline(deadline)
+                check_deadline(deadline, abort)
                 ended = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
                 if ended is not None:
                     break
@@ -344,23 +349,35 @@ class ActionsRead:
     def __init__(self, gh, deadline):
         self.gh, self.deadline = gh, deadline
         self.requests = 0
+        self.request_lock = threading.Lock()
+        self.abort = threading.Event()
+        self.active_reads = self.peak_concurrent_reads = 0
         self.started = time.monotonic()
         self.coverage = {"runs_enumerated": 0, "runs_with_jobs_read": 0, "job_rows_read": 0}
 
     def get(self, endpoint):
-        if self.requests >= MAX_API_REQUESTS:
-            raise Unknown("github_request_bound")
-        self.requests += 1
-        raw = bounded_read([self.gh, "api", "--hostname", "github.com",
-                            "-H", "Accept: application/vnd.github+json",
-                            "-H", "Cache-Control: no-cache", endpoint], self.deadline)
+        # Reserve from one invocation-wide budget before a worker launches gh.
+        with self.request_lock:
+            check_deadline(self.deadline, self.abort)
+            if self.requests >= MAX_API_REQUESTS:
+                raise Unknown("github_request_bound")
+            self.requests += 1
+            self.active_reads += 1
+            self.peak_concurrent_reads = max(self.peak_concurrent_reads, self.active_reads)
         try:
-            value = json.loads(raw)
-        except (ValueError, UnicodeError):
-            raise Unknown("github_response_invalid") from None
-        if not isinstance(value, dict):
-            raise Unknown("github_response_invalid")
-        return value
+            raw = bounded_read([self.gh, "api", "--hostname", "github.com",
+                                "-H", "Accept: application/vnd.github+json",
+                                "-H", "Cache-Control: no-cache", endpoint], self.deadline, self.abort)
+            try:
+                value = json.loads(raw)
+            except (ValueError, UnicodeError):
+                raise Unknown("github_response_invalid") from None
+            if not isinstance(value, dict):
+                raise Unknown("github_response_invalid")
+            return value
+        finally:
+            with self.request_lock:
+                self.active_reads -= 1
 
     def pages(self, endpoint, key):
         rows, seen, expected = [], set(), None
@@ -384,6 +401,31 @@ class ActionsRead:
                 raise Unknown("github_inventory_partial")
         raise Unknown("github_pagination_bound")
 
+    def job_inventories(self, prefix, runs):
+        # Only independent run inventories overlap; each run's pages stay serial.
+        # Never return a partial inventory or leave worker-owned sessions behind.
+        pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOB_READS)
+        futures = {}
+        try:
+            for run in runs:
+                check_deadline(self.deadline, self.abort)
+                endpoint = prefix + f"runs/{run['id']}/attempts/{run['run_attempt']}/jobs"
+                futures[pool.submit(self.pages, endpoint, "jobs")] = run["id"]
+            inventories = {}
+            for future in as_completed(futures):
+                jobs = future.result()
+                inventories[futures[future]] = jobs
+                self.coverage["runs_with_jobs_read"] += 1
+                self.coverage["job_rows_read"] += len(jobs)
+            return inventories
+        except BaseException:
+            self.abort.set()
+            for future in futures:
+                future.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def join(self, workers):
         prefix = f"repos/{REPOSITORY}/actions/"
         runs = self.pages(prefix + "runs?status=in_progress", "workflow_runs")
@@ -399,10 +441,10 @@ class ActionsRead:
                 raise Unknown("github_workflow_path_unknown")
             if type(attempt) is not int or attempt < 1 or run.get("status") != "in_progress":
                 raise Unknown("github_run_identity")
-            jobs = self.pages(prefix + f"runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
-            self.coverage["runs_with_jobs_read"] += 1
-            self.coverage["job_rows_read"] += len(jobs)
-            for job in jobs:
+        inventories = self.job_inventories(prefix, runs)
+        for run in runs:
+            path, attempt = run["path"], run["run_attempt"]
+            for job in inventories[run["id"]]:
                 runner = job.get("runner_name")
                 if job.get("status") != "in_progress" or runner not in wanted:
                     continue
@@ -566,6 +608,9 @@ def decision(host, limits, state_dir, gh, deadline):
     finally:
         if api is not None:
             result["api"] = {"request_count": api.requests,
+                             "parallel_job_workers": MAX_CONCURRENT_JOB_READS,
+                             "peak_concurrent_reads": api.peak_concurrent_reads,
+                             "concurrency_scope": "owner read attempts, including bounded child cleanup",
                              "duration_s": round(time.monotonic() - api.started, 6),
                              "request_count_scope": "explicit Actions CLI requests; wrapper auth/quota reads excluded",
                              "coverage": api.coverage}
