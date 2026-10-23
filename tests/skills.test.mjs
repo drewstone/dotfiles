@@ -426,7 +426,9 @@ test('operator scenarios keep every question, expected action and owning rule', 
     evolve: 'claude/skills/evolve/SKILL.md',
     hypothesize: 'claude/skills/hypothesize/SKILL.md',
     climb: 'docs/processes/climb.md',
+    'docs/processes/agent-work.md': 'docs/processes/agent-work.md',
   }
+  const ownerPattern = Object.keys(owners).map((owner) => owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
   const source = readFileSync(join(repoRoot, 'claude', 'skills', '_probes', 'operator-scenarios.md'), 'utf8')
   const rows = source.split('\n')
     .filter((line) => /^\| S\d+ \|/.test(line))
@@ -437,7 +439,7 @@ test('operator scenarios keep every question, expected action and owning rule', 
   assert.deepEqual(incomplete, [], `scenarios missing a question, action, owning rule or guard: ${incomplete.join(', ')}`)
 
   const missing = rows.flatMap(([id, , , rule]) => {
-    const quoted = [...rule.matchAll(/\b(AGENTS\.md|operate|report|reflect|evolve|hypothesize|climb)\b[^:"]*: "([^"]+)"/g)]
+    const quoted = [...rule.matchAll(new RegExp(`\\b(${ownerPattern})\\b[^:"]*: "([^"]+)"`, 'g'))]
     if (quoted.length === 0) return [`${id}: names no quoted rule`]
     return quoted
       .map(([, owner, text]) => [owner, text.replace(/…$/, '')])
