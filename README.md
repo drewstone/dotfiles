@@ -49,6 +49,13 @@ On Beelinks, `./host/install.sh --gate-priority-only` also applies the memory po
 - `claude/hooks/secret_scan.py` runs after Bash, Read and Grep calls and warns when their output or command holds a live-looking credential (`sk-tan-`, `gak_`, `lak_`, `plabs_`, `whsec_`, Stripe, GitHub, OpenAI, Anthropic shapes), with that key type's rotation steps.
   It records only the kind, length and SHA-256 in `~/.claude/logs/secret-exposures.jsonl`.
 - `claude/tools/hostlab` boots a throwaway VM (root, lvm2, dm-thin, xfs, the cwd at /work) where the same commands are allowed.
+  The OS disk has explicit firmware boot priority; scratch stays `/dev/vdb` and read-only inputs follow the seed disk.
+  Failed SSH or `/work` readiness retains bounded, sanitized SSH/serial logs and `boot-state.json` under
+  `$HOSTLAB_HOME/diagnostics/<run-id>` before teardown. The private diagnostics helper reads QMP runstate,
+  KVM/vCPU identity and the actual process/cgroup ancestors through an owner-only Unix socket.
+  Unsupported or incomplete observations stay unknown; QMP `running` does not prove guest health.
+  A successful mount also retains one quiet, bounded, best-effort `ready` snapshot.
+  Readiness budgets, KVM/resources and the existing retirement path remain unchanged.
   For a separate storage directory, run `HOSTLAB_HOME=/absolute/private/path host/hostlab/install.sh`,
   then use that same `HOSTLAB_HOME` for `hostlab build`, `run`, `status`, and `reap`.
   The installer adds a deterministic systemd timer instance for that path and retains the default timer.

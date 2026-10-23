@@ -149,6 +149,8 @@ def group_snapshot(groups, deadline):
                             'cgroup_events': read_text(path / 'cgroup.events'),
                             'memory_current_bytes': read_text(path / 'memory.current'),
                             'memory_max_bytes': read_text(path / 'memory.max'),
+                            'memory_events': read_text(path / 'memory.events'),
+                            'cpuset_cpus_effective': read_text(path / 'cpuset.cpus.effective'),
                             'cpu_pressure': pressure(path / 'cpu.pressure'),
                             'io_weight': io_weight['value'],
                             'io_weight_state': io_weight['state'],
