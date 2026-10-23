@@ -145,7 +145,7 @@ def attach_outcomes(rows, prs_texts, opts, at):
         join_report = O.join(refs, at=at, existing=snapshots)
     for row in rows:
         row["outcome"] = O.run_outcome(row.get("prs") or [], snapshots) if row.get("prs") else None
-    return join_report
+    return {**(join_report or {"checked": 0, "githubCalls": 0, "errors": []}), "signals": O.view_summary(snapshots)}
 
 
 def pct(part, whole):

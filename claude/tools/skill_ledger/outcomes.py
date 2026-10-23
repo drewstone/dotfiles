@@ -59,3 +59,10 @@ def join(refs, *, at=None, existing=None, write=True, refresh=False):
         return {**report, 'due': report.get('queued', report.get('checked', 0))}
     except (RuntimeError, OSError, ValueError) as error:
         return {'checked': 0, 'due': len(refs), 'githubCalls': 0, 'errors': [str(error)]}
+
+
+def view_summary(snapshots):
+    try:
+        return _signal_owner().signal_view_summary(snapshots)
+    except RuntimeError as error:
+        return {'prs': 0, 'unknownCoverage': {'signal owner': 1}, 'error': str(error), 'goalAcceptance': 'UNKNOWN'}
