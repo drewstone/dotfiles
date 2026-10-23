@@ -180,8 +180,10 @@ wait_for_load() {
   : "${load_wait_started:=$SECONDS}"
   local beelink=$1 budget since=$load_wait_started reported=-60 sample held why pause left
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die 'invalid BEELINK_GATE_LOAD_WAIT'
+  admission_stage checks
   verify_gate_unit || return 75
   while :; do
+    admission_stage checks
     admit_release_priority "$beelink"
     require_legacy_gate_drained || return 75
     sample=$(host_psi_admission) || return 75
@@ -193,7 +195,7 @@ wait_for_load() {
     held=$(python3 -c 'import json,sys; print(int(json.loads(sys.argv[1])["held"]))' "$sample") || return 75
     [ "$held" = 1 ] || break
     why="host CPU PSI some avg10 holds admission: $sample"
-    if (( SECONDS - since >= budget )); then echo "beelink-gate: REFUSED $beelink $why" >&2; return 3; fi
+    if (( SECONDS - since >= budget )); then admission_outcome=refused admission_reason=host_psi; echo "beelink-gate: REFUSED $beelink $why" >&2; return 3; fi
     if (( SECONDS - reported >= 60 )); then echo "beelink-gate: waiting $((SECONDS-since))s of ${budget}s: $why" >&2; reported=$SECONDS; fi
     admission_expired && not_admitted "$why"
     pause=${BEELINK_GATE_LOAD_POLL_SECONDS:-15}
@@ -202,8 +204,10 @@ wait_for_load() {
       left=$((deadline - SECONDS))
       (( pause <= left )) || pause=$left
     fi
+    admission_stage host_psi
     (( pause > 0 )) && { sleep "$pause" & wait $!; }
   done
+  admission_stage checks
   start_load=$(loadavg_now) start_host_pressure=$(host_pressure_now) start_pressure=$start_host_pressure
   export BEELINK_GATE_ADMISSION_SAMPLE="$sample" BEELINK_GATE_ADMITTED=1
   echo "beelink-gate: admission $sample" >&2

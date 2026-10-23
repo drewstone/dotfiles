@@ -486,6 +486,25 @@ outputs, fetches the requested commit with complete history, and runs a frozen
 pnpm or npm install against that user's shared package store.
 Non-login gates expose `~/bin`, `~/.local/bin`, `~/.cargo/bin` and `~/.foundry/bin`,
 in that order, before inherited PATH. Tools must already be installed.
+Native admission observations partition elapsed checks, host PSI, capacity-writer
+and capacity-lock waits, FIFO turns, checkout locks and host slots using one
+monotonic clock. The optional `timing.admission_wait` records
+`remote_start_to_lock_slot_admitted_s` separately from legacy `waited_s`: the
+legacy counter starts after the first remote PSI/floor/window checks, and includes
+unattributed cumulative launcher `placed_wait_s`. Observations begin after request
+identity validation; earlier setup and no-ID/frontend time remain unobserved.
+Checks include probe/instrument overhead; these are elapsed categories, not proof
+that PSI alone caused a delay. Post-admission rechecks remain wall/precommand time.
+The existing report also reads compact observations in retained job directories,
+including refused, replaced and signal/cancel-marker outcomes without adding
+completed gates. Its `admission_wait` field shows per-host retained/missing
+coverage; UTC begin selects the window, with labeled submitted/directory timestamp
+fallback for missing observations. Expired/no-ID history is unknown. Interrupted
+or failed measurements retain a partial prefix and unknown tail; open intervals
+are never extended to a guessed exit time. Complete coverage also requires a
+confirmed terminal observation; an admitted snapshot alone remains partial.
+Observation failures cannot change the
+gate's policy or command exit.
 Normal frozen-install gates share Turbo archives across their checkout slots in
 `~/.cache/beelink-gate/.turbo/<host>/<owner>/<repo>/normal/<script-node-version>`.
 The existing gate cache cap and LRU count these bytes alongside checkouts. Shared

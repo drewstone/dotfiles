@@ -72,6 +72,7 @@ beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 . "$gate_jobs_source" || exit $?
 # BEELINK_GATE_INSTALLER_END
 
+
 tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
 tempfail() { tempfail_line "$1" "$2"; exit "$TEMPFAIL"; }
 utc_in_minutes() {
@@ -82,7 +83,7 @@ decode() { printf '%s' "$1" | base64 --decode; }
 
 # Older launchers can emit a newly deployed main file with an older helper list.
 # A missing admission owner must refuse before any probe, reserve or cache work.
-if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ]; then
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}"; then
   tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
@@ -205,39 +206,8 @@ sparse_apply() {  # <checkout> <rev> [--shrink-only]
 
 # A writer holds the fd lock for its brief intent and rename. If it dies,
 # flock releases that lock; a claimant can then remove its abandoned marker.
-capacity_writer_active() {
-  # The lock is authoritative across marker creation/removal. Inspecting the
-  # path first races a brief writer's unlink and can reject a valid claim.
-  if flock -n -x "$writer_fd"; then
-    if [ -e "$intent_file" ] || [ -L "$intent_file" ]; then
-      [ ! -L "$intent_file" ] && [ -f "$intent_file" ] || die "capacity writer intent is not a regular file"
-      rm -f -- "$intent_file" || die "cannot clear stale capacity writer intent"
-    fi
-    flock -u "$writer_fd"
-    return 1
-  fi
-  return 0
-}
 
-wait_for_capacity_writer() {
-  admit_release_priority "$beelink"
-  local now_ms elapsed_ms
-  now_ms=$(date +%s%3N)
-  (( intent_started_ms )) || intent_started_ms=$now_ms
-  elapsed_ms=$((now_ms - intent_started_ms))
-  if (( elapsed_ms >= intent_wait_limit * 1000 )); then
-    if (( placed_auto )); then
-      not_admitted "capacity writer intent exceeded ${intent_wait_limit}s"
-    fi
-    tempfail "$(utc_in_minutes 5)" "capacity writer intent exceeded ${intent_wait_limit}s on $beelink"
-  fi
-  if (( SECONDS - last_report >= 60 )); then
-    echo "beelink-gate: waiting $((elapsed_ms / 1000))s for capacity writer on $beelink" >&2
-    last_report=$SECONDS
-  fi
-  admission_expired && not_admitted "capacity writer in progress"
-  sleep 1 & wait $!
-}
+
 
 # Use only this command's locked, disposable checkouts to restore a host's disk
 # floor with 10 GiB headroom. A missing cache has nothing safe to evict.
@@ -389,36 +359,6 @@ PY
 # Gates for different repos run in parallel; cap them per host with flock slots
 # so a burst of lanes cannot drive the load past the cores. The slot is taken
 # after the repo lock, so gates queued behind one repo hold no slot.
-acquire_slot() {
-  local slots_dir="$1" max="$2" pool="${3:-slot}" i announced="" marker
-  marker="$slots_dir/urgent-$pool"
-  if [ "${urgent:-0}" = 1 ]; then ticket_body > "$marker.$$"; urgent_markers+=("$marker.$$"); fi
-  while :; do
-    admit_release_priority "$beelink"
-    if [ "${urgent:-0}" = 1 ] || ! urgent_ahead "$marker"; then
-      for ((i = 0; i < max; i++)); do
-        exec {slot_fd}>"$slots_dir/$pool-$i.lock" || die "cannot open host slot"
-        if flock -n -x "$slot_fd"; then rm -f "$marker.$$"; return 0; fi
-        exec {slot_fd}>&-
-      done
-    fi
-    if [ -z "$announced" ]; then
-      echo "beelink-gate: waiting for a host gate slot ($max running$([ "$pool" = slot ] || echo " $pool"))" >&2
-      announced=1
-    fi
-    # The backstop covers slots too: with pressure admission, a full slot pool is
-    # now the usual wait (4/4 on both beelinks at 22:15Z with gate pressure 5-16%).
-    if starving; then
-      exec {slot_fd}>"$slots_dir/$pool-overflow.lock" || die "cannot open host slot"
-      starved=1
-      echo "beelink-gate: $( [ "${urgent:-0}" = 1 ] && echo URGENT || echo STARVED ): running past the $max-slot cap on $beelink after $(( ${placed_wait:-0} + SECONDS - ${load_wait_started:-$SECONDS} ))s; SHIP_MAX_WORKERS is halved" >&2
-      rm -f "$marker.$$"
-      return 0
-    fi
-    admission_expired && not_admitted "no free host slot"
-    if [ "${urgent:-0}" = 1 ]; then sleep 0.5; else sleep "${BEELINK_GATE_SLOT_POLL_SECONDS:-2}"; fi
-  done
-}
 
 # CPU this shell's reaped children used, in clock ticks (cutime + cstime of /proc/$$/stat).
 # A step's command is reaped through timeout, so the difference around a step is its CPU.
@@ -433,33 +373,7 @@ children_cpu_ticks() {
 
 # Admission ends early for a placement that may move: the remote gate gives the host back (exit 76, which
 # only the launcher sees) and the launcher places the gate again. Nothing is checked out before admission.
-NOT_ADMITTED=76
-cancel_if_requested() {
-  [ -z "${gate_id:-}" ] || [ ! -f "$STATE_DIR/jobs/.canceled/$gate_id" ] || {
-    echo "beelink-gate: canceled gate_id=$gate_id before command" >&2
-    exit 75
-  }
-}
-admission_expired() {
-  cancel_if_requested
-  [ -n "${admit_by:-}" ] && (( SECONDS >= admit_by ))
-}
-not_admitted() {
-  [ -z "${lock:-}" ] || rm -f "$lock.holder"
-  rm -f "${urgent_markers[@]}" 2>/dev/null
-  echo "beelink-gate: not admitted on $beelink within ${admit_wait}s ($1); placing the gate again" >&2
-  exit "$NOT_ADMITTED"
-}
-# A host auto chose can fall below its disk floor between the probe and the
-# gate's own check: on 2026-10-12 docker images filled beelink2 by 14 GiB in
-# 40 min, and a gate placed there exited TEMPFAIL while beelink1 had room. An
-# auto placement gives such a host back, and the launcher's next probe sees it
-# refused and picks the other host, or exits TEMPFAIL when both refuse.
-give_back_host() {
-  rm -f "${urgent_markers[@]}" 2>/dev/null
-  echo "beelink-gate: $beelink gave the gate back before admission ($1); placing the gate again" >&2
-  exit "$NOT_ADMITTED"
-}
+
 # A waiting gate leaves a ticket named <prefix>.<enqueued epoch>.<pid>. A free
 # checkout goes to the oldest live ticket, not to whichever gate polls first: on
 # 2026-10-12 an ADC gate waited 2,290 s on beelink1 while later gates took each
@@ -469,71 +383,6 @@ give_back_host() {
 # a later process that reused that pid after the gate was killed or the host
 # rebooted; such a stale ticket would hold a checkout until that process exits.
 # Its owner is live only if the process started no later than the file was written.
-proc_start() {  # <pid>: its start time in clock ticks since boot, which no clock step moves
-  local line fields
-  line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
-  read -ra fields <<< "${line##*) }"
-  [[ "${fields[19]:-}" =~ ^[0-9]+$ ]] && printf '%s' "${fields[19]}"
-}
-ticket_body() {  # [token]: a ticket or marker naming its token and this gate's start tick
-  printf '%s\nstart=%s\n' "${1:-}" "$(proc_start $$)"
-}
-waiter_alive() {  # <ticket or marker file> <pid>
-  kill -0 "$2" 2>/dev/null || return 1
-  local fields btime written recorded started
-  recorded=$(sed -n 's/^start=\([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null)
-  started=$(proc_start "$2") || return 0
-  # A ticket that names its owner's start tick is alive only while that same process runs: a reused pid starts
-  # at another tick. Realtime is not compared, because btime is realtime minus uptime and beelink1's moved
-  # +723 s in its first 17 h on 2026-10-18; with the old 1 s slack a step dropped a live reservation's ticket
-  # and a newer gate went first (beelink-gate tests 136 and 3397).
-  [ -z "$recorded" ] || { [ "$recorded" = "$started" ]; return; }
-  # Tickets from older gates name no tick. A reused pid needs a pid_max wrap (about 5 h on beelink1 at
-  # 238 pids/s), so 60 s of slack still catches reuse and absorbs small steps.
-  btime=$(awk '$1 == "btime" { print $2 }' /proc/stat 2>/dev/null)
-  written=$(stat -c %Y "$1" 2>/dev/null) || return 1
-  [[ "$btime" =~ ^[0-9]+$ ]] || return 0
-  (( btime + started / $(getconf CLK_TCK) <= written + 60 ))
-}
-older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tickets from other gates
-  # A gate's place is the oldest (epoch, pid) among its tickets: an auto gate holds a
-  # reservation ticket and its own, under one token. Every gate compares those same
-  # pairs, so two gates can never each count the other as ahead.
-  local t rest since pid token key me_since=$2 me_pid=$$ n=0
-  local -A key_since=() key_pid=()
-  for t in "$1".*.*; do
-    [ -e "$t" ] || continue
-    rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
-    [[ "$since" =~ ^[0-9]+$ && "$pid" =~ ^[0-9]+$ ]] || continue
-    token=$(head -n 1 "$t" 2>/dev/null) || token=""
-    [[ "$token" =~ ^[0-9a-f]{32}$ ]] || token=""
-    if [ "$pid" = "$$" ] || { [ -n "$token" ] && [ "$token" = "${reservation_token:-}" ]; }; then
-      if (( since < me_since || (since == me_since && pid < me_pid) )); then me_since=$since me_pid=$pid; fi
-      continue
-    fi
-    if ! waiter_alive "$t" "$pid"; then rm -f "$t"; continue; fi
-    key=${token:-$pid}
-    if [ -z "${key_since[$key]:-}" ] || (( since < key_since[$key] || (since == key_since[$key] && pid < key_pid[$key]) )); then
-      key_since[$key]=$since key_pid[$key]=$pid
-    fi
-  done
-  for key in "${!key_since[@]}"; do
-    if (( key_since[$key] < me_since || (key_since[$key] == me_since && key_pid[$key] < me_pid) )); then n=$((n + 1)); fi
-  done
-  echo "$n"
-}
-# An urgent gate leaves a marker while it waits; every other gate waiting for the same thing steps aside.
-urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
-  local m pid
-  for m in "$1".*; do
-    [ -e "$m" ] || continue
-    pid=${m##*.}
-    [ "$pid" != "$$" ] || continue
-    if waiter_alive "$m" "$pid"; then return 0; fi
-    rm -f "$m"  # left by a gate that died
-  done
-  return 1
-}
 
 declare -A BEELINK_IPS=([beelink1]=100.98.195.7 [beelink2]=100.127.22.51)
 SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10)
@@ -1214,6 +1063,7 @@ timing = {"fetch_s": int(fetch_s) if fetch_s else None,
 metrics = {"__name__": "beelink_gate_metrics"}
 exec(os.environ["BEELINK_GATE_METRICS_SOURCE"], metrics)
 timing.update(metrics["phase_timing"](timing_file))
+timing["admission_wait"] = metrics["read_admission_observation"](Path(path).parent / "jobs" / gate_id / "admission.json") if gate_id else None
 try:
     timing["turbo_cache"] = json.loads(os.environ.get("BEELINK_GATE_TURBO_OBSERVATIONS") or "null")
 except ValueError:
@@ -1330,7 +1180,7 @@ remote_gate() {
   parse_repo_url "$repo_url"
   local install_reserve_bytes admitted_shape="" reserve_heat=cold
   disk_dir="" disk_pid="" disk_ready=0 disk_deadline=0 disk_grace_s=0 disk_paths=()
-  gate_turbo_fd="" gate_turbo_root=""
+  gate_turbo_fd="" gate_turbo_root="" slot_fd="" capacity_claim_wait_ms=0
   unset BEELINK_GATE_DISK_OBSERVATION
   observed_install_reserve_bytes=0 reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
   local reserve_bytes_before="" reserve_free_before=""
@@ -1365,8 +1215,10 @@ remote_gate() {
   }
   # Nobody reads the output of a gate whose launcher is gone; writing to the
   # closed channel would end this shell before it stops the step's group.
-  trap 'watchdog=1; exec >/dev/null 2>&1; stop' USR1
-  trap stop TERM INT HUP
+  trap 'admission_signal=watchdog; watchdog=1; exec >/dev/null 2>&1; stop' USR1
+  trap 'admission_signal=TERM; stop' TERM
+  trap 'admission_signal=INT; stop' INT
+  trap 'admission_signal=HUP; stop' HUP
   if [ "${BEELINK_GATE_HEARTBEAT:-0}" = 1 ]; then
     # A background job's stdin defaults to /dev/null, so pass the heartbeat
     # through its own descriptor.
@@ -1410,6 +1262,8 @@ remote_gate() {
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
   [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
   # Validate here: a die inside a later $(load_limit) would only end that subshell.
+  admission_begin
+  trap 'admission_early_exit "$?"' EXIT
   max_cpu_pressure >/dev/null
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "managed containment, legacy drain or host CPU PSI unavailable"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
@@ -1422,6 +1276,7 @@ remote_gate() {
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout" "$install_reserve_bytes"
   if ! check_floor "$beelink" "$install_reserve_bytes"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its disk floor"
+    admission_outcome=refused admission_reason=disk_floor
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
@@ -1448,126 +1303,7 @@ remote_gate() {
   exec {capacity_fd}>>"$cache_root/.locks/.capacity.lock" || die "cannot open capacity lock"
   exec {writer_fd}>>"$cache_root/.locks/.capacity.writer.lock" || die "cannot open capacity writer lock"
   lock=""
-  local waiting_since=$SECONDS last_report=-60 claim_started_ms
-  capacity_claim_wait_ms=0
-  checkout=""
-  local urgent_marker="$cache_root/.locks/urgent-$host-$owner-$repo"
-  (( light == 0 )) || urgent_marker+=@light
-  (( dev == 0 )) || urgent_marker+=@dev
-  if (( urgent )); then ticket_body > "$urgent_marker.$$"; urgent_markers+=("$urgent_marker.$$"); fi
-  local ticket_prefix="$cache_root/.locks/queue-$host-$owner-$repo" enqueued=$(( $(date +%s) - placed_wait ))
-  (( light == 0 )) || ticket_prefix+=@light
-  (( dev == 0 )) || ticket_prefix+=@dev
-  # An auto gate's place in line is its reservation's, made on both hosts before its
-  # first probe and found here by its token. Dating its own ticket by now - placed_wait
-  # left out the reservation's setup, so a newer gate could fall between the two
-  # tickets: it waited for the reservation while this gate waited for it.
-  if [ -n "$reservation_token" ]; then
-    local reserved reserved_since
-    for reserved in "$ticket_prefix".*.*; do
-      [ -f "$reserved" ] && [ "$(cat "$reserved" 2>/dev/null)" = "$reservation_token" ] || continue
-      reserved_since=${reserved#"$ticket_prefix".}; reserved_since=${reserved_since%%.*}
-      [[ "$reserved_since" =~ ^[0-9]+$ ]] && (( reserved_since < enqueued )) && enqueued=$reserved_since
-    done
-  fi
-  local ticket="$ticket_prefix.$enqueued.$$"
-  ticket_body "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
-  # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
-  # and markers with it; finish replaces this trap once the checkout is held.
-  trap 'rm -f "${urgent_markers[@]}" 2>/dev/null' EXIT
-  # Wait for load before taking a checkout: a gate that only waits for load must
-  # not hold the repo's checkout. On 2026-10-11 one ADC gate held it for 1766s of
-  # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
-  while [ -z "$lock" ]; do
-    admit_release_priority "$beelink"
-    # Cleanup and the cache pruner hold this lock exclusively before inspecting
-    # repo locks. A shared claim prevents either from racing a new checkout,
-    # while other gates can claim their own repos at the same time. Release it
-    # as soon as the repo flock is held; the command keeps only its repo lock.
-    claim_started_ms=$(date +%s%3N)
-    while :; do
-      admit_release_priority "$beelink"
-      if capacity_writer_active; then
-        wait_for_capacity_writer
-        continue
-      fi
-      intent_started_ms=0
-      if ! flock -w 1 -s "$capacity_fd"; then
-        if (( SECONDS - last_report >= 60 )); then
-          echo "beelink-gate: waiting $((SECONDS - waiting_since))s for capacity cleanup on $beelink" >&2
-          last_report=$SECONDS
-        fi
-        admission_expired && not_admitted "capacity cleanup in progress"
-        continue
-      fi
-      # An intent can register while the shared claim waits for .capacity.lock.
-      # Check again before taking any repo lock; give the claim back to the writer.
-      if capacity_writer_active; then
-        flock -u "$capacity_fd"
-        wait_for_capacity_writer
-        continue
-      fi
-      break
-    done
-    capacity_claim_wait_ms=$((capacity_claim_wait_ms + $(date +%s%3N) - claim_started_ms))
-    # Each older waiter reserves one free checkout; with two free and one older
-    # waiter, this gate still takes the second.
-    local ahead=0 skipped=0
-    (( urgent )) || ahead=$(older_tickets_ahead "$ticket_prefix" "$enqueued")
-    for ((k = 0; k < copies; k++)); do
-      (( urgent )) || ! urgent_ahead "$urgent_marker" || break
-      suffix=$([ "$k" = 0 ] || echo "@$k"); (( light == 0 )) || suffix=@light; (( dev == 0 )) || suffix=@dev
-      candidate="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
-      [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
-      exec {fd}>"$candidate" || die "cannot open lock"
-      if flock -n -x "$fd"; then
-        # An urgent reservation can appear between the check above and flock.
-        # Give the newly free checkout back before a normal gate claims it.
-        if (( ! urgent )) && urgent_ahead "$urgent_marker"; then
-          flock -u "$fd"; exec {fd}>&-; break
-        fi
-        if (( skipped < ahead )); then
-          flock -u "$fd"; exec {fd}>&-; skipped=$((skipped + 1)); continue
-        fi
-        lock_fd=$fd lock=$candidate checkout="$cache_root/$host/$owner/$repo$suffix"
-        break
-      fi
-      exec {fd}>&-
-      reclaim_dead_holder "$candidate"
-    done
-    flock -u "$capacity_fd"
-    [ -z "$lock" ] || break
-    if (( SECONDS - last_report >= 60 )); then
-      echo "beelink-gate: waiting $((SECONDS - waiting_since))s for one of $copies $host/$owner/$repo checkouts on $beelink; $(holder_line "$cache_root/.locks/$host-$owner-$repo.lock")" >&2
-      last_report=$SECONDS
-    fi
-    admission_expired && not_admitted "both $host/$owner/$repo checkouts busy"
-    if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
-  done
-  exec {capacity_fd}>&-
-  exec {writer_fd}>&-
-  rm -f "$urgent_marker.$$" "$ticket"
-  if [ -L "$checkout" ] || [ -L "$checkout/.git" ]; then die "cache path contains a symlink"; fi
-  [ "$checkout" = "$cache_root/$host/$owner/$repo" ] || echo "beelink-gate: using second checkout ${checkout##*/}" >&2
-  printf 'pid=%s\nsid=%s\nstarted=%s\nsha=%s\nlauncher=%s\n' \
-    $$ "$(ps -o sid= -p $$ | tr -d ' ')" "$(date +%s)" "$sha" "$launcher" > "$lock.holder" || die "cannot write lock metadata"
-  if (( light )); then
-    local light_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}
-    [[ "$light_slots" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_LIGHT_SLOTS: $light_slots"
-    acquire_slot "$cache_root/.locks" "$light_slots" light-slot
-  elif (( dev )); then
-    local dev_slots=${BEELINK_GATE_DEV_SLOTS:-2}
-    [[ "$dev_slots" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_DEV_SLOTS: $dev_slots"
-    acquire_slot "$cache_root/.locks" "$dev_slots" dev-slot
-  else
-    acquire_slot "$cache_root/.locks" "$max_concurrent"
-  fi
-  unset BEELINK_GATE_LIGHT_SLOTS BEELINK_GATE_DEV_SLOTS
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
-  unset BEELINK_GATE_LOAD_WAIT
-  waited=$((SECONDS - waiting_since + placed_wait))
-  echo "beelink-gate: lock, host slot and admission ${BEELINK_GATE_ADMISSION_SAMPLE:-legacy} admitted on $beelink after ${waited}s${gate_id:+ gate_id=$gate_id}$( (( urgent )) && echo ' (urgent)')" >&2
+  acquire_checkout_admission
   started=$SECONDS display=""
   timing_file="" timing_phase=precheck fetch_s="" pre_command_s="" command_s="" cleanup_s=""
   local deadline=$((SECONDS + max_hold))
@@ -1686,6 +1422,7 @@ PYTURBO
     fi
     [ "${lock_released:-0}" = 1 ] || rm -f "$lock.holder"
     cleanup_s=$((SECONDS - cleanup_started))
+    admission_terminal "$status"
     receipt "$status"
     [ -z "$timing_file" ] || rm -f -- "$timing_file"
     exit "$status"
@@ -1945,44 +1682,7 @@ if [ "${1:-}" = --receipts ]; then
   if [ -n "${3:-}" ]; then
     BEELINK_GATE_RELEASE_STATE="$STATE_DIR/release-priority.json" BEELINK_GATE_ADMISSION_SAMPLE="$(host_psi_admission || echo '{"mode":"host_psi","held":true,"reason":"unavailable"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
   fi
-  # Admission refusals precede the normal receipt. Keep their log-derived count
-  # in the existing report, including the source window and retained coverage.
-  python3 - "$STATE_DIR" "${2:-48}" <<'PY'
-import datetime as dt
-import json
-from pathlib import Path
-import re
-import sys
-import time
-
-root, hours = Path(sys.argv[1]) / "jobs", int(sys.argv[2])
-end = time.time()
-start = end - hours * 3600
-logs = []
-refused = []
-active = []
-for log in root.glob("*/stderr.log"):
-    try:
-        at = log.stat().st_mtime
-        if not start <= at <= end:
-            continue
-        content = log.read_text(errors="replace")
-        logs.append(at)
-        if not (log.parent / "exit").exists():
-            submitted = log.parent / "submitted"
-            age = max(0, end - submitted.stat().st_mtime) if submitted.exists() else None
-            admitted = bool(re.search(r"lock, host slot and .* admitted on", content))
-            active.append({"gate_id": log.parent.name, "admitted": admitted,
-                           "submitted_age_s": round(age, 1) if age is not None else None})
-        if re.search(r"TEMPFAIL[^\n]*capacity writer intent exceeded", content):
-            refused.append(log.parent.name)
-    except FileNotFoundError:
-        continue  # Reconnect log retention may run during this read.
-utc = lambda value: dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat()
-print(json.dumps({"kind": "capacity_intent_logs", "window_from": utc(start), "window_to": utc(end),
-                  "logs_scanned": len(logs), "oldest_retained": utc(min(logs)) if logs else None,
-                  "refusals": len(refused), "gate_ids": sorted(refused), "nonterminal_jobs": active}))
-PY
+  retained_admission_observations "${2:-48}"
   exit $?
 fi
 
