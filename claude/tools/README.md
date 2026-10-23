@@ -358,6 +358,9 @@ The maintained host installer renders and checks that policy through the host
 role; no runner restart or process migration is needed. Per-gate unit counts do
 not multiply the aggregate weight. Cancellation stops the owned system unit and
 its descendants; retained old user units keep their original cancellation path.
+Attach and cancellation share the bounded manager record reader. A genuinely
+absent record selects the retained user manager; an unsafe or unreadable record
+refuses with TEMPFAIL. Status reads are bounded and use the recorded manager.
 Missing sudo authority or unverified containment refuses work rather than using
 an unprioritized fallback. Receipts retain the actual cgroup path, system manager
 and unit name.
@@ -382,7 +385,11 @@ source and require restaging through the maintained CLI. Empty legacy groups
 are an observed handoff boundary, not a claim that arbitrary externally pinned
 old scripts can never run again. Old and new caps are separate during transition;
 there is no invented combined allowance. IO weights are configured policy;
-without an effective IO controller/scheduler, bandwidth priority remains unknown.
+a kernel can expose IO statistics and pressure without a weight interface.
+The installer and admission report `UNSUPPORTED` for that interface while still
+requiring configured systemd IOWeight and effective CPU/memory policy. The CPU
+report distinguishes absent and unreadable interfaces. Device bandwidth
+priority remains unproved until measured.
 
 Receipts measure frozen installation separately. A compound gate command can
 record its own typecheck/test spans in `$BEELINK_GATE_PHASE_FILE`: append one

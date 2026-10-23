@@ -26,6 +26,15 @@ def read_text(path):
         return None
 
 
+def io_weight_snapshot(path):
+    try:
+        return {'state': 'present', 'value': path.read_text().strip()}
+    except FileNotFoundError:
+        return {'state': 'absent', 'value': None}
+    except (OSError, ValueError) as error:
+        return {'state': 'unreadable', 'value': None, 'error': type(error).__name__}
+
+
 def pressure(path):
     value = read_text(path)
     result = {}
@@ -131,13 +140,15 @@ def group_snapshot(groups, deadline):
             identity = path.stat().st_ino
             raw = read_text(path / 'cpu.stat')
             values = dict(line.split() for line in (raw or '').splitlines())
+            io_weight = io_weight_snapshot(path / 'io.weight')
             row = {'identity': identity,
                             'usage_usec': int(values['usage_usec']),
                             'throttled_usec': int(values.get('throttled_usec', 0)),
                             'cpu_max': read_text(path / 'cpu.max'),
                             'cpu_weight': read_text(path / 'cpu.weight'),
                             'cpu_pressure': pressure(path / 'cpu.pressure'),
-                            'io_weight': read_text(path / 'io.weight'),
+                            'io_weight': io_weight['value'],
+                            'io_weight_state': io_weight['state'],
                             'io_pressure': pressure(path / 'io.pressure'),
                             'io_counters': io_counters(path / 'io.stat')}
             if path.stat().st_ino != identity:
@@ -278,6 +289,7 @@ def sample():
                        'cpu_max': row['cpu_max'], 'cpu_weight': row['cpu_weight'],
                        'cpu_pressure': row['cpu_pressure'],
                        'io_weight': row['io_weight'], 'io_pressure': row['io_pressure'],
+                       'io_weight_state': row['io_weight_state'],
                        'io_delta': io_delta(previous['io_counters'], row['io_counters']),
                        'throttled_pct': round(max(0, row['throttled_usec'] - previous['throttled_usec']) / 10000 / interval, 2),
                        **states_row(group_states.get(name, collections.Counter()))})
@@ -304,11 +316,18 @@ def sample():
                       '/beelink-gate', '/beelink-gate-dev',
                       '/deploy.slice', '/deploy.slice/deploy-runners.slice'}
     priority_groups = [row for row in groups if row['cgroup'] in priority_names]
+    controllers = read_text(CGROUP / 'cgroup.controllers')
+    enabled = read_text(CGROUP / 'cgroup.subtree_control')
     return {'kind': 'host_cpu_sample', 'schema_version': 1, 'host': os.uname().nodename,
             'observed_at': observed_at, 'interval_seconds': round(interval, 3),
             'collector_seconds': round(time.monotonic() - started, 3), 'cores': os.cpu_count(),
             'loadavg': list(os.getloadavg()), 'cpu_pressure': pressure(PROC / 'pressure/cpu'),
             'io_pressure': pressure(PROC / 'pressure/io'),
+            'io_weight_capability': {
+                'root_weight_interface': second_groups.get('/', {}).get('io_weight_state', 'not_observed'),
+                'io_controller_available': None if controllers is None else 'io' in controllers.split(),
+                'io_controller_enabled': None if enabled is None else 'io' in enabled.split(),
+                'device_enforcement': 'not_measured'},
             'admission': json.loads(os.environ.get('BEELINK_GATE_ADMISSION_SAMPLE', 'null')),
             'release_priority': release_priority_observation(),
             'cpu': cpu, 'coverage': coverage, 'groups': groups[:30],
