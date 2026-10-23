@@ -4,13 +4,13 @@ Read only the relevant sections; [shared defaults](../../claude/AGENTS.md) own u
 
 ## Delegation
 
-Use existing task ownership; reconcile overlapping scope before assigning one independent outcome per worker.
+Use existing task ownership; reconcile overlapping scope before assigning each worker a coherent set of related outcomes.
 Specify ownership, interfaces, checkout, authority, resources, and completion evidence.
 The integrating agent owns consumer proof and delivery.
 Send updates when a decision, blocking dependency, ownership conflict, finding, or completed artifact changes another owner's next action.
 Include the change, evidence pointer, and required action; use the existing task record for unchanged status.
 Delegate independently useful deliverables; keep dependent fragments and routine heartbeats with their owner.
-Brief the whole outcome and expect it finished in one go: the worker designs the shape once, carries it out, merges, and reports done. Do not slice it into small PRs, line quotas per PR, "one PR at a time" or hourly check-ins. On 2026-10-20/21, lanes briefed "PRs stay small" made 26 PRs that moved 0 of their god files, and spent their turns on per-PR receipts and watchers. Drew: "its obvioulsy cause you're dispatching terrible prompts and not expecting them to literally solve it all in one go, come on, believ ein them! they can do it in one go!"
+Brief the complete set of goals and expect it finished in one go: the worker designs the shape once, carries it out, merges, and proves the results. A coherent PR may solve multiple related outcomes and shared causes across consumers. Do not slice it into small PRs, line quotas per PR, "one PR at a time" or hourly check-ins. On 2026-10-20/21, lanes briefed "PRs stay small" made 26 PRs that moved 0 of their god files, and spent their turns on per-PR receipts and watchers. Drew: "its obvioulsy cause you're dispatching terrible prompts and not expecting them to literally solve it all in one go, come on, believ ein them! they can do it in one go!"
 
 ### Brief template
 
@@ -123,7 +123,7 @@ Use Conventional Commits and repository hooks; dotfiles git/install.sh owns glob
 Write a multi-line commit or PR message to a file and pass it with `git commit -F <file>` or `--body-file <file>`; on 2026-10-15 an inline `-m` with unbalanced quotes ran message text as Mac shell commands.
 Use the [shared merge gate](../../claude/AGENTS.md#own-the-outcome); apply authorized waivers through the permitted path.
 
-One owner carries the PR through review, merge, release, and requested consumer proof.
+One accountable owner carries each coherent PR and all its outcomes through review, merge, release, and requested consumer proof.
 After a push, read available comments, reviews, and inline threads; fix actual findings without waiting for optional automation.
 Separate change defects, unrelated defects, and infrastructure failures; repair the first and track the others with their owners.
 For a blocked requirement, record its owner, next action, and completion check in the existing task record.
