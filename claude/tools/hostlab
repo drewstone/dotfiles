@@ -244,7 +244,7 @@ def clean(text):
     return ''.join(c for c in text if c in '\n\t' or ord(c) >= 32)
 error = source / (sys.argv[3] + '-ssh.stderr')
 lines = clean(tail(error, 16384)).splitlines()
-lines = [line for line in lines if not re.search(r'(?i)private key|offering public key|will attempt key|identity file|fingerprint|password|token|secret|credential', line)]
+lines = [line for line in lines if not re.search(r'(?i)private key|offering public key|will attempt key|identity file|fingerprint|\b(?:password|token|secret|credential)\s*[:=]', line)]
 (dest / 'ssh.stderr').write_text('\n'.join(lines[-80:]) + '\n')
 console = source / 'console.log'
 lines = clean(tail(console, 32768)).splitlines()
