@@ -2,13 +2,36 @@
 # Host admission policy, bundled into immutable gates. Running commands never
 # recheck this owner: a release hold stops new work and lets admitted work finish.
 release_priority_reason() {
-  local observation status=0
+  local observation status=0 parsed=0 reason
   observation=$(python3 -c "$beelink_gate_release_source" "$1" "$(limits_file)" "$STATE_DIR" "$(command -v gh-drew || true)") || status=$?
-  if [ "$status" != 0 ]; then
-    python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("release priority " + r["state"] + ": " + r["reason"])' "$observation" \
-      || echo 'release priority evidence unavailable'
+  reason=$(python3 - "$status" "$observation" <<'PYTHON'
+import json
+import re
+import sys
+
+try:
+    row = json.loads(sys.argv[2])
+    state, reason = row["state"], row["reason"]
+    if not isinstance(reason, str) or not re.fullmatch(r"[a-z_]{1,80}", reason):
+        raise ValueError()
+    if sys.argv[1] == "3" and state == "held":
+        print("release priority held: " + reason)
+        raise SystemExit(3)
+    if sys.argv[1] != "0" or state not in ("open", "unknown"):
+        raise ValueError()
+    # The owner already logs and persists a valid unknown observation.
+except (ValueError, TypeError, KeyError, IndexError, RecursionError):
+    print("release_evidence_invalid_or_crashed")
+PYTHON
+  ) || parsed=$?
+  if [ "$parsed" = 3 ]; then
+    printf '%s\n' "$reason"
+    return 3
   fi
-  return "$status"
+  if [ "$parsed" != 0 ] || [ -n "$reason" ]; then
+    echo 'beelink-gate: release priority unknown: release_evidence_invalid_or_crashed; using quota admission' >&2
+  fi
+  return 0
 }
 
 admit_release_priority() {

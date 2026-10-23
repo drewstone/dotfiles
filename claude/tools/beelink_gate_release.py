@@ -637,7 +637,7 @@ def main():
     args = parser.parse_args()
     started = time.monotonic()
     row = decision(args.host, args.limits, args.state_dir, args.gh, started + READ_BUDGET_SECONDS)
-    if _cancelled:
+    if _cancelled and row["state"] != "held":
         row.update(state="unknown", reason="read_cancelled")
     row["read_elapsed_s"] = round(time.monotonic() - started, 6)
     row["read_elapsed_scope"] = "decision; excludes atomic observation write"
@@ -646,15 +646,26 @@ def main():
         safe_directory(args.state_dir)
         write_cache(args.state_dir / "release-priority.json", row)
     except (OSError, Unknown, ValueError):
-        row.update(state="unknown", reason="observation_publish_failed")
-    if _cancelled and row.get("reason") != "read_cancelled":
+        row["observation_error"] = "observation_publish_failed"
+        if row["state"] != "held":
+            row.update(state="unknown", reason="observation_publish_failed")
+    if _cancelled and row["state"] != "held" and row.get("reason") != "read_cancelled":
         row.update(state="unknown", reason="read_cancelled")
         try:
             write_cache(args.state_dir / "release-priority.json", row)
         except (OSError, Unknown, ValueError):
+            row["observation_error"] = "observation_publish_failed"
             row["reason"] = "observation_publish_failed"
+    # Operator0413: only positively known critical work holds admission. Unknown
+    # identity keeps its diagnostic and uses the existing quota/disk admission.
+    if row["state"] == "unknown":
+        print("beelink-gate: release priority unknown: " + row["reason"] +
+              "; using quota admission", file=sys.stderr)
+    elif row.get("observation_error"):
+        print("beelink-gate: release priority held; observation publish failed; hold retained",
+              file=sys.stderr)
     print(json.dumps(row, separators=(",", ":"), allow_nan=False))
-    return 0 if row["state"] == "open" else 3
+    return 3 if row["state"] == "held" else 0
 
 
 if __name__ == "__main__":

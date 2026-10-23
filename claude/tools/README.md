@@ -408,15 +408,18 @@ Host release priority is a hard admission guard. The existing host limits
 file's `release_critical=1` blocks new normal, light, dev, urgent and starved
 gates. Its owning release/host operator keeps the hold through the owned Build,
 coordination gap and publisher/deploy terminal result; it has no automatic
-expiry. A malformed or duplicate key or ambiguous limits file refuses admission.
+expiry. Unknown release evidence, including malformed or unreadable release
+policy, is logged and falls back to the existing quota and host admission checks.
 
 [`beelink_gate_release.py`](beelink_gate_release.py) owns the release owner's
 exact workflow/job priority list and joins active GitHub job identities to native
 ADC release/deploy Worker identities. Other jobs on the same runners keep normal
-gate priority. A cached permit requires the same Worker PID/start ticks, a unique
-complete API join and the native system setup step strictly after Worker birth.
-Unknown identity, missing evidence or overlapping clock intervals hold admission;
-this is temporal evidence, not a native job UUID claim. Arguments, environments
+gate priority. A cached classification requires the same Worker PID/start ticks,
+a unique complete API join and the native system setup step strictly after Worker
+birth. Only a positively matched critical job holds admission. Changed Workers,
+missing evidence and overlapping clock intervals are recorded as unknown and
+use the unchanged preexisting admission path; they never waive its checks.
+This is temporal evidence, not a native job UUID claim. Arguments, environments
 and protected runner logs are never read. The shared cache policy is exported by
 that owner; the existing receipt report shows its last sanitized decision, age,
 API work and explicit unknowns without refreshing GitHub. `admission.sh` bundles
