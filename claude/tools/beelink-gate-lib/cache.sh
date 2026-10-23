@@ -18,6 +18,7 @@ root, current, cap, required_reclaim = Path(sys.argv[1]), Path(sys.argv[2]), int
 sparse_code = sys.argv[5]
 locks = root / ".locks"
 size_scans = 0
+removal_deadline = None
 
 def wait_capacity_lock(fd, path, deadline):
     announced = False
@@ -84,11 +85,30 @@ def free_bytes(path):
     return stat.f_bavail * stat.f_frsize
 
 def remove(path):
-    # Detached paths stay counted in the cache until removal finishes. A slow
-    # removal cannot block admission; the next prune retries a timed-out path.
-    result = subprocess.run(["timeout", "-s", "KILL", "2s", "rm", "-rf", "--", str(path)], stdin=subprocess.DEVNULL)
+    # One pass budget covers all detached removals, including pending retries.
+    # No writer, capacity or candidate repo lock is held during recursive work.
+    global removal_deadline
+    started = time.monotonic()
+    if removal_deadline is None:
+        removal_deadline = started + 60
+    remaining = removal_deadline - started
+    if remaining <= 0:
+        raise TimeoutError(f"cache removal budget exhausted before {path}")
+    result = subprocess.run(
+        ["timeout", "--verbose", "-s", "KILL", f"{remaining:.3f}s", "rm", "-rf", "--", str(path)],
+        stdin=subprocess.DEVNULL, text=True, capture_output=True,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    elapsed = time.monotonic() - started
+    sys.stderr.write(result.stderr)
+    outcome = ("owner-deadline" if "timeout: sending signal KILL" in result.stderr else
+               "unexpected-sigkill" if result.returncode == -9 else
+               "completed" if result.returncode == 0 else "unexpected-exit")
+    print(f"beelink-gate: detached cache removal {path}: outcome={outcome} "
+          f"elapsed={elapsed:.3f}s budget_remaining_before={remaining:.3f}s exit={result.returncode}",
+          file=sys.stderr)
     if result.returncode:
-        raise OSError(f"bounded cache removal {path}: exit {result.returncode}")
+        raise OSError(f"bounded cache removal {path}: {outcome}, exit {result.returncode}")
 
 try:
     for pending in locks.glob(".evicted-*"):
