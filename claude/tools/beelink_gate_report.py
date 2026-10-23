@@ -1,7 +1,7 @@
 """Gate report owner; the shell owns transport and passes retained records."""
 import collections, datetime as dt, json, math, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
-from beelink_gate_metrics import throughput
+from beelink_gate_metrics import throughput, admission_attempts
 from beelink_gate_disk import disk_summary
 from beelink_gate_release import GITHUB_CACHE_SECONDS
 path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -18,6 +18,7 @@ if len(sys.argv) > 6 and sys.argv[6]:
     since = requested.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 history = []
 capacity_logs = []
+admission_batches = []
 samples = []
 for line in open(path):
     try:
@@ -28,6 +29,8 @@ for line in open(path):
         continue
     if r.get("kind") == "capacity_intent_logs":
         capacity_logs.append(r)
+    elif r.get("kind") == "admission_observations":
+        admission_batches.append(r)
     elif r.get("kind") == "host_cpu_sample":
         samples.append(r)
     elif isinstance(r.get("at"), str) and isinstance(r.get("repo"), str):
@@ -77,6 +80,10 @@ def merged(repo):
     out = github(["-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"])
     return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
 print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
+admission_wait = admission_attempts(admission_batches)
+print("ADMISSION_WAIT " + json.dumps(admission_wait["summary"], sort_keys=True))
+for coverage in admission_wait["hosts"]:
+    print("ADMISSION_COVERAGE " + json.dumps(coverage, sort_keys=True))
 for logs in capacity_logs:
     print(f"CAPACITY_INTENT {logs['from']}: refusals={logs['refusals']} retained_logs={logs['logs_scanned']} "
           f"window={logs['window_from']}..{logs['window_to']} oldest_retained={logs['oldest_retained']}; expired logs unavailable")
@@ -201,7 +208,7 @@ if json_output:
                                 "performance": performance, "performance_24h": performance_24h,
                                 "timing_history_coverage": history_coverage, "disk": disk, "host_cpu_samples": samples,
                                 "missing_cpu_hosts": cpu_missing,
-                                "retained_job_logs": capacity_logs,
+                                "retained_job_logs": capacity_logs, "admission_wait": admission_wait,
                                 "github_metadata": {"enabled": bool(gh),
                                                     "cache_max_age_s": GITHUB_METADATA_CACHE_SECONDS,
                                                     "cache_age_s": None,
