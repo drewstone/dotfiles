@@ -233,6 +233,7 @@ def observe(directory, parent, budget, paths):
                                      "start_ticks": process_identity(os.getpid()), "parent_pid": parent})
     docker = {"status": "unknown", "reason": "docker_metadata_pending"}
     usage_before, usage_after = None, None
+    work = {"completed_loops": 0, "max_loop_work_s": 0.0, "max_write_s": 0.0}
     reason = "running"
     # Optional daemon queries must never pause filesystem sampling. One worker
     # bounds before+after work to the same query budget as the serial owner.
@@ -268,8 +269,14 @@ def observe(directory, parent, budget, paths):
             # A killed observer must not leave a qualified finished snapshot
             # while final metadata or a queued initial snapshot is incomplete.
             phase = "running" if reason == "running" else "finishing"
-            write_observation(directory, start, now, phase, filesystems, unknown, docker, usage_before, None)
-            time.sleep(INTERVAL_S)
+            write_started = time.monotonic()
+            write_observation(directory, start, now, phase, filesystems, unknown, docker, usage_before, None, work)
+            work["max_write_s"] = max(work["max_write_s"], time.monotonic() - write_started)
+            work["max_loop_work_s"] = max(work["max_loop_work_s"], time.monotonic() - now)
+            work["completed_loops"] += 1
+            # Work and JSON I/O consume this interval; do not add a full interval
+            # afterwards and manufacture an over-threshold sampling gap.
+            time.sleep(max(0, now + INTERVAL_S - time.monotonic()))
     if docker != docker_after:
         usage_after = {"status": "unknown", "reason": "docker_context_changed"}
         docker = {"status": "unknown", "reason": "docker_context_changed"}
@@ -279,12 +286,12 @@ def observe(directory, parent, budget, paths):
                     alias["error"] = "docker_context_changed"
     end = time.monotonic()
     sample(filesystems, end)
-    write_observation(directory, start, end, reason, filesystems, unknown, docker, usage_before, usage_after)
+    write_observation(directory, start, end, reason, filesystems, unknown, docker, usage_before, usage_after, work)
     for fs in filesystems.values():
         os.close(fs["descriptor"])
 
 
-def write_observation(directory, start, end, reason, filesystems, unknown, docker, before, after):
+def write_observation(directory, start, end, reason, filesystems, unknown, docker, before, after, work):
     rows = []
     for fs in filesystems.values():
         row = {key: value for key, value in fs.items() if key != "descriptor"}
@@ -304,6 +311,7 @@ def write_observation(directory, start, end, reason, filesystems, unknown, docke
         "interval_s": INTERVAL_S, "max_qualified_gap_s": MAX_SAMPLE_GAP_S,
         "start_monotonic_s": start, "end_monotonic_s": end,
         "termination": reason, "filesystems": rows, "unknown_paths": unknown,
+        "work": dict(work, scope="completed sampling loops; final observation write excluded"),
         "docker": dict(docker, usage_before=before, usage_after=after),
         "limits": "Sampled lower bound, not exact transient peak. Concurrent gates, CI, Docker, and reclaim affect host free space. Deduplicate filesystems; never sum aliases. f_bavail is process-available; f_bfree also includes reserved blocks."})
 
