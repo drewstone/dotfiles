@@ -56,7 +56,7 @@ verify_gate_unit() {
   actual=$(sed -n 's/^0:://p' /proc/self/cgroup) || return 75
   [ "$actual" = "$expected" ] || { echo 'beelink-gate: refused work outside its managed system unit' >&2; return 75; }
   python3 - "$(gate_slice)" <<'PY'
-import json, os, pathlib, stat, sys
+import json, os, pathlib, stat, subprocess, sys
 try:
     fd = os.open('/etc/beelink-gate/resource-policy.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd) as stream:
@@ -69,9 +69,19 @@ try:
         raise ValueError()
     if int((root/'cpu.weight').read_text()) != policy['cpu_weight']:
         raise ValueError()
-    weights = dict(line.split() for line in (root/'io.weight').read_text().splitlines())
-    if int(weights['default']) != policy['io_weight']:
-        raise ValueError()
+    for unit in (root.name, sys.argv[1]):
+        configured = subprocess.run(['systemctl', 'show', unit, '-p', 'IOWeight', '--value'],
+                                    capture_output=True, text=True, timeout=3)
+        if configured.returncode or configured.stdout.strip() != str(policy['io_weight']):
+            raise ValueError()
+    try:
+        weights = dict(line.split() for line in (root/'io.weight').read_text().splitlines())
+        if int(weights['default']) != policy['io_weight']:
+            raise ValueError()
+    except FileNotFoundError:
+        if os.path.lexists(root/'io.weight') or not all((root/name).is_file() for name in ('io.stat', 'io.pressure')):
+            raise ValueError()
+        print('beelink-gate: UNSUPPORTED kernel io.weight; systemd IOWeight configured, device enforcement unproved', file=sys.stderr)
     group = root / sys.argv[1]
     memory_key = 'dev_memory_bytes' if sys.argv[1] == 'beelinkgate-dev.slice' else 'normal_memory_bytes'
     if int((group/'memory.max').read_text()) != policy[memory_key]:
@@ -82,7 +92,7 @@ try:
             raise ValueError()
     elif quota == 'max' or int(quota) * 100 != os.cpu_count() * policy['normal_cpu_percent_per_host_cpu'] * int(period):
         raise ValueError()
-except (OSError, ValueError, KeyError, TypeError):
+except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
     sys.exit(75)
 PY
   [ "$?" = 0 ] || return 75

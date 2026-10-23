@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Submitted gate unit lifecycle; commands stay in their owning systemd unit.
+job_status_timeout_seconds=5
 
 job_dir_for() {
   [[ "$1" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid gate id"
@@ -80,7 +81,7 @@ printf '%s\n' "$rc" > "$dir/exit.tmp"
 mv -- "$dir/exit.tmp" "$dir/exit"
 RUNNER
   chmod 700 "$dir/runner.sh"
-  printf 'system\n' > "$dir/systemd-manager" || return 75
+  (umask 077; printf 'system\n' > "$dir/systemd-manager") || return 75
   if ! managed_unit_run job "$id" "$dir/runner.sh" "$@" {lock_fd}>&-; then
     printf '75\n' > "$dir/exit"
     return 75
@@ -145,6 +146,35 @@ gate_process_alive() {
   [ "$actual" = "$birth" ] && [ "$state" != Z ] && [ "$state" != X ] || return 1
   gate_pid=$pid
 }
+# Missing metadata identifies retained USER jobs. A present marker is read once
+# through a bounded non-following descriptor, shared by attach and cancellation.
+job_manager() {
+  python3 - "$1" <<'PYMANAGER'
+import os, stat, sys
+try:
+    directory = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            fd = os.open('systemd-manager', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            print('user')
+            sys.exit(0)
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022 or info.st_size > 16:
+                raise ValueError()
+            content = stream.read(17)
+        if content != b'system\n':
+            raise ValueError()
+        print('system')
+    finally:
+        os.close(directory)
+except (OSError, ValueError):
+    print('beelink-gate: unsafe or unreadable job manager metadata; TEMPFAIL 75', file=sys.stderr)
+    sys.exit(75)
+PYMANAGER
+}
+
 job_cancel_remote() {
   local id=$1 dir unit state lock_fd gate_pid i manager
   local -a control=(systemctl --user)
@@ -160,13 +190,10 @@ job_cancel_remote() {
   flock -u "$lock_fd"
   if [ -d "$dir" ] && [ ! -f "$dir/exit" ]; then
     unit="beelink-gate-$id.service"
-    if [ -f "$dir/systemd-manager" ]; then
-      manager=$(cat "$dir/systemd-manager") || return 75
-      [ "$manager" = system ] || return 75
-      control=(sudo -n /usr/bin/systemctl)
-    fi
+    manager=$(job_manager "$dir") || return 75
+    [ "$manager" != system ] || control=(sudo -n /usr/bin/systemctl)
     "${control[@]}" stop "$unit" >&2 || true
-    state=$("${control[@]}" show "$unit" -p ActiveState --value 2>/dev/null) || {
+    state=$(timeout --kill-after=1 "$job_status_timeout_seconds" "${control[@]}" show "$unit" -p ActiveState --value 2>/dev/null) || {
       # --collect may remove a stopped system unit. That is terminal only if
       # this exact gate process is also gone; ownership checks still apply.
       [ "${manager:-}" = system ] && ! gate_process_alive "$dir" || return 75
@@ -211,4 +238,60 @@ legacy_user_gate_units_drained() {
     [[ "$unit" =~ ^beelink-gate-beelink[12]-[0-9a-f]{32}\.service$ ]] || return 2
   done <<< "$units"
   return 1
+}
+
+job_attach_remote() {
+  local dir manager
+  dir=$(job_dir_for "$1")
+  [ -d "$dir" ] || die "unknown gate id: $1"
+  manager=$(job_manager "$dir") || return 75
+  python3 -u - "$dir" "$manager" "$job_status_timeout_seconds" <<'PY'
+import pathlib, subprocess, sys, time
+directory = pathlib.Path(sys.argv[1])
+control = ['systemctl'] + (['--user'] if sys.argv[2] == 'user' else [])
+streams = [(directory / "stdout.log", sys.stdout.buffer), (directory / "stderr.log", sys.stderr.buffer)]
+offsets = [0, 0]
+result = directory / "exit"
+started = time.monotonic()
+while True:
+    for i, (log, output) in enumerate(streams):
+        if log.exists():
+            with log.open("rb") as stream:
+                stream.seek(offsets[i])
+                data = stream.read(65536)
+            if data:
+                output.write(data)
+                output.flush()
+                offsets[i] += len(data)
+    if result.exists():
+        code = result.read_text().strip()
+        if any(log.exists() and log.stat().st_size > offsets[i] for i, (log, _) in enumerate(streams)):
+            continue
+        sys.exit(int(code) if code.isdigit() and 0 <= int(code) <= 255 else 75)
+    if time.monotonic() - started > 60:
+        unit = f"beelink-gate-{directory.name}.service"
+        try:
+            status = subprocess.run([*control, "show", unit, "-p", "ActiveState", "--value"],
+                                    capture_output=True, text=True, timeout=float(sys.argv[3]))
+            live = status.returncode == 0 and status.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating')
+        except (OSError, UnicodeError, subprocess.TimeoutExpired):
+            live = False
+        if not live:
+            # runner.sh can publish its exit between the receipt check above and this
+            # unit read; re-read it so a finished gate is never reported as TEMPFAIL.
+            if result.exists():
+                continue
+            print(f"beelink-gate: {directory.name} stopped without an exit receipt; TEMPFAIL 75", file=sys.stderr)
+            sys.exit(75)
+        started = time.monotonic()
+    time.sleep(0.2)
+PY
+}
+job_result_remote() {
+  local dir code
+  dir=$(job_dir_for "$1")
+  [ -f "$dir/exit" ] && [ ! -L "$dir/exit" ] || return 1
+  code=$(cat "$dir/exit") || return 1
+  [[ "$code" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]] || return 1
+  printf '%s\n' "$code"
 }

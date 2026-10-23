@@ -36,8 +36,16 @@ priority_drift=0
 for file in cpu.weight io.weight; do
   for group in beelink-gate beelink-gate-dev; do
     if [[ "$file" == io.weight ]]; then
+      path="/sys/fs/cgroup/$group/$file"
+      if [[ ! -e "$path" && ! -L "$path" ]]; then
+        [[ -r "/sys/fs/cgroup/$group/io.stat" && -r "/sys/fs/cgroup/$group/io.pressure" ]] || {
+          echo "cannot establish IO controller support for $group" >&2; exit 69;
+        }
+        echo "UNSUPPORTED $group io.weight: systemd IOWeight remains configured; device enforcement unproved" >&2
+        continue
+      fi
       expected="default:$gate_io"
-      actual="default:$(awk '$1 == "default" {print $2}' "/sys/fs/cgroup/$group/$file")"
+      actual="default:$(awk '$1 == "default" {print $2}' "$path")"
     else expected=$gate_cpu; actual=$(cat "/sys/fs/cgroup/$group/$file"); fi
     if [[ "$actual" != "$expected" ]]; then
       if [[ "$mode" == --check ]]; then echo "DRIFT $group $file"; priority_drift=1
@@ -169,4 +177,4 @@ for entry in "beelink-gate $normal_memory" "beelink-gate-dev $dev_memory"; do
   fi
 done
 (( drift == 0 )) || exit 1
-echo "Beelink resource policy OK: low-weight managed/legacy gates, memory containment, Docker=$docker_floor floor"
+echo "Beelink resource policy OK: gate CPU priority, configured IOWeight, memory containment, Docker=$docker_floor floor"

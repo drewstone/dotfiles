@@ -80,8 +80,8 @@ decode() { printf '%s' "$1" | base64 --decode; }
 
 # Older launchers can emit a newly deployed main file with an older helper list.
 # A missing admission owner must refuse before any probe, reserve or cache work.
-if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ]; then
-  tempfail "$(utc_in_minutes 5)" "complete release admission source unavailable; use the maintained gate launcher"
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ]; then
+  tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
 floor_gib() {
@@ -1952,54 +1952,6 @@ if [ "${1:-}" = --remote ]; then
   shift
   remote_gate "$@"
 fi
-job_attach_remote() {
-  local dir
-  dir=$(job_dir_for "$1")
-  [ -d "$dir" ] || die "unknown gate id: $1"
-  python3 -u - "$dir" <<'PY'
-import pathlib, subprocess, sys, time
-directory = pathlib.Path(sys.argv[1])
-streams = [(directory / "stdout.log", sys.stdout.buffer), (directory / "stderr.log", sys.stderr.buffer)]
-offsets = [0, 0]
-result = directory / "exit"
-started = time.monotonic()
-while True:
-    for i, (log, output) in enumerate(streams):
-        if log.exists():
-            with log.open("rb") as stream:
-                stream.seek(offsets[i])
-                data = stream.read()
-            if data:
-                output.write(data)
-                output.flush()
-                offsets[i] += len(data)
-    if result.exists():
-        code = result.read_text().strip()
-        if any(log.exists() and log.stat().st_size > offsets[i] for i, (log, _) in enumerate(streams)):
-            continue
-        sys.exit(int(code) if code.isdigit() and 0 <= int(code) <= 255 else 75)
-    if time.monotonic() - started > 60:
-        unit = f"beelink-gate-{directory.name}.service"
-        status = subprocess.run(["systemctl", "--user", "show", unit, "-p", "ActiveState", "--value"], capture_output=True, text=True)
-        if status.returncode != 0 or status.stdout.strip() in ("failed", "inactive"):
-            # runner.sh can publish its exit between the receipt check above and this
-            # unit read; re-read it so a finished gate is never reported as TEMPFAIL.
-            if result.exists():
-                continue
-            print(f"beelink-gate: {directory.name} stopped without an exit receipt; TEMPFAIL 75", file=sys.stderr)
-            sys.exit(75)
-        started = time.monotonic()
-    time.sleep(0.2)
-PY
-}
-job_result_remote() {
-  local dir code
-  dir=$(job_dir_for "$1")
-  [ -f "$dir/exit" ] && [ ! -L "$dir/exit" ] || return 1
-  code=$(cat "$dir/exit") || return 1
-  [[ "$code" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]] || return 1
-  printf '%s\n' "$code"
-}
 if [ "${1:-}" = --job-submit ]; then
   [ "$#" -ge 2 ] || die "invalid job submission"
   id=$2; shift 2
