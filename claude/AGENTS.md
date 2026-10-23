@@ -33,6 +33,7 @@ Never write or maintain unit or mock tests. Drew, 2026-10-15: "Unit tests, mock 
 For documentation-only changes, use relevant content, link, or structural checks.
 Never watch PR CI; fix failures forward while preserving hooks, enforced protections, and release authority.
 Add CI or automated review gates only when requested; never request hosted Codex PR reviews, but read every review and audit a PR has before merging it and answer each finding with a fix or evidence, and read audits that land after a merge and fix forward.
+A lane never waits on a stale hold, a dead owner, a slow or flaky check, or a release nobody promotes: whoever sees it merges or promotes it now, through the maintained path (Drew, 2026-10-23: "literally if a lane is ever waiting on dumb shit, MERGE IT instead!"). Only a precondition a PR names, a real review finding, or Drew's own decision holds a merge.
 Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize subsequent task work within its resource limits.
 Under a deadline, launch with available capability and improve instrumentation while it runs.
