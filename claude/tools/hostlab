@@ -203,17 +203,27 @@ qemu_start() {
 wait_ssh() {
   # Count SSH time as well as sleeps; a connected but stalled peer is bounded too.
   local port="$1" budget="$2" error_file="$3" command="$4"
-  local deadline=$((SECONDS + budget)) remaining attempt rc
+  local deadline=$((SECONDS + budget)) remaining attempt rc attempt_number=0
+  local attempt_file="${error_file}.attempt"
+  : > "$error_file"
   while (( SECONDS < deadline )); do
     remaining=$((deadline - SECONDS)); attempt="$remaining"
     (( attempt <= 5 )) || attempt=5
     if timeout --signal=KILL "${attempt}s" \
-      ssh -n -v $(ssh_opts) -p "$port" root@127.0.0.1 "$command" 2>"$error_file"; then
+      ssh -n -v $(ssh_opts) -p "$port" root@127.0.0.1 "$command" 2>&1 | tail -c 2048 > "$attempt_file"; then
+      rc=0
+    else
+      rc=${PIPESTATUS[0]}
+      (( rc != 0 )) || rc=1
+    fi
+    attempt_number=$((attempt_number + 1))
+    printf '\nhostlab: SSH attempt=%s elapsed=%ss exit=%s (deadline %ss)\n' \
+      "$attempt_number" "$((SECONDS - deadline + budget))" "$rc" "$attempt" >> "$error_file"
+    cat "$attempt_file" >> "$error_file"
+    if (( rc == 0 )); then
+      rm -f "$attempt_file"
       printf '\n'
       return 0
-    else
-      rc=$?
-      printf '\nhostlab: SSH attempt exit=%s (deadline %ss)\n' "$rc" "$attempt" >> "$error_file"
     fi
     printf '.'
     remaining=$((deadline - SECONDS))
@@ -221,6 +231,7 @@ wait_ssh() {
     (( remaining <= 2 )) || remaining=2
     sleep "$remaining"
   done
+  rm -f "$attempt_file"
   printf '\n'
   return 1
 }
@@ -241,20 +252,24 @@ def tail(path, limit):
         return 'hostlab: diagnostic unavailable: ' + type(error).__name__
 def clean(text):
     text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    text = re.sub(r'(?s)-----BEGIN[^\n]*KEY[^\n]*-----.*?(?:-----END[^\n]*KEY[^\n]*-----|\Z)', '[redacted key material]', text)
     return ''.join(c for c in text if c in '\n\t' or ord(c) >= 32)
+sensitive = re.compile(r'(?i)private key|offering public key|will attempt key|identity file|fingerprint|\b(?:password|token|secret|credential|authorization|cookie)\s*[:=]|(?:^|\s)(?:ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+)\s+[A-Za-z0-9+/=]+|^[A-Za-z0-9+/=]{32,}$')
 error = source / (sys.argv[3] + '-ssh.stderr')
-lines = clean(tail(error, 16384)).splitlines()
-lines = [line for line in lines if not re.search(r'(?i)private key|offering public key|will attempt key|identity file|fingerprint|\b(?:password|token|secret|credential)\s*[:=]', line)]
-(dest / 'ssh.stderr').write_text('\n'.join(lines[-80:]) + '\n')
+lines = [line for line in clean(tail(error, 262144)).splitlines() if not sensitive.search(line)]
+(dest / 'ssh.stderr').write_text('\n'.join(lines) + '\n')
+display = lines if len(lines) <= 60 else lines[:20] + ['... all attempt summaries retained in ssh.stderr ...'] + lines[-40:]
+(dest / 'ssh-display.txt').write_text('\n'.join(display) + '\n')
 console = source / 'console.log'
 lines = clean(tail(console, 32768)).splitlines()
-boot = re.compile(r'(?i)cloud-init.*(?:running|finished|failed)|(?:starting|started|failed to start).*(?:ssh|network|cloud|work)|(?:network|dhcp|sshd).*(?:failed|error|timeout)')
-lines = [line for line in lines if boot.search(line) and not re.search(r'(?i)key|password|token|secret|credential|authorization', line)]
-(dest / 'console.txt').write_text('\n'.join(lines[-40:]) + '\n')
+lines = [line for line in lines if not sensitive.search(line)]
+(dest / 'console.txt').write_text('\n'.join(lines) + '\n')
+display = lines if len(lines) <= 60 else lines[:20] + ['... complete bounded tail retained in console.txt ...'] + lines[-40:]
+(dest / 'console-display.txt').write_text('\n'.join(display) + '\n')
 (dest / 'stage').write_text(sys.argv[3] + '\n')
 PY
   echo "hostlab: boot diagnostics retained at $dest" >&2
-  cat "$dest/ssh.stderr" "$dest/console.txt" >&2
+  cat "$dest/ssh-display.txt" "$dest/console-display.txt" >&2
 }
 
 vm_stop() {
