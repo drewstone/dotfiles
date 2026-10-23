@@ -14,7 +14,7 @@ The forbidden behavior is repeatedly reconstructing useful measurements and join
 
 The shared [measurement rule](../AGENTS.md) already required a hand measurement to enter its owner's live instrument in the same session. It now also directs repeated analyses to deterministic measurements and joins with one schema/source owner, automatically updated cached or incremental views, and measured read latency, freshness and unknowns. Scripts remain references. Consumer accounting precedes duplicate-tool retirement.
 
-The existing [operator scenario S9](../skills/_probes/operator-scenarios.md) keeps its same expected behavior; only its quote of the directing rule changes. No new process, command, gate or runtime threshold is introduced.
+The existing [operator scenario S9](../skills/_probes/operator-scenarios.md) keeps its same expected behavior; only its quote of the directing rule changes. Native checking also exposed S18's unregistered work-process reference: its quote syntax and document registration are repaired without changing its expected action. The existing checker derives quoted-owner names from that one registration map. No new process, command, gate or runtime threshold is introduced.
 
 This is a guidance change, not evidence that all existing tools are incremental or that reads have constant computational cost. Those claims belong to each tool's maintained instrument and consumer proof. A merged PR is not proof that the original user goal was accepted.
 
