@@ -293,7 +293,7 @@ deferral to the journal and `ticks.jsonl` in the state directory. It includes ca
 inside `gh-drew`; API debug traces stay in memory. Use `--dry-run --state-dir DIR`
 with a separate directory for read-only cold/warm comparisons.
 
-To keep a ready PR open, add the `hold` label.
+To keep a ready PR open, add the `hold` label and a comment that says why: the precondition and its owner. A `hold` that no comment explains (a comment saying hold or held, from 10 minutes before the label onward) or body hold phrase explains is released after 30 minutes, with a comment naming who added it and when, and the pass records `hold-expired` in its decision log. The read that checks this runs only for held PRs and is cached until the PR changes.
 
 ### The other product repos
 
@@ -301,7 +301,7 @@ Every other repo in `host/agents/merge-on-green.repos` (the product stack and th
 
 Both timer services set `MERGE_ON_GREEN_SECURITY_UPDATES=1`. The existing bot checks security alerts and Dependabot security updates daily and enables either setting when disabled. Its per-repo `security-updates.json` records the verified result. Dry runs report needed changes without writing settings. Dependabot PRs use the same head checks, reviews, holds, and receipts as other PRs. A settings error is reported and retried without holding otherwise mergeable fixes.
 
-The timer inventory owns release-slot policy: a `slot` field after an instance marks a repository whose default merge deploys. On those repositories, a bot-authored PR receives `hold` on first sight and whenever its head changes; any earlier grant is cleared. An operator must grant that revision a slot with `release-slot-granted` and remove `hold` before the normal gate can merge it. The reviewed head is persisted per PR. Every slot hold is recorded in the existing decision log. Dry runs make no label changes. Manual invocations read the same inventory.
+The timer inventory owns release-slot policy: a `slot` field after an instance marks a repository whose default merge deploys. On those repositories, a bot-authored PR receives `hold` on first sight and whenever its head changes; any earlier grant is cleared. When it adds `hold`, it comments why on the PR, so a slot hold never reads as a forgotten one. An operator must grant that revision a slot with `release-slot-granted` and remove `hold` before the normal gate can merge it; the grant label is checked on its own, so removing `hold` alone never merges a bot PR. The reviewed head is persisted per PR. Every slot hold is recorded in the existing decision log. Dry runs make no label changes. Manual invocations read the same inventory.
 
 ```bash
 # Install or add a repo: link the template from the durable checkout, then enable one timer per line.

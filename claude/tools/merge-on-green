@@ -127,6 +127,18 @@ GATE_ONLY = re.compile(r"(?i)merge only (after|when)\s+(?:(?:the|hosted|required
 # discovery-lab #2010 (2026-10-18) described behavior ("Both hold until a later start writes the journal")
 # and was refused as held.
 HOLD_UNTIL_LEAD = re.compile(r"(?i)(?:please|this|pr)?(?:\s+(?:please|this|pr))*")
+# A `hold` label says why on the PR, or it expires. On 2026-10-23 three dependabot PRs sat behind `hold` with no
+# word on the PR (the release-slot holds below never said so) and a lead merged past them as forgotten holds.
+# A label that no comment explains within HOLD_TTL_S of being added is released with a comment. A comment that
+# names the hold (hold/held) from 10 minutes before the label onward, or a hold phrase in the body, keeps it.
+HOLD_TTL_S = 1800
+HOLD_WORD = re.compile(r"(?i)\b(hold|held|holding)\b")
+RELEASED = "merge-on-green released this `hold`"
+HOLD_FRAGMENT = """fragment pr on PullRequest { headRefOid
+  timelineItems(itemTypes: [LABELED_EVENT], last: 20) { nodes { ... on LabeledEvent { createdAt label { name } actor { login } } } }
+  comments(last: 50) { nodes { createdAt body } } }"""
+SLOT_NOTE = ("Held by merge-on-green for a release slot: {repo} deploys on merge, so a bot PR waits until an operator "
+             "grants revision {head} with the `release-slot-granted` label and removes `hold`.")
 # A cancelled run says nothing about the tree and nothing re-runs it, so it is not red;
 # #11004 sat green for 2 h on 2026-10-15 behind a cancelled "regressions" run.
 # The gate checks still have to read SUCCESS (REQUIRED below).
@@ -284,6 +296,8 @@ def bot_slot_hold(a, pr, noted, noted_path, now):
             if result.returncode:
                 return 'bot release-slot PR cannot merge; adding hold failed: ' + result.stderr.strip()[:160]
             pr['labels']['nodes'].append({'name': 'hold'})
+            gh('pr', 'comment', str(pr['number']), '-R', a.repo, '--body',
+               SLOT_NOTE.format(repo=a.repo, head=pr['headRefOid'][:10]))
         if SLOT_GRANT_LABEL in labels:
             result = gh('api', f"repos/{a.repo}/issues/{pr['number']}/labels/{SLOT_GRANT_LABEL}", '--method', 'DELETE')
             if result.returncode:
@@ -295,6 +309,47 @@ def bot_slot_hold(a, pr, noted, noted_path, now):
     if SLOT_GRANT_LABEL not in labels:
         return f'bot PR needs operator release-slot grant label {SLOT_GRANT_LABEL}'
     return None
+
+
+def unexplained_hold(detail, now):
+    """(added at, by whom) when the latest `hold` label is older than HOLD_TTL_S and no comment says why, else None."""
+    events = [e for e in ((detail.get('timelineItems') or {}).get('nodes') or [])
+              if (e.get('label') or {}).get('name') == 'hold']
+    if not events:
+        return None  # The label event is out of reach: keep the hold rather than guess its age.
+    at = utc(events[-1]['createdAt'])
+    if (now - at).total_seconds() < HOLD_TTL_S:
+        return None
+    since = at - dt.timedelta(minutes=10)
+    for c in ((detail.get('comments') or {}).get('nodes') or []):
+        body = c.get('body') or ''
+        if utc(c['createdAt']) >= since and HOLD_WORD.search(body) and not body.startswith(RELEASED):
+            return None
+    return at, ((events[-1].get('actor') or {}).get('login') or 'someone')
+
+
+def release_unexplained_hold(a, pr, now):
+    """Remove a `hold` label nothing on the PR explains; return the decision outcome, or None to keep the hold."""
+    if hold_reason({'body': pr.get('body'), 'labels': {'nodes': []}}):
+        return None  # The body names the hold.
+    try:
+        detail = CLIENT.reviews(pr, HOLD_FRAGMENT, kind='hold')['data']['repository']['pullRequest']
+    except RuntimeError:
+        return None
+    stale = unexplained_hold(detail, now)
+    if not stale:
+        return None
+    at, by = stale
+    if not a.dry_run:
+        r = gh('api', f"repos/{a.repo}/issues/{pr['number']}/labels/hold", '--method', 'DELETE')
+        if r.returncode:
+            return 'unexplained hold kept: removing the label failed: ' + r.stderr.strip()[:160]
+        gh('pr', 'comment', str(pr['number']), '-R', a.repo, '--body',
+           f"{RELEASED}: {by} added it at {at:%Y-%m-%d %H:%M}Z and nothing on this PR has said why in "
+           f"{HOLD_TTL_S // 60} minutes. To hold again, re-add `hold` with a comment that names the precondition "
+           "and its owner.")
+    pr['labels']['nodes'] = [l for l in pr['labels']['nodes'] if l['name'] != 'hold']
+    return f"released an unexplained hold ({by}, added {at:%H:%M}Z)"
 
 
 def hold_command():
@@ -673,6 +728,14 @@ def tick(a, owner, name):
             records.append({"at": stamp, "pr": n, "head": head, "action": "paused", "outcome": outcome})
             status.append(f"- #{n} {pr['headRefName']}: {outcome}")
             continue
+        if not pr["isDraft"] and hold_reason(pr) == "hold label":  # a draft never merges: no read for it
+            released = release_unexplained_hold(a, pr, now)
+            if released:
+                rec = {'at': stamp, 'pr': n, 'head': head, 'action': 'hold-expired', 'outcome': released}
+                records.append(rec)
+                if not a.dry_run:
+                    with open(os.path.join(a.state_dir, 'decisions.jsonl'), 'a') as f:
+                        f.write(json.dumps(rec) + '\n')
         answer = None
         if not (pr['isDraft'] or pr['headRefName'].startswith(RELEASE_PREFIXES) or hold_reason(pr)):
             answer = CLIENT.reviews(pr, REVIEW_FRAGMENT)
