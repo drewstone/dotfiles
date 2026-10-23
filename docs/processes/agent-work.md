@@ -33,7 +33,7 @@ Safety, required when the change can delete data, send bytes off a box, or chang
   Invariants:   <each law the change must keep, e.g. "no box deleted without a whole-workspace export">
   Do not undo:  <earlier decisions this change must not reverse, each with its link>
   Red first:    <each failure the change must prevent, as a test the worker shows failing before the fix>
-  Review:       opens with `hold`; an independent adversarial review passes before `hold` comes off
+  Review:       opens with `hold` and a comment naming the review and its owner (an unexplained hold expires in 30 min); an independent adversarial review passes before `hold` comes off
 Done when: <observable condition>, proven by <command and output, URL, receipt or SHA>
 Report back:
   status:      done | partial | blocked

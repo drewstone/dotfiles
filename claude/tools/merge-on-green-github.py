@@ -276,8 +276,9 @@ class GitHub:
             raise RateLimited(self.backoff['reason'])
         return r
 
-    def reviews(self, pr, fragment):
-        key = f'{self.repo}#{pr["number"]}'
+    def reviews(self, pr, fragment, kind='review'):
+        # Each fragment caches under its own key: a hold read must never answer a review read.
+        key = f'{self.repo}#{pr["number"]}' + ('' if kind == 'review' else f':{kind}')
         version = fingerprint(pr)
         cached = self.cache.get(key, {})
         if cached.get('version') == version:
