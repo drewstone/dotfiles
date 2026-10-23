@@ -397,12 +397,18 @@ report distinguishes absent and unreadable interfaces. Device bandwidth
 priority remains unproved until measured.
 
 Receipts measure frozen installation separately. A compound gate command can
-record its own typecheck/test spans in `$BEELINK_GATE_PHASE_FILE`: append one
-line `typecheck <start> <end>` or `tests <start> <end>`, with both times from
+record its own spans in `$BEELINK_GATE_PHASE_FILE`: append one line
+`<phase> <start> <end>`, where phase is `typecheck`, `prerequisite_build`,
+`canonical_typecheck` or `tests`, with both times from
 the same monotonic clock in seconds. Parallel spans are unioned per phase;
 they are nested in command time, not extra wall time. These are caller-declared
 phases, not an inference from a command's spelling. Missing historical or
-unreported phases stay null, rather than becoming zero. Fetch and cleanup
+unreported phases stay null, rather than becoming zero. Selected preflight's
+legacy `typecheck_s` covers prerequisite builds plus canonical typechecks;
+`prerequisite_build_s` and `canonical_typecheck_s` expose those child spans.
+The report's `performance.phase_labels` describes each caller span, and phase
+coverage counts each independently. Child spans are not inferred from historical
+combined measurements or added to that outer span. Fetch and cleanup
 timings are also retained. Cache pruning records its tree-walk count; it measures
 after sparse maintenance and again after each eviction. The removed pre-sparse
 size is reported as unmeasured. Reporting lives in `beelink_gate_report.py`, timing

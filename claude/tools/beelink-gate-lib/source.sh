@@ -5,7 +5,7 @@
 emit_gate_source() {
   local generated status
   generated=$(mktemp) || return "$TEMPFAIL"
-  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" '
+  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" -v metrics="${gate_metrics_source:-}" '
     function append(file, line, status, count) {
       while ((status = getline line < file) > 0) { print line; count++ }
       close(file)
@@ -21,6 +21,10 @@ emit_gate_source() {
       print "beelink_gate_release_source=$(cat <<\047BEELINK_GATE_RELEASE_PYTHON\047"
       append(release)
       print "BEELINK_GATE_RELEASE_PYTHON"
+      print ")"
+      print "beelink_gate_metrics_source=$(cat <<\047BEELINK_GATE_METRICS_PYTHON\047"
+      append(metrics)
+      print "BEELINK_GATE_METRICS_PYTHON"
       print ")"
       skip = 1; next
     }

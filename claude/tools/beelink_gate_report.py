@@ -165,11 +165,23 @@ for host, summary in disk["hosts"].items():
           f"({summary['observed_n']} numeric rows including partials); "
           "host-shared sampled lower bounds, not exact transient peaks or a floor")
 performance = throughput(history, since, now)
+rolling_since = (now - dt.timedelta(hours=24)).isoformat()
+performance_24h = throughput(history, rolling_since, now)
+history_coverage = {"requested_hours": hours, "missing_hosts": missing.split(",") if missing else [],
+                    "rolling_24h_requested": hours >= 24,
+                    "limits": "Both timing windows reuse the same retained history already read; completeness/expired records unknown. Requested history shorter than 24h cannot cover the rolling window."}
 for group in performance["groups"]:
     print(f"THROUGHPUT {group['repo']} {group['class']}: n={group['n']} "
           f"wait p90={group['wait_p90_s']}s wall p50={group['wall_p50_s']}s "
           f"passed={group['passed_n']} passed wait p90={group['passed_wait_p90_s']}s passed wall p50={group['passed_wall_p50_s']}s "
-          f"install/typecheck/tests coverage={group['phase_coverage']} turbo_cache={group['turbo_cache']}")
+          f"phase coverage={group['phase_coverage']} turbo_cache={group['turbo_cache']}")
+for label, window in (("SINCE", performance), ("ROLLING_24H", performance_24h)):
+    print(f"TIMING_WINDOW {label} {window['window_from']}..{window['window_to']} history={history_coverage}")
+    for group in window["groups"]:
+        if label == "ROLLING_24H":
+            print(f"THROUGHPUT_24H {group['repo']} {group['class']}: n={group['n']} wait p90={group['wait_p90_s']}s wall p50={group['wall_p50_s']}s")
+        print(f"CAPACITY_CLAIM_WAIT {label} {group['repo']} {group['class']}: {json.dumps(group['capacity_claim_wait'], sort_keys=True)}")
+print("PHASE_LABELS " + json.dumps(performance["phase_labels"], sort_keys=True))
 print("TIMING submission-start cohort; nearest-rank percentiles; incomplete/unadmitted attempts excluded and counted; missing phases stay unknown")
 cpu_missing = sorted(set(("beelink1", "beelink2")) - {s.get("from") for s in samples if not s.get("error")})
 if cpu_missing:
@@ -186,7 +198,8 @@ for sample in samples:
 if json_output:
     sys.stdout.write(json.dumps({"window_from": since, "window_to": now.isoformat(),
                                 "missing_hosts": missing.split(",") if missing else [],
-                                "performance": performance, "disk": disk, "host_cpu_samples": samples,
+                                "performance": performance, "performance_24h": performance_24h,
+                                "timing_history_coverage": history_coverage, "disk": disk, "host_cpu_samples": samples,
                                 "missing_cpu_hosts": cpu_missing,
                                 "retained_job_logs": capacity_logs,
                                 "github_metadata": {"enabled": bool(gh),
