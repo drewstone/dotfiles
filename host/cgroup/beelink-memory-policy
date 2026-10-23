@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Memory owner for the Beelink gate installer. Apply live without restarting
+# Resource owner for the Beelink gate installer. Apply live without restarting
 # Actions runners; systemctl properties persist in systemd's control drop-ins.
 set -euo pipefail
 mode=${1:---apply}
@@ -10,13 +10,57 @@ case $(hostname) in DESKTOP-18IR33V|beelink1) index=1;; DESKTOP-10CQNP0|beelink2
   if systemctl cat actions.runner.tangle-network.deploy-beelink1-adc-01.service >/dev/null 2>&1; then index=1
   elif systemctl cat actions.runner.tangle-network.deploy-beelink2-adc-01.service >/dev/null 2>&1; then index=2
   else echo 'no ADC deploy runner on this host' >&2; exit 69; fi;; esac
+# Values live once in the installed role-owned policy. Priority is safe to
+# apply before memory-cap validation; a memory refusal never restores high gates.
+read -r gate_cpu gate_io normal_memory dev_memory normal_percent < <(python3 - <<'PYTHON'
+import json, os, stat
+path = '/etc/beelink-gate/resource-policy.json'
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(fd) as stream:
+    info = os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 4096:
+        raise SystemExit('unsafe gate resource policy')
+    row = json.load(stream)
+keys = ('cpu_weight', 'io_weight', 'normal_memory_bytes', 'dev_memory_bytes', 'normal_cpu_percent_per_host_cpu')
+if set(row) != set(keys) or any(type(row[key]) is not int or row[key] <= 0 for key in keys):
+    raise SystemExit('invalid gate resource policy')
+if row['cpu_weight'] > 10000 or row['io_weight'] > 10000 or row['normal_cpu_percent_per_host_cpu'] > 100:
+    raise SystemExit('invalid gate resource policy range')
+print(*(row[key] for key in keys))
+PYTHON
+)
+[[ "$gate_cpu" =~ ^[0-9]+$ && "$normal_memory" =~ ^[0-9]+$ ]] || exit 69
+normal_cpu=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent * 1000 ))
+priority_drift=0
+# Lower both CPU groups first, even if this kernel lacks the IO controller.
+for file in cpu.weight io.weight; do
+  for group in beelink-gate beelink-gate-dev; do
+    if [[ "$file" == io.weight ]]; then
+      expected="default:$gate_io"
+      actual="default:$(awk '$1 == "default" {print $2}' "/sys/fs/cgroup/$group/$file")"
+    else expected=$gate_cpu; actual=$(cat "/sys/fs/cgroup/$group/$file"); fi
+    if [[ "$actual" != "$expected" ]]; then
+      if [[ "$mode" == --check ]]; then echo "DRIFT $group $file"; priority_drift=1
+      elif [[ "$file" == io.weight ]]; then echo "default $gate_io" > "/sys/fs/cgroup/$group/$file"
+      else echo "$expected" > "/sys/fs/cgroup/$group/$file"; fi
+    fi
+  done
+done
+if [[ $(cat /sys/fs/cgroup/beelink-gate/cpu.max) != "$normal_cpu 100000" ]]; then
+  if [[ "$mode" == --check ]]; then echo 'DRIFT legacy normal CPU ceiling'; priority_drift=1
+  else echo "$normal_cpu 100000" > /sys/fs/cgroup/beelink-gate/cpu.max; fi
+fi
 GiB=1073741824
 uid=$(id -u ghrunner-adcprod)
 # MemoryMin is used-page reclaim protection, not a preallocated reservation or
 # immunity from an ancestor OOM. Bound release compilation separately and keep
 # the former 32G deploy allowance plus two 12G release allowances in its parent.
 properties() {
-  printf '%s\n' 'deploy.slice MemoryMin 8589934592' \
+  printf '%s\n' "beelinkgate.slice CPUWeight $gate_cpu" "beelinkgate.slice IOWeight $gate_io" \
+    "beelinkgate-normal.slice CPUWeight $gate_cpu" "beelinkgate-normal.slice IOWeight $gate_io" \
+    "beelinkgate-dev.slice CPUWeight $gate_cpu" "beelinkgate-dev.slice IOWeight $gate_io" \
+    "beelinkgate-normal.slice MemoryMax $normal_memory" "beelinkgate-dev.slice MemoryMax $dev_memory"
+  printf '%s\n' 'deploy.slice MemoryMin 8589934592'  \
     'deploy-runners.slice MemoryMin 8589934592' \
     'deploy-runners.slice MemoryMax 60129542144'
   for n in 01 02; do
@@ -28,12 +72,12 @@ properties() {
   done
 }
 # A cap below current usage could kill a live job during installation. Refuse
-# before changing anything; the operator can retry once current use is below it.
-for entry in 'beelink-gate 24' 'beelink-gate-dev 8'; do
-  read -r group gib <<<"$entry"
+# before changing any memory cap; priority lowering above is safe independently.
+for entry in "beelink-gate $normal_memory" "beelink-gate-dev $dev_memory"; do
+  read -r group value <<<"$entry"
   current=$(cat "/sys/fs/cgroup/$group/memory.current")
-  if (( current > gib*GiB )); then
-    echo "$group currently exceeds ${gib}G; no policy changed" >&2; exit 75
+  if (( current > value )); then
+    echo "$group exceeds its memory cap; no memory policy changed" >&2; exit 75
   fi
 done
 while read -r unit property value; do
@@ -44,10 +88,10 @@ while read -r unit property value; do
           $(systemctl show "$unit" -p LoadState --value) == loaded &&
           -z $(systemctl show "$unit" -p ControlGroup --value) ]]; then current=0; fi
     [[ "$current" =~ ^[0-9]+$ ]] || { echo "cannot read $unit memory" >&2; exit 69; }
-    (( current <= value )) || { echo "$unit currently exceeds its cap; no policy changed" >&2; exit 75; }
+    (( current <= value )) || { echo "$unit exceeds its memory cap; no memory policy changed" >&2; exit 75; }
   fi
 done < <(properties)
-drift=0
+drift=$priority_drift
 while read -r unit property value; do
   actual=$(systemctl show "$unit" -p "$property" --value)
   if [[ $actual != "$value" ]]; then
@@ -55,6 +99,24 @@ while read -r unit property value; do
     else systemctl set-property "$unit" "$property=$value"; fi
   fi
 done < <(properties)
+# CPUQuotaPerSecUSec uses human timespan formatting; compare the effective
+# kernel ratio instead. Inactive slices use their persistent unit-file policy.
+normal_path=$(systemctl show beelinkgate-normal.slice -p ControlGroup --value)
+if [[ -n "$normal_path" ]]; then
+  read -r quota period < "/sys/fs/cgroup$normal_path/cpu.max"
+  if [[ ! "$quota" =~ ^[0-9]+$ ]] || (( quota * 100000 != normal_cpu * period )); then
+    if [[ "$mode" == --check ]]; then echo 'DRIFT managed normal CPU ceiling'; drift=1
+    else systemctl set-property beelinkgate-normal.slice "CPUQuota=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent ))%"; fi
+  fi
+fi
+dev_path=$(systemctl show beelinkgate-dev.slice -p ControlGroup --value)
+if [[ -n "$dev_path" ]]; then
+  read -r quota _ < "/sys/fs/cgroup$dev_path/cpu.max"
+  if [[ "$quota" != max ]]; then
+    if [[ "$mode" == --check ]]; then echo 'DRIFT managed dev CPU ceiling'; drift=1
+    else systemctl set-property beelinkgate-dev.slice CPUQuota=; fi
+  fi
+fi
 # Rootless image builds are charged to the user manager, outside runner units.
 # Carry the floor through its app slice to Docker's service, too.
 docker_floor=deferred
@@ -98,14 +160,13 @@ else
   echo 'DEFERRED production Docker app/service floors: user manager inactive' >&2
   [[ $mode != --check ]] || drift=1
 fi
-for entry in 'beelink-gate 24' 'beelink-gate-dev 8'; do
-  read -r group gib <<<"$entry"
+for entry in "beelink-gate $normal_memory" "beelink-gate-dev $dev_memory"; do
+  read -r group value <<<"$entry"
   file="/sys/fs/cgroup/$group/memory.max"
-  value=$((gib*GiB))
   if [[ $(cat "$file") != "$value" ]]; then
     if [[ $mode == --check ]]; then echo "DRIFT $group memory.max expected=$value"; drift=1
     else echo "$value" >"$file"; fi
   fi
 done
 (( drift == 0 )) || exit 1
-echo "Beelink memory policy OK: gate=24G dev=8G release=12G/job deploy=4G/runner Docker=$docker_floor floor"
+echo "Beelink resource policy OK: low-weight managed/legacy gates, memory containment, Docker=$docker_floor floor"

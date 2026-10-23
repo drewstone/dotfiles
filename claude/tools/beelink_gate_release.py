@@ -657,10 +657,10 @@ def main():
             row["observation_error"] = "observation_publish_failed"
             row["reason"] = "observation_publish_failed"
     # Operator0413: only positively known critical work holds admission. Unknown
-    # identity keeps its diagnostic and uses the existing quota/disk admission.
+    # identity keeps its diagnostic and uses the existing host-PSI/disk admission.
     if row["state"] == "unknown":
         print("beelink-gate: release priority unknown: " + row["reason"] +
-              "; using quota admission", file=sys.stderr)
+              "; using host PSI admission", file=sys.stderr)
     elif row.get("observation_error"):
         print("beelink-gate: release priority held; observation publish failed; hold retained",
               file=sys.stderr)

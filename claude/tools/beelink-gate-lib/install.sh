@@ -141,7 +141,7 @@ prepare_gate_dependencies() {
     (( workers >= 4 )) || workers=4
     if [ "${starved:-0}" = 1 ]; then workers=$(( workers / 2 )); (( workers >= 2 )) || workers=2; fi
     # Ship's default pool must fit the same verified budget as other commands.
-    if [ "${gate_cgroup_joined:-}" = "$(basename "$(gate_cgroup)")" ] && quota_capacity 1 >/dev/null; then
+    if worker_capacity 1 >/dev/null; then
       (( workers <= gate_workers )) || workers=$gate_workers
     fi
     export SHIP_MAX_WORKERS=$workers

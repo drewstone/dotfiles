@@ -5,7 +5,7 @@
 emit_gate_source() {
   local generated status
   generated=$(mktemp) || return "$TEMPFAIL"
-  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" '
+  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" '
     function append(file, line, status, count) {
       while ((status = getline line < file) > 0) { print line; count++ }
       close(file)
@@ -13,7 +13,7 @@ emit_gate_source() {
     }
     { last = $0 }
     $0 == "# BEELINK_GATE_INSTALLER_START" {
-      starts++; append(installer); append(staging); append(cache); append(admission)
+      starts++; append(installer); append(staging); append(cache); append(admission); append(resources); append(jobs)
       print "beelink_gate_disk_source=$(cat <<\047BEELINK_GATE_DISK_PYTHON\047"
       append(disk)
       print "BEELINK_GATE_DISK_PYTHON"
@@ -104,7 +104,6 @@ on_beelink() {
   [ -z "${BEELINK_GATE_CACHE_MAX_BYTES:-}" ] || envs+=("BEELINK_GATE_CACHE_MAX_BYTES=$BEELINK_GATE_CACHE_MAX_BYTES")
   [ -z "${TURBO_RUN_SUMMARY:-}" ] || envs+=("TURBO_RUN_SUMMARY=$TURBO_RUN_SUMMARY")
   [ -z "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ] || envs+=("BEELINK_GATE_MAX_CPU_PRESSURE=$BEELINK_GATE_MAX_CPU_PRESSURE")
-  [ -z "${BEELINK_GATE_HOST_PRESSURE_CEILING:-}" ] || envs+=("BEELINK_GATE_HOST_PRESSURE_CEILING=$BEELINK_GATE_HOST_PRESSURE_CEILING")
   [ -z "${BEELINK_GATE_STARVE_AFTER:-}" ] || envs+=("BEELINK_GATE_STARVE_AFTER=$BEELINK_GATE_STARVE_AFTER")
   [ "${gate_class:-}" != dev ] || envs+=("BEELINK_GATE_CLASS=dev")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")

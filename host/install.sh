@@ -22,7 +22,7 @@
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #   /etc/systemd/system/ci.slice.d/50-gate-priority.conf, beelink-gate-cgroup.service
-#                                          Beelinks: CI yields CPU to merge gates (weights 25 vs 400)
+#                                          Beelinks: gates yield CPU/IO to release and deploy work
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
 #                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
@@ -220,17 +220,13 @@ install_beelink_worktree_cap() {
   return 0
 }
 
-# Beelinks: merge gates win the CPU over CI runner jobs. Never stops a runner:
-# the weight applies live through set-property, and only under contention.
+# Beelinks: release/deploy work outranks every merge gate. Apply priority live
+# without moving processes or restarting any Actions runner.
 install_beelink_gate_priority() {
   local before=$CHANGED ci_weight=25
   CHANGED=0
-  # A host may set the CI runners' weight in /etc/beelink-gate/ci-weight. Staged
-  # 2026-10-12 (op-company, op-devplatform): runners starved at weight 25 timed
-  # out ADC CI, so a host under test runs them at 400, equal to the gate cgroup,
-  # both 4x the default-weight work (sessions, ollama). No CPUQuota: a hard cap
-  # would bring those timeouts back. Rollback: remove the file and rerun
-  # host/install.sh --gate-priority-only.
+  # CI and Nix retain their existing validated host override. Gate priority is
+  # independently owned by the resource policy below; this does not raise it.
   if [ -r /etc/beelink-gate/ci-weight ]; then
     ci_weight=$(tr -cd '0-9' < /etc/beelink-gate/ci-weight)
     if [[ ! "$ci_weight" =~ ^[0-9]+$ ]] || (( ci_weight < 1 || ci_weight > 10000 )); then
@@ -242,14 +238,35 @@ install_beelink_gate_priority() {
   want_file 0644 "$TMP/ci-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
   sed "s/@CI_WEIGHT@/$ci_weight/" "$SCRIPT_DIR/cgroup/50-nix-daemon-priority.conf" > "$TMP/nix-daemon-priority.conf"
   want_file 0644 "$TMP/nix-daemon-priority.conf" /etc/systemd/system/nix-daemon.service.d/50-gate-priority.conf
+  local gate_cpu gate_io normal_memory dev_memory normal_percent normal_quota
+  read -r gate_cpu gate_io normal_memory dev_memory normal_percent < <(python3 - "$SCRIPT_DIR/cgroup/beelink-gate-policy.json" <<'PYTHON'
+import json, sys
+row = json.load(open(sys.argv[1]))
+keys = ('cpu_weight', 'io_weight', 'normal_memory_bytes', 'dev_memory_bytes', 'normal_cpu_percent_per_host_cpu')
+if set(row) != set(keys) or any(type(row[key]) is not int or row[key] <= 0 for key in keys):
+    raise SystemExit('invalid gate resource policy')
+if row['cpu_weight'] > 10000 or row['io_weight'] > 10000 or row['normal_cpu_percent_per_host_cpu'] > 100:
+    raise SystemExit('invalid gate resource policy range')
+print(*(row[key] for key in keys))
+PYTHON
+  )
+  [[ "$gate_cpu" =~ ^[0-9]+$ && "$normal_percent" =~ ^[0-9]+$ ]] || exit 1
+  normal_quota=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent ))
+  want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-policy.json" /etc/beelink-gate/resource-policy.json
+  printf '[Slice]\nCPUWeight=%s\nIOWeight=%s\n' "$gate_cpu" "$gate_io" > "$TMP/beelinkgate.slice"
+  want_file 0644 "$TMP/beelinkgate.slice" /etc/systemd/system/beelinkgate.slice
+  {
+    cat "$TMP/beelinkgate.slice"
+    printf 'MemoryMax=%s\nCPUQuota=%s%%\n' "$normal_memory" "$normal_quota"
+  } > "$TMP/beelinkgate-normal.slice"
+  want_file 0644 "$TMP/beelinkgate-normal.slice" /etc/systemd/system/beelinkgate-normal.slice
+  { cat "$TMP/beelinkgate.slice"; printf 'MemoryMax=%s\n' "$dev_memory"; } > "$TMP/beelinkgate-dev.slice"
+  want_file 0644 "$TMP/beelinkgate-dev.slice" /etc/systemd/system/beelinkgate-dev.slice
   want_file 0755 "$SCRIPT_DIR/cgroup/beelink-memory-policy" /usr/local/libexec/beelink-memory-policy
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
   if [ "$CHECK" = 1 ]; then
     [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "ci.slice cpu.weight is not $ci_weight"
     [ "$(cat /sys/fs/cgroup/system.slice/nix-daemon.service/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "nix-daemon.service cpu.weight is not $ci_weight"
-    [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" = 400 ] || drift "beelink-gate cgroup cpu.weight is not 400"
-    [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" = 25 ] || drift "beelink-gate-dev cgroup cpu.weight is not 25"
-    [ "$(cut -d' ' -f1 /sys/fs/cgroup/beelink-gate/cpu.max 2>/dev/null)" = "$(( $(nproc) * 75000 ))" ] || drift "beelink-gate cgroup cpu.max is not 75% of the cores"
   else
     [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
     if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != "$ci_weight" ]; then
@@ -260,12 +277,10 @@ install_beelink_gate_priority() {
       $SUDO systemctl set-property --runtime nix-daemon.service CPUWeight="$ci_weight"
       note changed "nix-daemon.service CPUWeight=$ci_weight"
     fi
-    if [ "$CHANGED" = 1 ] || [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" != 400 ] \
-      || [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" != 25 ] \
-      || [ "$(cut -d' ' -f1 /sys/fs/cgroup/beelink-gate/cpu.max 2>/dev/null)" != "$(( $(nproc) * 75000 ))" ]; then
+    if [ "$CHANGED" = 1 ] || ! systemctl is-active --quiet beelink-gate-cgroup.service; then
       $SUDO systemctl enable --quiet beelink-gate-cgroup.service
       $SUDO systemctl restart beelink-gate-cgroup.service
-      note changed "beelink-gate cgroup cpu.weight=$(cat /sys/fs/cgroup/beelink-gate/cpu.weight)"
+      note changed 'gate resource policy applied; Actions runners unchanged'
     fi
   fi
   if [ "$CHECK" = 1 ]; then

@@ -29,7 +29,7 @@ PYTHON
     return 3
   fi
   if [ "$parsed" != 0 ] || [ -n "$reason" ]; then
-    echo 'beelink-gate: release priority unknown: release_evidence_invalid_or_crashed; using quota admission' >&2
+    echo 'beelink-gate: release priority unknown: release_evidence_invalid_or_crashed; using host PSI admission' >&2
   fi
   return 0
 }
