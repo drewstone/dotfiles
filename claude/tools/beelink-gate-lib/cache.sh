@@ -92,7 +92,8 @@ def remove(path):
     if removal_deadline is None:
         removal_deadline = started + 60
     remaining = removal_deadline - started
-    if remaining <= 0:
+    # GNU timeout treats a duration rounded to zero as no deadline.
+    if remaining < 0.001:
         raise TimeoutError(f"cache removal budget exhausted before {path}")
     result = subprocess.run(
         ["timeout", "--verbose", "-s", "KILL", f"{remaining:.3f}s", "rm", "-rf", "--", str(path)],
