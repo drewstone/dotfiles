@@ -10,7 +10,7 @@ Immediately before that correction:
 
 > AND SHIPPED
 
-> like literally bring everything to the msot amazing, most ambitious state, clear shit, clear out all the shit that is fucking us in the ass, we don’t need that shit in our ass, EVER, we need cleanest simplest most amazing code in the world, most amazing goal oriented, fast responses from agents ability to resasses any situation in any infra product or code base FAST
+> like literally bring everything to the msot amazing, most ambitious state, clear shit, clear out all the shit that is fucking us in the ass, we don't need that shit in our ass, EVER, we need cleanest simplest most amazing code in the world, most amazing goal oriented, fast responses from agents ability to resasses any situation in any infra product or code base FAST
 
 The correction forbids treating one outcome per PR, the smallest complete outcome, or a minimal diff as a scope ceiling. It also forbids fragmenting related user goals and shared causes into artificial PR boundaries or one-outcome-per-worker caps. Ambition means shipped goals, simpler code and faster reassessment, not a count of lines, commits, PRs or agents.
 
