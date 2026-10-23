@@ -146,6 +146,9 @@ def group_snapshot(groups, deadline):
                             'throttled_usec': int(values.get('throttled_usec', 0)),
                             'cpu_max': read_text(path / 'cpu.max'),
                             'cpu_weight': read_text(path / 'cpu.weight'),
+                            'cgroup_events': read_text(path / 'cgroup.events'),
+                            'memory_current_bytes': read_text(path / 'memory.current'),
+                            'memory_max_bytes': read_text(path / 'memory.max'),
                             'cpu_pressure': pressure(path / 'cpu.pressure'),
                             'io_weight': io_weight['value'],
                             'io_weight_state': io_weight['state'],
@@ -287,6 +290,9 @@ def sample():
         groups.append({'cgroup': name, 'cpu_pct': round(cpu, 2),
                        'cgroup_inode': row['identity'],
                        'cpu_max': row['cpu_max'], 'cpu_weight': row['cpu_weight'],
+                       'cgroup_events': row['cgroup_events'],
+                       'memory_current_bytes': row['memory_current_bytes'],
+                       'memory_max_bytes': row['memory_max_bytes'],
                        'cpu_pressure': row['cpu_pressure'],
                        'io_weight': row['io_weight'], 'io_pressure': row['io_pressure'],
                        'io_weight_state': row['io_weight_state'],
@@ -295,6 +301,11 @@ def sample():
                        **states_row(group_states.get(name, collections.Counter()))})
     groups.sort(key=lambda row: row['cpu_pct'], reverse=True)
     processes.sort(key=lambda row: row['cpu_pct'], reverse=True)
+    # Idle daemons can hold the legacy cap handoff forever while falling below
+    # the top-CPU display. Reuse the bounded stable-identity sample, no new scan.
+    legacy_members = [row for row in processes if any(
+        row['cgroup'] == name or row['cgroup'].startswith(name + '/')
+        for name in ('/beelink-gate', '/beelink-gate-dev'))]
     cpu = None
     if first_cpu is not None and second_cpu is not None:
         total = second_cpu[0] - first_cpu[0]
@@ -310,6 +321,8 @@ def sample():
                 'process_rows': len(processes), 'process_rows_retained': min(20, len(processes)),
                 'group_rows': len(groups), 'group_rows_retained': min(30, len(groups))}
     coverage['groups_recreated_or_counter_reset'] = reset_groups
+    coverage['legacy_gate_member_rows'] = len(legacy_members)
+    coverage['legacy_gate_member_rows_retained'] = min(64, len(legacy_members))
     priority_names = {'/beelinkgate.slice',
                       '/beelinkgate.slice/beelinkgate-normal.slice',
                       '/beelinkgate.slice/beelinkgate-dev.slice',
@@ -332,6 +345,7 @@ def sample():
             'release_priority': release_priority_observation(),
             'cpu': cpu, 'coverage': coverage, 'groups': groups[:30],
             'priority_groups': priority_groups, 'processes': processes[:20],
+            'legacy_gate_members': legacy_members[:64],
             'runnable_threads': sum(states['R'] for states in group_states.values()),
             'blocked_threads': sum(states['D'] for states in group_states.values()),
             'unattributed_cpu_pct': round(max(0, (cpu or {}).get('busy_pct', 0) - sum(row['cpu_pct'] for row in processes)), 2),

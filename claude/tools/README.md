@@ -349,6 +349,11 @@ remote waiting are not in those percentiles. A missing host is partial, never
 zero. CPU samples are current observations; cgroup rows overlap and must not
 be summed. Process accounting excludes short-lived tasks, with coverage and
 unattributed CPU reported.
+The same sample retains up to 64 `legacy_gate_members`, including idle processes
+that can hold the transition drain but disappear from the top-CPU list. Coverage
+reports the observed and retained counts; group rows include kernel population
+events and current/maximum memory. This reads no arguments or working directories
+and performs no extra process scan; unreadable or exited processes remain unknown.
 
 Every gate class runs as the caller's unprivileged UID in a SYSTEM-managed
 unit beneath the top-level `beelinkgate.slice`. Its low aggregate CPU and IO
