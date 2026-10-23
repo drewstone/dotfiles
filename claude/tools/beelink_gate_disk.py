@@ -3,6 +3,7 @@
 Filesystem highwater is sampled host-wide, not an exact transient or attributable
 per-gate peak. Directory bytes are bounded du checkpoints, never sampled peaks.
 """
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -122,6 +123,11 @@ def docker_usage(identity):
         return {"status": "unknown", "reason": "docker_usage_unreadable_or_timeout"}
 
 
+def docker_snapshot():
+    identity = docker_identity()
+    return identity, docker_usage(identity)
+
+
 def process_info(pid):
     try:
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
@@ -225,29 +231,47 @@ def observe(directory, parent, budget, paths):
     sample(filesystems, start)
     write_json(directory / "ready", {"baseline_monotonic_s": start, "pid": os.getpid(),
                                      "start_ticks": process_identity(os.getpid()), "parent_pid": parent})
-    docker = docker_identity()
-    if docker["status"] == "local":
-        added = add_filesystem(filesystems, "docker", docker["path"])
-        if added is not True:
-            unknown.append(added)
-    usage_before = docker_usage(docker)
+    docker = {"status": "unknown", "reason": "docker_metadata_pending"}
+    usage_before, usage_after = None, None
     reason = "running"
-    while not stop and not (directory / "stop").exists():
-        now = time.monotonic()
-        sample(filesystems, now)
-        if identity is None or process_identity(parent) != identity:
-            reason = "parent_exited"
-            break
-        if now >= start + budget:
-            reason = "deadline"
-            break
-        write_observation(directory, start, now, reason, filesystems, unknown, docker, usage_before, None)
-        time.sleep(min(INTERVAL_S, max(0, start + budget - now)))
-    if reason == "running":
-        reason = stop[0] if stop else "finished"
-    docker_after = docker_identity()
-    usage_after = docker_usage(docker_after) if docker == docker_after else {"status": "unknown", "reason": "docker_context_changed"}
+    # Optional daemon queries must never pause filesystem sampling. One worker
+    # bounds before+after work to the same query budget as the serial owner.
+    with ThreadPoolExecutor(max_workers=1) as metadata:
+        before = metadata.submit(docker_snapshot)
+        after = None
+        while True:
+            now = time.monotonic()
+            if before is not None and before.done():
+                docker, usage_before = before.result()
+                before = None
+                if docker["status"] == "local":
+                    known_filesystems = set(filesystems)
+                    added = add_filesystem(filesystems, "docker", docker["path"])
+                    for key in set(filesystems) - known_filesystems:
+                        filesystems[key]["late_discovery"] = True
+                    if added is not True:
+                        unknown.append(added)
+            sample(filesystems, now)
+            if identity is None or process_identity(parent) != identity:
+                reason = "parent_exited"
+            elif now >= start + budget and reason != "parent_exited":
+                reason = "deadline"
+            elif "terminated" in stop:
+                reason = "terminated"
+            elif reason == "running" and (stop or (directory / "stop").exists()):
+                reason = "finished"
+            if reason != "running" and after is None:
+                after = metadata.submit(docker_snapshot)
+            if after is not None and after.done() and before is None:
+                docker_after, usage_after = after.result()
+                break
+            # A killed observer must not leave a qualified finished snapshot
+            # while final metadata or a queued initial snapshot is incomplete.
+            phase = "running" if reason == "running" else "finishing"
+            write_observation(directory, start, now, phase, filesystems, unknown, docker, usage_before, None)
+            time.sleep(INTERVAL_S)
     if docker != docker_after:
+        usage_after = {"status": "unknown", "reason": "docker_context_changed"}
         docker = {"status": "unknown", "reason": "docker_context_changed"}
         for fs in filesystems.values():
             for alias in fs["aliases"]:
@@ -270,7 +294,8 @@ def write_observation(directory, start, end, reason, filesystems, unknown, docke
                                           if row["samples"] else None)
         row["full_window"] = (reason == "finished" and row["samples"] >= 2 and row["read_errors"] == 0
                               and first - start < INTERVAL_S and end - row["last_monotonic_s"] < INTERVAL_S
-                              and row["missed_intervals"] == 0 and row["max_gap_s"] <= MAX_SAMPLE_GAP_S)
+                              and row["missed_intervals"] == 0 and row["max_gap_s"] <= MAX_SAMPLE_GAP_S
+                              and not row.get("late_discovery", False))
         rows.append(row)
     write_json(directory / "observation.json", {
         "schema": SCHEMA, "source": "statvfs", "scope": "shared_host_filesystems",
