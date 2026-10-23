@@ -181,13 +181,44 @@ write_files:
 YAML
 }
 
+qmp_socket_path() {
+  # qmp_socket_path DIR -> prints a socket path in a new 0700 dir, or fails.
+  local base="${XDG_RUNTIME_DIR:-}" hash qdir
+  [ -n "$base" ] && [ -d "$base" ] && [ -w "$base" ] || base=/tmp
+  hash="$(printf '%s' "$1" | sha256sum | cut -c1-12)"
+  qdir="$(mktemp -d "$base/hostlab-qmp-$hash.XXXXXX" 2>/dev/null)" ||
+    { [ "$base" != /tmp ] && qdir="$(mktemp -d "/tmp/hostlab-qmp-$hash.XXXXXX" 2>/dev/null)"; } || return 1
+  chmod 700 "$qdir" || { rmdir "$qdir"; return 1; }
+  if (( ${#qdir} + 10 >= 108 )); then rmdir "$qdir"; return 1; fi
+  printf '%s\n' "$qdir/qmp.sock"
+}
+
+qmp_socket_remove() {
+  # Removes only the private dir qmp_socket_path made for this run.
+  local sock qdir
+  sock="$(cat "$1/qmp.path" 2>/dev/null)" || return 0
+  case "$sock" in /*/hostlab-qmp-*/qmp.sock) ;; *) return 0 ;; esac
+  qdir="${sock%/qmp.sock}"
+  [ -d "$qdir" ] && [ ! -L "$qdir" ] && [ -O "$qdir" ] || return 0
+  rm -f "$sock"; rmdir "$qdir" 2>/dev/null || true
+}
+
 qemu_start() {
   # qemu_start DIR PORT WORKDIR
   local dir="$1" port="$2" workdir="$3" i input_id LC_ALL=C
-  (( ${#dir} + 10 < 108 )) || die 'run directory is too long for a private QMP Unix socket'
   sha256sum "$HOSTLAB_SOURCE" "$BOOT_DIAGNOSTICS" \
     "$(dirname "$HOSTLAB_SOURCE")/beelink_gate_cpu.py" | awk '{print $1}' > "$dir/source-sha256"
-  local -a input=()
+  local -a input=() qmp=()
+  local sock
+  # QMP lives in a short private dir, because a Unix socket path must stay under
+  # 108 bytes and real run dirs exceed that (113 bytes for tangle-devops #585).
+  # Diagnostics never block a boot: without a socket, QEMU starts without QMP.
+  if sock="$(qmp_socket_path "$dir")"; then
+    qmp=(-qmp "unix:${sock//,/,,},server=on,wait=off")
+  else
+    sock=unavailable
+  fi
+  (umask 077; printf '%s\n' "$sock" > "$dir/qmp.path"); chmod 600 "$dir/qmp.path"
   for i in "${!INPUT_NAMES[@]}"; do
     input_id="hostlab-${INPUT_NAMES[$i]}"
     # QEMU's option parser escapes a literal comma as a doubled comma.
@@ -200,7 +231,7 @@ qemu_start() {
   (umask 077; qemu-system-x86_64 \
     -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
     -display none -serial "file:$dir/console.log" -monitor none \
-    -qmp "unix:${dir//,/,,}/qmp.sock,server=on,wait=off" \
+    "${qmp[@]}" \
     -drive "if=none,id=hostlab-internal-root,format=qcow2,file=${dir//,/,,}/disk.qcow2" \
     -device virtio-blk-pci,drive=hostlab-internal-root,bootindex=1 \
     -drive "if=none,id=hostlab-internal-scratch,format=qcow2,file=${dir//,/,,}/scratch.qcow2" \
@@ -211,7 +242,7 @@ qemu_start() {
     -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$port"-:22 -device virtio-net-pci,netdev=n0 \
     -virtfs local,path="$workdir",mount_tag=work,security_model=none,id=work \
     -pidfile "$dir/qemu.pid" -daemonize)
-  chmod 600 "$dir/qmp.sock"
+  [ "$sock" = unavailable ] || chmod 600 "$sock" 2>/dev/null || true
   local pid start
   pid="$(cat "$dir/qemu.pid")"; start="$(proc_start "$pid")"
   printf '%s %s\n' "$pid" "$start" > "$dir/qemu.identity"
@@ -276,6 +307,7 @@ vm_stop() {
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
     fi
   fi
+  qmp_socket_remove "$dir"
 }
 
 cmd_build() {
@@ -286,7 +318,7 @@ cmd_build() {
     mv "$CLOUD_IMG.part" "$CLOUD_IMG"
   fi
   local dir="$CACHE/build"
-  rm -rf "$dir"; mkdir -m 700 "$dir"
+  qmp_socket_remove "$dir"; rm -rf "$dir"; mkdir -m 700 "$dir"
   qemu-img create -q -f qcow2 -F qcow2 -b "$CLOUD_IMG" "$dir/disk.qcow2"
   qemu-img resize -q "$dir/disk.qcow2" "$DISK"
   qemu-img create -q -f qcow2 "$dir/scratch.qcow2" 1G
@@ -325,7 +357,7 @@ cmd_build() {
   fi
   mv "$dir/disk.qcow2" "$BASE_IMG"
   date -u +%FT%TZ > "$BASE_IMG.built"
-  rm -rf "$dir"
+  qmp_socket_remove "$dir"; rm -rf "$dir"
   echo "hostlab: base image ready at $BASE_IMG"
 }
 

@@ -53,6 +53,7 @@ On Beelinks, `./host/install.sh --gate-priority-only` also applies the memory po
   Failed SSH or `/work` readiness retains bounded, sanitized SSH/serial logs and `boot-state.json` under
   `$HOSTLAB_HOME/diagnostics/<run-id>` before teardown. The private diagnostics helper reads QMP runstate,
   KVM/vCPU identity and the actual process/cgroup ancestors through an owner-only Unix socket.
+  That socket lives in a 0700 `hostlab-qmp-*` dir under `$XDG_RUNTIME_DIR` (or `/tmp`), named in the run's `qmp.path`, so a long run dir never blocks a boot; without one, QEMU starts without QMP.
   Unsupported or incomplete observations stay unknown; QMP `running` does not prove guest health.
   A successful mount also retains one quiet, bounded, best-effort `ready` snapshot.
   Readiness budgets, KVM/resources and the existing retirement path remain unchanged.

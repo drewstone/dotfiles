@@ -71,6 +71,20 @@ def native(pid, tid=None):
             'threads': int(fields[17]), 'rss_pages': int(fields[21])}
 
 
+def qmp_endpoint(source):
+    recorded = bounded_file(source / 'qmp.path').decode().strip()
+    if recorded == 'unavailable':
+        raise ValueError('qmp_unavailable')
+    endpoint = Path(recorded)
+    if (not endpoint.is_absolute() or endpoint.name != 'qmp.sock' or len(recorded) >= 108
+            or not endpoint.parent.name.startswith('hostlab-qmp-')):
+        raise ValueError('unsafe_qmp_path')
+    info = endpoint.parent.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise ValueError('unsafe_qmp_directory')
+    return endpoint
+
+
 def qmp_snapshot(endpoint, pid, deadline):
     info = endpoint.lstat()
     if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
@@ -198,7 +212,7 @@ def snapshot(source, hostlab, deadline):
         row['uptime_seconds'] = float(bounded_file(Path('/proc/uptime')).split()[0])
         row['process_age_seconds'] = row['uptime_seconds'] - start / row['clock_ticks_per_second']
         row['process_cpu_seconds_since_birth'] = before['cpu_ticks'] / row['clock_ticks_per_second']
-        row['qmp'] = qmp_snapshot(source / 'qmp.sock', pid, deadline)
+        row['qmp'] = qmp_snapshot(qmp_endpoint(source), pid, deadline)
         if any(not row['qmp'].get(key) or 'unknown' in row['qmp'][key] for key in ('status', 'kvm')):
             row['unknowns'].append('qmp_query_unavailable')
         if not row['qmp']['cpus']:
