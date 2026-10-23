@@ -354,6 +354,7 @@ logs = []
 refused = []
 active = []
 entries = []
+frontend_entries = []
 retained_seen = 0
 utc = lambda value: dt.datetime.fromtimestamp(value, dt.timezone.utc).isoformat()
 for job in root.iterdir() if root.is_dir() else []:
@@ -382,6 +383,8 @@ for job in root.iterdir() if root.is_dir() else []:
                 canceled = stat.S_ISREG(marker.st_mode) and marker.st_uid == os.getuid()
             except OSError:
                 canceled = False
+            prefix = metrics["read_frontend_state"](job / "frontend.json")
+            frontend_entries.append({"gate_id": job.name, "observation": dict(prefix, authority=None) if prefix else None})
             entries.append({"gate_id": job.name, "observation": raw, "retained_job_exit": status,
                             "actual_cancel_marker": canceled,
                             "selection_at": utc(context),
@@ -410,6 +413,8 @@ print(json.dumps({"kind": "admission_observations", "window_from": utc(start), "
                   "retained_jobs_seen_n": retained_seen, "entries": entries,
                   "selection": "observation begin UTC; missing observations use submitted or directory mtime, labeled per entry",
                   "limits": "only retained job directories; expired/no-ID/pre-submission population unknown; exit alone never identifies cancellation"}))
+print(json.dumps({"kind": "frontend_observations", "origin": "remote_prefix", "entries": frontend_entries,
+                  "limits": "one optional pre-submit prefix per retained job; remote-only tails unknown; jobs without a valid prefix retained as unknown"}))
 PY
 }
 
