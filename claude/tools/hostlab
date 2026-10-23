@@ -117,6 +117,20 @@ need() {
     die "/dev/kvm is not accessible (add yourself to the kvm group)"
   fi
   mkdir -p "$CACHE" "$RUNS"
+  # This per-account cache holds the VM key and private diagnostic sockets.
+  # Enforce its owner here so ordinary group umasks do not disable evidence.
+  python3 - "$CACHE" <<'PY' || die "cannot secure the per-account Hostlab cache"
+import os, pathlib, stat, sys
+cache = pathlib.Path(sys.argv[1]).resolve(strict=True)
+descriptor = os.open(cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    info = os.fstat(descriptor)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise ValueError('Hostlab cache belongs to another account')
+    os.fchmod(descriptor, 0o700)
+finally:
+    os.close(descriptor)
+PY
   if [ ! -f "$KEY" ]; then
     ssh-keygen -q -t ed25519 -N '' -C hostlab -f "$KEY"
   fi
@@ -180,8 +194,16 @@ YAML
 
 qemu_start() {
   # qemu_start DIR PORT WORKDIR
-  local dir="$1" port="$2" workdir="$3" i input_id
-  local -a input=()
+  local dir="$1" port="$2" workdir="$3" i input_id pid LC_ALL=C
+  chmod 700 "$dir" || return "$?"
+  local -a input=() monitor=()
+  # A private local monitor exposes boot state even when the guest emits no
+  # serial output. Long custom cache paths still boot without this diagnostic.
+  if (( ${#dir} + 10 < 108 )); then
+    monitor=(-qmp "unix:${dir//,/,,}/qmp.sock,server=on,wait=off")
+  else
+    printf '%s\n' 'QMP unavailable: run path exceeds Unix socket limit' > "$dir/qmp-unavailable"
+  fi
   for i in "${!INPUT_NAMES[@]}"; do
     input_id="hostlab-${INPUT_NAMES[$i]}"
     # QEMU's option parser escapes a literal comma as a doubled comma.
@@ -190,14 +212,17 @@ qemu_start() {
   done
   qemu-system-x86_64 \
     -enable-kvm -cpu host -m "$MEM" -smp "$CPUS" \
-    -display none -serial "file:$dir/console.log" -monitor none \
+    -display none -serial "file:$dir/console.log" -monitor none "${monitor[@]}" \
     -drive if=virtio,format=qcow2,file="$dir/disk.qcow2" \
     -drive if=virtio,format=qcow2,file="$dir/scratch.qcow2" \
     -drive if=virtio,format=raw,file="$dir/seed.img",readonly=on \
     "${input[@]}" \
     -netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$port"-:22 -device virtio-net-pci,netdev=n0 \
     -virtfs local,path="$workdir",mount_tag=work,security_model=none,id=work \
-    -pidfile "$dir/qemu.pid" -daemonize
+    -pidfile "$dir/qemu.pid" -daemonize 2> "$dir/qemu.stderr" || return "$?"
+  pid="$(cat "$dir/qemu.pid")"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  proc_start "$pid" > "$dir/qemu.start"
 }
 
 wait_ssh() {
@@ -237,11 +262,30 @@ wait_ssh() {
 }
 
 vm_boot_diagnostics() {
-  local dir="$1" stage="$2" dest="$CACHE/diagnostics/$(basename "$1")"
-  mkdir -p "$dest"
-  python3 - "$dir" "$dest" "$stage" <<'PY'
-import pathlib, re, sys
+  local dir="$1" stage="$2" dest="$CACHE/diagnostics/$(basename "$1")" show="${3:-true}"
+  python3 - "$dir" "$dest" "$stage" <<'PY' || return "$?"
+import json, os, pathlib, re, socket, stat, sys, time
 source, dest = map(pathlib.Path, sys.argv[1:3])
+cache = dest.parent.parent
+if cache.stat().st_uid != os.geteuid() or cache.stat().st_mode & 0o022:
+    raise ValueError('hostlab cache is not controlled by this account')
+os.umask(0o077)
+for directory in (dest.parent, dest):
+    directory.mkdir(mode=0o700, exist_ok=True)
+    info = directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        raise ValueError('diagnostic destination is redirected or foreign')
+    directory.chmod(0o700)
+def private_text(name, text):
+    path = dest / name
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
+    with os.fdopen(descriptor, 'w') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+            raise ValueError('diagnostic file is redirected or foreign')
+        os.fchmod(stream.fileno(), 0o600)
+        stream.truncate(0)
+        stream.write(text)
 def tail(path, limit):
     try:
         with path.open('rb') as stream:
@@ -257,19 +301,78 @@ def clean(text):
 sensitive = re.compile(r'(?i)private key|offering public key|will attempt key|identity file|fingerprint|\b(?:password|token|secret|credential|authorization|cookie)\s*[:=]|(?:^|\s)(?:ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+)\s+[A-Za-z0-9+/=]+|^[A-Za-z0-9+/=]{32,}$')
 error = source / (sys.argv[3] + '-ssh.stderr')
 lines = [line for line in clean(tail(error, 262144)).splitlines() if not sensitive.search(line)]
-(dest / 'ssh.stderr').write_text('\n'.join(lines) + '\n')
+private_text('ssh.stderr', '\n'.join(lines) + '\n')
 display = lines if len(lines) <= 60 else lines[:20] + ['... all attempt summaries retained in ssh.stderr ...'] + lines[-40:]
-(dest / 'ssh-display.txt').write_text('\n'.join(display) + '\n')
+private_text('ssh-display.txt', '\n'.join(display) + '\n')
 console = source / 'console.log'
 lines = clean(tail(console, 32768)).splitlines()
 lines = [line for line in lines if not sensitive.search(line)]
-(dest / 'console.txt').write_text('\n'.join(lines) + '\n')
+private_text('console.txt', '\n'.join(lines) + '\n')
 display = lines if len(lines) <= 60 else lines[:20] + ['... complete bounded tail retained in console.txt ...'] + lines[-40:]
-(dest / 'console-display.txt').write_text('\n'.join(display) + '\n')
-(dest / 'stage').write_text(sys.argv[3] + '\n')
+private_text('console-display.txt', '\n'.join(display) + '\n')
+private_text('qemu.stderr', '\n'.join(line for line in clean(tail(source / 'qemu.stderr', 8192)).splitlines() if not sensitive.search(line)) + '\n')
+state = {'stage': sys.argv[3], 'observed_epoch': time.time(), 'process': None, 'qmp': {}}
+try:
+    pid = int((source / 'qemu.pid').read_text().strip())
+    proc = pathlib.Path('/proc') / str(pid)
+    # Do not read argv, environment or a reused/non-QEMU process's state.
+    if pathlib.Path(os.readlink(proc / 'exe')).name != 'qemu-system-x86_64':
+        raise ValueError('PID is not the expected emulator')
+    fields = (proc / 'stat').read_text().rsplit(') ', 1)[1].split()
+    if str(int(fields[19])) != (source / 'qemu.start').read_text().strip():
+        raise ValueError('emulator PID identity changed')
+    status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines() if ':' in line)
+    state['process'] = {'pid': pid, 'start_ticks': int(fields[19]), 'state': fields[0],
+                        'cpu_user_ticks': int(fields[11]), 'cpu_system_ticks': int(fields[12]),
+                        'rss_kib': status.get('VmRSS', '').strip(), 'threads': status.get('Threads', '').strip()}
+except (OSError, ValueError, IndexError) as error:
+    state['process_error'] = type(error).__name__
+try:
+    if (source / 'qmp-unavailable').exists():
+        state['qmp_unavailable'] = clean(tail(source / 'qmp-unavailable', 1024)).strip()
+        raise OSError('QMP intentionally unavailable')
+    # One total deadline, including asynchronous QMP events and partial replies.
+    deadline, pending, received = time.monotonic() + 3, b'', 0
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        def response(expected=None):
+            global pending, received
+            while True:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('QMP diagnostic deadline')
+                if b'\n' not in pending:
+                    connection.settimeout(max(0.001, deadline - time.monotonic()))
+                    chunk = connection.recv(8192)
+                    if not chunk:
+                        raise ValueError('QMP closed before response')
+                    received += len(chunk)
+                    if received > 65536:
+                        raise ValueError('QMP diagnostic response exceeds bound')
+                    pending += chunk
+                    continue
+                line, pending = pending.split(b'\n', 1)
+                value = json.loads(line)
+                if (expected is None and 'QMP' in value) or (expected is not None and value.get('id') == expected):
+                    return value
+        connection.settimeout(1)
+        connection.connect(str(source / 'qmp.sock'))
+        response()
+        # Capability negotiation changes this client connection only. Every
+        # subsequent command is a read; never resume, reset or alter the guest.
+        for number, command in enumerate(('qmp_capabilities', 'query-status', 'query-cpus-fast', 'query-blockstats')):
+            connection.settimeout(max(0.001, deadline - time.monotonic()))
+            connection.sendall((json.dumps({'execute': command, 'id': number}) + '\r\n').encode())
+            value = response(number)
+            if command != 'qmp_capabilities':
+                state['qmp'][command] = value
+except (OSError, ValueError) as error:
+    state['qmp_error'] = type(error).__name__
+private_text('emulator.json', json.dumps(state, sort_keys=True) + '\n')
+private_text('stage', sys.argv[3] + '\n')
 PY
   echo "hostlab: boot diagnostics retained at $dest" >&2
-  cat "$dest/ssh-display.txt" "$dest/console-display.txt" >&2
+  if [ "$show" = true ]; then
+    cat "$dest/ssh-display.txt" "$dest/console-display.txt" >&2
+  fi
 }
 
 vm_stop() {
@@ -346,7 +449,7 @@ vm_boot() {
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
   local id dir port i
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
-  dir="$RUNS/$id"; mkdir -p "$dir"
+  dir="$RUNS/$id"; mkdir -m 700 "$dir" || die "cannot create private run directory"
   # Recorded before qemu starts, so the reaper never sees an unowned run.
   # Command substitution keeps $$ as the hostlab process: the caller.
   printf '%s\n' "$OWNER" > "$dir/owner"
@@ -370,7 +473,11 @@ vm_boot() {
   printf 'instance-id: hostlab-%s\nlocal-hostname: hostlab-%s\n' "$id" "${id##*-}" > "$dir/meta-data"
   cloud-localds "$dir/seed.img" "$dir/user-data" "$dir/meta-data" 2>/dev/null
   port="$(free_port)"; echo "$port" > "$dir/port"; echo "$WORK" > "$dir/work"
-  qemu_start "$dir" "$port" "$WORK"
+  if ! qemu_start "$dir" "$port" "$WORK"; then
+    vm_boot_diagnostics "$dir" launch || true
+    vm_stop "$dir" || true
+    rm -rf "$dir"; die "emulator launch failed; see retained boot diagnostics"
+  fi
   printf 'hostlab: booting %s (ssh port %s, /work = %s) ' "$id" "$port" "$WORK" >&2
   if ! wait_ssh "$port" 120 "$dir/readiness-ssh.stderr" true >&2; then
     vm_boot_diagnostics "$dir" readiness || true
@@ -383,6 +490,9 @@ vm_boot() {
     vm_stop "$dir" || true
     rm -rf "$dir"; die "/work did not mount in 30 s"
   fi
+  # The same read-only snapshot qualifies the instrument on a successful boot
+  # and supplies a comparison for a later failed attempt; no guest command added.
+  vm_boot_diagnostics "$dir" readiness false || true
   echo "$dir"
 }
 
