@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Submitted gate unit lifecycle; commands stay in their owning systemd unit.
 job_status_timeout_seconds=5
+job_retention_seconds=86400
 
 job_dir_for() {
   [[ "$1" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid gate id"
@@ -25,7 +26,7 @@ job_submit() {
   }
   # Jobs can emit large logs. Keep completed reconnect records for one day;
   # active jobs have no exit file and their receipt also lives in receipts.jsonl.
-  python3 - "$STATE_DIR/jobs" "$id" <<'PY' || true
+  python3 - "$STATE_DIR/jobs" "$id" "$job_retention_seconds" <<'PY' || true
 import pathlib, re, shutil, stat, sys, time
 root, current = pathlib.Path(sys.argv[1]), sys.argv[2]
 for job in root.iterdir():
@@ -37,7 +38,7 @@ for job in root.iterdir():
         done = (job / "exit").lstat()
     except FileNotFoundError:
         continue
-    if stat.S_ISREG(done.st_mode) and time.time() - done.st_mtime > 86400:
+    if stat.S_ISREG(done.st_mode) and time.time() - done.st_mtime > int(sys.argv[3]):
         shutil.rmtree(job)
 PY
   cat > "$dir/runner.sh" <<'RUNNER'

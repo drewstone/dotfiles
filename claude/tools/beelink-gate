@@ -83,7 +83,7 @@ decode() { printf '%s' "$1" | base64 --decode; }
 
 # Older launchers can emit a newly deployed main file with an older helper list.
 # A missing admission owner must refuse before any probe, reserve or cache work.
-if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}"; then
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}"; then
   tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
@@ -1922,8 +1922,7 @@ start_checkout_reservations() {
   local priority=${1:-urgent} host file pid tries
   local -a args=()
   checkout_reservation_dir=$(mktemp -d) || die "cannot allocate checkout reservation state"
-  trap stop_checkout_reservations EXIT
-  trap 'exit 143' HUP INT TERM
+  trap 'frontend_tainted=1; exit 143' HUP INT TERM
   for host in beelink1 beelink2; do
     file="$checkout_reservation_dir/$host"
     args=("$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")")
@@ -2067,6 +2066,7 @@ if [ "${1:-}" = --report ]; then
     fi
   done
   rm -f "$host_rows"
+  frontend_local_records "$hours" >> "$receipts_file"
   merged_lookup=$(command -v gh-drew || command -v gh || true)
   report_module=$report_dir/beelink_gate_report.py
   python3 "$report_module" "$receipts_file" "$hours" "$merged_lookup" "$missing" "$report_format" "$report_since"
@@ -2075,18 +2075,24 @@ if [ "${1:-}" = --report ]; then
   exit "$status"
 fi
 
+# Remote/control/read-only paths above never create a launcher observation.
+[ "${1:-}" = --cancel-job ] || frontend_start
 if [ "${1:-}" = --attach ]; then
   [ "$#" = 2 ] && [[ "$2" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "usage: beelink-gate --attach <gate-id>"
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   target=${2%%-*}
+  frontend_record placement attached "$2" attach
+  frontend_phase attach
   heartbeat=0 on_beelink "$target" --job-attach "$2"
   rc=$?
   if [ "$rc" = 255 ]; then
     # SSH also exits 255 on transport loss. A completed command may itself
     # have returned 255; ask the job's exit file before calling it a loss.
+    frontend_phase result_read
     result=$(heartbeat=0 on_beelink "$target" --job-result "$2" 2>/dev/null) || result=""
     [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $2; run beelink-gate --attach $2 again"
   fi
+  if [ "$rc" != 255 ]; then frontend_record placement returned "$2" attach "$rc"; fi
   exit "$rc"
 fi
 if [ "${1:-}" = --cancel-job ]; then
@@ -2235,124 +2241,7 @@ merge_gated() {  # <gate stderr log>
   return "$MERGE_REFUSED"
 }
 
-# --retry MINUTES and --summary run this launcher again as a child with the rest
-# of the request and keep each attempt's output. --retry submits again at the
-# next_allowed of each attempt's TEMPFAIL line until MINUTES pass. A TEMPFAIL
-# that names a gate still running ("run beelink-gate --attach <id>") is
-# re-attached after 10 s instead, so a lost connection never starts a duplicate
-# gate, and a re-attached auto gate that gave its host back (76) is submitted
-# again at once, as the launcher itself does. A 75 without a TEMPFAIL line (a
-# canceled gate or the command's own 75) ends the retries.
-utc_at() { python3 -c 'import datetime as d, sys; print(d.datetime.fromtimestamp(int(sys.argv[1]), d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
-epoch_of_utc() { python3 -c 'import datetime as d, sys; print(int(d.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=d.timezone.utc).timestamp()))' "$1" 2>/dev/null; }
-schedule_cancellation() {  # <gate id>
-  echo "beelink-gate: manager stopped; scheduling cancellation of gate_id=$1" >&2
-  # Without systemd-run (the Mac has neither it nor /usr/bin/bash) cancel inline.
-  systemd-run --user --collect --unit="beelink-gate-cancel-$1" /usr/bin/bash "$0" --cancel-job "$1" >&2 \
-    || "$BASH" "$0" --cancel-job "$1" >&2
-}
-wrap_child="" wrap_sleep="" wrap_stop=""
-wrap_signal() {  # <exit code>
-  # A repeat changes nothing: GNU timeout signals the launcher and then its process group.
-  [ -z "$wrap_stop" ] || return 0
-  wrap_stop=$1
-  # A background child starts with SIGINT ignored, so every stop reaches it as TERM.
-  # With --cancel-on-term a launcher child cancels its own gate, and wrap_stopped
-  # cancels a gate the wrapper re-attached to; without it the gate runs on for --attach.
-  [ -z "$wrap_child" ] || kill -TERM "$wrap_child" 2>/dev/null || true
-  [ -z "$wrap_sleep" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
-}
-wrap_stopped() {  # <exit code> <gate id this wrapper attaches to, or empty>
-  [ "$cancel_on_term" != 1 ] || [ -z "$2" ] || schedule_cancellation "$2"
-  exit "$1"
-}
-run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>...
-  local minutes=$1 summary=$2 deadline=0 attempt=0 rc line next wait_s reattach="" got tee_out tee_err i
-  shift 2
-  local dir
-  dir=$(mktemp -d) || die "cannot allocate the gate transcript"
-  # shellcheck disable=SC2064 # expand the directory now; it is local to this function.
-  trap "rm -rf '$dir'" EXIT
-  trap 'wrap_signal 143' TERM
-  trap 'wrap_signal 129' HUP
-  trap 'wrap_signal 130' INT
-  [ -z "$minutes" ] || deadline=$(( $(date +%s) + minutes * 60 ))
-  while :; do
-    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop" "$reattach"
-    attempt=$((attempt + 1))
-    rm -f "$dir/out" "$dir/err"
-    mkfifo "$dir/out" "$dir/err" || die "cannot create the gate transcript pipes"
-    # The copies ignore stop signals, so a TERM sent to the whole process group
-    # cannot cut off the child's own cancellation output; they end at its EOF.
-    (trap '' HUP INT TERM; exec tee "$dir/out.log" < "$dir/out") & tee_out=$!
-    (trap '' HUP INT TERM; exec tee "$dir/err.log" < "$dir/err" >&2) & tee_err=$!
-    if [ -n "$reattach" ]; then
-      "$BASH" "$0" --attach "$reattach" > "$dir/out" 2> "$dir/err" & wrap_child=$!
-    else
-      "$BASH" "$0" "$@" > "$dir/out" 2> "$dir/err" & wrap_child=$!
-    fi
-    # A stop that came before the child's pid was known is forwarded here.
-    [ -z "$wrap_stop" ] || kill -TERM "$wrap_child" 2>/dev/null || true
-    wait "$wrap_child"; rc=$?
-    # A forwarded stop interrupts wait; keep waiting while the child handles it.
-    while [ -n "$wrap_stop" ] && kill -0 "$wrap_child" 2>/dev/null; do wait "$wrap_child"; rc=$?; done
-    wrap_child=""
-    # A process the child left behind may still hold the pipes; stop copying after 5s.
-    for ((i = 0; i < 50; i++)); do
-      kill -0 "$tee_out" 2>/dev/null || kill -0 "$tee_err" 2>/dev/null || break
-      sleep 0.1
-    done
-    kill -KILL "$tee_out" "$tee_err" 2>/dev/null || true
-    wait "$tee_out" "$tee_err" 2>/dev/null || true
-    [ -z "$wrap_stop" ] || wrap_stopped "$rc" "$reattach"
-    [ -n "$minutes" ] || break
-    line=""
-    if [ "$rc" = "$NOT_ADMITTED" ] && [ -n "$reattach" ]; then
-      reattach="" wait_s=0 got="exit $NOT_ADMITTED (the gate gave its host back)"
-    elif [ "$rc" = "$TEMPFAIL" ]; then
-      line=$(grep -a '^beelink-gate: TEMPFAIL next_allowed=' "$dir/err.log" | tail -n 1)
-      if [ -z "$line" ]; then
-        tempfail "$(utc_in_minutes 5)" "--retry $minutes: attempt $attempt exited 75 without a TEMPFAIL line (a canceled gate or the command's own 75); not retrying it"
-      fi
-      reattach="" got=TEMPFAIL
-      if [[ "$line" =~ beelink-gate\ --attach\ (beelink[12]-[0-9a-f]{32}) ]]; then
-        # The gate runs on: reconnect soon, whatever the line's next_allowed says.
-        reattach=${BASH_REMATCH[1]} wait_s=10
-      else
-        next=${line#beelink-gate: TEMPFAIL next_allowed=}
-        if next=$(epoch_of_utc "${next%% *}"); then
-          wait_s=$(( next - $(date +%s) ))
-          (( wait_s >= 30 )) || wait_s=30
-        else
-          wait_s=300
-        fi
-      fi
-    else
-      break
-    fi
-    # The test suite's hook to shorten every wait; callers never set it.
-    [ -z "${BEELINK_GATE_RETRY_SECONDS:-}" ] || wait_s=$BEELINK_GATE_RETRY_SECONDS
-    if (( $(date +%s) + wait_s > deadline )); then
-      echo "beelink-gate: --retry $minutes: the next attempt could not start before the retry window ends at $(utc_at "$deadline"); stopping after $attempt attempts" >&2
-      [ -n "$line" ] || tempfail "$(utc_in_minutes 0)" "the last gate gave its host back; submit it again"
-      echo "$line" >&2
-      exit "$TEMPFAIL"
-    fi
-    echo "beelink-gate: --retry $minutes: attempt $attempt got $got; attempt $((attempt + 1)) ${reattach:+re-attaches to $reattach and }starts at $(utc_at $(( $(date +%s) + wait_s ))) (window ends $(utc_at "$deadline"))" >&2
-    sleep "$wait_s" & wrap_sleep=$!
-    [ -z "$wrap_stop" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
-    wait "$wrap_sleep"
-    wrap_sleep=""
-  done
-  if [ "$summary" = 1 ] && [ "$rc" != 0 ] && [ "$rc" != "$TEMPFAIL" ]; then
-    summarize_output "$rc" "$dir/out.log" "$dir/err.log"
-  fi
-  if [ -n "$merge_pr" ] && [ "$rc" = 0 ]; then
-    merge_gated "$dir/err.log" || rc=$?
-  fi
-  exit "$rc"
-}
-
+# The source owner runs retry/summary wrappers and retains their one request scope.
 install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0 retry_minutes="" summary=0
 launch_options=()
 while [ "$#" -gt 0 ]; do
@@ -2438,6 +2327,9 @@ fi
 export BEELINK_GATE_LANE
 unset BEELINK_GATE_RESERVATION_TOKEN
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+frontend_key=$(parse_repo_url "$repo_url"; printf '%s/%s/%s' "$host" "$owner" "$repo")
+frontend_record metadata "$frontend_key" "$sha" "${gate_class:-$([ "$install_mode" = light ] && echo light || echo normal)}"
+frontend_phase reserve_lookup
 # The gated commit's checkout shape, read before any beelink fetches it, so each
 # host's reserve comes from a receipt of the same shape (last_install_reserve_bytes).
 commit_sparse_spec() {  # <repo-url> <sha>; prints nothing when it cannot tell
@@ -2489,6 +2381,7 @@ if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
 fi
 starve_after_launch=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
 if [ "$requested" = auto ]; then
+  frontend_phase reservation_setup
   if [ "${BEELINK_GATE_URGENT:-0}" = 1 ]; then
     start_checkout_reservations
   else
@@ -2504,6 +2397,7 @@ cancel_launcher_job() {
   # otherwise end the launcher before it schedules the cancellation. A no-op trap,
   # unlike an ignored signal, leaves an inline --cancel-job stoppable.
   trap : HUP INT TERM
+  frontend_tainted=1
   [ -z "${gate_id:-}" ] || schedule_cancellation "$gate_id"
   exit 143
 }
@@ -2518,6 +2412,7 @@ run_cancelable() {
 }
 launched=$SECONDS placements=0
 while :; do
+  frontend_phase placement_probe_wait
   case "$requested" in
     beelink1|100.98.195.7) target=$(place_named beelink1) ;;
     beelink2|100.127.22.51) target=$(place_named beelink2) ;;
@@ -2539,7 +2434,13 @@ while :; do
   gate_id="$target-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
   [ "$cancel_on_term" != 1 ] || trap cancel_launcher_job HUP INT TERM
   echo "beelink-gate: gate_id=$gate_id; reconnect with beelink-gate --attach $gate_id" >&2
+  frontend_record placement allocated "$gate_id"
+  frontend_phase stage
+  frontend_record snapshot
   run_cancelable stage_job "$target" "$gate_id" || tempfail "$(utc_in_minutes 5)" "staging unconfirmed for $gate_id on $target; submission not attempted, remote staging may be partial"
+  frontend_record placement staged "$gate_id"
+  frontend_phase submit
+  frontend_record placement submission_unknown "$gate_id"
   submit_bytes="$(printf '%s ' "${encoded[@]}" | wc -c | tr -d ' ') bytes of encoded arguments"
   submit_err=$(mktemp) || die "cannot create a temporary file"
   BEELINK_GATE_ID="$gate_id" heartbeat=0 run_cancelable on_beelink "$target" --job-submit "$gate_id" "${encoded[@]}" 2>"$submit_err"
@@ -2552,6 +2453,8 @@ while :; do
   rm -f "$submit_err"
   [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "submit connection lost for $gate_id ($submit_bytes); run beelink-gate --attach $gate_id before retrying"
   [ "$rc" = 0 ] || exit "$rc"
+  frontend_record placement submitted "$gate_id"
+  frontend_phase attach
   # Keep reservations until the submitted gate itself has joined the checkout
   # queue. Its own urgent marker then survives a lost launcher or SSH session.
   if [ -n "$checkout_reservation_dir" ]; then
@@ -2568,8 +2471,12 @@ while :; do
     rc=$?
   fi
   if [ "$rc" = 255 ]; then
+    frontend_phase result_read
     result=$(heartbeat=0 on_beelink "$target" --job-result "$gate_id" 2>/dev/null) || result=""
     [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $gate_id; run beelink-gate --attach $gate_id again"
+  fi
+  if [ "$rc" != 255 ]; then
+    frontend_record placement "$([ "$rc" = "$NOT_ADMITTED" ] && echo not_admitted || echo returned)" "$gate_id" "" "$rc"
   fi
   # Only an auto placement may move; a named host keeps waiting there, as it always has.
   [ "$rc" = "$NOT_ADMITTED" ] && [ "$requested" = auto ] || exit "$rc"

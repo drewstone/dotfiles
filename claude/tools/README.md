@@ -415,6 +415,37 @@ size is reported as unmeasured. Reporting lives in `beelink_gate_report.py`, tim
 populations in `beelink_gate_metrics.py`, and the bounded read-only CPU sample
 in `beelink_gate_cpu.py`; the shell owns transport and execution.
 
+The optional `frontend_requests` report field measures each CLI invocation after
+source bootstrap, separately from native placement timing. Its private local
+envelope is named on stderr as `frontend_observation`; one caller monotonic clock
+partitions setup, reserve lookup/setup, placement probing/waiting, staging,
+submission, attachment, result reading, retry wait and reservation cleanup.
+These are elapsed phases including check/transport overhead, not exclusive causes.
+Attachment overlaps native waiting and execution. Never add it, carried placement
+age, or multiple native receipts to obtain request latency.
+
+The retry wrapper delegates writes to one exact child at a time; only its outer
+finalizer can complete the request after cleanup. Every newly allocated gate ID
+gets an ordinal; reconnecting to that ID keeps its ordinal. A separate manual
+`--attach` has its own request and an unknown original-request association, and
+creates no native gate. A bounded, sanitized pre-submit prefix rides on the
+existing staging RPC and is bound to the exact staged source and job ID. It
+contains no private writer capability and is always partial: later caller return
+and cleanup are unknown remotely. Local finalized records are available only on
+the reporting caller. The report joins by request, ordinal and exact gate ID,
+and obtains native exits only from matching canonical receipts.
+
+Missing/source-skewed/conflicting snapshots, open or failed writers, unsupported
+local primitives and expired/no-ID population stay unknown. Observation IO uses
+the metrics owner's serialized atomic files and a short `timeout`/`gtimeout`
+bound; an observation failure cannot change the gate result or policy. Private
+records reuse the existing job owner's retention age, preserve open records, and
+cap each observation at 64 IDs and each local read at 4096 retained directories.
+Truncation and invalid-selection coverage are explicit. The implementation uses
+portable Python/Bash primitives for callers; Mac behavior requires a real Mac
+flow before claiming proof there. Native throughput cohorts and legacy latency
+definitions remain unchanged.
+
 `beelink_gate_disk.py` owns `disk_observation` in each receipt and the report's
 `disk` field. Its bounded `statvfs` sampler covers admission through local cleanup
 and the end store scan, before the checkout unlocks; subsequent global LRU reclaim

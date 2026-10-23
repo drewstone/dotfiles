@@ -63,13 +63,16 @@ receive_gate_source() {
 
 
 stage_job() {
-  local target=$1 id=$2 dir marker source_file status
+  local target=$1 id=$2 dir marker source_file status prefix=${frontend_output:-}
   source_file=$(mktemp) || return "$TEMPFAIL"
   emit_gate_source > "$source_file" || { rm -f "$source_file"; return "$TEMPFAIL"; }
   dir="$STATE_DIR/jobs/$id"
   if [ "$target" = "$SELF" ]; then
     mkdir -p "$STATE_DIR/jobs" && mkdir -m 700 "$dir" && cp -- "$source_file" "$dir/gate.sh" && chmod 700 "$dir/gate.sh"
     status=$?
+    if [ "$status" = 0 ] && [ -n "$prefix" ]; then
+      frontend_io retain_frontend_prefix "$dir" "$prefix" "$id" >/dev/null || true
+    fi
     rm -f "$source_file"
     return "$status"
   fi
@@ -89,6 +92,10 @@ BOOT
     printf "cat > \"\$dir/gate.sh\" <<'%s'\n" "$marker"
     cat "$source_file" || exit "$TEMPFAIL"
     printf '%s\ncomplete_source || exit 75\nchmod 700 "$dir/gate.sh"\n' "$marker"
+    if [ -n "$prefix" ]; then
+      printf 'timeout --kill-after=1 2 python3 -c %q "$dir" "$id" %q >/dev/null 2>&1 || true\n' \
+        "$beelink_gate_metrics_source"$'\n''import base64,sys; retain_frontend_prefix(sys.argv[1],base64.b64decode(sys.argv[3]).decode(),sys.argv[2])' "$(encode "$prefix")"
+    fi
   } | TRANSPORT_TIMEOUT_SECONDS=$STAGE_TIMEOUT_SECONDS bounded_transport "$target stage $id" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
   status=$?
   rm -f "$source_file"
@@ -190,3 +197,200 @@ on_beelink() {
   return "$rc"
 }
 
+
+# --retry keeps each child transcript and reattaches a still-running exact ID;
+# a natural AUTO 76 allocates a new placement. No TEMPFAIL line means no retry.
+# Launcher transcript and lifecycle share this transport owner.
+utc_at() { python3 -c 'import datetime as d, sys; print(d.datetime.fromtimestamp(int(sys.argv[1]), d.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
+epoch_of_utc() { python3 -c 'import datetime as d, sys; print(int(d.datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=d.timezone.utc).timestamp()))' "$1" 2>/dev/null; }
+schedule_cancellation() {  # <gate id>
+  echo "beelink-gate: manager stopped; scheduling cancellation of gate_id=$1" >&2
+  # Without systemd-run (the Mac has neither it nor /usr/bin/bash) cancel inline.
+  systemd-run --user --collect --unit="beelink-gate-cancel-$1" /usr/bin/bash "$0" --cancel-job "$1" >&2 \
+    || "$BASH" "$0" --cancel-job "$1" >&2
+}
+wrap_child="" wrap_sleep="" wrap_stop=""
+wrap_signal() {  # <exit code>
+  # A repeat changes nothing: GNU timeout signals the launcher and then its process group.
+  [ -z "$wrap_stop" ] || return 0
+  wrap_stop=$1
+  frontend_tainted=1
+  # A background child starts with SIGINT ignored, so every stop reaches it as TERM.
+  # With --cancel-on-term a launcher child cancels its own gate, and wrap_stopped
+  # cancels a gate the wrapper re-attached to; without it the gate runs on for --attach.
+  [ -z "$wrap_child" ] || kill -TERM "$wrap_child" 2>/dev/null || true
+  [ -z "$wrap_sleep" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
+}
+wrap_stopped() {  # <exit code> <gate id this wrapper attaches to, or empty>
+  [ "$cancel_on_term" != 1 ] || [ -z "$2" ] || schedule_cancellation "$2"
+  exit "$1"
+}
+run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>...
+  local minutes=$1 summary=$2 deadline=0 attempt=0 rc line next wait_s reattach="" got tee_out tee_err i
+  shift 2
+  local dir
+  dir=$(mktemp -d) || die "cannot allocate the gate transcript"
+  frontend_transcript_dir=$dir
+  trap 'wrap_signal 143' TERM
+  trap 'wrap_signal 129' HUP
+  trap 'wrap_signal 130' INT
+  [ -z "$minutes" ] || deadline=$(( $(date +%s) + minutes * 60 ))
+  while :; do
+    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop" "$reattach"
+    attempt=$((attempt + 1))
+    rm -f "$dir/out" "$dir/err"
+    mkfifo "$dir/out" "$dir/err" || die "cannot create the gate transcript pipes"
+    # The copies ignore stop signals, so a TERM sent to the whole process group
+    # cannot cut off the child's own cancellation output; they end at its EOF.
+    (trap '' HUP INT TERM; exec tee "$dir/out.log" < "$dir/out") & tee_out=$!
+    (trap '' HUP INT TERM; exec tee "$dir/err.log" < "$dir/err" >&2) & tee_err=$!
+    frontend_phase setup
+    frontend_child_owner=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    frontend_record delegate "$frontend_child_owner"
+    if [ -n "$reattach" ]; then
+      BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" --attach "$reattach" > "$dir/out" 2> "$dir/err" & wrap_child=$!
+    else
+      BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" "$@" > "$dir/out" 2> "$dir/err" & wrap_child=$!
+    fi
+    # A stop that came before the child's pid was known is forwarded here.
+    [ -z "$wrap_stop" ] || kill -TERM "$wrap_child" 2>/dev/null || true
+    wait "$wrap_child"; rc=$?
+    # A forwarded stop interrupts wait; keep waiting while the child handles it.
+    while [ -n "$wrap_stop" ] && kill -0 "$wrap_child" 2>/dev/null; do wait "$wrap_child"; rc=$?; done
+    wrap_child=""
+    frontend_record claim "$frontend_child_owner"
+    frontend_phase result_read
+    # A process the child left behind may still hold the pipes; stop copying after 5s.
+    for ((i = 0; i < 50; i++)); do
+      kill -0 "$tee_out" 2>/dev/null || kill -0 "$tee_err" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$tee_out" "$tee_err" 2>/dev/null || true
+    wait "$tee_out" "$tee_err" 2>/dev/null || true
+    [ -z "$wrap_stop" ] || wrap_stopped "$rc" "$reattach"
+    [ -n "$minutes" ] || break
+    line=""
+    if [ "$rc" = "$NOT_ADMITTED" ] && [ -n "$reattach" ]; then
+      reattach="" wait_s=0 got="exit $NOT_ADMITTED (the gate gave its host back)"
+    elif [ "$rc" = "$TEMPFAIL" ]; then
+      line=$(grep -a '^beelink-gate: TEMPFAIL next_allowed=' "$dir/err.log" | tail -n 1)
+      if [ -z "$line" ]; then
+        tempfail "$(utc_in_minutes 5)" "--retry $minutes: attempt $attempt exited 75 without a TEMPFAIL line (a canceled gate or the command's own 75); not retrying it"
+      fi
+      reattach="" got=TEMPFAIL
+      if [[ "$line" =~ beelink-gate\ --attach\ (beelink[12]-[0-9a-f]{32}) ]]; then
+        # The gate runs on: reconnect soon, whatever the line's next_allowed says.
+        reattach=${BASH_REMATCH[1]} wait_s=10
+      else
+        next=${line#beelink-gate: TEMPFAIL next_allowed=}
+        if next=$(epoch_of_utc "${next%% *}"); then
+          wait_s=$(( next - $(date +%s) ))
+          (( wait_s >= 30 )) || wait_s=30
+        else
+          wait_s=300
+        fi
+      fi
+    else
+      break
+    fi
+    # The test suite's hook to shorten every wait; callers never set it.
+    [ -z "${BEELINK_GATE_RETRY_SECONDS:-}" ] || wait_s=$BEELINK_GATE_RETRY_SECONDS
+    if (( $(date +%s) + wait_s > deadline )); then
+      echo "beelink-gate: --retry $minutes: the next attempt could not start before the retry window ends at $(utc_at "$deadline"); stopping after $attempt attempts" >&2
+      [ -n "$line" ] || tempfail "$(utc_in_minutes 0)" "the last gate gave its host back; submit it again"
+      echo "$line" >&2
+      exit "$TEMPFAIL"
+    fi
+    echo "beelink-gate: --retry $minutes: attempt $attempt got $got; attempt $((attempt + 1)) ${reattach:+re-attaches to $reattach and }starts at $(utc_at $(( $(date +%s) + wait_s ))) (window ends $(utc_at "$deadline"))" >&2
+    frontend_phase retry_wait
+    sleep "$wait_s" & wrap_sleep=$!
+    [ -z "$wrap_stop" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
+    wait "$wrap_sleep"
+    wrap_sleep=""
+  done
+  if [ "$summary" = 1 ] && [ "$rc" != 0 ] && [ "$rc" != "$TEMPFAIL" ]; then
+    summarize_output "$rc" "$dir/out.log" "$dir/err.log"
+  fi
+  if [ -n "$merge_pr" ] && [ "$rc" = 0 ]; then
+    merge_gated "$dir/err.log" || rc=$?
+  fi
+  exit "$rc"
+}
+
+
+# Optional caller-local observation. Capability is never exported or transported.
+frontend_io() {
+  local rc=0
+  [ -n "${frontend_timer:-}" ] || return 1
+  (
+    for frontend_fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do
+      exec {frontend_fd}>&-
+    done
+    exec "$frontend_timer" --kill-after=1 2 python3 -c "$beelink_gate_metrics_source"$'\n''import sys; globals()[sys.argv[1]](*sys.argv[2:])' "$@"
+  ) </dev/null 2>/dev/null || rc=$?
+  return "$rc"
+}
+frontend_record() {
+  [ -n "${frontend_path:-}" ] || return 0
+  # A failed/interrupting transition cannot silently become a measured interval.
+  [ "${frontend_waiting:-0}" != 1 ] || frontend_tainted=1
+  frontend_waiting=1
+  local rc=0
+  frontend_output=$(frontend_io frontend_observe "$frontend_path" "$frontend_token" "$frontend_owner" "$frontend_source" \
+    "$1" "${2:-}" "${3:-}" "${4:-}" "$frontend_tainted" "${5:-}") || rc=$?
+  frontend_waiting=0
+  if [ "$rc" != 0 ]; then
+    frontend_tainted=1
+    [ "${frontend_warned:-0}" = 1 ] || echo 'beelink-gate: optional frontend observation incomplete; gate policy/result unchanged' >&2
+    frontend_warned=1
+  fi
+  return 0
+}
+frontend_start() {
+  frontend_path="" frontend_tainted=0 frontend_waiting=0 frontend_root=1 frontend_warned=0
+  # Cleanup is required even when optional observation bootstrap is unsupported.
+  trap 'frontend_exit "$?"' EXIT
+  local inherited_path=${BEELINK_GATE_FRONTEND_PATH:-} inherited_token=${BEELINK_GATE_FRONTEND_TOKEN:-} inherited_owner=${BEELINK_GATE_FRONTEND_OWNER:-} setup rc=0
+  unset BEELINK_GATE_FRONTEND_PATH BEELINK_GATE_FRONTEND_TOKEN BEELINK_GATE_FRONTEND_OWNER
+  frontend_timer=$(command -v timeout || command -v gtimeout) || {
+    echo 'beelink-gate: optional frontend timing unavailable: no portable timeout owner' >&2
+    return 0
+  }
+  frontend_source=$(emit_gate_source | "$frontend_timer" --kill-after=1 2 python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())') || return 0
+  if [ -n "$inherited_path$inherited_token$inherited_owner" ]; then
+    frontend_path=$inherited_path frontend_token=$inherited_token frontend_owner=$inherited_owner frontend_root=0
+    frontend_record claim
+    # Source skew cannot start a parallel request or write into the old scope.
+    [ "$frontend_tainted" = 0 ] || frontend_path=""
+  else
+    setup=$(frontend_io frontend_begin "$STATE_DIR/requests" "$frontend_source" "$job_retention_seconds") || rc=$?
+    if [ "$rc" = 0 ]; then
+      mapfile -t frontend_setup <<< "$setup"
+      if [ "${#frontend_setup[@]}" = 3 ]; then
+        frontend_path=${frontend_setup[0]} frontend_token=${frontend_setup[1]} frontend_owner=${frontend_setup[2]}
+      fi
+    fi
+  fi
+  [ -n "$frontend_path" ] || echo 'beelink-gate: optional frontend timing unavailable: source/authority/IO unsupported; request duration unknown' >&2
+  [ -z "$frontend_path" ] || echo "beelink-gate: frontend_observation=$frontend_path" >&2
+}
+frontend_phase() { frontend_record phase "$1"; }
+frontend_exit() {
+  local saved=$1
+  trap - EXIT
+  # Reservation children own no request capability and must finish before root end.
+  if [ -n "${checkout_reservation_dir:-}" ]; then
+    frontend_phase reservation_cleanup
+    stop_checkout_reservations
+  fi
+  [ -z "${frontend_transcript_dir:-}" ] || rm -rf -- "$frontend_transcript_dir"
+  if [ "${frontend_root:-1}" = 1 ]; then frontend_record end "" "" "" "$saved"
+  else frontend_record release "" "" "" "$saved"; fi
+  return "$saved"
+}
+frontend_local_records() {
+  local timer
+  timer=$(command -v timeout || command -v gtimeout) || return 0
+  "$timer" --kill-after=1 2 python3 -c "$beelink_gate_metrics_source"$'\n''import sys; frontend_retained(sys.argv[1], int(sys.argv[2]))' "$STATE_DIR/requests" "$1" 2>/dev/null ||
+    printf '%s\n' '{"kind":"frontend_observations","origin":"local","entries":[],"error":"unavailable_or_timeout","truncated":true}'
+}
