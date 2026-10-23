@@ -239,10 +239,13 @@ install_beelink_gate_priority() {
     fi
   fi
   want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
+  sed "s/@CI_WEIGHT@/$ci_weight/" "$SCRIPT_DIR/cgroup/50-nix-daemon-priority.conf" > "$TMP/nix-daemon-priority.conf"
+  want_file 0644 "$TMP/nix-daemon-priority.conf" /etc/systemd/system/nix-daemon.service.d/50-gate-priority.conf
   want_file 0755 "$SCRIPT_DIR/cgroup/beelink-memory-policy" /usr/local/libexec/beelink-memory-policy
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
   if [ "$CHECK" = 1 ]; then
     [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "ci.slice cpu.weight is not $ci_weight"
+    [ "$(cat /sys/fs/cgroup/system.slice/nix-daemon.service/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "nix-daemon.service cpu.weight is not $ci_weight"
     [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" = 400 ] || drift "beelink-gate cgroup cpu.weight is not 400"
     [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" = 25 ] || drift "beelink-gate-dev cgroup cpu.weight is not 25"
     [ "$(cut -d' ' -f1 /sys/fs/cgroup/beelink-gate/cpu.max 2>/dev/null)" = "$(( $(nproc) * 75000 ))" ] || drift "beelink-gate cgroup cpu.max is not 75% of the cores"
@@ -251,6 +254,10 @@ install_beelink_gate_priority() {
     if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != "$ci_weight" ]; then
       $SUDO systemctl set-property --runtime ci.slice CPUWeight="$ci_weight"
       note changed "ci.slice CPUWeight=$ci_weight"
+    fi
+    if [ "$(cat /sys/fs/cgroup/system.slice/nix-daemon.service/cpu.weight 2>/dev/null)" != "$ci_weight" ]; then
+      $SUDO systemctl set-property --runtime nix-daemon.service CPUWeight="$ci_weight"
+      note changed "nix-daemon.service CPUWeight=$ci_weight"
     fi
     if [ "$CHANGED" = 1 ] || [ "$(cat /sys/fs/cgroup/beelink-gate/cpu.weight 2>/dev/null)" != 400 ] \
       || [ "$(cat /sys/fs/cgroup/beelink-gate-dev/cpu.weight 2>/dev/null)" != 25 ] \
