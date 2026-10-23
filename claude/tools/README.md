@@ -484,6 +484,8 @@ It uses cached, detached checkout slots per host/repo in `~/.cache/beelink-gate/
 locks each checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen
 pnpm or npm install against that user's shared package store.
+Non-login gates expose `~/bin`, `~/.local/bin`, `~/.cargo/bin` and `~/.foundry/bin`,
+in that order, before inherited PATH. Tools must already be installed.
 Normal frozen-install gates share Turbo archives across their checkout slots in
 `~/.cache/beelink-gate/.turbo/<host>/<owner>/<repo>/normal/<script-node-version>`.
 The existing gate cache cap and LRU count these bytes alongside checkouts. Shared
