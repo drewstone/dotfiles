@@ -2456,6 +2456,11 @@ declare -A matched_reserve=() matched_warm_reserve=()
 # Only short control calls use this deadline; submitted gates keep their hold.
 TRANSPORT_TIMEOUT_SECONDS=30
 TRANSPORT_KILL_GRACE_SECONDS=2
+# Staging writes the whole gate script through a fresh WSL session, which starts slowly
+# on a loaded host: on 2026-10-23 at load 120 on 16 cores, beelink1 staging passed 30 s
+# (ci-zero Braid #173) and the gate gave up before submitting. The checkout reservation
+# below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
+STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
 bounded_transport() {
   local label=$1 timer rc; shift
   timer=$(command -v timeout || command -v gtimeout) || {
@@ -2688,7 +2693,7 @@ start_checkout_reservations() {
   local i reserved=()
   for i in "${!checkout_reservation_files[@]}"; do
     file=${checkout_reservation_files[$i]} host=${checkout_reservation_hosts[$i]}
-    for ((tries = 0; tries < 300; tries++)); do
+    for ((tries = 0; tries < STAGE_TIMEOUT_SECONDS * 10; tries++)); do
       grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null && break
       kill -0 "${checkout_reservation_pids[$i]}" 2>/dev/null || break
       sleep 0.1

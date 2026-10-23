@@ -85,7 +85,7 @@ BOOT
     printf "cat > \"\$dir/gate.sh\" <<'%s'\n" "$marker"
     cat "$source_file" || exit "$TEMPFAIL"
     printf '%s\ncomplete_source || exit 75\nchmod 700 "$dir/gate.sh"\n' "$marker"
-  } | bounded_transport "$target stage $id" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
+  } | TRANSPORT_TIMEOUT_SECONDS=$STAGE_TIMEOUT_SECONDS bounded_transport "$target stage $id" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" wsl.exe -- bash -s
   status=$?
   rm -f "$source_file"
   return "$status"
