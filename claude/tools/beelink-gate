@@ -49,6 +49,8 @@ gate_source_root=$(python3 -c 'import os,sys; print(os.path.dirname(os.path.real
 gate_installer_source="$gate_source_root/beelink-gate-lib/install.sh"
 gate_staging_source="$gate_source_root/beelink-gate-lib/source.sh"
 gate_cache_source="$gate_source_root/beelink-gate-lib/cache.sh"
+gate_disk_source="$gate_source_root/beelink_gate_disk.py"
+beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 # shellcheck source=beelink-gate-lib/install.sh
 . "$gate_installer_source" || exit $?
 # shellcheck source=beelink-gate-lib/source.sh
@@ -978,18 +980,12 @@ PY
 # files) took 1.1-2.7 s. Prints nothing when du fails, warns about anything but a
 # file that vanished mid-scan, or runs past <seconds> (the caller passes 60 s or the
 # gate's remaining hold, whichever is less, so a scan never holds the lock past it).
+gate_disk() { python3 -c "$beelink_gate_disk_source" "$@"; }
 gate_bytes() {  # <seconds> <checkout> <store>...
-  local limit=$1 out err rc
+  local limit=$1
   shift
   (( limit > 0 )) || return 1
-  err=$(mktemp) || return 1
-  # KILL at the limit itself: du needs no cleanup, and a grace after TERM would let
-  # a du that ignores TERM keep the lock past the hold.
-  out=$(LC_ALL=C timeout -s KILL "$limit" du -s --total -B1 -- "$@" 2>"$err"); rc=$?
-  if (( rc == 1 )) && ! grep -qv '^du: cannot access .*: No such file or directory$' "$err"; then rc=0; fi
-  rm -f -- "$err"
-  out=$(tail -n 1 <<<"$out"); out=${out%%[[:space:]]*}
-  (( rc == 0 )) && [[ "$out" =~ ^[0-9]+$ ]] && echo "$out"
+  gate_disk scan "${disk_dir:-}" "${disk_snapshot_phase:-before}" "$limit" "$@"
 }
 
 # The shape a cached checkout has now: full, or the digest of its applied
@@ -1474,6 +1470,11 @@ try:
     row["admission"] = json.loads(os.environ.get("BEELINK_GATE_ADMISSION_SAMPLE", "null"))
 except ValueError:
     row["admission"] = None
+try:
+    disk = json.loads(os.environ.get("BEELINK_GATE_DISK_OBSERVATION") or "null")
+    row["disk_observation"] = disk if isinstance(disk, dict) else None
+except ValueError:
+    row["disk_observation"] = None
 if int(install_reserve):
     row["install_reserve_bytes"] = int(install_reserve)
     # The gate's own bytes against the host's free-space drop over the same window.
@@ -1643,6 +1644,8 @@ remote_gate() {
   unset BEELINK_GATE_RESERVATION_TOKEN
   parse_repo_url "$repo_url"
   local install_reserve_bytes admitted_shape="" reserve_heat=cold
+  disk_dir="" disk_pid="" disk_ready=0 disk_deadline=0 disk_grace_s=0 disk_paths=()
+  unset BEELINK_GATE_DISK_OBSERVATION
   observed_install_reserve_bytes=0 reserve_gate_bytes="" reserve_host_drop="" reserve_basis="" reserve_du_ms=""
   local reserve_bytes_before="" reserve_free_before=""
   # The frozen install always writes the fixed store; a store the environment names is measured too.
@@ -1910,32 +1913,6 @@ remote_gate() {
     (( left < 60 )) || left=60
     gate_bytes "$left" "$checkout" "${package_stores[@]}"
   }
-  # The reserve a receipt records is the 10 GiB headroom plus the most this gate's
-  # own bytes grew since just before its fetch (gate_bytes); host free space also
-  # moves with other lanes' writes and decides only the floor. A measurement that
-  # fails records the cold reserve, never less.
-  observe_install_reserve() {  # <when>
-    (( install_reserve_bytes > 0 )) || return 0
-    local now started grown observed
-    started=$(date +%s%3N)
-    if [ -n "$reserve_bytes_before" ] && now=$(measure_gate_bytes); then
-      reserve_du_ms=$(( $(date +%s%3N) - started ))
-      grown=$((now - reserve_bytes_before))
-      (( grown > ${reserve_gate_bytes:-0} )) && reserve_gate_bytes=$grown
-      : "${reserve_gate_bytes:=0}"
-      observed=$((10 * 1024 * 1024 * 1024 + reserve_gate_bytes))
-      [ "$reserve_basis" = cold_fallback ] || reserve_basis=measured
-    else
-      reserve_basis=cold_fallback
-      echo "beelink-gate: could not measure this gate's own bytes $1; recording the cold reserve" >&2
-      observed=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" cold) \
-        || observed=$((10 * 1024 * 1024 * 1024))
-    fi
-    [ -z "$reserve_free_before" ] || reserve_host_drop=$((reserve_free_before - last_floor_available))
-    (( observed > observed_install_reserve_bytes )) && observed_install_reserve_bytes=$observed
-    echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
-    return 0
-  }
   # Bundle command-created commits unreachable from remotes before checkout reuse.
   # Exclude refs present before the command, so later gates do not save them again.
   save_unpushed() {
@@ -1999,6 +1976,7 @@ PYTURBO
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
+    finish_disk_observation
     if [ "$watchdog" = 1 ]; then
       :
     elif cd "$cache_root"; then
@@ -2022,6 +2000,7 @@ PYTURBO
     exit "$status"
   }
   trap finish EXIT
+  start_disk_observation
   if mkdir -p "$STATE_DIR" 2>/dev/null; then
     timing_file=$(mktemp "$STATE_DIR/phase.XXXXXXXX" 2>/dev/null) || timing_file=""
   fi
@@ -2154,7 +2133,6 @@ PYTURBO
   recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   local floor_ok=0
   check_floor "$beelink" || floor_ok=1
-  observe_install_reserve "after checkout"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it

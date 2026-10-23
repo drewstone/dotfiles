@@ -238,7 +238,8 @@ install_beelink_gate_priority() {
       exit 1
     fi
   fi
-  want_file 0644 "$SCRIPT_DIR/cgroup/50-gate-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
+  sed "s/@CI_WEIGHT@/$ci_weight/" "$SCRIPT_DIR/cgroup/50-gate-priority.conf" > "$TMP/ci-priority.conf"
+  want_file 0644 "$TMP/ci-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
   sed "s/@CI_WEIGHT@/$ci_weight/" "$SCRIPT_DIR/cgroup/50-nix-daemon-priority.conf" > "$TMP/nix-daemon-priority.conf"
   want_file 0644 "$TMP/nix-daemon-priority.conf" /etc/systemd/system/nix-daemon.service.d/50-gate-priority.conf
   want_file 0755 "$SCRIPT_DIR/cgroup/beelink-memory-policy" /usr/local/libexec/beelink-memory-policy

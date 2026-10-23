@@ -177,3 +177,74 @@ prepare_gate_dependencies() {
     rebuild_native_addons || exit $?
   fi
 }
+
+# The reserve a receipt records is the 10 GiB headroom plus the most this gate's
+# own bytes grew since just before its fetch (gate_bytes); host free space also
+# moves with other lanes' writes and decides only the floor. A measurement that
+# fails records the cold reserve, never less.
+observe_install_reserve() {  # <when>
+  (( install_reserve_bytes > 0 )) || return 0
+  local now started grown observed
+  started=$(date +%s%3N)
+  if [ -n "$reserve_bytes_before" ] && now=$(disk_snapshot_phase=after_install measure_gate_bytes); then
+    reserve_du_ms=$(( $(date +%s%3N) - started ))
+    grown=$((now - reserve_bytes_before))
+    (( grown > ${reserve_gate_bytes:-0} )) && reserve_gate_bytes=$grown
+    : "${reserve_gate_bytes:=0}"
+    observed=$((10 * 1024 * 1024 * 1024 + reserve_gate_bytes))
+    [ "$reserve_basis" = cold_fallback ] || reserve_basis=measured
+  else
+    reserve_basis=cold_fallback
+    echo "beelink-gate: could not measure this gate's own bytes $1; recording the cold reserve" >&2
+    observed=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" cold) \
+      || observed=$((10 * 1024 * 1024 * 1024))
+  fi
+  [ -z "$reserve_free_before" ] || reserve_host_drop=$((reserve_free_before - last_floor_available))
+  (( observed > observed_install_reserve_bytes )) && observed_install_reserve_bytes=$observed
+  echo "beelink-gate: install reserve $1: gate bytes +${reserve_gate_bytes:-?} (checkout and package stores, du ${reserve_du_ms:-?} ms); host free fell ${reserve_host_drop:-?} bytes over the same window; records $observed_install_reserve_bytes ($reserve_basis)" >&2
+  return 0
+}
+
+# Disk lifecycle stays with install-reserve accounting; Python owns observations.
+start_disk_observation() {
+  disk_fallback_reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "${reserve_spec:-}" "${peer_reserve:-}" "${peer_warm_reserve:-}" cold) || disk_fallback_reserve=${install_reserve_bytes:-0}
+  if mkdir -p "$STATE_DIR" 2>/dev/null && disk_dir=$(mktemp -d "$STATE_DIR/disk.XXXXXXXX" 2>/dev/null); then
+    disk_paths=("$checkout" "${package_stores[@]}") disk_deadline=$deadline
+    disk_grace_s=$(gate_disk grace) || disk_grace_s=0
+    python3 -c "$beelink_gate_disk_source" observe "$disk_dir" "$$" "$((deadline - SECONDS))" "$HOME" "${disk_paths[@]}" {lock_fd}>&- {slot_fd}>&- </dev/null 2>/dev/null &
+    disk_pid=$!
+    for ((disk_try=0; disk_try<40; disk_try++)); do
+      [ ! -f "$disk_dir/ready" ] || { disk_ready=1; break; }
+      kill -0 "$disk_pid" 2>/dev/null || break
+      sleep 0.05
+    done
+    [ "$disk_ready" = 1 ] || : > "$disk_dir/late_start"
+  fi
+}
+
+finish_disk_observation() {
+  if [ -n "$disk_dir" ]; then
+    # Relocated from post-checkout: same three bounded du scans, now with end bytes.
+    if (( ${install_reserve_bytes:-0} > 0 )); then
+      disk_left=$((disk_deadline - SECONDS)); (( disk_left < 60 )) || disk_left=60
+      disk_snapshot_phase=end gate_bytes "$disk_left" "${disk_paths[@]}" >/dev/null || true
+      if (( observed_install_reserve_bytes == 0 )); then
+        observed_install_reserve_bytes=$disk_fallback_reserve reserve_basis=cold_fallback
+      fi
+    fi
+    : > "$disk_dir/stop"  # Cooperative stop also works without pidfd support.
+    gate_disk signal "$disk_dir" "$disk_pid" USR1 2>/dev/null || true
+    disk_stop_by=$((SECONDS + disk_grace_s))
+    while (( SECONDS < disk_stop_by )) && kill -0 "$disk_pid" 2>/dev/null; do sleep 0.1; done
+    gate_disk signal "$disk_dir" "$disk_pid" KILL 2>/dev/null || true
+    # Never block on a child whose safe escalation failed or has not completed.
+    if ! kill -0 "$disk_pid" 2>/dev/null; then wait "$disk_pid" 2>/dev/null || true
+    else
+      : > "$disk_dir/ownership_lost"
+      echo "beelink-gate: disk observer stop incomplete; retaining partial state" >&2
+    fi
+    BEELINK_GATE_DISK_OBSERVATION=$(gate_disk collect "$disk_dir" 2>/dev/null) || BEELINK_GATE_DISK_OBSERVATION=""
+    export BEELINK_GATE_DISK_OBSERVATION
+    kill -0 "$disk_pid" 2>/dev/null || rm -rf -- "$disk_dir"
+  fi
+}
