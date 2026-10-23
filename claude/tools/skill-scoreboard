@@ -8,8 +8,9 @@ Usage:
 
 Reads only the ledger files under ${XDG_STATE_HOME:-~/.local/state}/agent-work on this machine
 and, over ssh, on each host (default gtr, beelink1-wsl, beelink2-wsl; SKILL_SCOREBOARD_HOSTS
-overrides): skill-runs.jsonl, skill-runs.v2.jsonl, skill-run-events.jsonl, _outcomes/prs.jsonl.
-Before rendering, PR outcomes that are due are refreshed on GitHub through gh-drew (--no-join skips).
+overrides): skill-runs.jsonl, skill-runs.v2.jsonl, skill-run-events.jsonl, ../skill-outcomes/pr-signals.json.
+Rendering reads maintained PR signals and queues due refs; --no-join skips queuing.
+The existing daily/explicit skill-run-log --join refresh uses the shared tangle-tools owner.
 
 Columns follow docs/processes/climb.md's rewards, strongest first:
   outcome    machine-checked: PASS merged and clean 7 days; FAIL reverted or hot-fixed within 7
@@ -120,7 +121,7 @@ def load(opts, at):
         if not read.get("ok"):
             continue
         rows.extend(L.rows_from_files(read["files"], label))
-        prs_texts.append(read["files"].get("_outcomes/prs.jsonl", ""))
+        prs_texts.append(read["files"].get("../skill-outcomes/pr-signals.json", ""))
     floor = since_of(opts["since"], at)
     selected = []
     for row in rows:
@@ -144,7 +145,7 @@ def attach_outcomes(rows, prs_texts, opts, at):
         join_report = O.join(refs, at=at, existing=snapshots)
     for row in rows:
         row["outcome"] = O.run_outcome(row.get("prs") or [], snapshots) if row.get("prs") else None
-    return join_report
+    return {**(join_report or {"checked": 0, "githubCalls": 0, "errors": []}), "signals": O.view_summary(snapshots)}
 
 
 def pct(part, whole):

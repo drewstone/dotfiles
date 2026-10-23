@@ -348,7 +348,7 @@ def join_host(days: int) -> dict:
                 ts = L.parse_ts(obj.get("ts"))
                 if obj.get("prs") and ts and ts >= floor:
                     refs.extend(obj["prs"])
-    report = O.join(refs, at=at)
+    report = O.join(refs, at=at, refresh=True)
     stamp = L.state_root() / JOIN_STAMP
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(L.iso(at) + "\n")
