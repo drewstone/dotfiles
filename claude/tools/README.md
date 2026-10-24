@@ -35,8 +35,8 @@ Before `pr merge`, `--auto` included, it reads the PR's head, review threads and
 - `GH_DREW_REVIEW_OVERRIDE=<reason>` merges without the check and logs the reason. A read that fails refuses.
 
 Before `run cancel <id>`, or a request to `repos/<o>/<r>/actions/runs/<id>/cancel` or `force-cancel`, it reads the run's event and workflow.
-A scheduled run of `benchmark-production.yml` or `create-waterfall.yml` is refused (exit 1, logged as `refused`) before anything changes; company-01 approved this on 2026-10-19.
-A `workflow_dispatch` run of either, and a scheduled run of any other workflow, stays cancellable. A read that fails refuses.
+A scheduled run of `benchmark-production.yml` or `create-waterfall.yml` that is in progress is refused (exit 1, logged as `refused`) before anything changes; company-01 approved this on 2026-10-19.
+A `workflow_dispatch` run of either, a scheduled one that has not started (it has measured nothing, and such runs held the production deploy lock on 2026-10-19 and 10-23), and a scheduled run of any other workflow stay cancellable. A read that fails refuses.
 
 Each call appends one line to `~/.local/state/gh-drew/calls-<hour>.tsv` (`GH_DREW_LOG_DIR`):
 

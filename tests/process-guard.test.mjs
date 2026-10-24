@@ -179,6 +179,8 @@ test("hooks-bypass: reads, restatements and throwaway fixtures pass", () => {
 // --------------------------------------------------------------------------- shared-stash
 
 test("shared-stash: refuses the bare pops agents ran in shared checkouts", () => {
+  const shared = repo(join(ROOT, "shared-checkout"));
+  git(shared, "worktree", "add", "-q", "--detach", join(ROOT, "shared-checkout-2"));
   check([
     // 2026-10-09: the pop that took another session's entry.
     "cd /Users/drew/webb/_wt/gtm-seo-data && git stash -q -u && pnpm exec vitest run src/lib/.server/chat/system-prompt-budget.test.ts 2>&1 | /usr/bin/grep -E \"Tests |expected\" | head -3; git stash pop -q && git status --short | wc -l",
@@ -186,8 +188,22 @@ test("shared-stash: refuses the bare pops agents ran in shared checkouts", () =>
     "git stash -q && git fetch -q origin && git rebase -q origin/master && git stash pop -q",
     "git stash apply",
     "ssh beelink1-wsl 'cd ~/code/_wt/runtime-offbox-evidence-20261003 && git stash pop -q && git diff --stat'",
-  ], "deny");
+  ], "deny", { cwd: shared });
   assert.match(reason("git stash pop"), /stash@\{N\}/);
+});
+
+// From 10-17 to 10-24, 119 GTR refusals were factory runs stashing their change to test the base and popping it
+// in the same command, in a clone no other worktree shares.
+test("shared-stash: a pop of the entry the same command pushed passes in a one-worktree checkout", () => {
+  const clone = repo(join(ROOT, "factory-clone"));
+  writeFileSync(join(clone, "a.txt"), "change\n");
+  const baseline = "git stash -q && node --test x.test.mjs 2>&1 | tail -6; git stash pop -q && git status --short";
+  assert.equal(decide(baseline, { cwd: clone }), "allow");
+  assert.equal(decide("git stash push -q -- a.txt && true; git stash pop -q", { cwd: clone }), "allow");
+  assert.equal(decide("git stash pop -q", { cwd: clone }), "deny");
+  assert.equal(decide("git stash pop -q; git stash -q", { cwd: clone }), "deny");
+  git(clone, "worktree", "add", "-q", "--detach", join(ROOT, "factory-clone-2"));
+  assert.equal(decide(baseline, { cwd: clone }), "deny");
 });
 
 test("shared-stash: a named entry needs this session's worktree and branch", () => {
@@ -547,6 +563,27 @@ test("env-dump allows names, counts, fingerprints, non-secret names and env used
     "tr '\\0' ' ' < /proc/1/cmdline", "tr '\\0' '\\n' < /proc/1/environ | cut -d= -f1",
   ]) {
     assert.equal(decide(command), "allow", command);
+  }
+});
+
+// From 2026-10-17 to 10-24, 64 of the Mac's 99 env-dump refusals matched a path or a word named env that
+// was not the command, and 8 printed a variable whose name looked secret but held a path, a name or a session id.
+test("env-dump allows env that is not the command, redacted values and non-secret variable names", () => {
+  for (const command of [
+    "ls ~/.config/disco/env | grep -i SANDBOX", "cut -d= -f1 ~/.config/disco/env", "[ -f $d/env ] && echo exists",
+    "printf '%s\\n' '#!/usr/bin/env bash' 'echo hi' > /tmp/x.sh", "tangle-admin env 2>&1 | cut -d= -f1",
+    "cat > ~/.config/disco/env/.DISCO_SANDBOX_KEY_PLAYS.new", "env | grep -i FLEET | sed 's/=.*/=<set>/'",
+    "printenv | grep -E '^TANGLE' | sed -E 's/=.*/=<redacted>/'", "printf '%s\\n' \"$CLAUDE_CODE_SESSION_ID\"",
+    "echo \"keeper $SANDBOX_KEY_FILE\"", "echo \"key name: $KEYNAME\"",
+    "env | grep -oE \"^(TANGLE|SANDBOX)_[A-Z_]*(KEY|TOKEN)\" | head -5", "env | grep -c TANGLE_",
+    "cat /proc/1653568/environ | tr '\\0' '\\n' | grep -c UV_THREADPOOL_SIZE", "grep -l c39862803b /proc/3469945/environ",
+    "git commit -q -m 'the bash tool dumps env, /proc/self/environ, and more'",
+  ]) {
+    assert.equal(decide(command), "allow", command);
+  }
+  for (const command of ["env | sed -E 's/(KEY|TOKEN)=.*/\\1=<redacted>/'", "echo $SESSION_TOKEN", "do env | grep X",
+    "env | grep -o 'KEY=.*'", "tr '\\0' '\\n' < /proc/866036/environ | grep -E '^(TMPDIR|NODE_OPTIONS)'"]) {
+    assert.equal(decide(command), "deny", command);
   }
 });
 

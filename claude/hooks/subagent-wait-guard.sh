@@ -7,11 +7,16 @@
 # in a nohup script on gtr or a Beelink that acts and writes one result line; the
 # subagent ends its turn once its code is pushed and the script is armed.
 #
-# Denies, only when the caller is a subagent:
-#   - Bash with run_in_background: true
-#   - the Monitor tool
-#   - the Agent tool (no sub-agents spawned by subagents)
-# The main session is not affected.
+# Only when the caller is a subagent:
+#   - Bash with run_in_background: true runs in the foreground instead (timeout 600000, the
+#     cap; a longer call is moved to the background by the harness), unless the command
+#     waits (sleep, a while/until loop, wait, watch, tail -f), which is denied. From 10-17 to
+#     10-24 this refusal fired 188 times on the Mac, mostly on beelink-gate runs, tests and
+#     builds, and the subagent's next call was usually the same command in the foreground.
+#   - the Monitor tool is denied
+#   - the Agent tool is denied (no sub-agents spawned by subagents)
+# The main session is not affected. rtk-rewrite.sh leaves a subagent's background call to
+# this hook: when two hooks return updatedInput, the last one to finish wins.
 #
 # Fail-open by contract: missing python3, unparsable input or an unknown payload
 # shape exits 0 with no output.
@@ -25,6 +30,7 @@ command -v python3 >/dev/null || exit 0
 
 read -r -d '' GUARD_PY <<'PY'
 import json
+import re
 import sys
 
 try:
@@ -44,6 +50,19 @@ inp = d.get("tool_input") or {}
 
 reason = None
 if tool == "Bash" and inp.get("run_in_background"):
+    command = str(inp.get("command") or "")
+    if not re.search(r"\b(?:sleep|wait|watch|until|while)\b|--watch\b|\btail\s+-[a-zA-Z]*[fF]", command):
+        updated = {k: v for k, v in inp.items() if k != "run_in_background"}
+        updated["timeout"] = 600000
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "subagent-wait-guard: ran in the foreground",
+            "updatedInput": updated,
+            "additionalContext": "subagent-wait-guard ran this command in the foreground with a 10-minute "
+                                 "timeout: subagents never wait in-session on background work.",
+        }}))
+        sys.exit(0)
     reason = "Subagents never wait in-session."
 elif tool == "Monitor":
     reason = "Subagents never watch or wait in-session."

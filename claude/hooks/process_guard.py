@@ -18,7 +18,8 @@ while their briefs said not to:
                 the newest entry can be another session's; on 2026-10-09 an agent popped one.
                 The entry must be named, the checkout must be a `_wt` worktree this session
                 created (wt-new's .wt-owner, or a `git worktree add` in this session's
-                transcripts), and a named entry must come from the branch checked out there.
+                transcripts), and a named entry must come from the branch checked out there. A bare pop of
+                the entry the same command pushed passes in a one-worktree checkout (119 GTR refusals, 10-17..24).
   mac-build     whole-repo installs, builds, test runs, turbo runs, image builds and signoff
                 on the Mac (10 cores; agents drove its load to 120). Single test files stay
                 local. Allowed when the command sets CC_ALLOW_MAC_BUILD=1.
@@ -29,13 +30,10 @@ while their briefs said not to:
                 Claude sessions, Slack and postgres. Over ssh the pattern also matches the ssh
                 session's own command line; on 2026-10-09 and 2026-10-10 agents killed their own
                 sessions on gtr and beelink2 this way, and on 2026-10-11 a workflow agent ran
-                `ssh gtr 'pkill -f "python3 reproduce.py" ; ...'`, which the old regex hook missed
-                because pkill opened the quoted remote command. `pgrep -P <pid>` stays allowed.
-  broadcast-kill  `kill 0`, `kill -1`, `kill -9 -1`, `kill -- -<pgid>`: a target of 0 or a
-                negative pid signals the caller's process group, a whole group or every process
-                the user owns.
-                Both kill rules: override CC_ALLOW_BROADCAST_KILL=1, set by Drew for the session
-                (a command-line assignment does not count).
+                `ssh gtr 'pkill -f "python3 reproduce.py" ; ...'`. `pgrep -P <pid>` stays allowed.
+  broadcast-kill  `kill 0`, `kill -1`, `kill -9 -1`, `kill -- -<pgid>`: a target of 0 or a negative pid
+                signals the caller's process group, a whole group or every process the user owns. Both kill
+                rules: override CC_ALLOW_BROADCAST_KILL=1, set by Drew for the session (not on a command).
   xtrace-secrets  shell tracing (`bash -x`, `sh -x`, `set -x`, `set -o xtrace`, BASH_XTRACEFD)
                 while the traced scope loads or expands a secret: dotenvx run/get, sourcing or
                 reading a .env, key, token or secrets file, a *_KEY/*_TOKEN variable set from an
@@ -49,29 +47,24 @@ while their briefs said not to:
                 or `echo $X_TOKEN` for a secret-named variable, and env redirected into a file. Fleet lane
                 environments carry live credentials: on 2026-10-12 a subagent ran `env | grep TANGLE_` to find
                 its lane id and printed the lane's sk-tan- router key into the transcript, which forced a
-                production key rotation. Names only stay allowed (`env | cut -d= -f1`, `sed 's/=.*//'`,
-                `awk -F= '{print $1}'`, `wc`), as do `env VAR=x cmd` and `printenv` of non-secret names.
+                production key rotation. Names only stay allowed (`cut -d= -f1`, `sed 's/=.*/=<set>/'`, awk, `wc`),
+                as do `env VAR=x cmd`, `printenv` of a non-secret or *_FILE/*_PATH name, and a non-command `env`.
                 Override: CC_ALLOW_ENV_DUMP=1, set by Drew for the session.
 
   ledger-write  `echo '{...}' >> .agent/climb.jsonl`, `tee -a reports/climb/ledger.jsonl`: rows written
                 around `climb-log append`, which checks that every reported number names its selection
                 rule. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair Drew approved.
 
-  tail-sleep    `tail -f /dev/null` as a command, usually `read -t N < <(tail -f /dev/null)` used as a
-                sleep. Under the Mac's bash 3.2 the read can outlive its timeout, and every poll leaks a
-                tail: on 2026-10-15 company-01's watchers hung for 15 h, never reported, and left 380
-                processes behind. Wait with `sleep` in a loop with a `date +%s` deadline instead.
-                Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
+  tail-sleep    `tail -f /dev/null` as a command, usually `read -t N < <(tail -f /dev/null)` as a sleep. Under
+                the Mac's bash 3.2 the read can outlive its timeout and each poll leaks a tail (2026-10-15: watchers
+                hung 15 h and left 380 processes). Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
 
-Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed
-too: an admin merge or force push run on a Beelink has the same effect on GitHub. The Mac
-build rule skips remote commands, which is where that work belongs.
+Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed too (an admin
+merge run on a Beelink has the same effect on GitHub); the Mac build rule skips remote commands.
 
-So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`,
-`ssh host bash -s < x.sh`): one written by a heredoc earlier in the same command, or a file under
-a temp root such as a scratchpad. On 2026-10-04 an agent wrote a bare `git stash pop` into
-scratchpad/gate1699.sh and ran the file, which no inline check could see. A repository's own
-scripts are not read.
+So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host
+bash -s < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root: on 2026-10-04 a
+bare `git stash pop` ran from scratchpad/gate1699.sh. A repository's own scripts are not read.
 
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
 redacted. Fail-open: an unparsable payload exits 0 with no output.
@@ -317,6 +310,7 @@ class Command:
         self.upstream = []  # the argvs piped into this command
         self.via_xargs = False  # this command's arguments come from its stdin through xargs
         self.writes = []  # files this command writes: redirection targets, and tee's arguments
+        self.stashed = ctx.stashed  # this command pushed a stash before this point
 
     @property
     def prog(self):
@@ -343,6 +337,7 @@ class Context:
         self.loops = {}  # loop variable -> ("words", words, cwd, vars) or ("chain", upstream argvs, cwd, vars)
         self.chain = []  # argvs of the pipeline so far, for what feeds `xargs` or `while read`
         self.env_pending = None  # an env dump upstream in this pipeline, cleared by a names-only stage
+        self.stashed = False  # a `git stash` / `stash push` ran earlier in this command
 
 
 def strip_prefix(words):
@@ -674,31 +669,31 @@ def nested(text, cwd, remote, ctx, origin):
         ctx.origin = outer
 
 
-ENV_SECRET_VAR = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE|SESSION", re.I)
-PROC_ENVIRON = re.compile(r"/proc/[^\s/]+/environ\b")
+ENV_SECRET_VAR = re.compile(r"^(?!.*(?:_FILE|_PATH|_DIR|NAME)$).*(?:KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE)", re.I)
+PROC_ENVIRON = re.compile(r"/proc/[^\s/]+/environ")
 ENV_PASSTHROUGH = {"grep", "egrep", "fgrep", "rg", "sort", "uniq", "head", "tail", "tr", "cat", "column"}
 
 
 def env_dump(seg, argv):
     """What in this pipeline stage prints environment values, or None."""
     words = seg.words
-    for w in list(words) + list(getattr(seg, "inputs", [])):
-        if PROC_ENVIRON.search(w):
-            return f"read of {PROC_ENVIRON.search(w).group(0)}"
-    # env with no command: `env`, `env -0`, `env -u X`, `env A=1` print the whole environment.
-    for k, w in enumerate(words):
-        if w == "env" or w.endswith("/env"):
-            rest, j = words[k + 1:], 0
-            while j < len(rest):
-                if rest[j] in ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"):
-                    j += 2
-                elif rest[j].startswith("-") or ASSIGN.match(rest[j]):
-                    j += 1
-                else:
-                    break
-            if j >= len(rest):
-                return "env with no command"
-            break
+    for w in list(words) + list(getattr(seg, "inputs", [])):  # a path word, not prose that names one
+        if PROC_ENVIRON.fullmatch(w) and not env_names_only(argv):
+            return f"read of {w}"
+    # `env` as the command (consumed by strip_prefix, or argv[0]) with none of its own prints everything.
+    k = next((i for i, w in enumerate(words[:len(words) - len(argv)]) if w == "env"),
+             len(words) - len(argv) if argv and os.path.basename(argv[0]) == "env" else None)
+    if k is not None:
+        rest, j = words[k + 1:], 0
+        while j < len(rest):
+            if rest[j] in ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"):
+                j += 2
+            elif rest[j].startswith("-") or ASSIGN.match(rest[j]):
+                j += 1
+            else:
+                break
+        if j >= len(rest):
+            return "env with no command"
     if not argv:
         return None
     prog = os.path.basename(argv[0])
@@ -725,18 +720,18 @@ def env_dump(seg, argv):
 
 def env_names_only(argv):
     """A pipeline stage that keeps only variable names (or counts), so values never print."""
-    prog = os.path.basename(argv[0]) if argv else ""
-    args = argv[1:]
+    prog, args = (os.path.basename(argv[0]), argv[1:]) if argv else ("", [])
     if prog == "cut":
         joined = " ".join(args)
         return bool(re.search(r"-d\s*=|--delimiter[= ]=", joined)) and bool(re.search(r"(?:-f\s*|--fields[= ])1\b(?!\s*[-,])", joined))
     if prog == "sed":
-        return any(re.match(r"^s(.)=\.\*\$?\1\1g?$", a) for a in args)
+        return any(re.match(r"^s(.)=\.\*\$?\1[^\\&]*\1g?$", a) for a in args)  # also s/=.*/=<set>/
     if prog == "awk":
         return any(a in ("-F=", "-F", "=") for a in args) and any(re.search(r"print\s+\$1\b\s*}", a) for a in args)
-    if prog in ("wc", "sha256sum", "shasum", "sha1sum", "md5sum", "b2sum", "b3sum"):
-        return True  # a count or a fingerprint, never the value
-    return False
+    flags, pat = "".join(a[1:] for a in args if re.match(r"^-[a-zA-Z]+$", a)), next((a for a in args if a[:1] != "-"), "")
+    if prog in ("grep", "egrep", "rg"):  # counts, file names, or -o of an anchored name pattern that cannot reach `=`
+        return bool(re.search(r"[clLq]", flags)) or ("o" in flags and pat[:1] == "^" and not re.search(r"[.=\\]|\[\^", pat))
+    return prog in ("wc", "sha256sum", "shasum", "sha1sum", "md5sum", "b2sum", "b3sum")  # a count or a fingerprint
 
 
 def env_dump_flush(ctx):
@@ -808,6 +803,8 @@ def commands(src, cwd, remote=False, ctx=None):
         cmd.via_xargs = "xargs" in seg.words[:len(seg.words) - len(argv)]
         cmd.writes = list(seg.writes) + ([a for a in argv[1:] if not a.startswith("-")] if prog == "tee" else [])
         result.append(cmd)
+        g = git_split(argv) if prog == "git" else None
+        ctx.stashed |= bool(g and g[2] == "stash" and next((a for a in g[3] if a[:1] != "-"), "push") in ("push", "save"))
         loaded = secret_load(argv) or (secret_references(argv[1:]) if ctx.xtrace else None)
         if loaded:
             note(ctx, loaded)
@@ -1205,6 +1202,9 @@ def rule_shared_stash(cmd, payload):
     pos = [a for a in args[1:] if not a.startswith("-")]
     ref = (pos[1] if len(pos) > 1 else None) if action == "branch" else (pos[0] if pos else None)
     label = f"git stash {action}"
+    if not ref and cmd.stashed and not cmd.remote and (d := git_dir(cmd, cdir)) and action != "branch" and \
+            (git_out(d, "worktree", "list", "--porcelain") or "").count("worktree ") == 1:
+        return None  # pops the entry this command just pushed, in a checkout no other worktree shares
     if not ref:
         return ("shared-stash", f"bare {label}",
                 f"Bare `{label}` is refused. {STASH_WHY} Name the entry you made: find it with `git stash list`, "

@@ -6,8 +6,10 @@ SOUL's "at most three large agents at a time" for 425 of 726 live minutes (59%);
 written rule was loaded the whole time. This hook makes the cap bite at launch.
 
 It counts the session's live agents: transcripts under <session>/subagents/ (workflow
-agents included) written within the last CC_AGENT_LIVE_SECS seconds (default 240), each
-classified by the last model it recorded. An Agent or Workflow call is denied when it
+agents included) written within the last CC_AGENT_LIVE_SECS seconds (default 240) whose last
+assistant message did not end the agent's turn, each classified by the last model it recorded.
+A finished agent stopped counting only when its transcript aged out until 2026-10-24: 40 of
+85 refusals on the Mac from 10-17 to 10-24 counted agents that had already reported. An Agent or Workflow call is denied when it
 would add an Opus agent beyond CC_OPUS_AGENT_CAP (default 3), or any agent beyond
 CC_AGENT_TOTAL_CAP (default 8). An Agent call with model sonnet or haiku adds no Opus
 agent. A Workflow call adds CC_WORKFLOW_WEIGHT Opus agents (default 3): its script runs
@@ -45,11 +47,29 @@ def last_model(path: Path) -> str:
     return ""
 
 
+def finished(path: Path) -> bool:
+    """True when the transcript's last assistant message ended the agent's turn."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            f.seek(max(0, size - 262_144))
+            lines = f.read().splitlines()
+    except OSError:
+        return False
+    for line in reversed(lines):
+        if b'"type":"assistant"' in line:
+            try:
+                return (json.loads(line).get("message") or {}).get("stop_reason") == "end_turn"
+            except ValueError:
+                return False
+    return False
+
+
 def live_agents(subagents: Path, live_secs: float, now: float):
     opus = other = 0
     for path in subagents.rglob("agent-*.jsonl"):
         try:
-            if now - path.stat().st_mtime > live_secs:
+            if now - path.stat().st_mtime > live_secs or finished(path):
                 continue
         except OSError:
             continue
@@ -107,8 +127,9 @@ def main() -> None:
         "permissionDecision": "deny",
         "permissionDecisionReason": (
             f"agent-cap-guard: {why}. SOUL's spend rule: at most three large agents at a time "
-            "(2026-10-11: peak 19, over the cap 59% of live minutes). Let a running agent finish, "
-            "run small work with model: sonnet, or give the work to a Disco play."
+            "(2026-10-11: peak 19, over the cap 59% of live minutes). End your turn: the harness notifies "
+            "you as each agent finishes, and this launch passes once one has. Or run small work with "
+            "model: sonnet, or give the work to a Disco play."
         ),
     }}))
 

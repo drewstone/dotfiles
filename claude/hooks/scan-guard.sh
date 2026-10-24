@@ -82,7 +82,9 @@ def broad_roots(seg, base):
     if not toks:
         return []
     prog = os.path.basename(toks[0])
-    if prog not in ("grep", "rg", "find", "fd", "du"):
+    # `fd = os.open(...)` and `du = ...` in a script body are assignments, and `du --files0-from` reads its list.
+    if prog not in ("grep", "rg", "find", "fd", "du") or (len(toks) > 1 and toks[1].startswith("=")) \
+            or any(t.startswith("--files0-from") for t in toks):
         return []
     if prog == "grep" and not any(t.startswith("-") and ("r" in t or "R" in t) and not t.startswith("--") for t in toks[1:]) \
             and "--recursive" not in toks:
@@ -91,13 +93,15 @@ def broad_roots(seg, base):
     takes_value = {"-e", "-f", "--regexp", "--file", "-m", "--max-count", "-A", "-B", "-C", "-g", "--glob", "-t",
                    "--type", "-T", "--type-not", "-name", "-iname", "-path", "-ipath", "-type", "-maxdepth",
                    "-mindepth", "-newer", "-size", "-mtime", "-mmin", "-user", "-perm", "-regex", "-exec", "-d", "--max-depth"}
+    if prog == "rg":
+        takes_value |= {"-r", "--replace"}  # rg's -r is a replacement string, not recursion
     args, skip = [], False
     for t in toks[1:]:
         if skip:
             skip = False
         elif t in takes_value:
             skip = True
-        elif not t.startswith("-"):
+        elif t and not t.startswith("-"):  # an empty operand once resolved to "/"
             args.append(t)
     # grep and rg take the pattern as their first operand unless -e or -f supplies it; fd's first operand is its pattern.
     if prog in ("grep", "rg", "fd") and args and not any(t in ("-e", "-f", "--regexp", "--file", "--files") for t in toks[1:]):

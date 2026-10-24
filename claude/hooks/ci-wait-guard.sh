@@ -10,10 +10,12 @@
 # tasks/*.output file cost another 51.8 h; the harness already notifies on
 # completion. A warning was tried on 2026-08-26 and ignored, so this denies.
 #
-# Scope: `gh pr checks --watch`; any sleep loop around `gh pr checks`,
-# `gh pr view ... statusCheckRollup`, or `gh run view/list`; any sleep loop
-# reading tasks/*.output. `gh run watch` stays allowed because deploy and
-# release runs are delivery, not PR checks.
+# Scope: `gh pr checks --watch`; any sleep loop around `gh pr checks` or
+# `gh pr view ... statusCheckRollup`; any sleep loop reading tasks/*.output.
+# Runs are delivery, not PR checks: `gh run watch` and sleep loops over
+# `gh run view/list` (deploys, releases, package publishes) stay allowed. Until
+# 2026-10-24 those loops were refused too, and most PR-CI refusals on the Mac
+# from 10-17 to 10-24 were waits on deploy, publish and benchmark runs.
 #
 # Heredoc bodies are ignored: they are usually file contents or test data, and
 # matching them blocked writing this hook's own tests.
@@ -25,7 +27,7 @@ exec 2>/dev/null
 
 payload="$(cat 2>/dev/null || true)"
 [ -z "$payload" ] && exit 0
-printf '%s' "$payload" | grep -qE 'gh(-drew)? (pr|run)|tasks/[^ ]*[.]output' || exit 0
+printf '%s' "$payload" | grep -qE 'gh(-drew)? pr|tasks/[^ ]*[.]output' || exit 0
 command -v python3 >/dev/null || exit 0
 
 read -r -d '' GUARD_PY <<'PY'
@@ -63,17 +65,19 @@ def deny(reason):
     }}))
     sys.exit(0)
 
-if loop and re.search(r"tasks/\S*[.]output", cmd):
+task = re.search(r"[^\s'\"=]*tasks/[^\s'\"]*[.]output", cmd)
+if loop and task:
     deny("ci-wait-guard: do not poll a background task's output file. The harness "
-         "notifies you when the task finishes; do other work or end the turn.")
+         "notifies you when the task finishes, so do other work or end the turn. To see "
+         f"its progress now, read it once without a loop: `tail -n 40 {task.group(0)}`.")
 
 watch = re.search(GH + r"pr\s+checks\b[^\n|;&]*--watch", cmd)
-poll_target = re.search(GH + r"(?:pr\s+checks|pr\s+view[^\n]*statusCheckRollup|run\s+(?:view|list))", cmd)
+poll_target = re.search(GH + r"(?:pr\s+checks|pr\s+view[^\n]*statusCheckRollup)", cmd)
 if watch or (poll_target and loop):
     deny("ci-wait-guard: do not wait on PR CI. The local gate on beelink1-wsl/beelink2-wsl "
          "(merge base, frozen install, typecheck, affected tests) is the merge gate. "
          "Merge, or `gh-drew pr merge --auto`, then continue other work; fix CI failures "
-         "forward. Deploy runs may use `gh run watch`.")
+         "forward. A deploy, release or publish run is delivery: `gh run watch <id> --exit-status`.")
 sys.exit(0)
 PY
 
