@@ -27,9 +27,9 @@ unreadable state, or any doubt skips it, and every decision is logged.
     so it uses `sudo -n`; if any live process stays unreadable, nothing is
     removed that run.
 
-Removal uses `git worktree remove` without --force, so git re-checks the tree,
-then `git worktree prune --expire=<idle>`. The local branch is deleted with
-`git branch -d` only when it is an ancestor of the remote default branch.
+Removal delegates to the installed `wt-remove`, which owns retention and archive
+readback. Only its receipt for the exact, absent checkout confirms removal.
+Local branches and other worktree registrations remain intact.
 
 Derived files (--no-derived turns these off). Each pass deletes only what is
 rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
@@ -49,6 +49,9 @@ rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
   - pnpm store files no project links (Linux): `pnpm store prune` per store
     version, at most once every 20 hours, only in a quiet window while it
     holds every beelink-gate slot; see DerivedPass.pnpm_store.
+
+Removal uses the installed wt-remove retention owner; local refs remain intact.
+Reflog expiry rewrites do not count as new work; recorded event times do.
 
 Python 3.9 compatible: macOS runs it with /usr/bin/python3.
 """
@@ -247,16 +250,12 @@ def check_in_progress(gitdir):
 
 def newest_git_activity(gitdir, common_dir, branch):
     newest = 0.0
-    # Every file in the worktree's git dir (index, HEAD, ORIG_HEAD, locks, ...)
-    # but not the directory itself: read-only tools such as a status prompt
-    # create and delete index.lock there, which moves only the directory mtime.
+    # Metadata files count; status-created lock directory changes alone do not.
     try:
         paths = [e.path for e in os.scandir(gitdir) if not e.is_dir(follow_symlinks=False)]
     except OSError as exc:
         raise Skip('cannot read %s: %s' % (gitdir, exc.strerror))
-    paths.append(os.path.join(gitdir, 'logs', 'HEAD'))
     if branch:
-        paths.append(os.path.join(common_dir, 'logs', branch))
         paths.append(os.path.join(common_dir, branch))
     for path in paths:
         try:
@@ -264,19 +263,23 @@ def newest_git_activity(gitdir, common_dir, branch):
         except FileNotFoundError:
             continue
         newest = max(newest, st.st_mtime, st.st_ctime)
-    # The newest reflog entry carries its own timestamp.
-    try:
-        with open(os.path.join(gitdir, 'logs', 'HEAD'), 'rb') as fh:
-            fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - 4096))
-            tail = fh.read().decode('utf-8', 'replace').strip().splitlines()
-        if tail:
-            match = re.search(r'> (\d+) [+-]\d{4}\t', tail[-1])
-            if match:
+    # Expiry rewrites old reflogs without new work; only their event times count.
+    logs = [os.path.join(gitdir, 'logs', 'HEAD')]
+    if branch:
+        logs.append(os.path.join(common_dir, 'logs', branch))
+    for log in logs:
+        try:
+            with open(log, 'rb') as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 4096))
+                tail = fh.read().decode('utf-8', 'replace').strip().splitlines()
+            if tail:
+                match = re.search(r'> (\d+) [+-]\d{4}\t', tail[-1])
+                if not match:
+                    raise Skip('unreadable reflog event time: %s' % log)
                 newest = max(newest, float(match.group(1)))
-    except FileNotFoundError:
-        pass
+        except FileNotFoundError:
+            pass
     return newest
 
 
@@ -858,7 +861,15 @@ def run(args):
             log.write(decision='skip', path=rpath, reason='recheck: %s' % exc)
             continue
         try:
-            git(['-C', main_path, 'worktree', 'remove', rpath], '/')
+            owner = shutil.which('wt-remove') or os.path.expanduser('~/.local/bin/wt-remove')
+            result = subprocess.run([owner, rpath], cwd='/', capture_output=True, text=True)
+            if result.returncode:
+                raise Skip('wt-remove refused (exit %s); source retained' % result.returncode)
+            receipt = json.loads(result.stdout.strip().splitlines()[-1])
+            if (not isinstance(receipt, dict) or receipt.get('path') != rpath
+                    or receipt.get('action') not in ('removed-clean', 'salvaged-removed')
+                    or os.path.lexists(rpath)):
+                raise Skip('wt-remove did not confirm this exact removal')
         except Exception as exc:
             counts['skipped'] += 1
             counts['errors'] += 1
@@ -866,14 +877,7 @@ def run(args):
             continue
         counts['removed'] += 1
         removed.add(rpath)
-        log.write(decision='remove', path=rpath, branch=branch or '(detached)')
-        try:
-            git(['-C', main_path, 'worktree', 'prune', '--expire=%d.seconds.ago' % int(args.idle_hours * 3600)], '/')
-        except Exception as exc:
-            log.write(event='prune-failed', repo=common_dir, reason=str(exc))
-        if branch:
-            if delete_branch(branch, main_path, common_dir, log):
-                counts['branches_deleted'] += 1
+        log.write(decision='remove', path=rpath, branch=branch or '(detached)', receipt=json.dumps(receipt))
 
     if not args.no_derived:
         derived = DerivedPass(args, log)
@@ -1366,51 +1370,6 @@ def recheck(rpath, main_path, common_dir, args, log):
         users = sorted(p for p in held if inside(p, rpath))
         if users:
             raise Skip('in use by a process: %s' % users[0])
-
-
-def is_default_name(default, name):
-    """True when name matches the remote default branch, slashes included."""
-    prefix = 'refs/remotes/origin/'
-    short = default[len(prefix):] if default.startswith(prefix) else default
-    return name in (short, default.rsplit('/', 1)[-1])
-
-
-def local_head(common_dir):
-    """The branch the repository's own HEAD names (a bare repo's default), or None."""
-    try:
-        ref = git(['--git-dir', common_dir, 'symbolic-ref', '-q', 'HEAD'], '/').strip()
-    except Skip:
-        return None
-    return ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else None
-
-
-def delete_branch(ref, main_path, common_dir, log):
-    name = ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else None
-    if not name:
-        return False
-    default = default_branch(common_dir)
-    if not default:
-        log.write(event='branch-kept', branch=name, reason='remote default branch unknown')
-        return False
-    if is_default_name(default, name) or name == local_head(common_dir):
-        log.write(event='branch-kept', branch=name, reason='is the default branch name')
-        return False
-    try:
-        users = [e for e in list_worktrees(common_dir) if e.get('branch') == ref]
-        if users:
-            log.write(event='branch-kept', branch=name, reason='checked out in %s' % users[0].get('worktree'))
-            return False
-        proc = subprocess.run(['git', '-C', main_path, 'merge-base', '--is-ancestor', ref, default],
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if proc.returncode != 0:
-            log.write(event='branch-kept', branch=name, reason='not merged into %s' % default)
-            return False
-        git(['-C', main_path, 'branch', '-d', name], '/')
-    except Exception as exc:
-        log.write(event='branch-kept', branch=name, reason=str(exc))
-        return False
-    log.write(event='branch-deleted', branch=name, merged_into=default)
-    return True
 
 
 def main(argv=None):
