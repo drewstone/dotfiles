@@ -9,7 +9,21 @@ set -euo pipefail
 # they set core.hooksPath=/dev/null (the sanctioned pattern), or export
 # GIT_ALLOW_TEST_IDENTITY=1.
 if [ "${GIT_ALLOW_TEST_IDENTITY:-0}" != "1" ]; then
-  commit_email="$(git config user.email || true)"
+  # Check the identity the commit will carry, not config alone: GIT_AUTHOR_EMAIL and
+  # GIT_COMMITTER_EMAIL override config, so a config-only check passed a commit authored
+  # as anyone with Drew's config underneath it, and blamed config for a fixture's env.
+  ident_email() { git var "$1" 2>/dev/null | sed -n 's/^.*<\([^>]*\)>.*$/\1/p'; }
+  commit_email="$(ident_email GIT_AUTHOR_IDENT)"
+  committer_email="$(ident_email GIT_COMMITTER_IDENT)"
+  if [ "$commit_email" = drewstone329@gmail.com ] && [ "$committer_email" != drewstone329@gmail.com ]; then
+    commit_email="$committer_email"
+  fi
+  if [ -n "${GIT_AUTHOR_EMAIL:-}${GIT_COMMITTER_EMAIL:-}" ] && [ "$commit_email" != drewstone329@gmail.com ]; then
+    echo "pre-commit: refusing commit as <${commit_email:-unset}>, from GIT_AUTHOR_EMAIL/GIT_COMMITTER_EMAIL (set by the caller, or by git when amending a commit someone else authored; use --reset-author for your own work)." >&2
+    echo "  FIXTURE / THROWAWAY REPOS: export GIT_ALLOW_TEST_IDENTITY=1 for that command," >&2
+    echo "  or set core.hooksPath=/dev/null in the fixture." >&2
+    exit 1
+  fi
   case "$commit_email" in
     drewstone329@gmail.com) ;;
     *)
