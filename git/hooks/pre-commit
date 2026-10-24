@@ -19,7 +19,7 @@ if [ "${GIT_ALLOW_TEST_IDENTITY:-0}" != "1" ]; then
     commit_email="$committer_email"
   fi
   if [ -n "${GIT_AUTHOR_EMAIL:-}${GIT_COMMITTER_EMAIL:-}" ] && [ "$commit_email" != drewstone329@gmail.com ]; then
-    echo "pre-commit: refusing commit as <${commit_email:-unset}>, set by GIT_AUTHOR_EMAIL or GIT_COMMITTER_EMAIL in the environment." >&2
+    echo "pre-commit: refusing commit as <${commit_email:-unset}>, from GIT_AUTHOR_EMAIL/GIT_COMMITTER_EMAIL (set by the caller, or by git when amending a commit someone else authored; use --reset-author for your own work)." >&2
     echo "  FIXTURE / THROWAWAY REPOS: export GIT_ALLOW_TEST_IDENTITY=1 for that command," >&2
     echo "  or set core.hooksPath=/dev/null in the fixture." >&2
     exit 1
