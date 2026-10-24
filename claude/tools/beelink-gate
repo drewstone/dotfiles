@@ -1310,22 +1310,15 @@ PYTURBO
     if [ -d "$checkout/.git" ]; then
       if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
     fi
-    finish_disk_observation
-    release_gate_turbo_cache
-    if [ "$watchdog" = 1 ]; then
-      :
-    elif cd "$cache_root"; then
-      # Release before global cache work; the next gate owns the checkout and holder.
-      rm -f "$lock.holder"
-      [ -z "${lock_fd:-}" ] || flock -u "$lock_fd"
-      lock_released=1
+    release_checkout_before_reclaim
+    if [ "${lock_released:-0}" = 1 ]; then
       # Cache capacity cannot turn a successful command red; the disk floor guards starts.
       if ! prune_cache "$cache_root" "" "$cache_max"; then
         cache_note=unpruned
         echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
       fi
       prune_build_dirs "$build_root" "$cache_root/.locks" "" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
-    elif [ "$status" -eq 0 ]; then
+    elif [ "$watchdog" != 1 ] && [ "$status" -eq 0 ]; then
       status=3
     fi
     [ "${lock_released:-0}" = 1 ] || rm -f "$lock.holder"

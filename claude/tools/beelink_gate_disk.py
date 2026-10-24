@@ -449,7 +449,7 @@ def observation_snapshot(start, end, reason, filesystems, unknown, docker, befor
     return copy.deepcopy({
         "schema": SCHEMA, "source": "statvfs", "scope": "shared_host_filesystems",
         "sampler_pid": os.getpid(), "sampler_start_ticks": process_identity(os.getpid()),
-        "boundary": "admission_to_checkout_release; post-unlock global cache reclaim excluded",
+        "boundary": "admission_to_final_boundary; post-unlock global cache reclaim excluded",
         "interval_s": INTERVAL_S, "max_qualified_gap_s": MAX_SAMPLE_GAP_S,
         "start_monotonic_s": start, "end_monotonic_s": end,
         "termination": reason, "filesystems": rows, "unknown_paths": unknown,
@@ -469,7 +469,7 @@ def write_observation(directory, snapshot):
     return {"duration_s": time.monotonic() - started, "error": error}
 
 
-def collect(directory):
+def collect(directory, final_boundary=None):
     directory = Path(directory)
     observation = read_json(directory / "observation.json")
     if observation is None:
@@ -489,6 +489,11 @@ def collect(directory):
             if fs.get("identity_changed"):
                 fs["full_window"] = False
         observation["docker_identity_revalidated"] = "every_sample_and_collect"
+    # The caller names where it stopped the observer. Only an observer that
+    # finished on that stop, with intact coverage, reached it; nothing later is claimed.
+    reached = observation.get("termination") == "finished" and "coverage_error" not in observation
+    observation["final_boundary"] = final_boundary if final_boundary and reached else "unreached"
+    observation["requested_final_boundary"] = final_boundary or "unrecorded"
     observation["directory_snapshots"] = {phase: read_json(directory / (phase + ".json"))
                                            for phase in ("before", "after_install", "end")}
     observation["directory_complete"] = all(isinstance(observation["directory_snapshots"].get(phase), dict)
@@ -547,7 +552,7 @@ if __name__ == "__main__":
         directory, parent, budget, *paths = arguments
         sys.exit(observe(directory, int(parent), int(budget), paths))
     elif action == "collect":
-        collect(arguments[0])
+        collect(*arguments[:2])
     elif action == "signal":
         sys.exit(signal_sampler(Path(arguments[0]), int(arguments[1]), arguments[2]))
     elif action == "grace":
