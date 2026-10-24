@@ -14,7 +14,7 @@
     "loader", "action", "meta", "links", "headers", "handle", "ErrorBoundary", "HydrateFallback",
     "clientLoader", "clientAction", "shouldRevalidate", "Route", "Props"
   ],
-  "history": [".agent/", ".evolve/", ".agents/", "archive/", "pursuits/", "reports/"],
+  "history": [".agent/", ".evolve/", ".agents/", "archive/", "experiments/", "prereg/", "pursuits/", "reports/"],
   "trivial": "^([{}()\\[\\];,]+|\\}\\)?;?|\\)\\s*;?|\\]\\s*;?|//.*|/\\*.*|\\*.*|\\*/|import .*|export \\* from .*|export \\{[^}]*\\} from .*|\\} from .*)$",
   "window": 10,
   "fileLimit": 1000,

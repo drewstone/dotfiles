@@ -25,18 +25,18 @@ FUNCTION_HUG = tuple(_P["functionHug"])
 
 
 def logic(path):
-    """A file whose lines count toward production size: logic or a workflow, and not a test, declaration or vendored path."""
-    return bool((LOGIC.search(path) or WORKFLOW.search(path)) and not EXEMPT.search(path))
+    """A file whose lines count toward production size: logic or a workflow, and not a test, declaration, vendored path or dated record."""
+    return bool((LOGIC.search(path) or WORKFLOW.search(path)) and not EXEMPT.search(path) and not history(path))
 
 
 def source(path):
     """A TypeScript or JavaScript file outside tests: the duplication/export population."""
-    return bool(SOURCE.search(path) and not SKIP.search(path))
+    return bool(SOURCE.search(path) and not SKIP.search(path) and not history(path))
 
 
 def function_source(path):
     """A supported AST source outside tests, including Python."""
-    return bool(FUNCTION_SOURCE.search(path) and not SKIP.search(path))
+    return bool(FUNCTION_SOURCE.search(path) and not SKIP.search(path) and not history(path))
 
 
 def history(path):
