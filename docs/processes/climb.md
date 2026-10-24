@@ -72,10 +72,10 @@ Match depth to the ask:
 2. **Evidence:** numbers with value, unit, baseline and source; tables where facts are parallel.
 3. **Visuals built from data:**
    - in the terminal, [`viz`](../../claude/tools/README.md#viz) charts (bars, grouped bars, sparklines, pass/fail strips, stacks, waterfalls, timelines, tables), never typed by hand; in Claude Code chat they draw in colored emoji (`VIZ_COLOR=emoji`), and a status is `viz brief spec.json` pasted as it prints;
-   - for depth, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and written as a local HTML file under `~/reviews/` (never a claude.ai artifact: an account switch makes it unreadable); `viz brief` prints the same spec as the terminal status, and the [operator review](https://github.com/tangle-network/discovery-lab/blob/master/reports/climb/operator-review-20261010.html) shows the bar.
+   - only in the page cases [AGENTS.md](../../claude/AGENTS.md) names, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and written as a local HTML file under `~/reviews/` (never a claude.ai artifact: an account switch makes it unreadable); `viz brief` prints the same spec as the terminal status, and the [operator review](https://github.com/tangle-network/discovery-lab/blob/master/reports/climb/operator-review-20261010.html) shows the bar.
 4. **Scoreboard:** every registered prediction as PASS, FAIL or PENDING beside its measured value.
 5. **Proposals:** each states today's number, the number to beat, the test, the owner and the first step, ranked by impact for the effort.
-6. **One path** to the full page (its absolute path under `~/reviews/`), and one line naming the next action.
+6. **Next:** one line naming the next action, and the page's absolute path when one was written.
 
 Thin bullets are a failure for analysis: if facts are parallel, use a table; if they are quantities, draw them.
 

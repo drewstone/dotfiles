@@ -1,6 +1,6 @@
 # Brief kit
 
-Use the kit when an answer has more than one dimension: an operations review, a fleet or incident report, a comparison, or a status that needs duration, shape or ownership.
+Use the kit only in the page cases [AGENTS.md](../../../AGENTS.md) names: Drew asked for a page, someone else will read the work, or the evidence cannot fit a terminal answer. A status or analysis Drew reads alone stays in the terminal.
 Write a JSON spec, check it, look once, and write the page to `~/reviews/<YYYY-MM-DD>-<slug>.html`; give its absolute path and `open` it. Never publish it as a claude.ai artifact.
 A one-fact answer stays a sentence.
 
