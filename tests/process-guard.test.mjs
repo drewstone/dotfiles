@@ -550,6 +550,27 @@ test("env-dump allows names, counts, fingerprints, non-secret names and env used
   }
 });
 
+// From 2026-10-17 to 10-24, 64 of the Mac's 99 env-dump refusals matched a path or a word named env that
+// was not the command, and 8 printed a variable whose name looked secret but held a path, a name or a session id.
+test("env-dump allows env that is not the command, redacted values and non-secret variable names", () => {
+  for (const command of [
+    "ls ~/.config/disco/env | grep -i SANDBOX", "cut -d= -f1 ~/.config/disco/env", "[ -f $d/env ] && echo exists",
+    "printf '%s\\n' '#!/usr/bin/env bash' 'echo hi' > /tmp/x.sh", "tangle-admin env 2>&1 | cut -d= -f1",
+    "cat > ~/.config/disco/env/.DISCO_SANDBOX_KEY_PLAYS.new", "env | grep -i FLEET | sed 's/=.*/=<set>/'",
+    "printenv | grep -E '^TANGLE' | sed -E 's/=.*/=<redacted>/'", "printf '%s\\n' \"$CLAUDE_CODE_SESSION_ID\"",
+    "echo \"keeper $SANDBOX_KEY_FILE\"", "echo \"key name: $KEYNAME\"",
+    "env | grep -oE \"^(TANGLE|SANDBOX)_[A-Z_]*(KEY|TOKEN)\" | head -5", "env | grep -c TANGLE_",
+    "cat /proc/1653568/environ | tr '\\0' '\\n' | grep -c UV_THREADPOOL_SIZE", "grep -l c39862803b /proc/3469945/environ",
+    "git commit -q -m 'the bash tool dumps env, /proc/self/environ, and more'",
+  ]) {
+    assert.equal(decide(command), "allow", command);
+  }
+  for (const command of ["env | sed -E 's/(KEY|TOKEN)=.*/\\1=<redacted>/'", "echo $SESSION_TOKEN", "do env | grep X",
+    "env | grep -o 'KEY=.*'", "tr '\\0' '\\n' < /proc/866036/environ | grep -E '^(TMPDIR|NODE_OPTIONS)'"]) {
+    assert.equal(decide(command), "deny", command);
+  }
+});
+
 test("env-dump override is Drew's session flag, not a command-line assignment", () => {
   assert.equal(decide("env | grep TANGLE_", { env: { CC_ALLOW_ENV_DUMP: "1" } }), "allow");
   assert.equal(decide("CC_ALLOW_ENV_DUMP=1 env | grep TANGLE_"), "deny");

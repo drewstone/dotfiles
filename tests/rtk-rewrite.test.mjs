@@ -900,3 +900,17 @@ test("every mutant of the guard is caught by this file", async (t) => {
   }
   t.diagnostic(`${injected}/${MUTANTS.length} mutants injected into ${HOOK_SOURCE}; ${MUTANTS.length - injected} inapplicable`);
 });
+
+// subagent-wait-guard.sh owns a subagent's background call: it returns its own updatedInput, and
+// when two hooks return one the last to finish wins, so rtk must return none for that call.
+test("rtk leaves a subagent's background call to subagent-wait-guard", (t) => {
+  if (!has("git")) return t.skip("git not installed");
+  if (!has("rtk")) return t.skip("rtk not installed");
+  const fixture = buildFixture("subagent-background");
+  const hook = (payload) => spawnSync(hookPath, [], { cwd: fixture.repo, env: fixture.env, encoding: "utf8", input: JSON.stringify(payload) });
+  const tool_input = { command: "git diff", run_in_background: true };
+  assert.ok(routesToRtk(JSON.parse(hook({ tool_input }).stdout).hookSpecificOutput.updatedInput.command, "diff"),
+    "the main session's background git diff is no longer rewritten, so this test measures nothing");
+  assert.equal(hook({ tool_input, agent_id: "a1" }).stdout.trim(), "");
+  assert.equal(hook({ tool_input, transcript_path: "/x/s1/subagents/agent-a1.jsonl" }).stdout.trim(), "");
+});

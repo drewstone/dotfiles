@@ -686,10 +686,10 @@ receipt_guard() {
   log_call "gate-receipt: $head" "$@"
 }
 
-# Scheduled runs of these two workflows are not cancelled through gh-drew. company-01's watchers were
-# cancelling them, through `run cancel` and through `api POST .../actions/runs/<id>/cancel`, so both forms
-# are covered; company-01 approved this refusal on 2026-10-19 at about 08:30Z and stopped the watchers.
-# A workflow_dispatch run of either workflow, and a scheduled run of any other workflow, stays cancellable.
+# In-progress scheduled runs of these two workflows are not cancelled through gh-drew, by `run cancel` or
+# `api POST .../actions/runs/<id>/cancel` (company-01 approved this on 2026-10-19 and stopped its watchers).
+# A run that has not started has measured nothing and stays cancellable: on 2026-10-19 and 10-23 such a run,
+# with no runner, held the production deploy lock. So do workflow_dispatch runs and other workflows' runs.
 # The workflows are named by file; a run's file is the last component of its `path` (GitHub appends
 # `@<ref>` for some events, which is dropped).
 scheduled_cancel_refused='@benchmark-production.yml@create-waterfall.yml@'
@@ -742,10 +742,10 @@ parse_run_cancel() {
 cancel_guard() {
   local token="$1"; shift
   parse_run_cancel "$@" || return 0
-  local target="$cancel_repo" err row rc=0 event path file
+  local target="$cancel_repo" err row rc=0 event rest path file status
   [[ -n "$target" ]] || target='{owner}/{repo}'
   err="$(mktemp)"
-  row="$(GH_TOKEN="$token" gh api "repos/$target/actions/runs/$cancel_run" --jq '[.event, (.path // "")] | @tsv' 2>"$err")" || rc=$?
+  row="$(GH_TOKEN="$token" gh api "repos/$target/actions/runs/$cancel_run" --jq '[.event, (.path // ""), .status] | @tsv' 2>"$err")" || rc=$?
   if (( rc != 0 )); then
     log_call refused "$@"
     echo "gh-drew: refusing to cancel run $cancel_run: cannot read its event: $(tr '\n' ' ' <"$err" | cut -c1-300)" >&2
@@ -754,9 +754,9 @@ cancel_guard() {
     exit 1
   fi
   rm -f "$err"
-  event="${row%%$'\t'*}" path="${row#*$'\t'}"
+  event="${row%%$'\t'*}" rest="${row#*$'\t'}"; path="${rest%%$'\t'*}" status="${rest##*$'\t'}"
   file="${path%%@*}"; file="${file##*/}"
-  if [[ "$event" == schedule && "$scheduled_cancel_refused" == *"@$file@"* ]]; then
+  if [[ "$event" == schedule && "$scheduled_cancel_refused" == *"@$file@"* && "$status" == in_progress ]]; then
     # Drew, 2026-10-19 ~20:00Z: "i want to ship directly RIGHT NOW" while a queued scheduled benchmark,
     # with no runner, held the release yield and this guard had no way through. The override quotes his order.
     local allow="${GH_DREW_ALLOW_SCHEDULED_CANCEL:-}"
@@ -767,9 +767,9 @@ cancel_guard() {
       return 0
     fi
     log_call refused "$@"
-    echo "gh-drew: refusing to cancel run $cancel_run: it is a scheduled run of $file." >&2
-    echo "Scheduled runs of benchmark-production.yml and create-waterfall.yml are not cancelled (company-01, 2026-10-19)." >&2
-    echo "A workflow_dispatch run of either stays cancellable." >&2
+    echo "gh-drew: refusing to cancel run $cancel_run: it is a scheduled run of $file, in progress." >&2
+    echo "Running scheduled runs of benchmark-production.yml and create-waterfall.yml are not cancelled (company-01, 2026-10-19)." >&2
+    echo "A workflow_dispatch run of either, or a scheduled one that has not started, stays cancellable." >&2
     echo "When Drew orders it, cancel with GH_DREW_ALLOW_SCHEDULED_CANCEL=\"<his words, with the time>\"." >&2
     exit 1
   fi

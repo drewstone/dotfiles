@@ -395,3 +395,32 @@ esac
     rmSync(s.root, { recursive: true, force: true });
   }
 });
+
+// A scheduled benchmark that has not started has measured nothing; on 2026-10-19 and 10-23 one, with no
+// runner, held the production deploy lock while gh-drew refused to cancel it.
+test("a scheduled benchmark cancel is refused only while the run is in progress", () => {
+  const s = sandbox();
+  try {
+    writeFileSync(join(s.root, "bin", "gh"), `#!/usr/bin/env bash
+case "$*" in
+  "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
+  "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
+  "api repos/o/r/actions/runs/7 --jq"*) printf 'schedule\\t.github/workflows/benchmark-production.yml\\t%s\\n' "$FAKE_STATUS" ;;
+  "run cancel 7 -R o/r") echo "cancelled 7" ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+`);
+    const cancel = (status) => spawnSync(ghDrew, ["run", "cancel", "7", "-R", "o/r"], { cwd: s.work, env: { ...s.env, FAKE_STATUS: status }, encoding: "utf8" });
+    for (const status of ["queued", "waiting", "pending"]) {
+      const r = cancel(status);
+      assert.equal(r.status, 0, `${status}: ${r.stderr}`);
+      assert.match(r.stdout, /cancelled 7/);
+    }
+    const r = cancel("in_progress");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /refusing to cancel run 7: it is a scheduled run of benchmark-production.yml, in progress/);
+    assert.doesNotMatch(r.stdout, /cancelled/);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});

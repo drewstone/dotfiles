@@ -37,4 +37,16 @@ test("refuses unbounded finds that -xdev does not bound", () => {
   }
 });
 
+test("does not read script assignments, rg replacements or empty operands as broad searches (2026-10-17..24 refusals)", () => {
+  for (const command of [
+    "python3 - <<'EOF'\nfd = os.open(rootfs / 'sidecar.ext4.source', os.O_RDONLY)\ndu = (int(s['end']) - int(s['start'])) / 1e6\nEOF",
+    "rg -n 'durable identity hydration' -r '' ../tests",
+    "rg -n 'maxSystemPromptBytes' -r '' src tests scripts",
+    "find .claude/projects -name '*.jsonl' -mtime -7 -print0 | du -ch --files0-from=- | tail -1",
+  ]) {
+    assert.equal(decide(command), null, command);
+  }
+  assert.equal(decide("grep -rl key ''", "/")?.permissionDecision, "deny");
+});
+
 test.after(() => rmSync(repo, { recursive: true, force: true }));

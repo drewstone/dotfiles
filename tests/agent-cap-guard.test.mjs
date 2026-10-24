@@ -13,7 +13,7 @@ const HOOK = resolve("claude/hooks/agent-cap-guard.py");
 const NOW = 1_800_000_000;
 const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CC_")));
 
-function session({ opus = 0, sonnet = 0, ageSecs = 30 } = {}) {
+function session({ opus = 0, sonnet = 0, done = 0, ageSecs = 30 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "agent-cap-"));
   const sub = join(root, "sess", "subagents", "workflows", "wf_1");
   mkdirSync(sub, { recursive: true });
@@ -25,6 +25,13 @@ function session({ opus = 0, sonnet = 0, ageSecs = 30 } = {}) {
   let i = 0;
   for (let k = 0; k < opus; k++) write(i++, "claude-opus-5-5");
   for (let k = 0; k < sonnet; k++) write(i++, "claude-sonnet-5-5");
+  // A finished agent: its last assistant message ended the turn with its report.
+  for (let k = 0; k < done; k++) {
+    const file = join(sub, `agent-a${String(i++).padStart(4, "0")}.jsonl`);
+    const msg = (stop_reason) => JSON.stringify({ type: "assistant", message: { model: "claude-opus-5-5", stop_reason } });
+    writeFileSync(file, `${msg("tool_use")}\n${msg("end_turn")}\n${JSON.stringify({ type: "attachment" })}\n`);
+    utimesSync(file, NOW - ageSecs, NOW - ageSecs);
+  }
   return join(root, "sess.jsonl");
 }
 
@@ -66,6 +73,11 @@ test("with no Opus agent live, a Workflow starts", () => {
 
 test("at the Opus cap, a Workflow launch or resume is refused", () => {
   assert.equal(decision(run(session({ opus: 3 }), "Workflow", { scriptPath: "/x.js", resumeFromRunId: "wf_x" })), "deny");
+});
+
+test("agents that finished inside the live window do not count (2026-10-24: 40 of 85 refusals)", () => {
+  assert.equal(decision(run(session({ done: 4 }), "Workflow", { script: "x" })), "allow");
+  assert.equal(decision(run(session({ opus: 3, done: 4 }))), "deny");
 });
 
 test("agents silent longer than the live window do not count", () => {
