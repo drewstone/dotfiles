@@ -155,14 +155,15 @@ def docker_identity():
 def docker_usage(identity):
     if identity.get("status") != "local":
         return {"status": "unknown", "reason": identity.get("reason")}
-    raw = docker_query(["system", "df", "--format", "{{json .}}"])
     try:
+        raw = docker_query(["system", "df", "--format", "{{json .}}"])
         rows = [json.loads(line) for line in raw.splitlines()] if raw else []
         if not rows or not all(isinstance(row, dict) for row in rows):
             raise ValueError()
         return {"status": "measured", "source": "docker_system_df", "scope": "daemon logical usage, not filesystem allocated bytes",
                 "rows": [{key: row.get(key) for key in ("Type", "TotalCount", "Active", "Size", "Reclaimable")} for row in rows]}
-    except ValueError:
+    except Exception:
+        # Includes undecodable daemon output; usage is optional and never unwinds the observer.
         return {"status": "unknown", "reason": "docker_usage_unreadable_or_timeout"}
 
 
@@ -218,14 +219,15 @@ def signal_sampler(directory, pid, name):
             os.close(descriptor)
 
 
-def add_filesystem(filesystems, kind, path):
+def add_filesystem(filesystems, kind, path, exact=False):
     alias = {"kind": kind, "path": path, "directory_readable": os.access(path, os.R_OK | os.X_OK)}
     target = Path(path)
     descriptor = None
     try:
         # A cold checkout may not exist yet; its nearest ancestor identifies its
-        # filesystem without pretending the directory itself was measured.
-        while not target.exists() and target != target.parent:
+        # filesystem without pretending the directory itself was measured. An
+        # exact path (Docker's root) never falls back to a parent filesystem.
+        while not exact and not target.exists() and target != target.parent:
             target = target.parent
         # O_PATH needs no read permission, so a root-owned 0710 Docker root still
         # yields kernel fstat/fstatvfs identity; directory_readable stays honest.
@@ -261,7 +263,7 @@ def pin_docker(filesystems, unknown):
         docker = {"status": "unknown", "reason": "docker_metadata_failed", "error": type(error).__name__}
     pinned = {"status": "unknown", "reason": docker.get("reason", "docker_not_local")}
     if docker["status"] == "local":
-        added = add_filesystem(filesystems, "docker", docker["path"])
+        added = add_filesystem(filesystems, "docker", docker["path"], exact=True)
         if added is not True:
             unknown.append(added)
             pinned["reason"] = added.get("error", "filesystem_unreadable")
@@ -272,15 +274,30 @@ def pin_docker(filesystems, unknown):
     return dict(docker, filesystem_identity=pinned)
 
 
-def revalidate_docker(docker, filesystems):
+def path_identity(path):
+    info, fs = os.stat(path), os.statvfs(path)
+    return info.st_dev, fs.f_fsid
+
+
+def bounded_path_identity(path):
+    """collect runs outside the observer's stop grace, so its lookup is a killable child."""
+    result = subprocess.run([sys.executable, "-I", "-c", "import os,sys\ns=os.stat(sys.argv[1]);v=os.statvfs(sys.argv[1])\n"
+                             "print(s.st_dev,v.f_fsid)", path], capture_output=True, text=True,
+                            timeout=DOCKER_QUERY_S, stdin=subprocess.DEVNULL)
+    if result.returncode:
+        raise OSError("identity_unreadable")
+    device, fsid = result.stdout.split()
+    return int(device), int(fsid)
+
+
+def revalidate_docker(docker, filesystems, resolve=path_identity):
     """Re-resolve the live Docker root path; a remount, replacement or read error disqualifies its row."""
     pinned = docker["filesystem_identity"]
     if pinned.get("status") != "pinned_before_baseline":
         return
     try:
-        info, fs = os.stat(docker["path"]), os.statvfs(docker["path"])
-        reason = None if (info.st_dev, fs.f_fsid) == (pinned["device"], pinned["fsid"]) else "identity_changed"
-    except OSError:
+        reason = None if resolve(docker["path"]) == (pinned["device"], pinned["fsid"]) else "identity_changed"
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         reason = "identity_unreadable"
     if reason:
         pinned.update(status="unknown", reason=reason, changed_monotonic_s=time.monotonic())
@@ -311,6 +328,7 @@ def sample(filesystems, now):
 
 def observe(directory, parent, budget, paths):
     directory = Path(directory)
+    deadline = time.monotonic() + budget  # The caller's budget counts from launch, not baseline.
     identity = process_identity(parent)
     stop = []
     signal.signal(signal.SIGUSR1, lambda *_: stop.append("finished"))
@@ -349,7 +367,7 @@ def observe(directory, parent, budget, paths):
             sample(filesystems, now)
             if identity is None or process_identity(parent) != identity:
                 reason = "parent_exited"
-            elif now >= start + budget and reason != "parent_exited":
+            elif now >= deadline and reason != "parent_exited":
                 reason = "deadline"
             elif "terminated" in stop:
                 reason = "terminated"
@@ -436,7 +454,8 @@ def observation_snapshot(start, end, reason, filesystems, unknown, docker, befor
         "start_monotonic_s": start, "end_monotonic_s": end,
         "termination": reason, "filesystems": rows, "unknown_paths": unknown,
         "work": dict(work, scope="completed sampling loops and progress writes; final publication excluded"),
-        "docker": dict(docker, usage_before=before, usage_after=after),
+        # docker stays byte-identical to ready.docker unless its identity changed.
+        "docker": docker, "docker_usage": {"before": before, "after": after},
         "limits": "Sampled lower bound, not exact transient peak. Concurrent gates, CI, Docker, and reclaim affect host free space. Deduplicate filesystems; never sum aliases. f_bavail is process-available; f_bfree also includes reserved blocks."})
 
 
@@ -465,7 +484,7 @@ def collect(directory):
     if isinstance(docker, dict) and isinstance(docker.get("filesystem_identity"), dict):
         rows = {(fs.get("device"), fs.get("fsid")): fs for fs in observation.get("filesystems", [])
                 if isinstance(fs, dict)}
-        revalidate_docker(docker, rows)
+        revalidate_docker(docker, rows, resolve=bounded_path_identity)
         for fs in rows.values():
             if fs.get("identity_changed"):
                 fs["full_window"] = False
