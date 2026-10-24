@@ -1544,7 +1544,7 @@ if [ "${1:-}" = --window-probe ]; then
   exit $?
 fi
 if [ "${1:-}" = --remote ]; then
-  shift
+  shift; [ "${1:-}" != --args-file ] || { mapfile -d '' -t gate_args < "$2" && set -- "${gate_args[@]}"; } || die "unreadable gate args file"
   remote_gate "$@"
 fi
 if [ "${1:-}" = --job-submit ]; then
