@@ -179,8 +179,12 @@ on_beelink() {
   # ("exec request failed on channel 0"); on 2026-10-18 a 23 KB patch, base64
   # encoded in argv, became 41,676 bytes and the submit was reported as a lost
   # connection. Large arguments ride on stdin ahead of the script instead.
+  # The tighter limit is cmd.exe's 8191 characters, measured on the command as
+  # sent: env assignments plus shell-quoted arguments. On 2026-10-24 a 5,880-byte
+  # payload quoted to over 8 KB and failed "The command line is too long" while
+  # its raw length passed the old 8192-byte check.
   local -a remote_args=("$@")
-  if (( $(printf '%s ' "$@" | wc -c) > 8192 )); then
+  if (( $(printf '%q ' "${envs[@]}" "$@" | wc -c) > 4096 )); then
     args_line="set -- $(printf '%q ' "$@")"
     remote_args=()
   fi
