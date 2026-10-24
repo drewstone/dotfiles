@@ -289,6 +289,23 @@ install_uv() {
     env UV_NO_MODIFY_PATH=1 sh "$WORK/uv-install.sh" >/dev/null 2>&1
 }
 
+# Runner accounts cannot read this user's home, so the Nix profile publisher
+# reads the gate's disk floor (beelink-gate --disk-floor-bytes) from a
+# root-owned copy. The copy is the same source tree, refreshed on every run.
+GATE_LIB=/usr/local/lib/beelink-gate
+GATE_SRC="$DOTFILES/claude/tools"
+gate_cli_current() {
+  [ -L /usr/local/bin/beelink-gate ] && [ "$(readlink /usr/local/bin/beelink-gate)" = "$GATE_LIB/beelink-gate" ] &&
+    diff -rq "$GATE_SRC/beelink-gate" "$GATE_LIB/beelink-gate" >/dev/null 2>&1 &&
+    diff -rq "$GATE_SRC/beelink-gate-lib" "$GATE_LIB/beelink-gate-lib" >/dev/null 2>&1
+}
+install_gate_cli() {
+  as_root install -d -m 0755 "$GATE_LIB" &&
+    as_root cp -R --no-preserve=ownership "$GATE_SRC/beelink-gate" "$GATE_SRC/beelink-gate-lib" "$GATE_SRC"/beelink_gate_*.py "$GATE_LIB/" &&
+    as_root chmod -R a+rX,go-w "$GATE_LIB" &&
+    as_root ln -sfn "$GATE_LIB/beelink-gate" /usr/local/bin/beelink-gate
+}
+
 module_tools() {
   section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv"
   # shellcheck disable=SC2086 # the list splits on purpose
@@ -307,4 +324,5 @@ module_tools() {
   ensure "GitHub CLI apt source" gh_source_ok -- add_gh_source
   ensure "gh from GitHub's apt source" gh_from_github -- install_gh
   ensure "uv in ~/.local/bin" test -x "$HOME/.local/bin/uv" -- install_uv
+  ensure "beelink-gate readable by runner accounts ($GATE_LIB)" gate_cli_current -- install_gate_cli
 }
