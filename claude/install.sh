@@ -79,7 +79,7 @@ elif [ ! -e "$REFLECTIONS" ]; then
   echo "  STATE $REFLECTIONS (seeded from $SCRIPT_DIR/reflections)"
 fi
 
-# Directives (per-response interaction-style layer; read by hooks/inject-directive.sh)
+# Directives (interaction-style layer, one copy per context; read by hooks/inject-directive.sh)
 link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 
 # Skills. A skill can be a symlink into another repo's checkout, so a missing

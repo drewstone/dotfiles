@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook — injects the active interaction directive into every turn.
+# SessionStart hook (sources startup, resume, clear, compact): injects the active interaction
+# directive once per context window, and again after a compaction drops it. On UserPromptSubmit,
+# until 2026-10-24, it added ~4 KB on every prompt (six copies landed in one turn that day).
 #
 # Single source of truth: ~/.claude/directives/active + variants/<slug>.md
 # (symlinked from ~/dotfiles/claude/directives by install.sh).
@@ -64,6 +66,6 @@ fi
 
 jq -n --rawfile body "$FILE" --arg slug "$SLUG" '
   { hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
+      hookEventName: "SessionStart",
       additionalContext: ("<interaction-directive variant=\"" + $slug + "\">\n" + $body + "\n</interaction-directive>")
   } }'

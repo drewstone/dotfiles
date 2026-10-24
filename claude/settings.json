@@ -21,6 +21,15 @@
         ]
       },
       {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/inject-directive.sh"
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
@@ -31,14 +40,6 @@
       }
     ],
     "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/inject-directive.sh"
-          }
-        ]
-      },
       {
         "hooks": [
           {
