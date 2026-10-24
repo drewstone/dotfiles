@@ -167,9 +167,8 @@ def exports(sources):
     """Exported declaration names and the files that declare each, as dup-export-ratchet reads them."""
     defs = collections.defaultdict(set)
     for p, text in sources.items():
-        for line in text.splitlines():
-            if (m := C.DECLARATION.match(line)) and m.group(1) not in C.CONVENTION:
-                defs[m.group(1)].add(p)
+        for name in C.declared_exports(text):
+            defs[name].add(p)
     return defs
 
 
