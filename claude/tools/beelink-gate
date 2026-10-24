@@ -1486,6 +1486,8 @@ PYTURBO
   check_floor "$beelink" || floor_ok=1
   observe_install_reserve "after install"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  # Queue ownership transfers only after the last reversible placement guard.
+  [ -z "$gate_id" ] || echo "beelink-gate: placement handoff gate_id=$gate_id" >&2
   cancel_if_requested
   export BEELINK_GATE_PHASE_FILE="$timing_file"
   echo "beelink-gate: running ${display% }" >&2
@@ -1730,9 +1732,10 @@ stop_checkout_reservations() {
 }
 
 watch_checkout_admission() {
-  local log=$1 file
+  local log=$1 expected_gate_id=$2 file
+  [ -n "$expected_gate_id" ] || return 0
   while :; do
-    if grep -q '^beelink-gate: lock, host slot .* admitted on ' "$log" 2>/dev/null; then
+    if grep -Fqx -- "beelink-gate: placement handoff gate_id=$expected_gate_id" "$log" 2>/dev/null; then
       for file in "${checkout_reservation_files[@]}"; do : > "$file.stop"; done
       return 0
     fi
@@ -2276,12 +2279,12 @@ while :; do
   [ "$rc" = 0 ] || exit "$rc"
   frontend_record placement submitted "$gate_id"
   frontend_phase attach
-  # Keep reservations until the submitted gate itself has joined the checkout
-  # queue. Its own urgent marker then survives a lost launcher or SSH session.
+  # Preserve the original FIFO place until this exact placement passes its
+  # final reversible guard, including both post-fetch disk-floor checks.
   if [ -n "$checkout_reservation_dir" ]; then
     admission_log="$checkout_reservation_dir/admission.log"
     : > "$admission_log"
-    watch_checkout_admission "$admission_log" & checkout_monitor_pid=$!
+    watch_checkout_admission "$admission_log" "$gate_id" & checkout_monitor_pid=$!
     heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id" 2> >(tee "$admission_log" >&2)
     rc=$?
     kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
