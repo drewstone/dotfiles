@@ -219,7 +219,8 @@ start_disk_observation() {
     disk_grace_s=$(gate_disk grace) || disk_grace_s=0
     python3 -c "$beelink_gate_disk_source" observe "$disk_dir" "$$" "$((deadline - SECONDS))" "$HOME" "${disk_paths[@]}" {lock_fd}>&- {slot_fd}>&- </dev/null 2>/dev/null &
     disk_pid=$!
-    for ((disk_try=0; disk_try<40; disk_try++)); do
+    # 5 s: the baseline now waits for up to three 1 s Docker identity queries.
+    for ((disk_try=0; disk_try<100; disk_try++)); do
       [ ! -f "$disk_dir/ready" ] || { disk_ready=1; break; }
       kill -0 "$disk_pid" 2>/dev/null || break
       sleep 0.05

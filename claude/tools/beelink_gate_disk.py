@@ -155,14 +155,15 @@ def docker_identity():
 def docker_usage(identity):
     if identity.get("status") != "local":
         return {"status": "unknown", "reason": identity.get("reason")}
-    raw = docker_query(["system", "df", "--format", "{{json .}}"])
     try:
+        raw = docker_query(["system", "df", "--format", "{{json .}}"])
         rows = [json.loads(line) for line in raw.splitlines()] if raw else []
         if not rows or not all(isinstance(row, dict) for row in rows):
             raise ValueError()
         return {"status": "measured", "source": "docker_system_df", "scope": "daemon logical usage, not filesystem allocated bytes",
                 "rows": [{key: row.get(key) for key in ("Type", "TotalCount", "Active", "Size", "Reclaimable")} for row in rows]}
-    except ValueError:
+    except Exception:
+        # Includes undecodable daemon output; usage is optional and never unwinds the observer.
         return {"status": "unknown", "reason": "docker_usage_unreadable_or_timeout"}
 
 
@@ -218,16 +219,21 @@ def signal_sampler(directory, pid, name):
             os.close(descriptor)
 
 
-def add_filesystem(filesystems, kind, path):
+def add_filesystem(filesystems, kind, path, exact=False):
     alias = {"kind": kind, "path": path, "directory_readable": os.access(path, os.R_OK | os.X_OK)}
     target = Path(path)
     descriptor = None
     try:
         # A cold checkout may not exist yet; its nearest ancestor identifies its
-        # filesystem without pretending the directory itself was measured.
-        while not target.exists() and target != target.parent:
+        # filesystem without pretending the directory itself was measured. An
+        # exact path (Docker's root) never falls back to a parent filesystem.
+        while not exact and not target.exists() and target != target.parent:
             target = target.parent
-        descriptor = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+        # O_PATH needs no read permission, so a root-owned 0710 Docker root still
+        # yields kernel fstat/fstatvfs identity; directory_readable stays honest.
+        flags, alias["open_method"] = ((os.O_PATH | os.O_DIRECTORY, "o_path") if hasattr(os, "O_PATH")
+                                       else (os.O_RDONLY | os.O_DIRECTORY, "o_rdonly"))
+        descriptor = os.open(target, flags)
         stat = os.fstat(descriptor)
         fs = os.fstatvfs(descriptor)
         key = (stat.st_dev, fs.f_fsid)
@@ -247,6 +253,57 @@ def add_filesystem(filesystems, kind, path):
             os.close(descriptor)
         alias["error"] = "filesystem_unreadable"
         return alias
+
+
+def pin_docker(filesystems, unknown):
+    """Resolve the local Docker root before baseline and pin its kernel filesystem identity."""
+    try:
+        docker = docker_identity()
+    except Exception as error:
+        docker = {"status": "unknown", "reason": "docker_metadata_failed", "error": type(error).__name__}
+    pinned = {"status": "unknown", "reason": docker.get("reason", "docker_not_local")}
+    if docker["status"] == "local":
+        added = add_filesystem(filesystems, "docker", docker["path"], exact=True)
+        if added is not True:
+            unknown.append(added)
+            pinned["reason"] = added.get("error", "filesystem_unreadable")
+        else:
+            key = next(k for k, fs in filesystems.items() if any(a["kind"] == "docker" for a in fs["aliases"]))
+            pinned = {"status": "pinned_before_baseline", "device": key[0], "fsid": key[1],
+                      "captured_monotonic_s": time.monotonic()}
+    return dict(docker, filesystem_identity=pinned)
+
+
+def path_identity(path):
+    info, fs = os.stat(path), os.statvfs(path)
+    return info.st_dev, fs.f_fsid
+
+
+def bounded_path_identity(path):
+    """collect runs outside the observer's stop grace, so its lookup is a killable child."""
+    result = subprocess.run([sys.executable, "-I", "-c", "import os,sys\ns=os.stat(sys.argv[1]);v=os.statvfs(sys.argv[1])\n"
+                             "print(s.st_dev,v.f_fsid)", path], capture_output=True, text=True,
+                            timeout=DOCKER_QUERY_S, stdin=subprocess.DEVNULL)
+    if result.returncode:
+        raise OSError("identity_unreadable")
+    device, fsid = result.stdout.split()
+    return int(device), int(fsid)
+
+
+def revalidate_docker(docker, filesystems, resolve=path_identity):
+    """Re-resolve the live Docker root path; a remount, replacement or read error disqualifies its row."""
+    pinned = docker["filesystem_identity"]
+    if pinned.get("status") != "pinned_before_baseline":
+        return
+    try:
+        reason = None if resolve(docker["path"]) == (pinned["device"], pinned["fsid"]) else "identity_changed"
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        reason = "identity_unreadable"
+    if reason:
+        pinned.update(status="unknown", reason=reason, changed_monotonic_s=time.monotonic())
+        row = filesystems.get((pinned["device"], pinned["fsid"]))
+        if row is not None:
+            row["identity_changed"] = True
 
 
 def sample(filesystems, now):
@@ -271,7 +328,7 @@ def sample(filesystems, now):
 
 def observe(directory, parent, budget, paths):
     directory = Path(directory)
-    start = time.monotonic()
+    deadline = time.monotonic() + budget  # The caller's budget counts from launch, not baseline.
     identity = process_identity(parent)
     stop = []
     signal.signal(signal.SIGUSR1, lambda *_: stop.append("finished"))
@@ -281,10 +338,14 @@ def observe(directory, parent, budget, paths):
         added = add_filesystem(filesystems, kind, path)
         if added is not True:
             unknown.append(added)
+    # Docker joins the baseline instead of arriving late; at most three bounded
+    # queries, covered by the caller's ready wait.
+    docker = pin_docker(filesystems, unknown)
+    start = time.monotonic()
     sample(filesystems, start)
     write_json(directory / "ready", {"baseline_monotonic_s": start, "pid": os.getpid(),
-                                     "start_ticks": process_identity(os.getpid()), "parent_pid": parent})
-    docker = {"status": "unknown", "reason": "docker_metadata_pending"}
+                                     "start_ticks": process_identity(os.getpid()), "parent_pid": parent,
+                                     "docker": docker})
     usage_before, usage_after = None, None
     work = {"completed_loops": 0, "max_loop_work_s": 0.0, "max_write_s": 0.0,
             "progress_writes_submitted": 0, "progress_writes_completed": 0,
@@ -294,25 +355,19 @@ def observe(directory, parent, budget, paths):
     # Optional daemon queries must never pause filesystem sampling. One worker
     # bounds before+after work to the same query budget as the serial owner.
     with ThreadPoolExecutor(max_workers=1) as metadata, ThreadPoolExecutor(max_workers=1) as writer:
-        before = metadata.submit(docker_snapshot)
+        before = metadata.submit(docker_usage, docker)
         after = None
         progress = None
         while True:
             now = time.monotonic()
             if before is not None and before.done():
-                docker, usage_before = before.result()
+                usage_before = before.result()
                 before = None
-                if docker["status"] == "local":
-                    known_filesystems = set(filesystems)
-                    added = add_filesystem(filesystems, "docker", docker["path"])
-                    for key in set(filesystems) - known_filesystems:
-                        filesystems[key]["late_discovery"] = True
-                    if added is not True:
-                        unknown.append(added)
+            revalidate_docker(docker, filesystems)
             sample(filesystems, now)
             if identity is None or process_identity(parent) != identity:
                 reason = "parent_exited"
-            elif now >= start + budget and reason != "parent_exited":
+            elif now >= deadline and reason != "parent_exited":
                 reason = "deadline"
             elif "terminated" in stop:
                 reason = "terminated"
@@ -354,14 +409,17 @@ def observe(directory, parent, budget, paths):
             # Work and JSON I/O consume this interval; do not add a full interval
             # afterwards and manufacture an over-threshold sampling gap.
             time.sleep(max(0, now + INTERVAL_S - time.monotonic()))
-    if docker != docker_after:
+    if {key: value for key, value in docker.items() if key != "filesystem_identity"} != docker_after:
         usage_after = {"status": "unknown", "reason": "docker_context_changed"}
-        docker = {"status": "unknown", "reason": "docker_context_changed"}
+        pinned = dict(docker["filesystem_identity"], status="unknown", reason="docker_context_changed")
+        docker = {"status": "unknown", "reason": "docker_context_changed", "filesystem_identity": pinned}
         for fs in filesystems.values():
             for alias in fs["aliases"]:
                 if alias["kind"] == "docker":
                     alias["error"] = "docker_context_changed"
+                    fs["identity_changed"] = True
     end = time.monotonic()
+    revalidate_docker(docker, filesystems)
     sample(filesystems, end)
     # Both executors have joined. No older progress snapshot can overwrite this
     # final publication; its filesystem write is outside the sampled boundary.
@@ -385,7 +443,8 @@ def observation_snapshot(start, end, reason, filesystems, unknown, docker, befor
         row["full_window"] = (reason == "finished" and row["samples"] >= 2 and row["read_errors"] == 0
                               and first - start < INTERVAL_S and end - row["last_monotonic_s"] < INTERVAL_S
                               and row["missed_intervals"] == 0 and row["max_gap_s"] <= MAX_SAMPLE_GAP_S
-                              and not row.get("late_discovery", False) and work["write_errors"] == 0)
+                              and not row.get("late_discovery", False) and not row.get("identity_changed", False)
+                              and work["write_errors"] == 0)
         rows.append(row)
     return copy.deepcopy({
         "schema": SCHEMA, "source": "statvfs", "scope": "shared_host_filesystems",
@@ -395,7 +454,8 @@ def observation_snapshot(start, end, reason, filesystems, unknown, docker, befor
         "start_monotonic_s": start, "end_monotonic_s": end,
         "termination": reason, "filesystems": rows, "unknown_paths": unknown,
         "work": dict(work, scope="completed sampling loops and progress writes; final publication excluded"),
-        "docker": dict(docker, usage_before=before, usage_after=after),
+        # docker stays byte-identical to ready.docker unless its identity changed.
+        "docker": docker, "docker_usage": {"before": before, "after": after},
         "limits": "Sampled lower bound, not exact transient peak. Concurrent gates, CI, Docker, and reclaim affect host free space. Deduplicate filesystems; never sum aliases. f_bavail is process-available; f_bfree also includes reserved blocks."})
 
 
@@ -418,6 +478,17 @@ def collect(directory):
         for fs in observation.get("filesystems", []):
             fs["full_window"] = False
         observation["coverage_error"] = "baseline_not_ready_or_sampler_ownership_lost"
+    # The receipt is collected after the observer stops; the Docker root must
+    # still resolve to the pinned filesystem here too, or its row is disqualified.
+    docker = observation.get("docker")
+    if isinstance(docker, dict) and isinstance(docker.get("filesystem_identity"), dict):
+        rows = {(fs.get("device"), fs.get("fsid")): fs for fs in observation.get("filesystems", [])
+                if isinstance(fs, dict)}
+        revalidate_docker(docker, rows, resolve=bounded_path_identity)
+        for fs in rows.values():
+            if fs.get("identity_changed"):
+                fs["full_window"] = False
+        observation["docker_identity_revalidated"] = "every_sample_and_collect"
     observation["directory_snapshots"] = {phase: read_json(directory / (phase + ".json"))
                                            for phase in ("before", "after_install", "end")}
     observation["directory_complete"] = all(isinstance(observation["directory_snapshots"].get(phase), dict)

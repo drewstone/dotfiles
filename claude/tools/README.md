@@ -459,7 +459,18 @@ definitions remain unchanged.
 and the end store scan, before the checkout unlocks; subsequent global LRU reclaim
 is outside that boundary. Filesystems are deduplicated by device and filesystem
 identity; checkout, pnpm, npm and a verified local Docker root are aliases, never
-additive disk use. Available bytes use `f_bavail`; free bytes also show `f_bfree`
+additive disk use. Paths open with `O_PATH`, so a root-owned non-listable Docker
+root still yields kernel identity; `directory_readable` reports listing permission
+separately. The local Docker root is resolved before the baseline sample and
+published as `docker.filesystem_identity` (`pinned_before_baseline`, `device`,
+`fsid`, `captured_monotonic_s` at or before `start_monotonic_s`) in `ready`, live
+and final observations, byte-identical unless the identity changes. Every sample
+re-resolves the pinned root path, and the post-stop `collect` repeats that in a
+child bounded by the Docker query timeout; a remount, replacement or read error
+turns the identity `unknown` and marks its row `identity_changed`, which never
+qualifies. The daemon's endpoint and root are queried only at the start and end,
+so a mid-window data-root switch that is reversed before the end is not seen.
+Docker usage accounting stays asynchronous, under `docker_usage`. Available bytes use `f_bavail`; free bytes also show `f_bfree`
 including reserved blocks. Coverage includes sample counts, gaps, read errors,
 termination and unavailable paths. Samples with read errors, missed intervals or
 gaps beyond the owner's bound stay out of the qualified subset. Interval and gap
