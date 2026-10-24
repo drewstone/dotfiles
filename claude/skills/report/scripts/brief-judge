@@ -230,7 +230,7 @@ class _HtmlExtractor(html.parser.HTMLParser):
             if self.svg_depth == 0:
                 s = self.svg
                 drawn = f"{s['marks']} static marks" if s["marks"] else "empty in markup; drawn by script from embedded data"
-                labels = " ".join(s["text"])[:300]
+                labels = " ".join(s["text"])
                 self.out.append(f"\n[svg chart id={s['id']!r} label={s['label']!r} viewBox={s['viewBox']!r}: {drawn}"
                                 + (f"; text: {labels}" if labels else "") + "]\n")
                 self.svg = None
@@ -242,10 +242,8 @@ class _HtmlExtractor(html.parser.HTMLParser):
         elif tag == "table" and self.table is not None:
             rows = [r for r in self.table["rows"] if r]
             self.out.append(f"\n[table {len(rows)} rows x {max((len(r) for r in rows), default=0)} cols]\n")
-            for r in rows[:40]:
+            for r in rows:
                 self.out.append("| " + " | ".join(r) + " |\n")
-            if len(rows) > 40:
-                self.out.append(f"| ... {len(rows) - 40} more rows |\n")
             self.table = None
         elif tag in self.BLOCK:
             self.out.append("\n")
@@ -272,41 +270,26 @@ class _HtmlExtractor(html.parser.HTMLParser):
         self.out.append(data)
 
 
-def _shape(value, path="", out=None, depth=0):
-    """Summarize embedded JSON so the judge sees what data the charts are drawn from."""
-    out = [] if out is None else out
-    if len(out) > 120:
-        return out
-    if isinstance(value, dict) and depth < 4:
-        for k, v in value.items():
-            _shape(v, f"{path}.{k}", out, depth + 1)
-    elif isinstance(value, list):
-        sample = json.dumps(value[:3], ensure_ascii=False)[:200]
-        out.append(f"{path}: list of {len(value)}, first items {sample}")
-    else:
-        out.append(f"{path}: {json.dumps(value, ensure_ascii=False)[:120]}")
-    return out
-
-
 def extract_html(raw):
     p = _HtmlExtractor()
     p.feed(raw)
     text = re.sub(r"[ \t]+", " ", "".join(p.out))
     text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
-    notes = []
+    embedded = []
     for s in p.scripts:
         body = "".join(s["body"]).strip()
         if "json" in s["type"] and body:
             try:
-                notes.append(f"[embedded data id={s['id']!r}]\n" + "\n".join(_shape(json.loads(body))))
+                embedded.append(f"[embedded data id={s['id']!r}]\n"
+                                + json.dumps(json.loads(body), ensure_ascii=False, indent=2))
             except ValueError:
-                notes.append(f"[embedded data id={s['id']!r}: not valid JSON]")
+                embedded.append(f"[embedded data id={s['id']!r}: not valid JSON]")
     css = "".join(p.styles)
     code = sum(1 for s in p.scripts if "json" not in s["type"] and "".join(s["body"]).strip())
-    notes.append("[page structure] "
+    structure = ("[page structure] "
                  f"title={p.title.strip()!r}; scripts that draw content: {code}; "
                  f"dark theme: {'yes' if 'prefers-color-scheme: dark' in css or 'data-theme' in css else 'no'}")
-    return text, "\n\n".join(notes)
+    return "\n\n".join(part for part in [text, *embedded] if part), structure
 
 
 def extract_markdown(raw):
@@ -342,8 +325,10 @@ def build_prompt(text, structure, context, anchors):
     rubric = "\n".join(f"{i}. {name} ({key}): {want}\n   Levels: {levels}\n"
                        f"   3: meets the dimension in full and the best practitioners' standard: {anchors[key]}"
                        for i, (key, name, want, levels) in enumerate(DIMENSIONS, 1))
-    if len(text) > MAX_INPUT_CHARS:
-        text = text[:MAX_INPUT_CHARS] + f"\n[... truncated {len(text) - MAX_INPUT_CHARS} characters]"
+    input_chars = len(text) + len(structure)
+    if input_chars > MAX_INPUT_CHARS:
+        raise ValueError(f"complete extracted input is {input_chars} characters, above the "
+                         f"{MAX_INPUT_CHARS}-character bound; no judge call or score was produced")
     ctx = f"<context>\n{context.strip()}\n</context>\n\n" if context else ""
     return (f"Rubric, ten dimensions, each 0-3:\n{rubric}\n\n{ctx}"
             "The deliverable follows as extracted text. Charts appear as [svg chart ...] or [canvas chart ...] markers; "
@@ -532,7 +517,11 @@ def main():
     except ValueError as e:
         print(f"brief-judge: {e}", file=sys.stderr)
         sys.exit(2)
-    prompt = build_prompt(text, structure, context, anchors)
+    try:
+        prompt = build_prompt(text, structure, context, anchors)
+    except ValueError as e:
+        print(f"brief-judge: {e}", file=sys.stderr)
+        sys.exit(2)
     if args.dump_input:
         print(prompt)
         return
