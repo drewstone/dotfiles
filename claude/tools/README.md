@@ -580,8 +580,10 @@ commands never read out of the checkout by committing
 `.beelink-gate/sparse-checkout` (`git sparse-checkout --no-cone` patterns), as
 Discovery Lab does for `/pursuits/`. The gate sets the patterns before checkout and applies them to idle checkouts when
 it prunes, before evicting any, and the receipt records `sparse`. A gate refuses before fetching when
-beelink1 has less than 100 GiB or beelink2 has less than 162 GiB free on its
-root filesystem. A second floor
+its root filesystem is below the operational floor served by Tangle Tools'
+`fleet/disk_policy.py`, or a stricter local `disk_floor_gib` limit. The existing
+`--disk-floor-bytes` query reports that effective policy; an unavailable owner
+refuses growth. The install allowance is added to that floor. A second floor
 check after installation keeps the requested command from starting if its
 install consumed the reserve.
 
@@ -601,8 +603,9 @@ Install-reserve hints and remote update-policy reads use the wall deadline in
 SSH session with an unresponsive WSL read cannot hold these lookups indefinitely.
 A failed hint is reported as unavailable; the target still reads its own receipts
 and enforces its disk floor. An unavailable update policy retains its existing
-cache and TEMPFAIL behavior. Host probes can recover cache space and retain
-their existing lifecycle, as do submitted gates and attached runs.
+cache and TEMPFAIL behavior. Floor refusals do not evict caches: the archival
+storage lifecycle owns capacity recovery. Submitted gates and attached runs
+retain their existing lifecycle.
 The same transport bound applies to staging the gate script and requesting
 cancellation. A staging failure reports that submission was not attempted and
 remote files may be partial. Cancellation keeps its existing retry loop within
