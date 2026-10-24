@@ -580,8 +580,9 @@ commands never read out of the checkout by committing
 `.beelink-gate/sparse-checkout` (`git sparse-checkout --no-cone` patterns), as
 Discovery Lab does for `/pursuits/`. The gate sets the patterns before checkout and applies them to idle checkouts when
 it prunes, before evicting any, and the receipt records `sparse`. A gate refuses before fetching when
-its root filesystem is below the operational floor served by Tangle Tools'
-`fleet/disk_policy.py`, or a stricter local `disk_floor_gib` limit. The existing
+its root filesystem is below the lifecycle admission floor explicitly exported through Tangle Tools'
+`fleet/disk_policy.py`, or a stricter local `disk_floor_gib` limit. The lifecycle installer derives the protected
+export from its admission owner and validated configuration; Fleet's higher alert buffer remains advisory. The existing
 `--disk-floor-bytes` query reports that effective policy; an unavailable owner
 refuses growth. The install allowance is added to that floor. A second floor
 check after installation keeps the requested command from starting if its

@@ -27,7 +27,7 @@ SCHEMA = 1
 
 
 def effective_floor(host, limits):
-    """Admission cannot undercut the operational ruler; local limits may raise it."""
+    """Read lifecycle producer admission, independently of Fleet alert buffers; local limits may raise it."""
     if host not in ('beelink1', 'beelink2'):
         raise ValueError('unknown remote beelink')
     policy = Path('/usr/local/libexec/tangle-fleet-disk-policy.py')
@@ -44,10 +44,9 @@ def effective_floor(host, limits):
     spec.loader.exec_module(owner)
     if owner.SCHEMA != 1:
         raise ValueError('authoritative fleet disk policy schema unknown')
-    filesystem = os.statvfs('/')
-    floor = owner.disk_floor_bytes(host, '/', filesystem.f_blocks * filesystem.f_frsize)
+    floor = owner.admission_floor_bytes(host, '/')
     if type(floor) is not int or floor <= 0:
-        raise ValueError('authoritative fleet disk floor unknown')
+        raise ValueError('authoritative storage admission floor unknown')
     limits = Path(limits)
     if limits.exists() or limits.is_symlink():
         if not limits.is_file():
@@ -62,7 +61,7 @@ def effective_floor(host, limits):
                 raise ValueError('invalid disk_floor_gib')
             local = override * 1024 ** 3
             if local < floor:
-                print('beelink-gate: local disk limit is below the operational floor; using fleet policy', file=sys.stderr)
+                print('beelink-gate: local disk limit is below the storage admission floor; using lifecycle policy', file=sys.stderr)
             floor = max(floor, local)
     return floor
 

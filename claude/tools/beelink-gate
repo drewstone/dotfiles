@@ -103,7 +103,7 @@ effective_disk_floor_bytes() {
 if [ "${1:-}" = --disk-floor-bytes ]; then
   [ "$#" -eq 2 ] || die "usage: beelink-gate --disk-floor-bytes <beelink1|beelink2>"
   floor=$(effective_disk_floor_bytes "$2") || exit 3
-  echo "beelink-gate: $2 disk floor $floor bytes from fleet policy and limits file $(limits_file)" >&2
+  echo "beelink-gate: $2 disk floor $floor bytes from lifecycle admission and limits file $(limits_file)" >&2
   echo "$floor"
   exit 0
 fi
