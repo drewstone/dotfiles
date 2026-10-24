@@ -103,12 +103,41 @@ BOOT
 }
 
 
+# The existing public floor flag is local for this host, otherwise one bounded staged query.
+canonical_beelink() {
+  local name=${1,,}; name=${name%.local}
+  case "$name" in beelink1|desktop-18ir33v) echo beelink1 ;; beelink2) echo beelink2 ;; esac
+}
+self_beelink() {
+  [ -x "$REG_EXE" ] || return 0
+  canonical_beelink "${BEELINK_GATE_SELF:-$(hostname)}"
+}
+disk_floor_query() {
+  [ "$#" -eq 2 ] || die "usage: beelink-gate --disk-floor-bytes <beelink1|beelink2>"
+  local target=$2 floor here
+  case "$target" in beelink1|beelink2) ;; *) die "unknown disk floor host: $target" ;; esac
+  here=$(canonical_beelink "$(hostname)")
+  if [ "$target" = "$here" ]; then
+    floor=$(effective_disk_floor_bytes "$target") || return 3
+    echo "beelink-gate: $target disk floor $floor bytes from lifecycle admission and limits file $(limits_file)" >&2
+    echo "$floor"; return 0
+  fi
+  [ "${BEELINK_GATE_FLOOR_LOCAL:-0}" != 1 ] || {
+    echo 'beelink-gate: disk floor query reached the wrong host; growth refused' >&2
+    return "$TEMPFAIL"
+  }
+  local launcher_name; launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+  BEELINK_GATE_FLOOR_LOCAL=1 heartbeat=0 on_beelink "$target" --disk-floor-bytes "$target"
+}
+
+
 on_beelink() {
   local target=$1; shift
   local -a transport_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   case "${1:-}" in
-    --reserve-match|--job-cancel) transport_prefix=(bounded_transport "$target $1") ;;
+    --reserve-match|--job-cancel|--disk-floor-bytes) transport_prefix=(bounded_transport "$target $1") ;;
   esac
+  [ "${BEELINK_GATE_FLOOR_LOCAL:-0}" != 1 ] || envs+=("BEELINK_GATE_FLOOR_LOCAL=1")
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
   [ -z "${gate_branch:-}" ] || envs+=("BEELINK_GATE_BRANCH=$gate_branch")
   [ -z "${BEELINK_GATE_LOAD_WAIT:-}" ] || envs+=("BEELINK_GATE_LOAD_WAIT=$BEELINK_GATE_LOAD_WAIT")
