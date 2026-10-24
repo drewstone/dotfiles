@@ -52,7 +52,7 @@ stop_child() {
   [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true
 }
 trap stop_child TERM INT HUP
-bash "$dir/gate.sh" --remote "$@" > "$dir/stdout.log" 2> "$dir/stderr.log" &
+bash "$dir/gate.sh" --remote --args-file "$dir/args" > "$dir/stdout.log" 2> "$dir/stderr.log" &
 child=$!
 birth=$(awk '{print $22}' "/proc/$child/stat" 2>/dev/null)
 printf '%s %s\n' "$child" "$birth" > "$dir/gate.pid.tmp"
@@ -83,7 +83,11 @@ mv -- "$dir/exit.tmp" "$dir/exit"
 RUNNER
   chmod 700 "$dir/runner.sh"
   (umask 077; printf 'system\n' > "$dir/systemd-manager") || return 75
-  if ! managed_unit_run job "$id" "$dir/runner.sh" "$@" {lock_fd}>&-; then
+  # Gate arguments travel as a NUL-separated 0600 file, never as exec argv: on
+  # 2026-10-24 one base64-encoded 128,551 B command became a 171,404 B argument,
+  # over Linux's 131,072 B per-argument limit, and sudo refused with E2BIG.
+  (umask 077; printf '%s\0' "$@" > "$dir/args") || return 75
+  if ! managed_unit_run job "$id" "$dir/runner.sh" {lock_fd}>&-; then
     printf '75\n' > "$dir/exit"
     return 75
   fi
