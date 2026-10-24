@@ -455,9 +455,12 @@ flow before claiming proof there. Native throughput cohorts and legacy latency
 definitions remain unchanged.
 
 `beelink_gate_disk.py` owns `disk_observation` in each receipt and the report's
-`disk` field. Its bounded `statvfs` sampler covers admission through local cleanup
-and the end store scan, before the checkout unlocks; subsequent global LRU reclaim
-is outside that boundary. Filesystems are deduplicated by device and filesystem
+`disk` field. Its bounded `statvfs` sampler covers admission through local cleanup,
+the end store scan and the checkout release; it stops before the global LRU reclaim,
+which is outside that boundary. `final_boundary` names where it stopped:
+`after_checkout_release_before_cache_reclaim` normally, `before_checkout_release`
+when a watchdog or a missing cache root kept the lock. `release_checkout_before_reclaim`
+in `beelink-gate-lib/install.sh` owns that order. Filesystems are deduplicated by device and filesystem
 identity; checkout, pnpm, npm and a verified local Docker root are aliases, never
 additive disk use. Paths open with `O_PATH`, so a root-owned non-listable Docker
 root still yields kernel identity; `directory_readable` reports listing permission

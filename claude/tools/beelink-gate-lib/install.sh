@@ -229,16 +229,35 @@ start_disk_observation() {
   fi
 }
 
+# Gate end order: the end store scan while this gate still owns the checkout,
+# then the checkout release, then the observer's final sample and collect, so
+# the receipt covers release but never the global cache reclaim that follows.
+release_checkout_before_reclaim() {
+  finish_disk_scan
+  release_gate_turbo_cache
+  local boundary=before_checkout_release
+  if [ "$watchdog" != 1 ] && cd "$cache_root"; then
+    # Release before global cache work; the next gate owns the checkout and holder.
+    rm -f "$lock.holder"
+    [ -z "${lock_fd:-}" ] || flock -u "$lock_fd"
+    lock_released=1 boundary=after_checkout_release_before_cache_reclaim
+  fi
+  finish_disk_observation "$boundary"
+}
+
+finish_disk_scan() {
+  # Relocated from post-checkout: same three bounded du scans, now with end bytes.
+  if [ -n "$disk_dir" ] && (( ${install_reserve_bytes:-0} > 0 )); then
+    disk_left=$((disk_deadline - SECONDS)); (( disk_left < 60 )) || disk_left=60
+    disk_snapshot_phase=end gate_bytes "$disk_left" "${disk_paths[@]}" >/dev/null || true
+    if (( observed_install_reserve_bytes == 0 )); then
+      observed_install_reserve_bytes=$disk_fallback_reserve reserve_basis=cold_fallback
+    fi
+  fi
+}
+
 finish_disk_observation() {
   if [ -n "$disk_dir" ]; then
-    # Relocated from post-checkout: same three bounded du scans, now with end bytes.
-    if (( ${install_reserve_bytes:-0} > 0 )); then
-      disk_left=$((disk_deadline - SECONDS)); (( disk_left < 60 )) || disk_left=60
-      disk_snapshot_phase=end gate_bytes "$disk_left" "${disk_paths[@]}" >/dev/null || true
-      if (( observed_install_reserve_bytes == 0 )); then
-        observed_install_reserve_bytes=$disk_fallback_reserve reserve_basis=cold_fallback
-      fi
-    fi
     : > "$disk_dir/stop"  # Cooperative stop also works without pidfd support.
     gate_disk signal "$disk_dir" "$disk_pid" USR1 2>/dev/null || true
     disk_stop_by=$((SECONDS + disk_grace_s))
@@ -250,7 +269,7 @@ finish_disk_observation() {
       : > "$disk_dir/ownership_lost"
       echo "beelink-gate: disk observer stop incomplete; retaining partial state" >&2
     fi
-    BEELINK_GATE_DISK_OBSERVATION=$(gate_disk collect "$disk_dir" 2>/dev/null) || BEELINK_GATE_DISK_OBSERVATION=""
+    BEELINK_GATE_DISK_OBSERVATION=$(gate_disk collect "$disk_dir" "$1" 2>/dev/null) || BEELINK_GATE_DISK_OBSERVATION=""
     export BEELINK_GATE_DISK_OBSERVATION
     kill -0 "$disk_pid" 2>/dev/null || rm -rf -- "$disk_dir"
   fi
