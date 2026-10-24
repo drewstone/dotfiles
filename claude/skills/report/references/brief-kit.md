@@ -79,6 +79,12 @@ Keep the thesis to what the measurements support, and put projections in bets, l
 
 Score the rendered page with the independent judge before it reaches the reader:
 
+The judge reads the complete embedded JSON and static table rows, including content
+a page renders with JavaScript. `--dump-input` shows the exact evidence supplied.
+If the complete extracted input exceeds the judge's maintained bound, the command
+refuses before inference rather than scoring a truncated report. Narrow the report
+into independently reviewable artifacts while preserving the complete source.
+
 ```bash
 ~/.claude/skills/report/scripts/brief-judge brief.html --context "<what the reader asked>"   # add --no-ledger for trial runs
 ```
