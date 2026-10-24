@@ -240,8 +240,10 @@ release_checkout_before_reclaim() {
     # Release before global cache work; the next gate owns the checkout and holder.
     # Claim the release only when the held lock was actually unlocked: a missing
     # descriptor or a failed unlock keeps the lock, skips reclaim and fails closed.
+    # The holder goes first, while this gate still owns the lock, so it never
+    # deletes the next gate's record.
+    rm -f "$lock.holder"
     if [ -n "${lock_fd:-}" ] && flock -u "$lock_fd"; then
-      rm -f "$lock.holder"
       lock_released=1 boundary=after_checkout_release_before_cache_reclaim
     else
       echo "beelink-gate: checkout lock release failed; skipping cache reclaim" >&2
