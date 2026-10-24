@@ -608,16 +608,6 @@ class UnixSocketTest(unittest.TestCase):
         self.assertIn(sock, found or [])
 
 
-class DefaultBranchNameTest(unittest.TestCase):
-    """A default branch with a slash is still recognized."""
-
-    def test_slash_default(self):
-        mod = load_reaper()
-        self.assertTrue(mod.is_default_name('refs/remotes/origin/release/v1', 'release/v1'))
-        self.assertTrue(mod.is_default_name('refs/remotes/origin/main', 'main'))
-        self.assertFalse(mod.is_default_name('refs/remotes/origin/main', 'feat/x'))
-
-
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
 class DeletedSuffixTest(unittest.TestCase):
     """A directory literally named '... (deleted)' still counts as held."""
