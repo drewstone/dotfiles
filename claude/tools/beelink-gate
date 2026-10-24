@@ -83,7 +83,7 @@ decode() { printf '%s' "$1" | base64 --decode; }
 
 # Older launchers can emit a newly deployed main file with an older helper list.
 # A missing admission owner must refuse before any probe, reserve or cache work.
-if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}"; then
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t probe_transport)" != function ] || [ "$(type -t probe_of)" != function ]; then
   tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
@@ -1710,84 +1710,10 @@ TRANSPORT_KILL_GRACE_SECONDS=2
 # (ci-zero Braid #173) and the gate gave up before submitting. The checkout reservation
 # below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
 STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
-bounded_transport() {
-  local label=$1 timer rc; shift
-  timer=$(command -v timeout || command -v gtimeout) || {
-    echo "beelink-gate: cannot bound $label: GNU timeout is unavailable" >&2
-    return "$TEMPFAIL"
-  }
-  "$timer" --kill-after="${TRANSPORT_KILL_GRACE_SECONDS}s" "${TRANSPORT_TIMEOUT_SECONDS}s" "$@"; rc=$?
-  case "$rc" in
-    124|137)
-      echo "beelink-gate: $label unconfirmed (exit $rc; transport deadline $TRANSPORT_TIMEOUT_SECONDS seconds)" >&2
-      return "$TEMPFAIL"
-      ;;
-  esac
-  return "$rc"
-}
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
 
-# The policy rarely changes, so the last good read is kept per host. WSL interop
-# (reg.exe) fails under load, and SSH can time out; a read up to seven days old
-# still keeps gates out of the update window.
-read_policy() {
-  local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache
-  cache="$STATE_DIR/policy-$target"
-  if [ "$target" = "$SELF" ]; then
-    policy=$(timeout 20 "$REG_EXE" query "$key" 2>/dev/null) || policy=""
-  fi
-  if ! grep -q ScheduledInstallDay <<<"$policy"; then
-    policy=$(bounded_transport "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key" 2>/dev/null) || policy=""
-  fi
-  if grep -q ScheduledInstallDay <<<"$policy"; then
-    mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
-    printf '%s\n' "$policy"
-    return 0
-  fi
-  if [ -f "$cache" ] && [ -n "$(find "$cache" -mmin -10080 2>/dev/null)" ]; then
-    echo "beelink-gate: using the cached Windows Update policy for $target" >&2
-    cat "$cache"
-    return 0
-  fi
-  return 1
-}
-
-# Sets window_day and window_hour from the beelink's Windows Update policy.
-update_window_of() {
-  local target=$1 policy day_hex hour_hex
-  policy=$(read_policy "$target") || { echo "beelink-gate: cannot read Windows Update schedule from $target; refusing to start" >&2; return 2; }
-  policy=$(printf '%s' "$policy" | tr -d '\r')
-  day_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallDay" && $2 == "REG_DWORD" {print $3}')
-  hour_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallTime" && $2 == "REG_DWORD" {print $3}')
-  [[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] \
-    || { echo "beelink-gate: invalid Windows Update schedule from $target; refusing to start" >&2; return 2; }
-  window_day=$((16#${day_hex#0x}))
-  window_hour=$((16#${hour_hex#0x}))
-  (( window_day <= 7 && window_hour <= 23 )) \
-    || { echo "beelink-gate: invalid Windows Update day/hour from $target; refusing to start" >&2; return 2; }
-}
-
-encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
-
-# One probe line for a beelink, or nothing when it cannot be read.
-probe_of() {
-  local target=$1 attempt line
-  # A busy beelink's sshd drops some new connections (MaxStartups) while
-  # hundreds of lane sessions are open; one dropped probe made auto treat the
-  # host as unreachable for a whole placement round (ADC #10352, 2026-10-12
-  # 00:01Z, beelink2 at load 70 answering SSH in under a second).
-  for attempt in 1 2 3; do
-    if update_window_of "$target" 2>/dev/null; then
-      line=$(heartbeat=0 on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" "$(encode "$install_mode")" 2>/dev/null \
-        | grep '^beelink-gate-probe ' | tail -1)
-      [ -z "$line" ] || { echo "$line"; return 0; }
-    fi
-    (( attempt == 3 )) || sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"
-  done
-  return 1
-}
 field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
 overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1"); [ -n "$load" ] && [ -n "$limit" ] && over_limit "$load" "$limit"; }
 

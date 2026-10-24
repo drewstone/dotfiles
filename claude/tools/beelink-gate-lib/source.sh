@@ -140,7 +140,11 @@ on_beelink() {
   local me=$$ rc heartbeat_fd heartbeat_pid command_pid args_line="" source_file=""
   if [ "$target" != "$SELF" ]; then
     source_file=$(mktemp) || return "$TEMPFAIL"
-    emit_gate_source > "$source_file" || { rm -f "$source_file"; return "$TEMPFAIL"; }
+    emit_gate_source > "$source_file" || {
+      rc=$?
+      [ "${probe_diagnostic_scope:-0}" != 1 ] || { probe_nested_phase=source_emit; probe_nested_exit=$rc; }
+      rm -f "$source_file"; return "$TEMPFAIL"
+    }
   fi
   # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
   # ("exec request failed on channel 0"); on 2026-10-18 a 23 KB patch, base64
@@ -197,6 +201,103 @@ on_beelink() {
   return "$rc"
 }
 
+
+bounded_transport() {
+  local label=$1 timer rc; shift
+  timer=$(command -v timeout || command -v gtimeout) || {
+    echo "beelink-gate: cannot bound $label: GNU timeout is unavailable" >&2
+    return "$TEMPFAIL"
+  }
+  "$timer" --kill-after="${TRANSPORT_KILL_GRACE_SECONDS}s" "${TRANSPORT_TIMEOUT_SECONDS}s" "$@"; rc=$?
+  case "$rc" in
+    124|137)
+      [ "${probe_diagnostic_scope:-0}" != 1 ] || { probe_nested_phase=transport_command; probe_nested_exit=$rc; }
+      echo "beelink-gate: $label unconfirmed (exit $rc; transport deadline $TRANSPORT_TIMEOUT_SECONDS seconds)" >&2
+      return "$TEMPFAIL"
+      ;;
+  esac
+  return "$rc"
+}
+
+# Preserve the actual command stdout/status and foreground signal semantics.
+# Never attach a stderr reader: inherited writers must not delay a probe result.
+probe_transport() {  # <host> <phase> <actual command and arguments...>
+  local target=$1 phase=$2 attempt=${probe_attempt:-0} rc result=command_nonzero
+  local probe_diagnostic_scope=1 probe_nested_phase=none probe_nested_exit=unknown
+  shift 2
+  case "$target" in beelink1|beelink2) ;; *) target=unknown ;; esac
+  case "$phase" in windows_policy_local|windows_policy_ssh|remote_probe) ;; *) phase=unknown ;; esac
+  case "$attempt" in 0|1|2|3) ;; *) attempt=0 ;; esac
+  "$@" 2>/dev/null; rc=$?
+  [ "$rc" != 0 ] || result=command_zero
+  echo "beelink-gate: probe diagnostic host=$target attempt=$attempt phase=$phase result=$result exit=$rc nested_phase=$probe_nested_phase nested_exit=$probe_nested_exit stderr=discarded cause=unknown" >&2
+  return "$rc"
+}
+
+# The policy rarely changes, so the last good read is kept per host. WSL interop
+# (reg.exe) fails under load, and SSH can time out; a read up to seven days old
+# still keeps gates out of the update window.
+read_policy() {
+  local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache
+  cache="$STATE_DIR/policy-$target"
+  if [ "$target" = "$SELF" ]; then
+    policy=$(probe_transport "$target" windows_policy_local timeout 20 "$REG_EXE" query "$key") || policy=""
+  fi
+  if ! grep -q ScheduledInstallDay <<<"$policy"; then
+    policy=$(probe_transport "$target" windows_policy_ssh bounded_transport "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key") || policy=""
+  fi
+  if grep -q ScheduledInstallDay <<<"$policy"; then
+    mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
+    printf '%s\n' "$policy"
+    return 0
+  fi
+  if [ -f "$cache" ] && [ -n "$(find "$cache" -mmin -10080 2>/dev/null)" ]; then
+    echo "beelink-gate: using the cached Windows Update policy for $target" >&2
+    cat "$cache"
+    return 0
+  fi
+  return 1
+}
+
+# Sets window_day and window_hour from the beelink's Windows Update policy.
+update_window_of() {
+  local target=$1 policy day_hex hour_hex
+  policy=$(read_policy "$target") || { echo "beelink-gate: cannot read Windows Update schedule from $target; refusing to start" >&2; return 2; }
+  policy=$(printf '%s' "$policy" | tr -d '\r')
+  day_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallDay" && $2 == "REG_DWORD" {print $3}')
+  hour_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallTime" && $2 == "REG_DWORD" {print $3}')
+  [[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] \
+    || { echo "beelink-gate: invalid Windows Update schedule from $target; refusing to start" >&2; return 2; }
+  window_day=$((16#${day_hex#0x}))
+  window_hour=$((16#${hour_hex#0x}))
+  (( window_day <= 7 && window_hour <= 23 )) \
+    || { echo "beelink-gate: invalid Windows Update day/hour from $target; refusing to start" >&2; return 2; }
+}
+
+encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
+
+# One probe line for a beelink, or nothing when it cannot be read.
+probe_of() {
+  local target=$1 attempt line rc probe_attempt=0
+  # A busy beelink's sshd drops some new connections (MaxStartups) while
+  # hundreds of lane sessions are open; one dropped probe made auto treat the
+  # host as unreachable for a whole placement round (ADC #10352, 2026-10-12
+  # 00:01Z, beelink2 at load 70 answering SSH in under a second).
+  for attempt in 1 2 3; do
+    probe_attempt=$attempt
+    if update_window_of "$target"; then
+      line=$(heartbeat=0 probe_transport "$target" remote_probe on_beelink "$target" --probe "$(encode "$target")" "$(encode "$repo_url")" "$(encode "$window_day")" "$(encode "$window_hour")" "$(encode "$([ "${gate_class:-}" = dev ] && echo dev || echo "$install_mode")")" "$(encode "$install_mode")" \
+        | grep '^beelink-gate-probe ' | tail -1)
+      [ -z "$line" ] || { echo "$line"; return 0; }
+      echo "beelink-gate: probe diagnostic host=$target attempt=$attempt phase=probe_protocol result=no_valid_line cause=unknown" >&2
+    else
+      rc=$?
+      echo "beelink-gate: probe diagnostic host=$target attempt=$attempt phase=windows_policy_validation result=command_nonzero exit=$rc cause=unknown" >&2
+    fi
+    (( attempt == 3 )) || sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"
+  done
+  return 1
+}
 
 # --retry keeps each child transcript and reattaches a still-running exact ID;
 # a natural AUTO 76 allocates a new placement. No TEMPFAIL line means no retry.
