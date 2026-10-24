@@ -95,18 +95,6 @@ effective_disk_floor_bytes() {
   gate_disk floor "$1" "$path"
 }
 
-# --disk-floor-bytes <host>: the effective disk floor this gate admits against,
-# in bytes, for other admission owners (the Nix profile publisher) to read
-# instead of copying the number. The override comes from the invoking user's
-# limits file, named on stderr, so a caller under another account sees which
-# policy it read.
-if [ "${1:-}" = --disk-floor-bytes ]; then
-  [ "$#" -eq 2 ] || die "usage: beelink-gate --disk-floor-bytes <beelink1|beelink2>"
-  floor=$(effective_disk_floor_bytes "$2") || exit 3
-  echo "beelink-gate: $2 disk floor $floor bytes from lifecycle admission and limits file $(limits_file)" >&2
-  echo "$floor"
-  exit 0
-fi
 
 free_bytes() {
   local available root_available
@@ -1605,13 +1593,7 @@ fi
 # ---- launcher: runs on the Mac, GTR or a beelink ----
 
 # The beelink this launcher runs on, if any.
-self_beelink() {
-  [ -x "$REG_EXE" ] || return 0
-  case "${BEELINK_GATE_SELF:-$(hostname)}" in
-    beelink1|DESKTOP-18IR33V) echo beelink1 ;;
-    beelink2) echo beelink2 ;;
-  esac
-}
+
 SELF=$(self_beelink)
 # Each beelink's newest install reserve for the gated commit's checkout shape;
 # a gate on one host falls back to the other's.
@@ -1626,6 +1608,10 @@ TRANSPORT_KILL_GRACE_SECONDS=2
 # (ci-zero Braid #173) and the gate gave up before submitting. The checkout reservation
 # below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
 STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
+
+if [ "${1:-}" = --disk-floor-bytes ]; then
+  disk_floor_query "$@"; exit $?
+fi
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
