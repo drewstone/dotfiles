@@ -94,7 +94,9 @@ floor_gib() {
     beelink2) base=150 ;;
     *) die "unknown remote beelink: $host" ;;
   esac
-  path=$(limits_file)
+  # An unreadable limits path must refuse, not fall back to the minimum: a
+  # caller without HOME would otherwise report the base floor over an override.
+  path=$(limits_file) && [ -n "$path" ] || { echo "beelink-gate: cannot resolve the limits file" >&2; return 1; }
   if [[ -e "$path" || -L "$path" ]]; then
     if [[ ! -f "$path" || ! -r "$path" ]]; then
       echo "beelink-gate: invalid disk_floor_gib limits file: $path" >&2
@@ -131,6 +133,19 @@ floor_gib() {
     echo "$base"
   fi
 }
+
+# --disk-floor-bytes <host>: the effective disk floor this gate admits against,
+# in bytes, for other admission owners (the Nix profile publisher) to read
+# instead of copying the number. The override comes from the invoking user's
+# limits file, named on stderr, so a caller under another account sees which
+# policy it read.
+if [ "${1:-}" = --disk-floor-bytes ]; then
+  [ "$#" -eq 2 ] || die "usage: beelink-gate --disk-floor-bytes <beelink1|beelink2>"
+  floor=$(floor_gib "$2") || exit 3
+  echo "beelink-gate: $2 disk floor ${floor} GiB from limits file $(limits_file)" >&2
+  echo "$((floor * 1024 * 1024 * 1024))"
+  exit 0
+fi
 
 free_bytes() {
   local available
