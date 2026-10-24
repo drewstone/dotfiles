@@ -61,6 +61,8 @@ def pr_owner_notice(root, report, save):
     message = (f"merge-on-green ownership: {len(urls)} of {report['actionable']} non-archived PRs aged >=24h lack a trusted "
                f"Owner / Blocker / Next action comment. Target 0. Read {root / 'ownership.md'}; "
                + ("Read each PR fully, close with supersession proof or hand to a live owner via PR + inbox. "
+                  "Never close a PR whose remaining precondition is a decision or confirmation owed by Drew "
+                  "or a lead: leave it open and route it to that lead. "
                   if urls else "No actionable ownership breach remains. ") +
                f"Archived: {len(report['archived'])} read-only PRs listed separately; no action. "
                f"Strict unassigned: {len(report['unassigned'])} / {report['aged']} total aged. "
