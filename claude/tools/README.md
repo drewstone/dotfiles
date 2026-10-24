@@ -459,7 +459,8 @@ definitions remain unchanged.
 the end store scan and the checkout release; it stops before the global LRU reclaim,
 which is outside that boundary. `final_boundary` names where it stopped:
 `after_checkout_release_before_cache_reclaim` normally, `before_checkout_release`
-when a watchdog or a missing cache root kept the lock. `release_checkout_before_reclaim`
+when a watchdog or a missing cache root kept the lock, and `unreached` when the
+observer ended earlier (deadline, termination or lost coverage). `release_checkout_before_reclaim`
 in `beelink-gate-lib/install.sh` owns that order. Filesystems are deduplicated by device and filesystem
 identity; checkout, pnpm, npm and a verified local Docker root are aliases, never
 additive disk use. Paths open with `O_PATH`, so a root-owned non-listable Docker

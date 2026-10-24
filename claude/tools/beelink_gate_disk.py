@@ -489,8 +489,11 @@ def collect(directory, final_boundary=None):
             if fs.get("identity_changed"):
                 fs["full_window"] = False
         observation["docker_identity_revalidated"] = "every_sample_and_collect"
-    # The caller names where the observer stopped; nothing after it is claimed.
-    observation["final_boundary"] = final_boundary or "unrecorded"
+    # The caller names where it stopped the observer. Only an observer that
+    # finished on that stop, with intact coverage, reached it; nothing later is claimed.
+    reached = observation.get("termination") == "finished" and "coverage_error" not in observation
+    observation["final_boundary"] = final_boundary if final_boundary and reached else "unreached"
+    observation["requested_final_boundary"] = final_boundary or "unrecorded"
     observation["directory_snapshots"] = {phase: read_json(directory / (phase + ".json"))
                                            for phase in ("before", "after_install", "end")}
     observation["directory_complete"] = all(isinstance(observation["directory_snapshots"].get(phase), dict)
