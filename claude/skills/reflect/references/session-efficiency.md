@@ -4,13 +4,14 @@ Use when progress stalls, work repeats, or the user requests a waste audit.
 Start with one turn and stop when the next useful correction is clear; self-review must not become another monitoring loop.
 
 Resolve the maintained [Tangle Traces CLI](https://github.com/tangle-network/traces/blob/main/docs/facts.md) and check its help.
-On this Mac, it is `~/.local/bin/traces`; bare `traces` currently resolves an unrelated Homebrew tool.
+Check `command -v traces` and the resolved executable's version/help against that owner; unrelated providers can share the command name.
+Use the verified executable in the example below. Keep host-specific resolution in the installed command configuration.
 Read deterministic facts before considering model-backed analysis.
 This example uses Codex; other agents must select their own `--harness` and explicit `--session` from CLI help.
 `--current` uses CODEX_THREAD_ID; an unrelated latest session is not a substitute.
 
 ```sh
-~/.local/bin/traces facts --harness codex --current --latest-turn |
+traces facts --harness codex --current --latest-turn |
   jq '{sessions: [.sessions[] | {sessionId, spanCount, toolCalls: .toolCalls.value, tools: .toolCallsByName.value, unread: .unreadRecords, cumulativeTokens: .tokenTotal.value}]}'
 ```
 
