@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# traces: run tangle-network/traces as built from the checkout's HEAD commit, never an older build.
+#
+# On 2026-10-24 the Mac's hand-written ~/.local/bin/traces ran ~/code/traces/dist/cli.js built on
+# 2026-10-07 while the checkout sat at a 2026-10-23 commit, and nobody noticed. Rebuilding dist alone
+# was not enough: the checkout's node_modules were from 2026-10-13 and lacked an export the new dist
+# imports. So the wrapper runs a self-contained build (dist plus the lockfile's production
+# dependencies) whose SOURCE_COMMIT names the commit it was built from, and refuses, printing the
+# exact rebuild command, unless that commit is the checkout's HEAD. The Mac does not build
+# (process-guard mac-build): its build runs on beelink1-wsl and is copied back.
+#
+# It also shadows the unrelated Homebrew market-dot-dev/tap/traces.
+# TRACES_CHECKOUT (default ~/code/traces) and TRACES_BUILD (default ~/.local/share/traces-build) override.
+set -uo pipefail
+
+checkout="${TRACES_CHECKOUT:-$HOME/code/traces}"
+build="${TRACES_BUILD:-$HOME/.local/share/traces-build}"
+head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null)" || head=""
+built="$(cat "$build/SOURCE_COMMIT" 2>/dev/null)" || built=""
+
+if [ -f "$build/dist/cli.js" ] && { [ -z "$head" ] || [ "$built" = "$head" ]; }; then
+  exec node "$build/dist/cli.js" "$@"
+fi
+if [ -z "$head" ]; then
+  echo "traces: no build at $build and no checkout at $checkout; clone https://github.com/tangle-network/traces there." >&2
+  exit 2
+fi
+
+# Build HEAD, then install the lockfile's production dependencies flat into a fresh directory.
+recipe() {  # <checkout> <build dir> [commands that bring the checkout to HEAD first]
+  printf 'set -e; cd %s && %spnpm install --frozen-lockfile && pnpm build && rm -rf %s && mkdir -p %s && cp -R dist package.json pnpm-lock.yaml pnpm-workspace.yaml %s/ && cd %s && pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted && echo %s > SOURCE_COMMIT' \
+    "$1" "${3:-}" "$2" "$2" "$2" "$2" "$head"
+}
+echo "traces: refusing to run a stale build: $build is from ${built:-no commit}, the checkout $checkout is at ${head}." >&2
+if [ "$(uname -s)" = Darwin ]; then
+  echo "Build it on beelink1-wsl and copy it back:" >&2
+  echo "  ssh beelink1-wsl 'bash -lc \"$(recipe '~/code/traces' '~/.cache/traces-build' "git fetch -q origin && git checkout -q --detach $head && ")\"' && rsync -a --delete beelink1-wsl:.cache/traces-build/ $build/" >&2
+else
+  echo "Build it:" >&2
+  echo "  bash -lc \"$(recipe "$checkout" "$build")\"" >&2
+fi
+exit 2

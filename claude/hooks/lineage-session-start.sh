@@ -8,7 +8,7 @@
 # 2. Record who acted in this session (session-identity.sh): the harness, the model Claude Code
 #    reports, the profile (the --agent name, else the dotfiles profile every interactive session
 #    loads), a digest of the global instructions that profile is made of, and a digest of the
-#    installed skills. inject-directive.sh adds the directive variant on the first prompt.
+#    installed skills. inject-directive.sh, another SessionStart hook, adds the directive variant.
 
 INPUT=$(cat)
 # The real hooks dir, so the helper is found from a checkout pulled before install.sh relinks.

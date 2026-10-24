@@ -25,18 +25,18 @@ FUNCTION_HUG = tuple(_P["functionHug"])
 
 
 def logic(path):
-    """A file whose lines count toward production size: logic or a workflow, and not a test, declaration or vendored path."""
-    return bool((LOGIC.search(path) or WORKFLOW.search(path)) and not EXEMPT.search(path))
+    """A file whose lines count toward production size: logic or a workflow, and not a test, declaration, vendored path or dated record."""
+    return bool((LOGIC.search(path) or WORKFLOW.search(path)) and not EXEMPT.search(path) and not history(path))
 
 
 def source(path):
     """A TypeScript or JavaScript file outside tests: the duplication/export population."""
-    return bool(SOURCE.search(path) and not SKIP.search(path))
+    return bool(SOURCE.search(path) and not SKIP.search(path) and not history(path))
 
 
 def function_source(path):
     """A supported AST source outside tests, including Python."""
-    return bool(FUNCTION_SOURCE.search(path) and not SKIP.search(path))
+    return bool(FUNCTION_SOURCE.search(path) and not SKIP.search(path) and not history(path))
 
 
 def history(path):
@@ -63,3 +63,50 @@ def normalized(text, *, locations=False):
             lines.append((number, line) if locations else line)
         number += piece.count("\n")
     return lines
+
+
+def declared_exports(text):
+    """Exported declaration names in a JS/TS file, skipping lines that start inside a template literal.
+
+    A generator script writes `export const X` into a template string that becomes another file; that line is
+    text the script emits, not a declaration, so counting it reports the generator and its output as duplicates.
+    """
+    names, stack, i, n, line_start = [], [], 0, len(text), True
+    # stack holds "`" for an open template literal and "{" for each brace inside a ${...} substitution.
+    while i < n:
+        if line_start and (not stack or stack[-1] == "{"):
+            end = text.find("\n", i)
+            line = text[i : n if end < 0 else end]
+            if (m := DECLARATION.match(line)) and m.group(1) not in CONVENTION:
+                names.append(m.group(1))
+        line_start = False
+        c = text[i]
+        if c == "\n":
+            line_start = True
+        elif stack and stack[-1] == "`":
+            if c == "\\":
+                i += 1
+            elif c == "`":
+                stack.pop()
+            elif text.startswith("${", i):
+                stack.append("{")
+                i += 1
+        elif c == "`":
+            stack.append("`")
+        elif c == "{" and stack:
+            stack.append("{")
+        elif c == "}" and stack:
+            stack.pop()
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = (n if end < 0 else end) - 1
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = (n if end < 0 else end + 2) - 1
+        elif c in "'\"":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            i = j
+        i += 1
+    return names

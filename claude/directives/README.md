@@ -1,6 +1,6 @@
 # Interaction Directives
 
-The **response-shaping layer**: a swappable directive injected into *every* agent turn that
+The **response-shaping layer**: a swappable directive injected once into every context window that
 governs voice, lead/ask behavior, and how a run is closed out. This is distinct from
 `CLAUDE.md` (global *rules*) — directives shape *how* a response is delivered, and are
 **measured and rotated** so we can learn which style actually produces better runs.
@@ -9,14 +9,17 @@ governs voice, lead/ask behavior, and how a run is closed out. This is distinct 
 
 - `active` — single line. Either a variant slug (`evidence-lead-v1`) or a rotation spec
   (`rotate:evidence-lead-v1,<new-slug>`) for randomized-by-session A/B.
-- `variants/<slug>.md` — one directive variant. Keep them tight; this is injected on every turn.
+- `variants/<slug>.md` — one directive variant. Keep them tight; every context window carries one.
 
 ## How it reaches a response
 
-- **Claude (per-turn):** the `UserPromptSubmit` hook `hooks/inject-directive.sh` reads `active`,
-  resolves the variant (deterministic per-session pick when rotating), and injects it as
-  `additionalContext` wrapped in `<interaction-directive variant="...">`. Fail-open: any error
-  injects nothing and never blocks the prompt.
+- **Claude (per context):** the `SessionStart` hook `hooks/inject-directive.sh` runs for the
+  sources startup, resume, clear and compact. It reads `active`, resolves the variant (the
+  session's pinned variant, or a deterministic per-session pick when rotating), and injects it as
+  `additionalContext` wrapped in `<interaction-directive variant="...">`, so each context window
+  carries one copy and a compaction adds it back. Until 2026-10-24 it ran on `UserPromptSubmit`
+  and added ~4 KB on every prompt, mid-turn messages included. Fail-open: any error injects
+  nothing and never blocks the session.
 - **Codex (session-level):** *next increment* — Codex has no per-turn hook; the active variant
   will be composed into its `AGENTS.md` surface at switch time. Not yet wired; see TODO below.
 

@@ -8,6 +8,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+const SETTINGS = new URL('../claude/settings.json', import.meta.url).pathname
+
 const HOOK = process.env.DIRECTIVE_HOOK ?? new URL('../claude/hooks/inject-directive.sh', import.meta.url).pathname
 
 function home(active) {
@@ -20,9 +22,12 @@ function home(active) {
   return h
 }
 const setActive = (h, active) => writeFileSync(join(h, '.claude', 'directives', 'active'), `${active}\n`)
-function turn(h, session) {
-  const out = execFileSync('bash', [HOOK], { input: JSON.stringify({ session_id: session, cwd: '/tmp' }), env: { ...process.env, HOME: h }, encoding: 'utf8' })
-  return out ? /variant=\\?"([^"\\]+)/.exec(JSON.parse(out).hookSpecificOutput.additionalContext)[1] : null
+function turn(h, session, source = 'startup') {
+  const out = execFileSync('bash', [HOOK], { input: JSON.stringify({ session_id: session, cwd: '/tmp', hook_event_name: 'SessionStart', source }), env: { ...process.env, HOME: h }, encoding: 'utf8' })
+  if (!out) return null
+  const { hookSpecificOutput } = JSON.parse(out)
+  assert.equal(hookSpecificOutput.hookEventName, 'SessionStart')
+  return /variant=\\?"([^"\\]+)/.exec(hookSpecificOutput.additionalContext)[1]
 }
 const log = (h) => readFileSync(join(h, '.claude', 'directives-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
 
@@ -56,4 +61,20 @@ test('a new session under rotation is logged once with the variant it was shown'
   assert.equal(rows.length, 1)
   assert.equal(rows[0].variant, first)
   assert.ok(existsSync(join(h, '.claude', '.directive-seen', 'fresh-session')))
+})
+
+test('the directive is injected once per context window, never per prompt', () => {
+  const { hooks } = JSON.parse(readFileSync(SETTINGS, 'utf8'))
+  const wired = Object.entries(hooks).flatMap(([event, groups]) =>
+    groups.filter((g) => g.hooks.some((x) => x.command.includes('inject-directive.sh'))).map((g) => [event, g.matcher]))
+  assert.deepEqual(wired, [['SessionStart', 'startup|resume|clear|compact']])
+})
+
+test('a compaction re-adds the pinned variant without logging it again', () => {
+  const h = home('rotate:alpha,beta')
+  const first = turn(h, 'compacted')
+  setActive(h, first === 'alpha' ? 'beta' : 'alpha')
+  assert.equal(turn(h, 'compacted', 'compact'), first)
+  assert.equal(turn(h, 'compacted', 'resume'), first)
+  assert.equal(log(h).length, 1)
 })

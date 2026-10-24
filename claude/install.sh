@@ -79,7 +79,7 @@ elif [ ! -e "$REFLECTIONS" ]; then
   echo "  STATE $REFLECTIONS (seeded from $SCRIPT_DIR/reflections)"
 fi
 
-# Directives (per-response interaction-style layer; read by hooks/inject-directive.sh)
+# Directives (interaction-style layer, one copy per context; read by hooks/inject-directive.sh)
 link "$SCRIPT_DIR/directives" "$CLAUDE_DIR/directives"
 
 # Skills. A skill can be a symlink into another repo's checkout, so a missing
@@ -176,6 +176,11 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
     if [ ! -x "$tool" ]; then echo "  SKIP $tool (not executable in git: a module, not a tool)"; continue; fi
     link "$tool" "$HOME/bin/$base"
   done
+fi
+# The Mac's hand-written ~/.local/bin/traces ran ~/code/traces/dist with no freshness check, ahead of
+# ~/bin in login shells. tools/traces owns the name now, so that file becomes a link to it.
+if [ -f "$HOME/.local/bin/traces" ] && [ ! -L "$HOME/.local/bin/traces" ] && grep -q 'code/traces/dist/cli.js' "$HOME/.local/bin/traces"; then
+  rm "$HOME/.local/bin/traces" && link "$SCRIPT_DIR/tools/traces" "$HOME/.local/bin/traces"
 fi
 
 # Codex runs the shared search guard as a PreToolUse hook. Trust its exact

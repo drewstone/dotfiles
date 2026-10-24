@@ -785,3 +785,9 @@ See [OpenAI's skill documentation](https://learn.chatgpt.com/docs/build-skills).
 
 For usage, run `traces skills --since 30d`: it counts each skill's Claude Code loads and Codex `SKILL.md` reads across every local session, with no model call.
 `traces skills --unused --since 30d` lists installed skills with no use, the candidates to delete.
+
+## traces
+
+Runs tangle-network/traces from a self-contained build, `~/.local/share/traces-build` (`TRACES_BUILD`): `dist/` plus the lockfile's production dependencies, with `SOURCE_COMMIT` naming the commit it was built from.
+It refuses, exit 2, unless that commit is the HEAD of `~/code/traces` (`TRACES_CHECKOUT`), and prints the exact rebuild command: on the Mac a build on beelink1-wsl copied back with rsync, elsewhere a build in the checkout.
+It shadows Homebrew's unrelated `traces`.
