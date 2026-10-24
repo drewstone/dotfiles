@@ -1,5 +1,5 @@
 // Scenario tests for the session identity record through its real boundary: hook JSON on stdin to
-// the SessionStart and UserPromptSubmit hooks, the record on disk. The record is what `traces` reads
+// the SessionStart hooks (lineage and directive), the record on disk. The record is what `traces` reads
 // to say who acted in an interactive session, so every new session must end up with harness, model,
 // profile and directive variant, and nothing may be written as a placeholder.
 import { test } from 'node:test'
