@@ -249,38 +249,14 @@ def check_in_progress(gitdir):
 
 
 def newest_git_activity(gitdir, common_dir, branch):
-    newest = 0.0
-    # Metadata files count; status-created lock directory changes alone do not.
+    owner = os.path.expanduser('~/.local/share/tangle-tools')
+    if owner not in sys.path:
+        sys.path.insert(0, owner)
     try:
-        paths = [e.path for e in os.scandir(gitdir) if not e.is_dir(follow_symlinks=False)]
-    except OSError as exc:
-        raise Skip('cannot read %s: %s' % (gitdir, exc.strerror))
-    if branch:
-        paths.append(os.path.join(common_dir, branch))
-    for path in paths:
-        try:
-            st = os.lstat(path)
-        except FileNotFoundError:
-            continue
-        newest = max(newest, st.st_mtime, st.st_ctime)
-    # Expiry rewrites old reflogs without new work; only their event times count.
-    logs = [os.path.join(gitdir, 'logs', 'HEAD')]
-    if branch:
-        logs.append(os.path.join(common_dir, 'logs', branch))
-    for log in logs:
-        try:
-            with open(log, 'rb') as fh:
-                fh.seek(0, 2)
-                fh.seek(max(0, fh.tell() - 4096))
-                tail = fh.read().decode('utf-8', 'replace').strip().splitlines()
-            if tail:
-                match = re.search(r'> (\d+) [+-]\d{4}\t', tail[-1])
-                if not match:
-                    raise Skip('unreadable reflog event time: %s' % log)
-                newest = max(newest, float(match.group(1)))
-        except FileNotFoundError:
-            pass
-    return newest
+        from storage_lifecycle.worktree_activity import latest_git_activity
+        return latest_git_activity(gitdir, common_dir, branch)
+    except (ImportError, OSError, ValueError) as exc:
+        raise Skip('Git activity owner unavailable or unsafe: %s' % exc) from exc
 
 
 def _looks_bare(path, entries):

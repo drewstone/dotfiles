@@ -79,7 +79,7 @@ It covers every linked worktree registered with a repository under `~/code`, `~/
 It removes one only when every check passes:
 
 - The worktree is not locked and has no merge, rebase, bisect, cherry-pick, or revert in progress.
-- Nothing in it, its index, HEAD, or reflogs changed in the last 12 hours (`--idle-hours`).
+- Worktree content, index and HEAD metadata, and recorded reflog events satisfy `--idle-hours`. Git activity comes from the installed tangle-tools `storage_lifecycle.worktree_activity` owner; reflog maintenance rewrites do not count as new work. An unavailable owner or malformed event keeps the checkout.
 - `git status` is empty; only ignored build output such as `node_modules/` may remain. An ignored `.env` keeps the tree.
 - It holds no nested repository.
 - After `git fetch --all --prune`, every commit on its HEAD is on a remote-tracking ref.
