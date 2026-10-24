@@ -69,13 +69,23 @@ def main():
             )
 
         added = {n: {p for p in ps if not declared_in_merge_head(p, n)} for n, ps in added.items()}
+    # A line inside a template literal is text a generator emits, not a declaration; census reads it the same way.
+    staged = {}
+
+    def declares(rev, path, name):
+        if (rev, path) not in staged:
+            shown = git("show", f"{rev}:{path}")
+            staged[rev, path] = set(classify.declared_exports(shown.stdout)) if shown.returncode == 0 else set()
+        return name in staged[rev, path]
+
+    added = {n: {p for p in ps if declares("", p, n)} for n, ps in added.items()}
     added = {n: ps for n, ps in added.items() if ps}
     clashes = []
     for name, paths in sorted(added.items()):
         # POSIX ERE (git grep -E) has no \b on every platform, so the name ends at a non-identifier character.
         pattern = rf"^export (default )?(declare )?(async )?(abstract )?(function\*?|class|interface|type|const|let|enum) {re.escape(name)}([^A-Za-z0-9_$]|$)"
         hits = git("grep", "--cached", "-l", "-E", pattern, "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.mts", "*.cts").stdout.split()
-        others = sorted(h for h in hits if h not in paths and not SKIP.search(h))
+        others = sorted(h for h in hits if h not in paths and not SKIP.search(h) and declares("", h, name))
         if others or len(paths) > 1:
             clashes.append((name, sorted(paths), others or ["another file in this commit"]))
     if not clashes:
