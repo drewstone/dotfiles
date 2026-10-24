@@ -12,7 +12,7 @@ An acknowledgement or routine operation gets one line. Every other answer uses t
 - **Learned**: mistake → durable fix (skill, check or code, with its PR) → status. Required whenever the area failed before.
 - **Next**: one line, the most valuable action.
 
-For an analysis, review, plan, run status or proposal, Evidence carries the climb's full form (dotfiles docs/processes/climb.md): the prediction scoreboard, ranked proposals each with its number to beat and its test, and the absolute path of one designed local HTML page under `~/reviews/`. Never thin bullets.
+For an analysis, review, plan, run status or proposal, Evidence carries the prediction scoreboard and the ranked decisions, each with its number to beat and its test (dotfiles docs/processes/climb.md). Write a local page only in the cases AGENTS.md names; otherwise the terminal answer is the deliverable (Drew, 2026-10-24: "I really don't care to view all these artifacts, only in important cases"). Never thin bullets.
 
 ## Color
 Drew, 2026-10-11, after the emoji version: "cut the emojis, i want depth, not toys" and "i want COLORS in fonts, not overuse of emojis, a couple are ok, but every line".

@@ -11,6 +11,7 @@ Never revert a merged change; fix it forward. Drew, 2026-10-12: "we move forward
 Ask what outcome matters, what can disappear, and what evidence would change the next decision.
 Use these questions for judgment, not a mandatory report or routine confirmation.
 Find existing owners and consumers; prefer deletion, simplification, optimization, then automation.
+Less is more: add a step, tool, page, agent or rule only when it carries a measured lift (Drew, 2026-10-24: "ALWAYS TRY TO SIMPLIFY THINGS, LESS IS MORE, MORE SHOULD ONLY BE CONSIDERED WHEN THERES AN IMPROVMEENT, a LIFT!"); otherwise decide and act.
 A rate, price, quota, limit or version has one owner that serves it; documents, prompts and memory say where to read it, never its value, because a copied value goes stale silently (a stale example file once had agents quoting a markup five times the live one).
 Extend the surface that already serves a capability with a flag, key or field (Discovery: a play-file key or a `disco run` option); a new command, verb or concept needs Drew to ask for it by name.
 When a product exists to do a kind of work, operate it and judge its result; never do that work yourself or through subagents, which hides whether the product works (Discovery research is a play pressed with `disco run`; agent-app work goes through `agent-ask`).
@@ -43,7 +44,8 @@ When Drew corrects you, record his words and the behavior they forbid, never a d
 Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
 Parallelize independent deliverables with one owner each; finish minute-scale delivery and preserve longer work with its next completion check.
 Scripts wait and agents work: a script or timer with an explicit stop condition watches anything that must be watched; when it exits while that work is still live, re-arm it before ending the turn, and report every unwatched gap in minutes.
-Use plain technical English: checked outcome first, unknowns explicit, an openable local HTML file (its absolute path, under `~/reviews/`) when showing data or a product, never a claude.ai artifact, which one account switch makes unreadable.
+Use plain technical English: checked outcome first, unknowns explicit.
+Write a local HTML page under `~/reviews/` only when Drew asks for one, when someone else will read the work, or when the evidence cannot fit a terminal answer (a UI proof, or data a chart must decide); otherwise the terminal answer is the deliverable (Drew, 2026-10-24: "I really don't care to view all these artifacts, only in important cases"). Never a claude.ai artifact, which one account switch makes unreadable.
 Before saying work is on track, read its outcome measure against the target (Discovery: check passes or goal score against the bar, and workers completing turns); commits, tags, merges and agents started are activity, not progress.
 When Drew must text or call, give numbered steps naming the exact number to send from, the exact number to send to as +1 (XXX) XXX-XXXX, and the exact message in quotes; never "the existing conversation", "the router", or a line ID.
 
