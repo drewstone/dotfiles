@@ -2004,7 +2004,7 @@ test("a disk-floor refusal, then a green --ship whose ship-proof publish GitHub 
       { env: { ...f.env, GIT_CONFIG_GLOBAL: gitconfig, ...(avail ? { FAKE_AVAIL: avail } : {}) } });
     const refused = ship("150323855360");
     assert.equal(refused.status, 75, refused.stderr);
-    assert.match(refused.stderr, /REFUSED beelink2 has 150323855360 bytes free, below its 150 GiB disk floor/);
+    assert.match(refused.stderr, /REFUSED beelink2 has 150323855360 bytes available \(df avail, the lower of HOME and \/\), below its \d+ byte disk floor/);
     assert.match(refused.stderr.trim().split("\n").at(-1), /^beelink-gate: TEMPFAIL next_allowed=\S+Z beelink2 is below its disk floor$/);
     const retried = ship();
     assert.equal(retried.status, 0, retried.stderr);

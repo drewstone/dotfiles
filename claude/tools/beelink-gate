@@ -123,12 +123,12 @@ check_floor() {
   available=$(free_bytes)
   last_floor_available=$available
   if (( available < floor_bytes )); then
-    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor; use the other beelink or ask the host owner to recover capacity\n' \
+    printf 'beelink-gate: REFUSED %s has %s bytes available (df avail, the lower of HOME and /), below its %s byte disk floor; use the other beelink or ask the host owner to recover capacity\n' \
       "$host" "$available" "$floor_bytes" >&2
     return 3
   fi
   if (( reserve > 0 && available < floor_bytes + reserve )); then
-    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
+    printf 'beelink-gate: REFUSED %s has %s bytes available (df avail, the lower of HOME and /), below its %s byte disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
       "$host" "$available" "$floor_bytes" "$reserve" >&2
     return 3
   fi
