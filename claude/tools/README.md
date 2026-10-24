@@ -423,6 +423,29 @@ size is reported as unmeasured. Reporting lives in `beelink_gate_report.py`, tim
 populations in `beelink_gate_metrics.py`, and the bounded read-only CPU sample
 in `beelink_gate_cpu.py`; the shell owns transport and execution.
 
+The report owner caches GitHub metadata before invoking `gh-drew`, using the
+release owner's existing protected-directory, bounded JSON, atomic-publication
+and lock primitives. Report-only expiry and HTTP-cache duration are defined in
+`beelink_gate_report.py`; release admission keeps its own policy. Per-key refresh
+locks and positive/unknown entries are shared by the native account and host
+across report processes and worktrees. Both entry types use the same expiry;
+cache hits never extend it. Unavailable, unsafe or malformed cache/lock evidence
+leaves metadata unknown without an uncached fallback.
+
+`gh-drew` remains the quota owner. The report passes a stricter caller-hour cap,
+preserving any stricter inherited positive cap and the existing ten-minute cap,
+core floor and identity checks. Malformed inherited cap fields leave metadata
+unknown instead of executing with a disabled guard. The wrapper's existing cap
+counts called core reads per caller plus session (or working directory) on one
+host; it excludes search/free reads and is not an atomic or token-global limit.
+No report-local rate ledger or historical-freshness seed is maintained.
+`github_metadata` exposes cache ages/hits/misses, attempted wrapper launches and
+the exact cap scope. Cache age is elapsed since lookup attempt; actual API data
+age remains unknown, including the separate HTTP cache. A below-target hourly
+called/core-read proxy requires actual wrapper ledger evidence after adoption;
+fewer total attempts is a separate stricter measure. Native report populations,
+phase measurements and missing-host/CPU exit semantics are unchanged.
+
 The optional `frontend_requests` report field measures each CLI invocation after
 source bootstrap, separately from native placement timing. Its private local
 envelope is named on stderr as `frontend_observation`; one caller monotonic clock

@@ -1,9 +1,9 @@
 """Gate report owner; the shell owns transport and passes retained records."""
-import collections, datetime as dt, json, math, subprocess, sys
+import collections, datetime as dt, hashlib, json, math, os, pathlib, pwd, re, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from beelink_gate_metrics import throughput, admission_attempts, frontend_requests
 from beelink_gate_disk import disk_summary
-from beelink_gate_release import GITHUB_CACHE_SECONDS
+from beelink_gate_release import Unknown, bounded_read, safe_directory, read_cache, write_cache, lock_cache
 path, hours, gh, missing = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 json_output = len(sys.argv) > 5 and sys.argv[5] == "--json"
 if json_output:
@@ -40,16 +40,130 @@ for line in open(path):
         history.append(r)
 # GitHub follows a renamed repo but its search does not, so receipts group under the
 # current name; otherwise agent-dev-container's runs after its rename had no merged count.
-# gh owns persistence/expiry. Cache age is not returned by its API command, so
-# expose the maximum possible staleness without calling a cached response fresh.
-GITHUB_METADATA_CACHE_SECONDS = GITHUB_CACHE_SECONDS
+# Report cache expiry is separate from the release admission owner's policy.
+GITHUB_METADATA_CACHE_SECONDS = 3600
+GITHUB_HTTP_CACHE_SECONDS = 600
+GITHUB_REPORT_CALLER_CAP = 99
+
+
+class ReportGithub:
+    """Skip the wrapper on cached reads; the wrapper still owns quota policy."""
+    def __init__(self):
+        self.root = pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/state/beelink-gate/report-github"
+        self.mutex = threading.Lock()
+        self.error = None
+        self.stats = collections.Counter()
+        self.observations = {}
+        self.environment = os.environ.copy()
+        self.caller_cap = None
+        if not gh:
+            return
+        try:
+            if pathlib.Path(gh).name != "gh-drew":
+                raise Unknown("maintained_github_wrapper_required")
+            if any(not hasattr(os, name) for name in ("waitid", "WNOWAIT", "P_PID", "WEXITED", "WNOHANG")):
+                raise Unknown("bounded_reader_platform_unavailable")
+            # gh-drew disables its cap guard when either inherited field is
+            # malformed. Do not execute in that case or reinterpret shell octal.
+            for key in ("GH_DREW_CALLER_10M", "GH_DREW_CALLER_1H"):
+                value = self.environment.get(key)
+                if value is not None and re.fullmatch(r"(?:0|[1-9][0-9]{0,8})", value) is None:
+                    raise Unknown("inherited_wrapper_cap_invalid")
+            inherited = int(self.environment.get("GH_DREW_CALLER_1H", "0"))
+            self.caller_cap = min(inherited, GITHUB_REPORT_CALLER_CAP) if inherited else GITHUB_REPORT_CALLER_CAP
+            self.environment["GH_DREW_CALLER_1H"] = str(self.caller_cap)
+            safe_directory(self.root)
+        except (OSError, ValueError, Unknown) as error:
+            self.error = str(error) if isinstance(error, Unknown) else type(error).__name__
+
+    def observe(self, key, state, age=None, reason=None):
+        with self.mutex:
+            self.stats[state] += 1
+            self.observations[key] = {"state": state, "cache_age_s": age, "reason": reason}
+
+    @staticmethod
+    def valid(args, value):
+        return (isinstance(value, str) and len(value) <= 512
+                and (re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value) is not None
+                     if args[0].startswith("repos/") else value.isascii() and value.isdigit()))
+
+    def get(self, args, key):
+        unknown = subprocess.CompletedProcess(args, 1, "", "metadata unavailable")
+        if not gh or self.error:
+            self.observe(key, "unknown", reason=self.error or "github_disabled")
+            return unknown
+        token = hashlib.sha256(key.encode()).hexdigest()
+        query = hashlib.sha256(json.dumps([os.path.realpath(gh), args], separators=(",", ":")).encode()).hexdigest()
+        fd = None
+        try:
+            fd = lock_cache(self.root / f"{token}.lock", time.monotonic() + 2)
+            entry_path = self.root / f"{token}.json"
+            entry = read_cache(entry_path)
+            epoch = time.time()
+            if entry is not None:
+                if (set(entry) != {"schema", "query", "observed_at", "value", "reason"}
+                        or type(entry["schema"]) is not int or entry["schema"] != 1
+                        or not isinstance(entry["query"], str) or re.fullmatch(r"[0-9a-f]{64}", entry["query"]) is None
+                        or type(entry["observed_at"]) not in (int, float) or not 0 <= entry["observed_at"] <= epoch
+                        or not math.isfinite(entry["observed_at"])
+                        or entry["value"] is not None and not self.valid(args, entry["value"])
+                        or entry["reason"] not in (None, "refresh_incomplete", "github_unknown")
+                        or (entry["value"] is not None) != (entry["reason"] is None)):
+                    raise Unknown("report_cache_invalid_or_clock")
+                age = epoch - entry["observed_at"]
+                if entry["query"] == query and age < GITHUB_METADATA_CACHE_SECONDS:
+                    self.observe(key, "positive_hits" if entry["value"] is not None else "negative_hits", age, entry["reason"])
+                    return subprocess.CompletedProcess(args, 0, entry["value"], "") if entry["value"] is not None else unknown
+            self.observe(key, "misses")
+            # A killed refresh leaves an explicit negative cooldown, not a fresh
+            # miss in every later process. No existing malformed entry is reset.
+            entry = {"schema": 1, "query": query, "observed_at": time.time(),
+                     "value": None, "reason": "refresh_incomplete"}
+            write_cache(entry_path, entry)
+            with self.mutex:
+                self.stats["gh_calls"] += 1
+            try:
+                raw = bounded_read([gh, "api", "--cache", f"{GITHUB_HTTP_CACHE_SECONDS}s", *args],
+                                   time.monotonic() + 15, env=self.environment)
+                value = raw.decode("utf-8").strip()
+                entry.update(value=value if self.valid(args, value) else None,
+                             reason=None if self.valid(args, value) else "github_unknown")
+            except (OSError, ValueError, Unknown, TypeError):
+                # A mixed installed reader without env support is optional
+                # metadata unknown, never an uncapped wrapper fallback.
+                entry.update(value=None, reason="github_unknown")
+            age = time.time() - entry["observed_at"]
+            if not math.isfinite(age) or not 0 <= age < GITHUB_METADATA_CACHE_SECONDS:
+                raise Unknown("report_refresh_age_unknown")
+            write_cache(entry_path, entry)
+            self.observe(key, "positive_refreshes" if entry["value"] is not None else "negative_refreshes",
+                         age, entry["reason"])
+            return subprocess.CompletedProcess(args, 0, entry["value"], "") if entry["value"] is not None else unknown
+        except (OSError, ValueError, Unknown) as error:
+            self.error = str(error) if isinstance(error, Unknown) else type(error).__name__
+            self.observe(key, "unknown", reason=self.error)
+            return unknown
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def summary(self):
+        ages = [row["cache_age_s"] for row in self.observations.values() if row["cache_age_s"] is not None]
+        counts = {key: self.stats[key] for key in ("positive_hits", "negative_hits", "misses", "gh_calls",
+                                                   "positive_refreshes", "negative_refreshes", "unknown")}
+        return {"enabled": bool(gh), "cache_max_age_s": GITHUB_METADATA_CACHE_SECONDS,
+                "http_cache_max_age_s": GITHUB_HTTP_CACHE_SECONDS,
+                "cache_age_s": max(ages) if ages else None, "actual_data_age_s": None,
+                "age_scope": "elapsed since wrapper lookup attempt; cached HTTP response data age remains unknown",
+                "counts": counts, "observations": self.observations,
+                "wrapper_cap": {"owner": "gh-drew", "caller_1h": self.caller_cap,
+                                "scope": "called core reads per caller + session (or cwd), on this host; search/free reads excluded; not atomic/global"},
+                "limits": "gh_calls counts attempted wrapper launches including spawn failures, not HTTP requests or successful quota debits. Per-key locks/cache are shared by native uid and host across report sessions/worktrees. Positive and unknown entries have the same expiry; HTTP data age remains unknown. No historical freshness seed. The below100 called/core-read proxy per hour outcome needs actual postadoption ledger measurement; fewer total attempts is a separate stricter measure."}
+
+
+report_github = ReportGithub()
 canonical_names = {}
 canonical_unknown = set()
-def github(args):
-    try:
-        return subprocess.run([gh, "api", "--cache", f"{GITHUB_METADATA_CACHE_SECONDS}s", *args], capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return subprocess.CompletedProcess(args, 124 if isinstance(error, subprocess.TimeoutExpired) else 127, "", "metadata unavailable")
 def canonical(repo):
     if not repo.startswith("github.com/"):
         return repo
@@ -57,7 +171,7 @@ def canonical(repo):
         canonical_unknown.add(repo)
         return repo
     if repo not in canonical_names:
-        out = github([f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"])
+        out = report_github.get([f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"], "canonical:" + repo)
         name = out.stdout.strip()
         if out.returncode == 0 and name.count("/") == 1:
             canonical_names[repo] = f"github.com/{name}"
@@ -80,7 +194,7 @@ def merged(repo):
     if not gh or not repo.startswith("github.com/"):
         return None
     q = f"repo:{repo[len('github.com/'):]} is:pr is:merged merged:>={since}"
-    out = github(["-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"])
+    out = report_github.get(["-X", "GET", "search/issues", "-f", f"q={q}", "--jq", ".total_count"], "merged:" + repo)
     return int(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip().isdigit() else None
 print(f"beelink-gate report: {since} to {now:%Y-%m-%dT%H:%M:%SZ} ({len(rows)} gate runs)")
 admission_wait = admission_attempts(admission_batches)
@@ -103,9 +217,8 @@ merged_counts = dict.fromkeys(by_repo)
 if not json_output:
     with ThreadPoolExecutor(max_workers=4) as pool:
         merged_counts = dict(zip(by_repo, pool.map(merged, by_repo)))
-print(f"GITHUB_METADATA enabled={bool(gh)} cache_max_age_s={GITHUB_METADATA_CACHE_SECONDS} "
-      f"actual_cache_age=unknown canonical_unknown={sorted(canonical_unknown)} "
-      f"merged_unknown={sorted(repo for repo, count in merged_counts.items() if count is None)}")
+print("GITHUB_METADATA " + json.dumps({**report_github.summary(), "canonical_unknown": sorted(canonical_unknown),
+                                      "merged_unknown": sorted(repo for repo, count in merged_counts.items() if count is None)}, sort_keys=True))
 for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
     m = merged_counts[repo]
     waits = sorted(r.get("waited_s", 0) for r in rs)
@@ -215,9 +328,7 @@ if json_output:
                                 "missing_cpu_hosts": cpu_missing,
                                 "retained_job_logs": capacity_logs, "admission_wait": admission_wait,
                                 "frontend_requests": frontend,
-                                "github_metadata": {"enabled": bool(gh),
-                                                    "cache_max_age_s": GITHUB_METADATA_CACHE_SECONDS,
-                                                    "cache_age_s": None,
+                                "github_metadata": {**report_github.summary(),
                                                     "canonical_names": {repo: name for repo, name in canonical_names.items() if repo not in canonical_unknown},
                                                     "canonical_unknown": sorted(canonical_unknown),
                                                     "merged_counts_requested": False}}, sort_keys=True) + "\n")

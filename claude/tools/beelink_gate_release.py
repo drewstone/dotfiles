@@ -1,6 +1,6 @@
 """Release admission owner: native Worker identity joined to read-only Actions jobs.
 
-Imported reports reuse the metadata TTL; import performs no reads or API calls.
+Imported reports reuse cache and bounded-read primitives; import performs no reads or API calls.
 The shell embeds this source once and invokes main before admitting new work.
 """
 import argparse
@@ -303,10 +303,10 @@ def terminate_child(child):
     raise Unknown("github_descendants_not_reaped")
 
 
-def bounded_read(argv, deadline, abort=None):
+def bounded_read(argv, deadline, abort=None, *, env=None):
     check_deadline(deadline, abort)
     child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, start_new_session=True)
+                             stderr=subprocess.PIPE, start_new_session=True, env=env)
     output = bytearray()
     count = 0
     try:
