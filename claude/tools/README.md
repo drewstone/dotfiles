@@ -373,6 +373,14 @@ Probe-triggered cache recovery re-executes the immutable probe source in the
 same managed slice, with a bounded synchronous lifetime and the same PSI/drain
 checks before scanning or pruning. A failed launch cannot recover outside it.
 
+Host probes retain fixed per-attempt phase and exact command-exit diagnostics
+for Windows policy lookup and the remote probe. Known source-generation or
+transport-deadline failures retain their nested status. Raw stderr stays discarded:
+SSH exit 255 and a successful command without a protocol line still have an
+unknown underlying cause. No stderr reader, raw-output file, extra transport call,
+retry, deadline or admission change is introduced. A later successful SSH call
+does not explain a prior probe failure.
+
 Admission reads host CPU PSI `some avg10` against the existing host limits
 file's `max_cpu_pressure`. Caller overrides may lower that ceiling, never raise
 it. Normal, light, dev, urgent and starved gates share this hard guard. Missing
