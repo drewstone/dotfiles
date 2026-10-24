@@ -83,7 +83,7 @@ decode() { printf '%s' "$1" | base64 --decode; }
 
 # Older launchers can emit a newly deployed main file with an older helper list.
 # A missing admission owner must refuse before any probe, reserve or cache work.
-if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t probe_transport)" != function ] || [ "$(type -t probe_of)" != function ]; then
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || [ "$(type -t initial_disk_admission)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t probe_transport)" != function ] || [ "$(type -t probe_of)" != function ]; then
   tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
@@ -1184,10 +1184,7 @@ remote_gate() {
   # Validate here: a die inside a later $(load_limit) would only end that subshell.
   admission_begin
   trap 'admission_early_exit "$?"' EXIT
-  if ! check_floor "$beelink"; then
-    admission_outcome=refused admission_reason=disk_floor
-    tempfail "$(utc_in_minutes 15)" "$beelink is below its operational disk floor or its policy is unknown"
-  fi
+  initial_disk_admission
   max_cpu_pressure >/dev/null
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "managed containment, legacy drain or host CPU PSI unavailable"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then

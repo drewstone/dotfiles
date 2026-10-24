@@ -77,6 +77,11 @@ denied=run(cli,'--remote',*encoded)
 assert denied.returncode==75 and 'byte disk floor' in denied.stderr,denied.stderr
 assert not marker.exists() and not (sentinel.parent/'github.com').exists()
 assert hashlib.sha256(sentinel.read_bytes()).hexdigest()==original
+environment['BEELINK_GATE_AUTO']='1'
+auto=run(cli,'--remote',*encoded)
+assert auto.returncode==76 and 'gave the gate back before admission' in auto.stderr,(auto.returncode,auto.stderr)
+environment.pop('BEELINK_GATE_AUTO')
+assert not marker.exists() and hashlib.sha256(sentinel.read_bytes()).hexdigest()==original
 higher=math.ceil(expected/1024**3)+10
 limits.write_text(f'disk_floor_gib={higher}\n')
 strict=run(cli,'--disk-floor-bytes','beelink1')
@@ -90,10 +95,12 @@ assert not marker.exists() and hashlib.sha256(sentinel.read_bytes()).hexdigest()
 hidden.rename(policy)
 print(json.dumps({'old_cli_below_operational_floor':'RED reproduced',
     'real_normal_cli_refused_before_install_or_command':'PASS','higher_local_override_honored':'PASS',
+    'raced_auto_placement_hands_back_for_replacement':'PASS',
     'unknown_owner_fails_closed':'PASS','unarchived_cache_sentinel_preserved':'PASS',
     'actual_ext4_available_bytes':available,'old_floor_bytes':before,'operational_floor_bytes':expected,
     'policy_source_sha256':hashlib.sha256(policy.read_bytes()).hexdigest(),
     'gate_source_sha256':hashlib.sha256(cli.read_bytes()).hexdigest(),
     'disk_source_sha256':hashlib.sha256((current/'beelink_gate_disk.py').read_bytes()).hexdigest(),
     'jobs_source_sha256':hashlib.sha256((current/'beelink-gate-lib/jobs.sh').read_bytes()).hexdigest(),
-    'cache_source_sha256':hashlib.sha256((current/'beelink-gate-lib/cache.sh').read_bytes()).hexdigest()}))
+    'cache_source_sha256':hashlib.sha256((current/'beelink-gate-lib/cache.sh').read_bytes()).hexdigest(),
+    'admission_source_sha256':hashlib.sha256((current/'beelink-gate-lib/admission.sh').read_bytes()).hexdigest()}))

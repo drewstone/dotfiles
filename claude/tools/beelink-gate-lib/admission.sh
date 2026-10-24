@@ -200,6 +200,16 @@ give_back_host() {
   exit "$NOT_ADMITTED"
 }
 
+# A placement probe is a hint. Preserve auto handoff if capacity changes before
+# this gate starts; a named host retains its ordinary temporary refusal.
+initial_disk_admission() {
+  if ! check_floor "$beelink"; then
+    (( placed_auto == 0 )) || give_back_host "$beelink is below its operational disk floor or its policy is unknown"
+    admission_outcome=refused admission_reason=disk_floor
+    tempfail "$(utc_in_minutes 15)" "$beelink is below its operational disk floor or its policy is unknown"
+  fi
+}
+
 acquire_checkout_admission() {
   local waiting_since=$SECONDS last_report=-60 claim_started_ms
   admission_checkpoint
