@@ -90,8 +90,8 @@ RUNNER
   : > "$dir/submitted"
   echo "beelink-gate: submitted gate_id=$id" >&2
 }
-# One SYSTEM launcher for submitted jobs and existing probe cache recovery.
-# Both keep their complete process tree under the same resource-policy owner.
+# One SYSTEM launcher for submitted gate jobs.
+# It keeps the complete process tree under the same resource-policy owner.
 managed_unit_run() {
   local kind=$1 id=$2 script=$3 uid gid name
   shift 3
@@ -109,7 +109,7 @@ managed_unit_run() {
   for name in TURBO_CACHE_DIR TURBO_RUN_SUMMARY BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_BRANCH BEELINK_GATE_LOAD_WAIT BEELINK_GATE_CACHE_MAX_BYTES \
     BEELINK_GATE_MAX_CPU_PRESSURE BEELINK_GATE_STARVE_AFTER \
     BEELINK_GATE_CLASS BEELINK_GATE_SHIP_WORKERS BEELINK_GATE_PR BEELINK_GATE_LANE BEELINK_GATE_RESERVATION_TOKEN BEELINK_GATE_MAX_CONCURRENT \
-    BEELINK_GATE_REPO_CHECKOUTS BEELINK_GATE_LIGHT_CPU BEELINK_GATE_LIGHT_SLOTS BEELINK_GATE_PROBE_RECOVERY \
+    BEELINK_GATE_REPO_CHECKOUTS BEELINK_GATE_LIGHT_CPU BEELINK_GATE_LIGHT_SLOTS \
     BEELINK_GATE_URGENT BEELINK_GATE_AUTO BEELINK_GATE_ADMIT_WAIT BEELINK_GATE_PLACED_WAIT BEELINK_GATE_SPARSE_SPEC BEELINK_GATE_PEER_RESERVE BEELINK_GATE_PEER_WARM_RESERVE; do
     [ -z "${!name:-}" ] || vars+=("$name=${!name}")
   done
@@ -126,18 +126,6 @@ managed_unit_run() {
     "${command[@]}" -- /usr/bin/env "${vars[@]}" /usr/bin/bash "$script" "$@" >&2
   fi
 }
-managed_probe_recovery() (
-  local beelink=$1 source_file id status
-  shift
-  source_file=$(mktemp) || return 75
-  trap 'rm -f "$source_file"' EXIT
-  emit_gate_source > "$source_file" || return 75
-  id="$beelink-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')" || return 75
-  BEELINK_GATE_PROBE_RECOVERY=1 managed_unit_run probe "$id" "$source_file" --probe "$@"
-  status=$?
-  [ "$status" = 0 ] || return 75
-)
-
 gate_process_alive() {
   local dir=$1 pid birth actual state
   [ -f "$dir/gate.pid" ] && [ ! -L "$dir/gate.pid" ] || return 1

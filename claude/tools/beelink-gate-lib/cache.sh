@@ -192,29 +192,6 @@ release_gate_turbo_cache() {
   }
 }
 
-# A forecast only: floors remain binding before any install. One du counts
-# hardlinks once across idle checkouts and unleased, kernel-idle shared pools.
-idle_cache_bytes() {
-  local root="$1" dir rel lock fd
-  local -a idle=()
-  for dir in "$root"/*/*/*/; do
-    dir=${dir%/}
-    if [ -L "$dir" ] || [ ! -d "$dir/.git" ]; then continue; fi
-    rel=${dir#"$root"/}; lock="$root/.locks/${rel//\//-}.lock"
-    if [ -e "$lock" ]; then
-      exec {fd}<"$lock" || continue
-      if ! flock -n -s "$fd"; then exec {fd}<&-; continue; fi
-      exec {fd}<&-
-    fi
-    idle+=("$dir")
-  done
-  while IFS= read -r -d '' dir; do idle+=("$dir"); done < <(
-    python3 -c "$gate_turbo_cache_python"$'\n''import sys; turbo_idle_paths(Path(sys.argv[1]), Path(sys.argv[2]))' "$root" "$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup)"
-  )
-  (( ${#idle[@]} )) || { echo 0; return; }
-  du -s -c -B1 -- "${idle[@]}" 2>/dev/null | tail -n 1 | cut -f1
-}
-
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
     python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_normalize sparse_apply)" "$gate_turbo_cache_python" "$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup)" <<'PY'

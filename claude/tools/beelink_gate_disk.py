@@ -5,12 +5,14 @@ per-gate peak. Directory bytes are bounded du checkpoints, never sampled peaks.
 """
 from concurrent.futures import ThreadPoolExecutor
 import copy
+import importlib.util
 import json
 import math
 import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -22,6 +24,47 @@ DOCKER_QUERY_S = 1.0
 # At most context/show+inspect+info+usage at each end, plus sampling wakeups.
 STOP_GRACE_S = math.ceil(8 * DOCKER_QUERY_S + 2 * INTERVAL_S)
 SCHEMA = 1
+
+
+def effective_floor(host, limits):
+    """Admission cannot undercut the operational ruler; local limits may raise it."""
+    if host not in ('beelink1', 'beelink2'):
+        raise ValueError('unknown remote beelink')
+    policy = Path('/usr/local/libexec/tangle-fleet-disk-policy.py')
+    for parent in policy.parents:
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('authoritative fleet disk policy ancestors are unprotected')
+    info = policy.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError('authoritative fleet disk policy is not a protected regular library')
+    spec = importlib.util.spec_from_file_location('fleet_disk_policy', policy)
+    owner = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(owner)
+    if owner.SCHEMA != 1:
+        raise ValueError('authoritative fleet disk policy schema unknown')
+    filesystem = os.statvfs('/')
+    floor = owner.disk_floor_bytes(host, '/', filesystem.f_blocks * filesystem.f_frsize)
+    if type(floor) is not int or floor <= 0:
+        raise ValueError('authoritative fleet disk floor unknown')
+    limits = Path(limits)
+    if limits.exists() or limits.is_symlink():
+        if not limits.is_file():
+            raise ValueError('invalid disk floor limits file')
+        values = [line.partition('=')[2] for line in limits.read_text().splitlines()
+                  if line.startswith('disk_floor_gib=')]
+        if len(values) > 1 or values and not re.fullmatch(r'[0-9]{1,4}', values[0]):
+            raise ValueError('invalid or duplicate disk_floor_gib')
+        if values:
+            override = int(values[0])
+            if override > 1024:
+                raise ValueError('invalid disk_floor_gib')
+            local = override * 1024 ** 3
+            if local < floor:
+                print('beelink-gate: local disk limit is below the operational floor; using fleet policy', file=sys.stderr)
+            floor = max(floor, local)
+    return floor
 
 
 def write_json(path, value):
@@ -439,5 +482,11 @@ if __name__ == "__main__":
         sys.exit(signal_sampler(Path(arguments[0]), int(arguments[1]), arguments[2]))
     elif action == "grace":
         print(STOP_GRACE_S)
+    elif action == "floor":
+        try:
+            print(effective_floor(*arguments))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError, SyntaxError):
+            print('beelink-gate: authoritative disk floor unavailable or invalid; growth refused', file=sys.stderr)
+            sys.exit(75)
     else:
         sys.exit(64)

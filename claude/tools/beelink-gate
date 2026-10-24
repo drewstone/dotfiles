@@ -87,51 +87,12 @@ if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_r
   tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
-floor_gib() {
-  local host="$1" base path line override="" found=0
-  case "$host" in
-    beelink1) base=100 ;;
-    beelink2) base=150 ;;
-    *) die "unknown remote beelink: $host" ;;
-  esac
-  # An unreadable limits path must refuse, not fall back to the minimum: a
-  # caller without HOME would otherwise report the base floor over an override.
-  path=$(limits_file) && [ -n "$path" ] || { echo "beelink-gate: cannot resolve the limits file" >&2; return 1; }
-  if [[ -e "$path" || -L "$path" ]]; then
-    if [[ ! -f "$path" || ! -r "$path" ]]; then
-      echo "beelink-gate: invalid disk_floor_gib limits file: $path" >&2
-      return 1
-    fi
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      case "$line" in
-        disk_floor_gib=*)
-          if (( found )); then
-            echo "beelink-gate: invalid disk_floor_gib: duplicate limit" >&2
-            return 1
-          fi
-          override=${line#disk_floor_gib=}
-          found=1
-          ;;
-      esac
-    done < "$path"
-  fi
-  if (( found )); then
-    if [[ ! "$override" =~ ^[0-9]{1,4}$ ]] || (( 10#$override > 1024 )); then
-      echo "beelink-gate: invalid disk_floor_gib: $override (must be a whole number up to 1024; below $base holds $base)" >&2
-      return 1
-    fi
-    # A number under the host minimum cannot lower the floor, so it holds the
-    # minimum instead of refusing every gate: an override of 150, valid only on
-    # beelink1, took all of beelink2's gates out on 2026-10-15.
-    if (( 10#$override < base )); then
-      echo "beelink-gate: disk_floor_gib=$((10#$override)) is below $host's $base GiB minimum; using $base" >&2
-      echo "$base"
-      return 0
-    fi
-    echo "$((10#$override))"
-  else
-    echo "$base"
-  fi
+gate_disk() { python3 -c "$beelink_gate_disk_source" "$@"; }
+
+effective_disk_floor_bytes() {
+  local path
+  path=$(limits_file) && [ -n "$path" ] || return 75
+  gate_disk floor "$1" "$path"
 }
 
 # --disk-floor-bytes <host>: the effective disk floor this gate admits against,
@@ -141,33 +102,34 @@ floor_gib() {
 # policy it read.
 if [ "${1:-}" = --disk-floor-bytes ]; then
   [ "$#" -eq 2 ] || die "usage: beelink-gate --disk-floor-bytes <beelink1|beelink2>"
-  floor=$(floor_gib "$2") || exit 3
-  echo "beelink-gate: $2 disk floor ${floor} GiB from limits file $(limits_file)" >&2
-  echo "$((floor * 1024 * 1024 * 1024))"
+  floor=$(effective_disk_floor_bytes "$2") || exit 3
+  echo "beelink-gate: $2 disk floor $floor bytes from fleet policy and limits file $(limits_file)" >&2
+  echo "$floor"
   exit 0
 fi
 
 free_bytes() {
-  local available
+  local available root_available
   available=$(df -B1 --output=avail "$HOME" | tail -n 1 | tr -d ' ') || die "cannot read free disk space"
-  [[ "$available" =~ ^[0-9]+$ ]] || die "invalid free disk reading: $available"
+  root_available=$(df -B1 --output=avail / | tail -n 1 | tr -d ' ') || die "cannot read root free disk space"
+  [[ "$available" =~ ^[0-9]+$ && "$root_available" =~ ^[0-9]+$ ]] || die "invalid free disk reading"
+  (( root_available >= available )) || available=$root_available
   echo "$available"
 }
 
 check_floor() {
-  local host="$1" reserve="${2:-0}" floor_gib available floor_bytes
-  floor_gib=$(floor_gib "$host") || return 3
+  local host="$1" reserve="${2:-0}" available floor_bytes
+  floor_bytes=$(effective_disk_floor_bytes "$host") || return 3
   available=$(free_bytes)
   last_floor_available=$available
-  floor_bytes=$((floor_gib * 1024 * 1024 * 1024))
   if (( available < floor_bytes )); then
-    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor; use the other beelink or ask the host owner to recover capacity\n' \
-      "$host" "$available" "$floor_gib" >&2
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_bytes" >&2
     return 3
   fi
   if (( reserve > 0 && available < floor_bytes + reserve )); then
-    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s GiB disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
-      "$host" "$available" "$floor_gib" "$reserve" >&2
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_bytes" "$reserve" >&2
     return 3
   fi
 }
@@ -223,27 +185,6 @@ sparse_apply() {  # <checkout> <rev> [--shrink-only]
 # flock releases that lock; a claimant can then remove its abandoned marker.
 
 
-
-# Use only this command's locked, disposable checkouts to restore a host's disk
-# floor with 10 GiB headroom. A missing cache has nothing safe to evict.
-# A host short only of the repo's last measured install reserve gets the same
-# pass with nothing to reclaim: it applies sparse patterns to idle checkouts
-# and evicts only for the cache cap, so their bytes count before admission.
-recover_floor_from_cache() {
-  local host="$1" root="$2" cap="$3" current="$4" reserve="${5:-0}" available wanted floor
-  [ -d "$root/.locks" ] || return 0
-  available=$(free_bytes)
-  floor=$(floor_gib "$host") || return 3
-  floor=$(( floor * 1024 * 1024 * 1024 ))
-  wanted=$(( floor + 10 * 1024 * 1024 * 1024 ))
-  if (( available < wanted )); then
-    echo "beelink-gate: disk reserve needs $((wanted - available)) bytes; pruning owned idle cache" >&2
-    prune_cache "$root" "$current" "$cap" "$((wanted - available))" || true
-  elif (( available < floor + reserve )); then
-    echo "beelink-gate: install reserve needs $((floor + reserve - available)) bytes; applying sparse patterns to owned idle cache" >&2
-    prune_cache "$root" "$current" "$cap" 0 || true
-  fi
-}
 
 # Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
 # cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
@@ -547,7 +488,6 @@ PY
 # files) took 1.1-2.7 s. Prints nothing when du fails, warns about anything but a
 # file that vanished mid-scan, or runs past <seconds> (the caller passes 60 s or the
 # gate's remaining hold, whichever is less, so a scan never holds the lock past it).
-gate_disk() { python3 -c "$beelink_gate_disk_source" "$@"; }
 gate_bytes() {  # <seconds> <checkout> <store>...
   local limit=$1
   shift
@@ -846,14 +786,6 @@ remote_probe() {
   [ "$#" -eq 6 ] && reserve_mode=$(decode "$6")
   light=0 dev=0; [ "$probe_mode" = light ] && light=1
   [ "$probe_mode" = dev ] && dev=1
-  if [ "${BEELINK_GATE_PROBE_RECOVERY:-0}" = 1 ]; then
-    gate_id=${BEELINK_GATE_ID:-}
-    verify_gate_unit || return 75
-    require_legacy_gate_drained || return 75
-    local admission
-    admission=$(host_psi_admission) || return 75
-    python3 -c 'import json,sys; sys.exit(int(json.loads(sys.argv[1])["held"]))' "$admission" || return 75
-  fi
   parse_repo_url "$repo_url"
   cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
   if ! reason=$(release_priority_reason "$beelink"); then
@@ -866,38 +798,11 @@ remote_probe() {
   reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
     "${BEELINK_GATE_PEER_RESERVE:-}" "${BEELINK_GATE_PEER_WARM_RESERVE:-}" "$probe_heat" 2>/dev/null) \
     || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
-  # A host short of its floor plus reserve gets the recovery a gate admitted there
-  # would run, before auto passes it by: on 2026-10-17 beelink2 sat 3 GB short for
-  # hours with idle cache it never pruned, because only an admitted gate prunes.
-  # A recovery that leaves the host short is not repeated for 15 minutes, the
-  # refusal's own retry time, so polling launchers do not rescan the cache.
-  # Recovery runs only when the idle cache can close the gap: a shortfall it cannot
-  # cover would evict every idle checkout, leave the caches cold and still refuse.
-  local recovered=0 before shortfall floor_bytes stamp="$cache_root/.locks/.probe-recovery-short"
+  # A stricter admission bar never authorizes unarchived cache deletion.
+  # Capacity recovery belongs to the archival storage lifecycle.
+  local recovered=0
   if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
     state=refused next=$(utc_in_minutes 15)
-    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ] \
-      && floor_bytes=$(( $(floor_gib "$beelink") * 1024 * 1024 * 1024 )); then
-      if [ "${BEELINK_GATE_PROBE_RECOVERY:-0}" != 1 ]; then
-        managed_probe_recovery "$beelink" "$@"
-        return $?
-      fi
-      before=$(free_bytes)
-      shortfall=$(( floor_bytes + reserve - before ))
-      if (( shortfall <= $(idle_cache_bytes "$cache_root") )); then
-        mkdir -p "$STATE_DIR" 2>/dev/null
-        { echo "$(date -u +%FT%TZ) probe $beelink short $shortfall bytes; recovering idle cache"
-          recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
-            "$cache_root/.locks/no-current-checkout" "$reserve" 2>&1
-        } >> "$STATE_DIR/capacity.log" 2>/dev/null
-        recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
-      fi
-      if reason=$(check_floor "$beelink" "$reserve" 2>&1); then
-        state=free next=""; rm -f "$stamp"
-      else
-        touch "$stamp"
-      fi
-    fi
   fi
   if [ "$state" != refused ]; then
     err=$(mktemp)
@@ -1279,6 +1184,10 @@ remote_gate() {
   # Validate here: a die inside a later $(load_limit) would only end that subshell.
   admission_begin
   trap 'admission_early_exit "$?"' EXIT
+  if ! check_floor "$beelink"; then
+    admission_outcome=refused admission_reason=disk_floor
+    tempfail "$(utc_in_minutes 15)" "$beelink is below its operational disk floor or its policy is unknown"
+  fi
   max_cpu_pressure >/dev/null
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "managed containment, legacy drain or host CPU PSI unavailable"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
@@ -1288,7 +1197,6 @@ remote_gate() {
   ! any_copy_warm "$cache_root/$host/$owner/$repo" "$reserve_spec" || reserve_heat=warm
   install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" "$reserve_heat") \
     || die "cannot read install reserve receipts"
-  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout" "$install_reserve_bytes"
   if ! check_floor "$beelink" "$install_reserve_bytes"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its disk floor"
     admission_outcome=refused admission_reason=disk_floor
@@ -1459,7 +1367,6 @@ PYTURBO
   [ -z "$reserve_spec" ] || [ "$admitted_shape" != "$reserve_spec" ] || reserve_heat=warm
   install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" "$reserve_heat") \
     || die "cannot read install reserve receipts"
-  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$checkout" "$install_reserve_bytes"
   if ! check_floor "$beelink" "$install_reserve_bytes"; then
     # The host can cross its floor while the gate queued for pressure, a checkout
     # or a slot; an auto placement still gives it back (finish releases the lock).
@@ -1499,7 +1406,6 @@ PYTURBO
       echo "beelink-gate: $checkout left the cache after admission, so this gate clones it; judging it on the cold reserve" >&2
       install_reserve_bytes=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$install_mode" "$reserve_spec" "$peer_reserve" "$peer_warm_reserve" cold) \
         || die "cannot read install reserve receipts"
-      recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout" "$install_reserve_bytes"
       if ! check_floor "$beelink" "$install_reserve_bytes"; then
         if (( placed_auto )); then
           echo "beelink-gate: $beelink gave the gate back before checkout ($beelink is below its disk floor); placing the gate again" >&2
@@ -1577,8 +1483,7 @@ PYTURBO
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
   gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads refs/beelink-gate-saved | sort -u | tr '\n' ' ')
   gate_refs_taken=1
-  # Keep this gate's fetched checkout locked and intact; reclaim only other idle caches.
-  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
+  # Keep this gate's fetched checkout locked and intact through the final floor check.
   local floor_ok=0
   check_floor "$beelink" || floor_ok=1
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
@@ -1599,7 +1504,6 @@ PYTURBO
   export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$gate_workers}"
   cd "$checkout" || exit $?
   prepare_gate_dependencies || exit $?
-  recover_floor_from_cache "$beelink" "$cache_root" "$cache_max" "$cache_root/.locks/no-current-checkout"
   floor_ok=0
   check_floor "$beelink" || floor_ok=1
   observe_install_reserve "after install"
