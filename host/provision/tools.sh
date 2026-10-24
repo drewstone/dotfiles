@@ -291,19 +291,47 @@ install_uv() {
 
 # Runner accounts cannot read this user's home, so the Nix profile publisher
 # reads the gate's disk floor (beelink-gate --disk-floor-bytes) from a
-# root-owned copy. The copy is the same source tree, refreshed on every run.
+# root-owned copy of the gate and of this host's limits file. The installed
+# entry point reads that copied limits file, so a runner sees the same
+# override the gate admits against. Every run rebuilds the tree and replaces
+# it whole, so files removed here disappear there too.
 GATE_LIB=/usr/local/lib/beelink-gate
 GATE_SRC="$DOTFILES/claude/tools"
+GATE_LIMITS="${XDG_CONFIG_HOME:-$HOME/.config}/beelink-gate/limits"
+gate_cli_stage() {
+  local stage="$1" f
+  mkdir -p "$stage" &&
+    cp -R "$GATE_SRC/beelink-gate" "$GATE_SRC/beelink-gate-lib" "$stage/" || return 1
+  for f in "$GATE_SRC"/beelink_gate_*.py; do cp "$f" "$stage/" || return 1; done
+  if [ -f "$GATE_LIMITS" ]; then cp "$GATE_LIMITS" "$stage/limits" || return 1; fi
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "export BEELINK_GATE_LIMITS_FILE=\"\${BEELINK_GATE_LIMITS_FILE:-$GATE_LIB/limits}\"" \
+    "exec $GATE_LIB/beelink-gate \"\$@\"" > "$stage/entry"
+}
 gate_cli_current() {
-  [ -L /usr/local/bin/beelink-gate ] && [ "$(readlink /usr/local/bin/beelink-gate)" = "$GATE_LIB/beelink-gate" ] &&
-    diff -rq "$GATE_SRC/beelink-gate" "$GATE_LIB/beelink-gate" >/dev/null 2>&1 &&
-    diff -rq "$GATE_SRC/beelink-gate-lib" "$GATE_LIB/beelink-gate-lib" >/dev/null 2>&1
+  local stage
+  stage="$(mktemp -d)" || return 1
+  gate_cli_stage "$stage/tree" &&
+    [ "$(readlink /usr/local/bin/beelink-gate 2>/dev/null)" = "$GATE_LIB/entry" ] &&
+    diff -rq "$stage/tree" "$GATE_LIB" >/dev/null 2>&1
+  local rc=$?
+  rm -rf "$stage"
+  return "$rc"
 }
 install_gate_cli() {
-  as_root install -d -m 0755 "$GATE_LIB" &&
-    as_root cp -R --no-preserve=ownership "$GATE_SRC/beelink-gate" "$GATE_SRC/beelink-gate-lib" "$GATE_SRC"/beelink_gate_*.py "$GATE_LIB/" &&
-    as_root chmod -R a+rX,go-w "$GATE_LIB" &&
-    as_root ln -sfn "$GATE_LIB/beelink-gate" /usr/local/bin/beelink-gate
+  local stage
+  stage="$(mktemp -d)" || return 1
+  gate_cli_stage "$stage/tree" &&
+    as_root rm -rf "$GATE_LIB.new" &&
+    as_root cp -R --no-preserve=ownership "$stage/tree" "$GATE_LIB.new" &&
+    as_root chmod -R a+rX,go-w "$GATE_LIB.new" &&
+    as_root chmod 0755 "$GATE_LIB.new/entry" &&
+    as_root rm -rf "$GATE_LIB" &&
+    as_root mv "$GATE_LIB.new" "$GATE_LIB" &&
+    as_root ln -sfn "$GATE_LIB/entry" /usr/local/bin/beelink-gate
+  local rc=$?
+  rm -rf "$stage"
+  return "$rc"
 }
 
 module_tools() {

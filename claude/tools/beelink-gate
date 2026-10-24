@@ -94,7 +94,9 @@ floor_gib() {
     beelink2) base=150 ;;
     *) die "unknown remote beelink: $host" ;;
   esac
-  path=$(limits_file)
+  # An unreadable limits path must refuse, not fall back to the minimum: a
+  # caller without HOME would otherwise report the base floor over an override.
+  path=$(limits_file) && [ -n "$path" ] || { echo "beelink-gate: cannot resolve the limits file" >&2; return 1; }
   if [[ -e "$path" || -L "$path" ]]; then
     if [[ ! -f "$path" || ! -r "$path" ]]; then
       echo "beelink-gate: invalid disk_floor_gib limits file: $path" >&2
