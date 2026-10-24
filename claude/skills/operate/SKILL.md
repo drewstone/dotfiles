@@ -52,6 +52,7 @@ Start from the class's best template and save the finished list with its grades 
    Include observation cost when comparing resource use.
 3. Intervene through the installed stack's supported message or steering API, each steer opening with the goal line (`disco steer` adds it).
    Before sending a steer, write the change you expect in the next scored version, and score it when that version lands.
+   Steer from the requester's view; never name what a held-out check tests (`disco steer` warns when a steer does).
    Preserve the request, recipient, acknowledgment, and evidence of consumption separately.
 4. Attribute the requester's sources, answers, and corrections to the operator; research the run needs is the run's own work.
    A queued message establishes dispatch; later trace evidence establishes use.
