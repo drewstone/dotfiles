@@ -179,6 +179,8 @@ test("hooks-bypass: reads, restatements and throwaway fixtures pass", () => {
 // --------------------------------------------------------------------------- shared-stash
 
 test("shared-stash: refuses the bare pops agents ran in shared checkouts", () => {
+  const shared = repo(join(ROOT, "shared-checkout"));
+  git(shared, "worktree", "add", "-q", "--detach", join(ROOT, "shared-checkout-2"));
   check([
     // 2026-10-09: the pop that took another session's entry.
     "cd /Users/drew/webb/_wt/gtm-seo-data && git stash -q -u && pnpm exec vitest run src/lib/.server/chat/system-prompt-budget.test.ts 2>&1 | /usr/bin/grep -E \"Tests |expected\" | head -3; git stash pop -q && git status --short | wc -l",
@@ -186,8 +188,22 @@ test("shared-stash: refuses the bare pops agents ran in shared checkouts", () =>
     "git stash -q && git fetch -q origin && git rebase -q origin/master && git stash pop -q",
     "git stash apply",
     "ssh beelink1-wsl 'cd ~/code/_wt/runtime-offbox-evidence-20261003 && git stash pop -q && git diff --stat'",
-  ], "deny");
+  ], "deny", { cwd: shared });
   assert.match(reason("git stash pop"), /stash@\{N\}/);
+});
+
+// From 10-17 to 10-24, 119 GTR refusals were factory runs stashing their change to test the base and popping it
+// in the same command, in a clone no other worktree shares.
+test("shared-stash: a pop of the entry the same command pushed passes in a one-worktree checkout", () => {
+  const clone = repo(join(ROOT, "factory-clone"));
+  writeFileSync(join(clone, "a.txt"), "change\n");
+  const baseline = "git stash -q && node --test x.test.mjs 2>&1 | tail -6; git stash pop -q && git status --short";
+  assert.equal(decide(baseline, { cwd: clone }), "allow");
+  assert.equal(decide("git stash push -q -- a.txt && true; git stash pop -q", { cwd: clone }), "allow");
+  assert.equal(decide("git stash pop -q", { cwd: clone }), "deny");
+  assert.equal(decide("git stash pop -q; git stash -q", { cwd: clone }), "deny");
+  git(clone, "worktree", "add", "-q", "--detach", join(ROOT, "factory-clone-2"));
+  assert.equal(decide(baseline, { cwd: clone }), "deny");
 });
 
 test("shared-stash: a named entry needs this session's worktree and branch", () => {
