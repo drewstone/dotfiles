@@ -522,7 +522,25 @@ fence until they drain. A mixed old/new source bundle refuses before cache work.
 It uses cached, detached checkout slots per host/repo in `~/.cache/beelink-gate/` and
 locks each checkout through the install and command. It cleans the prior run's
 outputs, fetches the requested commit with complete history, and runs a frozen
-pnpm or npm install against that user's shared package store.
+pnpm, npm, Yarn or Bun install. Bun requires a text `bun.lock` and an exact
+repository version: `packageManager` first, otherwise agreeing literal pins in
+official `setup-bun` workflow/local-composite steps. Missing, conflicting or
+dynamic pins and unavailable/mismatched installed Bun refuse; no tool is globally
+installed. Initial lifecycle support requires an unconditional root composite's
+literal `run: bun install --frozen-lockfile --ignore-scripts` with Bash and no
+conditional, environment or directory modifiers. Workflow installs are checked
+but cannot alone authorize lifecycle policy; multiline, dynamic or alternate
+direct install policy refuses. The verified binary also serves `bunx`. Bun
+installs ignore lifecycle scripts and retain `bunfig.toml` workspace/linker policy; dependency-input changes
+or an unverified fence fail without restoring files. Its cache is forced inside
+the checkout's physical `.git`, counted by the existing cap/LRU; gitfile/external
+gitdir worktrees are unsupported for this path.
+A failed managed recovery after an observed floor/reserve refusal emits a final
+conservative refused probe row with the original next time and exact returned
+recovery status. Managed recovery protocol is forwarded only after a successful
+managed wait; failed or late children cannot override the refusal. Recovery and
+current free space remain unconfirmed; this does
+not classify earlier source/transport failures as disk refusals.
 Non-login gates expose `~/bin`, `~/.local/bin`, `~/.cargo/bin` and `~/.foundry/bin`,
 in that order, before inherited PATH. Tools must already be installed.
 Native admission observations partition elapsed checks, host PSI, capacity-writer

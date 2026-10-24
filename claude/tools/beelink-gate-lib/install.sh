@@ -22,6 +22,215 @@ repo_pnpm_version() {
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] && echo "$version"
 }
 
+# Read data only: the manifest owns an explicit pin; otherwise all official
+# setup-bun steps must agree. Only an unconditional root composite's literal
+# frozen/no-scripts run owns lifecycle; workflow installs alone cannot authorize it.
+repo_bun_version() {
+  local program
+  IFS= read -r -d '' program <<'PYBUNVERSION' || true
+import json, pathlib, re, subprocess, sys
+
+def exact(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?', value):
+        raise ValueError('Bun requires an exact version')
+    return value
+
+def scalar(value):
+    value = value.split(' #', 1)[0].strip()
+    if value.startswith(('"', "'")):
+        if len(value) < 2 or value[-1] != value[0]:
+            raise ValueError('unsupported Bun action scalar')
+        value = value[1:-1]
+    return value
+
+def action_steps(lines):
+    # Supported Actions mappings only; data named run and scalar bodies cannot
+    # authorize lifecycle. YAML aliases/merges or other shapes stay unsupported.
+    stack, composite, index = [], False, 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip(' '))
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        context = [entry[1] for entry in stack]
+        match = re.fullmatch(r' *([A-Za-z0-9_.-]+): *(.*)', line)
+        if not match:
+            if context == ['jobs']:
+                raise ValueError('unsupported Actions job key')
+            continue
+        key, value = match.groups()
+        if (not context and key in ('jobs', 'runs') or context == ['jobs']) and value:
+            raise ValueError('unsupported Actions job or action mapping')
+        if context == ['runs'] and key == 'using':
+            composite = scalar(value) == 'composite'
+        if key == 'steps' and (len(context) == 2 and context[0] == 'jobs' or context == ['runs'] and composite):
+            if value:
+                raise ValueError('unsupported Actions steps mapping')
+            item, section, block = None, None, None
+            while index < len(lines):
+                child = lines[index]
+                if not child.strip() or child.lstrip().startswith('#'):
+                    index += 1
+                    continue
+                level = len(child) - len(child.lstrip(' '))
+                if level <= indent:
+                    break
+                index += 1
+                if block is not None and level > block:
+                    if item is not None and 'run_body' in item:
+                        item['run_body'].append(child.strip())
+                    continue
+                block = None
+                first = re.fullmatch(r' *- +([A-Za-z0-9_.-]+): *(.*)', child)
+                if level == indent + 2 and first:
+                    if item is not None:
+                        yield item
+                    item, section = {'fields': {}, 'with': {}, 'root_composite': context == ['runs']}, None
+                    field, raw = first.groups()
+                elif level == indent + 4 and item is not None:
+                    entry = re.fullmatch(r' *([A-Za-z0-9_.-]+): *(.*)', child)
+                    if not entry:
+                        raise ValueError('unsupported Actions step field')
+                    field, raw = entry.groups()
+                elif level == indent + 6 and section == 'with' and item is not None:
+                    entry = re.fullmatch(r' *([A-Za-z0-9_.-]+): *(.*)', child)
+                    if not entry:
+                        raise ValueError('unsupported Actions action input')
+                    field, raw = entry.groups()
+                    if field in item['with']:
+                        raise ValueError('duplicate Actions input')
+                    item['with'][field] = raw
+                    continue
+                else:
+                    if level <= indent + 4:
+                        raise ValueError('unsupported Actions step structure')
+                    continue
+                if field in item['fields']:
+                    raise ValueError('duplicate Actions step field')
+                item['fields'][field] = raw
+                section = field if not raw else None
+                if raw.startswith(('|', '>')):
+                    block = indent + 4
+                    if field == 'run':
+                        item['run_body'] = []
+            if item is not None:
+                yield item
+            continue
+        if value.startswith(('|', '>')):
+            while index < len(lines) and (not lines[index].strip() or len(lines[index]) - len(lines[index].lstrip(' ')) > indent):
+                index += 1
+        elif not value:
+            stack.append((indent, key))
+
+try:
+    package = json.loads(pathlib.Path('package.json').read_text())
+    manifest_version = None
+    if 'packageManager' in package:
+        declaration = package['packageManager']
+        if not isinstance(declaration, str) or not declaration.startswith('bun@'):
+            raise ValueError('Bun packageManager mismatch')
+        manifest_version = exact(declaration[4:])
+    manager = package.get('devEngines', {}).get('packageManager')
+    if manifest_version is None and manager is not None:
+        if not isinstance(manager, dict) or manager.get('name') != 'bun':
+            raise ValueError('unsupported Bun devEngines declaration')
+        if 'version' in manager:
+            manifest_version = exact(manager['version'])
+    paths = subprocess.check_output(['git', 'ls-files', '-z', '--', '.github/workflows/*.yml',
+                                    '.github/workflows/*.yaml', '.github/actions/**/action.yml',
+                                    '.github/actions/**/action.yaml']).decode().split('\0')
+    versions, install_authorities = set(), 0
+    for name in filter(None, paths):
+        path = pathlib.Path(name)
+        if path.is_symlink() or path.stat().st_size > 1048576:
+            raise ValueError('unsupported Bun action source')
+        for step in action_steps(path.read_text().splitlines()):
+            fields = step['fields']
+            run = scalar(fields.get('run', ''))
+            if re.match(r'^bun\s+(install|i)(?:\s|$)', run):
+                if run != 'bun install --frozen-lockfile --ignore-scripts':
+                    raise ValueError('unsupported Bun lifecycle policy')
+                if step['root_composite'] and set(fields) <= {'name', 'id', 'run', 'shell'} and scalar(fields.get('shell', '')) == 'bash':
+                    install_authorities += 1
+            elif re.match(r'^bun\s+[^A-Za-z-]', run) or any(re.match(r'^bun\s+(?:install|i|[^A-Za-z-])(?:\s|$)', command) for command in step.get('run_body', [])):
+                raise ValueError('unsupported dynamic/multiline Bun policy')
+            if manifest_version is not None or 'oven-sh/setup-bun' not in fields.get('uses', ''):
+                continue
+            if not re.fullmatch(r'oven-sh/setup-bun@[A-Za-z0-9._/-]+', scalar(fields['uses'])):
+                raise ValueError('unsupported Bun action declaration')
+            if 'bun-version-file' in step['with'] or 'bun-version' not in step['with']:
+                raise ValueError('Bun action requires one exact literal pin')
+            versions.add(exact(scalar(step['with']['bun-version'])))
+    if install_authorities == 0:
+        raise ValueError('missing explicit frozen no-scripts Bun install authority')
+    if manifest_version is None and len(versions) != 1:
+        raise ValueError('Bun action pins are missing or conflicting')
+    print(manifest_version if manifest_version is not None else versions.pop())
+except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
+    print('beelink-gate: cannot resolve exact repository Bun version and frozen no-scripts policy', file=sys.stderr)
+    sys.exit(2)
+PYBUNVERSION
+  install_step timeout 120 python3 -c "$program"
+}
+
+prepare_bun_launcher() {
+  local want have binary directory private="$checkout/.git/beelink-gate-bin" cache="$checkout/.git/beelink-gate-bun-cache"
+  if [ ! -f bun.lock ] || [ -L bun.lock ] || [ -e bun.lockb ] || [ -L bun.lockb ]; then
+    die "Bun frozen installs require a regular text bun.lock"
+  fi
+  # A linked worktree's gitfile/external gitdir is not covered by checkout du.
+  if [ ! -d "$checkout/.git" ] || [ -L "$checkout/.git" ] \
+    || [ "$(cd "$checkout/.git" && pwd -P)" != "$checkout/.git" ] \
+    || [ "$(git rev-parse --absolute-git-dir)" != "$checkout/.git" ] \
+    || [ "$(realpath "$(git rev-parse --git-common-dir)")" != "$checkout/.git" ]; then
+    die "Bun requires a physical git directory inside the accounted checkout"
+  fi
+  for directory in "$private" "$cache"; do
+    if [ -L "$directory" ] || { [ -e "$directory" ] && [ ! -d "$directory" ]; }; then
+      die "unsafe Bun private cache or launcher directory"
+    fi
+    mkdir -p "$directory" || return $?
+    [ "$(realpath "$directory")" = "$directory" ] || die "Bun cache escapes the accounted checkout"
+  done
+  rm -f "$private/bun" "$private/bunx" "$private/bun-version" "$private/bun-required-version" "$private/bun-cache-path" "$private/bun-input-status" || return $?
+  repo_bun_version > "$private/bun-required-version" || return $?
+  want=$(cat "$private/bun-required-version") || return $?
+  binary=$(command -v bun || true)
+  [ -n "$binary" ] || binary="$HOME/.bun/bin/bun"
+  [ -x "$binary" ] || die "Bun $want is unavailable; provision it through the host tool owner"
+  binary=$(realpath "$binary") || return $?
+  [[ "$binary" != "$private/"* ]] || die "Bun launcher cannot select its own shim"
+  install_step timeout 120 "$binary" --version > "$private/bun-version" || return $?
+  have=$(cat "$private/bun-version") || return $?
+  [ "$have" = "$want" ] || die "repository requires Bun $want; installed Bun is $have"
+  printf '#!/usr/bin/env bash\nexport BUN_INSTALL_CACHE_DIR=%q\nexec %q "$@"\n' "$cache" "$binary" > "$private/bun" || return $?
+  printf '#!/usr/bin/env bash\nexec %q x "$@"\n' "$private/bun" > "$private/bunx" || return $?
+  chmod +x "$private/bun" "$private/bunx" || return $?
+  export PATH="$private:$PATH" BUN_INSTALL_CACHE_DIR="$cache"
+  install_step timeout 120 bun pm cache > "$private/bun-cache-path" || return $?
+  [ "$(cat "$private/bun-cache-path")" = "$cache" ] || die "Bun effective cache is outside the accounted checkout"
+}
+
+install_bun_dependencies() {
+  prepare_bun_launcher || return $?
+  local status=0 fence_status=0
+  install_step bun install --frozen-lockfile --ignore-scripts; status=$?
+  # Inspect after failures too. Never restore a changed input or turn its
+  # original nonzero install status into an apparently successful install.
+  install_step timeout 120 git status --porcelain --untracked-files=all -- package.json ':(glob)**/package.json' bun.lock bun.lockb bunfig.toml ':(glob)**/bunfig.toml' \
+    > "$checkout/.git/beelink-gate-bin/bun-input-status"; fence_status=$?
+  if [ "$fence_status" = 0 ] && [ -s "$checkout/.git/beelink-gate-bin/bun-input-status" ]; then fence_status=2; fi
+  if [ "$fence_status" != 0 ]; then
+    echo 'beelink-gate: Bun dependency inputs changed or could not be verified; evidence retained' >&2
+    [ "$status" != 0 ] || status=$fence_status
+  fi
+  [ "$status" != 0 ] || echo 'beelink-gate: frozen Bun install completed without lifecycle scripts' >&2
+  return "$status"
+}
+
 # Corepack owns the repository's exact Yarn version/hash. The shim also keeps
 # later `yarn` commands on that version without changing host-wide shims or
 # letting Corepack add packageManager to an otherwise unchanged repository.
@@ -62,7 +271,7 @@ install_yarn_dependencies() {
 # uses the PATH node.
 resolve_gate_node() {
   local probe='process.versions.modules+" "+process.version+" "+process.execPath' out="" via=node
-  if [ "${repo_manager:-}" != yarn ] && [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
+  if [ "${repo_manager:-}" != yarn ] && [ "${repo_manager:-}" != bun ] && [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
     out=$(timeout 120 pnpm exec node -p "$probe" </dev/null 2>/dev/null) || out=""
     out=${out##*$'\n'}
     if [[ $out =~ ^[0-9]+\ v[0-9] ]]; then via=pnpm; else via="node (pnpm exec failed)" out=""; fi
@@ -112,11 +321,24 @@ prepare_gate_dependencies() {
   # This private cache directory survives git clean; never reuse another
   # revision's package-manager shim, even when its manager has changed.
   rm -f "$checkout/.git/beelink-gate-bin/pnpm" "$checkout/.git/beelink-gate-bin/yarn" "$checkout/.git/beelink-gate-bin/yarn-version" || return $?
+  if [ -d "$checkout/.git" ] && [ ! -L "$checkout/.git" ] && [ ! -L "$checkout/.git/beelink-gate-bin" ]; then
+    rm -f "$checkout/.git/beelink-gate-bin/bun" "$checkout/.git/beelink-gate-bin/bunx" || return $?
+  fi
   repo_manager=$(node -e 'const p=require("./package.json"); console.log((p.packageManager||"").split("@")[0] || p.devEngines?.packageManager?.name || "")' 2>/dev/null) || repo_manager=""
-  if [ -n "$repo_manager" ] && [ "$repo_manager" != yarn ] && [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
+  if [ "$install_mode" != no-install ] && [ "$install_mode" != light ] && { [ "$repo_manager" = bun ] || [ -e bun.lock ] || [ -e bun.lockb ]; }; then
+    if [ -z "$repo_manager" ]; then
+      if [ -f yarn.lock ] || [ -f pnpm-lock.yaml ] || [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+        die "multiple package-manager locks require an explicit packageManager"
+      fi
+      repo_manager=bun
+    elif [ "$repo_manager" != bun ] && [ ! -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
+      die "packageManager declares $repo_manager but only a Bun lock exists"
+    fi
+  fi
+  if [ -n "$repo_manager" ] && [ "$repo_manager" != yarn ] && [ -f yarn.lock ] && [ ! -f bun.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
     die "packageManager declares $repo_manager but only yarn.lock exists; provide its matching lockfile or declare Yarn"
   fi
-  if [ "$repo_manager" != yarn ] && [ -f pnpm-lock.yaml ] && want_pnpm=$(repo_pnpm_version); then
+  if [ "$repo_manager" != yarn ] && [ "$repo_manager" != bun ] && [ -f pnpm-lock.yaml ] && want_pnpm=$(repo_pnpm_version); then
     have_pnpm=$(pnpm --version 2>/dev/null || true)
     if [ "$want_pnpm" != "$have_pnpm" ]; then
       mkdir -p "$checkout/.git/beelink-gate-bin" || exit $?
@@ -147,11 +369,14 @@ prepare_gate_dependencies() {
     fi
     export SHIP_MAX_WORKERS=$workers
     if [ "$repo_manager" = yarn ]; then prepare_yarn_launcher || return $?; fi
+    if [ "$repo_manager" = bun ]; then prepare_bun_launcher || return $?; fi
     resolve_gate_node
     echo "beelink-gate: --ship runs scripts/ship.sh verify with node $gate_node and SHIP_MAX_WORKERS=$workers (load $load on $cores cores)" >&2
   elif [ "$install_mode" = no-install ] || [ "$install_mode" = light ]; then
     export BEELINK_GATE_INSTALL_S=0
     echo "beelink-gate: skipping dependency install for this check" >&2
+  elif [ "$repo_manager" = bun ]; then
+    install_bun_dependencies || return $?
   elif [ "$repo_manager" = yarn ] || { [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; }; then
     repo_manager=yarn
     install_yarn_dependencies || return $?
@@ -165,7 +390,7 @@ prepare_gate_dependencies() {
     # A dependency-free package needs no install. A package with dependencies
     # and no lock cannot have a frozen install, so fail the gate.
     node -e 'const p=require("./package.json"); process.exit(Object.keys(p.dependencies||{}).length || Object.keys(p.devDependencies||{}).length || Object.keys(p.optionalDependencies||{}).length ? 1 : 0)' \
-      || die "package.json has dependencies but no pnpm/npm/Yarn lockfile"
+      || die "package.json has dependencies but no pnpm/npm/Yarn/Bun lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
     export BEELINK_GATE_INSTALL_S=0
   fi
@@ -179,7 +404,7 @@ prepare_gate_dependencies() {
   [ "$install_mode" = ship ] || export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$turbo_default}"
   export BEELINK_GATE_TURBO_REQUESTED_DIR="${TURBO_CACHE_DIR:-}"
   export TURBO_RUN_SUMMARY="${TURBO_RUN_SUMMARY:-true}"
-  if [ "$install_mode" != ship ] && [ "$repo_manager" != yarn ] && [ -d node_modules/.pnpm ]; then
+  if [ "$install_mode" != ship ] && [ "$repo_manager" != yarn ] && [ "$repo_manager" != bun ] && [ -d node_modules/.pnpm ]; then
     rebuild_native_addons || exit $?
   fi
 }

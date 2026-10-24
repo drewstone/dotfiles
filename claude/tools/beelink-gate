@@ -83,7 +83,7 @@ decode() { printf '%s' "$1" | base64 --decode; }
 
 # Older launchers can emit a newly deployed main file with an older helper list.
 # A missing admission owner must refuse before any probe, reserve or cache work.
-if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t probe_transport)" != function ] || [ "$(type -t probe_of)" != function ]; then
+if [ "$(type -t admit_release_priority)" != function ] || [ -z "${beelink_gate_release_source:-}" ] || ! grep -qxF '# BEELINK_GATE_PHASE_SPANS_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t verify_gate_unit)" != function ] || [ "$(type -t job_submit)" != function ] || [ "$(type -t job_attach_remote)" != function ] || [ "$(type -t job_result_remote)" != function ] || [ "$(type -t prepare_gate_turbo_cache)" != function ] || [ "$(type -t release_gate_turbo_cache)" != function ] || [ "$(type -t gate_turbo_node_cache)" != function ] || [ "${gate_shared_turbo_install:-}" != 1 ] || [ "$(type -t admission_begin)" != function ] || ! grep -qxF '# BEELINK_GATE_ADMISSION_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t frontend_start)" != function ] || ! grep -qxF '# BEELINK_GATE_FRONTEND_TIMING_V1' <<< "${beelink_gate_metrics_source:-}" || [ "$(type -t probe_transport)" != function ] || [ "$(type -t probe_of)" != function ] || [ "${gate_probe_recovery_quarantined:-}" != 1 ] || [ "$(type -t remote_probe)" != function ] || [ "$(type -t repo_bun_version)" != function ] || [ "$(type -t prepare_bun_launcher)" != function ] || [ "$(type -t install_bun_dependencies)" != function ]; then
   tempfail "$(utc_in_minutes 5)" "complete gate source unavailable; use the maintained gate launcher"
 fi
 
@@ -836,116 +836,6 @@ reclaim_dead_holder() {
   return 0
 }
 
-# Prints one line for `auto`: state=free|busy|refused, cache=warm|cold, load.
-remote_probe() {
-  if [ "$#" -lt 4 ] || [ "$#" -gt 6 ]; then die "invalid probe request"; fi
-  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err probe_mode=install reserve_mode reserve
-  beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
-  [ "$#" -ge 5 ] && probe_mode=$(decode "$5")
-  reserve_mode=$probe_mode
-  [ "$#" -eq 6 ] && reserve_mode=$(decode "$6")
-  light=0 dev=0; [ "$probe_mode" = light ] && light=1
-  [ "$probe_mode" = dev ] && dev=1
-  if [ "${BEELINK_GATE_PROBE_RECOVERY:-0}" = 1 ]; then
-    gate_id=${BEELINK_GATE_ID:-}
-    verify_gate_unit || return 75
-    require_legacy_gate_drained || return 75
-    local admission
-    admission=$(host_psi_admission) || return 75
-    python3 -c 'import json,sys; sys.exit(int(json.loads(sys.argv[1])["held"]))' "$admission" || return 75
-  fi
-  parse_repo_url "$repo_url"
-  cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
-  if ! reason=$(release_priority_reason "$beelink"); then
-    printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=release-held capacity=null reason=%s\n' \
-      "$beelink" "$(utc_in_minutes 5)" "$reason"
-    return 0
-  fi
-  local probe_heat=cold
-  ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
-  reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
-    "${BEELINK_GATE_PEER_RESERVE:-}" "${BEELINK_GATE_PEER_WARM_RESERVE:-}" "$probe_heat" 2>/dev/null) \
-    || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
-  # A host short of its floor plus reserve gets the recovery a gate admitted there
-  # would run, before auto passes it by: on 2026-10-17 beelink2 sat 3 GB short for
-  # hours with idle cache it never pruned, because only an admitted gate prunes.
-  # A recovery that leaves the host short is not repeated for 15 minutes, the
-  # refusal's own retry time, so polling launchers do not rescan the cache.
-  # Recovery runs only when the idle cache can close the gap: a shortfall it cannot
-  # cover would evict every idle checkout, leave the caches cold and still refuse.
-  local recovered=0 before shortfall floor_bytes stamp="$cache_root/.locks/.probe-recovery-short"
-  if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
-    state=refused next=$(utc_in_minutes 15)
-    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ] \
-      && floor_bytes=$(( $(floor_gib "$beelink") * 1024 * 1024 * 1024 )); then
-      if [ "${BEELINK_GATE_PROBE_RECOVERY:-0}" != 1 ]; then
-        managed_probe_recovery "$beelink" "$@"
-        return $?
-      fi
-      before=$(free_bytes)
-      shortfall=$(( floor_bytes + reserve - before ))
-      if (( shortfall <= $(idle_cache_bytes "$cache_root") )); then
-        mkdir -p "$STATE_DIR" 2>/dev/null
-        { echo "$(date -u +%FT%TZ) probe $beelink short $shortfall bytes; recovering idle cache"
-          recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
-            "$cache_root/.locks/no-current-checkout" "$reserve" 2>&1
-        } >> "$STATE_DIR/capacity.log" 2>/dev/null
-        recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
-      fi
-      if reason=$(check_floor "$beelink" "$reserve" 2>&1); then
-        state=free next=""; rm -f "$stamp"
-      else
-        touch "$stamp"
-      fi
-    fi
-  fi
-  if [ "$state" != refused ]; then
-    err=$(mktemp)
-    next=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>"$err") || { state=refused; reason=$(cat "$err"); }
-    rm -f "$err"
-    if [ "$state" != refused ]; then next=""; elif [ -z "$next" ]; then next=$(utc_in_minutes 5); fi
-  fi
-  # A repo has BEELINK_GATE_REPO_CHECKOUTS checkouts per host; one free is enough.
-  # A light gate has its own, <repo>@light.
-  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix free_copy=""
-  [[ "$copies" =~ ^[1-9][0-9]*$ ]] || copies=2
-  [ "$light" = 1 ] && copies=1
-  [ "$dev" = 1 ] && copies=1
-  if [ "$state" = free ]; then
-    state=busy
-    for ((k = 0; k < copies; k++)); do
-      suffix=$([ "$k" = 0 ] || echo "@$k"); [ "$light" = 1 ] && suffix=@light; [ "$dev" = 1 ] && suffix=@dev
-      lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
-      if [ ! -e "$lock" ]; then state=free free_copy=$suffix; break; fi
-      exec {fd}<"$lock" || die "cannot open lock"
-      if flock -n -s "$fd"; then state=free free_copy=$suffix; exec {fd}<&-; break; fi
-      exec {fd}<&-
-      reason=$(holder_line "$lock")
-    done
-    [ "$state" = busy ] || reason=""
-  fi
-  [ -d "$cache_root/$host/$owner/$repo$free_copy/.git" ] && cache=warm
-  local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-6} pool=slot free_slots=0 i slot
-  [ "$light" = 1 ] && { max_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}; pool="light-slot"; }
-  [ "$dev" = 1 ] && { max_slots=${BEELINK_GATE_DEV_SLOTS:-2}; pool="dev-slot"; }
-  for ((i = 0; i < max_slots; i++)); do
-    slot="$cache_root/.locks/$pool-$i.lock"
-    if [ ! -e "$slot" ]; then free_slots=$((free_slots + 1)); continue; fi
-    exec {fd}<"$slot" || continue
-    flock -n -s "$fd" && free_slots=$((free_slots + 1))
-    exec {fd}<&-
-  done
-  local probe_load probe_limit host_cpu capacity mode=host-psi held
-  capacity=$(host_psi_admission) || return 75
-  read -r probe_load probe_limit held < <(python3 -c 'import json,sys; x=json.loads(sys.argv[1]); print(x["some_avg10"] if x["some_avg10"] is not None else 100, x["limit"], int(x["held"]))' "$capacity")
-  host_cpu=$(host_pressure_now || echo unknown)
-  if [ "$held" = 1 ]; then state=busy; reason="host PSI some avg10 admission held"; fi
-  if ! legacy_gate_drained; then state=busy; reason="legacy gate class has not proved drained"; fi
-  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s admission=%s capacity=%s reason=%s\n' \
-    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$mode" "$capacity" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
-
-}
-
 # After a green --ship run, sign what ran and on which tree with this beelink's
 # own key, and publish it at refs/ship-proofs/<tree> so the repo's deploy can
 # skip repeating the same checks (gtm-agent scripts/ship-proof.mjs). Only repos
@@ -960,7 +850,7 @@ publish_proof() {
   [ -f "$key" ] || { echo "beelink-gate: no proof published: $beelink has no ship-proof key" >&2; return 0; }
   [ -x "$gh" ] || gh=$(command -v gh-drew) || { echo "beelink-gate: no proof published: gh-drew unavailable on $beelink" >&2; return 0; }
   tree=$(git rev-parse 'HEAD^{tree}') || return 0
-  version=$(declare -f remote_gate publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
+  version=$(declare -f remote_gate publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version repo_bun_version prepare_bun_launcher install_bun_dependencies install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
   tmp=$(mktemp -d) || return 0
   printf 'ship-proof v1\nrepo=%s\ntree=%s\ncommit=%s\ncommand=%s\ngate=%s\nhost=%s\nat=%s\nexit=0\n' \
     "$host/$owner/$repo" "$tree" "$(git rev-parse HEAD)" "${command[*]}" "$version" "$beelink" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp/receipt"

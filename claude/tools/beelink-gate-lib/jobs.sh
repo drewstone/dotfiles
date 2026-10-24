@@ -2,6 +2,7 @@
 # Submitted gate unit lifecycle; commands stay in their owning systemd unit.
 job_status_timeout_seconds=5
 job_retention_seconds=86400
+gate_probe_recovery_quarantined=1
 
 job_dir_for() {
   [[ "$1" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid gate id"
@@ -127,15 +128,19 @@ managed_unit_run() {
   fi
 }
 managed_probe_recovery() (
-  local beelink=$1 source_file id status
+  local beelink=$1 source_file protocol_file="" id status
   shift
   source_file=$(mktemp) || return 75
-  trap 'rm -f "$source_file"' EXIT
+  trap 'rm -f "$source_file" "$protocol_file"' EXIT
+  protocol_file=$(mktemp) || return 75
   emit_gate_source > "$source_file" || return 75
   id="$beelink-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')" || return 75
-  BEELINK_GATE_PROBE_RECOVERY=1 managed_unit_run probe "$id" "$source_file" --probe "$@"
+  # A timed-out client cannot prove the daemon-parented unit has closed stdout.
+  # Quarantine its protocol so late child bytes cannot override a refusal row.
+  BEELINK_GATE_PROBE_RECOVERY=1 managed_unit_run probe "$id" "$source_file" --probe "$@" > "$protocol_file"
   status=$?
   [ "$status" = 0 ] || return 75
+  cat "$protocol_file" || return 75
 )
 
 gate_process_alive() {

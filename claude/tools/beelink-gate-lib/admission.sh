@@ -596,3 +596,120 @@ urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
   done
   return 1
 }
+
+# Prints one line for `auto`: state=free|busy|refused, cache=warm|cold, load.
+remote_probe() {
+  if [ "$#" -lt 4 ] || [ "$#" -gt 6 ]; then die "invalid probe request"; fi
+  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err probe_mode=install reserve_mode reserve
+  beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
+  [ "$#" -ge 5 ] && probe_mode=$(decode "$5")
+  reserve_mode=$probe_mode
+  [ "$#" -eq 6 ] && reserve_mode=$(decode "$6")
+  light=0 dev=0; [ "$probe_mode" = light ] && light=1
+  [ "$probe_mode" = dev ] && dev=1
+  if [ "${BEELINK_GATE_PROBE_RECOVERY:-0}" = 1 ]; then
+    gate_id=${BEELINK_GATE_ID:-}
+    verify_gate_unit || return 75
+    require_legacy_gate_drained || return 75
+    local admission
+    admission=$(host_psi_admission) || return 75
+    python3 -c 'import json,sys; sys.exit(int(json.loads(sys.argv[1])["held"]))' "$admission" || return 75
+  fi
+  parse_repo_url "$repo_url"
+  cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  if ! reason=$(release_priority_reason "$beelink"); then
+    printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=release-held capacity=null reason=%s\n' \
+      "$beelink" "$(utc_in_minutes 5)" "$reason"
+    return 0
+  fi
+  local probe_heat=cold
+  ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
+  reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
+    "${BEELINK_GATE_PEER_RESERVE:-}" "${BEELINK_GATE_PEER_WARM_RESERVE:-}" "$probe_heat" 2>/dev/null) \
+    || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
+  # A host short of its floor plus reserve gets the recovery a gate admitted there
+  # would run, before auto passes it by: on 2026-10-17 beelink2 sat 3 GB short for
+  # hours with idle cache it never pruned, because only an admitted gate prunes.
+  # A recovery that leaves the host short is not repeated for 15 minutes, the
+  # refusal's own retry time, so polling launchers do not rescan the cache.
+  # Recovery runs only when the idle cache can close the gap: a shortfall it cannot
+  # cover would evict every idle checkout, leave the caches cold and still refuse.
+  local recovered=0 before shortfall floor_bytes stamp="$cache_root/.locks/.probe-recovery-short"
+  if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+    state=refused next=$(utc_in_minutes 15)
+    if [ -d "$cache_root/.locks" ] && [ -z "$(find "$stamp" -mmin -15 2>/dev/null)" ] \
+      && floor_bytes=$(( $(floor_gib "$beelink") * 1024 * 1024 * 1024 )); then
+      if [ "${BEELINK_GATE_PROBE_RECOVERY:-0}" != 1 ]; then
+        local recovery_status
+        managed_probe_recovery "$beelink" "$@"; recovery_status=$?
+        if [ "$recovery_status" != 0 ]; then
+          # The child may have printed free/busy before its managed wait failed.
+          # Last-line consumers must retain the initial refusal, not admit on it.
+          printf 'beelink-gate-probe host=%s state=refused cache=%s slots=0 load=- limit=- host_cpu=- next=%s recovered=unknown admission=initial-floor-refused capacity=null recovery=unconfirmed recovery_status=%s reason=initial floor refusal; recovery unconfirmed: %s\n' \
+            "$beelink" "$probe_heat" "$next" "$recovery_status" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+        fi
+        return "$recovery_status"
+      fi
+      before=$(free_bytes)
+      shortfall=$(( floor_bytes + reserve - before ))
+      if (( shortfall <= $(idle_cache_bytes "$cache_root") )); then
+        mkdir -p "$STATE_DIR" 2>/dev/null
+        { echo "$(date -u +%FT%TZ) probe $beelink short $shortfall bytes; recovering idle cache"
+          recover_floor_from_cache "$beelink" "$cache_root" "${BEELINK_GATE_CACHE_MAX_BYTES:-42949672960}" \
+            "$cache_root/.locks/no-current-checkout" "$reserve" 2>&1
+        } >> "$STATE_DIR/capacity.log" 2>/dev/null
+        recovered=$(( $(free_bytes) - before )); (( recovered > 0 )) || recovered=0
+      fi
+      if reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+        state=free next=""; rm -f "$stamp"
+      else
+        touch "$stamp"
+      fi
+    fi
+  fi
+  if [ "$state" != refused ]; then
+    err=$(mktemp)
+    next=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>"$err") || { state=refused; reason=$(cat "$err"); }
+    rm -f "$err"
+    if [ "$state" != refused ]; then next=""; elif [ -z "$next" ]; then next=$(utc_in_minutes 5); fi
+  fi
+  # A repo has BEELINK_GATE_REPO_CHECKOUTS checkouts per host; one free is enough.
+  # A light gate has its own, <repo>@light.
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix free_copy=""
+  [[ "$copies" =~ ^[1-9][0-9]*$ ]] || copies=2
+  [ "$light" = 1 ] && copies=1
+  [ "$dev" = 1 ] && copies=1
+  if [ "$state" = free ]; then
+    state=busy
+    for ((k = 0; k < copies; k++)); do
+      suffix=$([ "$k" = 0 ] || echo "@$k"); [ "$light" = 1 ] && suffix=@light; [ "$dev" = 1 ] && suffix=@dev
+      lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
+      if [ ! -e "$lock" ]; then state=free free_copy=$suffix; break; fi
+      exec {fd}<"$lock" || die "cannot open lock"
+      if flock -n -s "$fd"; then state=free free_copy=$suffix; exec {fd}<&-; break; fi
+      exec {fd}<&-
+      reason=$(holder_line "$lock")
+    done
+    [ "$state" = busy ] || reason=""
+  fi
+  [ -d "$cache_root/$host/$owner/$repo$free_copy/.git" ] && cache=warm
+  local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-6} pool=slot free_slots=0 i slot
+  [ "$light" = 1 ] && { max_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}; pool="light-slot"; }
+  [ "$dev" = 1 ] && { max_slots=${BEELINK_GATE_DEV_SLOTS:-2}; pool="dev-slot"; }
+  for ((i = 0; i < max_slots; i++)); do
+    slot="$cache_root/.locks/$pool-$i.lock"
+    if [ ! -e "$slot" ]; then free_slots=$((free_slots + 1)); continue; fi
+    exec {fd}<"$slot" || continue
+    flock -n -s "$fd" && free_slots=$((free_slots + 1))
+    exec {fd}<&-
+  done
+  local probe_load probe_limit host_cpu capacity mode=host-psi held
+  capacity=$(host_psi_admission) || return 75
+  read -r probe_load probe_limit held < <(python3 -c 'import json,sys; x=json.loads(sys.argv[1]); print(x["some_avg10"] if x["some_avg10"] is not None else 100, x["limit"], int(x["held"]))' "$capacity")
+  host_cpu=$(host_pressure_now || echo unknown)
+  if [ "$held" = 1 ]; then state=busy; reason="host PSI some avg10 admission held"; fi
+  if ! legacy_gate_drained; then state=busy; reason="legacy gate class has not proved drained"; fi
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s admission=%s capacity=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$mode" "$capacity" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+
+}
