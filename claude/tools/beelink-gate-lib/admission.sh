@@ -2,6 +2,73 @@
 # shellcheck disable=SC2034,SC2154 # Main/resource owners supply and consume admission globals.
 # Host admission policy, bundled into immutable gates. Running commands never
 # recheck this owner: a release hold stops new work and lets admitted work finish.
+
+free_bytes() {
+  local available root_available
+  available=$(df -B1 --output=avail "$HOME" | tail -n 1 | tr -d ' ') || die "cannot read free disk space"
+  root_available=$(df -B1 --output=avail / | tail -n 1 | tr -d ' ') || die "cannot read root free disk space"
+  [[ "$available" =~ ^[0-9]+$ && "$root_available" =~ ^[0-9]+$ ]] || die "invalid free disk reading"
+  (( root_available >= available )) || available=$root_available
+  echo "$available"
+}
+
+check_floor() {
+  local host="$1" reserve="${2:-0}" available floor_bytes
+  floor_bytes=$(effective_disk_floor_bytes "$host") || return 3
+  available=$(free_bytes) || return 3
+  last_floor_available=$available
+  last_floor_bytes=$floor_bytes
+  if (( available < floor_bytes )); then
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_bytes" >&2
+    return 3
+  fi
+  if (( reserve > 0 && available < floor_bytes + reserve )); then
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_bytes" "$reserve" >&2
+    return 3
+  fi
+}
+
+# Tools provides the protected SYSTEM worker and its low resource weights.
+# Apply gate release/legacy/host-pressure guards once; recovery never waits for
+# a new resource window or turns an unknown observation into permission.
+cache_recovery_allowed() {
+  local sample
+  release_priority_reason "$1" >/dev/null || return 1
+  require_legacy_gate_drained || return 1
+  sample=$(host_psi_admission) || return 1
+  python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1]).get("held") is False else 1)' "$sample"
+}
+
+# Only admission may request maintenance. Receipt checks call check_floor directly.
+# Tools owns cache classes, publication, active-work fences and service drain.
+# Its exit status never substitutes for a fresh measurement of the same floor.
+admit_disk_floor() {
+  local host="$1" reserve="${2:-0}" required status=0 budget=10 left bound
+  last_floor_available="" last_floor_bytes=""
+  if check_floor "$host" "$reserve" 2>/dev/null; then return 0; fi
+  # Unknown policy or free-space evidence cannot authorize eviction.
+  if [[ "${last_floor_available:-}" =~ ^[0-9]+$ && "${last_floor_bytes:-}" =~ ^[0-9]+$ ]] &&
+      command -v storage-lifecycle >/dev/null 2>&1 && cache_recovery_allowed "$host"; then
+    required=$((last_floor_bytes + reserve))
+    # Keep drain and the final check inside existing placement/hold deadlines.
+    # A budget too small for the maintained CLI skips recovery, without renewal.
+    for bound in "${admit_by:-}" "${deadline:-}"; do
+      [ -n "$bound" ] || continue
+      left=$((bound - SECONDS - 2))
+      (( left >= budget )) || budget=$left
+    done
+    if (( budget >= 3 )); then
+      echo "beelink-gate: requesting bounded lifecycle cache recovery on $host for $required bytes free" >&2
+      storage-lifecycle reclaim --caches-only --apply --required-free-bytes "$required" --max-seconds "$budget" >/dev/null || status=$?
+      echo "beelink-gate: lifecycle cache recovery on $host exited $status; rechecking native floor and reserve" >&2
+    fi
+  fi
+  # Partial/unknown recovery may have freed enough; only this measurement admits.
+  check_floor "$host" "$reserve"
+}
+
 release_priority_reason() {
   local observation status=0 parsed=0 reason
   observation=$(python3 -c "$beelink_gate_release_source" "$1" "$(limits_file)" "$STATE_DIR" "$(command -v gh-drew || true)") || status=$?
@@ -203,7 +270,7 @@ give_back_host() {
 # A placement probe is a hint. Preserve auto handoff if capacity changes before
 # this gate starts; a named host retains its ordinary temporary refusal.
 initial_disk_admission() {
-  if ! check_floor "$beelink"; then
+  if ! admit_disk_floor "$beelink"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its operational disk floor or its policy is unknown"
     admission_outcome=refused admission_reason=disk_floor
     tempfail "$(utc_in_minutes 15)" "$beelink is below its operational disk floor or its policy is unknown"

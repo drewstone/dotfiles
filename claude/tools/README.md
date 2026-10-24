@@ -369,9 +369,10 @@ refuses with TEMPFAIL. Status reads are bounded and use the recorded manager.
 Missing sudo authority or unverified containment refuses work rather than using
 an unprioritized fallback. Receipts retain the actual cgroup path, system manager
 and unit name.
-Probe-triggered cache recovery re-executes the immutable probe source in the
-same managed slice, with a bounded synchronous lifetime and the same PSI/drain
-checks before scanning or pruning. A failed launch cannot recover outside it.
+Admission requests rebuildable-cache recovery only through the lifecycle owner
+and its protected, bounded SYSTEM worker. The lifecycle owner retains the cache
+policy, low-priority resource controls, active-work fences and worker drain; the
+this recovery adds no gate-owned cache scan or eviction implementation.
 
 Host probes retain fixed per-attempt phase and exact command-exit diagnostics
 for Windows policy lookup and the remote probe. Known source-generation or
@@ -607,9 +608,16 @@ Install-reserve hints and remote update-policy reads use the wall deadline in
 SSH session with an unresponsive WSL read cannot hold these lookups indefinitely.
 A failed hint is reported as unavailable; the target still reads its own receipts
 and enforces its disk floor. An unavailable update policy retains its existing
-cache and TEMPFAIL behavior. Floor refusals do not evict caches: the archival
-storage lifecycle owns capacity recovery. Submitted gates and attached runs
-retain their existing lifecycle.
+cache and TEMPFAIL behavior. A measured floor or install-reserve shortfall asks
+`storage-lifecycle reclaim --caches-only --apply` once, with the exact native
+floor plus reserve in `--required-free-bytes` and the foreground budget in
+`admit_disk_floor`. Tools owns protected helper/policy publication, cache
+eligibility, exact active-gate locks, protected runner context and service drain.
+Unknown floor or free-space evidence authorizes no recovery. Recovery success
+never admits a gate: after any outcome, the gate reads its unchanged floor,
+reserve and actual free space again. A partial recovery may suffice; an
+insufficient or unknown measurement preserves TEMPFAIL and auto handoff. Receipt
+checks never trigger recovery. Submitted gates retain their existing lifecycle.
 The same transport bound applies to staging the gate script and requesting
 cancellation. A staging failure reports that submission was not attempted and
 remote files may be partial. Cancellation keeps its existing retry loop within
