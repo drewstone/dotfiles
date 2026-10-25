@@ -15,6 +15,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -70,8 +71,14 @@ def effective_floor(host, limits):
 
 def write_json(path, value):
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, sort_keys=True) + "\n")
+    began = time.monotonic()
+    encoded = json.dumps(value, sort_keys=True) + "\n"
+    encoded_at = time.monotonic()
+    temporary.write_text(encoded)
+    written_at = time.monotonic()
     temporary.replace(path)
+    return {"encode_s": encoded_at - began, "file_s": written_at - encoded_at,
+            "replace_s": time.monotonic() - written_at}
 
 
 def read_json(path):
@@ -326,10 +333,11 @@ def revalidate_docker(docker, filesystems, resolve=path_identity):
             row["identity_changed"] = True
 
 
-def sample(filesystems, now):
+def sample(filesystems):
     for fs in filesystems.values():
         try:
             value = os.fstatvfs(fs["descriptor"])
+            now = time.monotonic()  # Timestamp the measurement, not work queued before it.
             available, free = value.f_bavail * value.f_frsize, value.f_bfree * value.f_frsize
             if fs["samples"] == 0:
                 fs["start_available_bytes"], fs["start_free_bytes"] = available, free
@@ -344,6 +352,77 @@ def sample(filesystems, now):
             fs["samples"] += 1
         except OSError:
             fs["read_errors"] += 1
+
+
+class PinnedSampler:
+    """Only pinned-fd reads run on this clock; control and publication cannot delay it."""
+
+    def __init__(self, filesystems, start):
+        self.filesystems = filesystems
+        self.start = start
+        self.lock = threading.Lock()
+        self.stopped = threading.Event()
+        self.tick = threading.Event()
+        self.error = None
+        self.sequence = 1  # The baseline also requires live-path revalidation.
+        self.max_sample_work_s = 0.0
+        self.thread = threading.Thread(target=self.run, name="disk-sampler", daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stopped.set()
+        self.thread.join()
+
+    def run(self):
+        due = self.start + INTERVAL_S
+        try:
+            while not self.stopped.wait(max(0, due - time.monotonic())):
+                began = time.monotonic()
+                with self.lock:
+                    sample(self.filesystems)
+                ended = time.monotonic()
+                self.max_sample_work_s = max(self.max_sample_work_s, ended - began)
+                self.sequence += 1
+                self.tick.set()
+                # Stay on the baseline's monotonic clock. Do not replay missed
+                # deadlines as extra samples: their real gap must stay visible.
+                due += INTERVAL_S
+                if due <= ended:
+                    due += (math.floor((ended - due) / INTERVAL_S) + 1) * INTERVAL_S
+        except BaseException as error:
+            self.error = error
+            self.tick.set()
+
+    def rows(self):
+        # Hold the lock only for scalar copies, never deepcopy, /proc, path
+        # lookups, JSON encoding or I/O. Nested aliases belong to the controller.
+        with self.lock:
+            return {key: dict(fs) for key, fs in self.filesystems.items()}
+
+    def wait(self, checked):
+        if checked >= self.sequence:
+            self.tick.wait(INTERVAL_S)
+        self.tick.clear()
+        if self.error is not None:
+            raise self.error
+
+    def finish(self):
+        self.__exit__()
+        if self.error is not None:
+            raise self.error
+        sample(self.filesystems)
+        return time.monotonic()
+
+
+def timed_observer_work(work, key, function, *args):
+    began = time.monotonic()
+    try:
+        return function(*args)
+    finally:
+        work[key] = max(work.get(key, 0.0), time.monotonic() - began)
 
 
 def observe(directory, parent, budget, paths):
@@ -362,93 +441,103 @@ def observe(directory, parent, budget, paths):
     # queries, covered by the caller's ready wait.
     docker = pin_docker(filesystems, unknown)
     start = time.monotonic()
-    sample(filesystems, start)
-    write_json(directory / "ready", {"baseline_monotonic_s": start, "pid": os.getpid(),
-                                     "start_ticks": process_identity(os.getpid()), "parent_pid": parent,
-                                     "docker": docker})
-    usage_before, usage_after = None, None
-    work = {"completed_loops": 0, "max_loop_work_s": 0.0, "max_write_s": 0.0,
-            "progress_writes_submitted": 0, "progress_writes_completed": 0,
-            "progress_writes_skipped_busy": 0, "write_errors": 0}
-    reason = "running"
-    finishing_started = None
-    # Optional daemon queries must never pause filesystem sampling. One worker
-    # bounds before+after work to the same query budget as the serial owner.
-    with ThreadPoolExecutor(max_workers=1) as metadata, ThreadPoolExecutor(max_workers=1) as writer:
-        before = metadata.submit(docker_usage, docker)
-        after = None
-        progress = None
-        while True:
-            now = time.monotonic()
-            if before is not None and before.done():
-                usage_before = before.result()
-                before = None
-            revalidate_docker(docker, filesystems)
-            sample(filesystems, now)
-            if identity is None or process_identity(parent) != identity:
-                reason = "parent_exited"
-            elif now >= deadline and reason != "parent_exited":
-                reason = "deadline"
-            elif "terminated" in stop:
-                reason = "terminated"
-            elif reason == "running" and (stop or (directory / "stop").exists()):
-                reason = "finished"
-            if reason != "running" and finishing_started is None:
-                finishing_started = now
-            if reason != "running" and after is None:
-                after = metadata.submit(docker_snapshot)
-            if progress is not None and progress.done():
-                result = progress.result()
-                work["progress_writes_completed"] += 1
-                work["max_write_s"] = max(work["max_write_s"], result["duration_s"])
-                work["write_errors"] += int(result["error"] is not None)
-                progress = None
-            metadata_complete = after is not None and after.done() and before is None
-            if metadata_complete:
-                docker_after, usage_after = after.result()
-                if progress is None:
-                    break
-                if time.monotonic() >= finishing_started + STOP_GRACE_S:
-                    # A blocked Python thread cannot be cancelled safely. All
-                    # native metadata children are now reaped: exit only this
-                    # observer and its threads, retaining incomplete progress.
-                    os._exit(1)
-            # A killed observer must not leave a qualified finished snapshot
-            # while final metadata or a queued initial snapshot is incomplete.
-            phase = "running" if reason == "running" else "finishing"
-            if not metadata_complete:
-                if progress is None:
-                    work["progress_writes_submitted"] += 1
-                    snapshot = observation_snapshot(start, now, phase, filesystems, unknown,
-                                                    docker, usage_before, None, work)
-                    progress = writer.submit(write_observation, directory, snapshot)
-                else:
-                    work["progress_writes_skipped_busy"] += 1
-            work["max_loop_work_s"] = max(work["max_loop_work_s"], time.monotonic() - now)
-            work["completed_loops"] += 1
-            # Work and JSON I/O consume this interval; do not add a full interval
-            # afterwards and manufacture an over-threshold sampling gap.
-            time.sleep(max(0, now + INTERVAL_S - time.monotonic()))
-    if {key: value for key, value in docker.items() if key != "filesystem_identity"} != docker_after:
-        usage_after = {"status": "unknown", "reason": "docker_context_changed"}
-        pinned = dict(docker["filesystem_identity"], status="unknown", reason="docker_context_changed")
-        docker = {"status": "unknown", "reason": "docker_context_changed", "filesystem_identity": pinned}
+    sample(filesystems)
+    with PinnedSampler(filesystems, start) as sampler:
+        write_json(directory / "ready", {"baseline_monotonic_s": start, "pid": os.getpid(),
+                                         "start_ticks": process_identity(os.getpid()), "parent_pid": parent,
+                                         "docker": docker})
+        usage_before, usage_after = None, None
+        work = {"completed_loops": 0, "max_loop_work_s": 0.0, "max_write_s": 0.0,
+                "progress_writes_submitted": 0, "progress_writes_completed": 0,
+                "progress_writes_skipped_busy": 0, "write_errors": 0}
+        reason = "running"
+        finishing_started = None
+        checked = 0
+        # Optional daemon queries must never pause filesystem sampling. One worker
+        # bounds before+after work to the same query budget as the serial owner.
+        with ThreadPoolExecutor(max_workers=1) as metadata, ThreadPoolExecutor(max_workers=1) as writer:
+            before = metadata.submit(docker_usage, docker)
+            after = None
+            progress = None
+            while True:
+                now = time.monotonic()
+                if before is not None and before.done():
+                    usage_before = before.result()
+                    before = None
+                # Each actual sample gets a live-path check, even when slow
+                # control work leaves several samples pending. Never coalesce
+                # identity checks along with busy progress publications.
+                timed_observer_work(work, "max_identity_check_s", revalidate_docker, docker, filesystems)
+                checked += int(checked < sampler.sequence)
+                if identity is None or timed_observer_work(work, "max_parent_check_s", process_identity, parent) != identity:
+                    reason = "parent_exited"
+                elif now >= deadline and reason != "parent_exited":
+                    reason = "deadline"
+                elif "terminated" in stop:
+                    reason = "terminated"
+                elif reason == "running" and (stop or timed_observer_work(
+                        work, "max_stop_check_s", (directory / "stop").exists)):
+                    reason = "finished"
+                if reason != "running" and finishing_started is None:
+                    finishing_started = now
+                if reason != "running" and after is None:
+                    after = metadata.submit(docker_snapshot)
+                if progress is not None and progress.done():
+                    result = progress.result()
+                    work["progress_writes_completed"] += 1
+                    work["max_write_s"] = max(work["max_write_s"], result["duration_s"])
+                    for operation, duration in result["operations"].items():
+                        key = "max_write_" + operation
+                        work[key] = max(work.get(key, 0.0), duration)
+                    work["write_errors"] += int(result["error"] is not None)
+                    progress = None
+                metadata_complete = after is not None and after.done() and before is None
+                if metadata_complete:
+                    docker_after, usage_after = after.result()
+                    if progress is None and checked >= sampler.sequence:
+                        break
+                    if time.monotonic() >= finishing_started + STOP_GRACE_S:
+                        # A blocked Python thread cannot be cancelled safely. All
+                        # native metadata children are now reaped: exit only this
+                        # observer and its threads, retaining incomplete progress.
+                        os._exit(1)
+                # A killed observer must not leave a qualified finished snapshot
+                # while final metadata or a queued initial snapshot is incomplete.
+                phase = "running" if reason == "running" else "finishing"
+                if not metadata_complete:
+                    if progress is None:
+                        work["progress_writes_submitted"] += 1
+                        work["max_sample_work_s"] = sampler.max_sample_work_s
+                        rows = sampler.rows()
+                        snapshot = timed_observer_work(work, "max_snapshot_s", observation_snapshot,
+                                                       start, time.monotonic(), phase, rows, unknown,
+                                                       docker, usage_before, None, work)
+                        progress = writer.submit(write_observation, directory, snapshot)
+                    else:
+                        work["progress_writes_skipped_busy"] += 1
+                work["max_loop_work_s"] = max(work["max_loop_work_s"], time.monotonic() - now)
+                work["completed_loops"] += 1
+                sampler.wait(checked)
+        if {key: value for key, value in docker.items() if key != "filesystem_identity"} != docker_after:
+            usage_after = {"status": "unknown", "reason": "docker_context_changed"}
+            pinned = dict(docker["filesystem_identity"], status="unknown", reason="docker_context_changed")
+            docker = {"status": "unknown", "reason": "docker_context_changed", "filesystem_identity": pinned}
+            for fs in filesystems.values():
+                for alias in fs["aliases"]:
+                    if alias["kind"] == "docker":
+                        alias["error"] = "docker_context_changed"
+                        fs["identity_changed"] = True
+        revalidate_docker(docker, filesystems)
+        end = sampler.finish()
+        work["max_sample_work_s"] = sampler.max_sample_work_s
+        # Both executors have joined. No older progress snapshot can overwrite this
+        # final publication; its filesystem write is outside the sampled boundary.
+        snapshot = observation_snapshot(start, end, reason, filesystems, unknown,
+                                        docker, usage_before, usage_after, work)
+        result = write_observation(directory, snapshot)
         for fs in filesystems.values():
-            for alias in fs["aliases"]:
-                if alias["kind"] == "docker":
-                    alias["error"] = "docker_context_changed"
-                    fs["identity_changed"] = True
-    end = time.monotonic()
-    revalidate_docker(docker, filesystems)
-    sample(filesystems, end)
-    # Both executors have joined. No older progress snapshot can overwrite this
-    # final publication; its filesystem write is outside the sampled boundary.
-    snapshot = observation_snapshot(start, end, reason, filesystems, unknown,
-                                    docker, usage_before, usage_after, work)
-    result = write_observation(directory, snapshot)
-    for fs in filesystems.values():
-        os.close(fs["descriptor"])
-    return int(result["error"] is not None or work["write_errors"] > 0)
+            os.close(fs["descriptor"])
+        return int(result["error"] is not None or work["write_errors"] > 0)
 
 
 def observation_snapshot(start, end, reason, filesystems, unknown, docker, before, after, work):
@@ -482,11 +571,12 @@ def observation_snapshot(start, end, reason, filesystems, unknown, docker, befor
 def write_observation(directory, snapshot):
     started = time.monotonic()
     error = None
+    operations = {}
     try:
-        write_json(directory / "observation.json", snapshot)
+        operations = write_json(directory / "observation.json", snapshot)
     except (OSError, ValueError, TypeError) as failure:
         error = type(failure).__name__
-    return {"duration_s": time.monotonic() - started, "error": error}
+    return {"duration_s": time.monotonic() - started, "error": error, "operations": operations}
 
 
 def collect(directory, final_boundary=None):
