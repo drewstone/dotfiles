@@ -7,18 +7,23 @@ replaced or fabricated; admission, FIFO, resource and disk guards remain active.
 """
 import argparse
 import contextlib
+import concurrent.futures
 import fcntl
 import base64
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import signal
+import shlex
 import socket
 import subprocess
 import tempfile
 import time
+import tarfile
+import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -543,15 +548,274 @@ exit 0
                 assert cleanup.returncode == 0, "maintained fixture cancellation was not confirmed: " + cleanup.stderr
 
 
+class NativePeer:
+    """File and process observations for one real native fixture, over SSH."""
+    def __init__(self, host):
+        self.host = host
+        self.ip = {"beelink1": "100.98.195.7", "beelink2": "100.127.22.51"}[host]
+        self.nonce = uuid.uuid4().hex
+        self.root = None
+
+    def call(self, body, data=None):
+        script = "python3 - <<'NATIVE_PEER_PY'\nimport json,os,pathlib,sys\ndata=" + repr(data or {}) + "\n" + body + "\nNATIVE_PEER_PY\n"
+        result = subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+            "-o", "ConnectTimeout=10", self.ip, "wsl.exe", "--", "bash", "-s"],
+            input=script, capture_output=True, text=True, timeout=25)
+        if result.returncode:
+            raise RuntimeError(f"native observation transport exit={result.returncode}: {result.stderr[-1000:]}")
+        return json.loads(result.stdout)
+
+    def stage(self, origin):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            archive.add(origin, arcname="origin")
+        result = self.call('''
+import base64,io,tarfile
+root=pathlib.Path.home()/'.local/state/agent-work/pr680-acceptance'/data['nonce']
+root.mkdir(parents=True,mode=0o700)
+with tarfile.open(fileobj=io.BytesIO(base64.b64decode(data['archive']))) as archive:
+    archive.extractall(root,filter='data')
+print(json.dumps({'root':str(root),'origin':str(root/'origin')}))
+''', {"nonce": self.nonce, "archive": base64.b64encode(stream.getvalue()).decode()})
+        self.root = result["root"]
+        return result["origin"]
+
+    def observe(self, gate_id):
+        return self.call('''
+import hashlib,re,base64
+root=pathlib.Path(data['root'])
+state=pathlib.Path(os.environ.get('BEELINK_GATE_STATE_DIR') or pathlib.Path(os.environ.get('XDG_STATE_HOME',str(pathlib.Path.home()/'.local/state')))/'beelink-gate')
+result={'ready':(root/'ready').exists(),'state':str(state),'alive':False,'exit':None,'receipt':None,'canceled':False}
+cache=pathlib.Path(os.environ.get('BEELINK_GATE_CACHE_ROOT') or pathlib.Path(os.environ.get('XDG_CACHE_HOME',str(pathlib.Path.home()/'.cache')))/'beelink-gate')
+result['tickets']=[]
+for ticket in (cache/'.locks').glob('queue-local-'+root.name+'-origin@light.*'):
+    try:
+        with ticket.open('rb') as stream:
+            raw=stream.read(); info=os.fstat(stream.fileno())
+        if b'start=' in raw:
+            result['tickets'].append({'name':ticket.name,'inode':info.st_ino,'body_sha256':hashlib.sha256(raw).hexdigest()})
+    except FileNotFoundError: pass
+gate=data['gate']
+if gate:
+    assert re.fullmatch(r'beelink[12]-[0-9a-f]{32}',gate)
+    job=state/'jobs'/gate
+    for name,key in [('exit','exit'),('receipt.json','receipt')]:
+        try: result[key]=json.loads((job/name).read_text())
+        except FileNotFoundError: pass
+    try:
+        pid,birth=(job/'gate.pid').read_text().split()
+        fields=pathlib.Path('/proc/'+pid+'/stat').read_text().rsplit(')',1)[1].split()
+        result.update(pid=int(pid),birth=birth,alive=fields[19]==birth and fields[0] not in ('Z','X'))
+    except FileNotFoundError: pass
+    result['canceled']=(state/'jobs/.canceled'/gate).exists()
+    try: result['source_digest']=hashlib.sha256((job/'gate.sh').read_bytes()).hexdigest()
+    except FileNotFoundError: pass
+    try:
+        args=job/'args'
+        result['payload_digest']=hashlib.sha256(base64.b64decode(args.read_bytes().split(b'\0')[-2])).hexdigest()
+        result['args_mode']=args.stat().st_mode & 0o777
+    except FileNotFoundError: pass
+print(json.dumps(result))
+''', {"root": self.root, "gate": gate_id})
+
+    def release(self):
+        return self.call("(pathlib.Path(data['root'])/'release').touch(); print('{}')", {"root": self.root})
+
+
+def gtr_case(gate, host, mode, directory):
+    """GTR only launches the public CLI; every command runs in a normal gate."""
+    assert socket.gethostname().lower() not in ("beelink1", "beelink2", "desktop-18ir33v")
+    assert mode in ('native-pass','native-command-failure','native-command-255','native-command-75',
+        'native-pass-payload-large','native-lost-ssh','native-pid-term','native-attach-term',
+        'native-wrapper-term','native-global-deadline','native-pass-tty',
+        'native-reservation-lifetime','native-reservation-failure'), 'unsupported GTR case'
+    peer = NativePeer(host)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("BEELINK_GATE_", "BASH_FUNC_"))
+           and k not in ("BASH_ENV", "SHELLOPTS", "BASHOPTS")}
+    env.update(BEELINK_GATE_LOAD_WAIT="30s", BEELINK_GATE_MAX_HOLD="90s")
+    log = directory / (mode + ".log")
+    gate_id, observation, proc, saved = "", {}, None, []
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="gate-origin-") as temporary:
+        origin = Path(temporary) / Path(temporary).name / "repo"
+        origin.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(origin)], check=True)
+        tree = subprocess.check_output(["git", "-C", str(origin), "mktree"], input="", text=True).strip()
+        sha = subprocess.check_output(["git", "-C", str(origin), "commit-tree", tree], input="GTR control-plane fixture\n", text=True).strip()
+        subprocess.run(["git", "-C", str(origin), "update-ref", "HEAD", sha], check=True)
+        native_origin = peer.stage(origin)
+        reservation = mode in ('native-reservation-lifetime','native-reservation-failure')
+        peers = {host:peer}
+        if reservation:
+            other_host='beelink2' if host=='beelink1' else 'beelink1'
+            other=NativePeer(other_host); other.nonce=peer.nonce
+            assert other.stage(origin)==native_origin, 'native fixture paths differ'
+            peers[other_host]=other
+        controlled = mode in ("native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-global-deadline")
+        command_exit = {"native-command-failure":7,"native-command-255":255,"native-command-75":75}.get(mode, 0)
+        code = ("import pathlib,time,sys,os\np=pathlib.Path(" + repr(peer.root) + ")\n(p/'ready').touch()\n" +
+                ("while not (p/'release').exists(): time.sleep(.05)\n" if controlled else "") +
+                "print('ALL_REMAINING_CHECKS_EXIT=" + str(command_exit) + "',flush=True)\nsys.exit(" + str(command_exit) + ")\n")
+        if mode == "native-pass-payload-large":
+            code += "# " + ("quotes '\" $ ` tabs\t " * 10000)[:120000-len(code)-2]
+            assert len(code.encode()) == 120000 and len(base64.b64encode(code.encode())) > 131072
+        retry = ["--retry", "1"] if mode in ("native-wrapper-term", "native-global-deadline") else []
+        requested_sha='f'*40 if mode=='native-reservation-failure' else sha
+        argv = ["bash", str(gate.resolve()), "--light", "--no-install", *([] if reservation else ['--pin-host']), "--cancel-on-term", *retry,
+                'auto' if reservation else host, "file://" + native_origin, requested_sha, "--", "python3", "-c", code]
+        if mode == "native-pass-tty":
+            # The CLI is in a background process group of a real controlling PTY.
+            # A policy SSH that reads that TTY is stopped by SIGTTIN.
+            shell = "set -m; " + shlex.join(argv) + " </dev/tty & child=$!; wait $child; exit $?"
+            argv = ["script", "-q", "-e", "-c", "bash -c " + shlex.quote(shell), "/dev/null"]
+        result = {"case": mode, "host":host, "caller":socket.gethostname(), "passed":False}
+        try:
+            with log.open("w") as output:
+                proc = subprocess.Popen(argv, env=env, stdout=output, stderr=output, start_new_session=True)
+                saved.append(proc)
+                tickets = {}; ticket_samples=[]
+                while time.monotonic()-started < 60:
+                    text = log.read_text()
+                    frames = re.findall(r"frontend_observation=(\S+)", text)
+                    frame = json.loads(Path(frames[0]).read_text()) if frames else None
+                    if frame and frame['placements']:
+                        gate_id=frame['placements'][-1]['gate_id']
+                        if reservation: peer=peers[gate_id.split('-')[0]]
+                    observation=peer.observe(gate_id)
+                    if reservation:
+                        def snapshot(item): return item[0],item[1].observe('')['tickets']
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                            snapshots=dict(pool.map(snapshot,peers.items()))
+                        stops=(proc.poll() is not None or observation['exit'] is not None or observation['ready']
+                            or bool(frames and any(Path(frames[0]).parent.glob('reservations.*/*.stop'))))
+                        if not stops:
+                            for name,current in snapshots.items():
+                                if current and name not in tickets: tickets[name]=current
+                                if name in tickets:
+                                    assert current==tickets[name], 'reservation changed or retired before owned handoff'
+                        ticket_samples.append({'at_monotonic':time.monotonic(),'tickets':snapshots,'stopped':bool(stops)})
+                    if observation['ready']: break
+                    if proc.poll() is not None:
+                        if mode=='native-reservation-failure' and gate_id and observation['exit'] is not None:
+                            assert len(tickets)==2, 'both real reservations were not observed'
+                            assert proc.returncode!=0 and observation['receipt']['command_exit'] is None
+                            assert 'placement handoff gate_id='+gate_id not in text
+                            final_tickets={name:p.observe('')['tickets'] for name,p in peers.items()}
+                            assert not any(final_tickets.values()), 'native reservations survived terminal refusal'
+                            result.update(passed=True,gate_id=gate_id,frontend_exit=proc.returncode,native=observation,
+                                ticket_samples=ticket_samples,initial_tickets=tickets,final_tickets=final_tickets)
+                            return result
+                        result.update(infrastructure=True,reason="native admission/transport refused before command",frontend_exit=proc.returncode)
+                        return result
+                    time.sleep(.2)
+                assert observation.get('ready'), "finite first-command bound expired"
+                assert gate_id and frame['source_digest']==observation['source_digest'], "native source/frame mismatch"
+                if reservation:
+                    assert len(tickets)==2, 'both real reservations were not observed'
+                    assert 'placement handoff gate_id='+gate_id in log.read_text()
+                native_peer = actual_ssh_peer(proc,host) if controlled else None
+                first_exit = None
+                if mode in ("native-lost-ssh", "native-attach-term", "native-global-deadline"):
+                    if mode != "native-global-deadline":
+                        assert native_peer and process_identity(native_peer['pid'])['birth']==native_peer['birth']
+                        os.kill(native_peer['pid'],signal.SIGTERM)
+                    proc.wait(timeout=75 if mode == "native-global-deadline" else 15)
+                    first_exit=proc.returncode
+                    if mode=='native-global-deadline':
+                        final_frame=json.loads(Path(frames[0]).read_text())
+                        assert 58 <= (final_frame['end_ns']-final_frame['start_ns'])/1e9 <= 75
+                    observation=peer.observe(gate_id)
+                    assert first_exit==75 and observation['alive'] and not observation['canceled'], "transport/deadline canceled live native leaf"
+                    opts=['--cancel-on-term'] if mode=='native-attach-term' else []
+                    proc=subprocess.Popen(['bash',str(gate.resolve()),*opts,'--attach',gate_id],env=env,stdout=output,stderr=output,start_new_session=True)
+                    saved.append(proc)
+                    deadline=time.monotonic()+10
+                    while actual_ssh_peer(proc,host) is None:
+                        assert time.monotonic()<deadline, "no actual GTR reconnect SSH peer"
+                        time.sleep(.05)
+                term_elapsed=None
+                if mode in ('native-pid-term','native-attach-term','native-wrapper-term'):
+                    assert actual_ssh_peer(proc,host), "no actual owned Windows SSH peer"
+                    term_at=time.monotonic(); proc.send_signal(signal.SIGTERM); proc.wait(timeout=10)
+                    term_elapsed=time.monotonic()-term_at
+                elif controlled:
+                    peer.release()
+                proc.wait(timeout=20)
+                deadline=time.monotonic()+30
+                while time.monotonic()<deadline:
+                    observation=peer.observe(gate_id)
+                    if observation['exit'] is not None and not observation['alive']: break
+                    time.sleep(.1)
+                assert observation['exit'] is not None and not observation['alive'], "native leaf not terminal"
+                canceled=mode in ('native-pid-term','native-attach-term','native-wrapper-term')
+                assert proc.returncode==(143 if canceled else command_exit)
+                if not canceled:
+                    assert observation['exit']==observation['receipt']['exit']==observation['receipt']['command_exit']==command_exit
+                    assert not observation['canceled']
+                else:
+                    assert observation['canceled']
+                if mode=='native-pass-payload-large':
+                    assert observation['payload_digest']==hashlib.sha256(code.encode()).hexdigest() and observation['args_mode']==0o600
+                if mode=='native-pass-tty':
+                    assert 'windows_policy_ssh result=command_zero exit=0' in log.read_text(), 'TTY policy read did not actually succeed'
+                result.update(passed=True,gate_id=gate_id,frontend_exit=proc.returncode,first_frontend_exit=first_exit,
+                    term_elapsed_s=term_elapsed,native=observation,ssh_peer=native_peer,source_digest=frame['source_digest'],
+                    ticket_samples=ticket_samples,initial_tickets=tickets)
+                return result
+        except Exception as error:
+            result.update(error=str(error),gate_id=gate_id,native=observation)
+            return result
+        finally:
+            cleanup={}
+            if gate_id:
+                try:
+                    peer.release()
+                    finished=subprocess.run(['bash',str(gate.resolve()),'--cancel-job',gate_id],env=env,capture_output=True,text=True,timeout=330)
+                    cleanup['cancel_exit']=finished.returncode
+                    cleanup['native']=peer.observe(gate_id)
+                    if finished.returncode or cleanup['native']['alive']: result['passed']=False
+                except Exception as error:
+                    cleanup['unknown']=str(error); result['passed']=False
+            for frontend in saved:
+                if frontend.poll() is None:
+                    frontend.send_signal(signal.SIGTERM)
+                    try: frontend.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        cleanup['frontend_unknown']=frontend.pid; result['passed']=False
+            result.update(cleanup=cleanup,elapsed_s=time.monotonic()-started,log=str(log),native_fixture=peer.root)
+            (directory/(mode+'.json')).write_text(json.dumps(result,indent=2)+'\n')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--gate", type=Path, default=GATE)
+    parser.add_argument("--host", choices=["beelink1", "beelink2"], help="GTR control-plane caller; workloads stay native-gated")
+    parser.add_argument("--out", type=Path, help="private acceptance receipts")
     parser.add_argument("--case", choices=["native-pass", "native-pass-observation",
         "native-pass-payload-boundary", "native-pass-payload-large", "native-retry-term",
         "native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-wrapper-handoff-term", "native-foreign-id-refusal", "native-global-deadline", "native-pass-tty",
         "failure-cleanup-term", "pass-cleanup-term",
+        "native-command-failure", "native-command-255", "native-command-75", "native-reservation-lifetime", "native-reservation-failure",
         "cancel-group-term", "cancel-stdout-pipe"], action="append")
     args = parser.parse_args()
+    if args.host:
+        assert args.out, '--out is required for GTR acceptance'
+        def stop_controller(signum, frame):
+            raise KeyboardInterrupt('owned acceptance stop requested')
+        signal.signal(signal.SIGTERM, stop_controller)
+        signal.signal(signal.SIGHUP, stop_controller)
+        args.out.mkdir(parents=True,exist_ok=True)
+        modes=args.case or ['native-pass','native-command-failure','native-command-255','native-command-75',
+            'native-pass-payload-large','native-lost-ssh','native-pid-term','native-attach-term',
+            'native-wrapper-term','native-global-deadline','native-pass-tty','native-reservation-lifetime','native-reservation-failure']
+        rows=[]; began=time.monotonic()
+        for mode in modes:
+            assert time.monotonic()-began<1200, 'global acceptance bound reached'
+            row=gtr_case(args.gate,args.host,mode,args.out); rows.append(row)
+            (args.out/'summary.json').write_text(json.dumps({'cases':rows,'passed':sum(r['passed'] for r in rows),'total':len(rows)},indent=2)+'\n')
+            if not row['passed']: break
+        print(json.dumps({'cases':rows,'passed':sum(r['passed'] for r in rows),'total':len(rows)},indent=2))
+        raise SystemExit(0 if len(rows)==len(modes) and all(r['passed'] for r in rows) else 75 if rows[-1].get('infrastructure') else 1)
     rows = []
     for mode in args.case or [
         "native-pass", "native-pass-observation", "native-pass-payload-boundary",
