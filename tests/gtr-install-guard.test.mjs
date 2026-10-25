@@ -41,7 +41,6 @@ const service = checkout("code/cli-bridge-reviewer");
 const lab = checkout("code/_deploy/discovery-lab");
 const deploy = checkout(".local/share/tangle-tools");
 const cache = checkout(".cache/beelink-gate/github.com/tangle-network/gtm-agent");
-const fallbackGate = checkout(".cache/gtr-gate/agent-app-b80450c3");
 mkdirSync(join(HOME, ".config/fleet"), { recursive: true });
 writeFileSync(join(HOME, ".config/fleet/checkouts"),
   "# <path> <branch> <unit|-> <pnpm|-> [idle command]\n~/code/cli-bridge-reviewer main cli-bridge.service pnpm curl -sf http://127.0.0.1:3355/health\n");
@@ -78,7 +77,6 @@ test("deploy-managed service checkouts, the gate cache and non-installs still ru
     ["corepack", ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"], lab],
     ["pnpm", ["install", "--frozen-lockfile"], deploy],
     ["pnpm", ["install", "--frozen-lockfile"], cache],
-    ["pnpm", ["install", "--frozen-lockfile", "--ignore-scripts=false"], fallbackGate],
     ["npm", ["install", "-g", "@openai/codex"], gate],
     ["pnpm", ["install", "--lockfile-only"], gate],
     ["npm", ["install", "@tangle-network/sandbox@latest"], scratch],

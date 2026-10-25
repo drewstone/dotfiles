@@ -11,9 +11,27 @@ agent refused in `_wt` cloned `~/code/gate-gtm-20261010` and gated there. It
 points to `beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command>`. Exempt: the
 deploy-managed service checkouts tangle-tools-deploy installs (`~/.config/fleet/checkouts`,
 `DISCO_LAB` in `~/.config/fleet/lab.env`, the tangle-tools deploy clone), the beelink-gate cache,
-the fallback gate root `~/.cache/gtr-gate` (a gate no Beelink admits within 5 minutes runs there in
-a fresh clone, removed after), global installs, lockfile-only resolution, and directories that are not checkouts. `uv` installs
-stay refused only inside `_wt`, because GTR's tools run through `uv run` from their checkouts.
+global installs, lockfile-only resolution, and directories that are not checkouts. Outside
+the fallback root, `uv` installs stay refused only inside `_wt`, because GTR tools use
+`uv run` from their checkouts.
+
+When a Beelink has not admitted a gate within 5 minutes, reserve its actual worst-case
+growth through `storage-lifecycle admit` before creating a fresh clone under
+`~/.cache/gtr-gate`. If admission refuses, keep waiting for a Beelink. Run the same
+frozen install, typecheck and touched integration checks, retire the clone through
+`wt-remove`, and release the exact lease after its producer has finished. Retention
+refusals keep the clone and its charged bytes.
+
+Recognized package installs in the fallback root require the lifecycle owner
+`storage_lifecycle.admission.lease_receipt` from the installed Tangle Tools. The
+`TANGLE_STORAGE_LEASE`, `TANGLE_STORAGE_LANE` and `TANGLE_STORAGE_PATH` environment
+values identify a lease; they do not authorize it. `run-lane` exports them for its
+foreground child. A controller using direct `admit` must bind the returned token,
+its lane and the exact admitted path while the real lease owner supervises the child.
+The owner checks canonical policy and registry, matching paths, native process identity
+and ancestry. Missing, released, stale or unrelated leases refuse. This cooperating
+agent PATH guard does not claim protection against a same-user attacker rewriting
+the canonical registry. Existing deployment exemptions remain separate.
 
 Install after updating the durable `~/code/dotfiles` checkout:
 
