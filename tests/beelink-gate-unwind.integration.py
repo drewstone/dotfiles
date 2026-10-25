@@ -615,6 +615,7 @@ if gate:
         result['payload_digest']=hashlib.sha256(base64.b64decode(args.read_bytes().split(bytes([0]))[-2])).hexdigest()
         result['args_mode']=args.stat().st_mode & 0o777
     except FileNotFoundError: pass
+    except (IndexError,ValueError): result['payload_error']='incomplete_args_publication'
     group=(result['receipt'] or {}).get('cgroup')
     if group and group.endswith('/beelink-gate-'+gate+'.service') and '..' not in pathlib.PurePosixPath(group).parts:
         try:
@@ -776,6 +777,13 @@ def gtr_case(gate, host, mode, directory):
             return result
         finally:
             cleanup={}
+            if not gate_id:
+                try:
+                    current=read_frontend(log.read_bytes())
+                    if current and current['placements'] and current['placements'][-1]['association'] in ('created','reattached'):
+                        gate_id=current['placements'][-1]['gate_id']
+                except (OSError,ValueError,KeyError) as error:
+                    cleanup['custody_unknown']=str(error)
             if gate_id:
                 try:
                     peer.release()
