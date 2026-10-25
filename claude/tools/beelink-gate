@@ -1356,6 +1356,9 @@ PYTURBO
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
   admit_release_priority "$beelink"
+  # Prune before fetch costs minutes on a busy disk (270 s on beelink1 10-25), and a
+  # placement that then meets PSI at the fetch wait yields 76 with that work wasted.
+  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "host CPU PSI held before cache prune"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
     echo "beelink-gate: WARNING cache over its cap with only active checkouts left; running anyway (the disk floor guards disk space)" >&2
