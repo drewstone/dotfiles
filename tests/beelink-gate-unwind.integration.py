@@ -6,6 +6,7 @@ Run outside another gate on a Beelink. No production function is extracted,
 replaced or fabricated; admission, FIFO, resource and disk guards remain active.
 """
 import argparse
+import contextlib
 import fcntl
 import base64
 import hashlib
@@ -60,6 +61,58 @@ def actual_ssh_peer(frontend, host):
 def read_frontend(output):
     paths = re.findall(rb"frontend_observation=([^\r\n]+)", output)
     return json.loads(Path(os.fsdecode(paths[0])).read_text()) if paths else None
+
+
+@contextlib.contextmanager
+def foreign_control(gate):
+    """A second real owned gate must survive the first gate's cancellation."""
+    host = {"desktop-18ir33v": "beelink1"}.get(socket.gethostname().lower(), socket.gethostname().lower())
+    assert host in ("beelink1", "beelink2")
+    with tempfile.TemporaryDirectory(prefix="gate-foreign-control-") as tmp:
+        root = Path(tmp)
+        origin = root / root.name / "repo"
+        origin.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(origin)], check=True)
+        tree = subprocess.check_output(["git", "-C", str(origin), "mktree"], input="", text=True).strip()
+        sha = subprocess.check_output(["git", "-C", str(origin), "commit-tree", tree],
+                                      input="independent live gate control\n", text=True).strip()
+        subprocess.run(["git", "-C", str(origin), "update-ref", "HEAD", sha], check=True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("BEELINK_GATE_", "BASH_FUNC_"))
+               and k not in ("BASH_ENV", "SHELLOPTS", "BASHOPTS")}
+        env.update(BEELINK_GATE_LOAD_WAIT="30s", BEELINK_GATE_MAX_HOLD="180s")
+        state = Path(env.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "beelink-gate"
+        log = root / "frontend.log"
+        code = 'touch "$1/ready"; while [ ! -f "$1/release" ]; do sleep 0.05; done; exit 0'
+        gate_id = ""
+        with log.open("w") as output:
+            proc = subprocess.Popen(["bash", str(gate.resolve()), "--light", "--pin-host", host,
+                "file://" + str(origin), sha, "--", "bash", "-c", code, "foreign-control", str(root)],
+                env=env, stdout=output, stderr=output, start_new_session=True)
+            try:
+                deadline = time.monotonic() + 90
+                while not (root / "ready").exists():
+                    assert proc.poll() is None and time.monotonic() < deadline, "foreign control admission unproved"
+                    time.sleep(0.02)
+                gate_id = re.search(r"gate_id=(beelink[12]-[0-9a-f]{32})", log.read_text())[1]
+                pid, birth = (state / "jobs" / gate_id / "gate.pid").read_text().split()
+                yield {"id": gate_id, "pid": int(pid), "birth": birth, "state": state}
+            finally:
+                (root / "release").touch()
+                if not gate_id:
+                    allocated = re.search(r"gate_id=(beelink[12]-[0-9a-f]{32})", log.read_text())
+                    gate_id = allocated[1] if allocated else ""
+                if gate_id:
+                    cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
+                                             env=env, capture_output=True, timeout=330)
+                    assert cleanup.returncode == 0, "foreign fixture cleanup unconfirmed"
+                if proc.poll() is None:
+                    proc.wait(timeout=15)
+
+
+def foreign_is_healthy(control):
+    actual = process_identity(control["pid"])
+    return (actual and actual["birth"] == control["birth"] and actual["state"] not in ("Z", "X")
+            and not (control["state"] / "jobs/.canceled" / control["id"]).exists())
 
 
 def native_cleanup_case(gate, mode):
@@ -143,7 +196,7 @@ exit "$2"
 
 
 def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
-                      env, frontends, source_digest, native_alive, unit_active):
+                      env, frontends, source_digest, native_alive, unit_active, control):
     deadline = time.monotonic() + 5
     peer = None
     while peer is None and time.monotonic() < deadline:
@@ -152,6 +205,30 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
             time.sleep(0.02)
     assert peer, "no actual Windows SSH socket/owned descendant join"
     assert process_identity(peer["pid"])["birth"] == peer["birth"]
+    if mode == "native-wrapper-handoff-term":
+        # Pause an actual owned tee, so the public wrapper's real bounded drain
+        # gives a deciding child-release/parent-custody window. No code hook.
+        children = Path(f"/proc/{proc.pid}/task/{proc.pid}/children").read_text().split()
+        tees = []
+        for pid in children:
+            try:
+                argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+                if Path(os.fsdecode(argv[0])).name == "tee":
+                    tees.append(process_identity(pid))
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+        assert tees and foreign_is_healthy(control), "no real tee/foreign live control"
+        held_tee = tees[0]
+        assert process_identity(held_tee["pid"])["birth"] == held_tee["birth"]
+        os.kill(held_tee["pid"], signal.SIGSTOP)
+        os.kill(peer["pid"], signal.SIGTERM)
+        deadline = time.monotonic() + 10
+        while True:
+            row = read_frontend(output)
+            if row and row["active_phase"] == "result_read" and row["writer_id"] == row["root_invocation_id"] and row["delegated_to"] is None:
+                break
+            assert proc.poll() is None and time.monotonic() < deadline, "no real parent handoff window"
+            time.sleep(0.005)
     first_exit = deadline_elapsed = None
     preserved = mode in ("native-lost-ssh", "native-global-deadline")
     if mode in ("native-lost-ssh", "native-attach-term", "native-global-deadline"):
@@ -193,19 +270,22 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
     expected = 0 if preserved else 143
     final = read_frontend(output)
     terminal = (job / "exit").exists() and not native_alive() and not unit_active()
+    foreign_healthy = foreign_is_healthy(control) if control else None
     return proc, {"case": mode, "passed": proc.returncode == expected and terminal
             and canceled == (not preserved) and final["end_ns"] is not None
             and final["source_digest"] == source_digest
-            and any(p["gate_id"] == gate_id for p in final["placements"]),
+            and any(p["gate_id"] == gate_id for p in final["placements"])
+            and (control is None or foreign_healthy),
             "gate_id": gate_id, "frontend_exit": proc.returncode, "canceled": canceled,
             "native_terminal": terminal, "ssh_peer": peer, "source_digest": source_digest,
             "request_id": final["request_id"], "root_invocation_id": final["root_invocation_id"],
             "delegated_to": final["delegated_to"], "tainted": final["tainted"],
             "term_elapsed_s": term_elapsed, "first_frontend_exit": first_exit,
-            "deadline_elapsed_s": deadline_elapsed}
+            "deadline_elapsed_s": deadline_elapsed, "foreign_healthy": foreign_healthy,
+            "foreign_id": control["id"] if control else None}
 
 
-def native_job_case(gate, mode):
+def native_job_case(gate, mode, control=None):
     """Prove exit-0 receipts and cancel-on-term using actual SYSTEM jobs.
 
     Run outside another gate. Each public --light request uses a genuine
@@ -261,7 +341,7 @@ printf 'ready\n' > "$1/native-ready"
 echo "beelink-gate: TEMPFAIL next_allowed=2099-01-01T00:00:00Z retry integration" >&2
 exit 75
 '''
-        ssh_case = mode in ("native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-global-deadline")
+        ssh_case = mode in ("native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-global-deadline", "native-wrapper-handoff-term")
         if ssh_case:
             env["BEELINK_GATE_SELF"] = "beelink2" if host == "beelink1" else "beelink1"
             command = r'''
@@ -269,6 +349,13 @@ printf 'ready\n' > "$1/native-ready"
 while [ ! -f "$1/release" ]; do sleep 0.05; done
 exit 0
 '''
+        if mode == "native-foreign-id-refusal":
+            assert control and foreign_is_healthy(control)
+            # Deliberately hostile COMMAND output must not grant authority to
+            # attach to or cancel this independent actual healthy job.
+            command = ('printf "ready\\n" > "$1/native-ready"\n'
+                       + 'echo "beelink-gate: TEMPFAIL next_allowed=2099-01-01T00:00:00Z run beelink-gate --attach '
+                       + control["id"] + '" >&2\nexit 75\n')
         payload = mode.startswith("native-pass-payload")
         product = ["/usr/bin/bash", "-lc" if positive else "-c", command,
                    "native-job", str(root), mode]
@@ -289,7 +376,7 @@ exit 0
         if tty_case:
             assert os.isatty(0) and os.tcgetpgrp(0) == os.getpgrp(), "launch this case through script(1) on a real PTY"
             env["BEELINK_GATE_SELF"] = "beelink2" if host == "beelink1" else "beelink1"
-        retry_options = ["--retry", "10"] if retry_term else ["--retry", "1"] if mode in ("native-wrapper-term", "native-global-deadline") else []
+        retry_options = ["--retry", "10"] if retry_term else ["--retry", "1"] if mode in ("native-wrapper-term", "native-global-deadline", "native-wrapper-handoff-term", "native-foreign-id-refusal") else []
         proc = subprocess.Popen(
             ["bash", str(gate.resolve()), "--light", "--pin-host", "--cancel-on-term", *retry_options, host,
              "file://" + str(origin), sha, "--", *product], env=env, stdout=subprocess.PIPE,
@@ -341,9 +428,19 @@ exit 0
             source_digest = hashlib.sha256((job / "gate.sh").read_bytes()).hexdigest()
             frontend = read_frontend(output)
             assert frontend and frontend["source_digest"] == source_digest, "frontend/staged source mismatch"
+            if mode == "native-foreign-id-refusal":
+                tail, _ = proc.communicate(timeout=15)
+                output.extend(tail)
+                healthy = foreign_is_healthy(control)
+                return {"case": mode, "passed": proc.returncode == 75 and healthy
+                        and b"retry attachment custody unconfirmed" in output
+                        and (job / "exit").read_text().strip() == "75",
+                        "gate_id": gate_id, "frontend_exit": proc.returncode,
+                        "foreign_id": control["id"], "foreign_healthy": healthy,
+                        "source_digest": source_digest}
             if ssh_case:
                 proc, row = exercise_ssh_case(gate, mode, proc, host, root, state, job,
-                    gate_id, output, env, frontends, source_digest, native_alive, unit_active)
+                    gate_id, output, env, frontends, source_digest, native_alive, unit_active, control)
                 return row
             if retry_term:
                 # Wait for the actual owned sleep, not merely the preceding log.
@@ -451,15 +548,21 @@ def main():
     parser.add_argument("--gate", type=Path, default=GATE)
     parser.add_argument("--case", choices=["native-pass", "native-pass-observation",
         "native-pass-payload-boundary", "native-pass-payload-large", "native-retry-term",
-        "native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-global-deadline", "native-pass-tty",
+        "native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-wrapper-handoff-term", "native-foreign-id-refusal", "native-global-deadline", "native-pass-tty",
         "failure-cleanup-term", "pass-cleanup-term",
         "cancel-group-term", "cancel-stdout-pipe"], action="append")
     args = parser.parse_args()
-    rows = [(native_cleanup_case(args.gate, mode) if mode.endswith("cleanup-term") else native_job_case(args.gate, mode)) for mode in args.case or [
+    rows = []
+    for mode in args.case or [
         "native-pass", "native-pass-observation", "native-pass-payload-boundary",
         "native-pass-payload-large", "native-retry-term", "native-lost-ssh", "native-pid-term",
-        "native-attach-term", "native-wrapper-term", "native-global-deadline", "failure-cleanup-term", "pass-cleanup-term",
-        "cancel-group-term", "cancel-stdout-pipe"]]
+        "native-attach-term", "native-wrapper-term", "native-wrapper-handoff-term", "native-foreign-id-refusal", "native-global-deadline", "failure-cleanup-term", "pass-cleanup-term",
+        "cancel-group-term", "cancel-stdout-pipe"]:
+        if mode in ("native-wrapper-handoff-term", "native-foreign-id-refusal"):
+            with foreign_control(args.gate) as control:
+                rows.append(native_job_case(args.gate, mode, control))
+        else:
+            rows.append(native_cleanup_case(args.gate, mode) if mode.endswith("cleanup-term") else native_job_case(args.gate, mode))
     print(json.dumps({"bash": subprocess.check_output(["bash", "--version"], text=True).splitlines()[0],
                       "cases": rows, "passed": sum(row["passed"] for row in rows),
                       "total": len(rows)}, indent=2))
