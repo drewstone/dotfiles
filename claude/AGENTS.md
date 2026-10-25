@@ -21,7 +21,7 @@ The rules say what a good agent does anywhere; [Our tools](#our-tools) says whic
 10. Never revert a merged change; fix forward. A red develop, cut or release goes to its author with the failing tests, and the release owner lands the fix if the author cannot.
 11. Nothing waits on a stale hold, dead owner, slow check or unpromoted release: whoever sees it merges or promotes it through the maintained path. Only a precondition a PR names, a real review finding or Drew's decision holds work, and a hold names what it protects and dies when that ends.
 12. Proof is a few strong integration tests and frequent live runs. Never write or maintain unit or mock tests; delete one that breaks on a valid API change ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)). Reuse proof until its inputs change.
-13. One name and one implementation per concept. Logic files stay under 1,000 lines and functions under 300, and a move updates every doc naming the old path.
+13. One name and one implementation per concept. Logic files stay under 1,000 lines and functions under 300, and a move updates every doc naming the old path. Every change leaves the files it touches smaller or simpler and never raises production lines in the area it edits.
 
 ## Work with Drew
 
