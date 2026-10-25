@@ -4,6 +4,8 @@
 Every case invokes the complete public CLI and actual managed SYSTEM jobs.
 Run outside another gate on a Beelink. No production function is extracted,
 replaced or fabricated; admission, FIFO, resource and disk guards remain active.
+Pass --out for private raw frontend/frame/native/cleanup evidence, including failures.
+Keep the adjacent beelink_gate_evidence.py with this entrypoint when staging.
 """
 import argparse
 import contextlib
@@ -24,18 +26,13 @@ import tempfile
 import time
 import tarfile
 import uuid
+from beelink_gate_evidence import (case_evidence, cleanup_owned, observe_leaf,
+                                   process_identity, record_result, wait_drained)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "claude/tools/beelink-gate"
-
-
-def process_identity(pid):
-    try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return {"pid": int(pid), "birth": fields[19], "state": fields[0]}
-    except (FileNotFoundError, ProcessLookupError):
-        return None
+EVIDENCE_SOURCE = Path(__file__).with_name("beelink_gate_evidence.py")
 
 
 def actual_ssh_peer(frontend, host):
@@ -86,11 +83,11 @@ def owned_frontend_leaf(frame, host):
 
 
 @contextlib.contextmanager
-def foreign_control(gate):
+def foreign_control(gate, out, mode):
     """A second real owned gate must survive the first gate's cancellation."""
     host = {"desktop-18ir33v": "beelink1"}.get(socket.gethostname().lower(), socket.gethostname().lower())
     assert host in ("beelink1", "beelink2")
-    with tempfile.TemporaryDirectory(prefix="gate-foreign-control-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="gate-foreign-control-") as tmp, case_evidence(out, mode + "-foreign", Path(tmp)) as record:
         root = Path(tmp)
         origin = root / root.name / "repo"
         origin.mkdir(parents=True)
@@ -104,7 +101,9 @@ def foreign_control(gate):
         env.update(BEELINK_GATE_LOAD_WAIT="30s", BEELINK_GATE_MAX_HOLD="180s")
         state = Path(env.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "beelink-gate"
         log = root / "frontend.log"
-        code = 'touch "$1/ready"; while [ ! -f "$1/release" ]; do sleep 0.05; done; exit 0'
+        code = ('touch "$1/ready"; count=0; while [ ! -f "$1/release" ]; do '
+                'count=$((count+1)); printf "%s\\n" "$count" > "$1/progress.next"; '
+                'mv "$1/progress.next" "$1/progress"; sleep 0.05; done; exit 0')
         gate_id = ""
         with log.open("w") as output:
             proc = subprocess.Popen(["bash", str(gate.resolve()), "--light", "--pin-host", host,
@@ -117,17 +116,20 @@ def foreign_control(gate):
                     time.sleep(0.02)
                 gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
                 assert gate_id, "foreign fixture allocation custody unknown"
+                record.update(gate_id=gate_id, state=str(state))
                 pid, birth = (state / "jobs" / gate_id / "gate.pid").read_text().split()
-                yield {"id": gate_id, "pid": int(pid), "birth": birth, "state": state}
+                control = {"id": gate_id, "pid": int(pid), "birth": birth, "state": state, "progress": root / "progress",
+                           "source_digest": read_frontend(log.read_bytes())["source_digest"]}
+                record["control"] = control
+                yield control
             finally:
                 (root / "release").touch()
                 try:
                     if not gate_id:
                         gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
                     if gate_id:
-                        cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
-                                                 env=env, capture_output=True, timeout=330)
-                        assert cleanup.returncode == 0, "foreign fixture cleanup unconfirmed"
+                        record.update(gate_id=gate_id, state=str(state))
+                        cleanup_owned(gate, env, state, gate_id, record)
                 finally:
                     if proc.poll() is None:
                         proc.send_signal(signal.SIGTERM)
@@ -135,19 +137,33 @@ def foreign_control(gate):
 
 
 def foreign_is_healthy(control):
-    actual = process_identity(control["pid"])
-    return (actual and actual["birth"] == control["birth"] and actual["state"] not in ("Z", "X")
-            and not (control["state"] / "jobs/.canceled" / control["id"]).exists())
+    before = None
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        row = observe_leaf(control["state"], control["id"])
+        try:
+            after = int(control["progress"].read_text())
+        except (OSError, ValueError):
+            after = None
+        if before is None:
+            before = after
+        if (row["live"] and not row["canceled"] and row.get("birth") == control["birth"]
+                and row.get("source_digest") == control["source_digest"]
+                and before is not None and after is not None and after > before):
+            control["progress_witness"] = dict(before=before, after=after, observed_monotonic=time.monotonic(), native=row)
+            return True
+        time.sleep(0.05)
+    return False
 
 
-def native_cleanup_case(gate, mode):
+def native_cleanup_case(gate, mode, out):
     """Signal the real finish path after a known command exit, behind an
     externally held PRIVATE cache lock. No other gate can use this fixture's
     XDG cache, and no executable or production function is replaced.
     """
     host = {"desktop-18ir33v": "beelink1"}.get(socket.gethostname().lower(), socket.gethostname().lower())
     assert host in ("beelink1", "beelink2") and not os.environ.get("BEELINK_GATE_RUN")
-    with tempfile.TemporaryDirectory(prefix="gate-real-cleanup-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="gate-real-cleanup-") as tmp, case_evidence(out, mode, Path(tmp)) as record:
         root = Path(tmp)
         origin = root / root.name / "repo"
         origin.mkdir(parents=True)
@@ -182,6 +198,7 @@ exit "$2"
                     time.sleep(0.02)
                 gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
                 assert gate_id, "cleanup fixture allocation custody unknown"
+                record.update(gate_id=gate_id, state=str(state))
                 job = state / "jobs" / gate_id
                 cache = root / "cache/beelink-gate"
                 lock = (cache / ".locks/.capacity.lock").open("a+")
@@ -201,13 +218,13 @@ exit "$2"
                 row = json.loads((job / "receipt.json").read_text())
                 expected = code or 143
                 native_exit = int((job / "exit").read_text())
-                return {"case": mode, "passed": proc.returncode == row["exit"] == native_exit == expected
+                return record_result(record, {"case": mode, "passed": proc.returncode == row["exit"] == native_exit == expected
                         and row["command_exit"] == code and row["post_command_exit"] == 143
                         and row["post_command_phase"] == "cleanup_signal",
                         "gate_id": gate_id, "frontend_exit": proc.returncode, "native_exit": native_exit,
                         "command_exit": row["command_exit"], "post_command_exit": row["post_command_exit"],
                         "native_process": actual, "private_cache": str(cache),
-                        "source_digest": hashlib.sha256((job / "gate.sh").read_bytes()).hexdigest()}
+                        "source_digest": hashlib.sha256((job / "gate.sh").read_bytes()).hexdigest()})
             finally:
                 if lock:
                     lock.close()
@@ -216,9 +233,8 @@ exit "$2"
                     if not gate_id:
                         gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
                     if gate_id:
-                        cleaned = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id], env=env,
-                                                 capture_output=True, timeout=330)
-                        assert cleaned.returncode == 0, "exact native fixture retirement unconfirmed"
+                        record.update(gate_id=gate_id, state=str(state))
+                        cleanup_owned(gate, env, state, gate_id, record)
                 finally:
                     if proc.poll() is None:
                         proc.send_signal(signal.SIGTERM)
@@ -226,7 +242,7 @@ exit "$2"
 
 
 def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
-                      env, frontends, source_digest, native_alive, unit_active, control):
+                      env, frontends, source_digest, control, record):
     deadline = time.monotonic() + 5
     peer = None
     while peer is None and time.monotonic() < deadline:
@@ -235,6 +251,7 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
             time.sleep(0.02)
     assert peer, "no actual Windows SSH socket/owned descendant join"
     assert process_identity(peer["pid"])["birth"] == peer["birth"]
+    record["ssh_peer"] = peer
     if mode == "native-wrapper-handoff-term":
         # Pause an actual owned tee, so the public wrapper's real bounded drain
         # gives a deciding child-release/parent-custody window. No code hook.
@@ -249,6 +266,7 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
                 pass
         assert tees and foreign_is_healthy(control), "no real tee/foreign live control"
         held_tee = tees[0]
+        record["held_tee"] = held_tee
         assert process_identity(held_tee["pid"])["birth"] == held_tee["birth"]
         os.kill(held_tee["pid"], signal.SIGSTOP)
         os.kill(peer["pid"], signal.SIGTERM)
@@ -269,7 +287,8 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
         output.extend(tail)
         first_exit = proc.returncode
         deadline_elapsed = time.monotonic() - began
-        assert first_exit == 75 and native_alive() and unit_active()
+        record["native_after_transport"] = observe_leaf(state, gate_id)
+        assert first_exit == 75 and record["native_after_transport"]["live"]
         assert not (state / "jobs/.canceled" / gate_id).exists(), "transport/deadline canceled native job"
         assert ("beelink-gate --attach " + gate_id).encode() in output
         if mode == "native-global-deadline":
@@ -293,13 +312,11 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
     tail, _ = proc.communicate(timeout=8)
     output.extend(tail)
     term_elapsed = time.monotonic() - term_at if term_at else None
-    deadline = time.monotonic() + 30
-    while (native_alive() or unit_active()) and time.monotonic() < deadline:
-        time.sleep(0.05)
+    native = wait_drained(state, gate_id)
     canceled = (state / "jobs/.canceled" / gate_id).exists()
     expected = 0 if preserved else 143
     final = read_frontend(output)
-    terminal = (job / "exit").exists() and not native_alive() and not unit_active()
+    terminal = native["drained"]
     foreign_healthy = foreign_is_healthy(control) if control else None
     return proc, {"case": mode, "passed": proc.returncode == expected and terminal
             and canceled == (not preserved) and final["end_ns"] is not None
@@ -315,7 +332,7 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
             "foreign_id": control["id"] if control else None}
 
 
-def native_job_case(gate, mode, control=None):
+def native_job_case(gate, mode, out, control=None):
     """Prove exit-0 receipts and cancel-on-term using actual SYSTEM jobs.
 
     Run outside another gate. Each public --light request uses a genuine
@@ -326,7 +343,7 @@ def native_job_case(gate, mode, control=None):
     host = {"desktop-18ir33v": "beelink1"}.get(host, host)
     assert host in ("beelink1", "beelink2"), "native integration requires a real Beelink"
     assert not os.environ.get("BEELINK_GATE_RUN"), "run native process cases outside another gate"
-    with tempfile.TemporaryDirectory(prefix="gate-native-cancel-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="gate-native-cancel-") as tmp, case_evidence(out, mode, Path(tmp)) as record:
         root = Path(tmp)
         origin = root / root.name / "repo"
         origin.mkdir(parents=True)
@@ -368,7 +385,8 @@ exit 0
         if retry_term:
             command = r'''
 printf 'ready\n' > "$1/native-ready"
-echo "beelink-gate: TEMPFAIL next_allowed=2099-01-01T00:00:00Z retry integration" >&2
+next=$(date -u -d '+180 seconds' '+%Y-%m-%dT%H:%M:%SZ')
+echo "beelink-gate: TEMPFAIL next_allowed=$next retry integration" >&2
 exit 75
 '''
         ssh_case = mode in ("native-lost-ssh", "native-pid-term", "native-attach-term", "native-wrapper-term", "native-global-deadline", "native-wrapper-handoff-term")
@@ -416,22 +434,8 @@ exit 0
         gate_id = ""
         job = None
         output = bytearray()
+        record["output"] = output
         os.set_blocking(proc.stdout.fileno(), False)
-
-        def native_alive():
-            try:
-                pid, birth = (job / "gate.pid").read_text().split()
-                fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-                return fields[19] == birth and fields[0] not in ("Z", "X")
-            except (FileNotFoundError, ProcessLookupError):
-                return False
-
-        def unit_active():
-            result = subprocess.run(
-                ["systemctl", "show", "beelink-gate-" + gate_id + ".service",
-                 "-p", "ActiveState", "--value"], capture_output=True, text=True, timeout=4)
-            return result.returncode == 0 and result.stdout.strip() in (
-                "active", "activating", "reloading", "deactivating")
 
         try:
             deadline = time.monotonic() + 90
@@ -449,6 +453,7 @@ exit 0
                     pass
                 gate_id = owned_frontend_leaf(read_frontend(output), host)
             assert gate_id, "frontend did not publish its exact allocated gate ID"
+            record.update(gate_id=gate_id, state=str(state))
             job = state / "jobs" / gate_id
             assert (job / "systemd-manager").read_text() == "system\n"
             source_digest = hashlib.sha256((job / "gate.sh").read_bytes()).hexdigest()
@@ -458,16 +463,16 @@ exit 0
                 tail, _ = proc.communicate(timeout=15)
                 output.extend(tail)
                 healthy = foreign_is_healthy(control)
-                return {"case": mode, "passed": proc.returncode == 75 and healthy
+                return record_result(record, {"case": mode, "passed": proc.returncode == 75 and healthy
                         and b"retry attachment custody unconfirmed" in output
                         and (job / "exit").read_text().strip() == "75",
                         "gate_id": gate_id, "frontend_exit": proc.returncode,
                         "foreign_id": control["id"], "foreign_healthy": healthy,
-                        "source_digest": source_digest}
+                        "source_digest": source_digest})
             if ssh_case:
                 proc, row = exercise_ssh_case(gate, mode, proc, host, root, state, job,
-                    gate_id, output, env, frontends, source_digest, native_alive, unit_active, control)
-                return row
+                    gate_id, output, env, frontends, source_digest, control, record)
+                return record_result(record, row)
             if retry_term:
                 # Wait for the actual owned sleep, not merely the preceding log.
                 sleeper = None
@@ -488,17 +493,17 @@ exit 0
                     if sleeper is None:
                         time.sleep(0.05)
                 assert sleeper is not None, "frontend never reached a real between-attempt retry sleep"
-                assert (job / "exit").read_text().strip() == "75" and not native_alive() and not unit_active()
+                assert wait_drained(state, gate_id)["drained"] and (job / "exit").read_text().strip() == "75"
                 term_at = time.monotonic()
                 proc.send_signal(signal.SIGTERM)
                 tail, _ = proc.communicate(timeout=8)
                 output.extend(tail)
                 elapsed = time.monotonic() - term_at
                 sleeper_reaped = not Path(f"/proc/{sleeper}").exists()
-                terminal = (job / "exit").read_text().strip() == "75" and not native_alive() and not unit_active()
-                return {"case": mode, "passed": proc.returncode == 143 and elapsed < 8 and sleeper_reaped and terminal,
+                terminal = wait_drained(state, gate_id)["drained"] and (job / "exit").read_text().strip() == "75"
+                return record_result(record, {"case": mode, "passed": proc.returncode == 143 and elapsed < 8 and sleeper_reaped and terminal,
                         "gate_id": gate_id, "frontend_exit": proc.returncode, "term_elapsed_s": round(elapsed, 3),
-                        "retry_sleeper_reaped": sleeper_reaped, "native_exit": 75, "native_confirmed_terminal": terminal}
+                        "retry_sleeper_reaped": sleeper_reaped, "native_exit": 75, "native_confirmed_terminal": terminal})
             if positive:
                 tail, _ = proc.communicate(timeout=60)
                 output.extend(tail)
@@ -521,15 +526,16 @@ exit 0
                     payload_info = {"payload_bytes": len(actual), "expected_sha256": expected_hash,
                                     "received_sha256": actual_hash, "submit_argument_bytes": submit_bytes, "args_mode": oct(args_file.stat().st_mode & 0o777),
                                     "transport": "ssh Windows wsl.exe (same physical Beelink)"}
-                return {"case": mode, "passed": payload_intact and proc.returncode == exit_code == receipt["exit"] ==
+                return record_result(record, {"case": mode, "passed": payload_intact and proc.returncode == exit_code == receipt["exit"] ==
                         receipt.get("command_exit") == receipt.get("post_command_exit") == admission_exit == 0
                         and b"ALL_REMAINING_CHECKS_EXIT=0" in output
                         and (mode != "native-pass-observation" or unreadable == 1),
                         "gate_id": gate_id, "frontend_exit": proc.returncode, "exit_file": exit_code,
                         "receipt_exit": receipt["exit"], "command_exit": receipt.get("command_exit"),
                         "post_command_exit": receipt.get("post_command_exit"),
-                        "admission_wait_exit": admission_exit, "unreadable_observations": unreadable, **payload_info}
-            assert native_alive() and unit_active(), "no independent live SYSTEM job"
+                        "admission_wait_exit": admission_exit, "unreadable_observations": unreadable, **payload_info})
+            record["native_before_pipe_close"] = observe_leaf(state, gate_id)
+            assert record["native_before_pipe_close"]["live"], "no independent live SYSTEM job/kernel observation"
             # The native command writes to its retained log, independent of the
             # frontend's pipe and process group. It stops only through cancel-job.
             proc.stdout.close()
@@ -538,18 +544,16 @@ exit 0
             try:
                 proc.wait(timeout=12)
             except subprocess.TimeoutExpired:
-                return {"case": mode, "passed": False, "gate_id": gate_id,
-                        "reason": "frontend survived closed stdout / group TERM"}
-            deadline = time.monotonic() + 20
-            while time.monotonic() < deadline and (native_alive() or unit_active()):
-                time.sleep(0.1)
+                return record_result(record, {"case": mode, "passed": False, "gate_id": gate_id,
+                        "reason": "frontend survived closed stdout / group TERM"})
+            native = wait_drained(state, gate_id, seconds=20)
             canceled = (state / "jobs/.canceled" / gate_id).exists()
             terminal = (job / "exit").exists()
-            stopped = not native_alive() and not unit_active()
-            return {"case": mode, "passed": proc.returncode != 0 and canceled and terminal and stopped,
+            stopped = native["drained"]
+            return record_result(record, {"case": mode, "passed": proc.returncode != 0 and canceled and terminal and stopped,
                     "frontend_exit": proc.returncode, "gate_id": gate_id,
                     "manager": "system", "canceled": canceled,
-                    "native_terminal": terminal, "native_stopped": stopped}
+                    "native_terminal": terminal, "native_stopped": stopped})
         finally:
             custody_error = None
             if not gate_id:
@@ -571,13 +575,18 @@ exit 0
                         os.killpg(frontend.pid, signal.SIGKILL)
                         frontend.wait(timeout=3)
                 if frontend.stdout is not None:
+                    if not frontend.stdout.closed:
+                        try:
+                            while chunk := os.read(frontend.stdout.fileno(), 65536):
+                                output.extend(chunk)
+                        except BlockingIOError:
+                            pass
                     frontend.stdout.close()
             # The red baseline must not leave the independently managed unit
             # running. Retire it only through the maintained exact-ID cancel CLI.
             if gate_id:
-                cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
-                                         env=env, capture_output=True, text=True, timeout=330)
-                assert cleanup.returncode == 0, "maintained fixture cancellation was not confirmed: " + cleanup.stderr
+                record.update(gate_id=gate_id, state=str(state))
+                cleanup_owned(gate, env, state, gate_id, record)
             assert custody_error is None, "native fixture cancellation custody unknown: " + str(custody_error)
 
 
@@ -590,7 +599,8 @@ class NativePeer:
         self.root = None
 
     def call(self, body, data=None):
-        script = "python3 - <<'NATIVE_PEER_PY'\nimport json,os,pathlib,sys\ndata=" + repr(data or {}) + "\n" + body + "\nNATIVE_PEER_PY\n"
+        script = ("python3 - <<'NATIVE_PEER_PY'\nimport json,os,pathlib,sys\n" + EVIDENCE_SOURCE.read_text()
+                  + "\ndata=" + repr(data or {}) + "\n" + body + "\nNATIVE_PEER_PY\n")
         result = subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=10", self.ip, "wsl.exe", "--", "bash", "-s"],
             input=script, capture_output=True, text=True, timeout=25)
@@ -630,31 +640,7 @@ for ticket in (cache/'.locks').glob('queue-local-'+root.name+'-origin@light.*'):
     except FileNotFoundError: pass
 gate=data['gate']
 if gate:
-    assert re.fullmatch(r'beelink[12]-[0-9a-f]{32}',gate)
-    job=state/'jobs'/gate
-    for name,key in [('exit','exit'),('receipt.json','receipt')]:
-        try: result[key]=json.loads((job/name).read_text())
-        except FileNotFoundError: pass
-    try:
-        pid,birth=(job/'gate.pid').read_text().split()
-        fields=pathlib.Path('/proc/'+pid+'/stat').read_text().rsplit(')',1)[1].split()
-        result.update(pid=int(pid),birth=birth,alive=fields[19]==birth and fields[0] not in ('Z','X'))
-    except FileNotFoundError: pass
-    result['canceled']=(state/'jobs/.canceled'/gate).exists()
-    try: result['source_digest']=hashlib.sha256((job/'gate.sh').read_bytes()).hexdigest()
-    except FileNotFoundError: pass
-    try:
-        args=job/'args'
-        result['payload_digest']=hashlib.sha256(base64.b64decode(args.read_bytes().split(bytes([0]))[-2])).hexdigest()
-        result['args_mode']=args.stat().st_mode & 0o777
-    except FileNotFoundError: pass
-    except (IndexError,ValueError): result['payload_error']='incomplete_args_publication'
-    group=(result['receipt'] or {}).get('cgroup')
-    if group and group.endswith('/beelink-gate-'+gate+'.service') and '..' not in pathlib.PurePosixPath(group).parts:
-        try:
-            events=dict(line.split() for line in (pathlib.Path('/sys/fs/cgroup')/group.lstrip('/')/'cgroup.events').read_text().splitlines())
-            if events.get('populated') in ('0','1'): result['unit_populated']=events['populated']=='1'
-        except FileNotFoundError: result['unit_populated']=False
+    result.update(observe_leaf(state,gate))
 print(json.dumps(result))
 ''', {"root": self.root, "gate": gate_id})
 
@@ -769,7 +755,7 @@ def gtr_case(gate, host, mode, directory):
                         final_frame=json.loads(Path(frames[0]).read_text())
                         assert 58 <= (final_frame['end_ns']-final_frame['start_ns'])/1e9 <= 75
                     observation=peer.observe(gate_id)
-                    assert first_exit==75 and observation['alive'] and not observation['canceled'], "transport/deadline canceled live native leaf"
+                    assert first_exit==75 and observation['live'], "transport/deadline native liveness unproved or canceled"
                     opts=['--cancel-on-term'] if mode=='native-attach-term' else []
                     proc=subprocess.Popen(['bash',str(gate.resolve()),*opts,'--attach',gate_id],env=env,stdout=output,stderr=output,start_new_session=True)
                     saved.append(proc)
@@ -788,9 +774,9 @@ def gtr_case(gate, host, mode, directory):
                 deadline=time.monotonic()+30
                 while time.monotonic()<deadline:
                     observation=peer.observe(gate_id)
-                    if observation['exit'] is not None and not observation['alive'] and observation['unit_populated'] is False: break
+                    if observation['drained']: break
                     time.sleep(.1)
-                assert observation['exit'] is not None and not observation['alive'] and observation['unit_populated'] is False, "native leaf/cgroup drain unproved"
+                assert observation['drained'], "native leaf/unit/kernel drain unproved"
                 canceled=mode in ('native-pid-term','native-attach-term','native-wrapper-term')
                 assert proc.returncode==(143 if canceled else command_exit)
                 if not canceled:
@@ -823,7 +809,7 @@ def gtr_case(gate, host, mode, directory):
                     finished=subprocess.run(['bash',str(gate.resolve()),'--cancel-job',gate_id],env=env,capture_output=True,text=True,timeout=330)
                     cleanup['cancel_exit']=finished.returncode
                     cleanup['native']=peer.observe(gate_id)
-                    if finished.returncode or cleanup['native']['alive'] or cleanup['native']['unit_populated'] is not False: result['passed']=False
+                    if finished.returncode or not cleanup['native']['drained']: result['passed']=False
                 except Exception as error:
                     cleanup['unknown']=str(error); result['passed']=False
             for frontend in saved:
@@ -848,13 +834,14 @@ def main():
         "native-command-failure", "native-command-255", "native-command-75", "native-reservation-lifetime", "native-reservation-failure",
         "cancel-group-term", "cancel-stdout-pipe"], action="append")
     args = parser.parse_args()
+    assert args.out, '--out is required for private acceptance evidence'
+    args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
+    args.out.chmod(0o700)
     def stop_controller(signum, frame):
         raise KeyboardInterrupt('owned acceptance stop requested')
     signal.signal(signal.SIGTERM, stop_controller)
     signal.signal(signal.SIGHUP, stop_controller)
     if args.host:
-        assert args.out, '--out is required for GTR acceptance'
-        args.out.mkdir(parents=True,exist_ok=True)
         modes=args.case or ['native-pass','native-command-failure','native-command-255','native-command-75',
             'native-pass-payload-large','native-lost-ssh','native-pid-term','native-attach-term',
             'native-wrapper-term','native-global-deadline','native-pass-tty','native-reservation-lifetime','native-reservation-failure']
@@ -872,11 +859,21 @@ def main():
         "native-pass-payload-large", "native-retry-term", "native-lost-ssh", "native-pid-term",
         "native-attach-term", "native-wrapper-term", "native-wrapper-handoff-term", "native-foreign-id-refusal", "native-global-deadline", "failure-cleanup-term", "pass-cleanup-term",
         "cancel-group-term", "cancel-stdout-pipe"]:
-        if mode in ("native-wrapper-handoff-term", "native-foreign-id-refusal"):
-            with foreign_control(args.gate) as control:
-                rows.append(native_job_case(args.gate, mode, control))
-        else:
-            rows.append(native_cleanup_case(args.gate, mode) if mode.endswith("cleanup-term") else native_job_case(args.gate, mode))
+        try:
+            if mode in ("native-wrapper-handoff-term", "native-foreign-id-refusal"):
+                with foreign_control(args.gate, args.out, mode) as control:
+                    rows.append(native_job_case(args.gate, mode, args.out, control))
+            else:
+                rows.append(native_cleanup_case(args.gate, mode, args.out) if mode.endswith("cleanup-term") else native_job_case(args.gate, mode, args.out))
+        except BaseException as error:
+            if not rows or rows[-1].get('case') != mode:
+                rows.append({'case':mode})
+            rows[-1].update(passed=False, error=f'{type(error).__name__}: {error}')
+            raise
+        finally:
+            target=args.out/'summary.json'
+            target.write_text(json.dumps({'cases':rows,'passed':sum(r.get('passed',False) for r in rows),'total':len(rows)},indent=2)+'\n')
+            target.chmod(0o600)
         if not rows[-1]["passed"]:
             break
     print(json.dumps({"bash": subprocess.check_output(["bash", "--version"], text=True).splitlines()[0],
