@@ -3,23 +3,54 @@
 # Sourced by beelink-gate and bundled into its staged source; never run alone.
 gate_shared_turbo_install=1
 
-# The pnpm version the repo's own CI installs with: package.json packageManager
-# (what corepack and pnpm/action-setup read), else the version pinned on
-# pnpm/action-setup in a workflow. Only an exact x.y.z is used.
-repo_pnpm_version() {
-  local version
-  version=$(node -e 'const m = /^pnpm@([^+]+)/.exec(require("./package.json").packageManager || ""); if (m) console.log(m[1])' 2>/dev/null)
+# The package-manager version the repo's own CI installs with: package.json
+# packageManager (what corepack and the setup actions read), else the version
+# pinned on that manager's setup action in a workflow. Only an exact x.y.z is used.
+repo_manager_version() {  # <manager> <setup action> <action version key>
+  local manager=$1 action=$2 key=$3 version
+  version=$(node -e 'const m = new RegExp("^" + process.argv[1] + "@([^+]+)").exec(require("./package.json").packageManager || ""); if (m) console.log(m[1])' "$manager" 2>/dev/null)
   local -a workflows=()
   local had_nullglob=0
   shopt -q nullglob && had_nullglob=1
   shopt -s nullglob; workflows=(.github/workflows/*.yml .github/workflows/*.yaml)
   [ "$had_nullglob" = 1 ] || shopt -u nullglob
   if [ -z "$version" ] && [ "${#workflows[@]}" -gt 0 ]; then
-    version=$(awk '/uses:[[:space:]]*pnpm\/action-setup/ { inside = 1; next }
+    version=$(awk -v action="$action" -v key="$key:" 'index($0, "uses:") && index($0, action) { inside = 1; next }
       inside && /^[[:space:]]*-[[:space:]]/ { inside = 0 }
-      inside && $1 == "version:" { gsub(/["\047]/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
+      inside && $1 == key { gsub(/["\047v]/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
   fi
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] && echo "$version"
+}
+
+repo_pnpm_version() { repo_manager_version pnpm pnpm/action-setup version; }
+
+has_bun_lock() { [ -f bun.lock ] || [ -f bun.lockb ]; }
+
+# Install and run with the repo's Bun: the Beelink accounts carry none, and a
+# host-wide Bun would drift from the version CI pins. npm publishes Bun's
+# binaries, so npx fetches that exact version once into its cache; the shim
+# links the binary itself, so nested `bun --filter` scripts pay no npx start.
+install_bun_dependencies() {
+  local want have bin
+  want=$(repo_manager_version bun oven-sh/setup-bun bun-version) \
+    || die "bun.lock needs an exact Bun version: packageManager bun@x.y.z or bun-version on oven-sh/setup-bun"
+  have=$(bun --version 2>/dev/null || true)
+  if [ "$want" != "$have" ]; then
+    install_step timeout 300 npx --yes "bun@$want" --version || return $?
+    bin=$(timeout 60 npx --yes "bun@$want" -e 'console.log(process.execPath)' </dev/null) || die "cannot resolve the Bun $want binary"
+    [ -x "$bin" ] || die "Bun $want resolved to a non-executable path: $bin"
+    mkdir -p "$checkout/.git/beelink-gate-bin" || return $?
+    # Bun picks its mode from argv[0]; repo scripts spawn `bunx` as well.
+    ln -sf "$bin" "$checkout/.git/beelink-gate-bin/bun" || return $?
+    ln -sf "$bin" "$checkout/.git/beelink-gate-bin/bunx" || return $?
+    export PATH="$checkout/.git/beelink-gate-bin:$PATH"
+    echo "beelink-gate: using the repo's bun $want (beelink has ${have:-none})" >&2
+  fi
+  # Without lifecycle scripts: Bun already runs none for dependencies outside
+  # trustedDependencies, and a root `prepare: lefthook install` refuses on every
+  # Beelink because the global core.hooksPath belongs to the dotfiles hooks.
+  install_step bun install --frozen-lockfile --ignore-scripts || return $?
+  echo "beelink-gate: frozen Bun $want install completed" >&2
 }
 
 # Corepack owns the repository's exact Yarn version/hash. The shim also keeps
@@ -111,7 +142,7 @@ prepare_gate_dependencies() {
   local want_pnpm have_pnpm repo_manager
   # This private cache directory survives git clean; never reuse another
   # revision's package-manager shim, even when its manager has changed.
-  rm -f "$checkout/.git/beelink-gate-bin/pnpm" "$checkout/.git/beelink-gate-bin/yarn" "$checkout/.git/beelink-gate-bin/yarn-version" || return $?
+  rm -f "$checkout/.git/beelink-gate-bin/pnpm" "$checkout/.git/beelink-gate-bin/bun" "$checkout/.git/beelink-gate-bin/bunx" "$checkout/.git/beelink-gate-bin/yarn" "$checkout/.git/beelink-gate-bin/yarn-version" || return $?
   repo_manager=$(node -e 'const p=require("./package.json"); console.log((p.packageManager||"").split("@")[0] || p.devEngines?.packageManager?.name || "")' 2>/dev/null) || repo_manager=""
   if [ -n "$repo_manager" ] && [ "$repo_manager" != yarn ] && [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
     die "packageManager declares $repo_manager but only yarn.lock exists; provide its matching lockfile or declare Yarn"
@@ -155,6 +186,9 @@ prepare_gate_dependencies() {
   elif [ "$repo_manager" = yarn ] || { [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; }; then
     repo_manager=yarn
     install_yarn_dependencies || return $?
+  elif [ "$repo_manager" = bun ] || { has_bun_lock && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; }; then
+    repo_manager=bun
+    install_bun_dependencies || return $?
   elif [ -f pnpm-lock.yaml ]; then
     command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
     install_step pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
@@ -165,7 +199,7 @@ prepare_gate_dependencies() {
     # A dependency-free package needs no install. A package with dependencies
     # and no lock cannot have a frozen install, so fail the gate.
     node -e 'const p=require("./package.json"); process.exit(Object.keys(p.dependencies||{}).length || Object.keys(p.devDependencies||{}).length || Object.keys(p.optionalDependencies||{}).length ? 1 : 0)' \
-      || die "package.json has dependencies but no pnpm/npm/Yarn lockfile"
+      || die "package.json has dependencies but no pnpm/npm/Yarn/Bun lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
     export BEELINK_GATE_INSTALL_S=0
   fi
