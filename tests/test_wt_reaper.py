@@ -387,7 +387,8 @@ class ReaperTest(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         s = summaries[0]
         self.assertEqual(s['mode'], 'live')
-        self.assertEqual(int(s['removed']), 7)  # merged, detached, pushed_unmerged, build_output, dry, hardlinked, generated
+        # merged, detached, pushed_unmerged, build_output, dry, hardlinked, generated, owner_marker, owner_marker_ignored
+        self.assertEqual(int(s['removed']), 9)
         self.assertEqual(int(s['scanned']), int(s['removed']) + int(s['skipped']))
 
 
