@@ -4,18 +4,16 @@
 # Policy (AGENTS.md): the local gate on a beelink is the merge gate. After it
 # passes, merge or enable auto-merge and move on; CI failures are fixed forward.
 #
-# Measured 2026-10-02 over 7.8 days of Claude and Codex traces: 4,140 CI polling
+# Over 7.8 days of Claude and Codex traces, 4,140 CI polling
 # episodes in 488 sessions cost 180 agent-hours (8.7% of all agent time), 37%
 # of it on agent-dev-container. Sleep loops over a background task's
 # tasks/*.output file cost another 51.8 h; the harness already notifies on
-# completion. A warning was tried on 2026-08-26 and ignored, so this denies.
+# completion. A warning was tried and ignored, so this denies.
 #
 # Scope: `gh pr checks --watch`; any sleep loop around `gh pr checks` or
 # `gh pr view ... statusCheckRollup`; any sleep loop reading tasks/*.output.
 # Runs are delivery, not PR checks: `gh run watch` and sleep loops over
-# `gh run view/list` (deploys, releases, package publishes) stay allowed. Until
-# 2026-10-24 those loops were refused too, and most PR-CI refusals on the Mac
-# from 10-17 to 10-24 were waits on deploy, publish and benchmark runs.
+# `gh run view/list` (deploys, releases, package publishes) stay allowed.
 #
 # Heredoc bodies are ignored: they are usually file contents or test data, and
 # matching them blocked writing this hook's own tests.

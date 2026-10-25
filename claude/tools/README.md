@@ -35,8 +35,8 @@ Before `pr merge`, `--auto` included, it reads the PR's head, review threads and
 - `GH_DREW_REVIEW_OVERRIDE=<reason>` merges without the check and logs the reason. A read that fails refuses.
 
 Before `run cancel <id>`, or a request to `repos/<o>/<r>/actions/runs/<id>/cancel` or `force-cancel`, it reads the run's event and workflow.
-A scheduled run of `benchmark-production.yml` or `create-waterfall.yml` that is in progress is refused (exit 1, logged as `refused`) before anything changes; company-01 approved this on 2026-10-19.
-A `workflow_dispatch` run of either, a scheduled one that has not started (it has measured nothing, and such runs held the production deploy lock on 2026-10-19 and 10-23), and a scheduled run of any other workflow stay cancellable. A read that fails refuses.
+A scheduled run of `benchmark-production.yml` or `create-waterfall.yml` that is in progress is refused (exit 1, logged as `refused`) before anything changes; company-01 approved this.
+A `workflow_dispatch` run of either, a scheduled one that has not started (it has measured nothing, and such runs held the production deploy lock), and a scheduled run of any other workflow stay cancellable. A read that fails refuses.
 
 Each call appends one line to `~/.local/state/gh-drew/calls-<hour>.tsv` (`GH_DREW_LOG_DIR`):
 
@@ -198,9 +198,9 @@ It exits 1 on the first job that concludes anything other than success or skippe
 It exits 0 when the run completes and prints the run's conclusion.
 It retries transient read errors and exits 2 after 5 failed reads in a row.
 Use it for deploys: a run-level watch misses a failed job while the run waits on a later one.
-On 2026-10-19, deploy 39274359094 failed its host-agent rollout at 15:30Z, then stayed `waiting` for 47 minutes.
+Deploy 39274359094 failed its host-agent rollout at 15:30Z, then stayed `waiting` for 47 minutes.
 Run it as a tracked background task, so its exit reaches the session.
-`--require-job <name>` exits 3 unless that job itself concluded success: a deploy can conclude success while every deploy job was skipped as superseded (39313450494, 2026-10-19). For deploys, pass `--require-job "Deploy to Production"`.
+`--require-job <name>` exits 3 unless that job itself concluded success: a deploy can conclude success while every deploy job was skipped as superseded (39313450494). For deploys, pass `--require-job "Deploy to Production"`.
 
 ## wt-new, wt-save
 
@@ -218,7 +218,7 @@ wt-save /path/to/some/worktree     # explicit path is always treated as owned
 A worktree is owned when its `.wt-owner` marker's `owner=` line matches
 `$CLAUDE_CODE_SESSION_ID`, or when it is named explicitly. Without a marker
 match, `wt-save` never commits or pushes in it — an unscoped version of this
-once committed and pushed another session's in-progress work (2026-09-24).
+once committed and pushed another session's in-progress work.
 Mid-merge/mid-rebase trees are always skipped. A dirty tree whose pre-commit
 hook refuses the commit gets a patch backup under
 `~/attic/wt-save-patches/<date>/` instead (never `--no-verify`). Runs up to

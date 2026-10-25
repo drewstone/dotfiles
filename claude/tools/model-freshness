@@ -9,7 +9,7 @@
  *   2. SERVING   Does the router serve that id — and serve THAT ID, not a
  *                substitute? A failover 200 reads exactly like a healthy 200
  *                unless the served-model header is compared to the requested
- *                one. Measured 2026-08-10: `gpt-5.5` answered 200 with
+ *                one. `gpt-5.5` once answered 200 with
  *                `body.model = gemini-2.5-flash`, so a catalog check and a
  *                status check BOTH said "fine" while no OpenAI model worked.
  *   3. CURRENT   Is a newer generation of the same family in the catalog and
@@ -81,8 +81,8 @@ function apiKey() {
 }
 
 async function catalog(key) {
-  // Authenticated: the anonymous catalog is a NARROWER list (499 ids vs 540 on
-  // 2026-08-10), so an unauthenticated check reports ids as "not in catalog"
+  // Authenticated: the anonymous catalog is a NARROWER list (499 ids vs 540),
+  // so an unauthenticated check reports ids as "not in catalog"
   // that a real request would find.
   const res = await fetch(`${ROUTER}/v1/models`, { headers: key ? { authorization: `Bearer ${key}` } : {} })
   if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`)

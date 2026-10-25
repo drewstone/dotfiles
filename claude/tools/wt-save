@@ -2,7 +2,7 @@
 # wt-save — save (commit + push) ONLY the worktrees this Claude Code session owns.
 #
 # Why this exists: an unscoped save script committed and pushed another
-# session's in-progress work (2026-09-24). Multiple agent sessions share one
+# session's in-progress work. Multiple agent sessions share one
 # Unix user on this host, so a bare directory scan cannot tell whose work is
 # whose — ownership has to be a marker, not a guess.
 #

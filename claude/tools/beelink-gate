@@ -141,7 +141,7 @@ sparse_spec_of() {
 # A repo keeps tracked paths its gated commands never read out of its gate
 # checkouts by committing .beelink-gate/sparse-checkout: `git sparse-checkout
 # --no-cone` patterns, one per line, # for comments. Discovery Lab's excludes
-# historical /pursuits/: on 2026-10-14 its full gate checkout held 11 GB on
+# historical /pursuits/: its full gate checkout held 11 GB on
 # beelink1, and its 22-28 GB measured install reserve kept Lab gates off both
 # beelinks. A commit without the file, or with no patterns in it, gets a full
 # checkout. This keeps <checkout> at the patterns committed at <rev>, the
@@ -149,7 +149,7 @@ sparse_spec_of() {
 # holds the checkout's repo lock. Setting patterns removes the excluded
 # tracked files now, and later checkouts never write them. The cache prune
 # passes --shrink-only: it never restores a full tree, which would write
-# gigabytes in the step that frees disk (on 2026-10-15 an idle Lab checkout at
+# gigabytes in the step that frees disk (an idle Lab checkout at
 # a commit older than its file was rewritten with 4.7 GB of pursuits/). Sets
 # sparse_source to repo or empty, and says on stderr when it changed the
 # checkout.
@@ -369,7 +369,7 @@ parse_repo_url() {
 # checkout shape they measured (sparse_spec: full or a pattern digest) and its
 # temperature (checkout_temperature: warm when the checkout already had that
 # shape, cold when the gate cloned it, reshaped otherwise). A reserve measured
-# on another shape says nothing about this one: on 2026-10-15 beelink2's newest
+# on another shape says nothing about this one: beelink2's newest
 # Lab receipt was a 28.2 GB full clone, which refused every sparse Lab gate, so
 # none could write a sparse receipt. A cold clone's cost says little about a
 # warm checkout: beelink2's 15.58 GB cold sparse clone then refused its own warm
@@ -526,7 +526,7 @@ adopt_origin() {
 
 # The URL a cache fetches from. The beelinks have an SSH key for GitHub and no
 # https credentials, so https://github.com/<owner>/<repo> is fetched as
-# git@github.com:<owner>/<repo>.git: on 2026-10-12 a cold tangle-tools cache
+# git@github.com:<owner>/<repo>.git: a cold tangle-tools cache
 # cloned from the https spelling failed with "could not read Username".
 fetch_url() {
   if [ "$host" = github.com ]; then echo "git@github.com:$owner/$repo.git"; else echo "$1"; fi
@@ -1191,7 +1191,7 @@ remote_gate() {
   unset BEELINK_GATE_MAX_CONCURRENT
   # Each repo gets BEELINK_GATE_REPO_CHECKOUTS checkouts per host (default 2):
   # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
-  # not take both beelinks. On 2026-10-11, 38 gates of one repo from one lane
+  # not take both beelinks. 38 gates of one repo from one lane
   # waited 527 min in total behind a single checkout per host.
   local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd capacity_fd writer_fd
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
@@ -1501,7 +1501,7 @@ PYTURBO
   # a predictable non-group-writable default without changing the gate shell's
   # mask for receipts, bundles, and other state written after the command.
   # A pipeline exits with its last stage: `sh -c 'node --test ... | tail -12'` exited 0 on a failing test, and --merge
-  # merged discovery-lab #2097 red (2026-10-19). A shell -c command runs under pipefail, so a failing stage fails the
+  # merged discovery-lab #2097 red. A shell -c command runs under pipefail, so a failing stage fails the
   # gate; the receipt still names the command as requested.
   local -a run_command=("${command[@]}")
   # Any single-dash option cluster holding c counts: beelink1's receipts held 89 `bash -lc` gates (16 piped) and a
@@ -1599,7 +1599,7 @@ declare -A matched_reserve=() matched_warm_reserve=()
 TRANSPORT_TIMEOUT_SECONDS=30
 TRANSPORT_KILL_GRACE_SECONDS=2
 # Staging writes the whole gate script through a fresh WSL session, which starts slowly
-# on a loaded host: on 2026-10-23 at load 120 on 16 cores, beelink1 staging passed 30 s
+# on a loaded host: at load 120 on 16 cores, beelink1 staging passed 30 s
 # (ci-zero Braid #173) and the gate gave up before submitting. The checkout reservation
 # below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
 STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
@@ -1760,7 +1760,7 @@ start_checkout_reservations() {
   done
   # One host that cannot reserve (unreachable, or its reservation died) must not
   # stop auto: a named gate still runs on the other one, so auto keeps the hosts
-  # that reserved and places only on them. On 2026-10-17/18 a single sick
+  # that reserved and places only on them. A single sick
   # Beelink made every auto gate exit 75 while named gates ran.
   local i reserved=()
   for i in "${!checkout_reservation_files[@]}"; do
@@ -1816,7 +1816,7 @@ fi
 # --receipt <repo-url> <sha>: every receipt both beelinks hold for that repo and
 # SHA, one JSON line each with its gate_id and the host it came from ("from").
 # gh-drew reads this before it merges a release-path PR, so a merge rests on the
-# gate's own receipt, never on a wrapper's exit code: on 2026-10-18 a lane script
+# gate's own receipt, never on a wrapper's exit code: a lane script
 # recorded exit=0 for gate beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose
 # receipt says exit=1, and discovery-lab#2009 merged on it. Exit 0 with rows,
 # 1 with none, 75 when a beelink cannot be read and the others hold no row (a partial read is never "none").
@@ -1849,7 +1849,7 @@ PY
   done
   cat "$found"
   if [ -s "$found" ]; then rc=0; elif [ -n "$unread" ]; then rc=$TEMPFAIL; else rc=1; fi
-  # Name what was read, so a refusal is not mistaken for the down host's fault: on 2026-10-18
+  # Name what was read, so a refusal is not mistaken for the down host's fault:
   # agent-runtime#1832 refused with only "could not read beelink2" while beelink1 held no receipt either.
   # Only with a host unread: gh-drew reads any stderr here as "a beelink was not read".
   if [ ! -s "$found" ] && [ -n "$unread" ]; then
@@ -1879,7 +1879,7 @@ if [ "${1:-}" = --report ]; then
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   receipts_file=$(mktemp) host_rows=$(mktemp) missing=""
   for host in beelink1 beelink2; do
-    # One retry, then a loud partial: on 2026-10-14 one dropped B1 read silently
+    # One retry, then a loud partial: one dropped B1 read silently
     # turned a 352-run window into a B2-only 115 runs at 1.0 runs per merged PR.
     if heartbeat=0 on_beelink "$host" --receipts "$hours" "$cpu_source" > "$host_rows" 2>/dev/null \
       || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts "$hours" "$cpu_source" > "$host_rows" 2>/dev/null; }; then
@@ -2035,7 +2035,7 @@ PY
 # gh-drew owns the merge preconditions (merge-on-green's hold, unanswered review
 # threads, a running Codex review), so they are not repeated here. Lanes had
 # each written a wait-for-gate-then-merge script (graph-canary flow.sh and
-# merge-1818.sh, 2026-10-17). A red or TEMPFAIL gate never merges; a merge
+# merge-1818.sh). A red or TEMPFAIL gate never merges; a merge
 # gh-drew refuses exits MERGE_REFUSED with its reason.
 MERGE_REFUSED=78
 merge_pr="" merge_repo="" merge_sha=""
@@ -2120,7 +2120,7 @@ fi
 target=$1 repo_url=$2 sha=$3
 if [ "$pin_host" = 1 ] && [ "$target" = auto ]; then die "--pin-host requires a named beelink"; fi
 shift 4
-# agent-container stopped merging on a local signoff on 2026-10-14 (agent-dev-container
+# agent-container stopped merging on a local signoff (agent-dev-container
 # #10892): its PRs merge on green CI and develop runs the full suite after merge. Sessions
 # that loaded the old rule kept holding Beelink slots the CI runners on the same hosts need.
 if [[ "$repo_url" =~ tangle-network/agent-(dev-)?container(\.git)?$ ]] && [ "$gate_class" != dev ] \
@@ -2198,7 +2198,7 @@ export BEELINK_GATE_SPARSE_SPEC
 requested=$target admit_wait_launch="" placed_wait_launch=0
 # An --urgent gate stays on the first host auto places it on: giving the host
 # back drops its urgent marker and with it its place ahead of every normal gate.
-# On 2026-10-12 an urgent fix for a red ADC develop (#10345) was re-placed for
+# An urgent fix for a red ADC develop (#10345) was re-placed for
 # 1413 s while normal gates re-took the checkout each time it let go.
 if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
   admit_wait_launch=$(seconds_of "${BEELINK_GATE_REPLACE_WAIT:-60s}") || die "invalid BEELINK_GATE_REPLACE_WAIT: ${BEELINK_GATE_REPLACE_WAIT:-}"

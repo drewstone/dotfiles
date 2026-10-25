@@ -26,7 +26,7 @@
 #    clear them as the second half of any reclamation pass:
 #      tmutil listlocalsnapshots /
 #      tmutil deletelocalsnapshots <YYYY-MM-DD-HHMMSS>
-#    On 2026-09-18 that step alone took free space from 30 GiB to 57 GiB.
+#    That step alone once took free space from 30 GiB to 57 GiB.
 #
 # Blast radius when this is dead: another session hit 133 MiB free with 680
 # abandoned worktrees, which hung every Chrome debug tab of a browser fleet at
@@ -37,7 +37,7 @@
 # removal loses nothing; the unpushed check still runs because a pool also holds
 # standalone clones, where a local commit exists nowhere else.
 #
-# On 2026-09-11 this sweep ran nightly and the host still reached 15 GiB free on a
+# This sweep ran nightly and the host still reached 15 GiB free on a
 # 926 GB disk. It was watching two pools under ~/webb while sessions had left 374 GB
 # in /private/tmp: 1,083 adc-* checkouts at about 6 GB each plus roughly 60 other
 # agent trees. A manual pass removed 253 of them and freed 228.5 GiB. That pool is
@@ -47,7 +47,7 @@ set -uo pipefail
 # Report the version actually running, and say so when it is behind its own remote.
 #
 # Installed tools are symlinks into a dotfiles worktree, and a worktree has no mechanism to
-# advance itself. On 2026-09-11 that bit twice in one day: `~/.claude/skills` resolved into a
+# advance itself. That bit twice in one day: `~/.claude/skills` resolved into a
 # worktree LOCKED at a commit predating a skill, so the skill did not exist as far as the
 # session was concerned; and the replacement worktree was a merge behind by the same evening,
 # so cron would have run the previous day's sweep logic.
@@ -108,7 +108,7 @@ sweep_tree() {
     return 0
   fi
   # A tree whose only changes are build output or an agent's own append-only log holds no
-  # work. On 2026-09-11, 85 trees in the tmp pool reported dirty; across them the commonest
+  # work. 85 trees in the tmp pool reported dirty; across them the commonest
   # entries were an untracked node_modules (14) and a modified .agent/skill-runs.jsonl (13),
   # with agent-runtime's in-place scratch (program.mjs, context/) behind them. Treating those
   # as work kept 12.5 GiB of pure artifact. A single changed source file still keeps the tree.
@@ -191,7 +191,7 @@ for repo in "$HOME/webb"/*/ "$HOME/code"/*/; do
 done
 
 # Deleting files frees nothing while a local Time Machine snapshot still references
-# them. On 2026-09-11, 18.7 GiB of removals moved `df` by zero until the snapshots
+# them. 18.7 GiB of removals moved `df` by zero until the snapshots
 # were thinned, and a snapshot taken mid-sweep pinned about 52 GiB more. Ask for the
 # space back explicitly, or a nightly sweep reports success and the disk stays full.
 if [ "$removed" -gt 0 ] && command -v tmutil >/dev/null 2>&1; then

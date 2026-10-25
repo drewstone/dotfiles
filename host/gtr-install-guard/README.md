@@ -6,8 +6,8 @@ pnpm home, and installed nvm Node versions. Each original executable stays next 
 wrapper as `<name>.gtr-original`; allowed commands delegate to it.
 
 The wrapper refuses pnpm, npm and yarn installs (frozen included, and the same through
-`corepack`) in any git checkout on GTR, not only inside `~/code/_wt` and `~/webb/_wt`: on
-2026-10-10 an agent refused in `_wt` cloned `~/code/gate-gtm-20261010` and gated there. It
+`corepack`) in any git checkout on GTR, not only inside `~/code/_wt` and `~/webb/_wt`: an
+agent refused in `_wt` cloned `~/code/gate-gtm-20261010` and gated there. It
 points to `beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command>`. Exempt: the
 deploy-managed service checkouts tangle-tools-deploy installs (`~/.config/fleet/checkouts`,
 `DISCO_LAB` in `~/.config/fleet/lab.env`, the tangle-tools deploy clone), the beelink-gate cache,
@@ -68,7 +68,7 @@ package installs are not refused, since Beelinks are where they run.
   so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
 - Trees outside `_wt` (tool caches, `tangle-ops ship`, the adc-wt pool, `~/company/_wt`) and every other Git command pass through.
 - This is a guardrail for cooperating agents, not a sandbox: a new `FLEET_LANE` value or a Git alias gets past it.
-  A `worktree move` into `_wt` is checked like an add (lane-10080 moved a 4.6 GB tree in under the floor on 2026-10-12). Trees made before installation carry no lane and are not counted.
+  A `worktree move` into `_wt` is checked like an add (lane-10080 moved a 4.6 GB tree in under the floor). Trees made before installation carry no lane and are not counted.
 
-Measured 2026-10-11: beelink1 gained 49 `_wt` worktrees in 6 h and held 73 GB of `_wt` data unique beyond the pnpm store;
+beelink1 once gained 49 `_wt` worktrees in 6 h and held 73 GB of `_wt` data unique beyond the pnpm store;
 the idle reapers cannot touch a tree younger than 12 h.

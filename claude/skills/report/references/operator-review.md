@@ -6,7 +6,7 @@ The `3:` lines of [judging a deliverable](../../../../docs/processes/climb.md#ju
 
 ## The exemplars
 
-Each was read from its primary source on 2026-10-11.
+Each was read from its primary source.
 
 | Exemplar | Author | What it is |
 |---|---|---|

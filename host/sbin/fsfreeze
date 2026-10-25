@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fsfreeze wrapper. A freeze must name a real mountpoint that is not backed by
 # the root disk. `fsfreeze -f <plain directory>` freezes the filesystem that
-# holds the directory, which on 2026-09-02 was / itself. Thaw is always allowed.
+# holds the directory, which was / itself. Thaw is always allowed.
 set -uo pipefail
 . /usr/local/lib/host-blast-guard.sh
 real="$(hbg_real fsfreeze)" || exit 127

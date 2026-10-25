@@ -176,7 +176,7 @@ on_beelink() {
     }
   fi
   # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
-  # ("exec request failed on channel 0"); on 2026-10-18 a 23 KB patch, base64
+  # ("exec request failed on channel 0"); a 23 KB patch, base64
   # encoded in argv, became 41,676 bytes and the submit was reported as a lost
   # connection. Large arguments ride on stdin ahead of the script instead.
   local -a remote_args=("$@")

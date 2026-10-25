@@ -10,7 +10,7 @@ This document is the shared process for Claude, Codex and OpenCode.
 
 ## Why it exists
 
-On 2026-10-10 a review of the Terraform program found the same failure at every layer: loops that recorded data but never closed.
+A review of the Terraform program found the same failure at every layer: loops that recorded data but never closed.
 - **Rulers:** they maxed out, holding 17/17 for 40 h, while the judge fell 16 points as the product moved toward the goal.
 - **Runs:** 738 of 1,112 turn attempts failed, and no run reported it.
 - **Directive:** an interaction directive was injected into 4,010 sessions while its A/B scorer was never built.
@@ -54,7 +54,7 @@ Each pass leaves a mark in the output, or the pass did not happen.
 4. **Red team.** Write the pre-mortem: it is two weeks later and this failed; why? State the strongest contrary evidence and what would change the conclusion.
    For each headline number, run the narrowest query that would come out differently if it were false: the product or its harness, merged or served, the start of the outage or the start of the log.
    When a subscription surface offers another model (pi with GLM, Codex, another Claude seat), have it write the red team.
-   On 2026-10-10 an independent GLM red team found that this process's first draft rewarded self-grades, and one route check showed that $583 of "GLM spend" was flat-plan traffic priced at list.
+   An independent GLM red team found that this process's first draft rewarded self-grades, and one route check showed that $583 of "GLM spend" was flat-plan traffic priced at list.
 5. **Bigger.** Ask what would make the result ten times better, what the best practitioner alive would do, and what we should stop doing entirely. Then ask again from the new answer.
 6. **The question not yet asked.** Name the most important question nobody has asked, and answer it or say what would.
 7. **Stress test the winner.** Recompute its numbers from two independent sources, move its weakest input to its market value, and name who loses if it is wrong.
@@ -147,7 +147,7 @@ GitHub's server merge ignores the attribute and reports a conflict; update the b
 
 ### Every number names its sample
 
-On 2026-10-10, 5 reported numbers were retracted.
+5 reported numbers were retracted.
 "Coalescing p50 32,401" chose streams by finish time across two releases, a failure time was measured from its notice, and a disk reclaim was an estimate.
 So each baseline or result that reports a number carries a `measurement` block, and `climb-log append` refuses the row without one:
 - `metric`, `unit`, `n`, and `basis` (measured, computed or judged; an estimate belongs in `prediction`);
@@ -176,11 +176,11 @@ Judge a move by the strongest signal available:
 
 A weaker signal never overrides a stronger one.
 Attach outcomes automatically, when the row is written and again in a daily join.
-Waiting for someone to rate later does not work: on 2026-10-10, 421 logged skill runs carried 0 ratings.
+Waiting for someone to rate later does not work: 421 logged skill runs carried 0 ratings.
 
 Guard each reward against gaming and leaks:
 - **Proxies:** fewer status pulls count only when push volume did not rise; fewer corrections count only beside outcomes, so hedged output cannot win.
-- **Privacy:** agent-runtime AgentProfiles and trace analysts may read transcripts and the person's messages on any model, as Drew decided on 2026-10-10.
+- **Privacy:** agent-runtime AgentProfiles and trace analysts may read transcripts and the person's messages on any model.
   Before transcript content reaches a non-Claude model, the analyst pipeline removes `~/.config/privacy/denylist` entries, phone and card numbers, and secrets; if redaction cannot run, the step fails closed.
 - **Spend:** judges, labelers and red teams prefer subscription surfaces; trace analysts may use per-token Router models within a logged budget cap.
 
@@ -200,7 +200,7 @@ A theme that recurs after its change has failed and needs a change at a higher l
 
 The optimizers already exist: agent-eval's `improve()`, the GEPA, SkillOpt and DSPy bridges, held-out gates and the search ledger's lenses.
 An optimizer climbs whatever it is pointed at, so it needs ground truth and fresh diagnosis first.
-On 2026-10-09 the daily meta-analyst (`trace-mine`) read 3 of 32,093 sessions and asked no questions; the run analysts asked the same 9 questions of every run; and no layer had ground truth beyond hand-made reviews.
+The daily meta-analyst (`trace-mine`) read 3 of 32,093 sessions and asked no questions; the run analysts asked the same 9 questions of every run; and no layer had ground truth beyond hand-made reviews.
 
 | Organ | Job | Owner |
 |---|---|---|
@@ -223,7 +223,7 @@ For every output class we make (a financial model, research report, workbook, ch
 3. **Turn the teardown into the rubric's top anchor** and the profile's standard, then measure the gap.
 4. **When the gap closes, find the next exemplar.**
 
-Done so far: the operator review, on 2026-10-11, in the [operator review standard](../../claude/skills/report/references/operator-review.md); its features are the rubric's `3:` lines.
+Done so far: the operator review, in the [operator review standard](../../claude/skills/report/references/operator-review.md); its features are the rubric's `3:` lines.
 
 ## Organize like the hardest projects in history
 

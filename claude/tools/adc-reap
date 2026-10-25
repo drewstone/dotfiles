@@ -17,7 +17,7 @@
 #   reap [--yes]      remove worktrees that are provably safe
 #
 # `report` exists because every wrong answer in this system came from acting on
-# a number that had not been checked. Measured 2026-09-10 on the Mac: a count of
+# a number that had not been checked. On the Mac a count of
 # 4,001 cold /private/tmp entries was worth 0.0G, while the size sat in 259 git
 # worktrees the sweep could not see; and 49 of those held uncommitted work that
 # exists on no remote. Count is not size, and age is not safety.
@@ -39,7 +39,7 @@ done
 
 # Roots differ per host and the omission is silent: the Linux box keeps trees under
 # ~/code/.worktrees, while on this Mac the pool is /private/tmp (259 worktrees across
-# ~20 repos, measured 2026-09-10) plus ~/webb. A root that is not listed is simply
+# ~20 repos) plus ~/webb. A root that is not listed is simply
 # invisible, which is how 235G stayed outside every sweep.
 ROOTS=("$HOME/code" "$HOME/code/.worktrees" "$HOME/webb" "$HOME/company" "/private/tmp")
 [ -n "${ADC_REAP_ROOTS:-}" ] && read -r -a ROOTS <<< "$ADC_REAP_ROOTS"
@@ -115,7 +115,7 @@ report)
     IFS=$'\t' read -r verdict reason < <(classify "$tree")
     # Size only what could actually be removed. `du` over a 6G tree is seconds and
     # classification is milliseconds, so sizing every tree made the report time out
-    # before it reached its last root: measured 2026-09-11, it died partway through
+    # before it reached its last root: it died partway through
     # and silently reported a verdict over three of five roots. A held tree's size
     # changes no decision, so it is not worth the walk.
     if [ "$verdict" = REAP ]; then

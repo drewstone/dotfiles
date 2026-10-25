@@ -56,7 +56,7 @@ def _db(path):
 
 def codex_db_logs() -> list:
     """`logged:` results in Codex's thread history, which outlives the rollout files it projects
-    (GTR prunes rollouts; on 2026-10-10 its history held 613k command items in 8.6 GB)."""
+    (GTR prunes rollouts; its history held 613k command items in 8.6 GB)."""
     path = L.codex_home() / "thread_history_1.sqlite"
     if not path.exists():
         return []

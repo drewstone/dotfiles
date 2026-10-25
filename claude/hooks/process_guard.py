@@ -15,7 +15,7 @@ while their briefs said not to:
                 repo (under a temp dir with no remote, or created by `git init` in the same
                 command) may still set core.hooksPath, the pattern the global hooks document.
   shared-stash  bare `git stash pop` / `apply`. Every worktree of a repo shares one stash list, so
-                the newest entry can be another session's; on 2026-10-09 an agent popped one.
+                the newest entry can be another session's; an agent popped one.
                 The entry must be named, the checkout must be a `_wt` worktree this session
                 created (wt-new's .wt-owner, or a `git worktree add` in this session's
                 transcripts), and a named entry must come from the branch checked out there. A bare pop of
@@ -25,11 +25,11 @@ while their briefs said not to:
                 local. Allowed when the command sets CC_ALLOW_MAC_BUILD=1.
   pattern-kill  `pkill` and `killall` in any form, and `kill` fed by `pgrep <pattern>` or `pidof`:
                 `kill $(pgrep -f X)`, `p=$(pgrep -f X); kill $p`, `for p in $(pgrep -f X); do kill $p`,
-                `pgrep -f X | while read p; do kill` and `| xargs kill`. On 2026-09-14 a local
+                `pgrep -f X | while read p; do kill` and `| xargs kill`. A local
                 `pkill -f 'cli-bridge-8921.*' -P 1` (BSD pkill read `-P 1` as patterns) SIGTERMed other
                 Claude sessions, Slack and postgres. Over ssh the pattern also matches the ssh
-                session's own command line; on 2026-10-09 and 2026-10-10 agents killed their own
-                sessions on gtr and beelink2 this way, and on 2026-10-11 a workflow agent ran
+                session's own command line; agents killed their own
+                sessions on gtr and beelink2 this way, and a workflow agent ran
                 `ssh gtr 'pkill -f "python3 reproduce.py" ; ...'`. `pgrep -P <pid>` stays allowed.
   broadcast-kill  `kill 0`, `kill -1`, `kill -9 -1`, `kill -- -<pgid>`: a target of 0 or a negative pid
                 signals the caller's process group, a whole group or every process the user owns. Both kill
@@ -37,7 +37,7 @@ while their briefs said not to:
   xtrace-secrets  shell tracing (`bash -x`, `sh -x`, `set -x`, `set -o xtrace`, BASH_XTRACEFD)
                 while the traced scope loads or expands a secret: dotenvx run/get, sourcing or
                 reading a .env, key, token or secrets file, a *_KEY/*_TOKEN variable set from an
-                expansion or expanded in a command, `gh auth token`. On 2026-10-10 a `bash -x` run
+                expansion or expanded in a command, `gh auth token`. A `bash -x` run
                 of a script over ssh printed the GTM operator key into the transcript;
                 secret_scan.py warned, but only after the output existed. A traced script is read
                 (a remote one over ssh, once, 10 s timeout; unreadable means allowed).
@@ -45,7 +45,7 @@ while their briefs said not to:
   env-dump      printing environment VALUES into the transcript: bare `env`/`printenv`/`export -p`/
                 `declare -x`/`set`, `env | grep X`, `printenv | ...`, reading /proc/<pid>/environ, `printenv KEY`
                 or `echo $X_TOKEN` for a secret-named variable, and env redirected into a file. Fleet lane
-                environments carry live credentials: on 2026-10-12 a subagent ran `env | grep TANGLE_` to find
+                environments carry live credentials: a subagent ran `env | grep TANGLE_` to find
                 its lane id and printed the lane's sk-tan- router key into the transcript, which forced a
                 production key rotation. Names only stay allowed (`cut -d= -f1`, `sed 's/=.*/=<set>/'`, awk, `wc`),
                 as do `env VAR=x cmd`, `printenv` of a non-secret or *_FILE/*_PATH name, and a non-command `env`.
@@ -56,14 +56,13 @@ while their briefs said not to:
                 rule. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair Drew approved.
 
   tail-sleep    `tail -f /dev/null` as a command, usually `read -t N < <(tail -f /dev/null)` as a sleep. Under
-                the Mac's bash 3.2 the read can outlive its timeout and each poll leaks a tail (2026-10-15: watchers
-                hung 15 h and left 380 processes). Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
+                the Mac's bash 3.2 the read can outlive its timeout and each poll leaks a tail. Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
 
 Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed too (an admin
 merge run on a Beelink has the same effect on GitHub); the Mac build rule skips remote commands.
 
 So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host
-bash -s < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root: on 2026-10-04 a
+bash -s < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root: a
 bare `git stash pop` ran from scratchpad/gate1699.sh. A repository's own scripts are not read.
 
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
@@ -1189,7 +1188,7 @@ def worktree_owner(toplevel):
 
 
 STASH_WHY = ("Every worktree of a repo shares one stash list, so the newest entry can be another session's "
-             "work (2026-10-09: an agent popped one).")
+             "work.")
 
 
 def rule_shared_stash(cmd, payload):
@@ -1277,9 +1276,9 @@ def rule_kill(cmd):
     $(...), a variable, a for/while loop or xargs. Commands run over ssh or in nested shells are included."""
     if cmd.prog in ("pkill", "killall"):
         return ("pattern-kill", f"{cmd.prog}",
-                f"`{cmd.prog}` selects processes by name or pattern, and one misplaced argument widens it: on 2026-09-14 "
+                f"`{cmd.prog}` selects processes by name or pattern, and one misplaced argument widens it: "
                 "`pkill -f 'cli-bridge-8921.*' -P 1` SIGTERMed other Claude sessions, Slack and postgres. Over ssh the "
-                "pattern also matches the ssh session's own command line; on 2026-10-11 a workflow agent ran "
+                "pattern also matches the ssh session's own command line; a workflow agent ran "
                 "`ssh gtr 'pkill -f \"python3 reproduce.py\" ; ...'` on a shared host. " + EXACT_PID, KILL_OVERRIDE)
     if cmd.prog != "kill":
         return None
@@ -1295,7 +1294,7 @@ def rule_kill(cmd):
     if any(pattern_source(t, cmd.tainted) for t in targets) or (not targets and cmd.stream_tainted):
         return ("pattern-kill", "kill of pids from a pattern match",
                 "This kill takes its pids from `pgrep <pattern>` (or pidof). Over ssh the pattern also matches the ssh "
-                "session's own command line, so the kill takes down the caller: on 2026-10-09 and 2026-10-10 agents "
+                "session's own command line, so the kill takes down the caller: agents "
                 "killed their own sessions on gtr and beelink2 this way. " + EXACT_PID, KILL_OVERRIDE)
     return None
 
@@ -1311,7 +1310,7 @@ def rule_tail_sleep(cmd):
         return None
     return ("tail-sleep", "tail -f /dev/null as a sleep",
             "`tail -f /dev/null` never exits, so `read -t N < <(tail -f /dev/null)` is a sleep that can outlive "
-            "its timeout and leaves a tail behind on every poll; on 2026-10-15 watchers built this way hung for "
+            "its timeout and leaves a tail behind on every poll; watchers built this way hung for "
             "15 h and leaked 380 processes on the Mac. Wait with `sleep N` inside a loop bounded by a "
             "`date +%s` deadline, and check the watched thing's conclusion before exiting. To run it anyway, "
             "put CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.", "CC_ALLOW_TAIL_SLEEP")
@@ -1325,7 +1324,7 @@ def rule_ledger_write(cmd):
     return ("ledger-write", "shell write into a climb ledger",
             f"This command writes {hit} from the shell. Ledger rows go through `climb-log append --row '<json>'` "
             "(or `--file row.json`), which refuses a reported number that does not name its selection rule, window "
-            "and code version, the gap behind the 5 numbers retracted on 2026-10-10; a `>` would also erase the "
+            "and code version, the gap behind the 5 numbers retracted; a `>` would also erase the "
             "append-only history. `climb-log schema` prints the contract. To repair a malformed line with Drew's "
             "approval, rerun with CC_ALLOW_LEDGER_WRITE=1 (logged).", "CC_ALLOW_LEDGER_WRITE")
 
@@ -1576,7 +1575,7 @@ def rule_xtrace_secrets(events):
     return ("xtrace-secrets", "xtrace while loading a secret",
             f"This command turns on shell tracing (bash -x, sh -x, set -x, set -o xtrace or BASH_XTRACEFD) while it loads "
             f"or expands a secret ({found[0]}). The trace prints every expanded value, so the secret would land in the "
-            "transcript: on 2026-10-10 a `bash -x` run of a hosted-runner script over ssh printed the GTM operator key. "
+            "transcript: a `bash -x` run of a hosted-runner script over ssh printed the GTM operator key. "
             "Run it without -x, or wrap only the non-secret part: `set +x` before the line that reads the key and "
             "`set -x` after it. To check a key, print its length or a fingerprint, never the value.", None)
 
@@ -1588,7 +1587,7 @@ def rule_env_dump(events):
         return None
     return ("env-dump", "print of environment values",
             f"This command prints environment values ({found[0]}). Fleet lane environments carry live credentials "
-            "(router keys, GitHub and sandbox tokens), and the transcript keeps whatever is printed: on 2026-10-12 a "
+            "(router keys, GitHub and sandbox tokens), and the transcript keeps whatever is printed: a "
             "subagent ran `env | grep TANGLE_` to find its lane id and printed the lane's sk-tan- router key, which "
             "forced a production key rotation. Print names only (`env | cut -d= -f1 | grep TANGLE_`), or one named "
             "non-secret variable (`printf '%s\\n' \"$TANGLE_RUN_ID\"`). To check a key, print its length "

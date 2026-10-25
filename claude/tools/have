@@ -602,7 +602,7 @@ def workflow_candidates(files: dict[str, str], q: Query) -> list[Workflow]:
 
 
 # A sweep greps every repository on this machine. With 6 repositories at 2 threads each, one `have` held about 8 cores of a
-# 10-core laptop and, with two sessions searching at once, pushed load1 to 77 (2026-10-19 21:23Z, fleet load alert). The
+# 10-core laptop and, with two sessions searching at once, pushed load1 to 77. The
 # greps run at a lower CPU priority and one thread each, and the default parallelism follows the machine.
 COURTESY = ["nice", "-n", "10"]  # not macOS taskpolicy -b: its background I/O throttle starved greps past their timeout
 

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Refuse a commit that moves or deletes a file while a current doc still names its old path.
 
-Drew, 2026-10-21, while the split lanes were moving thousands of files: "make the repo much more
-friendly to work in for agents, no miscommunication or confusion should be allowed". That day a third
+A repo must not mislead its next agent. While split lanes moved thousands of files, a third
 of the file paths named in agent-container's current docs (594 of 1,683) pointed at nothing, and every
 split made it worse. A doc that names a missing file sends the next agent looking for code that is gone.
 

@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 """Stop hook: a final message that hands Drew a credential lookup goes back to the agent once.
 
-Drew corrected the same hand-off twice. On 2026-10-16 an agent ended with "Three things are
-still blocked on you: ... tell me where `DISCO_SANDBOX_KEY_PLAYS` lives on GTR ... unlock GTR's
-keyring"; Drew replied "hwy blocked please finish this properly! you are the owner, you can
-manage secrets and stuff better than i", and the agent then found the key itself (discovery-lab
-#1913). On 2026-10-17 an agent wrote "ChatGPT Pro critiques need one thing that only you can
-provide: your GTR login password"; Drew replied "wtf u have alwasy had all the passwords".
+Agents twice asked for a key or password they could find themselves.
 
 The rule: a final message that asks Drew for a password, key, token, secret, login or unlock is
 sent back once with an instruction to look first (the vault via dotenvx, ~/.config/disco/env,
@@ -120,7 +115,7 @@ def main():
         "decision": "block",
         "reason": (
             f"blocked-guard: your final message asks Drew for a credential or login (\"{hits[0]}\"). "
-            "Drew, 2026-10-17: \"wtf u have alwasy had all the passwords\". Look before asking: the vault "
+            "You have access to the secrets. Look before asking: the vault "
             "(`dotenvx get` on the repo's vault files), ~/.config/disco/env, the repo's secret stores and "
             "`gh secret list`, `have <name>`, and Drew's earlier messages in this session's transcript. "
             "Read a value only into the process that needs it; never type it into a command. If you find it, "

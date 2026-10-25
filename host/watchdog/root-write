@@ -1,7 +1,7 @@
 #!/bin/sh
 # watchdog(8) v1 test script.
 # test:   write and fsync a probe file on the root filesystem. A frozen root
-#         (fsfreeze, 2026-09-02) blocks the write past the daemon's
+#         (fsfreeze) blocks the write past the daemon's
 #         test-timeout; the daemon then stops the keepalive and the kernel
 #         watchdog resets the box instead of leaving it unreachable for days.
 # repair: nothing can thaw a root frozen by a dead process. Exit non-zero so

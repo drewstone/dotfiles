@@ -189,7 +189,7 @@ not_admitted() {
   exit "$NOT_ADMITTED"
 }
 # A host auto chose can fall below its disk floor between the probe and the
-# gate's own check: on 2026-10-12 docker images filled beelink2 by 14 GiB in
+# gate's own check: docker images filled beelink2 by 14 GiB in
 # 40 min, and a gate placed there exited TEMPFAIL while beelink1 had room. An
 # auto placement gives such a host back, and the launcher's next probe sees it
 # refused and picks the other host, or exits TEMPFAIL when both refuse.
@@ -239,7 +239,7 @@ acquire_checkout_admission() {
   # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
   # and markers with it; finish replaces this trap once the checkout is held.
   # Wait for load before taking a checkout: a gate that only waits for load must
-  # not hold the repo's checkout. On 2026-10-11 one ADC gate held it for 1766s of
+  # not hold the repo's checkout. One ADC gate held it for 1766s of
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
   while [ -z "$lock" ]; do
@@ -557,7 +557,7 @@ waiter_alive() {  # <ticket or marker file> <pid>
   started=$(proc_start "$2") || return 0
   # A ticket that names its owner's start tick is alive only while that same process runs: a reused pid starts
   # at another tick. Realtime is not compared, because btime is realtime minus uptime and beelink1's moved
-  # +723 s in its first 17 h on 2026-10-18; with the old 1 s slack a step dropped a live reservation's ticket
+  # +723 s in its first 17 h; with the old 1 s slack a step dropped a live reservation's ticket
   # and a newer gate went first (beelink-gate tests 136 and 3397).
   [ -z "$recorded" ] || { [ "$recorded" = "$started" ]; return; }
   # Tickets from older gates name no tick. A reused pid needs a pid_max wrap (about 5 h on beelink1 at

@@ -1,7 +1,6 @@
 """Warn before `gh pr merge` / `gh-drew pr merge` when a PR's head commit is not green.
 
-On 2026-10-10 at 20:34Z a merge-queue session, on Drew's direct "merge these in right now",
-merged 18 agent-dev-container PRs in one loop. Its red filter read only check-run `conclusion`
+A merge-queue session once merged 18 agent-dev-container PRs in one loop. Its red filter read only check-run `conclusion`
 and missed commit statuses (`signoff/local` reports a `state`), so #10102 (signoff failure),
 #10079 (failure), #10106 (mixed) and #10110 (pending) looked green. develop enforces nothing:
 branch protection is not available on that plan.

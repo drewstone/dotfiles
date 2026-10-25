@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Refuse a commit that makes a logic file a god object.
 
-Drew, 2026-10-20, after a census found 958 logic files over 1,000 lines across
-our repos: "files of logic never exceeding <1.5k LOC, even <1k LOC ideally".
-The process had no rule, so files only grew. This is the rule:
+A census found 958 logic files over 1,000 lines across our repos.
+Logic files stay under 1,000 lines. The process had no rule, so files only grew. This is the rule:
 
 - a new logic file may not exceed LIMIT lines;
 - a logic file already over LIMIT may not grow (a rename keeps its old count).

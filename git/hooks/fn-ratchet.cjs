@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Refuse a commit that adds a function over LIMIT lines or grows one already over it.
 //
-// Drew, 2026-10-21, after the file splits: "where else is there god objects we didn't finish". The splits put every
-// logic file under 1,000 lines, but god objects moved inside files: a 953-line function filled tangle-router's 999-line
+// The file splits put every logic file under 1,000 lines, but god objects moved inside files: a 953-line function filled tangle-router's 999-line
 // failover/dispatch.ts, and agent-container had 171 functions over 500 lines. loc-ratchet cannot see that.
 //
 // The rule, for staged TypeScript, JavaScript and Python outside tests: no new function longer than LIMIT lines, and no

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse guard: a subagent never waits inside the session and never spawns agents.
 #
-# On 2026-10-06 subagents kept themselves alive for hours on in-session background
+# Subagents kept themselves alive for hours on in-session background
 # watchers ("Waiting on the background event watcher"), re-reading 300k-900k tokens
 # of context on every wake, and spawned their own "land PR" agents. Waiting belongs
 # in a nohup script on gtr or a Beelink that acts and writes one result line; the
@@ -71,7 +71,7 @@ elif tool == "Agent":
 if reason is None:
     sys.exit(0)
 
-# 2026-10-14: a detached receipt script on drew-gtr-pro ran under a non-login shell,
+# A detached receipt script on drew-gtr-pro ran under a non-login shell,
 # found neither gh-drew nor beelink-gate, exited 127 at once, and the PR waited
 # unmerged behind a result file nobody had checked.
 msg = (reason + " To land an agent-container PR, push it and stop: merge-on-green merges it "

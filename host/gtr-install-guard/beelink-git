@@ -1,7 +1,7 @@
 #!/bin/sh
 # Beelink /usr/local/bin/git. Only `worktree` commands pay Python's startup for the lane cap
 # (guard.py, installed as /usr/local/lib/beelink-worktree-cap/git); every other call goes
-# straight to /usr/bin/git. Measured 2026-10-11 on beelink2: 76 ms per call through Python, 8 ms native.
+# straight to /usr/bin/git. Python costs 76 ms per call, native 8 ms.
 case " $* " in
   *" worktree "*) exec /usr/bin/python3 -I -S /usr/local/lib/beelink-worktree-cap/git "$@" ;;
 esac

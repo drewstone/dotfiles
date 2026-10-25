@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path'
 import { retryAfterSeconds, takeSlot } from './operator-api/rate.mjs'
 
 // Production origins; --origin or <APP>_BASE_URL overrides the origin. No app carries a copied default
-// workspace: it goes stale when the owner's workspaces change (GTM's b81b721c… was frozen on 2026-10-19), so the
+// workspace: it goes stale when the owner's workspaces change (GTM's b81b721c… was frozen), so the
 // workspace comes from --workspace, <APP>_WORKSPACE_ID, or the key's only workspace.
 const APPS = {
   gtm: { name: 'GTM Agent', origin: 'https://gtm.tangle.tools' },
@@ -124,7 +124,7 @@ function parseArgs(argv) {
   } else if (command === 'ask') {
     if (positional.length === 0) throw new UsageError('give the ask as an argument, or - to read stdin')
     // A new conversation that is one lowercase word is a mistyped command, and an
-    // ask starts a real, billed turn (`whoami` did on 2026-10-16). Replies on a
+    // ask starts a real, billed turn (`whoami` did). Replies on a
     // --thread ("go", "yes") pass, and `--` sends anything as an ask.
     if (!allLiteral && !options.thread && positional.length === 1 && /^[a-z][a-z0-9-]*$/.test(positional[0])) {
       throw new UsageError(`"${positional[0]}" is not a command (${[...COMMANDS].join(', ')}); an ask is a sentence, or pass -- ${positional[0]} to send it as one`)

@@ -6,7 +6,6 @@ description: Voice ledger, day profiles, "what makes my agents productive": mine
 # Voice ledger
 
 Reverse-engineer what makes Drew's agents productive from his own words: every turn he typed, which turns corrected an agent, what shipped that day, and the profiles that would have worked the way he wanted.
-Drew asked for this skill by name on 2026-10-15 after a manual run.
 
 Run it on the Mac and read the GTR over ssh (`drew-gtr-pro`).
 Set up these names first:

@@ -5,7 +5,7 @@ Installs and gates belong on a Beelink (`beelink-gate beelink1|beelink2 <repo> <
 GTR is resource-constrained and shared by many agent sessions.
 
 pnpm, npm and yarn installs (including `--frozen-lockfile`, and the same through `corepack`) are
-refused in any git checkout on GTR. On 2026-10-10, refused inside `_wt`, an agent cloned a new
+refused in any git checkout on GTR. Refused inside `_wt`, an agent cloned a new
 checkout at ~/code/gate-gtm-20261010 and ran its frozen install and tests there instead.
 
 Exempt: the deploy-managed service checkouts that tangle-tools-deploy installs
@@ -512,7 +512,7 @@ def main() -> None:
     if not Path(str(entry) + ".gtr-original").exists():
         # Invoked through a symlink to the installed wrapper (a test's stub bin/git that links
         # `which git`): the preserved executable and the worktree cap sit beside the wrapper's
-        # real path, not beside the alias. On 2026-10-11 the alias path refused every ADC script
+        # real path, not beside the alias. The alias path refused every ADC script
         # test that builds such a stub, so no signoff could pass on either Beelink.
         installed = Path(__file__).resolve()
         if Path(str(installed) + ".gtr-original").exists():

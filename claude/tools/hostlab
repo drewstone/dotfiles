@@ -2,8 +2,8 @@
 # hostlab: a throwaway Ubuntu 24.04 VM for root-level experiments.
 #
 # Storage, mount, namespace, and freeze work never runs on the host root.
-# Two outages came from that: 2026-08-20 (`unshare --mount` then `rmdir /proc`,
-# 5 days down) and 2026-09-02 (`fsfreeze -f` on a directory whose mount had
+# Two outages came from that: `unshare --mount` then `rmdir /proc` (5 days
+# down), and `fsfreeze -f` on a directory whose mount had
 # failed froze the root filesystem, 16 days down). The host wrappers in
 # /usr/local/sbin and the Claude hook refuse those verbs and point here.
 #
@@ -36,7 +36,7 @@
 # minute. It stops a kept VM past its expiry, a run whose caller exited, and a
 # run whose qemu died, then moves the run dir to the archive, which keeps 14
 # days. A boot refuses when the disk holding the runs has under 100 GB free.
-# Why: on 2026-09-27, VMs whose callers were gone held 60 GB of RAM and 70 GB
+# Why: VMs whose callers were gone held 60 GB of RAM and 70 GB
 # of disk on drew-gtr-pro, and one run's copy of /nix filled 36 GB.
 set -euo pipefail
 
@@ -56,7 +56,7 @@ DISK="${HOSTLAB_DISK:-20G}"
 ARCHIVE="${HOSTLAB_ARCHIVE:-/mnt/traces/archive/hostlab}"
 # The archive lives on the external drive. When that drive is missing, the
 # path is a plain directory on the root disk, and archiving there would move
-# VM disks onto root (2026-09-28: the drive vanished after a crash).
+# VM disks onto root.
 ARCHIVE_MOUNT="${HOSTLAB_ARCHIVE_MOUNT:-/mnt/traces}"
 MIN_FREE_GB=100
 ARCHIVE_KEEP_DAYS=14
@@ -545,7 +545,7 @@ cmd_extend() {
 # An archive keeps a run's logs and small artifacts (no VM disks, nothing over
 # 100 MB) in <dest>/<id>, and the run dir is deleted only once the archive holds
 # the same number of files. VM disks are throwaway: moving them was the problem
-# on both kinds of host. On 2026-10-12 beelink2, which has no archive drive,
+# on both kinds of host. Beelink2, which has no archive drive,
 # held 22 expired runs (62 GiB of disks) and refused gates on its disk floor;
 # the same morning GTR's reaper spent 2.8 h moving one 22 GB run onto the USB
 # trace drive at 0.7 MB/s, holding it at 87-100% utilization and stalling every

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """PreToolUse guard: a session runs at most three live Opus agents at a time.
 
-On 2026-10-10/11 one operator session had 19 Opus agents live at its peak and was over
+One operator session had 19 Opus agents live at its peak and was over
 SOUL's "at most three large agents at a time" for 425 of 726 live minutes (59%); the
 written rule was loaded the whole time. This hook makes the cap bite at launch.
 
 It counts the session's live agents: transcripts under <session>/subagents/ (workflow
 agents included) written within the last CC_AGENT_LIVE_SECS seconds (default 240) whose last
 assistant message did not end the agent's turn, each classified by the last model it recorded.
-A finished agent stopped counting only when its transcript aged out until 2026-10-24: 40 of
-85 refusals on the Mac from 10-17 to 10-24 counted agents that had already reported. An Agent or Workflow call is denied when it
+When a finished agent counted until its transcript aged out, 40 of 85 refusals counted agents
+that had already reported. An Agent or Workflow call is denied when it
 would add an Opus agent beyond CC_OPUS_AGENT_CAP (default 3), or any agent beyond
 CC_AGENT_TOTAL_CAP (default 8). An Agent call with model sonnet or haiku adds no Opus
 agent. A Workflow call adds CC_WORKFLOW_WEIGHT Opus agents (default 3): its script runs
-several agents at once, and on 2026-10-11 a workflow counted as one let 5 Opus agents run
+several agents at once, and a workflow counted as one let 5 Opus agents run
 against the cap of 3. With the defaults a workflow starts only when no Opus agent is live.
 
 The session-level override CC_ALLOW_AGENT_OVERCAP=1 (set for the session, not on a
@@ -126,8 +126,8 @@ def main() -> None:
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": (
-            f"agent-cap-guard: {why}. SOUL's spend rule: at most three large agents at a time "
-            "(2026-10-11: peak 19, over the cap 59% of live minutes). End your turn: the harness notifies "
+            f"agent-cap-guard: {why}. SOUL's spend rule: at most three large agents at a time. "
+            "End your turn: the harness notifies "
             "you as each agent finishes, and this launch passes once one has. Or run small work with "
             "model: sonnet, or give the work to a Disco play."
         ),

@@ -365,7 +365,7 @@ function pushedReleaseLine(refUpdates) {
  * A default branch is updated only from the local branch of the same name. A worktree whose
  * branch tracks origin/develop under push.default=upstream turns a plain `git push` into an
  * update of develop from a feature branch; three such pushes landed on agent-dev-container's
- * develop on 2026-10-11 with no pull request. A receipted merge lands through the GitHub API,
+ * develop with no pull request. A receipted merge lands through the GitHub API,
  * not git push, so this never sees it.
  */
 function checkNoCrossNameDefaultPush(repoRoot, refUpdates = [], remoteUrl = "") {

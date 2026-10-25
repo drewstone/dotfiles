@@ -685,9 +685,8 @@ rtk_guard_args_name_revision() {
 # than the caller: a file (`> x.patch`, `>> log`, `&> out`, `>&2`) or another
 # program (`| git apply`, `| tee x`). rtk's output is a compact DISPLAY for an
 # agent to read; it is not git's output format, and a file or a program that
-# expects a patch receives something that is not one. Measured 2026-10-12:
-# `git diff > x.patch` routed to rtk wrote a summary, and `git apply` on it
-# exited 7 after a 521 s gate (agent-dev-container #10053).
+# expects a patch receives something that is not one: `git diff > x.patch`
+# routed to rtk wrote a summary that `git apply` rejected.
 #
 # Same scanning rule as above: it stops only at a recognised command-position
 # token, and a pipe there means the next command reads this output. A token

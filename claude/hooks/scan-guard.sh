@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # PreToolUse(Bash) block for recursive searches over the whole home or state trees.
 #
-# On 2026-10-02/03 agents ran `find /Users/drew ...`, `grep -rl <key> ~/.config
+# Agents ran `find /Users/drew ...`, `grep -rl <key> ~/.config
 # ~/.local/state ...` and `grep -rl clef-flash ~/.local/state` on the Mac. Each ran
 # 4-10 min at ~100% CPU and heavy I/O while the Mac sat at load 50-110 with swap
 # full, and each answer was available from a narrower path (the repo, the owning
 # state file, or the vault by key name).
 #
-# On 2026-10-05/06 on drew-gtr-pro, four `find / -name ...` searches ran 20-75 min
+# Four `find / -name ...` searches ran 20-75 min
 # each. They walked the trace archive HDD (/mnt/traces, 11M inodes) and evicted the
 # inode cache the hourly trace-archive capture needs, which then read about 115
 # entries/s instead of over 1,000.
@@ -20,7 +20,7 @@
 # Bounded finds stay allowed on a broad root: `-maxdepth` up to 3, or `-xdev` on
 # /mnt (its own filesystem, without the archive drive). `-xdev` on / or the home
 # still walks every checkout. Codex runs this hook too (~/.codex/hooks.json,
-# installed by claude/install.sh); on 2026-10-11 a Codex session's
+# installed by claude/install.sh); a Codex session's
 # `find / -name ...` walked /mnt/traces for 35+ min on drew-gtr-pro because only
 # Claude ran the guard.
 #
@@ -55,7 +55,7 @@ home = os.path.expanduser("~")
 BROAD = {"/", "/home", "/mnt", "/mnt/traces", home, home + "/", home + "/.local", home + "/.local/state", home + "/.local/share",
          home + "/.config", home + "/.cache", home + "/Library", home + "/.codex", home + "/.claude",
          home + "/code", home + "/code/_wt", home + "/webb", home + "/webb/_wt"}
-# A relative or implicit path resolves against the session's cwd: on 2026-10-10 a lane ran `grep -rln ... .` from
+# A relative or implicit path resolves against the session's cwd: a lane ran `grep -rln ... .` from
 # ~/code on drew-gtr-pro at 43 MB/s while the box sat at load 90, and the literal "." matched nothing here.
 cwd = d.get("cwd") or os.getcwd()
 

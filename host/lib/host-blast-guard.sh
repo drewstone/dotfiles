@@ -3,8 +3,8 @@
 # Every wrapper sources this file, decides, then execs the real binary.
 #
 # Why: two outages came from root storage commands that look scoped and act on
-# the whole host. 2026-08-20: `unshare --mount` then `rmdir /proc` deleted the
-# real /proc directory (5 days down). 2026-09-02: `fsfreeze -f` on a directory
+# the whole host. `unshare --mount` then `rmdir /proc` deleted the
+# real /proc directory (5 days down); `fsfreeze -f` on a directory
 # whose mount had failed froze the root filesystem (16 days down).
 #
 # Policy: a command may touch a loop device, a device-mapper device on a loop
@@ -33,7 +33,7 @@ hbg_refuse() {
   shift
   {
     printf 'host-blast-guard: refused %s: %s\n' "$verb" "$*"
-    printf 'This class of command took this host down on 2026-08-20 and 2026-09-02.\n'
+    printf 'This class of command took this host down twice.\n'
     printf 'Run it in a throwaway VM instead:  hostlab run -- %s ...   (hostlab --help)\n' "$verb"
     printf 'A human may bypass one call with HOST_BLAST_GUARD=off. An agent must not.\n'
   } >&2
