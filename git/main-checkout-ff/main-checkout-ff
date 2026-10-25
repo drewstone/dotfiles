@@ -29,9 +29,9 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeou
 note() { echo "$(date -u +%FT%TZ) $*" >> "$log"; }
 say() { if [ "$dry_run" = 1 ]; then echo "$*"; else note "$*"; fi; }
 
-# Repositories another lane owns (fleet runbook: discovery-lab-65 owns discovery-lab and discovery).
-# Override with MAIN_CHECKOUT_FF_EXCLUDE, a space-separated list of directory names.
-exclude=" ${MAIN_CHECKOUT_FF_EXCLUDE-discovery-lab discovery} "
+# Directory names to leave alone, space-separated. None by default: the tracked-change, in-use
+# and ignored-file guards below already keep a fast-forward from touching live work.
+exclude=" ${MAIN_CHECKOUT_FF_EXCLUDE-} "
 
 # Prints the paths each process runs from: its working directory, its program (argv[0]) and
 # the script it was given (argv[1]), since services run code by absolute path without a cwd

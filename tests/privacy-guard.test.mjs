@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -10,6 +10,7 @@ const hook = resolve("git/hooks/pre-commit");
 const DETAIL = "77 Fictional Test Lane";
 // A Luhn-valid 16-digit run, assembled at runtime so this file never stages one itself.
 const LUHN_DIGITS = ["4539", "1488", "0343", "6467"].join("");
+const AMEX_DIGITS = ["3412", "345678", "90127"].join("");
 
 function repoWith(content, { denylist = `# local only\n${DETAIL}\n` } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "privacy-guard-"));
@@ -17,15 +18,20 @@ function repoWith(content, { denylist = `# local only\n${DETAIL}\n` } = {}) {
   git("init", "-q");
   git("config", "user.email", "drewstone329@gmail.com");
   git("config", "user.name", "Drew Stone");
+  git("config", "core.hooksPath", dirname(hook));
   writeFileSync(join(dir, "file.txt"), content);
   git("add", "file.txt");
-  const list = join(dir, "..", `denylist-${Date.now()}-${Math.random()}`);
+  const list = join(dir, "denylist");
   writeFileSync(list, denylist);
-  return spawnSync("bash", [hook], {
-    cwd: dir,
-    encoding: "utf8",
-    env: { ...process.env, GIT_PRIVACY_DENYLIST: list },
-  });
+  try {
+    return spawnSync("git", ["commit", "-qm", "test: privacy boundary fixture"], {
+      cwd: dir,
+      encoding: "utf8",
+      env: { ...process.env, GIT_PRIVACY_DENYLIST: list },
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 test("refuses a staged personal detail from the local denylist, case-insensitively, without echoing it", () => {
@@ -54,4 +60,34 @@ test("accepts published processor test cards, timestamps and ordinary content", 
 
 test("passes when no local denylist exists", () => {
   assert.equal(repoWith(`footer: ${DETAIL}\n`, { denylist: "" }).status, 0);
+});
+
+
+test("accepts card-shaped numeric spans only when they belong to an alphanumeric token", () => {
+  for (const digits of [LUHN_DIGITS, AMEX_DIGITS]) {
+    for (const token of [`a${digits}`, `${digits}B`, `f${digits}e`]) {
+      const result = repoWith(`revision: ${token}\n`);
+      assert.equal(result.status, 0, "an alphanumeric token was misclassified as a card");
+    }
+    const hex = `abc${digits}${"f".repeat(37 - digits.length)}`;
+    assert.equal(hex.length, 40);
+    assert.equal(repoWith(`revision: ${hex}\n`).status, 0, "a hexadecimal revision was misclassified as a card");
+  }
+});
+
+test("still refuses unexempted compact and grouped PANs at punctuation boundaries without exposing them", () => {
+  const grouped = [
+    LUHN_DIGITS.match(/.{4}/g).join(" "),
+    LUHN_DIGITS.match(/.{4}/g).join("-"),
+    `${AMEX_DIGITS.slice(0, 4)} ${AMEX_DIGITS.slice(4, 10)} ${AMEX_DIGITS.slice(10)}`,
+    `${AMEX_DIGITS.slice(0, 4)}-${AMEX_DIGITS.slice(4, 10)}-${AMEX_DIGITS.slice(10)}`,
+  ];
+  for (const digits of [LUHN_DIGITS, AMEX_DIGITS, ...grouped]) {
+    for (const content of [digits, `card: "${digits}",`, `(${digits})`, `_${digits}_`, `${digits}.`]) {
+      const result = repoWith(`${content}\n`);
+      assert.equal(result.status, 1, "an unexempted delimited card was accepted");
+      assert.match(result.stderr, /payment card number/);
+      assert.ok(!result.stdout.includes(digits) && !result.stderr.includes(digits), "hook output exposed the card");
+    }
+  }
 });
