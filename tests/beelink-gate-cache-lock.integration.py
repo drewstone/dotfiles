@@ -114,8 +114,10 @@ def reservation_case(source, refusal, expected_id=True):
                         "tempfail_line", "tempfail"])
     reservations = common + "\n" + "\n".join(
         function(admission, name) for name in ["proc_start", "ticket_body"])
-    reservations += "\n" + function(source, "reserve_checkout")
     transport = (ROOT / "claude/tools/beelink-gate-lib/source.sh").read_text()
+    # Load the actual helper, including the heartbeat interval it owns. A
+    # function-only extraction dropped that interval and retired tickets at once.
+    reservations += "\n" + transport + "\n" + function(source, "reserve_checkout")
     begin = transport.index("  heartbeat_input() {")
     end = transport.index("\n  }", begin) + len("\n  }")
     reservations += "\n" + transport[begin:end]
@@ -206,7 +208,7 @@ exit "$rc"
                 children.append(proc)
                 wait_until(lambda: bool(list(cache.glob(".locks/queue-*"))), "reservation did not enqueue")
                 ticket, = cache.glob(".locks/queue-*")
-                wait_until(lambda: token in ticket.read_text() and "start=" in ticket.read_text(),
+                wait_until(lambda: token in (body := ticket.read_text()) and "start=" in body,
                            "reservation did not finish writing its ticket")
                 tickets.append(ticket)
                 original.append((ticket.stat().st_ino, ticket.read_text()))
