@@ -115,20 +115,23 @@ def foreign_control(gate):
                 while not (root / "ready").exists():
                     assert proc.poll() is None and time.monotonic() < deadline, "foreign control admission unproved"
                     time.sleep(0.02)
-                gate_id = re.search(r"gate_id=(beelink[12]-[0-9a-f]{32})", log.read_text())[1]
+                gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
+                assert gate_id, "foreign fixture allocation custody unknown"
                 pid, birth = (state / "jobs" / gate_id / "gate.pid").read_text().split()
                 yield {"id": gate_id, "pid": int(pid), "birth": birth, "state": state}
             finally:
                 (root / "release").touch()
-                if not gate_id:
-                    allocated = re.search(r"gate_id=(beelink[12]-[0-9a-f]{32})", log.read_text())
-                    gate_id = allocated[1] if allocated else ""
-                if gate_id:
-                    cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
-                                             env=env, capture_output=True, timeout=330)
-                    assert cleanup.returncode == 0, "foreign fixture cleanup unconfirmed"
-                if proc.poll() is None:
-                    proc.wait(timeout=15)
+                try:
+                    if not gate_id:
+                        gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
+                    if gate_id:
+                        cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
+                                                 env=env, capture_output=True, timeout=330)
+                        assert cleanup.returncode == 0, "foreign fixture cleanup unconfirmed"
+                finally:
+                    if proc.poll() is None:
+                        proc.send_signal(signal.SIGTERM)
+                        proc.wait(timeout=15)
 
 
 def foreign_is_healthy(control):
@@ -177,7 +180,8 @@ exit "$2"
                 while not (root / "ready").exists():
                     assert proc.poll() is None and time.monotonic() < deadline, "real command did not start"
                     time.sleep(0.02)
-                gate_id = re.search(r"gate_id=(beelink[12]-[0-9a-f]{32})", log.read_text())[1]
+                gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
+                assert gate_id, "cleanup fixture allocation custody unknown"
                 job = state / "jobs" / gate_id
                 cache = root / "cache/beelink-gate"
                 lock = (cache / ".locks/.capacity.lock").open("a+")
@@ -208,13 +212,17 @@ exit "$2"
                 if lock:
                     lock.close()
                 (root / "release").touch()
-                if gate_id:
-                    cleaned = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id], env=env,
-                                             capture_output=True, timeout=330)
-                    assert cleaned.returncode == 0, "exact native fixture retirement unconfirmed"
-                if proc.poll() is None:
-                    proc.send_signal(signal.SIGTERM)
-                    proc.wait(timeout=12)
+                try:
+                    if not gate_id:
+                        gate_id = owned_frontend_leaf(read_frontend(log.read_bytes()), host)
+                    if gate_id:
+                        cleaned = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id], env=env,
+                                                 capture_output=True, timeout=330)
+                        assert cleaned.returncode == 0, "exact native fixture retirement unconfirmed"
+                finally:
+                    if proc.poll() is None:
+                        proc.send_signal(signal.SIGTERM)
+                        proc.wait(timeout=12)
 
 
 def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
@@ -432,9 +440,6 @@ exit 0
                     output.extend(os.read(proc.stdout.fileno(), 65536))
                 except BlockingIOError:
                     pass
-                match = re.search(rb"gate_id=(beelink[12]-[0-9a-f]{32})", output)
-                if match:
-                    gate_id = match[1].decode()
                 assert proc.poll() is None and time.monotonic() < deadline, "native job never reached its real command"
                 time.sleep(0.05)
             if not gate_id:
@@ -442,8 +447,7 @@ exit 0
                     output.extend(os.read(proc.stdout.fileno(), 65536))
                 except BlockingIOError:
                     pass
-                match = re.search(rb"gate_id=(beelink[12]-[0-9a-f]{32})", output)
-                gate_id = match[1].decode() if match else ""
+                gate_id = owned_frontend_leaf(read_frontend(output), host)
             assert gate_id, "frontend did not publish its exact allocated gate ID"
             job = state / "jobs" / gate_id
             assert (job / "systemd-manager").read_text() == "system\n"
@@ -547,6 +551,17 @@ exit 0
                     "manager": "system", "canceled": canceled,
                     "native_terminal": terminal, "native_stopped": stopped}
         finally:
+            custody_error = None
+            if not gate_id:
+                try:
+                    if proc.stdout is not None and not proc.stdout.closed:
+                        try:
+                            output.extend(os.read(proc.stdout.fileno(), 65536))
+                        except BlockingIOError:
+                            pass
+                    gate_id = owned_frontend_leaf(read_frontend(output), host)
+                except (OSError, ValueError, KeyError) as error:
+                    custody_error = str(error)
             for frontend in frontends:
                 if frontend.poll() is None:
                     os.killpg(frontend.pid, signal.SIGTERM)
@@ -563,6 +578,7 @@ exit 0
                 cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
                                          env=env, capture_output=True, text=True, timeout=330)
                 assert cleanup.returncode == 0, "maintained fixture cancellation was not confirmed: " + cleanup.stderr
+            assert custody_error is None, "native fixture cancellation custody unknown: " + str(custody_error)
 
 
 class NativePeer:
@@ -832,12 +848,12 @@ def main():
         "native-command-failure", "native-command-255", "native-command-75", "native-reservation-lifetime", "native-reservation-failure",
         "cancel-group-term", "cancel-stdout-pipe"], action="append")
     args = parser.parse_args()
+    def stop_controller(signum, frame):
+        raise KeyboardInterrupt('owned acceptance stop requested')
+    signal.signal(signal.SIGTERM, stop_controller)
+    signal.signal(signal.SIGHUP, stop_controller)
     if args.host:
         assert args.out, '--out is required for GTR acceptance'
-        def stop_controller(signum, frame):
-            raise KeyboardInterrupt('owned acceptance stop requested')
-        signal.signal(signal.SIGTERM, stop_controller)
-        signal.signal(signal.SIGHUP, stop_controller)
         args.out.mkdir(parents=True,exist_ok=True)
         modes=args.case or ['native-pass','native-command-failure','native-command-255','native-command-75',
             'native-pass-payload-large','native-lost-ssh','native-pid-term','native-attach-term',
@@ -861,6 +877,8 @@ def main():
                 rows.append(native_job_case(args.gate, mode, control))
         else:
             rows.append(native_cleanup_case(args.gate, mode) if mode.endswith("cleanup-term") else native_job_case(args.gate, mode))
+        if not rows[-1]["passed"]:
+            break
     print(json.dumps({"bash": subprocess.check_output(["bash", "--version"], text=True).splitlines()[0],
                       "cases": rows, "passed": sum(row["passed"] for row in rows),
                       "total": len(rows)}, indent=2))
