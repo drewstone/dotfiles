@@ -383,8 +383,7 @@ wrap_signal() {  # <exit code>
   [ -z "$wrap_child" ] || kill -TERM "$wrap_child" 2>/dev/null || true
   [ -z "$wrap_sleep" ] || kill -TERM "$wrap_sleep" 2>/dev/null || true
 }
-wrap_stopped() {  # <exit code> <gate id this wrapper attaches to, or empty>
-  [ -z "$2" ] || frontend_cancel_gate=$2
+wrap_stopped() {  # <exit code>; exact leaf was bound by the current frame owner
   if [ "${cancel_on_term:-0}" = 1 ] && [ -z "${frontend_cancel_gate:-}" ]; then
     frontend_tainted=1
     echo 'beelink-gate: UNKNOWN cancellation custody; no authenticated current leaf is available, native cancellation unconfirmed' >&2
@@ -407,7 +406,7 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     deadline=$(( $(date +%s) + (frontend_retry_deadline_ms - $(monotonic_ms) + 999) / 1000 ))
   fi
   while :; do
-    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop" "$reattach"
+    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop"
     attempt=$((attempt + 1))
     rm -f "$dir/out" "$dir/err"
     mkfifo "$dir/out" "$dir/err" || die "cannot create the gate transcript pipes"
@@ -417,9 +416,12 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     (trap '' HUP INT TERM; exec tee "$dir/err.log" < "$dir/err" >&2) & tee_err=$!
     frontend_phase setup
     frontend_child_owner=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    frontend_delegation_confirmed=""
     frontend_record delegate "$frontend_child_owner"
+    [ "${frontend_output:-}" != "$frontend_child_owner" ] || frontend_delegation_confirmed=$frontend_child_owner
     if [ -n "$reattach" ]; then
-      frontend_cancel_gate=$reattach
+      frontend_cancel_gate=""
+      [ -z "$frontend_delegation_confirmed" ] || frontend_cancel_gate=$reattach
       BEELINK_GATE_CANCEL_ON_TERM="${cancel_on_term:-0}" BEELINK_GATE_FRONTEND_DEADLINE_MS="${frontend_retry_deadline_ms:-0}" BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" --attach "$reattach" > "$dir/out" 2> "$dir/err" & wrap_child=$!
     else
       frontend_cancel_gate=""
@@ -431,12 +433,12 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     # A forwarded stop interrupts wait; keep waiting while the child handles it.
     while [ -n "$wrap_stop" ] && kill -0 "$wrap_child" 2>/dev/null; do wait "$wrap_child"; rc=$?; done
     wrap_child=""
-    frontend_record claim "$frontend_child_owner"
+    frontend_record claim "$frontend_child_owner" "$frontend_delegation_confirmed"
     # The existing authenticated state owner returns a leaf only after the
     # exact delegated child released it. Bind before tee drain or stop handling.
-    if [[ "${frontend_output:-}" =~ ^beelink[12]-[0-9a-f]{32}$ ]]; then
+    if [ "$frontend_delegation_confirmed" = "$frontend_child_owner" ] && [[ "${frontend_output:-}" =~ ^beelink[12]-[0-9a-f]{32}$ ]]; then
       frontend_cancel_gate=$frontend_output
-    elif [ -z "$reattach" ]; then
+    else
       frontend_cancel_gate=""
     fi
     frontend_phase result_read
@@ -447,7 +449,7 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     done
     kill -KILL "$tee_out" "$tee_err" 2>/dev/null || true
     wait "$tee_out" "$tee_err" 2>/dev/null || true
-    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop" "$reattach"
+    [ -z "$wrap_stop" ] || wrap_stopped "$wrap_stop"
     [ -n "$minutes" ] || break
     line=""
     if [ "$rc" = "$NOT_ADMITTED" ] && [ -n "$reattach" ]; then
@@ -494,7 +496,7 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
       while kill -0 "$wrap_sleep" 2>/dev/null; do wait "$wrap_sleep" 2>/dev/null || true; done
       wait "$wrap_sleep" 2>/dev/null || true
       wrap_sleep=""
-      wrap_stopped "$wrap_stop" "$reattach"
+      wrap_stopped "$wrap_stop"
     fi
     wrap_sleep=""
   done
