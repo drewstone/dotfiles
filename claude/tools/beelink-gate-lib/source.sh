@@ -179,8 +179,15 @@ on_beelink() {
   # ("exec request failed on channel 0"); a 23 KB patch, base64
   # encoded in argv, became 41,676 bytes and the submit was reported as a lost
   # connection. Large arguments ride on stdin ahead of the script instead.
+  # The limit that binds first is cmd.exe's 8,191 characters for the whole line
+  # OpenSSH hands it: wsl.exe, every env assignment and bash -s, not only the
+  # arguments. 7,821 argument bytes passed an arguments-only 8,192 check and the
+  # full line failed "command line too long". Measure the line ssh sends, with a
+  # margin for the cmd.exe /c wrapper.
   local -a remote_args=("$@")
-  if (( $(printf '%s ' "$@" | wc -c) > 8192 )); then
+  local remote_line_bytes
+  remote_line_bytes=$(printf '%s ' wsl.exe -- env "${envs[@]}" bash -s -- "$@" | wc -c)
+  if (( remote_line_bytes > 8191 - 512 )); then
     args_line="set -- $(printf '%q ' "$@")"
     remote_args=()
   fi
