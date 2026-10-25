@@ -1,7 +1,7 @@
 # GTR package install guard
 
 On `drew-GTR-Pro`, `host/gtr-install-guard/install.py` wraps the existing PATH
-entrypoints for `pnpm`, `npm`, `yarn`, `uv` and `corepack` in `~/.local/bin`, `~/bin`, the
+entrypoints for `pnpm`, `pnpx`, `npm`, `yarn`, `uv` and `corepack` in `~/.local/bin`, `~/bin`, the
 pnpm home, and installed nvm Node versions. Each original executable stays next to its
 wrapper as `<name>.gtr-original`; allowed commands delegate to it.
 
@@ -32,6 +32,20 @@ The owner checks canonical policy and registry, matching paths, native process i
 and ancestry. Missing, released, stale or unrelated leases refuse. This cooperating
 agent PATH guard does not claim protection against a same-user attacker rewriting
 the canonical registry. Existing deployment exemptions remain separate.
+
+PNPM, pnpx and Corepack invocations enroll their original native unit in the
+existing storage-lifecycle PNPM_HOME resource before delegation. Enrollment
+protects the cache; it does not grant admission or change the original unit's
+CPU/memory hierarchy or supervising lease. The installer and cache collector
+share the existing capacity fence. A full install also enrolls existing account
+units without reading argv or prompts. Unknown/changing legacy populations keep
+the cache protected. Scoped Node prefix enrollment does not claim full coverage.
+Reclaim additionally checks the installed front doors against the root-protected
+guard generation and requires positive native terminal/recursive-empty evidence.
+Uninstall or drift retains cache custody instead of authorizing deletion.
+The implementation and native proof belong to Tangle Tools
+`storage_lifecycle/cache_producers.py` and
+`storage_lifecycle/tests/integration_cache_producers.py`.
 
 Install after updating the durable `~/code/dotfiles` checkout:
 

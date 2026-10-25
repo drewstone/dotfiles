@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 """Install reversible PATH entrypoint guards on GTR without touching Beelinks."""
 import argparse
+import hashlib
+import guard
 import os
 import shutil
 import sys
@@ -10,21 +12,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 HOME = Path.home()
 DEST = HOME / ".local/libexec/gtr-install-guard/guard.py"
-MANAGERS = ("pnpm", "npm", "yarn", "uv", "corepack")
 GIT_ENTRY = HOME / "bin/git"
-
-
-def entries(prefixes=()):
-    dirs = [prefix / "bin" for prefix in prefixes]
-    if not prefixes:
-        dirs = [HOME / ".local/bin", HOME / ".local/share/pnpm", HOME / "bin"]
-        dirs.extend(sorted((HOME / ".nvm/versions/node").glob("*/bin")))
-    paths = [directory / name for directory in dirs for name in MANAGERS]
-    return [path for path in paths if path.exists() or path.is_symlink() or Path(str(path) + ".gtr-original").exists()] + ([] if prefixes else [GIT_ENTRY])
-
-
-def guarded(path: Path) -> bool:
-    return path.is_symlink() and path.resolve(strict=False) == DEST
+entries, guarded = guard.entries, guard.guarded
 
 
 def install(prefixes=()) -> int:
@@ -104,7 +93,16 @@ def main() -> int:
         return 0
     selected = args.action or "--install"
     try:
-        return {"--install": install, "--check": check, "--uninstall": uninstall}[selected](prefixes)
+        if selected == "--check":
+            return check(prefixes)
+        admission, caches = guard.lifecycle()
+        cfg = admission.Config.load()
+        with caches.package_install_fence(cfg):
+            result = {"--install": install, "--uninstall": uninstall}[selected](prefixes)
+            if selected == "--install" and not prefixes:
+                guard.package_sources(HOME)
+                caches.producer_owner().update(cfg, hashlib.sha256((HERE / "guard.py").read_bytes()).hexdigest(), enroll=True)
+            return result
     except (OSError, RuntimeError) as error:
         print(f"gtr-install-guard: {error}", file=sys.stderr)
         return 1

@@ -24,6 +24,7 @@ worktree cap: a `git worktree add` into `_wt` must name its fleet lane, and is r
 already holds `cap` worktrees there or the filesystem has less than `floor_bytes` free. The refusal
 lists the longest-idle trees to release with wt-remove. Installs stay allowed: Beelinks are where they run.
 """
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -41,6 +42,44 @@ COREPACK_MANAGERS = {"pnpm": "pnpm", "pnpx": "pnpm", "yarn": "yarn", "yarnpkg": 
 NO_INSTALL = {"-g", "--global", "--location=global", "--lockfile-only", "--package-lock-only"}
 GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source"}
 WORKTREE_VALUE_FLAGS = {"-b", "-B", "--reason", "--orphan"}
+
+
+MANAGERS = ("pnpm", "pnpx", "npm", "yarn", "uv", "corepack")
+
+
+def entries(prefixes=(), home=HOME):
+    directories = [prefix / "bin" for prefix in prefixes]
+    if not prefixes:
+        directories = [home / ".local/bin", home / ".local/share/pnpm", home / "bin"]
+        directories.extend(sorted((home / ".nvm/versions/node").glob("*/bin")))
+    paths = [directory / name for directory in directories for name in MANAGERS]
+    return [path for path in paths if path.exists() or path.is_symlink()
+            or Path(str(path) + ".gtr-original").exists()] + ([] if prefixes else [home / "bin/git"])
+
+
+def guarded(path, home=HOME):
+    return path.is_symlink() and path.resolve(strict=False) == home / ".local/libexec/gtr-install-guard/guard.py"
+
+
+def package_sources(home=HOME):
+    destination = home / ".local/libexec/gtr-install-guard/guard.py"
+    paths = [p for p in entries(home=home) if p.name in ("pnpm", "pnpx", "corepack")]
+    if (not paths or destination.read_bytes() != Path(__file__).read_bytes()
+            or any(not guarded(p, home) or not Path(str(p) + ".gtr-original").exists() for p in paths)):
+        raise RuntimeError("installed PNPM producer coverage is unknown; retain the store")
+    return paths
+
+
+def lifecycle():
+    owner = (HOME / ".local/share/tangle-tools").resolve(strict=True)
+    package = owner / "storage_lifecycle"
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(owner))
+    from storage_lifecycle import admission, cache_filesystem
+    for module in (admission, cache_filesystem):
+        if Path(module.__file__).resolve(strict=True) != package / (module.__name__.split('.')[-1] + '.py'):
+            raise RuntimeError("lifecycle owner is outside its installed package")
+    return admission, cache_filesystem
 
 
 def resolved(value: str, cwd: Path) -> list[Path]:
@@ -130,19 +169,7 @@ def fallback_refusal(values: list[str], cwd: Path):
     if not paths:
         return None
     try:
-        # This fixed installed owner is shared with run-lane; caller overrides
-        # such as PYTHONPATH or TANGLE_TOOLS_DEPLOY are not policy sources.
-        owner = (HOME / ".local/share/tangle-tools").resolve(strict=True)
-        package = owner / "storage_lifecycle"
-        expected = package / "admission.py"
-        if (not (package / "__init__.py").is_file() or not expected.is_file()
-                or expected.resolve(strict=True).parent != package.resolve(strict=True)):
-            raise RuntimeError("installed lifecycle lease owner is unavailable")
-        sys.dont_write_bytecode = True
-        sys.path.insert(0, str(owner))
-        import storage_lifecycle.admission as admission
-        if Path(admission.__file__).resolve(strict=True) != expected.resolve(strict=True):
-            raise RuntimeError("lifecycle lease verifier is outside the installed owner")
+        admission, _ = lifecycle()
         for path in sorted(paths):
             admission.lease_receipt(path, requester_pid=os.getpid())
     except Exception as error:
@@ -458,7 +485,7 @@ def main() -> None:
             entry = installed
     manager = entry.name
     original = Path(str(entry) + ".gtr-original")
-    if (manager not in MUTATING and manager not in {"corepack", "git"}) or not original.exists():
+    if (manager not in MUTATING and manager not in {"corepack", "pnpx", "git"}) or not original.exists():
         print(f"gtr-install-guard: missing preserved executable for {entry}", file=sys.stderr)
         raise SystemExit(127)
     argv = sys.argv[1:]
@@ -473,11 +500,19 @@ def main() -> None:
                 raise SystemExit(125)
             raise SystemExit(capped_add(real, argv, target, fleet_lane(), config))
         os.execv(real, [real, *argv])
-    message = refusal(manager, argv, Path.cwd())
+    message = refusal("pnpm" if manager == "pnpx" else manager, argv, Path.cwd())
     if message:
         print(message, file=sys.stderr)
         raise SystemExit(125)
     real = str(original.resolve(strict=True))
+    if manager in ("pnpm", "pnpx", "corepack"):
+        try:
+            admission, caches = lifecycle()
+            with caches.package_producer(admission.Config.load(), hashlib.sha256(Path(__file__).read_bytes()).hexdigest()):
+                os.execv(real, [real, *argv])
+        except (OSError, RuntimeError) as error:
+            print("gtr-install-guard: PNPM producer custody refused: " + str(error), file=sys.stderr)
+            raise SystemExit(75)
     os.execv(real, [real, *argv])
 
 
