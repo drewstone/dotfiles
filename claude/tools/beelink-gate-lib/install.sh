@@ -5,19 +5,21 @@ gate_shared_turbo_install=1
 
 # The package-manager version the repo's own CI installs with: package.json
 # packageManager (what corepack and the setup actions read), else the version
-# pinned on that manager's setup action in a workflow. Only an exact x.y.z is used.
+# pinned on that manager's setup action in a workflow or a composite action
+# (.github/actions/*/action.yml), where repos keep their one shared setup step.
+# Only an exact x.y.z is used.
 repo_manager_version() {  # <manager> <setup action> <action version key>
   local manager=$1 action=$2 key=$3 version
   version=$(node -e 'const m = new RegExp("^" + process.argv[1] + "@([^+]+)").exec(require("./package.json").packageManager || ""); if (m) console.log(m[1])' "$manager" 2>/dev/null)
-  local -a workflows=()
+  local -a setup_files=()
   local had_nullglob=0
   shopt -q nullglob && had_nullglob=1
-  shopt -s nullglob; workflows=(.github/workflows/*.yml .github/workflows/*.yaml)
+  shopt -s nullglob; setup_files=(.github/workflows/*.yml .github/workflows/*.yaml .github/actions/*/action.yml .github/actions/*/action.yaml)
   [ "$had_nullglob" = 1 ] || shopt -u nullglob
-  if [ -z "$version" ] && [ "${#workflows[@]}" -gt 0 ]; then
+  if [ -z "$version" ] && [ "${#setup_files[@]}" -gt 0 ]; then
     version=$(awk -v action="$action" -v key="$key:" 'index($0, "uses:") && index($0, action) { inside = 1; next }
       inside && /^[[:space:]]*-[[:space:]]/ { inside = 0 }
-      inside && $1 == key { gsub(/["\047v]/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
+      inside && $1 == key { gsub(/["\047]/, "", $2); sub(/^v/, "", $2); print $2; exit }' "${setup_files[@]}" 2>/dev/null)
   fi
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] && echo "$version"
 }
