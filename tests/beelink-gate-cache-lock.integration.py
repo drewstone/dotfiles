@@ -44,14 +44,22 @@ def run_case(lock_name, timeout):
             mode = fcntl.LOCK_SH if lock_name == ".capacity.lock" else fcntl.LOCK_EX
             fcntl.flock(held, mode)
             started = time.monotonic()
+            err_path = Path(tmp) / "child.stderr"
+            err_file = err_path.open("w")
             child = subprocess.Popen(
                 ["bash", "-c", script, "gate-cache-integration", str(root),
                  str(root / "not-current")], stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True,
+                stderr=err_file, text=True,
                 env={**os.environ, "BEELINK_GATE_CAPACITY_INTENT_WAIT_SECONDS": "1"},
             )
-            time.sleep(0.35)
-            waited = child.poll() is None
+            # Wait for the child's own announcement, not a fixed sleep: on a loaded
+            # host the child can still be in its brief repo-lock window at 0.35 s.
+            announce = "waiting up to"
+            start_wait = time.monotonic()
+            while (time.monotonic() - start_wait < 5 and child.poll() is None
+                   and announce not in err_path.read_text()):
+                time.sleep(0.02)
+            waited = child.poll() is None and announce in err_path.read_text()
             with (locks / "local-owner-idle.lock").open("a+") as repo_lock:
                 try:
                     fcntl.flock(repo_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -61,11 +69,14 @@ def run_case(lock_name, timeout):
             if not timeout:
                 fcntl.flock(held, fcntl.LOCK_UN)
             try:
-                stdout, stderr = child.communicate(timeout=4)
+                stdout, _ = child.communicate(timeout=4)
             except subprocess.TimeoutExpired:
                 child.kill()
-                stdout, stderr = child.communicate()
+                child.communicate()
                 raise AssertionError("lock acquisition exceeded its 1s budget")
+            finally:
+                err_file.close()
+            stderr = err_path.read_text()
         elapsed = time.monotonic() - started
         if timeout:
             passed = (waited and repo_free and child.returncode == 3
@@ -73,7 +84,7 @@ def run_case(lock_name, timeout):
                       and 0.9 <= elapsed < 3 and repo.exists())
         else:
             passed = (waited and repo_free and child.returncode == 0
-                      and not repo.exists() and elapsed >= 0.35)
+                      and not repo.exists())
         passed = passed and not (locks / ".capacity.writer.intent").exists()
         return {"lock": lock_name, "timeout": timeout, "passed": passed,
                 "waited": waited, "repo_lock_free_while_waiting": repo_free,
