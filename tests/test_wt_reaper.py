@@ -168,6 +168,16 @@ class ReaperTest(unittest.TestCase):
         p['env'] = f.add('env')
         f.write(p['env'], '.env', 'SECRET=1\n')
 
+        # wt-new's ownership marker alone, untracked (older wt-new) or ignored (wt-new excludes it now).
+        p['owner_marker'] = f.add('owner_marker')
+        f.write(p['owner_marker'], '.wt-owner', 'owner=session-a\n')
+        p['owner_marker_ignored'] = f.add('owner_marker_ignored')
+        with open(os.path.join(p['owner_marker_ignored'], '.gitignore'), 'a') as fh:
+            fh.write('.wt-owner\n')
+        git(['commit', '-qam', 'ignore the marker'], p['owner_marker_ignored'])
+        git(['push', '-q', '-u', 'origin', 'owner_marker_ignored'], p['owner_marker_ignored'])
+        f.write(p['owner_marker_ignored'], '.wt-owner', 'owner=session-b\n')
+
         p['dirty'] = f.add('dirty')
         f.write(p['dirty'], 'a.txt', 'changed\n')
 
@@ -325,6 +335,12 @@ class ReaperTest(unittest.TestCase):
 
     def test_skip_ignored_non_build_file(self):
         self.assertSkipped('env', 'ignored non-build files: .env')
+
+    def test_wt_new_owner_marker_is_not_work(self):
+        # 2026-10-25: beelink2 kept nine idle, clean, pushed trees whose only "change" was this marker.
+        for name in ('owner_marker', 'owner_marker_ignored'):
+            with self.subTest(name=name):
+                self.assertRemoved(name)
 
     def test_skip_tracked_change(self):
         self.assertSkipped('dirty', 'not clean')
