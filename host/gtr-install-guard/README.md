@@ -11,7 +11,8 @@ agent refused in `_wt` cloned `~/code/gate-gtm-20261010` and gated there. It
 points to `beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command>`. Exempt: the
 deploy-managed service checkouts tangle-tools-deploy installs (`~/.config/fleet/checkouts`,
 `DISCO_LAB` in `~/.config/fleet/lab.env`, the tangle-tools deploy clone), the beelink-gate cache,
-global installs, lockfile-only resolution, and directories that are not checkouts. `uv` installs
+the fallback gate root `~/.cache/gtr-gate` (a gate no Beelink admits within 5 minutes runs there in
+a fresh clone, removed after), global installs, lockfile-only resolution, and directories that are not checkouts. `uv` installs
 stay refused only inside `_wt`, because GTR's tools run through `uv run` from their checkouts.
 
 Install after updating the durable `~/code/dotfiles` checkout:

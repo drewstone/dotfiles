@@ -11,7 +11,8 @@ checkout at ~/code/gate-gtm-20261010 and ran its frozen install and tests there 
 Exempt: the deploy-managed service checkouts that tangle-tools-deploy installs
 (~/.config/fleet/checkouts, DISCO_LAB in ~/.config/fleet/lab.env, the tangle-tools deploy clone),
 the pinned discovery-lab copies under ~/code/_deploy that Discovery runs execute from, the
-beelink-gate cache, global installs, lockfile-only resolution, and directories that are not
+beelink-gate cache, the GTR fallback gate root ~/.cache/gtr-gate (a gate no Beelink admits within
+5 minutes runs there in a fresh clone; AGENTS.md, Our tools), global installs, lockfile-only resolution, and directories that are not
 checkouts (tool caches such as agent-record's renderers, a scratch directory probing a package).
 
 uv keeps its narrower rule: refused only inside a `_wt` worktree, because GTR's own tools run
@@ -100,6 +101,8 @@ def env_file_value(path: Path, key: str):
 def exempt_roots() -> list[Path]:
     """Checkouts whose installs are a deploy path, not a gate."""
     roots = [HOME / ".cache/beelink-gate",
+             # The fallback gate: a fresh clone per gate when no Beelink admits one within 5 minutes.
+             HOME / ".cache/gtr-gate",
              Path(os.environ.get("TANGLE_TOOLS_DEPLOY", HOME / ".local/share/tangle-tools")).expanduser(),
              HOME / "code/_deploy",  # pinned discovery-lab copies that Discovery runs execute from
              # The Lab keeper's deploy path: each deploy is a fresh discovery-lab-<sha> checkout here,
@@ -251,7 +254,9 @@ def refusal(manager: str, argv: list[str], cwd: Path):
     return (f"gtr-install-guard: refused {manager} install in {root}, a checkout on GTR. Installs and gates run on "
             "a Beelink: push the commit, then from GTR run "
             "beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command> "
-            "(the gate does the frozen install in its own cache). A new clone outside _wt is a checkout too. "
+            "(the gate does the frozen install in its own cache). If no Beelink admits it within 5 minutes, "
+            "gate in a fresh clone under ~/.cache/gtr-gate/ and remove the clone after. "
+            "Any other new clone, inside _wt or not, is a checkout too. "
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 
 
