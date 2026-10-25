@@ -23,6 +23,7 @@
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #   /etc/systemd/system/ci.slice.d/50-gate-priority.conf, beelink-gate-cgroup.service
 #                                          Beelinks: gates yield CPU/IO to release and deploy work
+#   /usr/local/bin/sccache                 Beelinks: pinned sccache release for beelink-gate's Rust cache
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
 #                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
@@ -31,7 +32,7 @@
 # Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only|--docker-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
 #   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
-#   --gate-priority-only  Beelinks: install gate CPU and deploy memory isolation.
+#   --gate-priority-only  Beelinks: install gate CPU and deploy memory isolation, and sccache.
 #   --docker-only     validate and stage only daemon.json; never reload or restart Docker.
 #
 # Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
@@ -292,6 +293,31 @@ PYTHON
   return 0
 }
 
+# Beelinks: beelink-gate compiles a Cargo checkout through its own sccache server
+# (claude/tools/beelink-gate-lib/rust.sh). This pin is the one owner of its version:
+# the upstream x86_64 musl release, its tarball checked before anything is unpacked,
+# and the binary checked again so --check reports a changed copy without the network.
+SCCACHE_VERSION=0.18.0
+SCCACHE_TARBALL_SHA256=45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+SCCACHE_BINARY_SHA256=973cb15f6a986d84ca334bbed3bbe2eb8f1ee8fd81bf9e115b8539a293bf8d59
+install_beelink_sccache() {
+  local dst=/usr/local/bin/sccache name="sccache-v$SCCACHE_VERSION-x86_64-unknown-linux-musl"
+  if [ "$(sha256sum "$dst" 2>/dev/null | cut -d' ' -f1)" = "$SCCACHE_BINARY_SHA256" ] &&
+    [ "$(stat -c '%a %U' "$dst" 2>/dev/null)" = "755 root" ]; then
+    return 0
+  fi
+  if [ "$CHECK" = 1 ]; then drift "$dst is not sccache $SCCACHE_VERSION"; return 0; fi
+  [ "$(uname -m)" = x86_64 ] || { echo "sccache pin is x86_64 only" >&2; exit 1; }
+  curl -fsSL --proto '=https' --retry 3 -o "$TMP/$name.tar.gz" \
+    "https://github.com/mozilla/sccache/releases/download/v$SCCACHE_VERSION/$name.tar.gz"
+  echo "$SCCACHE_TARBALL_SHA256  $TMP/$name.tar.gz" | sha256sum -c --quiet - ||
+    { echo "sccache $SCCACHE_VERSION tarball checksum mismatch" >&2; exit 1; }
+  tar -xzf "$TMP/$name.tar.gz" -C "$TMP" "$name/sccache"
+  echo "$SCCACHE_BINARY_SHA256  $TMP/$name/sccache" | sha256sum -c --quiet - ||
+    { echo "sccache $SCCACHE_VERSION binary checksum mismatch" >&2; exit 1; }
+  want_file 0755 "$TMP/$name/sccache" "$dst"
+}
+
 install_gtr_lane_send() {
   want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-send.conf" /etc/ssh/ssh_config.d/20-fleet-lane-send.conf
 }
@@ -299,6 +325,7 @@ install_gtr_lane_send() {
 if [ "$GATE_PRIORITY_ONLY" = 1 ]; then
   is_beelink || { echo "the gate CPU priority runs on the Beelinks only" >&2; exit 2; }
   install_beelink_gate_priority
+  install_beelink_sccache
   exit 0
 fi
 if [ "$GIT_GUARD_ONLY" = 1 ]; then
@@ -338,6 +365,7 @@ if [ "$(hostname -s)" = drew-GTR-Pro ]; then
 fi
 is_beelink && install_beelink_worktree_cap
 is_beelink && install_beelink_gate_priority
+is_beelink && install_beelink_sccache
 
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh

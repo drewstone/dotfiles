@@ -580,6 +580,34 @@ flags can override it, so this field alone does not establish actual placement.
 Counts describe tasks per invocation, including nested runs, rather than unique
 tasks or passing evidence. An empty or unreadable summary does not prove a check
 ran or passed; the command exit remains authoritative.
+Rust builds default to `CARGO_TARGET_DIR=<checkout>/.git/beelink-gate-target` and
+`CARGO_INCREMENTAL=0`, so the cache cap counts and evicts their output with the
+checkout; a command that sets its own target dir keeps it. `--cargo-key <key>`
+(1-96 of `[A-Za-z0-9._-]`, not starting with a dot; or `BEELINK_GATE_CARGO_KEY`)
+keeps one target dir warm for a run's lifetime instead:
+`~/.cache/<host>/<owner>/<repo>-build/<key>`, outside the 40 GiB cap. Every gate
+with that key renews its hold, `<repo>-build/.holds/<key>` (an expiry epoch,
+`BEELINK_GATE_CARGO_HOLD_SECONDS`, default 7 days). The post-gate build sweep
+removes entries untouched for 24 hours from tagged (`CACHEDIR.TAG`) target dirs at
+`~/.cache/<repo>-build` and keyed ones, skipping a keyed target while its hold is
+live and removing it whole, with its hold, once the hold has expired and nothing
+in it was touched for 24 hours; a held lock of a `<repo>` gate or of cargo skips
+it. With a key, the probe reports `cache=warm` only on the beelink that holds the
+key's target dir, so `auto` keeps a key's builds on that host and falls over cold
+to the other one when that host cannot admit.
+A checkout that tracks a `Cargo.toml` compiles through `sccache` when it is
+installed (`host/install.sh` pins the release on both beelinks at
+`/usr/local/bin/sccache`; a caller's own `RUSTC_WRAPPER` wins). Each gate starts
+its own server on an abstract Unix socket named by the gate and stops it at the
+end, because each gate's systemd unit stops its whole cgroup; all servers share
+`~/.cache/beelink-gate/.sccache` with `SCCACHE_BASEDIRS` set to the checkout, so
+hits carry across gates and checkout copies. That directory counts toward the cap,
+is never evicted by the cache prune, and is bounded by `SCCACHE_CACHE_SIZE`
+(forwarded from the caller; default a quarter of `BEELINK_GATE_CACHE_MAX_BYTES`,
+refused above half). The gate prints the server's compile requests, hits, misses
+and hit rate, and the receipt records `sccache=<hits>/<hits+misses>` (or `none`,
+`missing`, `caller`, `unavailable`) and `cargo_key`, with the counts in the JSON
+row's `sccache`.
 Use `--no-install` only for dependency-free checks, such as docs content or
 structure checks. The gate still fetches and verifies the exact SHA, and its
 receipt records `install=no-install`.

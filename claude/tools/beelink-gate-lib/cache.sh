@@ -314,7 +314,9 @@ try:
         lock_acquired = time.monotonic_ns()
         candidates = []
         for host in root.iterdir():
-            if host.name in (".locks", ".turbo") or host.is_symlink() or not host.is_dir():
+            # .sccache counts in the du below but is never an eviction candidate:
+            # live gate servers write it, and its SCCACHE_CACHE_SIZE (gate_rust_begin) bounds it.
+            if host.name in (".locks", ".turbo", ".sccache") or host.is_symlink() or not host.is_dir():
                 continue
             for owner in host.iterdir():
                 if owner.is_symlink() or not owner.is_dir():

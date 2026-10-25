@@ -56,7 +56,7 @@ function fixture() {
   const windowHour = 12;
   // A gate running these tests exports its own Rust settings, and the outer test runner its
   // NODE_TEST_CONTEXT, which makes a nested `node --test` skip its files and exit 0; start clean.
-  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_CACHE_MAX_BYTES: _cacheCap, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, NODE_TEST_CONTEXT: _testContext, ...inherited } = process.env;
+  const { CARGO_TARGET_DIR: _target, CARGO_INCREMENTAL: _incremental, BEELINK_GATE_CACHE_MAX_BYTES: _cacheCap, BEELINK_GATE_MAX_CONCURRENT: _slots, BEELINK_GATE_HEARTBEAT: _heartbeat, BEELINK_GATE_LAUNCHER: _launcher, BEELINK_GATE_MAX_HOLD: _hold, BEELINK_GATE_SHIP_WORKERS: _workers, BEELINK_GATE_ADMITTED: _admitted, BEELINK_GATE_AUTO: _auto, BEELINK_GATE_HOST_PRESSURE_CEILING: _ceiling, npm_config_store_dir: _store, npm_config_confirm_modules_purge: _purge, VITEST_MAX_WORKERS: _vw, VITEST_MAX_THREADS: _vt, VITEST_MAX_FORKS: _vf, TURBO_CONCURRENCY: _tc, CARGO_BUILD_JOBS: _cj, NODE_TEST_CONTEXT: _testContext, RUSTC_WRAPPER: _wrapper, SCCACHE_DIR: _scDir, SCCACHE_CACHE_SIZE: _scSize, SCCACHE_SERVER_UDS: _scUds, SCCACHE_IDLE_TIMEOUT: _scIdle, SCCACHE_BASEDIRS: _scBase, BEELINK_GATE_CARGO_KEY: _cargoKey, BEELINK_GATE_CARGO_HOLD_SECONDS: _cargoHold, ...inherited } = process.env;
   // Fixture gates see a light host unless a test sets the load.
   const loadavg = join(root, "loadavg");
   writeFileSync(loadavg, "0.50 0.50 0.50 1/100 1\n");
@@ -101,6 +101,7 @@ if [[ -n "\${FAKE_STAGE_PAUSE:-}" && "\${rest[*]}" == "wsl.exe -- bash -s" ]]; t
   while [[ ! -e "$FAKE_STAGE_PAUSE.release" ]]; do sleep 0.05; done
 fi
 [[ -z "\${FAKE_CACHE_PREFIX:-}" ]] || export BEELINK_GATE_CACHE_ROOT="$FAKE_CACHE_PREFIX-$host"
+[[ -z "\${FAKE_XDG_PREFIX:-}" ]] || export XDG_CACHE_HOME="$FAKE_XDG_PREFIX-$host"
 [[ -z "\${FAKE_AVAIL_PREFIX:-}" ]] || export FAKE_AVAIL_FILE="$FAKE_AVAIL_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_LOADAVG="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_CPU_PRESSURE="$FAKE_PRESSURE_PREFIX-$host"
@@ -1864,6 +1865,175 @@ test("the build sweep leaves a target alone while cargo or a gate for its repo h
       assert.match(result.stderr, /skipped .*engine-build; a engine gate holds its lock/);
       assert.equal(existsSync(engine.oldRlib), true);
     } finally { gateLock.kill(); }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// The keyed target of the fixture repo (file:// URLs are host "local") under a cache home.
+const keyedTarget = (cacheHome, key) => join(cacheHome, "local", "owner", "repo-build", key);
+const ageTree = (path, seconds) => {
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    if (entry.isDirectory()) ageTree(join(path, entry.name), seconds);
+    else utimesSync(join(path, entry.name), seconds, seconds);
+  }
+  utimesSync(path, seconds, seconds);
+};
+
+test("a cargo key builds in its held target dir, which the build sweep keeps while an expired key's target is removed", () => {
+  const f = fixture();
+  try {
+    const cacheHome = join(f.home, ".cache");
+    const held = keyedTarget(cacheHome, "run-a");
+    const shown = f.call(f.first, ["bash", "-c", 'printf "%s" "$CARGO_TARGET_DIR"'], { noInstall: true, env: { BEELINK_GATE_CARGO_KEY: "run-a" } });
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.equal(shown.stdout, held);
+    assert.match(shown.stderr, /cargo_key=run-a/);
+    assert.equal(receipts(f).at(-1).cargo_key, "run-a");
+    const holdFile = join(cacheHome, "local", "owner", "repo-build", ".holds", "run-a");
+    const expiry = Number(readFileSync(holdFile, "utf8"));
+    assert.ok(Math.abs(expiry - (Date.now() / 1000 + 7 * DAY)) < 120, String(expiry));
+    assert.match(readFileSync(join(held, "CACHEDIR.TAG"), "utf8"), /^Signature: 8a477f597d28d172789f06886806bc55/);
+    // Stale cargo output in the held target, and a second key whose hold expired a day ago.
+    const old = Date.now() / 1000 - 2 * DAY;
+    const oldRlib = join(held, "debug", "deps", "libengine-old.rlib");
+    mkdirSync(join(held, "debug", ".fingerprint"), { recursive: true });
+    mkdirSync(dirname(oldRlib), { recursive: true });
+    writeFileSync(oldRlib, Buffer.alloc(4096));
+    utimesSync(oldRlib, old, old);
+    const expired = keyedTarget(cacheHome, "run-b");
+    mkdirSync(join(expired, "debug", "deps"), { recursive: true });
+    mkdirSync(join(expired, "debug", ".fingerprint"), { recursive: true });
+    writeFileSync(join(expired, "CACHEDIR.TAG"), CARGO_TAG);
+    writeFileSync(join(expired, "debug", "deps", "libengine.rlib"), Buffer.alloc(4096));
+    ageTree(expired, old);
+    const expiredHold = join(cacheHome, "local", "owner", "repo-build", ".holds", "run-b");
+    writeFileSync(expiredHold, `${Math.floor(Date.now() / 1000 - DAY)}\n`);
+    const swept = f.call(f.first, ["true"], { noInstall: true });
+    assert.equal(swept.status, 0, swept.stderr);
+    assert.match(swept.stderr, /kept cargo target .*repo-build\/run-a; its key is held until /);
+    assert.match(swept.stderr, /removed \d+ bytes in cargo target .*repo-build\/run-b; its key's hold expired/);
+    assert.equal(existsSync(oldRlib), true);
+    assert.equal(existsSync(expired), false);
+    assert.equal(existsSync(expiredHold), false);
+    // Without a key the gate keeps today's default target inside the checkout.
+    const plain = f.call(f.first, ["bash", "-c", 'printf "%s" "$CARGO_TARGET_DIR"'], { noInstall: true });
+    assert.equal(plain.stdout, join(f.cache, "local", "owner", "repo", ".git", "beelink-gate-target"));
+    assert.match(plain.stderr, /cargo_key=none/);
+    const invalid = run(gate, ["--cargo-key", "../escape", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
+    assert.equal(invalid.status, 2);
+    assert.match(invalid.stderr, /--cargo-key needs/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("the probe calls a checkout warm for a cargo key only where that key's target dir exists, so auto routes the key there", () => {
+  const f = fixture();
+  try {
+    const probe = (key) => run("bash", [gate, "--probe", ...["beelink2", f.url, f.windowDay, f.windowHour].map(encode)],
+      { env: { ...f.env, ...(key ? { BEELINK_GATE_CARGO_KEY: key } : {}) } });
+    assert.match(probe("").stdout, /^beelink-gate-probe host=beelink2 state=free cache=cold /m);
+    const warmed = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_CARGO_KEY: "run-a" } });
+    assert.equal(warmed.status, 0, warmed.stderr);
+    assert.match(probe("").stdout, / cache=warm /);
+    assert.match(probe("run-a").stdout, / cache=warm /);
+    assert.match(probe("run-b").stdout, / cache=cold /);
+
+    installFakeSsh(f);
+    const prefix = join(f.root, "hosts");
+    const env = { ...f.env, FAKE_CACHE_PREFIX: `${prefix}-cache`, FAKE_XDG_PREFIX: `${prefix}-xdg`, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+    // Both beelinks hold a warm checkout; only beelink2 holds run-a's target.
+    assert.equal(run(gate, ["--no-install", "beelink1", f.url, f.first, "--", "true"], { env }).status, 0);
+    const keyed = run(gate, ["--no-install", "--cargo-key", "run-a", "beelink2", f.url, f.first, "--", "true"], { env });
+    assert.equal(keyed.status, 0, keyed.stderr);
+    assert.equal(existsSync(keyedTarget(`${prefix}-xdg-100.127.22.51`, "run-a")), true);
+    const sticky = run(gate, ["--no-install", "--cargo-key", "run-a", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(sticky.status, 0, sticky.stderr);
+    assert.match(sticky.stderr, /auto chose beelink2 .*beelink1: host=beelink1 state=free cache=cold .*beelink2: host=beelink2 state=free cache=warm/);
+    const unkeyed = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(unkeyed.status, 0, unkeyed.stderr);
+    assert.match(unkeyed.stderr, /beelink1: host=beelink1 state=free cache=warm .*beelink2: host=beelink2 state=free cache=warm/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// Adds a commit that tracks a Cargo.toml (in a member crate) and makes it the bare repo's head.
+function cargoCommit(f) {
+  mkdirSync(join(f.source, "crates", "engine", "src"), { recursive: true });
+  writeFileSync(join(f.source, "crates", "engine", "Cargo.toml"), '[package]\nname = "engine"\nversion = "0.1.0"\nedition = "2021"\n\n[workspace]\n');
+  writeFileSync(join(f.source, "crates", "engine", "src", "lib.rs"), "pub fn answer() -> u32 { 42 }\n");
+  f.git(["add", "."]); f.git(["commit", "-qm", "rust crate"]);
+  const sha = f.git(["rev-parse", "HEAD"]);
+  const defaultBranch = f.git(["--git-dir", f.bare, "symbolic-ref", "HEAD"], f.root);
+  f.git(["--git-dir", f.bare, "fetch", f.source, sha], f.root);
+  f.git(["--git-dir", f.bare, "update-ref", defaultBranch, sha], f.root);
+  return sha;
+}
+const RUST_ENV = 'printf "%s|%s|%s|%s|%s" "${RUSTC_WRAPPER-unset}" "${SCCACHE_DIR-unset}" "${SCCACHE_CACHE_SIZE-unset}" "${SCCACHE_SERVER_UDS-unset}" "${SCCACHE_BASEDIRS-unset}"';
+
+test("a Cargo checkout compiles through the gate's own sccache server inside the gate cache, and a non-Rust checkout gets none", () => {
+  const f = fixture();
+  try {
+    const log = join(f.root, "sccache.log");
+    const fake = join(f.root, "bin", "sccache");
+    // Stands in for the pinned binary at the gate's PATH boundary; the gate, Git and the receipt are real.
+    writeFileSync(fake, `#!/usr/bin/env bash
+printf '%s|%s|%s\\n' "$*" "\${SCCACHE_DIR:-}" "\${SCCACHE_SERVER_UDS:-}" >> '${log}'
+case "$1" in
+  --version) echo "sccache 0.18.0" ;;
+  --show-stats) echo '{"stats":{"compile_requests":5,"requests_not_cacheable":1,"cache_errors":{"counts":{},"adv_counts":{}},"cache_hits":{"counts":{"Rust":3},"adv_counts":{}},"cache_misses":{"counts":{"Rust":1},"adv_counts":{}}}}' ;;
+esac
+`);
+    chmodSync(fake, 0o755);
+    const plain = f.call(f.first, ["bash", "-c", RUST_ENV], { noInstall: true });
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.equal(plain.stdout, "unset|unset|unset|unset|unset");
+    assert.match(plain.stderr, / sccache=none /);
+    assert.equal(existsSync(log), false);
+    assert.equal(receipts(f).at(-1).sccache, null);
+
+    const sha = cargoCommit(f);
+    const checkout = join(f.cache, "local", "owner", "repo");
+    const rust = f.call(sha, ["bash", "-c", RUST_ENV], { noInstall: true });
+    assert.equal(rust.status, 0, rust.stderr);
+    const [wrapper, dir, size, uds, basedirs] = rust.stdout.split("|");
+    assert.equal(wrapper, fake);
+    assert.equal(dir, join(f.cache, ".sccache"));
+    assert.equal(size, String(42949672960 / 4));
+    assert.match(uds, /^\\x00beelink-gate-sccache-\S+$/);
+    assert.equal(basedirs, checkout);
+    const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => line.split("|"));
+    assert.deepEqual(calls.map(([args]) => args), ["--start-server", "--version", "--show-stats --stats-format json", "--stop-server"]);
+    assert.ok(calls.every(([, callDir, callUds]) => callDir === dir && callUds === uds), JSON.stringify(calls));
+    assert.match(rust.stderr, /beelink-gate: sccache compile_requests=5 hits=3 misses=1 hit_rate=0\.75/);
+    assert.match(rust.stderr, / sccache=3\/4 cargo_key=none/);
+    assert.deepEqual(receipts(f).at(-1).sccache, { state: "on", compile_requests: 5, hits: 3, misses: 1, hit_rate: 0.75, not_cacheable: 1, errors: 0 });
+    // The cache is counted in the gate cache root, and a size over half its cap refuses.
+    assert.equal(existsSync(join(f.cache, ".sccache")), true);
+    assert.equal(f.call(sha, ["bash", "-c", 'printf "%s" "$SCCACHE_CACHE_SIZE"'], { noInstall: true, env: { SCCACHE_CACHE_SIZE: "2G" } }).stdout, "2G");
+    const tooBig = f.call(sha, ["true"], { noInstall: true, env: { SCCACHE_CACHE_SIZE: "21G" } });
+    assert.equal(tooBig.status, 2);
+    assert.match(tooBig.stderr, /SCCACHE_CACHE_SIZE 21G is over half the 42949672960-byte gate cache cap/);
+    // A caller's own wrapper wins.
+    const caller = f.call(sha, ["bash", "-c", RUST_ENV], { noInstall: true, env: { RUSTC_WRAPPER: "/caller/wrapper" } });
+    assert.equal(caller.stdout.split("|")[0], "/caller/wrapper");
+    assert.match(caller.stderr, / sccache=caller /);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("with the pinned sccache and cargo installed, a second cargo key's build hits the first one's sccache entries", (t) => {
+  const sccache = "/usr/local/bin/sccache";
+  const cargo = [join(process.env.HOME ?? "", ".cargo", "bin", "cargo"), "/usr/bin/cargo"].find((path) => existsSync(path));
+  if (!existsSync(sccache) || !cargo) { t.skip(`needs ${sccache} and cargo on this host (sccache ${existsSync(sccache) ? "present" : "absent"}, cargo ${cargo ?? "absent"})`); return; }
+  const f = fixture();
+  try {
+    const sha = cargoCommit(f);
+    const env = { PATH: `${dirname(cargo)}:/usr/local/bin:${f.env.PATH}`, RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(process.env.HOME ?? "", ".rustup"), CARGO_HOME: process.env.CARGO_HOME ?? join(process.env.HOME ?? "", ".cargo") };
+    const build = ["bash", "-c", "cd crates/engine && cargo build --offline -q"];
+    const first = f.call(sha, build, { noInstall: true, env: { ...env, BEELINK_GATE_CARGO_KEY: "real-a" } });
+    assert.equal(first.status, 0, first.stderr);
+    const second = f.call(sha, build, { noInstall: true, env: { ...env, BEELINK_GATE_CARGO_KEY: "real-b" } });
+    assert.equal(second.status, 0, second.stderr);
+    const [a, b] = receipts(f).slice(-2).map((row) => row.sccache);
+    assert.equal(a.state, "on", JSON.stringify(a));
+    assert.ok(a.compile_requests > 0, JSON.stringify(a));
+    assert.ok(b.hits > 0, `second key's build had no sccache hit: ${JSON.stringify(b)}`);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

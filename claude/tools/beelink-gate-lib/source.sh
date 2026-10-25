@@ -5,7 +5,7 @@
 emit_gate_source() {
   local generated status
   generated=$(mktemp) || return "$TEMPFAIL"
-  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" -v metrics="${gate_metrics_source:-}" '
+  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v rust="${gate_rust_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" -v metrics="${gate_metrics_source:-}" '
     function append(file, line, status, count) {
       while ((status = getline line < file) > 0) { print line; count++ }
       close(file)
@@ -13,7 +13,7 @@ emit_gate_source() {
     }
     { last = $0 }
     $0 == "# BEELINK_GATE_INSTALLER_START" {
-      starts++; append(installer); append(staging); append(cache); append(admission); append(resources); append(jobs)
+      starts++; append(installer); append(staging); append(cache); append(admission); append(resources); append(jobs); append(rust)
       print "beelink_gate_disk_source=$(cat <<\047BEELINK_GATE_DISK_PYTHON\047"
       append(disk)
       print "BEELINK_GATE_DISK_PYTHON"
@@ -162,6 +162,11 @@ on_beelink() {
   # age in the checkout queue and its starvation clock.
   (( ${placed_wait_launch:-0} == 0 )) || envs+=("BEELINK_GATE_PLACED_WAIT=$placed_wait_launch")
   [ -z "${BEELINK_GATE_SPARSE_SPEC:-}" ] || envs+=("BEELINK_GATE_SPARSE_SPEC=$BEELINK_GATE_SPARSE_SPEC")
+  # The probe reads the cargo key too, so cache=warm also means that key's target dir is on the host.
+  local rust_name
+  for rust_name in BEELINK_GATE_CARGO_KEY BEELINK_GATE_CARGO_HOLD_SECONDS SCCACHE_CACHE_SIZE; do
+    [ -z "${!rust_name:-}" ] || envs+=("$rust_name=${!rust_name}")
+  done
   local peer_host=beelink1; [ "$target" != beelink1 ] || peer_host=beelink2
   [ -z "${matched_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_RESERVE=${matched_reserve[$peer_host]}")
   [ -z "${matched_warm_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_WARM_RESERVE=${matched_warm_reserve[$peer_host]}")
