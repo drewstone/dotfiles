@@ -686,14 +686,17 @@ def gtr_case(gate, host, mode, directory):
                         def snapshot(item): return item[0],item[1].observe('')['tickets']
                         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                             snapshots=dict(pool.map(snapshot,peers.items()))
-                        stops=(proc.poll() is not None or observation['exit'] is not None or observation['ready']
-                            or bool(frames and any(Path(frames[0]).parent.glob('reservations.*/*.stop'))))
-                        if not stops:
+                        stops=bool(frames and any(Path(frames[0]).parent.glob('reservations.*/*.stop')))
+                        handed_off=bool(gate_id and 'beelink-gate: placement handoff gate_id='+gate_id in log.read_text().splitlines())
+                        authorized=observation['exit'] is not None or observation['ready'] or handed_off
+                        assert not stops or authorized, 'reservation stop preceded an owner-bound handoff or native terminal outcome'
+                        if not authorized:
                             for name,current in snapshots.items():
                                 if current and name not in tickets: tickets[name]=current
                                 if name in tickets:
                                     assert current==tickets[name], 'reservation changed or retired before owned handoff'
-                        ticket_samples.append({'at_monotonic':time.monotonic(),'tickets':snapshots,'stopped':bool(stops)})
+                        ticket_samples.append({'at_monotonic':time.monotonic(),'tickets':snapshots,'stopped':stops,
+                            'owner_handoff':handed_off,'native_terminal':observation['exit'] is not None})
                     if observation['ready']: break
                     if proc.poll() is not None:
                         if mode=='native-reservation-failure' and gate_id and observation['exit'] is not None:
