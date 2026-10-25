@@ -48,8 +48,7 @@ A mocked dependency cannot establish an integration or E2E claim.
 Keep real boundary failures detectable, and preserve historical research and calibration evidence.
 Measure verification time, invocations, flakiness, and agent rework where available; coverage percentages and test counts are not success targets.
 
-This policy follows Drew's testing priorities. Drew, 2026-10-15: "Consolidated tests should only have a few extremely strong unit tests, extremely strong integration tests, and real live proofs, frequently, to prove that things work."
-[Callaway's test-deletion experiment](https://x.com/shcallaway/status/2106142042405453879) motivates the audit; its proposed benefits remain hypotheses.
+This policy follows Drew's testing priorities. [Callaway's test-deletion experiment](https://x.com/shcallaway/status/2106142042405453879) motivates the audit; its proposed benefits remain hypotheses.
 
 ## Implement and deliver
 
