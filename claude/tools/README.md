@@ -619,7 +619,7 @@ Callers retry at `next_allowed`. A known nonzero command exit remains the
 native and receipt exit even when later shell or cleanup work also fails.
 `post_command_exit` and its phase retain that later failure. A successful
 command still fails its gate when required post-command work fails.
-An explicit frontend signal exits with128+signal. With `--cancel-on-term`,
+An explicit frontend signal exits with 128 + signal. With `--cancel-on-term`,
 it cancels only that invocation's exact owned gate, including a delegated or
 reattached leaf. A lost SSH client or an expired frontend deadline leaves the
 native job available for `--attach`; a nonzero attach is resolved through the

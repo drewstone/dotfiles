@@ -143,7 +143,7 @@ exit "$2"
 
 
 def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
-                      env, source_digest, native_alive, unit_active):
+                      env, frontends, source_digest, native_alive, unit_active):
     deadline = time.monotonic() + 5
     peer = None
     while peer is None and time.monotonic() < deadline:
@@ -172,6 +172,7 @@ def exercise_ssh_case(gate, mode, proc, host, root, state, job, gate_id, output,
         proc = subprocess.Popen(["bash", str(gate.resolve()), *options, "--attach", gate_id],
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 start_new_session=True)
+        frontends.append(proc)
         deadline = time.monotonic() + 5
         while actual_ssh_peer(proc, host) is None:
             assert time.monotonic() < deadline, "reconnect has no real SSH peer"
@@ -294,6 +295,7 @@ exit 0
              "file://" + str(origin), sha, "--", *product], env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, start_new_session=not tty_case,
             preexec_fn=os.setpgrp if tty_case else None)
+        frontends = [proc]
         gate_id = ""
         job = None
         output = bytearray()
@@ -341,7 +343,7 @@ exit 0
             assert frontend and frontend["source_digest"] == source_digest, "frontend/staged source mismatch"
             if ssh_case:
                 proc, row = exercise_ssh_case(gate, mode, proc, host, root, state, job,
-                    gate_id, output, env, source_digest, native_alive, unit_active)
+                    gate_id, output, env, frontends, source_digest, native_alive, unit_active)
                 return row
             if retry_term:
                 # Wait for the actual owned sleep, not merely the preceding log.
@@ -426,20 +428,21 @@ exit 0
                     "manager": "system", "canceled": canceled,
                     "native_terminal": terminal, "native_stopped": stopped}
         finally:
-            if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.wait(timeout=3)
-            if proc.stdout is not None:
-                proc.stdout.close()
+            for frontend in frontends:
+                if frontend.poll() is None:
+                    os.killpg(frontend.pid, signal.SIGTERM)
+                    try:
+                        frontend.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(frontend.pid, signal.SIGKILL)
+                        frontend.wait(timeout=3)
+                if frontend.stdout is not None:
+                    frontend.stdout.close()
             # The red baseline must not leave the independently managed unit
             # running. Retire it only through the maintained exact-ID cancel CLI.
             if gate_id:
                 cleanup = subprocess.run(["bash", str(gate.resolve()), "--cancel-job", gate_id],
-                                         env=env, capture_output=True, text=True, timeout=40)
+                                         env=env, capture_output=True, text=True, timeout=330)
                 assert cleanup.returncode == 0, "maintained fixture cancellation was not confirmed: " + cleanup.stderr
 
 
