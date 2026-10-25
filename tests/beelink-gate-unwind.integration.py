@@ -585,7 +585,7 @@ print(json.dumps({'root':str(root),'origin':str(root/'origin')}))
 import hashlib,re,base64
 root=pathlib.Path(data['root'])
 state=pathlib.Path(os.environ.get('BEELINK_GATE_STATE_DIR') or pathlib.Path(os.environ.get('XDG_STATE_HOME',str(pathlib.Path.home()/'.local/state')))/'beelink-gate')
-result={'ready':(root/'ready').exists(),'state':str(state),'alive':False,'exit':None,'receipt':None,'canceled':False}
+result={'ready':(root/'ready').exists(),'state':str(state),'alive':False,'exit':None,'receipt':None,'canceled':False,'unit_populated':None}
 cache=pathlib.Path(os.environ.get('BEELINK_GATE_CACHE_ROOT') or pathlib.Path(os.environ.get('XDG_CACHE_HOME',str(pathlib.Path.home()/'.cache')))/'beelink-gate')
 result['tickets']=[]
 for ticket in (cache/'.locks').glob('queue-local-'+root.name+'-origin@light.*'):
@@ -612,9 +612,15 @@ if gate:
     except FileNotFoundError: pass
     try:
         args=job/'args'
-        result['payload_digest']=hashlib.sha256(base64.b64decode(args.read_bytes().split(b'\0')[-2])).hexdigest()
+        result['payload_digest']=hashlib.sha256(base64.b64decode(args.read_bytes().split(bytes([0]))[-2])).hexdigest()
         result['args_mode']=args.stat().st_mode & 0o777
     except FileNotFoundError: pass
+    group=(result['receipt'] or {}).get('cgroup')
+    if group and group.endswith('/beelink-gate-'+gate+'.service') and '..' not in pathlib.PurePosixPath(group).parts:
+        try:
+            events=dict(line.split() for line in (pathlib.Path('/sys/fs/cgroup')/group.lstrip('/')/'cgroup.events').read_text().splitlines())
+            if events.get('populated') in ('0','1'): result['unit_populated']=events['populated']=='1'
+        except FileNotFoundError: result['unit_populated']=False
 print(json.dumps(result))
 ''', {"root": self.root, "gate": gate_id})
 
@@ -747,9 +753,9 @@ def gtr_case(gate, host, mode, directory):
                 deadline=time.monotonic()+30
                 while time.monotonic()<deadline:
                     observation=peer.observe(gate_id)
-                    if observation['exit'] is not None and not observation['alive']: break
+                    if observation['exit'] is not None and not observation['alive'] and observation['unit_populated'] is False: break
                     time.sleep(.1)
-                assert observation['exit'] is not None and not observation['alive'], "native leaf not terminal"
+                assert observation['exit'] is not None and not observation['alive'] and observation['unit_populated'] is False, "native leaf/cgroup drain unproved"
                 canceled=mode in ('native-pid-term','native-attach-term','native-wrapper-term')
                 assert proc.returncode==(143 if canceled else command_exit)
                 if not canceled:
@@ -776,7 +782,7 @@ def gtr_case(gate, host, mode, directory):
                     finished=subprocess.run(['bash',str(gate.resolve()),'--cancel-job',gate_id],env=env,capture_output=True,text=True,timeout=330)
                     cleanup['cancel_exit']=finished.returncode
                     cleanup['native']=peer.observe(gate_id)
-                    if finished.returncode or cleanup['native']['alive']: result['passed']=False
+                    if finished.returncode or cleanup['native']['alive'] or cleanup['native']['unit_populated'] is not False: result['passed']=False
                 except Exception as error:
                     cleanup['unknown']=str(error); result['passed']=False
             for frontend in saved:
