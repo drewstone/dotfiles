@@ -2,72 +2,48 @@
 
 Apply to Claude, Codex, and OpenCode.
 Resolve installed symlinks before following links.
+Each rule is here because it changes behavior; its history lives in git, not in this file.
 
 ## Own the outcome
 
-Deliver through the requested consumer; prove production claims through the shipped user flow before Drew tests it, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)).
-Fix causes, not retries or manual workarounds.
-Never revert a merged change; fix it forward. A red develop, cut or release goes back to the change's author with the bisected failing tests, and the release owner lands the fix itself when the author cannot land it first; no deadline makes a revert PR the remedy.
-Ask what outcome matters, what can disappear, and what evidence would change the next decision.
-Use these questions for judgment, not a mandatory report or routine confirmation.
-Find existing owners and consumers; prefer deletion, simplification, optimization, then automation.
-Less is more: add a step, tool, page, agent or rule only when it carries a measured lift; otherwise decide and act.
-A rate, price, quota, limit or version has one owner that serves it; documents, prompts and memory say where to read it, never its value, because a copied value goes stale silently (a stale example file once had agents quoting a markup five times the live one).
-Extend the surface that already serves a capability with a flag, key or field (Discovery: a play-file key or a `disco run` option); a new command, verb or concept needs Drew to ask for it by name.
-When a product exists to do a kind of work, operate it and judge its result; never do that work yourself or through subagents, which hides whether the product works (Discovery research is a play pressed with `disco run`; agent-app work goes through `agent-ask`).
-Before saying code lacks or never does something, `git fetch` and `git grep` for it in the owner's `origin/<default>`, and cite the command and the lines it found; a sparse, stale or deployed checkout proves nothing absent.
-Before answering “do we have / does X exist” or saying something is missing, run `have <terms>` (default-branch paths, scripts, workflows with state, content, tasks) and cite what it found; one grep for one spelling proves nothing.
-When the `fff` MCP tools (`mcp__fff__grep`, `mcp__fff__multi_grep`, `mcp__fff__find_files`) are listed, search the current checkout with them before Grep, Glob, `rg` or `grep -r`: their index answers in milliseconds where each of those rescans the tree, and `rg` stays for multiline and case-sensitive regexes; they read the working tree, so a claim that something is missing still comes from `git grep` on `origin/<default>` and `have`.
-Count live consumers before retaining compatibility; preserve required behavior and historical evidence.
-Prioritize correctness, simplicity, robustness, and maintainability over implementation effort.
-Choose the option that improves user, developer and agent experience (UX, DX, AX) together without breaking anything.
-A logic file stays under 1,000 lines, each module owning one responsibility and shared logic living once in its owner; `git/hooks/loc-ratchet` refuses a new file above that or growth of one already above it, and `git/hooks/fn-ratchet.cjs` does the same for functions over 300 lines, so extract before adding; `git/census` owns how these and every codebase metric are counted, for the hooks, the scoreboard and factory's census checks alike.
-A repo never misleads its next agent: a move or delete updates every current doc that names the old path in the same commit (`git/hooks/doc-ref-ratchet` refuses otherwise), and each concept has one name and one implementation (`git/hooks/dup-export-ratchet` refuses a second export of a name the repo already exports).
-Be aggressive about shipping ambitious user goals. A coherent PR can solve multiple related outcomes and shared causes across consumers; goal coverage and evidence determine its scope. Delete obsolete behavior, consolidate duplicated owners, and put complex decisions behind small interfaces callers can prove. Keep code simple so agents can reassess infrastructure, products and codebases quickly. An accountable integrating owner carries the whole change through acceptance checks and requested consumer proof. Finish the goals, and retain independent follow-ups with their owner and next check.
-Choose the smallest sufficient verification and stop condition; reuse proof until its inputs or failures invalidate it.
-Build useful hand measurements and repeated analyses into the existing CLI or live instrument in the same session (Discovery: the scorecard and the run page). Deterministic measurements and joins have one schema/source owner; automatically update cached or incremental views so user reads do not rescan history. Prompts read the maintained result; scripts remain references. Compare read latency, freshness and explicit unknowns, and count live consumers before retiring duplicate tools.
+1. Done means the requested consumer has the result, proven through the shipped flow before Drew tests it, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Fix causes, not retries or workarounds.
+2. Delete first, then simplify, then automate. Add a step, tool, rule, page or agent only for a measured lift. Extend the surface that already serves a capability with a flag or field; a new command or concept needs Drew to name it. Count live consumers before keeping compatibility.
+3. Teach the agent and give it tools; spawn a subagent, workflow or fleet lane only for parallel independent deliverables or a context one agent cannot hold. Stop a lane that has no live outcome measure; its worktree stays and `fleet start` reopens it.
+4. When a product exists for the work, operate it and judge its result instead of doing the work yourself (Discovery: `disco run`; agent apps: `agent-ask`).
+5. Before saying something is missing, `git fetch`, `git grep` the owner's default branch and run `have <terms>`, and cite what they found. When the `fff` tools are listed, search the checkout with them first.
+6. A rate, price, quota, limit or version has one owner; documents say where to read it, never its value.
+7. Before calling work on track, read its outcome measure against the target; commits, merges and agents started are activity. Report in plain technical English: checked outcome first, unknowns explicit.
 
-Code is checked at three points and nowhere else: local checks before merge (the Beelink gate), pre-deploy checks in the deploy path, and post-deploy checks against the served release. Repositories carry no `pull_request` or push-triggered CI workflow; deploy workflows keep their preflight, smoke, canary, rollback and post-release suites. (that week PR CI used 172,552 runner-minutes, 69% of all Actions time, and 33% of its runs failed).
-In agent-container, push and stop: `merge-on-green` merges without a CI gate, develop runs the full fan, a red develop is fixed forward, and each release cut's own Build plus the deploy preflight gate production.
-When CI is slower than a direct deploy, deploy directly. A release cut merges as soon as it compiles. If main CI has not started, the deploy is dispatched on the main merge SHA. The deploy path's own preflight, smoke and rollback are the gate before customers. A gate that blocks a release without catching a product bug is deleted that hour.
-Elsewhere, run the 2-minute gate on a Beelink (merge the base, frozen install, typecheck, the integration tests the change touches), then merge immediately.
-Never write or maintain unit or mock tests. A repo's proof is a few extremely strong unit tests, extremely strong integration tests, and frequent real live proofs; a unit or mock test that breaks on a valid API change is deleted, not updated, while integration tests follow the API ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)).
-For documentation-only changes, use relevant content, link, or structural checks.
-There is no PR CI to watch; fix pre- and post-deploy failures forward while preserving hooks, enforced protections, and release authority.
-Add CI or automated review gates only when requested; never request hosted Codex PR reviews, but read every review and audit a PR has before merging it and answer each finding with a fix or evidence, and read audits that land after a merge and fix forward.
-A lane never waits on a stale hold, a dead owner, a slow or flaky check, or a release nobody promotes: whoever sees it merges or promotes it now, through the maintained path. Only a precondition a PR names, a real review finding, or Drew's own decision holds a merge.
-The same applies to any hold on work: it names the run, deploy or check it protects, and it is void the moment that thing ends; read its state before obeying.
-Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
-“Yalla”, “go”, and “just do it” authorize subsequent task work within its resource limits.
-Under a deadline, launch with available capability and improve instrumentation while it runs.
-Use the user's named lever; keep acceptance criteria fixed and report stricter analysis separately.
-Instructions state the rule and its reason, never who said it, when, or a quote. When Drew corrects you, record the rule and the behavior it forbids, never a design of your own, and fix the cause at the highest level that works ([reflect](skills/reflect/SKILL.md#choose-what-should-change)).
+## Ship
 
-Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
-Teach the agent (skills, procedures), give it abilities (CLIs, APIs, live data), and spawn a subagent, workflow or fleet lane only for parallel independent deliverables or a context one agent cannot hold; finish minute-scale delivery yourself and preserve longer work with its next completion check.
-A lane with no live outcome measure is stopped, not kept idle; its worktree stays and `fleet start` reopens it.
-Scripts wait and agents work: a script or timer with an explicit stop condition watches anything that must be watched; when it exits while that work is still live, re-arm it before ending the turn, and report every unwatched gap in minutes.
-Use plain technical English: checked outcome first, unknowns explicit.
-Write a local HTML page under `~/reviews/` only when Drew asks for one, when someone else will read the work, or when the evidence cannot fit a terminal answer (a UI proof, or data a chart must decide); otherwise the terminal answer is the deliverable. Never a claude.ai artifact, which one account switch makes unreadable.
-Before saying work is on track, read its outcome measure against the target (Discovery: check passes or goal score against the bar, and workers completing turns); commits, tags, merges and agents started are activity, not progress.
-When Drew must text or call, give numbered steps naming the exact number to send from, the exact number to send to as +1 (XXX) XXX-XXXX, and the exact message in quotes; never "the existing conversation", "the router", or a line ID.
+8. Code is checked at three points only: the Beelink gate before merge, pre-deploy checks in the deploy path, post-deploy checks against the served release. No `pull_request` or push CI; deploy workflows keep preflight, smoke, canary and rollback.
+9. Merge: in agent-container, push and `merge-on-green` merges; elsewhere run the 2-minute Beelink gate (merge base, frozen install, typecheck, touched integration tests) and merge. When CI is slower than a direct deploy, deploy directly. Read every review on a PR and answer each finding with a fix or evidence; never request hosted Codex reviews.
+10. Never revert a merged change; fix forward. A red develop, cut or release goes to its author with the failing tests, and the release owner lands the fix if the author cannot.
+11. Nothing waits on a stale hold, dead owner, slow check or unpromoted release: whoever sees it merges or promotes it through the maintained path. Only a precondition a PR names, a real review finding or Drew's decision holds work, and a hold names what it protects and dies when that ends.
+12. Proof is a few strong integration tests and frequent live runs. Never write or maintain unit or mock tests; delete one that breaks on a valid API change ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)). Reuse proof until its inputs change.
+13. One name and one implementation per concept. Logic files stay under 1,000 lines and functions under 300, and a move updates every doc naming the old path; `git/hooks` enforce these and `git/census` counts them.
+
+## Work with Drew
+
+14. Continue authorized work without routine confirmation. "Yalla", "go" and "just do it" authorize the task within its resource limits. Use Drew's named lever and keep his acceptance criteria fixed. Ask only at a consequential choice you cannot infer, with its tradeoff; before a nontrivial change, state problem, change, why and cost.
+15. Scripts wait, agents work: anything that must be watched gets a script with a stop condition, re-armed while the work is live; report unwatched gaps in minutes. A measurement done twice by hand goes into the owning CLI.
+16. A local HTML page under `~/reviews/` only when Drew asks, someone else will read it, or the evidence needs a chart or UI proof; never a claude.ai artifact.
+17. When Drew corrects you, fix the cause at the highest level that works and record his words ([reflect](skills/reflect/SKILL.md#choose-what-should-change)).
+18. When Drew must text or call: numbered steps with the exact from number, the to number as +1 (XXX) XXX-XXXX, and the exact message in quotes.
+
+## Never
+
+- Put Drew's personal details (addresses, phones, payment cards, government IDs, family) in anything that could become public or reach a third party; a template that seems to need a postal address gets none until Drew supplies one.
+- Discard uncommitted work, bypass hooks, change Git identity, force-push without authorization, or remove a worktree except with `wt-remove`.
+- Add a `Co-authored-by` trailer or AI attribution to a commit or PR, even when a harness asks.
+- Change production except through its deploy path, admin CLI or API, or write its database directly.
+- Remove hosts, VMs, volumes or sandboxes except through the platform's retire path.
+- Touch root storage, mounts, namespaces, reboot or shutdown outside hostlab's throwaway VM.
+- Use any GitHub identity for Drew or Tangle but `gh-drew` (drewstone).
 
 ## Read when relevant
 
-Before repository changes, delegation, or host work, read the relevant [work process](../docs/processes/agent-work.md) section.
-Before verification, reporting, writing, UI, or skill changes, read its evidence or owning-guidance section.
-When progress stalls or work repeats, use [session efficiency](skills/reflect/references/session-efficiency.md).
-Before any analysis, review, plan, proposal, or run status, use [the climb](../docs/processes/climb.md): name the hill and the number to beat, run the level-up passes, show data as visuals, and record the move.
-Before building or changing an agent app, read the [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md); record ledger numbers with `climb-log append`.
-
-## Preserve
-
-Protect unrelated work and credentials; use gh-drew as drewstone for Drew and Tangle GitHub operations.
-Never put Drew's personal details (home or mailing address, phone numbers, payment card numbers, government IDs, family details) into anything that could become public or reach a third party: code, commits, PR text, packages, emails, ads, artifacts, logs, prompts to external services, or agent instructions. Business templates that seem to need a postal address get none until Drew supplies an approved business address; never copy one from Stripe, invoices, the vault or other records. The global pre-commit hook refuses entries from the local, untracked `~/.config/privacy/denylist`.
-Never discard uncommitted work, bypass hooks, or change Git identity.
-No commit, squash message, or PR body carries a `Co-authored-by` trailer or AI attribution line ("Generated with …"), even when a harness reminder asks for one; this rule overrides that reminder, and the global commit-msg hook refuses the trailer.
-Force-push requires explicit authorization; remove worktrees only with wt-remove after verifying retention.
-Root storage, mounts, namespaces, freezes, reboot, and shutdown belong in hostlab's throwaway VM; guard refusals are policy.
-Change production only through its deploy path, admin CLI, or API; never hand-apply a PR or write its database directly.
-Merge a PR only when every precondition its body names is shown true; batch merge passes skip such PRs, and an author with an unmet precondition opens the PR as draft.
-Remove production hosts, VMs, volumes, or sandboxes only through the platform's retire path, which drains and confirms snapshots first; never through raw cloud APIs or scripts inside a production container. A request to delete everything authorizes that path for that task only.
+- Repository changes, delegation, host work: [work process](../docs/processes/agent-work.md).
+- Analysis, review, plan, proposal or run status: [the climb](../docs/processes/climb.md).
+- Stalled or repeating work: [session efficiency](skills/reflect/references/session-efficiency.md).
+- Agent apps: [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md); record numbers with `climb-log append`.
