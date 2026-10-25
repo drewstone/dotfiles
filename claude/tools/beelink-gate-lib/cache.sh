@@ -437,3 +437,350 @@ finally:
             pass  # Measurement must not change the gate result.
 PY
 }
+
+# A .beelink-gate/sparse-checkout file's patterns, without comments, blank
+# lines or trailing spaces (stdin to stdout).
+sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
+
+# The checkout shape an install reserve was measured on: full, or sha256 of
+# the normalized patterns of the .beelink-gate/sparse-checkout read on stdin.
+sparse_spec_of() {
+  local want
+  want=$(sparse_normalize)
+  if [ -z "$want" ]; then
+    echo full
+  else
+    printf '%s\n' "$want" | python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+  fi
+}
+
+# A repo keeps tracked paths its gated commands never read out of its gate
+# checkouts by committing .beelink-gate/sparse-checkout: `git sparse-checkout
+# --no-cone` patterns, one per line, # for comments. Discovery Lab's excludes
+# historical /pursuits/: its full gate checkout held 11 GB on
+# beelink1, and its 22-28 GB measured install reserve kept Lab gates off both
+# beelinks. A commit without the file, or with no patterns in it, gets a full
+# checkout. This keeps <checkout> at the patterns committed at <rev>, the
+# commit it is about to check out (an idle checkout passes HEAD); the caller
+# holds the checkout's repo lock. Setting patterns removes the excluded
+# tracked files now, and later checkouts never write them. The cache prune
+# passes --shrink-only: it never restores a full tree, which would write
+# gigabytes in the step that frees disk (an idle Lab checkout at
+# a commit older than its file was rewritten with 4.7 GB of pursuits/). Sets
+# sparse_source to repo or empty, and says on stderr when it changed the
+# checkout.
+sparse_apply() {  # <checkout> <rev> [--shrink-only]
+  local want enabled
+  want=$(git -C "$1" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sparse_normalize)
+  enabled=$(git -C "$1" config --bool core.sparseCheckout)
+  sparse_source=${want:+repo}
+  if [ -z "$want" ]; then
+    [ "$enabled" = true ] && [ "${3:-}" != --shrink-only ] || return 0
+    echo "beelink-gate: $1 has no sparse patterns at $2; restoring its full tree" >&2
+    git -C "$1" sparse-checkout disable
+  elif [ "$enabled" != true ] || [ "$want" != "$(cat "$1/.git/info/sparse-checkout" 2>/dev/null)" ]; then
+    echo "beelink-gate: applying repo sparse patterns to $1: $(printf '%s' "$want" | tr '\n' ' ')" >&2
+    printf '%s\n' "$want" | git -C "$1" sparse-checkout set --no-cone --stdin
+  fi
+}
+
+
+# A writer holds the fd lock for its brief intent and rename. If it dies,
+# flock releases that lock; a claimant can then remove its abandoned marker.
+
+
+
+# Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
+# cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
+# 24 h. Each sweep holds every gate lock for <repo> and cargo's own profile
+# locks, so no gate or cargo build is using the files it removes; a removed
+# artifact only costs a rebuild. Failure is reported but never fails a gate.
+prune_build_dirs() {
+  python3 - "$@" <<'PY'
+import fcntl
+import os
+from pathlib import Path
+import shutil
+import sys
+import time
+
+build_root, locks, current_lock = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+max_age = int(sys.argv[4])
+cutoff = time.time() - max_age
+TAG = "Signature: 8a477f597d28d172789f06886806bc55"
+ARTIFACT_DIRS = ("deps", "build", ".fingerprint", "incremental", "examples")
+CARGO_LOCKS = (".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock")
+
+def try_lock(path, held):
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return True
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return False
+    held.append(fd)
+    return True
+
+def release(held):
+    while held:
+        os.close(held.pop())
+
+def newest(path):
+    # relatime refreshes atime on a read at most daily; cargo's locks, not
+    # this age, are what keep an active build's inputs safe.
+    st = path.lstat()
+    latest = max(st.st_atime, st.st_mtime)
+    if path.is_dir() and not path.is_symlink():
+        for parent, dirs, files in os.walk(path):
+            for name in dirs + files:
+                st = os.lstat(os.path.join(parent, name))
+                latest = max(latest, st.st_atime, st.st_mtime)
+    return latest
+
+def reclaimable(path):
+    if not path.is_dir() or path.is_symlink():
+        st = path.lstat()
+        return st.st_blocks * 512 if st.st_nlink == 1 else 0
+    total = 0
+    for parent, _, files in os.walk(path):
+        for name in files:
+            st = os.lstat(os.path.join(parent, name))
+            if st.st_nlink == 1:
+                total += st.st_blocks * 512
+    return total
+
+def profiles(target):
+    # <target>/<profile> and <target>/<triple>/<profile>
+    for child in target.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if (child / ".fingerprint").is_dir():
+            yield child
+            continue
+        for grandchild in child.iterdir():
+            if not grandchild.is_symlink() and (grandchild / ".fingerprint").is_dir():
+                yield grandchild
+
+try:
+    with (locks / ".build-prune.lock").open("a+") as sweep_lock:
+        try:
+            fcntl.flock(sweep_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit(0)
+        for target in sorted(build_root.glob("*-build")):
+            tag = target / "CACHEDIR.TAG"
+            if target.is_symlink() or not target.is_dir() or tag.is_symlink() or not tag.is_file():
+                continue
+            with tag.open() as tagfile:
+                if not tagfile.read(len(TAG)) == TAG:
+                    continue
+            repo = target.name[:-len("-build")]
+            held = []
+            try:
+                busy = [lock for lock in sorted([*locks.glob(f"*-{repo}.lock"), *locks.glob(f"*-{repo}@*.lock")])
+                        if lock != current_lock and not try_lock(lock, held)]
+                if busy:
+                    print(f"beelink-gate: skipped {target}; a {repo} gate holds its lock", file=sys.stderr)
+                    continue
+                freed = 0
+                for profile in profiles(target):
+                    profile_held = []
+                    try:
+                        if not all(try_lock(profile / name, profile_held) for name in CARGO_LOCKS):
+                            print(f"beelink-gate: skipped {profile}; cargo is building there", file=sys.stderr)
+                            continue
+                        for name in ARTIFACT_DIRS:
+                            area = profile / name
+                            if area.is_symlink() or not area.is_dir():
+                                continue
+                            for entry in area.iterdir():
+                                if newest(entry) >= cutoff:
+                                    continue
+                                bytes_used = reclaimable(entry)
+                                if entry.is_dir() and not entry.is_symlink():
+                                    shutil.rmtree(entry)
+                                else:
+                                    entry.unlink()
+                                freed += bytes_used
+                    finally:
+                        release(profile_held)
+                if freed:
+                    print(f"beelink-gate: pruned {freed} bytes of cargo output untouched for {max_age}s from {target}", file=sys.stderr)
+            finally:
+                release(held)
+except OSError as exc:
+    print(f"beelink-gate: build cache sweep failed: {exc}", file=sys.stderr)
+PY
+}
+
+# The fixed 10 GiB pre-install headroom is the safe fallback for a repo with
+# no receipt yet. Later receipts include that headroom plus bytes consumed
+# between admission and the install check (fetch, checkout and install), the
+# checkout shape they measured (sparse_spec: full or a pattern digest) and its
+# temperature (checkout_temperature: warm when the checkout already had that
+# shape, cold when the gate cloned it, reshaped otherwise). A reserve measured
+# on another shape says nothing about this one: beelink2's newest
+# Lab receipt was a 28.2 GB full clone, which refused every sparse Lab gate, so
+# none could write a sparse receipt. A cold clone's cost says little about a
+# warm checkout: beelink2's 15.58 GB cold sparse clone then refused its own warm
+# checkout at 226 GB free.
+# With the gated commit's shape known (<spec>), a cold gate uses this host's
+# newest cold receipt of that shape, else the other beelink's (<peer-cold>),
+# else the headroom. A warm gate uses this host's newest warm receipt of that
+# shape, else the other beelink's (<peer-warm>), else the cold value. With the
+# shape unknown, use this host's newest receipt, as before. Receipts from before
+# temperatures count as cold. A malformed receipt never counts, and an older one
+# never overrides a newer one. match-only prints this host's newest cold and
+# warm values for the shape, for the other beelink.
+last_install_reserve_bytes() {  # <beelink> <host/owner/repo> <mode> [<spec> <peer-cold> <peer-warm> <warm|cold> [match-only]]
+  local beelink="$1" repo_key="$2" mode="$3"
+  case "$mode" in install|ship|dev) ;; *) echo 0; return ;; esac
+  python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$repo_key" "${4:-}" "${5:-}" "${6:-}" "${7:-cold}" "${8:-}" <<'PY'
+import json
+import mmap
+import os
+import re
+import sys
+
+path, host, repo, spec, peer_cold, peer_warm, temperature, match_only = sys.argv[1:]
+fallback = 10 * 1024 ** 3
+SPEC = re.compile(r"full|sha256:[0-9a-f]{64}")
+spec = spec if SPEC.fullmatch(spec) else ""
+warm = temperature == "warm"
+
+def measured(value):
+    return type(value) is int and fallback <= value <= 1024 ** 4
+
+def peer(value):
+    return int(value) if value.isdigit() and measured(int(value)) else None
+
+def shape(row):
+    # Receipts from before sparse_spec: one with sparse patterns measured
+    # unknown patterns; every other one measured a full checkout.
+    if "sparse_spec" not in row:
+        return None if row.get("sparse") else "full"
+    value = row["sparse_spec"]
+    return value if isinstance(value, str) and SPEC.fullmatch(value) else None
+
+def heat(row):
+    # Receipts from before temperatures count as cold, the costlier case.
+    if "checkout_temperature" not in row:
+        return "cold"
+    value = row["checkout_temperature"]
+    return value if value in ("warm", "cold", "reshaped") else None
+
+def answer(value, source):
+    print(f"beelink-gate: install reserve {value} bytes from {source}", file=sys.stderr)
+    print(value)
+    sys.exit(0)
+
+newest = {}
+try:
+    with open(path, "rb") as receipts:
+        if os.fstat(receipts.fileno()).st_size:
+            with mmap.mmap(receipts.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                pos = len(data)
+                for _ in range(10000):
+                    if pos == 0 or len(newest) == 2:
+                        break
+                    if data[pos - 1:pos] == b"\n":
+                        pos -= 1
+                    start = data.rfind(b"\n", 0, pos) + 1
+                    line, pos = data[start:pos], start
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict) or row.get("host") != host or row.get("repo") != repo:
+                        continue
+                    value = row.get("install_reserve_bytes")
+                    if not measured(value):
+                        continue
+                    if not spec and not match_only:
+                        answer(value, f"{host}'s newest receipt (checkout shape unknown)")
+                    if shape(row) == spec and heat(row) in ("warm", "cold"):
+                        newest.setdefault(heat(row), value)
+except FileNotFoundError:
+    pass
+if match_only:
+    for kind in ("cold", "warm"):
+        if kind in newest:
+            print(f"{kind} {newest[kind]}")
+    sys.exit(0)
+if warm and "warm" in newest:
+    answer(newest["warm"], f"{host}'s newest warm receipt for checkout shape {spec}")
+if warm and peer(peer_warm):
+    answer(peer(peer_warm), f"the other beelink's newest warm receipt for checkout shape {spec}")
+note = "; a warm checkout pays it until a beelink has a warm receipt of its shape" if warm else ""
+if "cold" in newest:
+    answer(newest["cold"], f"{host}'s newest cold receipt for checkout shape {spec}{note}")
+if peer(peer_cold):
+    answer(peer(peer_cold), f"the other beelink's newest cold receipt for checkout shape {spec}{note}")
+answer(fallback, f"the 10 GiB headroom (no receipt for checkout shape {spec}){note}")
+PY
+}
+
+# The bytes a gate owns on disk: its checkout and the package stores its install
+# writes, in one du, so a node_modules file hardlinked into the store counts once.
+# On beelink1 at load 12-16 the Lab checkout and the 15 GiB pnpm store (486,018
+# files) took 1.1-2.7 s. Prints nothing when du fails, warns about anything but a
+# file that vanished mid-scan, or runs past <seconds> (the caller passes 60 s or the
+# gate's remaining hold, whichever is less, so a scan never holds the lock past it).
+gate_bytes() {  # <seconds> <checkout> <store>...
+  local limit=$1
+  shift
+  (( limit > 0 )) || return 1
+  gate_disk scan "${disk_dir:-}" "${disk_snapshot_phase:-before}" "$limit" "$@"
+}
+
+# The shape a cached checkout has now: full, or the digest of its applied
+# patterns. Fails when there is no checkout.
+checkout_shape() {  # <checkout>
+  [ -d "$1/.git" ] || return 1
+  if [ "$(git -C "$1" config --bool core.sparseCheckout)" = true ]; then
+    sparse_spec_of < "$1/.git/info/sparse-checkout"
+  else
+    echo full
+  fi
+}
+
+# Before a gate holds a checkout lock it cannot know which copy it gets, so the
+# probe and the first admission check assume warm when any copy of the repo has
+# the gated commit's shape. Only the check after the lock is binding.
+any_copy_warm() {  # <repo cache dir> <spec>
+  local copy
+  [ -n "$2" ] || return 1
+  for copy in "$1" "$1"@*; do
+    [ "$(checkout_shape "$copy" 2>/dev/null)" != "$2" ] || return 0
+  done
+  return 1
+}
+
+# The cache is keyed by host/owner/repo, so any spelling of that repo (https or
+# SSH, with or without .git) owns it; a different repo in that path is refused.
+# The checkout keeps the origin it was created with: that transport has already
+# fetched on this host, while the caller's spelling may need credentials the
+# beelink does not have (an https URL without a token prompts and hangs).
+adopt_origin() {
+  local checkout=$1 url=$2 origin origin_key
+  # The recorded URL, not `remote get-url`, which applies url.*.insteadOf rewrites.
+  origin=$(git -C "$checkout" config --get remote.origin.url) || return $?
+  origin_key=$(parse_repo_url "$origin" 2>/dev/null && printf '%s/%s/%s' "$host" "$owner" "$repo")
+  [ "$origin_key" = "$host/$owner/$repo" ] || die "cache origin mismatch at $checkout: $origin is not $url"
+  # A GitHub cache fetches over SSH, the transport the beelinks hold a key for;
+  # an https origin left by an earlier gate is moved to it.
+  if [ "$origin" != "$(fetch_url "$url")" ] && [ "$host" = github.com ]; then
+    git -C "$checkout" remote set-url origin "$(fetch_url "$url")" || return $?
+  fi
+}
+
+# The URL a cache fetches from. The beelinks have an SSH key for GitHub and no
+# https credentials, so https://github.com/<owner>/<repo> is fetched as
+# git@github.com:<owner>/<repo>.git: a cold tangle-tools cache
+# cloned from the https spelling failed with "could not read Username".
+fetch_url() {
+  if [ "$host" = github.com ]; then echo "git@github.com:$owner/$repo.git"; else echo "$1"; fi
+}

@@ -19,11 +19,10 @@ def size(path):
 
 def main():
     owner = Path(__file__).resolve().parents[1] / "claude/tools/beelink-gate"
-    source = owner.read_text()
-    # Load the actual owner functions; no alternative implementation or fake executables.
-    functions = source[source.index("sparse_normalize() {"):source.index("# The checkout shape")]
-    functions += source[source.index("sparse_apply() {"):source.index("# A writer holds")]
-    functions += (owner.parent / "beelink-gate-lib/cache.sh").read_text()
+    library = owner.parent / "beelink-gate-lib"
+    # Load the actual complete module owners; the native filesystem, Git,
+    # sparse checkout and locks supply the integration boundary.
+    functions = (library / "resources.sh").read_text() + "\n" + (library / "cache.sh").read_text()
     with tempfile.TemporaryDirectory(prefix="gate-cache-integration-") as directory:
         root = Path(directory)
         repo = root / "source"

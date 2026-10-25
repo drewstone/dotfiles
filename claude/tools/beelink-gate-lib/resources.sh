@@ -292,3 +292,126 @@ gate_worker_budget() {
   (( each >= 2 )) || each=2
   echo "$each"
 }
+
+effective_disk_floor_bytes() {
+  local path
+  path=$(limits_file) && [ -n "$path" ] || return 75
+  gate_disk floor "$1" "$path"
+}
+
+
+free_bytes() {
+  local available root_available
+  available=$(df -B1 --output=avail "$HOME" | tail -n 1 | tr -d ' ') || die "cannot read free disk space"
+  root_available=$(df -B1 --output=avail / | tail -n 1 | tr -d ' ') || die "cannot read root free disk space"
+  [[ "$available" =~ ^[0-9]+$ && "$root_available" =~ ^[0-9]+$ ]] || die "invalid free disk reading"
+  (( root_available >= available )) || available=$root_available
+  echo "$available"
+}
+
+check_floor() {
+  local host="$1" reserve="${2:-0}" available floor_bytes
+  floor_bytes=$(effective_disk_floor_bytes "$host") || return 3
+  available=$(free_bytes)
+  last_floor_available=$available
+  if (( available < floor_bytes )); then
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_bytes" >&2
+    return 3
+  fi
+  if (( reserve > 0 && available < floor_bytes + reserve )); then
+    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
+      "$host" "$available" "$floor_bytes" "$reserve" >&2
+    return 3
+  fi
+}
+
+# Gates for different repos run in parallel; cap them per host with flock slots
+# so a burst of lanes cannot drive the load past the cores. The slot is taken
+# after the repo lock, so gates queued behind one repo hold no slot.
+
+# CPU this shell's reaped children used, in clock ticks (cutime + cstime of /proc/$$/stat).
+# A step's command is reaped through timeout, so the difference around a step is its CPU.
+children_cpu_ticks() {
+  local stat
+  stat=$(cat "/proc/$$/stat" 2>/dev/null) || { echo 0; return; }
+  stat=${stat##*) }
+  # shellcheck disable=SC2086 # split the stat fields
+  set -- $stat
+  echo $(( ${14} + ${15} ))
+}
+
+# Prints one line for `auto`: state=free|busy|refused, cache=warm|cold, load.
+remote_probe() {
+  if [ "$#" -lt 4 ] || [ "$#" -gt 6 ]; then die "invalid probe request"; fi
+  local beelink repo_url window_day window_hour host owner repo cache_root lock fd state=free cache=cold reason="" next="" err probe_mode=install reserve_mode reserve
+  beelink=$(decode "$1") repo_url=$(decode "$2") window_day=$(decode "$3") window_hour=$(decode "$4") || die "invalid probe encoding"
+  [ "$#" -ge 5 ] && probe_mode=$(decode "$5")
+  reserve_mode=$probe_mode
+  [ "$#" -eq 6 ] && reserve_mode=$(decode "$6")
+  light=0 dev=0; [ "$probe_mode" = light ] && light=1
+  [ "$probe_mode" = dev ] && dev=1
+  parse_repo_url "$repo_url"
+  cache_root="${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}"
+  if ! reason=$(release_priority_reason "$beelink"); then
+    printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=release-held capacity=null reason=%s\n' \
+      "$beelink" "$(utc_in_minutes 5)" "$reason"
+    return 0
+  fi
+  local probe_heat=cold
+  ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
+  reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
+    "${BEELINK_GATE_PEER_RESERVE:-}" "${BEELINK_GATE_PEER_WARM_RESERVE:-}" "$probe_heat" 2>/dev/null) \
+    || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
+  # A stricter admission bar never authorizes unarchived cache deletion.
+  # Capacity recovery belongs to the archival storage lifecycle.
+  local recovered=0
+  if [ "$state" != refused ] && ! reason=$(check_floor "$beelink" "$reserve" 2>&1); then
+    state=refused next=$(utc_in_minutes 15)
+  fi
+  if [ "$state" != refused ]; then
+    err=$(mktemp)
+    next=$(check_update_window "$beelink" "$window_day" "$window_hour" 2>"$err") || { state=refused; reason=$(cat "$err"); }
+    rm -f "$err"
+    if [ "$state" != refused ]; then next=""; elif [ -z "$next" ]; then next=$(utc_in_minutes 5); fi
+  fi
+  # A repo has BEELINK_GATE_REPO_CHECKOUTS checkouts per host; one free is enough.
+  # A light gate has its own, <repo>@light.
+  local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix free_copy=""
+  [[ "$copies" =~ ^[1-9][0-9]*$ ]] || copies=2
+  [ "$light" = 1 ] && copies=1
+  [ "$dev" = 1 ] && copies=1
+  if [ "$state" = free ]; then
+    state=busy
+    for ((k = 0; k < copies; k++)); do
+      suffix=$([ "$k" = 0 ] || echo "@$k"); [ "$light" = 1 ] && suffix=@light; [ "$dev" = 1 ] && suffix=@dev
+      lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
+      if [ ! -e "$lock" ]; then state=free free_copy=$suffix; break; fi
+      exec {fd}<"$lock" || die "cannot open lock"
+      if flock -n -s "$fd"; then state=free free_copy=$suffix; exec {fd}<&-; break; fi
+      exec {fd}<&-
+      reason=$(holder_line "$lock")
+    done
+    [ "$state" = busy ] || reason=""
+  fi
+  [ -d "$cache_root/$host/$owner/$repo$free_copy/.git" ] && cache=warm
+  local max_slots=${BEELINK_GATE_MAX_CONCURRENT:-6} pool=slot free_slots=0 i slot
+  [ "$light" = 1 ] && { max_slots=${BEELINK_GATE_LIGHT_SLOTS:-2}; pool="light-slot"; }
+  [ "$dev" = 1 ] && { max_slots=${BEELINK_GATE_DEV_SLOTS:-2}; pool="dev-slot"; }
+  for ((i = 0; i < max_slots; i++)); do
+    slot="$cache_root/.locks/$pool-$i.lock"
+    if [ ! -e "$slot" ]; then free_slots=$((free_slots + 1)); continue; fi
+    exec {fd}<"$slot" || continue
+    flock -n -s "$fd" && free_slots=$((free_slots + 1))
+    exec {fd}<&-
+  done
+  local probe_load probe_limit host_cpu capacity mode=host-psi held
+  capacity=$(host_psi_admission) || return 75
+  read -r probe_load probe_limit held < <(python3 -c 'import json,sys; x=json.loads(sys.argv[1]); print(x["some_avg10"] if x["some_avg10"] is not None else 100, x["limit"], int(x["held"]))' "$capacity")
+  host_cpu=$(host_pressure_now || echo unknown)
+  if [ "$held" = 1 ]; then state=busy; reason="host PSI some avg10 admission held"; fi
+  if ! legacy_gate_drained; then state=busy; reason="legacy gate class has not proved drained"; fi
+  printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s admission=%s capacity=%s reason=%s\n' \
+    "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$mode" "$capacity" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
+
+}

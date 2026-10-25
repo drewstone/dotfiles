@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """Real filesystem/lock integration: no simulated commands or lock objects."""
 import argparse
-import base64
 import fcntl
 import json
 import os
 from pathlib import Path
-import re
-import signal
 import subprocess
 import tempfile
 import time
@@ -15,14 +12,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "claude/tools/beelink-gate"
-
-
-def function(source, name):
-    start = source.index(name + "() {")
-    first_end = source.index("\n", start)
-    if source[start:first_end].rstrip().endswith("}"):
-        return source[start:first_end]
-    return source[start:source.index("\n}", start) + 2]
 
 
 def run_case(lock_name, timeout):
@@ -34,12 +23,11 @@ def run_case(lock_name, timeout):
         locks.mkdir()
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         (repo / "allocated").write_bytes(b"x" * 16_777_216)
-        source = GATE.read_text()
-        helpers = "\n".join(function(source, name) for name in
-                            ["sparse_normalize", "sparse_apply"])
-        module = ROOT / "claude/tools/beelink-gate-lib/cache.sh"
-        prune = module.read_text() if module.exists() else function(source, "prune_cache")
-        script = helpers + "\n" + prune + '\nprune_cache "$1" "$2" 8388608\n'
+        library = GATE.resolve().parent / "beelink-gate-lib"
+        # Real module integration against the native kernel and filesystem.
+        # Use the complete owners, never slices of private function definitions.
+        script = (library / "resources.sh").read_text() + "\n" + (library / "cache.sh").read_text()
+        script += '\nprune_cache "$1" "$2" 8388608\n'
         with (locks / lock_name).open("a+") as held:
             mode = fcntl.LOCK_SH if lock_name == ".capacity.lock" else fcntl.LOCK_EX
             fcntl.flock(held, mode)

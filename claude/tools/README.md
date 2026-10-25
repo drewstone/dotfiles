@@ -330,6 +330,15 @@ gh-drew variable set MERGE_ON_GREEN_PAUSED -R tangle-network/agent-container --b
 
 ## beelink-gate
 
+The entrypoint loads one shared composition and dispatches the public commands.
+Its immutable SSH payload embeds those same owners: `beelink-gate-lib/source.sh`
+for transport and frontend state, `placement.sh` for host selection and FIFO
+reservations, `execution.sh` for native setup, receipts and checked command
+execution, `cache.sh` for sparse checkouts and reclamation, `install.sh` for
+dependencies and final cleanup, and the admission, resources and job owners.
+Changing that composition updates both the local loader and source emitter;
+incomplete bundles refuse before dispatch.
+
 From GTR, run a full-SHA gate on a beelink without creating a lane worktree there:
 
 ```bash

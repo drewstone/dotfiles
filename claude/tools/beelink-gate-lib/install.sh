@@ -467,3 +467,260 @@ finish_disk_observation() {
     kill -0 "$disk_pid" 2>/dev/null || rm -rf -- "$disk_dir"
   fi
 }
+
+# Native addons under node_modules/.pnpm that the gate's Node cannot load, one
+# "<name>\t<package dir>\t<reason>" line each: an addon under build/ made for
+# another NODE_MODULE_VERSION (process.versions.modules), or a package with a
+# binding.gyp and no .node file that the repo allows to build. The build policy
+# comes from the repo (pnpm-workspace.yaml, package.json "pnpm") and from
+# node_modules/.modules.yaml: allowBuilds, onlyBuiltDependencies,
+# neverBuiltDependencies, ignoredBuiltDependencies and ignoredBuilds. A package
+# the repo keeps from building is never reported, and N-API addons load under
+# any Node.
+stale_native_addons() {
+  [ -n "$gate_abi" ] || { echo "beelink-gate: cannot read the NODE_MODULE_VERSION of node $gate_node to check native addons" >&2; return 1; }
+  python3 - "$gate_abi" "${gate_node_bin:-node}" <<'PY'
+import json, os, re, subprocess, sys, tempfile
+abi, node = sys.argv[1], sys.argv[2]
+root = "node_modules/.pnpm"
+allowed, denied = set(), set()
+
+def bare(name):
+    name = str(name).strip().strip("'\"")
+    return re.sub(r"@[^@/]*$", "", name) if name.rfind("@") > 0 else name
+
+def policy(config):
+    if not isinstance(config, dict):
+        return
+    for name, value in (config.get("allowBuilds") or {}).items():
+        (allowed if value is True or str(value).lower() == "true" else denied).add(bare(name))
+    allowed.update(bare(n) for n in config.get("onlyBuiltDependencies") or [])
+    for key in ("neverBuiltDependencies", "ignoredBuiltDependencies", "ignoredBuilds"):
+        denied.update(bare(n) for n in config.get(key) or [])
+
+def read_yaml(path):
+    """The top-level lists and flat mappings of a pnpm YAML file; enough for its build policy."""
+    try:
+        text = open(path).read()
+    except OSError:
+        return {}
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    config, section = {}, None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if re.match(r"^\S", line):
+            section = line.split(":", 1)[0].strip()
+            config.setdefault(section, None)
+        elif section and line.strip().startswith("- "):
+            config[section] = (config[section] if isinstance(config[section], list) else []) + [line.strip()[2:]]
+        elif section and ":" in line:
+            key, _, value = line.strip().rpartition(":")
+            if not isinstance(config[section], dict):
+                config[section] = {}
+            config[section][key.strip().strip("'\"")] = value.strip()
+    return config
+
+policy(read_yaml("node_modules/.modules.yaml"))
+policy(read_yaml("pnpm-workspace.yaml"))
+try:
+    policy(json.load(open("package.json")).get("pnpm") or {})
+except (OSError, ValueError, AttributeError):
+    pass
+allowed -= denied
+
+def addons(top, depth=0):
+    try:
+        entries = list(os.scandir(top))
+    except OSError:
+        return
+    for entry in entries:
+        if entry.is_symlink() or entry.name == "node_modules":
+            continue
+        if entry.is_dir() and depth < 4:
+            yield from addons(entry.path, depth + 1)
+        elif entry.name.endswith(".node") and entry.is_file():
+            yield entry.path
+
+def entrypoint_loads_native(path):
+    # Prebuilt addons may live in optional dependency packages. Let this Node
+    # validate a declared same-family platform binary reachable from this
+    # entrypoint, excluding incidental native dependencies and preloads.
+    probe = r"""
+const fs = require('node:fs'), path = require('node:path');
+const root = process.argv[1], manifest = require(path.join(root, 'package.json'));
+const family = manifest.name.split('/').pop() + '-';
+const libc = process.platform === 'linux' && (process.report.getReport().header.glibcVersionRuntime ? 'glibc' : 'musl');
+function owner(file) {
+  for (let dir = path.dirname(fs.realpathSync(file));; dir = path.dirname(dir)) {
+    const metadata = path.join(dir, 'package.json');
+    if (fs.existsSync(metadata)) return { root: dir, manifest: JSON.parse(fs.readFileSync(metadata, 'utf8')) };
+    if (dir === path.dirname(dir)) return null;
+  }
+}
+const providers = new Set();
+for (const name of Object.keys(manifest.optionalDependencies || {})) {
+  if (!name.split('/').pop().startsWith(family)) continue;
+  try {
+    const candidate = owner(require.resolve(name, { paths: [root] })), meta = candidate.manifest;
+    if (meta.name === name && meta.os?.includes(process.platform) && meta.cpu?.includes(process.arch)
+        && (!libc || meta.libc?.includes(libc))) providers.add(candidate.root);
+  } catch {}
+}
+const entry = require.resolve(root);
+require(entry);
+const seen = new Set(), native = [];
+function visit(mod) {
+  if (!mod || seen.has(mod.id)) return;
+  seen.add(mod.id);
+  if (mod.filename.endsWith('.node') && providers.has(owner(mod.filename)?.root)) native.push(mod.filename);
+  for (const child of mod.children) visit(child);
+}
+visit(require.cache[entry]);
+console.log(JSON.stringify(native));
+"""
+    try:
+        # A helper may inherit stdout after Node exits; a file avoids waiting
+        # forever for a descendant to close a captured pipe after timeout.
+        with tempfile.TemporaryFile(mode="w+") as output:
+            result = subprocess.run([node, "-e", probe, os.path.abspath(path)],
+                                    stdin=subprocess.DEVNULL, stdout=output,
+                                    stderr=subprocess.DEVNULL, text=True, timeout=10)
+            output.seek(0)
+            loaded = json.load(output) if result.returncode == 0 else []
+        return isinstance(loaded, list) and bool(loaded)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+for store_entry in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+    base = os.path.join(root, store_entry, "node_modules")
+    try:
+        names = os.listdir(base)
+    except OSError:
+        continue
+    for name in names:
+        candidates = [os.path.join(name, s) for s in os.listdir(os.path.join(base, name))] if name.startswith("@") and os.path.isdir(os.path.join(base, name)) else [name]
+        for pkg in candidates:
+            path = os.path.join(base, pkg)
+            if os.path.islink(path) or not os.path.isfile(os.path.join(path, "binding.gyp")) or pkg in denied:
+                continue
+            found = list(addons(path))
+            if not found:
+                if pkg in allowed and not entrypoint_loads_native(path):
+                    print(f"{pkg}\t{path}\tmissing addon")
+                continue
+            for addon in found:
+                if os.sep + "build" + os.sep not in addon[len(path):] + os.sep:
+                    continue
+                with open(addon, "rb") as fh:
+                    built = re.search(rb"node_register_module_v(\d+)", fh.read())
+                if built and built.group(1).decode() != abi:
+                    print(f"{pkg}\t{path}\tabi {built.group(1).decode()}->{abi}")
+                    break
+PY
+}
+
+# Rebuild the stale native addons for the gate's Node before the command runs.
+# Each one's build directory is unlinked first: pnpm links build output from its
+# store, and a rebuild in place overwrites the store's shared copy for every
+# checkout and Node that links it. The result goes on the receipt.
+rebuild_native_addons() {
+  local stale names=() dirs=() reasons=() name dir reason after scan_rc
+  stale=$(BEELINK_GATE_RUN=$run_token stale_native_addons); scan_rc=$?
+  reap_leftovers
+  (( scan_rc == 0 )) || return "$scan_rc"
+  [ -n "$stale" ] || return 0
+  while IFS=$'\t' read -r name dir reason; do
+    names+=("$name"); dirs+=("$dir"); reasons+=("$name $reason")
+  done <<< "$stale"
+  echo "beelink-gate: rebuilding native addons for node $gate_node: ${reasons[*]}" >&2
+  for dir in "${dirs[@]}"; do rm -rf -- "$dir/build" || return $?; done
+  step pnpm rebuild --store-dir "$HOME/.local/share/pnpm/store" "${names[@]}" || return $?
+  after=$(BEELINK_GATE_RUN=$run_token stale_native_addons); scan_rc=$?
+  reap_leftovers
+  (( scan_rc == 0 )) || return "$scan_rc"
+  if [ -n "$after" ]; then
+    native_rebuild="failed: ${reasons[*]}"
+    echo "beelink-gate: NATIVE ADDONS STILL STALE after pnpm rebuild, so node $gate_node cannot load them: ${after//$'\t'/ }" >&2
+    return 1
+  fi
+  native_rebuild="${reasons[*]}"
+}
+
+# After a green --ship run, sign what ran and on which tree with this beelink's
+# own key, and publish it at refs/ship-proofs/<tree> so the repo's deploy can
+# skip repeating the same checks (gtm-agent scripts/ship-proof.mjs). Only repos
+# that pin signers in scripts/ship-proof-signers get a proof. The key never
+# reaches a command, and a failure here never changes the gate's result.
+publish_proof() {
+  # Each starts empty: a `local` without a value is unset, and the result check
+  # below reads status after any of the API calls may have failed first.
+  local key="$HOME/.config/beelink-gate/ship-proof-key" gh="$HOME/bin/gh-drew" tmp="" tree="" empty="" commit="" status="" version=""
+  [ -f scripts/ship-proof-signers ] || return 0
+  [ "$host" = github.com ] || { echo "beelink-gate: no proof published: $host is not GitHub" >&2; return 0; }
+  [ -f "$key" ] || { echo "beelink-gate: no proof published: $beelink has no ship-proof key" >&2; return 0; }
+  [ -x "$gh" ] || gh=$(command -v gh-drew) || { echo "beelink-gate: no proof published: gh-drew unavailable on $beelink" >&2; return 0; }
+  tree=$(git rev-parse 'HEAD^{tree}') || return 0
+  version=$(declare -f remote_gate execute_gate_checkout step finish finish_gate_exit record_post_command_failure publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version repo_manager_version has_bun_lock install_bun_dependencies install_mise_tools install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
+  tmp=$(mktemp -d) || return 0
+  printf 'ship-proof v1\nrepo=%s\ntree=%s\ncommit=%s\ncommand=%s\ngate=%s\nhost=%s\nat=%s\nexit=0\n' \
+    "$host/$owner/$repo" "$tree" "$(git rev-parse HEAD)" "${command[*]}" "$version" "$beelink" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp/receipt"
+  if ! ssh-keygen -Y sign -q -f "$key" -n ship-proof "$tmp/receipt" </dev/null >/dev/null 2>&1; then
+    echo "beelink-gate: no proof published: signing failed" >&2; rm -rf "$tmp"; return 0
+  fi
+  cat "$tmp/receipt" "$tmp/receipt.sig" > "$tmp/message"
+  empty=$("$gh" api -X POST "repos/$owner/$repo/git/trees" --input - --jq .sha <<<'{"tree":[]}' 2>/dev/null) &&
+    commit=$("$gh" api -X POST "repos/$owner/$repo/git/commits" -F "message=@$tmp/message" -f "tree=$empty" --jq .sha 2>/dev/null) &&
+    status=$("$gh" api -X POST "repos/$owner/$repo/git/refs" -f "ref=refs/ship-proofs/$tree" -f "sha=$commit" --jq .ref 2>&1)
+  case "$?:$status" in
+    0:refs/ship-proofs/*) echo "beelink-gate: published ship proof for tree $tree at refs/ship-proofs/$tree" >&2 ;;
+    *already\ exists*) echo "beelink-gate: a ship proof for tree $tree already exists" >&2 ;;
+    *) echo "beelink-gate: no proof published: GitHub refused ($(printf '%s' "${status:-no response}" | tr '\n' ' ' | cut -c1-160))" >&2 ;;
+  esac
+  rm -rf "$tmp"
+  return 0
+}
+
+# After a green --ship verify, run the repo's pre-merge chat canary when it
+# offers one (`scripts/ship.sh preview <base>`) and names the vault files its
+# credentials come from (scripts/ship-preview.vault, one file per line under
+# ~/company/devops/secrets). The credentials reach that step only. Exit: 0 when
+# the preview passed or the change needs none, 0 when it was refused (ship
+# verify stands alone; the reason is printed), 75 when a release preempted it,
+# 1 when it failed. The preview's receipt goes into this gate's receipt row.
+run_preview() {
+  local vault="$HOME/company/devops/secrets" line receipt_file rc
+  local -a files=()
+  grep -q '^  preview) ' scripts/ship.sh 2>/dev/null && [ -f scripts/ship-preview.vault ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%%#*}; line=${line//[[:space:]]/}
+    [ -n "$line" ] || continue
+    [[ "$line" =~ ^[A-Za-z0-9._-]+\.env$ ]] || { echo "beelink-gate: preview not run: '$line' is not a vault file name" >&2; return 1; }
+    [ -f "$vault/$line" ] || { echo "beelink-gate: preview not run: $vault/$line is missing on $beelink" >&2; return 1; }
+    files+=(-f "$vault/$line")
+  done < scripts/ship-preview.vault
+  [ -n "$default_branch" ] || { echo "beelink-gate: preview not run: the remote default branch is unknown" >&2; return 1; }
+  receipt_file=$(mktemp) || return 1
+  echo "beelink-gate: running the pre-merge preview against origin/$default_branch" >&2
+  step npx -y @dotenvx/dotenvx run "${files[@]}" --quiet -- \
+    env SHIP_PREVIEW_RECEIPT="$receipt_file" SHIP_PREVIEW_PR="$gate_pr" bash scripts/ship.sh preview "origin/$default_branch"
+  rc=$?
+  preview_result=$(tail -n 1 "$receipt_file" 2>/dev/null)
+  rm -f "$receipt_file"
+  case "$rc" in
+    0|2) return 0 ;;
+    3) tempfail_line "$(utc_in_minutes 5)" "the preview was preempted or inconclusive; ship verify passed"; return "$TEMPFAIL" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Keep install timing on failure too; no inference from the surrounding precheck.
+install_step() {
+  local begin=$SECONDS status
+  step "$@"; status=$?
+  export BEELINK_GATE_INSTALL_S=$(( ${BEELINK_GATE_INSTALL_S:-0} + SECONDS - begin ))
+  return "$status"
+}

@@ -7,7 +7,7 @@ declare -A frontend_group_identities=()
 emit_gate_source() {
   local generated status
   generated=$(mktemp) || return "$TEMPFAIL"
-  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" -v metrics="${gate_metrics_source:-}" '
+  if ! awk -v installer="${gate_installer_source:-}" -v staging="${gate_staging_source:-}" -v cache="${gate_cache_source:-}" -v admission="${gate_admission_source:-}" -v resources="${gate_resources_source:-}" -v jobs="${gate_jobs_source:-}" -v execution="${gate_execution_source:-}" -v placement="${gate_placement_source:-}" -v disk="${gate_disk_source:-}" -v release="${gate_release_source:-}" -v metrics="${gate_metrics_source:-}" '
     function append(file, line, status, count) {
       while ((status = getline line < file) > 0) { print line; count++ }
       close(file)
@@ -15,7 +15,7 @@ emit_gate_source() {
     }
     { last = $0 }
     $0 == "# BEELINK_GATE_INSTALLER_START" {
-      starts++; append(installer); append(staging); append(cache); append(admission); append(resources); append(jobs)
+      starts++; append(installer); append(staging); append(cache); append(admission); append(resources); append(jobs); append(execution); append(placement)
       print "beelink_gate_disk_source=$(cat <<\047BEELINK_GATE_DISK_PYTHON\047"
       append(disk)
       print "BEELINK_GATE_DISK_PYTHON"
@@ -749,4 +749,133 @@ frontend_local_records() {
   timer=$(command -v timeout || command -v gtimeout) || return 0
   "$timer" --kill-after=1 2 python3 -c "$beelink_gate_metrics_source"$'\n''import sys; frontend_retained(sys.argv[1], int(sys.argv[2]))' "$STATE_DIR/requests" "$1" 2>/dev/null ||
     printf '%s\n' '{"kind":"frontend_observations","origin":"local","entries":[],"error":"unavailable_or_timeout","truncated":true}'
+}
+
+# --summary: a red gate's test counts and failing tests, printed last so a
+# caller's tail still shows the cause. It reads the node test runner's spec
+# reporter ("ℹ tests 3" counts, the "✖ failing tests:" section), TAP
+# ("# tests 3" counts, each "not ok" line with its indented diagnostics) and
+# vitest ("Test Files  1 failed | 2 passed (3)" counts, each "FAIL  file > test"
+# line with its error's first line).
+summarize_output() {  # <exit code> <output file>...
+  python3 - "$@" <<'PY' >&2
+import re, sys
+code, paths = sys.argv[1], sys.argv[2:]
+ansi = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+keys = "tests|suites|pass|fail|cancelled|skipped|todo|duration_ms"
+count = re.compile(rf"^(?:ℹ|#) ({keys}) (\S+)$")
+not_ok = re.compile(r"^(\s*)not ok\b")
+vitest_count = re.compile(r"^\s*(Test Files|Tests)\s{2,}((?:\d+ [a-z]+(?: \| )?)+) \((\d+)\)$")
+vitest_fail = re.compile(r"^\s*FAIL\s{1,2}\S")
+groups, blocks = [], []
+def close(block, kind):
+    # A suite's own "not ok" only says that a subtest failed; the subtest's block has the cause.
+    if kind == "tap" and any("failureType: 'subtestsFailed'" in l for l in block):
+        return
+    while block and not block[-1].strip():
+        block.pop()
+    blocks.append(block)
+for path in paths:
+    group, block, kind, depth = {}, None, None, 0
+    try:
+        lines = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    with lines:
+        for raw in lines:
+            line = ansi.sub("", raw.rstrip("\r\n"))
+            if block is not None and kind == "vitest":
+                # A vitest failure ends at its "⎯" rule or the next FAIL; keep the error's first line.
+                if not (line.startswith("⎯") or vitest_fail.match(line)):
+                    if line.strip() and len(block) < 2:
+                        block.append(line)
+                    continue
+                close(block, kind)
+                block = None
+            if block is not None:
+                indent = len(line) - len(line.lstrip())
+                if not line.strip() or (kind == "spec" and (indent or line.startswith(("test at ", "✖ ")))) \
+                        or (kind == "tap" and indent > depth):
+                    block.append(line)
+                    continue
+                close(block, kind)
+                block = None
+            match = count.match(line)
+            if match:
+                group[match[1]] = match[2]
+                continue
+            if (match := vitest_count.match(line)):
+                prefix = "files_" if match[1] == "Test Files" else ""
+                group["files" if prefix else "tests"] = match[3]
+                for n, state in re.findall(r"(\d+) ([a-z]+)", match[2]):
+                    group[prefix + state] = n
+                continue
+            if group:
+                groups.append(group)
+                group = {}
+            if line == "✖ failing tests:":
+                block, kind = [line], "spec"
+            elif vitest_fail.match(line):
+                block, kind = [line.strip()], "vitest"
+            elif (match := not_ok.match(line)):
+                block, kind, depth = [line], "tap", len(match[1])
+    if block is not None:
+        close(block, kind)
+    if group:
+        groups.append(group)
+print(f"beelink-gate: summary of the failed command (exit {code})")
+shown = [l for b in blocks for l in b]
+limit = 200
+for l in shown[:limit]:
+    print(l)
+if len(shown) > limit:
+    print(f"beelink-gate: summary omitted {len(shown) - limit} more failing-test lines; the full output is above")
+for g in groups:
+    print("beelink-gate: summary " + " ".join(f"{k}={v}" for k, v in g.items()))
+if not blocks and not groups:
+    print("beelink-gate: summary found no test counts or failing tests in the command output")
+PY
+}
+github_repo() {  # <repo-url>: prints owner/name of a GitHub URL, or fails
+  local r=$1
+  case "$r" in
+    git@github.com:*) r=${r#git@github.com:} ;;
+    ssh://git@github.com/*) r=${r#ssh://git@github.com/} ;;
+    https://github.com/*) r=${r#https://github.com/} ;;
+    *) return 1 ;;
+  esac
+  r=${r%/}; r=${r%.git}
+  [[ "$r" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s\n' "$r"
+}
+merge_gated() {  # <gate stderr log>
+  local id out sha
+  id=$(grep -ao 'gate_id=[A-Za-z0-9-]*' "$1" | tail -n 1)
+  id=${id#gate_id=}
+  # gh-drew requires this gate's own receipt for a release-path repo (its gated_repos).
+  if out=$(BEELINK_GATE_ID="$id" gh-drew pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
+    sha=$(gh-drew pr view "$merge_pr" -R "$merge_repo" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null)
+    echo "beelink-gate: merged #$merge_pr ${sha:-unknown} gate_id=${id:-unknown}" >&2
+    return 0
+  fi
+  echo "beelink-gate: merge of #$merge_pr refused: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" >&2
+  return "$MERGE_REFUSED"
+}
+# The gated commit's checkout shape, read before any beelink fetches it, so each
+# host's reserve comes from a receipt of the same shape (last_install_reserve_bytes).
+commit_sparse_spec() {  # <repo-url> <sha>; prints nothing when it cannot tell
+  local host owner repo gh raw err
+  parse_repo_url "$1" 2>/dev/null || return 0
+  if [ "$host" = github.com ]; then
+    gh=$(command -v gh-drew || command -v gh) || return 0
+    err=$(mktemp) || return 0
+    if raw=$(bounded_transport "source sparse lookup" "$gh" api "repos/$owner/$repo/contents/.beelink-gate/sparse-checkout?ref=$2" --jq .content 2>"$err"); then
+      printf '%s' "$raw" | tr -d '\n' | base64 --decode | sparse_spec_of
+    elif grep -q 'HTTP 404' "$err"; then
+      echo full
+    fi
+    rm -f "$err"
+  elif [ "$host" = local ] && git -C "${1#file://}" cat-file -e "$2^{commit}" 2>/dev/null; then
+    git -C "${1#file://}" cat-file blob "$2:.beelink-gate/sparse-checkout" 2>/dev/null | sparse_spec_of
+  fi
 }

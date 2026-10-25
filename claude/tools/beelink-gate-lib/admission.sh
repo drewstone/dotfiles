@@ -606,3 +606,48 @@ urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
   done
   return 1
 }
+
+# One line describing the holder of a lock, from the metadata its gate wrote.
+holder_line() {
+  local info="$1.holder" pid started sha launcher
+  [ -f "$info" ] && [ ! -L "$info" ] || { echo "holder unknown (no metadata; an older gate version)"; return; }
+  pid=$(sed -n 's/^pid=//p' "$info"); started=$(sed -n 's/^started=//p' "$info")
+  sha=$(sed -n 's/^sha=//p' "$info"); launcher=$(sed -n 's/^launcher=//p' "$info")
+  local state=dead
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && state=alive
+  echo "holder pid=$pid ($state) sha=${sha:0:12} launcher=${launcher:-unknown} held=$(( $(date +%s) - ${started:-0} ))s"
+}
+
+# A gate whose main process is gone can leave children that inherited the lock
+# descriptor (gates before this version passed it to the command). Kill only
+# processes that hold this lock file open, are in the dead holder's session and
+# are not themselves gates. A live holder is never touched.
+reclaim_dead_holder() {
+  local lock=$1 info="$1.holder" pid sid p fd target self_sid candidates=()
+  [ -f "$info" ] && [ ! -L "$info" ] || return 0
+  pid=$(sed -n 's/^pid=//p' "$info"); sid=$(sed -n 's/^sid=//p' "$info")
+  [[ "$pid" =~ ^[0-9]+$ && "$sid" =~ ^[0-9]+$ ]] || return 0
+  kill -0 "$pid" 2>/dev/null && return 0
+  self_sid=$(ps -o sid= -p $$ | tr -d ' ')
+  [ "$sid" != "$self_sid" ] || return 0
+  for p in /proc/[0-9]*; do
+    p=${p#/proc/}
+    [ "$p" != $$ ] || continue
+    [ "$(ps -o sid= -p "$p" 2>/dev/null | tr -d ' ')" = "$sid" ] || continue
+    for fd in /proc/"$p"/fd/*; do
+      target=$(readlink "$fd" 2>/dev/null) || continue
+      if [ "$target" = "$lock" ]; then
+        case "$(tr '\0' ' ' < /proc/"$p"/cmdline 2>/dev/null)" in *--remote*|*beelink-gate*) ;; *) candidates+=("$p") ;; esac
+        break
+      fi
+    done
+  done
+  [ "${#candidates[@]}" -gt 0 ] || return 0
+  for p in "${candidates[@]}"; do
+    echo "beelink-gate: reclaiming lock from dead gate $pid: killing leftover pid $p ($(tr '\0' ' ' < /proc/"$p"/cmdline 2>/dev/null | cut -c1-120))" >&2
+    kill -TERM "$p" 2>/dev/null
+  done
+  sleep 5
+  for p in "${candidates[@]}"; do kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null; done
+  return 0
+}
