@@ -45,7 +45,10 @@ PY
 require_legacy_gate_drained() {
   local status=0
   legacy_gate_drained || status=$?
-  [ "$status" = 0 ] || { echo "beelink-gate: legacy gate class has not proved drained (status=$status); no new managed work" >&2; return 75; }
+  [ "$status" = 0 ] || {
+    tempfail_line "$(utc_in_minutes 5)" "legacy gate class has not proved drained (status=$status); no new managed work"
+    return 75
+  }
 }
 
 verify_gate_unit() {
