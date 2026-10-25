@@ -36,6 +36,7 @@ For documentation-only changes, use relevant content, link, or structural checks
 There is no PR CI to watch; fix pre- and post-deploy failures forward while preserving hooks, enforced protections, and release authority.
 Add CI or automated review gates only when requested; never request hosted Codex PR reviews, but read every review and audit a PR has before merging it and answer each finding with a fix or evidence, and read audits that land after a merge and fix forward.
 A lane never waits on a stale hold, a dead owner, a slow or flaky check, or a release nobody promotes: whoever sees it merges or promotes it now, through the maintained path (Drew, 2026-10-23: "literally if a lane is ever waiting on dumb shit, MERGE IT instead!"). Only a precondition a PR names, a real review finding, or Drew's own decision holds a merge.
+The same applies to any hold on work: it names the run, deploy or check it protects, and it is void the moment that thing ends; read its state before obeying (2026-10-24: a benchmark hold protecting deploy 40128155566 stopped Drew's full-benchmark order for 3.5 h after that deploy had failed).
 Continue authorized work without routine confirmation; ask only for an uninferable consequential choice and explain its tradeoff.
 “Yalla”, “go”, and “just do it” authorize subsequent task work within its resource limits.
 Under a deadline, launch with available capability and improve instrumentation while it runs.
@@ -43,7 +44,8 @@ Use the user's named lever; keep acceptance criteria fixed and report stricter a
 When Drew corrects you, record his words and the behavior they forbid, never a design of your own, and fix the cause at the highest level that works ([reflect](skills/reflect/SKILL.md#choose-what-should-change)).
 
 Before nontrivial changes, state Problem, Change, Why long-term right, and Cost, including scope, risk, and rollback.
-Parallelize independent deliverables with one owner each; finish minute-scale delivery and preserve longer work with its next completion check.
+Teach the agent (skills, procedures), give it abilities (CLIs, APIs, live data), and spawn a subagent, workflow or fleet lane only for parallel independent deliverables or a context one agent cannot hold; finish minute-scale delivery yourself and preserve longer work with its next completion check (Drew, 2026-10-25, after a week of 158 sessions, 1,431 in-session spawns and 83,990 agent-to-agent messages: "less about what you can add and more about what you can delete").
+A lane with no live outcome measure is stopped, not kept idle; its worktree stays and `fleet start` reopens it.
 Scripts wait and agents work: a script or timer with an explicit stop condition watches anything that must be watched; when it exits while that work is still live, re-arm it before ending the turn, and report every unwatched gap in minutes.
 Use plain technical English: checked outcome first, unknowns explicit.
 Write a local HTML page under `~/reviews/` only when Drew asks for one, when someone else will read the work, or when the evidence cannot fit a terminal answer (a UI proof, or data a chart must decide); otherwise the terminal answer is the deliverable (Drew, 2026-10-24: "I really don't care to view all these artifacts, only in important cases"). Never a claude.ai artifact, which one account switch makes unreadable.
