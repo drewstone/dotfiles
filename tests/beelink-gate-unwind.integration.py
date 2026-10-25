@@ -68,6 +68,23 @@ def read_frontend(output):
     return json.loads(Path(os.fsdecode(paths[0])).read_text()) if paths else None
 
 
+def owned_frontend_leaf(frame, host):
+    if frame is None:
+        return ""
+    if not isinstance(frame, dict) or not isinstance(frame.get("placements"), list):
+        raise ValueError("frontend cancellation custody unknown: invalid placement frame")
+    if not frame["placements"]:
+        return ""
+    placement = frame["placements"][-1]
+    if (not isinstance(placement, dict)
+            or placement.get("association") not in ("created", "reattached")
+            or placement.get("target_host") != host
+            or not isinstance(placement.get("gate_id"), str)
+            or not re.fullmatch(re.escape(host) + r"-[0-9a-f]{32}", placement["gate_id"])):
+        raise ValueError("frontend cancellation custody unknown: placement is not owned on pinned host")
+    return placement["gate_id"]
+
+
 @contextlib.contextmanager
 def foreign_control(gate):
     """A second real owned gate must survive the first gate's cancellation."""
@@ -685,8 +702,9 @@ def gtr_case(gate, host, mode, directory):
                     text = log.read_text()
                     frames = re.findall(r"frontend_observation=(\S+)", text)
                     frame = json.loads(Path(frames[0]).read_text()) if frames else None
-                    if frame and frame['placements']:
-                        gate_id=frame['placements'][-1]['gate_id']
+                    owned_leaf=owned_frontend_leaf(frame,host)
+                    if owned_leaf:
+                        gate_id=owned_leaf
                         if reservation: peer=peers[gate_id.split('-')[0]]
                     observation=peer.observe(gate_id)
                     if reservation:
@@ -780,8 +798,7 @@ def gtr_case(gate, host, mode, directory):
             if not gate_id:
                 try:
                     current=read_frontend(log.read_bytes())
-                    if current and current['placements'] and current['placements'][-1]['association'] in ('created','reattached'):
-                        gate_id=current['placements'][-1]['gate_id']
+                    gate_id=owned_frontend_leaf(current,host)
                 except (OSError,ValueError,KeyError) as error:
                     cleanup['custody_unknown']=str(error)
             if gate_id:
