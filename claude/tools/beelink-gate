@@ -1663,7 +1663,7 @@ reserve_checkout() {
   # The launcher keeps stdin open. EOF removes the reservation even if its
   # session dies; a timeout merely means that no heartbeat bytes arrived.
   while :; do
-    IFS= read -r -t 5 _; rc=$?
+    IFS= read -r -t "$gate_heartbeat_interval_seconds" _; rc=$?
     (( rc == 0 || rc > 128 )) || break
   done
   rm -f "$marker"
@@ -1673,11 +1673,29 @@ reserve_checkout() {
 checkout_reservation_pids=() checkout_reservation_files=() checkout_reservation_hosts=() checkout_reservation_dir="" checkout_monitor_pid=""
 declare -A checkout_reservation_lost=()
 stop_checkout_reservations() {
-  local pid file
-  [ -z "$checkout_monitor_pid" ] || kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
+  local pid file active drain_end=$((SECONDS + gate_heartbeat_interval_seconds + TRANSPORT_KILL_GRACE_SECONDS))
+  local -a owned=("${checkout_reservation_pids[@]}")
+  [ -z "$checkout_monitor_pid" ] || owned+=("$checkout_monitor_pid")
   for file in "${checkout_reservation_files[@]}"; do : > "$file.stop"; done
-  for pid in "${checkout_reservation_pids[@]}"; do wait "$pid" 2>/dev/null || true; done
-  [ -z "$checkout_reservation_dir" ] || rm -rf "$checkout_reservation_dir"
+  while (( SECONDS < drain_end )); do
+    active=0
+    for pid in "${owned[@]}"; do kill -0 -- "-$pid" 2>/dev/null && active=1; done
+    (( active )) || break
+    sleep 0.1
+  done
+  for pid in "${owned[@]}"; do
+    if kill -0 -- "-$pid" 2>/dev/null; then
+      frontend_tainted=1
+      echo "beelink-gate: UNKNOWN reservation EOF cleanup; draining exact owned local group=$pid, remote ticket removal unconfirmed" >&2
+    fi
+    stop_frontend_group "$pid" || frontend_tainted=1
+  done
+  # An unconfirmed local drain keeps its private stop/peer metadata for recovery.
+  if [ "${frontend_tainted:-0}" != 1 ]; then
+    [ -z "$checkout_reservation_dir" ] || rm -rf "$checkout_reservation_dir"
+  elif [ -n "$checkout_reservation_dir" ]; then
+    echo "beelink-gate: reservation cleanup evidence retained at $checkout_reservation_dir" >&2
+  fi
 }
 
 watch_checkout_admission() {
@@ -1694,15 +1712,20 @@ watch_checkout_admission() {
 start_checkout_reservations() {
   local priority=${1:-urgent} host file pid tries
   local -a args=()
-  checkout_reservation_dir=$(mktemp -d) || die "cannot allocate checkout reservation state"
+  if [ -n "${frontend_path:-}" ]; then
+    checkout_reservation_dir=$(mktemp -d "${frontend_path%/*}/reservations.XXXXXXXX") || die "cannot allocate checkout reservation state"
+  else
+    checkout_reservation_dir=$(mktemp -d) || die "cannot allocate checkout reservation state"
+  fi
   for host in beelink1 beelink2; do
     file="$checkout_reservation_dir/$host"
     args=("$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")")
     if [ "$priority" = normal ]; then
       args+=("$(encode normal)" "$(encode "$reservation_epoch")" "$(encode "$reservation_token")")
     fi
-    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "${args[@]}" >"$file" 2>"$file.err" &
-    checkout_reservation_pids+=("$!")
+    BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 start_frontend_group on_beelink "$host" --urgent-reserve "${args[@]}" >"$file" 2>"$file.err"
+    checkout_reservation_pids+=("$frontend_spawned_pid")
+    printf '%s %s\n' "$frontend_spawned_pid" "${frontend_group_identities[$frontend_spawned_pid]:-unknown}" > "$file.local-group"
     checkout_reservation_files+=("$file")
     checkout_reservation_hosts+=("$host")
   done
@@ -1724,7 +1747,7 @@ start_checkout_reservations() {
     else
       cat "$file.err" >&2
       : > "$file.stop"
-      kill -TERM "${checkout_reservation_pids[$i]}" 2>/dev/null || true
+      stop_frontend_group "${checkout_reservation_pids[$i]}" || frontend_tainted=1
       checkout_reservation_lost[$host]=1
       echo "beelink-gate: $host did not reserve a checkout place; auto places only on the other beelink" >&2
     fi
@@ -2212,11 +2235,11 @@ while :; do
   if [ -n "$checkout_reservation_dir" ]; then
     admission_log="$checkout_reservation_dir/admission.log"
     : > "$admission_log"
-    watch_checkout_admission "$admission_log" "$gate_id" & checkout_monitor_pid=$!
+    start_frontend_group watch_checkout_admission "$admission_log" "$gate_id"
+    checkout_monitor_pid=$frontend_spawned_pid
     heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id" 2> >(tee "$admission_log" >&2)
     rc=$?
-    kill -TERM "$checkout_monitor_pid" 2>/dev/null || true
-    wait "$checkout_monitor_pid" 2>/dev/null || true
+    stop_frontend_group "$checkout_monitor_pid" || frontend_tainted=1
     checkout_monitor_pid=""
   else
     heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id"

@@ -632,8 +632,9 @@ and enforces its disk floor. An unavailable update policy retains its existing
 cache and TEMPFAIL behavior. Floor refusals do not evict caches: the archival
 storage lifecycle owns capacity recovery. Submitted gates retain their existing
 hold. The initial placement wait is bounded by the existing load-wait budget.
-The frontend's absolute monotonic deadline uses the existing load-wait plus
-hold budgets, and `--retry` can shorten it. An expired attach reports unconfirmed
+The default frontend's absolute monotonic deadline uses the existing load-wait
+plus hold budgets. An explicit `--retry` uses the caller's full window, unchanged
+across retries. An expired attach reports unconfirmed
 state and the exact reconnect command; it does not cancel the native job.
 The same transport bound applies to staging the gate script and requesting
 cancellation. A staging failure reports that submission was not attempted and

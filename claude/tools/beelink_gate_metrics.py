@@ -505,6 +505,10 @@ def frontend_observe(*args):
         if now < row["last_ns"]:
             raise ValueError("frontend clock changed")
         root = row["root_invocation_id"]
+        # Only a confirmed child release can hand its current leaf back to
+        # the wrapper. A forced reclaim retains timing UNKNOWN and cannot
+        # manufacture cancellation authority from a transcript or an old leaf.
+        released_child = action == "claim" and writer == root and row["writer_id"] == root and row["delegated_to"] is None
         if action == "claim" and writer != root:
             if row["writer_id"] != root or row["delegated_to"] != writer:
                 raise ValueError("child has no pending writer delegation")
@@ -562,6 +566,10 @@ def frontend_observe(*args):
         _replace_observation_json(target, row)
         if action == "snapshot":
             print(json.dumps(dict(row, authority=None), separators=(",", ":")))
+        elif released_child and row["placements"]:
+            leaf = row["placements"][-1]
+            if leaf["association"] in ("created", "reattached") and leaf["state"] in ("allocated", "staged", "submission_unknown", "submitted"):
+                print(leaf["gate_id"])
     finally:
         os.close(directory)
 

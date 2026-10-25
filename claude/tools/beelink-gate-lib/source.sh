@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Complete, validated source bundling, transport and job staging.
 # Sourced by beelink-gate and embedded into every submitted script.
+gate_heartbeat_interval_seconds=5
+declare -A frontend_group_identities=()
 
 emit_gate_source() {
   local generated status
@@ -203,7 +205,7 @@ on_beelink() {
       send_gate_source "${transport_args[@]}"
     fi
     while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
-      sleep 5 & sleeper=$!
+      sleep "$gate_heartbeat_interval_seconds" & sleeper=$!
       wait "$sleeper" || true
       sleeper=""
     done
@@ -383,6 +385,10 @@ wrap_signal() {  # <exit code>
 }
 wrap_stopped() {  # <exit code> <gate id this wrapper attaches to, or empty>
   [ -z "$2" ] || frontend_cancel_gate=$2
+  if [ "${cancel_on_term:-0}" = 1 ] && [ -z "${frontend_cancel_gate:-}" ]; then
+    frontend_tainted=1
+    echo 'beelink-gate: UNKNOWN cancellation custody; no authenticated current leaf is available, native cancellation unconfirmed' >&2
+  fi
   exit "$1"
 }
 run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>...
@@ -397,7 +403,7 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
   trap 'wrap_signal 141' PIPE
   if [ -n "$minutes" ]; then
     local retry_end=$((frontend_started_ms + minutes * 60000))
-    (( frontend_retry_deadline_ms <= retry_end )) || frontend_retry_deadline_ms=$retry_end
+    frontend_retry_deadline_ms=$retry_end
     deadline=$(( $(date +%s) + (frontend_retry_deadline_ms - $(monotonic_ms) + 999) / 1000 ))
   fi
   while :; do
@@ -426,6 +432,13 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     while [ -n "$wrap_stop" ] && kill -0 "$wrap_child" 2>/dev/null; do wait "$wrap_child"; rc=$?; done
     wrap_child=""
     frontend_record claim "$frontend_child_owner"
+    # The existing authenticated state owner returns a leaf only after the
+    # exact delegated child released it. Bind before tee drain or stop handling.
+    if [[ "${frontend_output:-}" =~ ^beelink[12]-[0-9a-f]{32}$ ]]; then
+      frontend_cancel_gate=$frontend_output
+    elif [ -z "$reattach" ]; then
+      frontend_cancel_gate=""
+    fi
     frontend_phase result_read
     # A process the child left behind may still hold the pipes; stop copying after 5s.
     for ((i = 0; i < 50; i++)); do
@@ -446,6 +459,8 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
       fi
       reattach="" got=TEMPFAIL
       if [[ "$line" =~ beelink-gate\ --attach\ (beelink[12]-[0-9a-f]{32}) ]]; then
+        [ "${BASH_REMATCH[1]}" = "${frontend_cancel_gate:-}" ] ||
+          tempfail "$(utc_in_minutes 1)" 'retry attachment custody unconfirmed; transcript ID is not the authenticated current leaf, no new gate submitted'
         # The gate runs on: reconnect soon, whatever the line's next_allowed says.
         reattach=${BASH_REMATCH[1]} wait_s=10
       else
@@ -510,14 +525,35 @@ frontend_signal() {
 # Every blocking local transport/probe tree shares the selector's owned group.
 # Waiting on an asynchronous child lets a signal to only this frontend PID run
 # immediately; EXIT drains that exact group without touching native gate units.
-run_cancelable() {
-  local rc monitor=0
-  frontend_retry_check
+start_frontend_group() {
+  local monitor=0
   [[ $- != *m* ]] || monitor=1
   set -m
-  (set +m; trap - EXIT TERM INT HUP PIPE; frontend_selector_active=1; "$@") &
-  frontend_selector_pid=$!
+  (set +m; trap - EXIT TERM INT HUP PIPE; "$@") &
+  frontend_spawned_pid=$!
   (( monitor )) || set +m
+  frontend_group_identities[$frontend_spawned_pid]=$(frontend_group_identity "$frontend_spawned_pid")
+}
+frontend_group_identity() {  # <local Bash group leader>; PID is also expected PGID
+  local pid=$1 line
+  local -a fields=()
+  if [ -r "/proc/$pid/stat" ]; then
+    IFS= read -r line < "/proc/$pid/stat" || return 1
+    read -r -a fields <<< "${line##*) }"
+    [ "${fields[2]:-}" = "$pid" ] && [ -n "${fields[19]:-}" ] || return 1
+    printf 'proc:%s:%s\n' "$pid" "${fields[19]}"
+  else
+    line=$(ps -p "$pid" -o pgid= -o lstart= 2>/dev/null) || return 1
+    read -r -a fields <<< "$line"
+    [ "${fields[0]:-}" = "$pid" ] && [ "${#fields[@]}" = 6 ] || return 1
+    printf 'ps:%s\n' "${fields[*]}"
+  fi
+}
+run_cancelable() {
+  local rc
+  frontend_retry_check
+  frontend_selector_active=1 start_frontend_group "$@"
+  frontend_selector_pid=$frontend_spawned_pid
   wait "$frontend_selector_pid"; rc=$?
   stop_frontend_selector
   return "$rc"
@@ -566,16 +602,43 @@ select_target() {
   update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
   printf '%s %s %s\n' "$target" "$window_day" "$window_hour"
 }
+stop_frontend_group() {  # <exact group created by start_frontend_group>
+  local pid=$1 i expected=${frontend_group_identities[$1]:-} actual
+  if ! kill -0 -- "-$pid" 2>/dev/null; then
+    wait "$pid" 2>/dev/null || true
+    return 0
+  fi
+  actual=$(frontend_group_identity "$pid") || actual=""
+  if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+    frontend_tainted=1
+    echo "beelink-gate: UNKNOWN local group=$pid incarnation; cleanup refused, expected=$expected observed=$actual" >&2
+    return "$TEMPFAIL"
+  fi
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  for ((i=0; i<TRANSPORT_KILL_GRACE_SECONDS * 10; i++)); do
+    kill -0 -- "-$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 -- "-$pid" 2>/dev/null; then
+    actual=$(frontend_group_identity "$pid") || actual=""
+    if [ -n "$expected" ] && [ "$actual" = "$expected" ]; then
+      kill -KILL -- "-$pid" 2>/dev/null || true
+    fi
+  fi
+  for ((i=0; i<TRANSPORT_KILL_GRACE_SECONDS * 10; i++)); do
+    kill -0 -- "-$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null || kill -0 -- "-$pid" 2>/dev/null; then
+    frontend_tainted=1
+    echo "beelink-gate: UNKNOWN owned local group=$pid could not be drained; retain its identity for host-owner recovery" >&2
+    return "$TEMPFAIL"
+  fi
+  wait "$pid" 2>/dev/null || true
+}
 stop_frontend_selector() {
-  local i
   if [ -n "${frontend_selector_pid:-}" ]; then
-    kill -TERM -- "-$frontend_selector_pid" 2>/dev/null || true
-    for ((i=0; i<20; i++)); do
-      kill -0 "$frontend_selector_pid" 2>/dev/null || break
-      sleep 0.1
-    done
-    kill -KILL -- "-$frontend_selector_pid" 2>/dev/null || true
-    wait "$frontend_selector_pid" 2>/dev/null || true
+    stop_frontend_group "$frontend_selector_pid" || frontend_tainted=1
     frontend_selector_pid=""
   fi
 }
@@ -618,8 +681,8 @@ frontend_start() {
   frontend_cancel_gate=""
   frontend_selector_pid="" frontend_selector_output=""
   frontend_started_ms=$(monotonic_ms) || die 'cannot read the frontend monotonic clock'
-  # The existing load-wait and hold budgets also bound a default frontend.
-  # --retry can only shorten this absolute, same-launcher monotonic deadline.
+  # Existing load-wait and hold budgets bound a default frontend. An explicit
+  # retry window is immutable across its delegated children on this same clock.
   local frontend_budget
   frontend_budget=$(( $(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") + $(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") ))
   (( frontend_budget > 0 )) || die 'invalid frontend load/hold budget'
@@ -629,8 +692,6 @@ frontend_start() {
   [[ "$cancel_on_term" =~ ^[01]$ ]] || die 'invalid inherited cancellation intent'
   unset BEELINK_GATE_FRONTEND_DEADLINE_MS
   [[ "$frontend_retry_deadline_ms" =~ ^[1-9][0-9]*$ ]] || die 'invalid frontend retry deadline'
-  local frontend_limit=$((frontend_started_ms + frontend_budget * 1000))
-  (( frontend_retry_deadline_ms <= frontend_limit )) || frontend_retry_deadline_ms=$frontend_limit
   local inherited_path=${BEELINK_GATE_FRONTEND_PATH:-} inherited_token=${BEELINK_GATE_FRONTEND_TOKEN:-} inherited_owner=${BEELINK_GATE_FRONTEND_OWNER:-} setup rc=0
   unset BEELINK_GATE_FRONTEND_PATH BEELINK_GATE_FRONTEND_TOKEN BEELINK_GATE_FRONTEND_OWNER
   frontend_timer=$(command -v timeout || command -v gtimeout) || {
