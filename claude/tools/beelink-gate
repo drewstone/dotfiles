@@ -1615,6 +1615,12 @@ fi
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
 
 field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"; }
+# A probe line's state and its reason text, or the bare word (unreachable) it holds.
+refusal_reason() {
+  case "$1" in ''|unreachable) echo "${1:-unknown}" ;;
+    *) local why; why=$(sed -n 's/.* reason=//p' <<<"$1"); echo "$(field state "$1")${why:+ ($why)}" ;;
+  esac
+}
 overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1"); [ -n "$load" ] && [ -n "$limit" ] && over_limit "$load" "$limit"; }
 
 # A named beelink over its load limit hands the gate to the other one when that
@@ -1679,6 +1685,9 @@ choose_beelink() {
     fi
     if [[ "${seen[beelink1]:-}" != *state=busy* && "${seen[beelink2]:-}" != *state=busy* ]]; then
       echo "beelink-gate: no beelink can start this gate (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
+      # The probe line leads with load and the admission mode (host-psi); a disk-floor
+      # refusal read as CPU pressure on 10-25. Name each host's actual reason first.
+      echo "beelink-gate: refused because beelink1: $(refusal_reason "${seen[beelink1]:-}"); beelink2: $(refusal_reason "${seen[beelink2]:-}")" >&2
       # The earliest time either refusing host names.
       next=$(printf '%s\n' "$(field next "${seen[beelink1]:-}")" "$(field next "${seen[beelink2]:-}")" | grep -E '^[0-9]{4}-' | sort | head -1)
       tempfail "${next:-$(utc_in_minutes 5)}" "no beelink can start this gate"
