@@ -853,7 +853,7 @@ publish_proof() {
   [ -f "$key" ] || { echo "beelink-gate: no proof published: $beelink has no ship-proof key" >&2; return 0; }
   [ -x "$gh" ] || gh=$(command -v gh-drew) || { echo "beelink-gate: no proof published: gh-drew unavailable on $beelink" >&2; return 0; }
   tree=$(git rev-parse 'HEAD^{tree}') || return 0
-  version=$(declare -f remote_gate publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version repo_manager_version has_bun_lock install_bun_dependencies install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
+  version=$(declare -f remote_gate publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version repo_manager_version has_bun_lock install_bun_dependencies install_mise_tools install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
   tmp=$(mktemp -d) || return 0
   printf 'ship-proof v1\nrepo=%s\ntree=%s\ncommit=%s\ncommand=%s\ngate=%s\nhost=%s\nat=%s\nexit=0\n' \
     "$host/$owner/$repo" "$tree" "$(git rev-parse HEAD)" "${command[*]}" "$version" "$beelink" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp/receipt"
