@@ -113,6 +113,65 @@ def exercise(observer, cpu, case, root):
                 process.wait()
 
 
+def exercise_identity(observer, cpu, case, root):
+    """Swap a real path while ready publication blocks only the controller."""
+    directory = root / case
+    directory.mkdir()
+    original, replacement = directory / "original", directory / "replacement"
+    original.mkdir()
+    replacement.mkdir()
+    watched = directory / "watched"
+    watched.symlink_to(original, target_is_directory=True)
+    os.mkfifo(directory / "ready.tmp")
+    # Exercise both the held fd's path and another alias deduplicated onto it.
+    paths = [watched] * 5 if case != "alias-swap" else [original, watched, original, original, original]
+    with (directory / "stderr").open("w") as errors:
+        process = subprocess.Popen(
+            [sys.executable, str(observer), "observe", str(directory), str(os.getpid()), "60",
+             *map(str, paths)], stderr=errors,
+            env={**os.environ, "DOCKER_HOST": "tcp://127.0.0.1:1", "DOCKER_CONTEXT": ""},
+            start_new_session=True)
+        try:
+            os.sched_setaffinity(process.pid, {cpu})
+            until(lambda: any(p.read_text().strip() == "wait_for_partner"
+                              for p in Path(f"/proc/{process.pid}/task").glob("*/wchan")), process)
+            if case == "path-missing":
+                watched.unlink()
+            else:
+                swap = directory / "swap"
+                swap.symlink_to(replacement, target_is_directory=True)
+                swap.replace(watched)
+            time.sleep(2.2)  # At least two ticks see the changed/unreadable identity.
+            restore = directory / "restore"
+            restore.symlink_to(original, target_is_directory=True)
+            restore.replace(watched)
+            release_fifo(directory / "ready.tmp", process)
+            process.send_signal(signal.SIGUSR1)
+            process.wait(timeout=20)
+            assert process.returncode == 0, (directory / "stderr").read_text()
+            observation = regular_json(directory / "observation.json")
+            assert observation and observation["termination"] == "finished"
+            collected = subprocess.run([sys.executable, str(observer), "collect", str(directory)],
+                                       capture_output=True, text=True, check=True)
+            receipt = json.loads(collected.stdout)
+            fs, = receipt["filesystems"]
+            result = {"case": case, "samples": fs["samples"], "max_gap_s": fs["max_gap_s"],
+                      "checked_samples": fs.get("checked_samples"),
+                      "unchecked_samples": fs.get("unchecked_samples"), "full_window": fs["full_window"],
+                      "docker_identity_revalidated": receipt.get("docker_identity_revalidated")}
+            (directory / "result.json").write_text(json.dumps(receipt, indent=2) + "\n")
+            print(json.dumps(result), flush=True)
+            assert fs.get("unchecked_samples", 0) >= 2, result
+            assert fs["checked_samples"] + fs["unchecked_samples"] == fs["samples"], result
+            assert not fs["full_window"], result
+            assert receipt.get("docker_identity_revalidated") != "every_sample_and_collect", result
+            return result
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+
+
 def check_termination(observer, cpu, root):
     for reason in ("deadline", "terminated"):
         directory = root / reason
@@ -145,6 +204,7 @@ def main():
                         default=Path(__file__).resolve().parents[1] / "claude/tools/beelink_gate_disk.py")
     parser.add_argument("--busy", type=int, default=8)
     parser.add_argument("--results", type=Path, help="retain full observations in this directory")
+    parser.add_argument("--case", choices=("path-swap", "alias-swap", "path-missing"))
     args = parser.parse_args()
     assert args.busy > 0
     cpu = min(os.sched_getaffinity(0))
@@ -157,6 +217,9 @@ def main():
         with tempfile.TemporaryDirectory(prefix="disk-sampling-") as tmp:
             root = args.results or Path(tmp)
             root.mkdir(parents=True, exist_ok=True)
+            if args.case:
+                exercise_identity(args.observer.resolve(), cpu, args.case, root)
+                return
             results = [exercise(args.observer.resolve(), cpu, case, root)
                        for case in ("cpu", "slow-ready", "slow-progress")]
             print(json.dumps({"observer": str(args.observer), "busy_processes": args.busy,
@@ -164,6 +227,14 @@ def main():
             check_termination(args.observer.resolve(), cpu, root)
             assert all(r["max_gap_s"] < 1.5 and r["missed_intervals"] == 0 and r["full_window"]
                        for r in results), "sampling lost cadence during CPU contention / blocking publication"
+            failed = []
+            for case in ("path-swap", "alias-swap", "path-missing"):
+                try:
+                    exercise_identity(args.observer.resolve(), cpu, case, root)
+                except AssertionError as error:
+                    failed.append({"case": case, "error": str(error)})
+            print(json.dumps({"passed": 8 - len(failed), "failed": len(failed), "failures": failed}), flush=True)
+            assert not failed, failed
     finally:
         for worker in workers:
             worker.terminate()

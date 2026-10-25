@@ -264,13 +264,14 @@ def add_filesystem(filesystems, kind, path, exact=False):
         stat = os.fstat(descriptor)
         fs = os.fstatvfs(descriptor)
         key = (stat.st_dev, fs.f_fsid)
-        alias["stat_path"] = str(target)
+        alias.update(stat_path=str(target), device=stat.st_dev, inode=stat.st_ino)
         if key in filesystems:
             os.close(descriptor)
             filesystems[key]["aliases"].append(alias)
         else:
             filesystems[key] = {"descriptor": descriptor, "device": stat.st_dev, "fsid": fs.f_fsid,
                                 "aliases": [alias], "samples": 0, "read_errors": 0,
+                                "checked_samples": 0, "unchecked_samples": 0,
                                 "start_available_bytes": None, "end_available_bytes": None,
                                 "min_available_bytes": None, "start_free_bytes": None,
                                 "end_free_bytes": None, "max_gap_s": 0, "missed_intervals": 0, "last_monotonic_s": None}
@@ -333,12 +334,39 @@ def revalidate_docker(docker, filesystems, resolve=path_identity):
             row["identity_changed"] = True
 
 
-def sample(filesystems):
+def sample_identity_matches(fs):
+    """Stat only: validate the held path and every deduplicated alias, including Docker."""
+    try:
+        held = os.fstat(fs["descriptor"])
+        first = fs["aliases"][0]
+        if (held.st_dev, held.st_ino) != (first.get("device"), first.get("inode")):
+            return False
+        for alias in fs["aliases"]:
+            current = os.stat(alias["stat_path"])
+            if (current.st_dev, current.st_ino) != (alias.get("device"), alias.get("inode")):
+                return False
+        return True
+    except (OSError, KeyError):
+        return False
+
+
+def sample(filesystems, lock):
     for fs in filesystems.values():
+        # Bracket the fd read with current-path checks. An error or missing
+        # identity remains unchecked even if the path is restored before collect.
+        checked = sample_identity_matches(fs)
         try:
             value = os.fstatvfs(fs["descriptor"])
             now = time.monotonic()  # Timestamp the measurement, not work queued before it.
-            available, free = value.f_bavail * value.f_frsize, value.f_bfree * value.f_frsize
+        except OSError:
+            with lock:
+                fs["read_errors"] += 1
+            continue
+        checked_after = sample_identity_matches(fs)
+        checked = checked and checked_after
+        available, free = value.f_bavail * value.f_frsize, value.f_bfree * value.f_frsize
+        # No filesystem I/O under the lock shared with controller snapshots.
+        with lock:
             if fs["samples"] == 0:
                 fs["start_available_bytes"], fs["start_free_bytes"] = available, free
                 fs["first_monotonic_s"] = now
@@ -350,12 +378,12 @@ def sample(filesystems):
             fs["end_available_bytes"], fs["end_free_bytes"] = available, free
             fs["last_monotonic_s"] = now
             fs["samples"] += 1
-        except OSError:
-            fs["read_errors"] += 1
+            fs["checked_samples"] += int(checked)
+            fs["unchecked_samples"] += int(not checked)
 
 
 class PinnedSampler:
-    """Only pinned-fd reads run on this clock; control and publication cannot delay it."""
+    """Pinned-fd reads and stat identity checks share a clock independent of publication."""
 
     def __init__(self, filesystems, start):
         self.filesystems = filesystems
@@ -364,34 +392,41 @@ class PinnedSampler:
         self.stopped = threading.Event()
         self.tick = threading.Event()
         self.error = None
-        self.sequence = 1  # The baseline also requires live-path revalidation.
+        self.sequence = 0
         self.max_sample_work_s = 0.0
         self.thread = threading.Thread(target=self.run, name="disk-sampler", daemon=True)
 
     def __enter__(self):
         self.thread.start()
+        self.tick.wait()  # Baseline is checked on the sampling thread too.
+        if self.error is not None:
+            raise self.error
         return self
 
     def __exit__(self, *_):
         self.stopped.set()
         self.thread.join()
 
+    def take_sample(self):
+        began = time.monotonic()
+        sample(self.filesystems, self.lock)
+        self.max_sample_work_s = max(self.max_sample_work_s, time.monotonic() - began)
+        self.sequence += 1
+        self.tick.set()
+
     def run(self):
         due = self.start + INTERVAL_S
         try:
+            self.take_sample()
             while not self.stopped.wait(max(0, due - time.monotonic())):
-                began = time.monotonic()
-                with self.lock:
-                    sample(self.filesystems)
+                self.take_sample()
                 ended = time.monotonic()
-                self.max_sample_work_s = max(self.max_sample_work_s, ended - began)
-                self.sequence += 1
-                self.tick.set()
                 # Stay on the baseline's monotonic clock. Do not replay missed
                 # deadlines as extra samples: their real gap must stay visible.
                 due += INTERVAL_S
                 if due <= ended:
                     due += (math.floor((ended - due) / INTERVAL_S) + 1) * INTERVAL_S
+            self.take_sample()  # The final boundary uses the same checked read.
         except BaseException as error:
             self.error = error
             self.tick.set()
@@ -413,7 +448,6 @@ class PinnedSampler:
         self.__exit__()
         if self.error is not None:
             raise self.error
-        sample(self.filesystems)
         return time.monotonic()
 
 
@@ -441,7 +475,6 @@ def observe(directory, parent, budget, paths):
     # queries, covered by the caller's ready wait.
     docker = pin_docker(filesystems, unknown)
     start = time.monotonic()
-    sample(filesystems)
     with PinnedSampler(filesystems, start) as sampler:
         write_json(directory / "ready", {"baseline_monotonic_s": start, "pid": os.getpid(),
                                          "start_ticks": process_identity(os.getpid()), "parent_pid": parent,
@@ -464,11 +497,10 @@ def observe(directory, parent, budget, paths):
                 if before is not None and before.done():
                     usage_before = before.result()
                     before = None
-                # Each actual sample gets a live-path check, even when slow
-                # control work leaves several samples pending. Never coalesce
-                # identity checks along with busy progress publications.
+                # These controller checks supplement the sampler's stat checks;
+                # they cannot certify the identity of earlier samples.
                 timed_observer_work(work, "max_identity_check_s", revalidate_docker, docker, filesystems)
-                checked += int(checked < sampler.sequence)
+                checked = sampler.sequence
                 if identity is None or timed_observer_work(work, "max_parent_check_s", process_identity, parent) != identity:
                     reason = "parent_exited"
                 elif now >= deadline and reason != "parent_exited":
@@ -553,7 +585,8 @@ def observation_snapshot(start, end, reason, filesystems, unknown, docker, befor
                               and first - start < INTERVAL_S and end - row["last_monotonic_s"] < INTERVAL_S
                               and row["missed_intervals"] == 0 and row["max_gap_s"] <= MAX_SAMPLE_GAP_S
                               and not row.get("late_discovery", False) and not row.get("identity_changed", False)
-                              and work["write_errors"] == 0)
+                              and row.get("checked_samples", -1) == row["samples"]
+                              and row.get("unchecked_samples", -1) == 0 and work["write_errors"] == 0)
         rows.append(row)
     return copy.deepcopy({
         "schema": SCHEMA, "source": "statvfs", "scope": "shared_host_filesystems",
@@ -596,9 +629,14 @@ def collect(directory, final_boundary=None):
                 if isinstance(fs, dict)}
         revalidate_docker(docker, rows, resolve=bounded_path_identity)
         for fs in rows.values():
-            if fs.get("identity_changed"):
+            if (fs.get("identity_changed") or fs.get("checked_samples", -1) != fs.get("samples")
+                    or fs.get("unchecked_samples", -1) != 0):
                 fs["full_window"] = False
-        observation["docker_identity_revalidated"] = "every_sample_and_collect"
+        checked = docker["filesystem_identity"].get("status") == "pinned_before_baseline" and bool(rows) and all(
+            fs.get("checked_samples", -1) == fs.get("samples")
+            and fs.get("unchecked_samples", -1) == 0 and fs.get("read_errors") == 0
+            and not fs.get("identity_changed") for fs in rows.values())
+        observation["docker_identity_revalidated"] = ("every_sample_and_collect" if checked else "incomplete")
     # The caller names where it stopped the observer. Only an observer that
     # finished on that stop, with intact coverage, reached it; nothing later is claimed.
     reached = observation.get("termination") == "finished" and "coverage_error" not in observation
