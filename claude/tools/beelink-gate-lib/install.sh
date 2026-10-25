@@ -17,7 +17,7 @@ repo_manager_version() {  # <manager> <setup action> <action version key>
   if [ -z "$version" ] && [ "${#workflows[@]}" -gt 0 ]; then
     version=$(awk -v action="$action" -v key="$key:" 'index($0, "uses:") && index($0, action) { inside = 1; next }
       inside && /^[[:space:]]*-[[:space:]]/ { inside = 0 }
-      inside && $1 == key { gsub(/["\047v]/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
+      inside && $1 == key { gsub(/["\047]/, "", $2); sub(/^v/, "", $2); print $2; exit }' "${workflows[@]}" 2>/dev/null)
   fi
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]] && echo "$version"
 }
