@@ -20,7 +20,9 @@ import time
 
 INTERVAL_S = 1.0
 MAX_SAMPLE_GAP_S = INTERVAL_S * 1.5
-DOCKER_QUERY_S = 1.0
+# The docker CLI answers in ~0.15 s on an idle Beelink but exceeded 1 s under host CPU PSI ~80 with 11 gates
+# (10-24 gate beelink1-2d49d77c), which reported a timeout as an unreadable Docker root and failed coverage.
+DOCKER_QUERY_S = 5.0
 # At most context/show+inspect+info+usage at each end, plus sampling wakeups.
 STOP_GRACE_S = math.ceil(8 * DOCKER_QUERY_S + 2 * INTERVAL_S)
 SCHEMA = 1
@@ -121,16 +123,29 @@ def scan(directory, phase, seconds, paths):
     return 0
 
 
+DOCKER_QUERY_FAILURE = {}
+
+
 def docker_query(arguments):
+    """Return stdout, or None with the cause recorded so callers report why, not a generic unreadable."""
+    key = arguments[0] if arguments[0] != "context" else " ".join(arguments[:2])
     try:
         result = subprocess.run(["docker", *arguments], capture_output=True, text=True,
                                 timeout=DOCKER_QUERY_S, stdin=subprocess.DEVNULL)
-        return result.stdout.strip() if result.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        DOCKER_QUERY_FAILURE[key] = "docker_query_timeout"
         return None
+    except OSError:
+        DOCKER_QUERY_FAILURE[key] = "docker_cli_unavailable"
+        return None
+    if result.returncode != 0:
+        DOCKER_QUERY_FAILURE[key] = "docker_query_failed"
+        return None
+    return result.stdout.strip()
 
 
 def docker_identity():
+    DOCKER_QUERY_FAILURE.clear()
     context = docker_query(["context", "show"])
     endpoint = os.environ.get("DOCKER_HOST") if not os.environ.get("DOCKER_CONTEXT") else None
     if not endpoint and context:
@@ -141,14 +156,19 @@ def docker_identity():
             endpoint = None
     # A daemon's directory is not this machine's directory over TCP/SSH.
     if not isinstance(endpoint, str) or not endpoint.startswith("unix://"):
-        return {"status": "unknown", "reason": "remote_or_unreadable_context", "context": context}
+        failed = DOCKER_QUERY_FAILURE.get("context inspect") or DOCKER_QUERY_FAILURE.get("context show")
+        return {"status": "unknown", "reason": failed or "remote_context", "context": context}
     raw = docker_query(["info", "--format", "{{json .DockerRootDir}}"])
+    if raw is None:
+        return {"status": "unknown", "reason": DOCKER_QUERY_FAILURE.get("info", "docker_query_failed"), "context": context}
     try:
         path = json.loads(raw) if raw else None
     except ValueError:
         path = None
-    if not isinstance(path, str) or not os.path.isabs(path) or not os.path.isdir(path):
-        return {"status": "unknown", "reason": "docker_root_unreadable", "context": context}
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return {"status": "unknown", "reason": "docker_root_unparsed", "context": context}
+    if not os.path.isdir(path):
+        return {"status": "unknown", "reason": "docker_root_not_directory", "context": context}
     return {"status": "local", "context": context, "endpoint": endpoint, "path": path}
 
 
