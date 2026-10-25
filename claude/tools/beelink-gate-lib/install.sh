@@ -344,7 +344,7 @@ finish() {
   if [ -n "${command_exit:-}" ] && [ "$final_exit" != 0 ] && [ "$final_exit" != "$command_exit" ]; then
     record_post_command_failure "$final_exit" "${timing_phase:-shell_exit}"
   fi
-  # A signal during EXIT cleanup changes the verdict without abandoning
+  # A signal during EXIT cleanup records its own failure without abandoning
   # the held locks, owned children or receipt. stop ignores repeated signals.
   trap 'admission_signal=TERM; final_exit=143; record_post_command_failure 143 cleanup_signal' TERM
   trap 'admission_signal=INT; final_exit=143; record_post_command_failure 143 cleanup_signal' INT
@@ -399,6 +399,9 @@ PYTURBO
   fi
   [ "${lock_released:-0}" = 1 ] || rm -f "$lock.holder"
   cleanup_s=$((SECONDS - cleanup_started))
+  # The command's known failure is primary. Later shell/cleanup/signal failures
+  # remain explicit post_command evidence and cannot replace that exit code.
+  if [ -n "${command_exit:-}" ] && [ "$command_exit" != 0 ]; then final_exit=$command_exit; fi
   admission_terminal "$final_exit"
   receipt "$final_exit"
   [ -z "$timing_file" ] || rm -f -- "$timing_file"

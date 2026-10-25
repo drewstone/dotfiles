@@ -47,6 +47,9 @@ emit_gate_source() {
 receive_gate_source() {
   local generated line complete=0 status
   generated=$(mktemp) || return 75
+  # Shell builtins write values before source, never through exec argv. A
+  # base64 argument can exceed Linux MAX_ARG_STRLEN even after Windows stdin.
+  printf 'set -- %s\n' "$(printf '%q ' "$@")" > "$generated" || { rm -f "$generated"; return 75; }
   while IFS= read -r line; do
     printf '%s\n' "$line" >> "$generated" || { rm -f "$generated"; return 75; }
     if [ "$line" = "# BEELINK_GATE_SOURCE_END" ]; then complete=1; break; fi
@@ -56,7 +59,7 @@ receive_gate_source() {
     echo "beelink-gate: TEMPFAIL incomplete or invalid received gate source" >&2
     return 75
   fi
-  bash "$generated" "$@"; status=$?
+  bash "$generated"; status=$?
   rm -f "$generated"
   return "$status"
 }
@@ -133,9 +136,18 @@ disk_floor_query() {
 
 on_beelink() {
   local target=$1; shift
+  local TRANSPORT_TIMEOUT_SECONDS=$TRANSPORT_TIMEOUT_SECONDS
   local -a transport_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   case "${1:-}" in
-    --probe|--reserve-match|--job-cancel|--disk-floor-bytes) transport_prefix=(bounded_transport "$target $1") ;;
+    --probe|--reserve-match|--job-submit|--job-result|--job-cancel|--disk-floor-bytes) transport_prefix=(bounded_transport "$target $1") ;;
+    --job-attach)
+      if (( ${frontend_retry_deadline_ms:-0} > 0 )); then
+        frontend_retry_check
+        TRANSPORT_TIMEOUT_SECONDS=$(( (frontend_retry_deadline_ms - $(monotonic_ms) + 999) / 1000 ))
+        (( TRANSPORT_TIMEOUT_SECONDS > 0 )) || TRANSPORT_TIMEOUT_SECONDS=1
+        transport_prefix=(bounded_transport "$target $1")
+      fi
+      ;;
   esac
   [ "${BEELINK_GATE_FLOOR_LOCAL:-0}" != 1 ] || envs+=("BEELINK_GATE_FLOOR_LOCAL=1")
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
@@ -167,14 +179,12 @@ on_beelink() {
   [ -z "${matched_warm_reserve[$peer_host]:-}" ] || envs+=("BEELINK_GATE_PEER_WARM_RESERVE=${matched_warm_reserve[$peer_host]}")
   [ "${heartbeat:-0}" = 1 ] && envs+=("BEELINK_GATE_HEARTBEAT=1")
   local me=$$ rc heartbeat_fd heartbeat_pid command_pid source_file=""
-  if [ "$target" != "$SELF" ]; then
-    source_file=$(mktemp) || return "$TEMPFAIL"
-    emit_gate_source > "$source_file" || {
-      rc=$?
-      [ "${probe_diagnostic_scope:-0}" != 1 ] || { probe_nested_phase=source_emit; probe_nested_exit=$rc; }
-      rm -f "$source_file"; return "$TEMPFAIL"
-    }
-  fi
+  source_file=$(mktemp) || return "$TEMPFAIL"
+  emit_gate_source > "$source_file" || {
+    rc=$?
+    [ "${probe_diagnostic_scope:-0}" != 1 ] || { probe_nested_phase=source_emit; probe_nested_exit=$rc; }
+    rm -f "$source_file"; return "$TEMPFAIL"
+  }
   # Windows parses the entire exec command before WSL starts (cmd.exe's
   # 8191-character limit includes env and quoting). Keep every value on stdin,
   # even small arguments; job_submit persists them in its 0600 NUL args file.
@@ -204,14 +214,14 @@ on_beelink() {
     exec {heartbeat_fd}<&-
   }
   if [ "$target" = "$SELF" ] && [ "${heartbeat:-0}" = 1 ]; then
-    exec {heartbeat_fd}< <(heartbeat_input)
+    exec {heartbeat_fd}< <(heartbeat_input 1)
     heartbeat_pid=$!
-    env "${envs[@]}" bash "$0" "$@" <&"$heartbeat_fd" &
+    bash -s <&"$heartbeat_fd" &
     command_pid=$!
     wait "$command_pid"; rc=$?
     stop_heartbeat
   elif [ "$target" = "$SELF" ]; then
-    "${transport_prefix[@]}" env "${envs[@]}" bash "$0" "$@" </dev/null
+    "${transport_prefix[@]}" bash -s < <(send_gate_source "$@")
     rc=$?
   elif [ "${heartbeat:-0}" = 1 ]; then
     exec {heartbeat_fd}< <(heartbeat_input 1)
@@ -254,6 +264,8 @@ bounded_transport() {
     124|137)
       [ "${probe_diagnostic_scope:-0}" != 1 ] || { probe_nested_phase=transport_command; probe_nested_exit=$rc; }
       echo "beelink-gate: $label unconfirmed (exit $rc; transport deadline $seconds seconds)" >&2
+      frontend_retry_check
+      tempfail_line "$(utc_in_minutes 1)" "$label transport unconfirmed${frontend_cancel_gate:+; run beelink-gate --attach $frontend_cancel_gate}"
       return "$TEMPFAIL"
       ;;
   esac
@@ -285,7 +297,7 @@ read_policy() {
     policy=$(TRANSPORT_TIMEOUT_SECONDS=20 probe_transport "$target" windows_policy_local bounded_transport "$target Windows Update policy" "$REG_EXE" query "$key") || policy=""
   fi
   if ! grep -q ScheduledInstallDay <<<"$policy"; then
-    policy=$(probe_transport "$target" windows_policy_ssh bounded_transport "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key") || policy=""
+    policy=$(probe_transport "$target" windows_policy_ssh bounded_transport "$target Windows Update policy" ssh -n "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key") || policy=""
   fi
   if grep -q ScheduledInstallDay <<<"$policy"; then
     mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
@@ -361,6 +373,7 @@ wrap_signal() {  # <exit code>
   trap : PIPE
   exec >/dev/null 2>&1
   wrap_stop=$1
+  frontend_stop_requested=1
   frontend_tainted=1
   # A background child starts with SIGINT ignored, so every stop reaches it as TERM.
   # With --cancel-on-term a launcher child cancels its own gate, and wrap_stopped
@@ -383,7 +396,8 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
   trap 'wrap_signal 130' INT
   trap 'wrap_signal 141' PIPE
   if [ -n "$minutes" ]; then
-    frontend_retry_deadline_ms=$((frontend_started_ms + minutes * 60000))
+    local retry_end=$((frontend_started_ms + minutes * 60000))
+    (( frontend_retry_deadline_ms <= retry_end )) || frontend_retry_deadline_ms=$retry_end
     deadline=$(( $(date +%s) + (frontend_retry_deadline_ms - $(monotonic_ms) + 999) / 1000 ))
   fi
   while :; do
@@ -400,10 +414,10 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
     frontend_record delegate "$frontend_child_owner"
     if [ -n "$reattach" ]; then
       frontend_cancel_gate=$reattach
-      BEELINK_GATE_FRONTEND_DEADLINE_MS="${frontend_retry_deadline_ms:-0}" BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" --attach "$reattach" > "$dir/out" 2> "$dir/err" & wrap_child=$!
+      BEELINK_GATE_CANCEL_ON_TERM="${cancel_on_term:-0}" BEELINK_GATE_FRONTEND_DEADLINE_MS="${frontend_retry_deadline_ms:-0}" BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" --attach "$reattach" > "$dir/out" 2> "$dir/err" & wrap_child=$!
     else
       frontend_cancel_gate=""
-      BEELINK_GATE_FRONTEND_DEADLINE_MS="${frontend_retry_deadline_ms:-0}" BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" "$@" > "$dir/out" 2> "$dir/err" & wrap_child=$!
+      BEELINK_GATE_CANCEL_ON_TERM="${cancel_on_term:-0}" BEELINK_GATE_FRONTEND_DEADLINE_MS="${frontend_retry_deadline_ms:-0}" BEELINK_GATE_FRONTEND_PATH="${frontend_path:-}" BEELINK_GATE_FRONTEND_TOKEN="${frontend_token:-}" BEELINK_GATE_FRONTEND_OWNER="$frontend_child_owner" "$BASH" "$0" "$@" > "$dir/out" 2> "$dir/err" & wrap_child=$!
     fi
     # A stop that came before the child's pid was known is forwarded here.
     [ -z "$wrap_stop" ] || kill -TERM "$wrap_child" 2>/dev/null || true
@@ -484,31 +498,73 @@ monotonic_ms() { python3 -c 'import time; print(time.monotonic_ns() // 1000000)'
 frontend_retry_check() {
   (( ${frontend_retry_deadline_ms:-0} > 0 )) || return 0
   (( $(monotonic_ms) < frontend_retry_deadline_ms )) ||
-    tempfail "$(utc_in_minutes 5)" 'retry window expired before host admission'
+    tempfail "$(utc_in_minutes 5)" "frontend deadline expired${frontend_cancel_gate:+; native state unconfirmed, run beelink-gate --attach $frontend_cancel_gate}"
 }
 frontend_signal() {
   trap : TERM INT HUP PIPE
   exec >/dev/null 2>&1
   frontend_tainted=1
+  frontend_stop_requested=1
   exit "$1"
 }
-frontend_select() {
+# Every blocking local transport/probe tree shares the selector's owned group.
+# Waiting on an asynchronous child lets a signal to only this frontend PID run
+# immediately; EXIT drains that exact group without touching native gate units.
+run_cancelable() {
   local rc monitor=0
-  frontend_selector_output=$(mktemp) || die 'cannot allocate selector output'
+  frontend_retry_check
   [[ $- != *m* ]] || monitor=1
-  # Give the function and its probes one owned process group without
-  # serializing shell functions or state into a new Bash environment.
   set -m
-  (set +m; trap - EXIT TERM INT HUP; frontend_selector_active=1; choose_beelink) > "$frontend_selector_output" &
+  (set +m; trap - EXIT TERM INT HUP PIPE; frontend_selector_active=1; "$@") &
   frontend_selector_pid=$!
   (( monitor )) || set +m
   wait "$frontend_selector_pid"; rc=$?
-  target=$(cat "$frontend_selector_output")
-  # A timed-out foreground probe can leave a child after its shell exits.
-  # Release the whole owned group on every result, including normal expiry.
   stop_frontend_selector
-  frontend_selector_output=""
   return "$rc"
+}
+frontend_capture() {  # <variable> <command...>
+  local capture_name=$1 capture_file capture_status
+  shift
+  capture_file=$(mktemp) || return "$TEMPFAIL"
+  frontend_selector_output=$capture_file
+  run_cancelable "$@" > "$capture_file"; capture_status=$?
+  printf -v "$capture_name" '%s' "$(cat "$capture_file")"
+  rm -f "$capture_file"
+  frontend_selector_output=""
+  return "$capture_status"
+}
+resolve_attachment_exit() {  # <host> <exact gate id> <transport exit>; sets rc
+  rc=$3
+  [ "$rc" != 0 ] || return 0
+  frontend_phase result_read
+  local result=""
+  heartbeat=0 frontend_capture result on_beelink "$1" --job-result "$2" 2>/dev/null || result=""
+  # SSH's255 and local transport signals overlap real command exit codes.
+  # Only the native terminal owner disambiguates them. Unknown stays attachable.
+  if [[ "$result" =~ ^[0-9]{1,3}$ ]] && (( 10#$result <= 255 )); then
+    rc=$((10#$result))
+    return 0
+  fi
+  tempfail "$(utc_in_minutes 1)" "attach transport unconfirmed for $2; run beelink-gate --attach $2 again"
+}
+frontend_select() {
+  local selection
+  frontend_capture selection select_target || return $?
+  read -r target window_day window_hour <<< "$selection"
+  [[ "$target" =~ ^beelink[12]$ && "$window_day" =~ ^[0-7]$ && "$window_hour" =~ ^[0-9]+$ ]]
+}
+select_target() {
+  local target window_day window_hour
+  local placement_end=$((frontend_started_ms + $(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") * 1000))
+  (( frontend_retry_deadline_ms <= placement_end )) || frontend_retry_deadline_ms=$placement_end
+  case "$requested" in
+    beelink1|100.98.195.7) target=$(place_named beelink1) ;;
+    beelink2|100.127.22.51) target=$(place_named beelink2) ;;
+    auto) target=$(choose_beelink) || return $? ;;
+    *) die "unknown beelink: $requested" ;;
+  esac
+  update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
+  printf '%s %s %s\n' "$target" "$window_day" "$window_hour"
 }
 stop_frontend_selector() {
   local i
@@ -522,7 +578,6 @@ stop_frontend_selector() {
     wait "$frontend_selector_pid" 2>/dev/null || true
     frontend_selector_pid=""
   fi
-  [ -z "${frontend_selector_output:-}" ] || rm -f "$frontend_selector_output"
 }
 
 frontend_io() {
@@ -553,7 +608,7 @@ frontend_record() {
   return 0
 }
 frontend_start() {
-  frontend_path="" frontend_tainted=0 frontend_waiting=0 frontend_root=1 frontend_warned=0
+  frontend_path="" frontend_tainted=0 frontend_waiting=0 frontend_root=1 frontend_warned=0 frontend_stop_requested=0
   # Cleanup is required even when optional observation bootstrap is unsupported.
   trap 'frontend_exit "$?"' EXIT
   trap 'frontend_signal 143' TERM INT HUP
@@ -561,9 +616,19 @@ frontend_start() {
   frontend_cancel_gate=""
   frontend_selector_pid="" frontend_selector_output=""
   frontend_started_ms=$(monotonic_ms) || die 'cannot read the frontend monotonic clock'
-  frontend_retry_deadline_ms=${BEELINK_GATE_FRONTEND_DEADLINE_MS:-0}
+  # The existing load-wait and hold budgets also bound a default frontend.
+  # --retry can only shorten this absolute, same-launcher monotonic deadline.
+  local frontend_budget
+  frontend_budget=$(( $(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") + $(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") ))
+  (( frontend_budget > 0 )) || die 'invalid frontend load/hold budget'
+  frontend_retry_deadline_ms=${BEELINK_GATE_FRONTEND_DEADLINE_MS:-$((frontend_started_ms + frontend_budget * 1000))}
+  cancel_on_term=${BEELINK_GATE_CANCEL_ON_TERM:-${cancel_on_term:-0}}
+  unset BEELINK_GATE_CANCEL_ON_TERM
+  [[ "$cancel_on_term" =~ ^[01]$ ]] || die 'invalid inherited cancellation intent'
   unset BEELINK_GATE_FRONTEND_DEADLINE_MS
-  [[ "$frontend_retry_deadline_ms" =~ ^[0-9]+$ ]] || die 'invalid frontend retry deadline'
+  [[ "$frontend_retry_deadline_ms" =~ ^[1-9][0-9]*$ ]] || die 'invalid frontend retry deadline'
+  local frontend_limit=$((frontend_started_ms + frontend_budget * 1000))
+  (( frontend_retry_deadline_ms <= frontend_limit )) || frontend_retry_deadline_ms=$frontend_limit
   local inherited_path=${BEELINK_GATE_FRONTEND_PATH:-} inherited_token=${BEELINK_GATE_FRONTEND_TOKEN:-} inherited_owner=${BEELINK_GATE_FRONTEND_OWNER:-} setup rc=0
   unset BEELINK_GATE_FRONTEND_PATH BEELINK_GATE_FRONTEND_TOKEN BEELINK_GATE_FRONTEND_OWNER
   frontend_timer=$(command -v timeout || command -v gtimeout) || {
@@ -593,17 +658,17 @@ frontend_exit() {
   local saved=$1
   trap - EXIT
   trap : TERM INT HUP PIPE
-  # An attach reader can report EPIPE as exit 1 instead of delivering PIPE
-  # to Bash. With --cancel-on-term, every abnormal frontend exit releases its
-  # exact native job. A terminal native job keeps its receipt in cancel-job.
-  if [ "${cancel_on_term:-0}" = 1 ] && [ "$saved" != 0 ]; then
-    local cancel_id=${frontend_cancel_gate:-${gate_id:-}}
+  stop_frontend_selector
+  # A lost SSH or expired frontend deadline leaves the exact native job
+  # running for --attach. Only an explicit handled signal requests cancellation.
+  if [ "${cancel_on_term:-0}" = 1 ] && [ "${frontend_stop_requested:-0}" = 1 ]; then
+    local cancel_id=${frontend_cancel_gate:-}
     if [ -n "$cancel_id" ]; then
       exec >/dev/null 2>&1
       schedule_cancellation "$cancel_id" || frontend_tainted=1
     fi
   fi
-  stop_frontend_selector
+  [ -z "${frontend_selector_output:-}" ] || rm -f "$frontend_selector_output"
   # Reservation children own no request capability and must finish before root end.
   if [ -n "${checkout_reservation_dir:-}" ]; then
     frontend_phase reservation_cleanup

@@ -37,7 +37,8 @@ fi
 # Each gate keeps its checkout locked through install and command under one hold budget.
 # Managed system units contain every gate; host PSI some avg10 admits all classes.
 # Host update windows, disk floors, checkout locks and slots always apply.
-# Exit: the command's status,2 for invalid requests/cache,75 for a temporary inability to prove.
+# Exit: the command status,2 for invalid requests/cache,75 for an unconfirmed result,
+# or128+signal for an explicit frontend stop. Transport loss never cancels a job.
 set -uo pipefail
 die() { echo "beelink-gate: $*" >&2; exit 2; }
 TEMPFAIL=75
@@ -1848,6 +1849,12 @@ if [ "${1:-}" = --report ]; then
   exit "$status"
 fi
 
+# The same cancellation flag applies to an explicit reconnect. Its exact leaf
+# is the supplied ID; an ordinary lost reconnect never requests cancellation.
+if [ "${1:-}" = --cancel-on-term ] && [ "${2:-}" = --attach ]; then
+  cancel_on_term=1
+  shift
+fi
 # Remote/control/read-only paths above never create a launcher observation.
 [ "${1:-}" = --cancel-job ] || frontend_start
 if [ "${1:-}" = --attach ]; then
@@ -1856,16 +1863,11 @@ if [ "${1:-}" = --attach ]; then
   target=${2%%-*}
   frontend_record placement attached "$2" attach
   frontend_phase attach
-  heartbeat=0 on_beelink "$target" --job-attach "$2"
+  frontend_cancel_gate=$2
+  heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$2"
   rc=$?
-  if [ "$rc" = 255 ]; then
-    # SSH also exits 255 on transport loss. A completed command may itself
-    # have returned 255; ask the job's exit file before calling it a loss.
-    frontend_phase result_read
-    result=$(heartbeat=0 on_beelink "$target" --job-result "$2" 2>/dev/null) || result=""
-    [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $2; run beelink-gate --attach $2 again"
-  fi
-  if [ "$rc" != 255 ]; then frontend_record placement returned "$2" attach "$rc"; fi
+  resolve_attachment_exit "$target" "$2" "$rc"
+  frontend_record placement returned "$2" attach "$rc"
   exit "$rc"
 fi
 if [ "${1:-}" = --cancel-job ]; then
@@ -2015,7 +2017,7 @@ merge_gated() {  # <gate stderr log>
 }
 
 # The source owner runs retry/summary wrappers and retains their one request scope.
-install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0 retry_minutes="" summary=0
+install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=${cancel_on_term:-0} retry_minutes="" summary=0
 launch_options=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -2111,7 +2113,7 @@ commit_sparse_spec() {  # <repo-url> <sha>; prints nothing when it cannot tell
   if [ "$host" = github.com ]; then
     gh=$(command -v gh-drew || command -v gh) || return 0
     err=$(mktemp) || return 0
-    if raw=$("$gh" api "repos/$owner/$repo/contents/.beelink-gate/sparse-checkout?ref=$2" --jq .content 2>"$err"); then
+    if raw=$(bounded_transport "source sparse lookup" "$gh" api "repos/$owner/$repo/contents/.beelink-gate/sparse-checkout?ref=$2" --jq .content 2>"$err"); then
       printf '%s' "$raw" | tr -d '\n' | base64 --decode | sparse_spec_of
     elif grep -q 'HTTP 404' "$err"; then
       echo full
@@ -2124,10 +2126,10 @@ commit_sparse_spec() {  # <repo-url> <sha>; prints nothing when it cannot tell
 BEELINK_GATE_SPARSE_SPEC=""
 case "$install_mode" in
   install|ship)
-    BEELINK_GATE_SPARSE_SPEC=$(commit_sparse_spec "$repo_url" "$sha")
+    frontend_capture BEELINK_GATE_SPARSE_SPEC commit_sparse_spec "$repo_url" "$sha" || BEELINK_GATE_SPARSE_SPEC=""
     if [ -n "$BEELINK_GATE_SPARSE_SPEC" ]; then
       for reserve_host in beelink1 beelink2; do
-        reserve_lines=$(heartbeat=0 on_beelink "$reserve_host" --reserve-match "$(encode "$reserve_host")" "$(encode "$repo_url")" "$(encode "$BEELINK_GATE_SPARSE_SPEC")")
+        heartbeat=0 frontend_capture reserve_lines on_beelink "$reserve_host" --reserve-match "$(encode "$reserve_host")" "$(encode "$repo_url")" "$(encode "$BEELINK_GATE_SPARSE_SPEC")"
         reserve_status=$?
         case "$reserve_status" in
           0) ;;
@@ -2164,29 +2166,10 @@ if [ "$requested" = auto ]; then
     start_checkout_reservations normal
   fi
 fi
-cancel_launcher_job() {
-  # EXIT owns cancellation even if the output pipe died before TERM arrived.
-  frontend_signal 143
-}
-run_cancelable() {
-  if [ "$cancel_on_term" = 1 ]; then
-    "$@" &
-    local child=$! rc
-    wait "$child"; rc=$?
-    return "$rc"
-  fi
-  "$@"
-}
 launched=$SECONDS placements=0
 while :; do
   frontend_phase placement_probe_wait
-  case "$requested" in
-    beelink1|100.98.195.7) target=$(place_named beelink1) ;;
-    beelink2|100.127.22.51) target=$(place_named beelink2) ;;
-    auto) frontend_select || exit $? ;;
-    *) die "unknown beelink: $requested" ;;
-  esac
-  update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
+  frontend_select || exit $?
   encoded=()
   for arg in "$target" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
     encoded+=("$(encode "$arg")")
@@ -2199,7 +2182,7 @@ while :; do
     echo "beelink-gate: waited ${placed_wait_launch}s across placements; staying on $target in its place in line" >&2
   fi
   gate_id="$target-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-  [ "$cancel_on_term" != 1 ] || trap cancel_launcher_job HUP INT TERM
+  frontend_cancel_gate=$gate_id
   echo "beelink-gate: gate_id=$gate_id; reconnect with beelink-gate --attach $gate_id" >&2
   frontend_record placement allocated "$gate_id"
   frontend_phase stage
@@ -2218,7 +2201,10 @@ while :; do
     die "$target refused the SSH exec request for $gate_id ($submit_bytes); no gate was submitted, and retrying the same command fails the same way"
   fi
   rm -f "$submit_err"
-  [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "submit connection lost for $gate_id ($submit_bytes); run beelink-gate --attach $gate_id before retrying"
+  case "$rc" in
+    129|130|137|141|143|255)
+      tempfail "$(utc_in_minutes 1)" "submit transport unconfirmed for $gate_id ($submit_bytes); run beelink-gate --attach $gate_id before retrying" ;;
+  esac
   [ "$rc" = 0 ] || exit "$rc"
   frontend_record placement submitted "$gate_id"
   frontend_phase attach
@@ -2237,14 +2223,8 @@ while :; do
     heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id"
     rc=$?
   fi
-  if [ "$rc" = 255 ]; then
-    frontend_phase result_read
-    result=$(heartbeat=0 on_beelink "$target" --job-result "$gate_id" 2>/dev/null) || result=""
-    [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $gate_id; run beelink-gate --attach $gate_id again"
-  fi
-  if [ "$rc" != 255 ]; then
-    frontend_record placement "$([ "$rc" = "$NOT_ADMITTED" ] && echo not_admitted || echo returned)" "$gate_id" "" "$rc"
-  fi
+  resolve_attachment_exit "$target" "$gate_id" "$rc"
+  frontend_record placement "$([ "$rc" = "$NOT_ADMITTED" ] && echo not_admitted || echo returned)" "$gate_id" "" "$rc"
   # Only an auto placement may move; a named host keeps waiting there, as it always has.
   [ "$rc" = "$NOT_ADMITTED" ] && [ "$requested" = auto ] || exit "$rc"
   placements=$((placements + 1))

@@ -615,16 +615,26 @@ preempted or inconclusive preview. Its last line says when to ask again:
 beelink-gate: TEMPFAIL next_allowed=2026-10-11T09:30:00Z no beelink can start this gate
 ```
 
-Callers retry at `next_allowed`. Any other non-zero exit is the command's own
-failure or, with 2, a broken request.
+Callers retry at `next_allowed`. A known nonzero command exit remains the
+native and receipt exit even when later shell or cleanup work also fails.
+`post_command_exit` and its phase retain that later failure. A successful
+command still fails its gate when required post-command work fails.
+An explicit frontend signal exits with128+signal. With `--cancel-on-term`,
+it cancels only that invocation's exact owned gate, including a delegated or
+reattached leaf. A lost SSH client or an expired frontend deadline leaves the
+native job available for `--attach`; a nonzero attach is resolved through the
+native terminal owner before treating it as a command failure.
 Install-reserve hints and remote update-policy reads use the wall deadline in
 `beelink-gate`'s `bounded_transport`, through GNU `timeout` or `gtimeout`. A connected
 SSH session with an unresponsive WSL read cannot hold these lookups indefinitely.
 A failed hint is reported as unavailable; the target still reads its own receipts
 and enforces its disk floor. An unavailable update policy retains its existing
 cache and TEMPFAIL behavior. Floor refusals do not evict caches: the archival
-storage lifecycle owns capacity recovery. Submitted gates and attached runs
-retain their existing lifecycle.
+storage lifecycle owns capacity recovery. Submitted gates retain their existing
+hold. The initial placement wait is bounded by the existing load-wait budget.
+The frontend's absolute monotonic deadline uses the existing load-wait plus
+hold budgets, and `--retry` can shorten it. An expired attach reports unconfirmed
+state and the exact reconnect command; it does not cancel the native job.
 The same transport bound applies to staging the gate script and requesting
 cancellation. A staging failure reports that submission was not attempted and
 remote files may be partial. Cancellation keeps its existing retry loop within

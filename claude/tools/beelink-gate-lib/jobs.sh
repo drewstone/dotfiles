@@ -73,8 +73,7 @@ if [ "$stop_requested" = 1 ]; then
     echo "beelink-gate: gate child $child survived unit stop" >&2
     exit 75
   fi
-  wait "$child" 2>/dev/null || true
-  rc=75
+  wait "$child" 2>/dev/null; rc=$?
 fi
 exec {lock_fd}> "$dir/../.locks/${dir##*/}.lock"
 flock "$lock_fd"
