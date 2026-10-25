@@ -44,8 +44,7 @@ Claude Code shows a reply as Markdown in about two text colors, and ANSI color c
 The [evidence-lead directive](../../../directives/variants/evidence-lead-v1.md) sets the blocks of a reply (a bold headline, then Focus, Evidence, Doing, Learned and Next) and where its color comes from; this standard sets what those blocks must hold.
 
 - **Charts:** draw each one with [`viz`](../../../tools/README.md#viz) and paste its output in a code fence directly under the sentence it supports. Never type bars by hand.
-- **Color:** use text the terminal highlights: inline code for key numbers and terms, and `diff` fences for contrasts, whose `+` lines show green and `-` lines red. Use at most two emoji in a reply; Drew, 2026-10-11: "cut the emojis, i want depth, not toys".
-- **Length:** the first screen, about 40 lines, holds the headline, a chart, the actions and the decision. Depth goes on a [brief kit](brief-kit.md) page published as an artifact, behind one link.
+- **Color:** use text the terminal highlights: inline code for key numbers and terms, and `diff` fences for contrasts, whose `+` lines show green and `-` lines red. Use at most two emoji in a reply; - **Length:** the first screen, about 40 lines, holds the headline, a chart, the actions and the decision. Depth goes on a [brief kit](brief-kit.md) page published as an artifact, behind one link.
 - **Focus:** one topic per reply; a second topic gets its own reply.
 
 ## Worked examples

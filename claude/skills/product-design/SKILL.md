@@ -32,7 +32,7 @@ For a blog or research index, read [editorial surfaces](references/editorial-sur
 2. Map changed controls and states to the shared components and their existing owners.
 3. Implement with the application's existing components and tokens.
    Read [polish](references/polish.md) for detail review and phone checks; read [motion](references/motion.md) when changing animation or gestures.
-4. Cut taglines, helper text and secondary labels; when a screen needs one to make sense, fix the layout instead (Drew, 2026-10-24). Controls keep their own labels.
+4. Cut taglines, helper text and secondary labels; when a screen needs one to make sense, fix the layout instead. Controls keep their own labels.
 
 For a major redesign, requested direction comparison or state model that needs checking before implementation, read [variants and prototypes](references/variants.md).
 

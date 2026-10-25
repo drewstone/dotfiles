@@ -93,7 +93,7 @@ Run `viz --help` for every option.
 
 Claude Code renders chat as markdown with about two text colors and drops ANSI escapes, but emoji keep their color.
 `--color emoji`, or `VIZ_COLOR=emoji` in the environment, draws every chart with them; `--color plain` overrides the variable, and plain output is unchanged.
-Plain is the default everywhere. Drew, 2026-10-11: "cut the emojis, i want depth, not toys"; emoji squares are opt-in, for a chart that needs them.
+Plain is the default everywhere. ; emoji squares are opt-in, for a chart that needs them.
 
 | Mark | Plain | Emoji |
 |---|---|---|
