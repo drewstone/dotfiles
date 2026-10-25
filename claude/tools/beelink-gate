@@ -853,7 +853,7 @@ publish_proof() {
   [ -f "$key" ] || { echo "beelink-gate: no proof published: $beelink has no ship-proof key" >&2; return 0; }
   [ -x "$gh" ] || gh=$(command -v gh-drew) || { echo "beelink-gate: no proof published: gh-drew unavailable on $beelink" >&2; return 0; }
   tree=$(git rev-parse 'HEAD^{tree}') || return 0
-  version=$(declare -f remote_gate publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version repo_manager_version has_bun_lock install_bun_dependencies install_mise_tools install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
+  version=$(declare -f remote_gate step finish finish_gate_exit record_post_command_failure publish_proof prepare_gate_dependencies prepare_yarn_launcher install_yarn_dependencies resolve_gate_node repo_pnpm_version repo_manager_version has_bun_lock install_bun_dependencies install_mise_tools install_step rebuild_native_addons stale_native_addons | sha256sum | cut -d' ' -f1)
   tmp=$(mktemp -d) || return 0
   printf 'ship-proof v1\nrepo=%s\ntree=%s\ncommit=%s\ncommand=%s\ngate=%s\nhost=%s\nat=%s\nexit=0\n' \
     "$host/$owner/$repo" "$tree" "$(git rev-parse HEAD)" "${command[*]}" "$version" "$beelink" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp/receipt"
@@ -918,16 +918,19 @@ install_step() {
     local status="$1" ran=$((SECONDS - started))
     local preview_verdict
     preview_verdict=$(printf '%s' "$preview_result" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t).get("verdict","?") if t else "none")' 2>/dev/null || echo "?")
-    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s sparse=%s checkout=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s\n' \
+    printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s cache=%s sparse=%s checkout=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s command_exit=%s post_command_exit=%s\n' \
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
-      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${checkout_temperature:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
-    mkdir -p "$STATE_DIR" 2>/dev/null && BEELINK_GATE_METRICS_SOURCE="$beelink_gate_metrics_source" python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
+      "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${cache_note:-ok}" "${sparse_source:-none}" "${checkout_temperature:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" "${command_exit:-unknown}" "${post_command_exit:-unknown}" >&2
+    mkdir -p "$STATE_DIR" 2>/dev/null && BEELINK_GATE_COMMAND_EXIT="${command_exit:-}" BEELINK_GATE_POST_COMMAND_EXIT="${post_command_exit:-}" BEELINK_GATE_POST_COMMAND_PHASE="${post_command_phase:-}" BEELINK_GATE_METRICS_SOURCE="$beelink_gate_metrics_source" python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "${cache_note:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
 from pathlib import Path
 path, beelink, repo, sha, mode, command, status, waited, ran, timed_out, watchdog, launcher, load, preview, cpu, node, rebuild, pressure, starved, cgroup, cache_note, gate_class, reaped, bundle, host_cpu, gate_id, base_sha, pr_number, lane, install_reserve, timing_file, fetch_s, pre_command_s, command_s, cleanup_s, capacity_claim_wait_ms, sparse, sparse_spec, checkout_temperature, reserve_gate_bytes, reserve_host_drop, reserve_basis, reserve_du_ms = sys.argv[1:]
 row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink, "repo": repo, "sha": sha,
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(waited), "ran_s": int(ran),
+       "command_exit": int(os.environ["BEELINK_GATE_COMMAND_EXIT"]) if os.environ["BEELINK_GATE_COMMAND_EXIT"] else None,
+       "post_command_exit": int(os.environ["BEELINK_GATE_POST_COMMAND_EXIT"]) if os.environ["BEELINK_GATE_POST_COMMAND_EXIT"] else None,
+       "post_command_phase": os.environ["BEELINK_GATE_POST_COMMAND_PHASE"] or None,
        "timed_out": timed_out == "1", "watchdog": watchdog == "1", "launcher": launcher,
        "start_load": float(load) if load else None,
        "start_cpu_pressure": float(pressure) if pressure else None,
@@ -1117,7 +1120,7 @@ remote_gate() {
     done
   }
   stop() {
-    trap - TERM INT HUP
+    trap '' TERM INT HUP
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
     exit 143
   }
@@ -1213,33 +1216,9 @@ remote_gate() {
   lock=""
   acquire_checkout_admission
   started=$SECONDS display=""
-  timing_file="" timing_phase=precheck fetch_s="" pre_command_s="" command_s="" cleanup_s=""
+  timing_file="" timing_phase=precheck fetch_s="" pre_command_s="" command_s="" cleanup_s="" command_exit="" post_command_exit="" post_command_phase=""
   local deadline=$((SECONDS + max_hold))
   printf -v display '%q ' "${command[@]}"
-  # Each step is its own process group (timeout's), bounded by the remaining
-  # hold budget, without the lock descriptor and without the launcher's stdin.
-  step() {
-    local left=$((deadline - SECONDS)) rc step_started=$SECONDS
-    if (( left <= 0 )); then
-      timed_out=1
-      echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
-      return 124
-    fi
-    BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
-    current=$!
-    wait "$current"; rc=$?
-    current=""
-    # timeout ran for exactly $left real seconds, but SECONDS counts whole
-    # seconds and can still read deadline-1 here, which lost this message.
-    if [ "$rc" = 124 ] && (( SECONDS - step_started >= left - 1 )); then
-      timed_out=1
-      echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
-    fi
-    # A step ends with its command; a server or watcher it started does not
-    # outlive it (a wrangler dev from an ADC signoff ran 44 h after its gate).
-    reap_leftovers
-    return "$rc"
-  }
   # Each scan gets at most 60 s and never more than the gate's remaining hold; a scan
   # cut short counts as a failed measurement, which records the cold reserve.
   measure_gate_bytes() {
@@ -1275,60 +1254,7 @@ remote_gate() {
       echo "beelink-gate: WARNING could not write a bundle; $new unpushed commit(s) kept as $bundle_note/* in $checkout" >&2
     fi
   }
-  finish() {
-    local status=$?
-    trap - EXIT
-    local cleanup_started=$SECONDS
-    timing_phase=cleanup
-    [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
-    reap_leftovers
-    # Snapshot this command's summaries before releasing or evicting its checkout.
-    export BEELINK_GATE_TURBO_OBSERVATIONS="$(python3 - "$checkout/.turbo/runs" <<'PYTURBO'
-import json, math, os, sys
-from pathlib import Path
-result = {"source": "turbo_run_summary", "requested_dir": os.environ.get("BEELINK_GATE_TURBO_REQUESTED_DIR"), "location_source": "gate_environment", "runs": [], "unreadable": 0}
-begin = int(os.environ.get("BEELINK_GATE_COMMAND_STARTED_MS", "0"))
-for path in Path(sys.argv[1]).glob("*.json") if begin else []:
-    try:
-        summary = json.loads(path.read_text())
-        tasks, execution = summary["tasks"], summary["execution"]
-        start, end = execution["startTime"], execution["endTime"]
-        if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) for n in (start, end)) or not 0 <= start <= end:
-            raise ValueError("invalid execution interval")
-        if start < begin:
-            continue
-        if not isinstance(tasks, list) or any(not isinstance(t, dict) or not isinstance(t.get("cache", {}), dict) for t in tasks):
-            raise ValueError("invalid tasks")
-        result["runs"].append({"cached_tasks": sum(t.get("cache", {}).get("status") == "HIT" for t in tasks),
-                               "total_tasks": len(tasks), "wall_ms": end - start})
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
-        result["unreadable"] += 1
-print(json.dumps(result))
-PYTURBO
-)"
-    save_unpushed
-    if [ -d "$checkout/.git" ]; then
-      if ! touch "$checkout/.git/beelink-gate-used" && [ "$status" -eq 0 ]; then status=3; fi
-    fi
-    release_checkout_before_reclaim
-    if [ "${lock_released:-0}" = 1 ]; then
-      # Cache capacity cannot turn a successful command red; the disk floor guards starts.
-      if ! prune_cache "$cache_root" "" "$cache_max"; then
-        cache_note=unpruned
-        echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
-      fi
-      prune_build_dirs "$build_root" "$cache_root/.locks" "" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
-    elif [ "$watchdog" != 1 ] && [ "$status" -eq 0 ]; then
-      status=3
-    fi
-    [ "${lock_released:-0}" = 1 ] || rm -f "$lock.holder"
-    cleanup_s=$((SECONDS - cleanup_started))
-    admission_terminal "$status"
-    receipt "$status"
-    [ -z "$timing_file" ] || rm -f -- "$timing_file"
-    exit "$status"
-  }
-  trap finish EXIT
+  trap finish_gate_exit EXIT
   prepare_gate_turbo_cache || tempfail "$(utc_in_minutes 5)" "shared Turbo cache ownership unavailable"
   start_disk_observation
   if mkdir -p "$STATE_DIR" 2>/dev/null; then
@@ -1496,6 +1422,7 @@ PYTURBO
   echo "beelink-gate: running ${display% }" >&2
   pre_command_s=$((SECONDS - started))
   export BEELINK_GATE_COMMAND_STARTED_MS=$(date +%s%3N)
+  timing_phase='command'
   local command_started=$SECONDS
   local tick cpu_before cpu_after
   tick=$(getconf CLK_TCK 2>/dev/null || echo 100)
@@ -1520,20 +1447,28 @@ PYTURBO
   else
     step "${command_with_umask[@]}"
   fi
-  local status=$?
+  local command_step_exit=$? gate_status
+  gate_status=${command_exit:-$command_step_exit}
+  timing_phase=post_command
+  if [ "$command_step_exit" != 0 ] && [ "$command_step_exit" != "$gate_status" ]; then
+    record_post_command_failure "$command_step_exit" command_step
+    [ "$gate_status" != 0 ] || gate_status=$command_step_exit
+  fi
   command_s=$((SECONDS - command_started))
   cpu_after=$(children_cpu_ticks)
   cpu_s=$(awk -v a="$cpu_before" -v b="$cpu_after" -v t="$tick" 'BEGIN { printf "%.1f", (b - a) / t }')
   if (( light )) && awk -v c="$cpu_s" -v l="$light_cpu" 'BEGIN { exit !(c + 0 > l + 0) }'; then
     echo "beelink-gate: LIGHT GATE OVER BUDGET: the command used ${cpu_s} core-seconds of the ${light_cpu} it declared; run it as a normal gate" >&2
-    status=1
+    record_post_command_failure 1 light_budget
+    gate_status=1
   fi
-  if [ "$status" -eq 0 ] && [ "$install_mode" = ship ]; then
+  if [ "$gate_status" -eq 0 ] && [ "$install_mode" = ship ]; then
     run_preview
-    status=$?
-    [ "$status" -ne 0 ] || publish_proof
+    gate_status=$?
+    if [ "$gate_status" -ne 0 ]; then record_post_command_failure "$gate_status" preview
+    else publish_proof; fi
   fi
-  exit "$status"
+  exit "$gate_status"
 }
 
 if [ "${1:-}" = --window-probe ]; then
@@ -1637,13 +1572,16 @@ place_named() {
 choose_beelink() {
   local target line state cache load slots best="" best_rank=9 best_load rank waited=0 reported=-60 light_busy next
   local -A seen=()
-  local auto_started=$SECONDS
+  local auto_started=$SECONDS pause left
   while :; do
+    frontend_retry_check
     check_checkout_reservations
     best="" best_rank=9 best_load="" light_busy=""
     for target in beelink1 beelink2; do
+      frontend_retry_check
       [ -z "${checkout_reservation_lost[$target]:-}" ] || { seen[$target]="unreachable"; continue; }
       line=$(probe_of "$target") || line=""
+      frontend_retry_check
       [ -n "$line" ] || { seen[$target]="unreachable"; continue; }
       seen[$target]=${line#beelink-gate-probe }
       state=$(sed -n 's/.* state=\([a-z]*\).*/\1/p' <<<"$line"); cache=$(sed -n 's/.* cache=\([a-z]*\).*/\1/p' <<<"$line")
@@ -1669,6 +1607,7 @@ choose_beelink() {
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     if [ -n "$best" ]; then
+      frontend_retry_check
       check_checkout_reservations
       [ -z "${checkout_reservation_lost[$best]:-}" ] || continue
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
@@ -1687,7 +1626,13 @@ choose_beelink() {
       echo "beelink-gate: no beelink is both free for this repo and under its load limit after ${waited}s; waiting (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       reported=$waited
     fi
-    sleep "${BEELINK_GATE_AUTO_POLL_SECONDS:-$([ "${BEELINK_GATE_URGENT:-0}" = 1 ] && echo 2 || echo 20)}"; waited=$((SECONDS - auto_started))
+    pause=${BEELINK_GATE_AUTO_POLL_SECONDS:-$([ "${BEELINK_GATE_URGENT:-0}" = 1 ] && echo 2 || echo 20)}
+    if (( ${frontend_retry_deadline_ms:-0} > 0 )); then
+      left=$(( (frontend_retry_deadline_ms - $(monotonic_ms) + 999) / 1000 ))
+      (( left > 0 )) || { frontend_retry_check; continue; }
+      (( pause <= left )) || pause=$left
+    fi
+    sleep "$pause"; waited=$((SECONDS - auto_started))
   done
 }
 
@@ -1749,7 +1694,7 @@ start_checkout_reservations() {
   local priority=${1:-urgent} host file pid tries
   local -a args=()
   checkout_reservation_dir=$(mktemp -d) || die "cannot allocate checkout reservation state"
-  trap 'frontend_tainted=1; exit 143' HUP INT TERM
+  trap 'frontend_signal 143' HUP INT TERM
   for host in beelink1 beelink2; do
     file="$checkout_reservation_dir/$host"
     args=("$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")")
@@ -1769,6 +1714,7 @@ start_checkout_reservations() {
   for i in "${!checkout_reservation_files[@]}"; do
     file=${checkout_reservation_files[$i]} host=${checkout_reservation_hosts[$i]}
     for ((tries = 0; tries < STAGE_TIMEOUT_SECONDS * 10; tries++)); do
+      frontend_retry_check
       grep -q "^beelink-gate-$priority-reserved " "$file" 2>/dev/null && break
       kill -0 "${checkout_reservation_pids[$i]}" 2>/dev/null || break
       sleep 0.1
@@ -2219,14 +2165,8 @@ if [ "$requested" = auto ]; then
   fi
 fi
 cancel_launcher_job() {
-  # Repeats do nothing: GNU timeout signals the child and then its process group,
-  # and --retry forwards a stop the group also received, so a second TERM would
-  # otherwise end the launcher before it schedules the cancellation. A no-op trap,
-  # unlike an ignored signal, leaves an inline --cancel-job stoppable.
-  trap : HUP INT TERM
-  frontend_tainted=1
-  [ -z "${gate_id:-}" ] || schedule_cancellation "$gate_id"
-  exit 143
+  # EXIT owns cancellation even if the output pipe died before TERM arrived.
+  frontend_signal 143
 }
 run_cancelable() {
   if [ "$cancel_on_term" = 1 ]; then
@@ -2243,7 +2183,7 @@ while :; do
   case "$requested" in
     beelink1|100.98.195.7) target=$(place_named beelink1) ;;
     beelink2|100.127.22.51) target=$(place_named beelink2) ;;
-    auto) target=$(choose_beelink) || exit $? ;;
+    auto) frontend_select || exit $? ;;
     *) die "unknown beelink: $requested" ;;
   esac
   update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"

@@ -3,6 +3,45 @@
 # Sourced by beelink-gate and bundled into its staged source; never run alone.
 gate_shared_turbo_install=1
 
+# Each step is its own process group (timeout's), bounded by the remaining
+# hold budget, without the lock descriptor and without the launcher's stdin.
+step() {
+  local left=$((deadline - SECONDS)) rc step_started=$SECONDS
+  if (( left <= 0 )); then
+    timed_out=1
+    echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
+    return 124
+  fi
+  BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "$@" {lock_fd}>&- {slot_fd}>&- </dev/null &
+  current=$!
+  wait "$current"; rc=$?
+  current=""
+  # Save the child's wait status before reaping or shell unwinding; preview
+  # and cleanup failures still have their own, binding gate exit status.
+  if [ "$timing_phase" = command ]; then
+    command_exit=$rc post_command_exit=0 post_command_phase=""
+  fi
+  # timeout ran for exactly $left real seconds, but SECONDS counts whole
+  # seconds and can still read deadline-1 here, which lost this message.
+  if [ "$rc" = 124 ] && (( SECONDS - step_started >= left - 1 )); then
+    timed_out=1
+    echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2
+  fi
+  # A step ends with its command; a server or watcher it started does not
+  # outlive it (a wrangler dev from an ADC signoff ran 44 h after its gate).
+  reap_leftovers
+  return "$rc"
+}
+
+record_post_command_failure() {
+  # Keep the first post-command failure; later cleanup must not erase its cause.
+  [ -n "${command_exit:-}" ] || return 0
+  [ "${post_command_exit:-0}" != 0 ] || {
+    post_command_exit=$1 post_command_phase=$2
+    echo "beelink-gate: post-command failure phase=$2 exit=$1 command_exit=$command_exit" >&2
+  }
+}
+
 # The package-manager version the repo's own CI installs with: package.json
 # packageManager (what corepack and the setup actions read), else the version
 # pinned on that manager's setup action in a workflow or a composite action
@@ -297,6 +336,80 @@ start_disk_observation() {
     done
     [ "$disk_ready" = 1 ] || : > "$disk_dir/late_start"
   fi
+}
+
+finish() {
+  local final_exit=$?
+  trap - EXIT
+  if [ -n "${command_exit:-}" ] && [ "$final_exit" != 0 ] && [ "$final_exit" != "$command_exit" ]; then
+    record_post_command_failure "$final_exit" "${timing_phase:-shell_exit}"
+  fi
+  # A signal during EXIT cleanup changes the verdict without abandoning
+  # the held locks, owned children or receipt. stop ignores repeated signals.
+  trap 'admission_signal=TERM; final_exit=143; record_post_command_failure 143 cleanup_signal' TERM
+  trap 'admission_signal=INT; final_exit=143; record_post_command_failure 143 cleanup_signal' INT
+  trap 'admission_signal=HUP; final_exit=143; record_post_command_failure 143 cleanup_signal' HUP
+  trap 'admission_signal=watchdog; watchdog=1; final_exit=143; record_post_command_failure 143 cleanup_signal' USR1
+  local cleanup_started=$SECONDS
+  timing_phase=cleanup
+  [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
+  reap_leftovers
+  # Snapshot this command's summaries before releasing or evicting its checkout.
+  export BEELINK_GATE_TURBO_OBSERVATIONS="$(python3 - "$checkout/.turbo/runs" <<'PYTURBO'
+import json, math, os, sys
+from pathlib import Path
+result = {"source": "turbo_run_summary", "requested_dir": os.environ.get("BEELINK_GATE_TURBO_REQUESTED_DIR"), "location_source": "gate_environment", "runs": [], "unreadable": 0}
+begin = int(os.environ.get("BEELINK_GATE_COMMAND_STARTED_MS", "0"))
+for path in Path(sys.argv[1]).glob("*.json") if begin else []:
+  try:
+      summary = json.loads(path.read_text())
+      tasks, execution = summary["tasks"], summary["execution"]
+      start, end = execution["startTime"], execution["endTime"]
+      if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) for n in (start, end)) or not 0 <= start <= end:
+          raise ValueError("invalid execution interval")
+      if start < begin:
+          continue
+      if not isinstance(tasks, list) or any(not isinstance(t, dict) or not isinstance(t.get("cache", {}), dict) for t in tasks):
+          raise ValueError("invalid tasks")
+      result["runs"].append({"cached_tasks": sum(t.get("cache", {}).get("status") == "HIT" for t in tasks),
+                             "total_tasks": len(tasks), "wall_ms": end - start})
+  except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+      result["unreadable"] += 1
+print(json.dumps(result))
+PYTURBO
+)"
+  save_unpushed
+  if [ -d "$checkout/.git" ]; then
+    if ! touch "$checkout/.git/beelink-gate-used"; then
+      record_post_command_failure 3 cleanup_used_marker
+      [ "$final_exit" -ne 0 ] || final_exit=3
+    fi
+  fi
+  release_checkout_before_reclaim
+  if [ "${lock_released:-0}" = 1 ]; then
+    # Cache capacity cannot turn a successful command red; the disk floor guards starts.
+    if ! prune_cache "$cache_root" "" "$cache_max"; then
+      cache_note=unpruned
+      echo "beelink-gate: WARNING cache over its cap; the command's exit ($final_exit) stands" >&2
+    fi
+    prune_build_dirs "$build_root" "$cache_root/.locks" "" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
+  elif [ "$watchdog" != 1 ]; then
+    record_post_command_failure 3 cleanup_checkout_release
+    [ "$final_exit" -ne 0 ] || final_exit=3
+  fi
+  [ "${lock_released:-0}" = 1 ] || rm -f "$lock.holder"
+  cleanup_s=$((SECONDS - cleanup_started))
+  admission_terminal "$final_exit"
+  receipt "$final_exit"
+  [ -z "$timing_file" ] || rm -f -- "$timing_file"
+  exit "$final_exit"
+}
+
+finish_gate_exit() {
+  # Bash 5.2 eval/errexit can over-unwind the function context before EXIT.
+  # This entry frame must have no locals: the next frame lets finish and its
+  # callees use locals and write the receipt, retaining the real failure status.
+  finish
 }
 
 # Gate end order: the end store scan while this gate still owns the checkout,
