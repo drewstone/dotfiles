@@ -788,6 +788,7 @@ For usage, run `traces skills --since 30d`: it counts each skill's Claude Code l
 
 ## traces
 
-Runs tangle-network/traces from a self-contained build, `~/.local/share/traces-build` (`TRACES_BUILD`): `dist/` plus the lockfile's production dependencies, with `SOURCE_COMMIT` naming the commit it was built from.
-It refuses, exit 2, unless that commit is the HEAD of `~/code/traces` (`TRACES_CHECKOUT`), and prints the exact rebuild command: on the Mac a build on beelink1-wsl copied back with rsync, elsewhere a build in the checkout.
-It shadows Homebrew's unrelated `traces`.
+The [upstream npm package](https://github.com/tangle-network/traces#install) owns this command and its [installer](https://github.com/tangle-network/traces/blob/main/install.sh).
+Deploy a qualified package with that installer, using `--prefix "$HOME/.local"` when needed; disable npm lifecycle scripts when deploying a prebuilt CLI.
+`traces --version` names the installed artifact independently of any source checkout. Keep the package's bin directory ahead of Homebrew's unrelated command.
+This installer retires only its former links to the checkout wrapper; it preserves npm links and independently managed files.

@@ -177,11 +177,14 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
     link "$tool" "$HOME/bin/$base"
   done
 fi
-# The Mac's hand-written ~/.local/bin/traces ran ~/code/traces/dist with no freshness check, ahead of
-# ~/bin in login shells. tools/traces owns the name now, so that file becomes a link to it.
-if [ -f "$HOME/.local/bin/traces" ] && [ ! -L "$HOME/.local/bin/traces" ] && grep -q 'code/traces/dist/cli.js' "$HOME/.local/bin/traces"; then
-  rm "$HOME/.local/bin/traces" && link "$SCRIPT_DIR/tools/traces" "$HOME/.local/bin/traces"
-fi
+# The upstream npm package owns traces. Retire only links this installer created;
+# never remove npm's link, another program, or an independently managed file.
+for legacy_traces in "$HOME/bin/traces" "$HOME/.local/bin/traces"; do
+  if [ -L "$legacy_traces" ] && [ "$(readlink "$legacy_traces")" = "$SCRIPT_DIR/tools/traces" ]; then
+    rm "$legacy_traces"
+    echo "  RETIRE $legacy_traces (install @tangle-network/traces with its maintained install.sh)"
+  fi
+done
 
 # Codex runs the shared search guard as a PreToolUse hook. Trust its exact
 # definition in every existing account home; Codex hashes each source path
