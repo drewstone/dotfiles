@@ -636,15 +636,27 @@ cmd_reap() {
   fi
 }
 
+# build, status, reap and clean take no arguments. Answer help and refuse anything
+# else before they act: `reap --help` reaped on GTR, and `clean --help` would stop
+# and delete every VM.
+no_args() {
+  local cmd=$1; shift
+  case "${1:-}" in
+    '') ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "hostlab $cmd takes no arguments (got: $*)" ;;
+  esac
+}
+
 case "${1:-}" in
-  build) shift; cmd_build "$@" ;;
+  build) shift; no_args build "$@"; cmd_build ;;
   run) shift; cmd_run "$@" ;;
   shell) shift; cmd_shell "$@" ;;
   ssh) shift; cmd_ssh "$@" ;;
-  status) shift; cmd_status ;;
+  status) shift; no_args status "$@"; cmd_status ;;
   extend) shift; cmd_extend "$@" ;;
-  reap) shift; cmd_reap ;;
-  clean) shift; cmd_clean ;;
+  reap) shift; no_args reap "$@"; cmd_reap ;;
+  clean) shift; no_args clean "$@"; cmd_clean ;;
   -h|--help|help|"") usage; exit 0 ;;
   *) die "unknown command $1 (hostlab --help)" ;;
 esac
