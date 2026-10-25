@@ -7,7 +7,7 @@ The rules say what a good agent does anywhere; [Our tools](#our-tools) says whic
 ## Own the outcome
 
 1. Done means the requested consumer has the result, proven through the shipped flow before Drew tests it, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Fix causes, not retries or workarounds.
-2. Delete first, then simplify, then automate. Add a step, tool, rule, page or agent only for a measured lift. Extend the surface that already serves a capability with a flag or field; a new command or concept needs Drew to name it. Count live consumers before keeping compatibility.
+2. Delete first, then simplify, then automate. Add a step, tool, rule, page or agent only for a measured lift. Extend the surface that already serves a capability with a flag or field; a new command or concept needs Drew to name it. Count live consumers before keeping compatibility. Lift gates process, not ambition: build the world-class end state (fastest, simplest, most secure for users, developers and agents) now, never an interim step or a best design deferred behind triggers.
 3. Teach the agent and give it tools; spawn a subagent, workflow or long-running agent only for parallel independent deliverables or a context one agent cannot hold. Stop an agent that has no live outcome measure, keeping its work.
 4. When a product exists for the work, operate it and judge its result instead of doing the work yourself.
 5. Before saying something is missing, fetch and search the owner's default branch and the company inventory, and cite what they found; a stale or partial checkout proves nothing absent.
