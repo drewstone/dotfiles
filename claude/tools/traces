@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # traces: run tangle-network/traces as built from the checkout's HEAD commit, never an older build.
 #
-# On 2026-10-24 the Mac's hand-written ~/.local/bin/traces ran ~/code/traces/dist/cli.js built on
+# The Mac's hand-written ~/.local/bin/traces ran ~/code/traces/dist/cli.js built on
 # 2026-10-07 while the checkout sat at a 2026-10-23 commit, and nobody noticed. Rebuilding dist alone
 # was not enough: the checkout's node_modules were from 2026-10-13 and lacked an export the new dist
 # imports. So the wrapper runs a self-contained build (dist plus the lockfile's production

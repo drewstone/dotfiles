@@ -9,7 +9,7 @@ set -uo pipefail
 FLOOR_GB=${MAC_DISK_GUARD_FLOOR_GB:-60}
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin
 free_gb() { df -g / | awk 'NR==2{print $4}'; }
-# Every external call gets a hard time budget: on 2026-09-25 `docker info` hung
+# Every external call gets a hard time budget: `docker info` hung
 # 23 minutes on the docker-scout plugin and stalled the whole guard.
 TIER_SECONDS=${MAC_DISK_GUARD_TIER_SECONDS:-600}
 budget() { local s=$1; shift; perl -e 'alarm shift; exec @ARGV' "$s" "$@"; }
@@ -29,7 +29,7 @@ tier() {
 # idle for GONE_IDLE_HOURS, go through wt-remove, which still salvages unpushed commits
 # and uncommitted or ignored non-build files to gtr-pro before removing anything.
 # 12 h matches wt-remove's own rule: an agent paused on a usage limit sits idle for hours,
-# and on 2026-10-05 a 2 h window removed two worktrees whose agents resumed afterwards.
+# and a 2 h window removed two worktrees whose agents resumed afterwards.
 GONE_IDLE_HOURS=${MAC_DISK_GUARD_GONE_IDLE_HOURS:-12}
 gone_branch_trees() {
   local wt_remove="$HOME/company/tools/worktree-reap/bin/wt-remove" open list d b

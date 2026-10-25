@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hourly scoreboard for the <1,000-line hill (Drew 2026-10-20): re-run the census, apply the same scope, append one row
+# Hourly scoreboard for the <1,000-line hill: re-run the census, apply the same scope, append one row
 # to <state>/score.jsonl. Every number comes from the census owner beside it (git/census/README.md), so the scoreboard,
 # the ratchets and factory's census checks count alike.
 # logic_lines counts every in-scope logic file, so deletion and deduplication show up; a split only moves lines out of over_1000.
@@ -24,7 +24,7 @@ DUP={"agent-dev-container","ph0ny"}
 SKIP={"discovery-lab":("prereg/","archive/","artifacts/","reports/","pursuits/","experiments/"),"tnt-core":("bindings/",),"blueprint-agent":("scripts/experiments/",)}
 scoped=[(r,p,int(n)) for r,p,n in rows if r not in DUP and not any(p.startswith(s) for s in SKIP.get(r,()))]
 big=[b for b in scoped if b[2]>1000]
-# Drew 2026-10-21 07:00Z: "nothing but agent-container, agent-eval, agent-runtime", "and whatever is really used frankly", blueprints not now.
+# Focus: agent-container, agent-eval, agent-runtime, and whatever is really used; not blueprints.
 # Really used = a successful production deploy run in the 7 days before 10-21 (gh run list): the apps below and tangle-router.
 FOCUS={"agent-container","agent-eval","agent-runtime","tangle-router","creative-agent","gtm-agent","agent-app","legal-agent","hardware-agent"}
 fbig=[b for b in big if b[0] in FOCUS]

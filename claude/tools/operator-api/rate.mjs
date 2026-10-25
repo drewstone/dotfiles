@@ -3,7 +3,7 @@
 // Agent apps allow each key a fixed number of requests per minute (sliding
 // window; a refused request does not count) and answer the excess with 429 and
 // Retry-After. Several lanes share one key, so each client waiting out its own
-// refusals still produces bursts: on 2026-10-10 one key served 1,121 requests,
+// refusals still produces bursts: one key served 1,121 requests,
 // 653 of them refused. Taking a slot here before each request keeps the host
 // under the key's limit instead.
 //

@@ -56,7 +56,7 @@ install_yarn_dependencies() {
 }
 
 # The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm")
-# and gate_node_bin. pnpm may launch its own Node, so on 2026-10-21 a gate read
+# and gate_node_bin. pnpm may launch its own Node, so a gate read
 # plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3
 # (ABI 127 vs 137). Probe Yarn through its launcher too (including PnP); npm
 # uses the PATH node.
@@ -82,7 +82,7 @@ resolve_gate_node() {
 prepare_gate_dependencies() {
   # Install and run with the repo's Node (.nvmrc), as its CI does, so the install
   # and the command load the same native addon ABI. pnpm keys a native package's
-  # build on the Node that installs it: on 2026-10-11 agent-app#1036 installed under
+  # build on the Node that installs it: agent-app#1036 installed under
   # the beelink's default Node 22, its `bash -lc` command ran under nvm's default 24,
   # and better-sqlite3 failed with "Module did not self-register". With an nvm Node
   # first on PATH, a login shell keeps it.
@@ -96,7 +96,7 @@ prepare_gate_dependencies() {
     fi
   elif [[ "${command[0]##*/}" =~ ^(sh|dash|bash)$ && "${command[1]:-}" =~ ^-[A-Za-z]*l[A-Za-z]*$ && "${command[1]}" == *c* ]]; then
     # A login-shell command runs under the Node its profile selects (nvm's default, 24, on both Beelinks), while this
-    # unit's PATH starts at /usr/local/bin/node (22). On 2026-10-21 agent-knowledge installed better-sqlite3 for ABI 127
+    # unit's PATH starts at /usr/local/bin/node (22). Agent-knowledge installed better-sqlite3 for ABI 127
     # and its `sh -lc` tests ran under 137, three rounds in a row. Install and probe with the login shell's Node.
     local login_node
     login_node=$(/usr/bin/bash -lc 'command -v node' </dev/null 2>/dev/null | tail -1)

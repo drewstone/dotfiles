@@ -3,8 +3,8 @@
 # host. Exit 2 with the reason on stderr blocks the call and shows Claude why.
 #
 # Why: two outages came from root storage commands that look scoped and act on
-# the whole host. 2026-08-20: `unshare --mount` then `rmdir /proc` deleted the
-# real /proc directory (5 days down). 2026-09-02: `fsfreeze -f` on a directory
+# the whole host. `unshare --mount` then `rmdir /proc` deleted the
+# real /proc directory (5 days down); `fsfreeze -f` on a directory
 # whose mount had failed froze the root filesystem (16 days down).
 #
 # This hook is the first line: it stops the verb before sudo sees it and names
@@ -128,7 +128,7 @@ for pat, why in RULES:
             continue
         err = sys.stderr
         print("host-blast-guard: blocked `%s`: %s." % (verb_text.strip().splitlines()[0][:80], why), file=err)
-        print("This class of command took this host down on 2026-08-20 (5 days) and 2026-09-02 (16 days).", file=err)
+        print("This class of command took this host down twice (5 and 16 days).", file=err)
         print("Run the experiment in a throwaway VM:  hostlab run -- '<command>'   (hostlab --help: lvm2, dm-thin, xfs, root, the cwd at /work).", file=err)
         print("If it truly must run on the host, ask Drew to run it himself (he can prefix it with ! in the prompt). Do not wrap it in sh -c, env, python, or an absolute path.", file=err)
         sys.exit(2)

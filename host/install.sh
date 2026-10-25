@@ -187,7 +187,7 @@ install_system_git_guard() {
 }
 
 # Beelinks run the same Git entrypoint with only its worktree cap: each fleet lane may hold
-# `cap` worktrees under _wt, and none are added below the free-space floor. On 2026-10-11 beelink1
+# `cap` worktrees under _wt, and none are added below the free-space floor. Beelink1
 # held 261 _wt worktrees and gained 49 in 6 h; idle reapers cannot touch trees younger than 12 h.
 is_beelink() { case "$(hostname -s)" in beelink1|beelink2|DESKTOP-18IR33V) return 0 ;; *) return 1 ;; esac; }
 
@@ -199,7 +199,7 @@ install_beelink_worktree_cap() {
   want_file 0755 "$SCRIPT_DIR/gtr-install-guard/guard.py" "$cap/git"
   want_file 0644 "$SCRIPT_DIR/gtr-install-guard/beelink-worktree-cap.json" "$cap/git.worktree-cap.json"
   want_file 0755 "$SCRIPT_DIR/gtr-install-guard/beelink-git" /usr/local/bin/git
-  # The first install (2026-10-11) put the Python guard itself at /usr/local/bin/git.
+  # The first install put the Python guard itself at /usr/local/bin/git.
   local stale
   for stale in /usr/local/bin/git.gtr-original /usr/local/bin/git.worktree-cap.json; do
     if [ -e "$stale" ] || [ -L "$stale" ]; then

@@ -40,7 +40,7 @@ PR merged, with no open PR on it, holds commits the base never got. The pass ope
 from that branch (title "<title> (commits pushed after #N merged)"), which merges like any other PR,
 and comments on #N. `git cherry` in the merge mirror drops each commit the base reaches or already
 carries as an equal patch (a cherry-pick in another PR), and a head a later merged PR carries is
-skipped. Each (PR, head) is judged once, recorded in <state-dir>/stranded.json. On 2026-10-22 two fixes were pushed after their
+skipped. Each (PR, head) is judged once, recorded in <state-dir>/stranded.json. Two fixes were pushed after their
 PRs merged and reached the base only by hand: #13426's cascade guard (#13437) and #13395's cold
 classes (#13443).
 
@@ -92,12 +92,12 @@ SLOT_REPOS, INVALID_POLICY_REPOS = slot_repositories()
 REVIEW_FRAGMENT = Path(__file__).resolve().with_name('gh-drew-review.sh').read_text().split("<<'GRAPHQL'", 1)[1].split('\n', 1)[1].split('\nGRAPHQL', 1)[0]
 
 REQUIRED = [c.strip() for c in os.environ.get("MERGE_ON_GREEN_REQUIRED", "Fast Checks,Build,Type Check").split(",") if c.strip()]
-# "*": every check on the head is the gate. On 2026-10-21 about 60 PRs across the product repos waited for
+# "*": every check on the head is the gate. About 60 PRs across the product repos waited for
 # a hand merge because this tool served agent-container alone; most of those repos run no PR CI.
 ALL_CHECKS = REQUIRED == ["*"]
 PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"} if ALL_CHECKS else {"SUCCESS"}
 # Under "*", a head whose passing checks include none that builds or tests is treated as a head with no CI:
-# agent-eval#1047 merged on 2026-10-22 00:57Z on its only check, "adopt / adopt", which runs no typecheck or test.
+# agent-eval#1047 merged on its only check, "adopt / adopt", which runs no typecheck or test.
 TESTING = re.compile(os.environ.get("MERGE_ON_GREEN_TESTING", r"(?i)build|test|type|lint|check|verify|ci\b|gate|sign-?off|e2e"))
 # A no-CI head whose receipt gh-drew refused is asked again after this long, not every tick:
 # each ask reads both beelinks' receipts over SSH.
@@ -119,15 +119,15 @@ labels(first:10){nodes{name}} commits(last:1){nodes{commit{statusCheckRollup{sta
 RELEASE_PREFIXES = ("release/", "changeset-release/", "sync/main-", "queue/")
 HOLD = re.compile(r"(?i)\b(do not merge|don'?t merge|merge only (after|when)|hold until)\b")
 # A sentence that waits only for the gate this tool already requires is not a hold. #11327
-# (2026-10-17) said "merge only after Fast Checks, Build and Type Check finish green on this head",
+# said "merge only after Fast Checks, Build and Type Check finish green on this head",
 # sat green 3.5 h, and was merged by hand; the same hand pass merged #11312 past a real pre-deploy hold.
 GATE_ONLY = re.compile(r"(?i)merge only (after|when)\s+(?:(?:the|hosted|required|gate|fast checks|checks?|build|type check|and|,)\s*)+"
                        r"(?:finish(?:es)?|pass(?:es)?|are|is|turn|go)?\s*green")
 # "hold until" holds only as an instruction: it opens its sentence or list item, after at most "please" or "this PR".
-# discovery-lab #2010 (2026-10-18) described behavior ("Both hold until a later start writes the journal")
+# discovery-lab #2010 described behavior ("Both hold until a later start writes the journal")
 # and was refused as held.
 HOLD_UNTIL_LEAD = re.compile(r"(?i)(?:please|this|pr)?(?:\s+(?:please|this|pr))*")
-# A `hold` label says why on the PR, or it expires. On 2026-10-23 three dependabot PRs sat behind `hold` with no
+# A `hold` label says why on the PR, or it expires. Three dependabot PRs sat behind `hold` with no
 # word on the PR (the release-slot holds below never said so) and a lead merged past them as forgotten holds.
 # A label that no comment explains within HOLD_TTL_S of being added is released with a comment. A comment that
 # names the hold (hold/held) from 10 minutes before the label onward, or a hold phrase in the body, keeps it.
@@ -140,7 +140,7 @@ HOLD_FRAGMENT = """fragment pr on PullRequest { headRefOid
 SLOT_NOTE = ("Held by merge-on-green for a release slot: {repo} deploys on merge, so a bot PR waits until an operator "
              "grants revision {head} with the `release-slot-granted` label and removes `hold`.")
 # A cancelled run says nothing about the tree and nothing re-runs it, so it is not red;
-# #11004 sat green for 2 h on 2026-10-15 behind a cancelled "regressions" run.
+# #11004 sat green for 2 h behind a cancelled "regressions" run.
 # The gate checks still have to read SUCCESS (REQUIRED below).
 RED = {"FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
 # Statuses only the retired local-signoff path posted; a stale red one is not a gate.
@@ -149,7 +149,7 @@ MIN_HEAD_AGE_S = int(os.environ.get("MERGE_ON_GREEN_MIN_AGE_S", "120"))
 # gh-drew waits for a Codex review running on the head before it merges; a tick does not wait,
 # so such a PR is refused now and tried again on the next tick.
 os.environ.setdefault("GH_DREW_REVIEW_WAIT", "0")
-# A pause ends on its own: version PR #11196 needed one clean CI window on 2026-10-15, and the
+# A pause ends on its own: version PR #11196 needed one clean CI window, and the
 # only pause then was stopping the timer by hand behind a separate dead-man restart.
 PAUSE_MAX_MIN = 120
 PAUSE_VAR = "MERGE_ON_GREEN_PAUSED"
@@ -256,7 +256,7 @@ def hold_reason(pr):
     labels = {l["name"] for l in ((pr.get("labels") or {}).get("nodes") or [])}
     if "hold" in labels:
         return "hold label"
-    # A release cut held by its release owner: on 2026-10-19 a lane hand-merged
+    # A release cut held by its release owner: a lane hand-merged
     # cut #11993 over hold-promotion and superseded eu1's fleet roll a minute in.
     if "hold-promotion" in labels:
         return "hold-promotion label (the release owner holds this cut)"
@@ -486,7 +486,7 @@ def stranded_commits(a, n, branch, merged_head, current, merged_heads):
     """Return (commits, why): the (sha, subject) pairs pushed to a merged PR's branch whose change the base lacks.
 
     `git cherry` drops a commit the base reaches and marks one whose patch the base already carries:
-    on 2026-10-22 the late commits on #13407's and #13395's branches reached develop as cherry-picks
+    the late commits on #13407's and #13395's branches reached develop as cherry-picks
     in new PRs from other branches (#13436, #13443), and are not stranded.
     """
     if current in merged_heads:
@@ -753,8 +753,8 @@ def tick(a, owner, name):
         if action == "merge" and not a.dry_run:
             m = gh("pr", "merge", str(n), "-R", a.repo, method, "--match-head-commit", head,
                    env={'MOG_REVIEW_SNAPSHOT': CLIENT.snapshot(pr, answer), **({'GH_DREW_REQUIRE_RECEIPT': '1'} if receipt else {})})
-            # gh-drew prints notices before its refusal ("merging without the Codex review check: ..."); on
-            # 2026-10-21 that notice filled every outcome's 160 characters and hid the refusal itself.
+            # gh-drew prints notices before its refusal ("merging without the Codex review check: ...");
+            # that notice filled every outcome's 160 characters and hid the refusal itself.
             # Both streams, minus JSON documents: from 10-21 to 10-22, 99 refusals recorded only a GraphQL
             # schema dump ({"data":{"PullRequest":{"fields":...}}}) printed ahead of the real error.
             said = "\n".join(l for l in "\n".join((m.stderr.strip(), m.stdout.strip())).splitlines()

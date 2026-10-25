@@ -1,5 +1,5 @@
-# Codex reviews arrive minutes after a PR opens, and agents merged without reading them: on
-# 2026-10-15, dotfiles#465 merged 22 s after it opened while its review ran, and the review's two
+# Codex reviews arrive minutes after a PR opens, and agents merged without reading them:
+# dotfiles#465 merged 22 s after it opened while its review ran, and the review's two
 # P2 findings landed 6 minutes after the merge. Of the 42 completed Codex reviews on dotfiles from
 # 2026-10-11 to 10-15, 20 finished after their PR merged.
 # Before a merge (or --auto), one GraphQL query reads the PR's head, review threads and comments:
@@ -16,12 +16,11 @@
 # percentile from start to finish, and a merge comes at least one gate after the review starts.
 # GH_DREW_REVIEW_OVERRIDE=<reason> merges without the check; the reason is logged. A host-wide override is the
 # file ~/.config/gh-drew/review-override (GH_DREW_REVIEW_OVERRIDE_FILE): while it exists and is not empty, its
-# first line is the reason for every merge on the host. Drew, 2026-10-17, with the Codex seats full: "keep
-# merging no more codex review ... time to just merge and yolo". Deleting the file restores the check. Reads that fail
+# first line is the reason for every merge on the host. Deleting the file restores the check. Reads that fail
 # refuse. GraphQL draws on no core quota, so cap_reads and guard_reads never count these reads.
 # The same read asks merge-on-green, which owns the rule, whether the PR's author holds it (the hold
 # label, or a hold phrase such as "merge only after the pre-deploy check below"). A held PR is refused,
-# override or not: on 2026-10-17 a lane hand-merged #11312, which merge-on-green had skipped for six hours,
+# override or not: a lane hand-merged #11312, which merge-on-green had skipped for six hours,
 # before the pre-deploy check its body names was shown. GH_DREW_PRECONDITIONS_SHOWN=<evidence> merges a
 # held PR once every precondition is shown true; the evidence is logged.
 review_wait="${GH_DREW_REVIEW_WAIT:-600}"
@@ -65,7 +64,7 @@ if held.returncode == 1:
     print("held", clean(held.stdout), sep="\t")
 elif held.returncode != 0:
     sys.exit("cannot ask merge-on-green whether the PR is held: " + clean(held.stderr or held.stdout)[:200])
-# GitHub closes what a merged body names after a closing keyword, pull requests included: on 2026-10-19
+# GitHub closes what a merged body names after a closing keyword, pull requests included:
 # "placement fix #11872" in #11873 closed #11872, and "closed #11879" in #11872 closed #11879.
 # "-" stands for this repository: tab is IFS whitespace, so bash's read would drop an empty field.
 for m in re.finditer(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", pr.get("body") or ""):
@@ -88,7 +87,7 @@ for comment in pr["comments"]["nodes"]:
     if not codex(comment["author"]) or "codex-pull-request-review-summary" not in body:
         continue
     # The summary carries this state while a review runs or after it fails, and drops it once
-    # the review completes (dotfiles#464 and #465, 2026-10-15).
+    # the review completes (dotfiles#464 and #465).
     state = re.search(r"codex-review-state:v1 (\{.*?\}) -->", body)
     try:
         for review, s in (json.loads(state.group(1)) if state else {}).items():

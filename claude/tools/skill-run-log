@@ -21,7 +21,7 @@ Example:
 Writes to ${XDG_STATE_HOME:-~/.local/state}/agent-work/<repo>/skill-runs.jsonl, where <repo> names
 the main checkout, so every worktree of a repository shares one log; outside a git repository
 <repo> is the basename of $PWD. The log lives outside the checkout because an append inside it
-left main checkouts permanently dirty (discovery-lab, 2026-10-05). Rows written before then remain
+left main checkouts permanently dirty (discovery-lab). Rows written before then remain
 in each repo's .agent/ or .evolve/skill-runs.jsonl as history. Append-only; never rewrites a line.
 
 Each row is a move on the climb's "operator tools" layer (docs/processes/climb.md): layer,

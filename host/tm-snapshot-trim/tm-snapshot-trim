@@ -1,7 +1,7 @@
 #!/bin/bash
 # Delete Time Machine local snapshots on a Mac whose backup disk is not attached.
 # Why: with no reachable destination, macOS still takes an hourly local snapshot,
-# and each one pins every block deleted since it was taken. On 2026-09-24/25 this
+# and each one pins every block deleted since it was taken. This
 # hid 20, 15 and 15 GB of freed space and drove the Mac to 4 GB free.
 # When the backup disk is reachable, local snapshots are left alone: they are
 # the staging copy Time Machine uploads. No sudo is needed.

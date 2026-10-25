@@ -17,8 +17,8 @@ governs voice, lead/ask behavior, and how a run is closed out. This is distinct 
   sources startup, resume, clear and compact. It reads `active`, resolves the variant (the
   session's pinned variant, or a deterministic per-session pick when rotating), and injects it as
   `additionalContext` wrapped in `<interaction-directive variant="...">`, so each context window
-  carries one copy and a compaction adds it back. Until 2026-10-24 it ran on `UserPromptSubmit`
-  and added ~4 KB on every prompt, mid-turn messages included. Fail-open: any error injects
+  carries one copy and a compaction adds it back. On `UserPromptSubmit` it
+  added ~4 KB on every prompt, mid-turn messages included. Fail-open: any error injects
   nothing and never blocks the session.
 - **Codex (session-level):** *next increment* — Codex has no per-turn hook; the active variant
   will be composed into its `AGENTS.md` surface at switch time. Not yet wired; see TODO below.
@@ -57,20 +57,20 @@ to start splitting traffic. Each variant should encode a *distinct hypothesis* a
 makes a response better (structure vs. density, more vs. less proactive checkpointing, etc.),
 not a cosmetic tweak — otherwise the measurement can't separate them.
 
-## Measurement status (2026-10-11)
+## Measurement status
 
 `terse-ops-v1` was the single active variant from 2026-09-20 to 2026-10-10, across 4,011 sessions in the Mac's assignment log.
 So no variant had a measured result by 2026-10-11.
-On 2026-10-10 Drew rejected terse output for analysis ("These bullet points just aint cutting it"), and `evidence-lead-v1` became active.
+Terse output was rejected for analysis, so `evidence-lead-v1` became active.
 The inactive variants (`terse-ops-v1`, `lead-checkpoint-v1`, `gate-checkpoint-v1`) were then deleted; git history keeps them.
 Before the join existed, the measurement was the corrections ledger in [the climb](../../docs/processes/climb.md#corrections-are-data): Drew's corrections per session, by theme, under each variant.
 
-On 2026-10-11 Drew rejected the terminal output itself: two colors, no fixed order for what, why, how and focus, unambitious answers that lean on old records, and no visible sign of learning from a week of Terraform mistakes.
+The terminal output itself was then rejected: two colors, no fixed order for what, why, how and focus, unambitious answers that lean on old records, and no visible sign of learning from a week of Terraform mistakes.
 `evidence-lead-v1` was rewritten in place, keeping its slug, with the same blocks in the same order every turn, emoji color for status and charts, the owner's voice, and a Learned block that shows each mistake, its durable fix and its status.
 The assignment log records the slug, not the text, so split its sessions at the merge time of the PR that made this rewrite (`git log --format='%cI %s' -- claude/directives/variants/evidence-lead-v1.md` lists it).
 The measure is the corrections ledger's communication theme after that time against before it.
 
-## Rotation (2026-10-15)
+## Rotation
 
 The trace-insights join now exists: trace-mine's daily analyst writes a "Directive scores" table, with corrections per hour and per turn and 95% intervals per variant.
 On 2026-10-14 `evidence-lead-v1` had 43 labelled turns at 18.6% corrections per turn [9.7%, 32.6%].

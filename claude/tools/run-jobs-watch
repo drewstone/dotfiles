@@ -2,12 +2,12 @@
 # run-jobs-watch [-v] <run-id> [owner/repo]: watch a GitHub Actions run at the JOB level.
 # Exits 1 on the first job that concludes anything but success or skipped, and prints that job's link;
 # exits 0 when the run completes, printing its conclusion; exits 2 after 5 failed reads in a row.
-# A run-level watch misses a failed job while the run waits on a later one: on 2026-10-19 agent-container
+# A run-level watch misses a failed job while the run waits on a later one: agent-container
 # deploy 39274359094 failed its host-agent rollout at 15:30Z, then sat in `waiting` for 47 min.
 # Transient read errors (a GitHub 502 ended `gh run watch` on the same run) are retried.
 # --require-job <name>: only that job decides. Other failed jobs are printed but do not stop the watch;
 # exit 0 when the run completes with that job a success, exit 3 otherwise. A run can conclude
-# success while shipping nothing: deploy 39313450494 (2026-10-19) skipped every deploy job as
+# success while shipping nothing: deploy 39313450494 skipped every deploy job as
 # superseded, and this tool reported "completed: success".
 verbose=0; require=""
 while [ $# -gt 0 ]; do case "$1" in -v) verbose=1; shift ;; --require-job) require=${2:?--require-job needs a job name}; shift 2 ;; *) break ;; esac; done

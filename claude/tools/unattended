@@ -4,7 +4,7 @@
 #
 # usage: unattended [--name NAME] [--watch] [--max N] -- <command> [args...]
 #
-# On 2026-10-11 GTR ran at load 87-114 on 32 cores and dropped off the network:
+# GTR ran at load 87-114 on 32 cores and dropped off the network:
 # 55 Claude processes shared it with mirrors, archive extraction, a local model
 # server, watchers polling every second and a `find /`. The command runs in its
 # own systemd user scope with CPUWeight 20 (interactive work keeps 100) and nice

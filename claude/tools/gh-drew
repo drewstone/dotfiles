@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Associative arrays below require Bash 4+. Under macOS's system Bash 3.2, which a PATH
 # with /usr/bin first resolves, the receipt-rule table fails with "tangle: unbound
-# variable" and the requested call never runs (an armed merge, 2026-10-18). Re-exec an
+# variable" and the requested call never runs (an armed merge). Re-exec an
 # installed compatible Bash so callers using the normal CLI keep working without a new install.
 bash_major=0
 if [ -n "${BASH_VERSION:-}" ]; then bash_major=${BASH_VERSION%%.*}; fi
@@ -27,7 +27,7 @@ set -euo pipefail
 # Every `gh` this script runs (identity check, quota probe, the call itself)
 # must be the real binary. Without the marker, the gh shim (claude/tools/gh)
 # re-entered gh-drew, so each call was verified and logged twice, and each
-# guarded read logged a phantom `api rate_limit` (found 2026-10-09).
+# guarded read logged a phantom `api rate_limit`.
 export GH_DREW_SHIM=1
 
 expected_login="${GH_DREW_EXPECTED_LOGIN:-drewstone}"
@@ -35,7 +35,7 @@ secrets_file="${GH_DREW_SECRETS_FILE:-$HOME/company/devops/secrets/agent-state.e
 keys_file="${GH_DREW_KEYS_FILE:-$HOME/company/devops/secrets/.env.keys}"
 
 # Decrypting the vault starts a Node process per call. Thirteen agent sessions
-# calling gh-drew kept 3-6 decrypts running at once (2026-09-27, several cores).
+# calling gh-drew kept 3-6 decrypts running at once.
 # A decrypted value is cached for GH_DREW_SECRET_TTL seconds (default 900) in a
 # per-user private temp directory (0700, files 0600), and is discarded early when
 # the vault file changes. The vault's own key file lives in the same home, so the
@@ -93,7 +93,7 @@ read_secret_uncached() {
 # and lock out merges. Cache the verdict per token fingerprint; the token's
 # identity does not change between calls.
 # The check asks GraphQL (`viewer { login }`), whose quota is separate from the
-# core REST quota: on 2026-10-09 the core quota reached 0 at 20:10Z, the 6h
+# core REST quota: the core quota reached 0 at 20:10Z, the 6h
 # verdict expired at 20:20Z, `GET /user` then failed, and every gh-drew call on
 # the host, writes and `/rate_limit` included, refused until the 20:21Z reset.
 verify_cache_dir="${GH_DREW_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/gh-drew}"
@@ -553,14 +553,14 @@ review_guard() {
   review_guard "$token" "$@"
 }
 
-# Release-path repos merge only on the gate's own receipt. On 2026-10-18 01:39Z discovery-lab#2009 merged
+# Release-path repos merge only on the gate's own receipt. Discovery-lab#2009 merged
 # through a lane script that recorded exit=0 for gate beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose receipt
 # says exit=1 (the script's own quoting failed); earlier agent-runtime#1818 merged on a subset gate that never
 # ran its src/ tests and turned the Runtime release red. So a `pr merge`, or an `api -X PUT
 # repos/<o>/<r>/pulls/<n>/merge`, of a repo below needs: the merge pinned to the PR's head
 # (--match-head-commit <head>, or -f sha=<head>), and a beelink-gate receipt for that head (read from the
 # beelinks by `beelink-gate --receipt`) with exit 0, mode install and class normal. Any command counts: Drew's
-# merge model (AGENTS.md, 2026-10-18) is a fast gate on the integration tests a change touches, then merge, with the
+# merge model (AGENTS.md) is a fast gate on the integration tests a change touches, then merge, with the
 # full suite after merge; the Lab's full `pnpm test` failed a different unrelated test on 3 of 4 gates that night
 # (shared /tmp fixtures, OOM timing under load), blocking merges without catching a bug. Under `beelink-gate --merge`, BEELINK_GATE_ID names the gate and that receipt must be the one.
 # The review override does not reach this check, and nothing overrides it.
@@ -670,7 +670,7 @@ receipt_guard() {
     local found="${out#*$'\n'}"; [[ "$out" == *$'\n'* ]] || found=""
     # One passing receipt is enough; a beelink left unread may hold it, so no pass with a host unread is not "none".
     # Under --merge only the named gate's receipt counts, so once that row is read an unread host cannot change
-    # the verdict: on 2026-10-18 discovery-lab#2078 refused with "could not read beelink2's receipts" first,
+    # the verdict: discovery-lab#2078 refused with "could not read beelink2's receipts" first,
     # and the lane waited for beelink2 while its beelink1 receipt said mode no-install.
     if [[ -s "$err" ]] && ! { [[ -n "${BEELINK_GATE_ID:-}" ]] && grep -qF "  $BEELINK_GATE_ID " <<<"$found"; }; then
       local why; why="$(tr '\n' ' ' <"$err" | cut -c1-300)"; rm -f "$err"
@@ -687,8 +687,8 @@ receipt_guard() {
 }
 
 # In-progress scheduled runs of these two workflows are not cancelled through gh-drew, by `run cancel` or
-# `api POST .../actions/runs/<id>/cancel` (company-01 approved this on 2026-10-19 and stopped its watchers).
-# A run that has not started has measured nothing and stays cancellable: on 2026-10-19 and 10-23 such a run,
+# `api POST .../actions/runs/<id>/cancel` (company-01 approved this and stopped its watchers).
+# A run that has not started has measured nothing and stays cancellable: such a run,
 # with no runner, held the production deploy lock. So do workflow_dispatch runs and other workflows' runs.
 # The workflows are named by file; a run's file is the last component of its `path` (GitHub appends
 # `@<ref>` for some events, which is dropped).
@@ -757,8 +757,7 @@ cancel_guard() {
   event="${row%%$'\t'*}" rest="${row#*$'\t'}"; path="${rest%%$'\t'*}" status="${rest##*$'\t'}"
   file="${path%%@*}"; file="${file##*/}"
   if [[ "$event" == schedule && "$scheduled_cancel_refused" == *"@$file@"* && "$status" == in_progress ]]; then
-    # Drew, 2026-10-19 ~20:00Z: "i want to ship directly RIGHT NOW" while a queued scheduled benchmark,
-    # with no runner, held the release yield and this guard had no way through. The override quotes his order.
+    # A queued scheduled run with no runner can hold the release yield; the override, with a reason, cancels it.
     local allow="${GH_DREW_ALLOW_SCHEDULED_CANCEL:-}"
     allow="${allow//[$'\t\n\r']/ }"
     if [[ -n "$allow" ]]; then
@@ -768,7 +767,7 @@ cancel_guard() {
     fi
     log_call refused "$@"
     echo "gh-drew: refusing to cancel run $cancel_run: it is a scheduled run of $file, in progress." >&2
-    echo "Running scheduled runs of benchmark-production.yml and create-waterfall.yml are not cancelled (company-01, 2026-10-19)." >&2
+    echo "Running scheduled runs of benchmark-production.yml and create-waterfall.yml are not cancelled (company-01)." >&2
     echo "A workflow_dispatch run of either, or a scheduled one that has not started, stays cancellable." >&2
     echo "When Drew orders it, cancel with GH_DREW_ALLOW_SCHEDULED_CANCEL=\"<his words, with the time>\"." >&2
     exit 1
@@ -808,7 +807,7 @@ add_squash_body() {
 
 # Lane provenance: a PR body or squash message gh-drew writes ends with the run that made it, so a
 # merge can be traced to its lane (hills merges-lane-attributed reads "Run ID:" / "Session:" lines;
-# on 2026-10-12 0 of 656 merged PRs carried one). This names a run, not an author: no trailers.
+# 0 of 656 merged PRs carried one). This names a run, not an author: no trailers.
 lane_line() {
   if [[ -n "${TANGLE_RUN_ID:-}" ]]; then
     printf 'Run ID: %s' "$TANGLE_RUN_ID"
@@ -954,7 +953,7 @@ with_squash_body() {
 }
 
 # One open PR per fleet lane (ops-board #10097). Lanes opened PRs faster than
-# signoff could land them (5.7/h in vs 3.25/h merged on 2026-10-12), so a lane
+# signoff could land them (5.7/h in vs 3.25/h merged), so a lane
 # with an open PR is refused another `pr create`. Fleet stamps a stable key
 # from the claimed project, shared by helpers, new runs, and operator handoffs.
 # Older sessions retain their run-id key; a shell with no lane id is not limited.

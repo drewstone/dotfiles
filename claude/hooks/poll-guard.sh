@@ -7,7 +7,7 @@
 # prints after `done` returns nothing, while one that prints each iteration
 # keeps its progress.
 #
-# Measured 2026-08-26 over 1,830 transcripts, 80 capped wait loops (66 parsed):
+# Over 1,830 transcripts, 80 capped wait loops (66 parsed):
 #   silent loop body  -> lost all output 29 of 30  (96.7%)
 #   printing body     -> lost all output 13 of 36  (36.1%)
 #   delta +60.6pp, bootstrap 95% CI [+43.3, +77.8], Cohen's h 1.485, p < 1e-5
@@ -16,7 +16,7 @@
 # in 600 ordinary commands, and it stays quiet when the command sets
 # run_in_background or already writes its output to a file.
 #
-# Two earlier triggers were removed on 2026-08-26 because measurement did not
+# Two earlier triggers were removed because measurement did not
 # support them. A ci-poll counter nudged on repeat `gh run view` calls: it fired
 # in session ff995b36 and 12 capped waits followed it, and it matched 0 of 600
 # sampled commands. A long-work trigger warned before installs, builds and
@@ -63,9 +63,8 @@ bodies = LOOP_BODY.findall(cmd)
 
 # A release watcher that polls `npm view` reads "not published yet" when npm is
 # missing from PATH (lanes have node in /usr/bin and npm only under ~/.nvm), so
-# it waits blind past the release. That happened 2026-10-12 (~50 min),
-# 2026-10-18 (~55 min) and 2026-10-20 (33 min, agent-knowledge 22.0.4), each
-# time in a background watcher, so this check runs before the background skip.
+# it waits blind past the release. That happened three times
+# (33-55 min each), each in a background watcher, so this check runs before the background skip.
 if any(SLEEP.search(b) and re.search(r"\bnpm\s+(?:view|info|show)\b", b) for b in bodies):
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",

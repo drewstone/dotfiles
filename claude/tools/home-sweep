@@ -29,7 +29,7 @@ done < <(find "$home" -maxdepth 1 -type f ! -name '.*' -mmin +2880 -print0)
 
 echo "home-sweep: moved $moved file(s) to $attic"
 
-# Free-space trend. Three exhaustion events in 19 days (2026-08-14, 08-19, 09-01)
+# Free-space trend. Three exhaustion events in 19 days
 # were each found only after work had already failed, so the sweep also reports.
 # On macOS, deleted files stay charged to the volume until their APFS local
 # snapshots expire, so report both the raw figure and the snapshot count.

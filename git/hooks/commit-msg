@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Refuse a commit whose MESSAGE contains a credential.
 #
-# On 2026-07-12 an agent pasted a 216-line `env` dump into an
+# An agent pasted a 216-line `env` dump into an
 # agent-dev-container commit body. It reached origin/main and 2,220 branches,
 # so every clone carries it, and three live API keys sat there for 23 days.
 #
@@ -20,8 +20,7 @@ set -euo pipefail
 MSG_FILE="${1:?commit-msg hook requires the message file}"
 
 # Refuse co-authorship trailers. Agent harnesses append "Co-Authored-By: <model>"
-# by default and their reminders say to; Drew's rule is that no commit carries
-# one (2026-10-06: a Claude session added it despite AGENTS.md). No escape hatch.
+# by default and their reminders say to; no commit carries one. No escape hatch.
 coauthor="$(grep -v '^#' "$MSG_FILE" | grep -i -m1 '^[[:space:]]*co-authored-by:' || true)"
 if [ -n "$coauthor" ]; then
   {

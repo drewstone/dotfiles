@@ -4,7 +4,7 @@
 # usage: fff-mcp-scoped <fff-mcp binary> [fff-mcp options]
 #
 # Claude Code starts one fff-mcp per session in the session's directory, and
-# fff-mcp indexes and watches everything under it. On 2026-10-12, five GTR
+# fff-mcp indexes and watches everything under it. Five GTR
 # sessions rooted at ~/code and ~/code/_wt (hundreds of checkouts) read 1.2 TB
 # in about two hours and held GTR's I/O pressure at 85-94%, while 34 instances
 # rooted in single repos read 2 GB together. So the server indexes only the

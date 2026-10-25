@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Refuse a commit that exports a name another file in the repo already exports.
 
-Drew, 2026-10-21, after the god-object splits: "repos and primitives need to be reusable and smart and
-simple and succinct", and "no miscommunication or confusion should be allowed". That morning
+Each concept has one name and one implementation. After the god-object splits,
 agent-container exported 659 names from two or more files (logger from 24, JsonValue from 11, shellQuote
 from 6), so an agent could not tell which one to use, and every copy drifted on its own.
 
