@@ -40,11 +40,16 @@ install_bun_dependencies() {
     bin=$(timeout 60 npx --yes "bun@$want" -e 'console.log(process.execPath)' </dev/null) || die "cannot resolve the Bun $want binary"
     [ -x "$bin" ] || die "Bun $want resolved to a non-executable path: $bin"
     mkdir -p "$checkout/.git/beelink-gate-bin" || return $?
+    # Bun picks its mode from argv[0]; repo scripts spawn `bunx` as well.
     ln -sf "$bin" "$checkout/.git/beelink-gate-bin/bun" || return $?
+    ln -sf "$bin" "$checkout/.git/beelink-gate-bin/bunx" || return $?
     export PATH="$checkout/.git/beelink-gate-bin:$PATH"
     echo "beelink-gate: using the repo's bun $want (beelink has ${have:-none})" >&2
   fi
-  install_step bun install --frozen-lockfile || return $?
+  # Without lifecycle scripts: Bun already runs none for dependencies outside
+  # trustedDependencies, and a root `prepare: lefthook install` refuses on every
+  # Beelink because the global core.hooksPath belongs to the dotfiles hooks.
+  install_step bun install --frozen-lockfile --ignore-scripts || return $?
   echo "beelink-gate: frozen Bun $want install completed" >&2
 }
 
@@ -137,7 +142,7 @@ prepare_gate_dependencies() {
   local want_pnpm have_pnpm repo_manager
   # This private cache directory survives git clean; never reuse another
   # revision's package-manager shim, even when its manager has changed.
-  rm -f "$checkout/.git/beelink-gate-bin/pnpm" "$checkout/.git/beelink-gate-bin/bun" "$checkout/.git/beelink-gate-bin/yarn" "$checkout/.git/beelink-gate-bin/yarn-version" || return $?
+  rm -f "$checkout/.git/beelink-gate-bin/pnpm" "$checkout/.git/beelink-gate-bin/bun" "$checkout/.git/beelink-gate-bin/bunx" "$checkout/.git/beelink-gate-bin/yarn" "$checkout/.git/beelink-gate-bin/yarn-version" || return $?
   repo_manager=$(node -e 'const p=require("./package.json"); console.log((p.packageManager||"").split("@")[0] || p.devEngines?.packageManager?.name || "")' 2>/dev/null) || repo_manager=""
   if [ -n "$repo_manager" ] && [ "$repo_manager" != yarn ] && [ -f yarn.lock ] && [ ! -f pnpm-lock.yaml ] && [ ! -f package-lock.json ] && [ ! -f npm-shrinkwrap.json ]; then
     die "packageManager declares $repo_manager but only yarn.lock exists; provide its matching lockfile or declare Yarn"
