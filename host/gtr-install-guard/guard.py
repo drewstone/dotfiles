@@ -11,12 +11,12 @@ checkout at ~/code/gate-gtm-20261010 and ran its frozen install and tests there 
 Exempt: the deploy-managed service checkouts that tangle-tools-deploy installs
 (~/.config/fleet/checkouts, DISCO_LAB in ~/.config/fleet/lab.env, the tangle-tools deploy clone),
 the pinned discovery-lab copies under ~/code/_deploy that Discovery runs execute from, the
-beelink-gate cache, the GTR fallback gate root ~/.cache/gtr-gate (a gate no Beelink admits within
-5 minutes runs there in a fresh clone; AGENTS.md, Our tools), global installs, lockfile-only resolution, and directories that are not
+beelink-gate cache, global installs, lockfile-only resolution, and directories that are not
 checkouts (tool caches such as agent-record's renderers, a scratch directory probing a package).
 
-uv keeps its narrower rule: refused only inside a `_wt` worktree, because GTR's own tools run
-through `uv run` from their checkouts.
+Fallback installs in ~/.cache/gtr-gate require a matching live storage-lifecycle lease;
+the directory alone grants no permission. Outside that root, uv keeps its narrower rule:
+refused only inside a `_wt` worktree, because GTR tools use uv from their checkouts.
 
 On a Beelink, /usr/local/bin/git is a shell shim (beelink-git) that runs this file, with `git.worktree-cap.json` beside it,
 only for `worktree` commands. There it applies only the
@@ -101,8 +101,6 @@ def env_file_value(path: Path, key: str):
 def exempt_roots() -> list[Path]:
     """Checkouts whose installs are a deploy path, not a gate."""
     roots = [HOME / ".cache/beelink-gate",
-             # The fallback gate: a fresh clone per gate when no Beelink admits one within 5 minutes.
-             HOME / ".cache/gtr-gate",
              Path(os.environ.get("TANGLE_TOOLS_DEPLOY", HOME / ".local/share/tangle-tools")).expanduser(),
              HOME / "code/_deploy",  # pinned discovery-lab copies that Discovery runs execute from
              # The Lab keeper's deploy path: each deploy is a fresh discovery-lab-<sha> checkout here,
@@ -124,6 +122,38 @@ def exempt_roots() -> list[Path]:
     return roots
 
 
+def fallback_refusal(values: list[str], cwd: Path):
+    """The lifecycle owner validates leases; a pathname or exported token is no grant."""
+    roots = (HOME / ".cache/gtr-gate",)
+    paths = {candidate for value in values if value
+             for candidate in resolved(value, cwd) if under(candidate, roots)}
+    if not paths:
+        return None
+    try:
+        # This fixed installed owner is shared with run-lane; caller overrides
+        # such as PYTHONPATH or TANGLE_TOOLS_DEPLOY are not policy sources.
+        owner = (HOME / ".local/share/tangle-tools").resolve(strict=True)
+        package = owner / "storage_lifecycle"
+        expected = package / "admission.py"
+        if (not (package / "__init__.py").is_file() or not expected.is_file()
+                or expected.resolve(strict=True).parent != package.resolve(strict=True)):
+            raise RuntimeError("installed lifecycle lease owner is unavailable")
+        sys.dont_write_bytecode = True
+        sys.path.insert(0, str(owner))
+        import storage_lifecycle.admission as admission
+        if Path(admission.__file__).resolve(strict=True) != expected.resolve(strict=True):
+            raise RuntimeError("lifecycle lease verifier is outside the installed owner")
+        for path in sorted(paths):
+            admission.lease_receipt(path, requester_pid=os.getpid())
+    except Exception as error:
+        return ("gtr-install-guard: fallback install requires a live matching "
+                "storage-lifecycle lease: " + str(error) + ". Reserve the actual "
+                "bytes with storage-lifecycle admit or run-lane; if refused, keep "
+                "waiting for a Beelink. Preserve retention checks and release the "
+                "exact lease after the producer finishes.")
+    return None
+
+
 def refused_checkout(values: list[str], cwd: Path):
     """The checkout an install would write into, unless it is exempt or not a checkout."""
     exempt = exempt_roots()
@@ -133,6 +163,8 @@ def refused_checkout(values: list[str], cwd: Path):
         for candidate in resolved(value, cwd):
             root = checkout_root(candidate)
             if root and not under(candidate, exempt):
+                if under(candidate, (HOME / ".cache/gtr-gate",)):
+                    continue  # refusal() already required the lifecycle lease.
                 return root
     return None
 
@@ -244,6 +276,9 @@ def refusal(manager: str, argv: list[str], cwd: Path):
         return (f"gtr-install-guard: refused {manager} install into a GTR _wt worktree. "
                 "Run the frozen install and checks through "
                 "beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command>.")
+    fallback = fallback_refusal(candidates, cwd)
+    if fallback:
+        return fallback
     if manager == "uv":
         return None
     if any(word in NO_INSTALL or word.startswith("--location=global") for word in argv):
@@ -255,7 +290,7 @@ def refusal(manager: str, argv: list[str], cwd: Path):
             "a Beelink: push the commit, then from GTR run "
             "beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command> "
             "(the gate does the frozen install in its own cache). If no Beelink admits it within 5 minutes, "
-            "gate in a fresh clone under ~/.cache/gtr-gate/ and remove the clone after. "
+            "reserve space with storage-lifecycle admit, then gate in a fresh clone under ~/.cache/gtr-gate/; if admission refuses, keep waiting for a Beelink. Retire the clone through wt-remove and release its exact lease after. "
             "Any other new clone, inside _wt or not, is a checkout too. "
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 
