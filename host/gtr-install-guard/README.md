@@ -80,9 +80,10 @@ package installs are not refused, since Beelinks are where they run.
 - A `git worktree add` into `~/code/_wt` or `~/webb/_wt` must name its fleet lane: `FLEET_LANE=<operator>:<lane>`,
   or the `FLEET_STATUS_FILE` that GTR's ssh client sends (`host/ssh/20-fleet-lane-send.conf`, accepted by
   `host/ssh/20-fleet-lane-accept.conf`). The lane is recorded as `fleet-lane` in the new worktree's admin directory.
-- A lane holding `cap` (4) recorded worktrees is refused; so is any add while the filesystem has less than
-  `floor_bytes` (160 GiB, matching storage-lifecycle admission) free. The refusal lists the longest-idle trees: `OWNER_RELEASED=1 wt-remove <path>` for the lane's own,
+- A lane at its configured `cap` is refused, listing its longest-idle trees: `OWNER_RELEASED=1 wt-remove <path>` for the lane's own,
   plain `wt-remove <path>` (which keeps its idle guard) for another lane's.
+  The live `floor_bytes` also refuses adds. Its message points to the existing read-only
+  `storage-lifecycle run --exclusive-inventory --max-seconds 20`; the guard does not duplicate allocation or salvage scans.
 - Counting, checkout and the lane record run under one per-lane lock, and the record is written whenever the tree exists,
   so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
 - Trees outside `_wt` (tool caches, `tangle-ops ship`, the adc-wt pool, `~/company/_wt`) and every other Git command pass through.
