@@ -26,6 +26,36 @@ repo_manager_version() {  # <manager> <setup action> <action version key>
 
 repo_pnpm_version() { repo_manager_version pnpm pnpm/action-setup version; }
 
+# The gate's own mise: a release binary verified by checksum (SHASUMS256.txt
+# of that release), never a host-wide install. Bump both lines together.
+gate_mise_version=2026.7.11
+gate_mise_sha256_x64=d31578a16ae2708385249b439c95533068e04b9507a118e905aa6768905671fc
+
+# Repos that declare checks' tools in mise.toml (actionlint, zizmor, ...) run
+# them through `mise exec`, and no Beelink account has mise. Install exactly
+# the tools the repo declares, with mise's data, cache and state under the
+# checkout's .git so they stay inside the gate cache cap, and keep the host's
+# global mise config out of it.
+install_mise_tools() {
+  [ "$(uname -m)" = x86_64 ] || die "mise.toml: beelink-gate pins mise for x86_64 only, not $(uname -m)"
+  local dir="$checkout/.git/beelink-gate-bin" mise_root="$checkout/.git/beelink-gate-mise" bin have
+  bin="$dir/mise"
+  mkdir -p "$dir" "$mise_root" || return $?
+  have=$(sha256sum "$bin" 2>/dev/null | cut -d' ' -f1)
+  if [ "$have" != "$gate_mise_sha256_x64" ]; then
+    install_step curl -fsSL --retry 3 --max-time 300 -o "$bin.download" \
+      "https://github.com/jdx/mise/releases/download/v$gate_mise_version/mise-v$gate_mise_version-linux-x64" || return $?
+    have=$(sha256sum "$bin.download" | cut -d' ' -f1)
+    [ "$have" = "$gate_mise_sha256_x64" ] || { rm -f "$bin.download"; die "mise $gate_mise_version checksum mismatch: $have"; }
+    chmod +x "$bin.download" && mv -f "$bin.download" "$bin" || return $?
+  fi
+  export PATH="$dir:$PATH"
+  export MISE_DATA_DIR="$mise_root/data" MISE_CACHE_DIR="$mise_root/cache" MISE_STATE_DIR="$mise_root/state"
+  export MISE_GLOBAL_CONFIG_FILE=/dev/null MISE_TRUSTED_CONFIG_PATHS="$checkout" MISE_YES=1
+  install_step mise install || return $?
+  echo "beelink-gate: mise $gate_mise_version installed the repo's declared tools: $(mise ls --current --no-header 2>/dev/null | awk '{printf "%s@%s ", $1, $2}')" >&2
+}
+
 has_bun_lock() { [ -f bun.lock ] || [ -f bun.lockb ]; }
 
 # Install and run with the repo's Bun: the Beelink accounts carry none, and a
@@ -204,6 +234,10 @@ prepare_gate_dependencies() {
       || die "package.json has dependencies but no pnpm/npm/Yarn/Bun lockfile"
     echo "beelink-gate: dependency-free package; no frozen install needed" >&2
     export BEELINK_GATE_INSTALL_S=0
+  fi
+  if [ "$install_mode" != ship ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ] \
+    && { [ -f mise.toml ] || [ -f .mise.toml ]; }; then
+    install_mise_tools || return $?
   fi
   [ "$install_mode" = ship ] || resolve_gate_node
   # Only normal frozen-install gates share archives across checkout slots.
