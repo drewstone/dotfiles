@@ -47,7 +47,7 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 | Need | Tool |
 |---|---|
 | GitHub as Drew or Tangle (rule: never another identity) | `gh-drew` (login `drewstone`) |
-| Local gate before merge (rules 8-9) | `beelink-gate` on a Beelink; not admitted within 5 minutes, run the same gate on `drew-gtr-pro` (fresh clone, frozen install, typecheck, touched integration tests) and merge; agent-container pushes and `merge-on-green` merges |
+| Local gate before merge (rules 8-9) | `beelink-gate` on a Beelink; not admitted within 5 minutes, run the same gate on `drew-gtr-pro` in a fresh clone under `~/.cache/gtr-gate/` (frozen install, typecheck, touched integration tests; remove the clone after) and merge; agent-container pushes and `merge-on-green` merges |
 | Production benchmark | `pnpm --dir products/sandbox/evals exec tsx run.ts --preset full --cells eu1,us1 --target production` from `drew-gtr-pro`, keys from the tangle-devops vault; never GitHub Actions |
 | Is X built? (rule 5) | `have <terms>`, plus `git grep` on `origin/<default>`; search a checkout with the `fff` tools first when listed |
 | Start, steer, stop agents (rule 3) | `fleet start`, `fleet send`, `fleet stop`; `acct status` for seat room |
