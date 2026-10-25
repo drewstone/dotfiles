@@ -1695,7 +1695,6 @@ start_checkout_reservations() {
   local priority=${1:-urgent} host file pid tries
   local -a args=()
   checkout_reservation_dir=$(mktemp -d) || die "cannot allocate checkout reservation state"
-  trap 'frontend_signal 143' HUP INT TERM
   for host in beelink1 beelink2; do
     file="$checkout_reservation_dir/$host"
     args=("$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")")

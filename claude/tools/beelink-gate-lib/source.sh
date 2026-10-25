@@ -611,7 +611,9 @@ frontend_start() {
   frontend_path="" frontend_tainted=0 frontend_waiting=0 frontend_root=1 frontend_warned=0 frontend_stop_requested=0
   # Cleanup is required even when optional observation bootstrap is unsupported.
   trap 'frontend_exit "$?"' EXIT
-  trap 'frontend_signal 143' TERM INT HUP
+  trap 'frontend_signal 143' TERM
+  trap 'frontend_signal 130' INT
+  trap 'frontend_signal 129' HUP
   trap 'frontend_signal 141' PIPE
   frontend_cancel_gate=""
   frontend_selector_pid="" frontend_selector_output=""
