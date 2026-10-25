@@ -788,7 +788,7 @@ For usage, run `traces skills --since 30d`: it counts each skill's Claude Code l
 
 ## traces
 
-The [upstream npm package](https://github.com/tangle-network/traces#installation) owns this command and its [installer](https://github.com/tangle-network/traces/blob/main/install.sh).
+The [upstream npm package](https://github.com/tangle-network/traces#install) owns this command and its [installer](https://github.com/tangle-network/traces/blob/main/install.sh).
 Deploy a qualified package with that installer, using `--prefix "$HOME/.local"` when needed; disable npm lifecycle scripts when deploying a prebuilt CLI.
 `traces --version` names the installed artifact independently of any source checkout. Keep the package's bin directory ahead of Homebrew's unrelated command.
 This installer retires only its former links to the checkout wrapper; it preserves npm links and independently managed files.
