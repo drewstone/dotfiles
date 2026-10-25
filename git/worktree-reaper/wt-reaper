@@ -340,9 +340,7 @@ def walk_tree(path, cutoff):
 
 def is_build_output(rel):
     parts = [p for p in rel.rstrip('/').split('/') if p]
-    if any(p in BUILD_DIRS for p in parts):
-        return True
-    return bool(parts) and bool(BUILD_FILE_RE.search(parts[-1]))
+    return any(p in BUILD_DIRS for p in parts) or bool(parts and BUILD_FILE_RE.search(parts[-1]))
 
 
 def only_build_output(full, rel, depth=4, budget=None):
@@ -384,11 +382,12 @@ def check_clean(path):
         code, rel = rec[:2], rec[3:]
         if code[0] in 'RC':
             i += 1  # rename/copy carries the source path as the next record
-        if code == '!!':
-            if not (is_build_output(rel) or only_build_output(os.path.join(path, rel), rel)):
-                keep.append(rel)
-        else:
+        if rel == '.wt-owner' and code in ('??', '!!'):
+            continue  # wt-new's per-machine ownership marker, untracked or excluded, is never work
+        if code != '!!':
             dirty.append(rel)
+        elif not (is_build_output(rel) or only_build_output(os.path.join(path, rel), rel)):
+            keep.append(rel)
     if dirty:
         raise Skip('not clean: %d change(s), first %s' % (len(dirty), dirty[0]))
     if keep:
