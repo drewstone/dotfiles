@@ -2,9 +2,8 @@
 # The drew-gtr-pro fallback gate: one gate in a fresh clone under a storage-lifecycle lease.
 # Sourced by beelink-gate; it runs on GTR only, never in a staged Beelink gate.
 # shellcheck disable=SC2154,SC2034 # repo_url, sha, install_mode, host, owner, repo and launched are the launcher's.
-# (SC2034: GTR_AFTER_SECONDS and beelink are read by beelink-gate and prepare_gate_dependencies.)
+# (SC2034: beelink is read by prepare_gate_dependencies.)
 GTR_HOST=drew-gtr-pro
-GTR_AFTER_SECONDS=300
 gtr_self() { [ "$(hostname | tr '[:upper:]' '[:lower:]')" = "$GTR_HOST" ]; }
 
 # GTR's receipts.jsonl, read here on GTR or over SSH; a host that never gated has none.
@@ -80,7 +79,10 @@ gtr_gate() {  # <command>...
   fi
   pid=$!
   local saved_traps; saved_traps=$(trap -p TERM INT HUP)
-  trap 'kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; wait "$pid"; rm -f "$log"; exit 143' TERM INT HUP
+  # A stop goes to the gate under run-lane, which then records its receipt and removes its clone; run-lane
+  # sees it fail and releases the lease. TERM to run-lane itself kept the lease (it releases only on a
+  # known outcome) and leaked 17.3 GB of the gate lane on 10-26. The SSH path has no child here: ssh stops.
+  trap 'pkill -TERM -P "$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; wait "$pid"; rm -f "$log"; exit 143' TERM INT HUP
   while kill -0 "$pid" 2>/dev/null; do
     # Once GTR admits the gate, its FIFO places on the Beelinks go to the gates behind it.
     if [ -n "${checkout_reservation_dir:-}" ] && grep -q "^beelink-gate: $GTR_HOST admitted" "$log"; then
@@ -130,7 +132,11 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
     save_unpushed
     bytes=$(du -sb "$dir" 2>/dev/null | cut -f1)
     gtr_write_receipt "$status" "$((SECONDS - started))" "${bytes:-0}" "$base_sha" "${display% }"
-    chmod -R u+w "$dir" 2>/dev/null; rm -rf -- "$dir"
+    # One rename takes the clone out of the pool that admission's lane accounting walks, so the slow
+    # delete runs where no walk sees files vanish (an admission refused on ENOENT mid-rm on 10-26).
+    local gone="${dir%/pool/*}/.retiring-${dir##*/}"
+    mv -T -- "$dir" "$gone" 2>/dev/null || gone=$dir
+    chmod -R u+w "$gone" 2>/dev/null; rm -rf -- "$gone"
     echo "beelink-gate: $GTR_HOST status=$status" >> "$log"
     echo "beelink-gate receipt: sha=$sha install=$install_mode exit=$status duration=$((SECONDS - started))s host=$GTR_HOST class=normal gtr_bytes=${bytes:-0} gate_id=$gate_id" >&2
     exit "$status"
@@ -157,6 +163,10 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   [ "$(git -C "$checkout" rev-parse HEAD)" = "${sha,,}" ] || die "checkout SHA mismatch"
   gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads | sort -u | tr '\n' ' ') gate_refs_taken=1
   cd "$checkout" || exit $?
+  # pnpm 11+ keeps metadata in <cache-dir>/v11, and GTR's ~/.cache/pnpm/v11 links to the SMR traces drive
+  # (/mnt/traces/adc-egress-cache-recovery-20261002), which starved Discovery on 10-26. The install and the
+  # command keep their cache on NVMe; pnpm 12 reads this variable, not npm_config_cache_dir.
+  export pnpm_config_cache_dir="$HOME/.cache/pnpm-gate"
   prepare_gate_dependencies || exit $?
   gate_command_argv "${command[@]}"
   echo "beelink-gate: running ${display% } on $GTR_HOST" >&2
