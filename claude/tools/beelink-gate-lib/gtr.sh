@@ -113,6 +113,7 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   command=("$@") beelink=$GTR_HOST checkout="$dir/checkout" gate_id=${BEELINK_GATE_ID:-} reaped=0 current=""
   # The command must not learn its gate's id: it could append a passing receipt for it.
   unset BEELINK_GATE_ID
+  gate_refs_before="" gate_refs_taken=0 bundle_note=""
   run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
   parse_repo_url "$repo_url"
   echo "beelink-gate: $GTR_HOST admitted gate_id=$gate_id" | tee -a "$log" >&2 || exit 75
@@ -125,6 +126,8 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
     trap '' PIPE; trap - EXIT TERM INT HUP
     [ -z "$current" ] || kill -TERM "$current" 2>/dev/null
     reap_leftovers
+    # Commits the command made that reach no remote are bundled before the clone goes, as on a Beelink.
+    save_unpushed
     bytes=$(du -sb "$dir" 2>/dev/null | cut -f1)
     gtr_write_receipt "$status" "$((SECONDS - started))" "${bytes:-0}" "$base_sha" "${display% }"
     chmod -R u+w "$dir" 2>/dev/null; rm -rf -- "$dir"
@@ -152,6 +155,7 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   sparse_apply "$checkout" "$sha" || exit $?
   git -C "$checkout" checkout --quiet --detach "$sha" || exit $?
   [ "$(git -C "$checkout" rev-parse HEAD)" = "${sha,,}" ] || die "checkout SHA mismatch"
+  gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads | sort -u | tr '\n' ' ') gate_refs_taken=1
   cd "$checkout" || exit $?
   prepare_gate_dependencies || exit $?
   gate_command_argv "${command[@]}"
@@ -162,7 +166,7 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
 }
 
 gtr_write_receipt() {  # <status> <ran_s> <clone bytes> <base sha> <command>
-  mkdir -p "$STATE_DIR" && python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$sha" "$install_mode" "$5" "$1" "$2" "$3" "$4" "$gate_id" <<'PY'
+  mkdir -p "$STATE_DIR" && GTR_BUNDLE="${bundle_note:-}" python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$sha" "$install_mode" "$5" "$1" "$2" "$3" "$4" "$gate_id" <<'PY'
 import fcntl, json, os, sys, time
 path, repo, sha, mode, command, status, ran, size, base, gate_id = sys.argv[1:]
 pr = os.environ.get("BEELINK_GATE_PR", "")
@@ -170,7 +174,7 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": "drew-g
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(os.environ.get("BEELINK_GATE_PLACED_WAIT") or 0),
        "ran_s": int(ran), "class": "normal", "gate_id": gate_id, "base_sha": base or None,
        "pr_number": int(pr) if pr.isdigit() else None, "lane": os.environ.get("BEELINK_GATE_LANE") or None,
-       "gtr_bytes": int(size), "checkout_temperature": "cold"}
+       "gtr_bytes": int(size), "checkout_temperature": "cold", "bundle": os.environ.get("GTR_BUNDLE") or None}
 with open(path, "a") as out:
     fcntl.flock(out, fcntl.LOCK_EX)
     out.write(json.dumps(row) + "\n")
