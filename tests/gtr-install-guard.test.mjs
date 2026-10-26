@@ -85,13 +85,19 @@ test("deploy-managed service checkouts, the gate cache and non-installs still ru
     ["pnpm", ["typecheck"], gate],
     ["pnpm", ["exec", "vitest", "run", "tests/a.test.ts"], gate],
     ["npm", ["view", "@tangle-network/agent-app", "version"], gate],
-    ["corepack", ["enable"], gate],
+    ["corepack", ["enable", "--install-directory", "/tmp/x"], gate],
     ["uv", ["run", "python", "-m", "fleet"], gate],
   ]) {
     const r = run(manager, args, cwd);
     assert.equal(r.status, 0, `${manager} ${args.join(" ")} in ${cwd} refused: ${r.err}`);
     assert.match(r.out, /^ran/);
   }
+});
+
+test("corepack enable without a directory leaves the guarded shims alone", () => {
+  const r = run("corepack", ["enable"], gate);
+  assert.equal(r.status, 0);
+  assert.equal(r.out, "");
 });
 
 test("uv keeps its _wt-only rule", () => {
