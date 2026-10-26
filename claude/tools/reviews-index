@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Turn every page under ~/reviews into a markdown digest that qmd indexes.
+
+Agents write analyses as local HTML pages, so another agent could not find
+them: qmd indexes markdown, and Hindsight reads transcripts, not pages. Each
+digest carries the page's title, description, date, headings, visible text and
+outgoing links, plus the page's absolute path, so a search answer opens the
+page itself. Runs incrementally: a page is re-read only when it changed.
+
+  reviews-index                 # ~/reviews -> ~/.cache/reviews-md/<host>, then `qmd update`
+  reviews-index --no-update     # digests only
+  reviews-index --peer gtr      # also pull the peer host's digests (rsync over ssh)
+  qmd search -c reviews "eu1 births"    # what agents run before a new analysis
+"""
+
+from __future__ import annotations
+
+import argparse
+import html.parser
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+TEXT_LIMIT = 6000
+LINK_LIMIT = 40
+
+
+class Page(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.description = ""
+        self.headings: list[str] = []
+        self.text: list[str] = []
+        self.links: list[str] = []
+        self._skip = 0
+        self._tag = ""
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag in ("script", "style", "svg"):
+            self._skip += 1
+        elif tag == "meta" and (a.get("name") or "").lower() == "description":
+            self.description = (a.get("content") or "").strip()
+        elif tag == "a" and a.get("href", "").startswith(("http", "/")):
+            if len(self.links) < LINK_LIMIT and a["href"] not in self.links:
+                self.links.append(a["href"])
+        self._tag = tag
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "svg") and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data):
+        if self._skip:
+            return
+        data = " ".join(data.split())
+        if not data:
+            return
+        if self._tag == "title" and not self.title:
+            self.title = data
+        elif self._tag in ("h1", "h2", "h3"):
+            self.headings.append(data)
+        self.text.append(data)
+
+
+def digest(path: Path, host: str) -> str:
+    page = Page()
+    page.feed(path.read_text(errors="replace"))
+    text = " ".join(page.text)[:TEXT_LIMIT]
+    title = page.title or (page.headings[0] if page.headings else path.stem)
+    lines = [
+        f"# {title}",
+        "",
+        f"- page: {path} (host {host})",
+        f"- date: {path.name[:10] if path.name[:4].isdigit() else ''}",
+    ]
+    if page.description:
+        lines.append(f"- summary: {page.description}")
+    if page.headings:
+        lines += ["", "## Sections", "", *(f"- {h}" for h in page.headings[:30])]
+    lines += ["", "## Text", "", text]
+    if page.links:
+        lines += ["", "## Links", "", *(f"- {link}" for link in page.links)]
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--src", type=Path, default=Path.home() / "reviews")
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("--no-update", action="store_true", help="skip `qmd update`")
+    parser.add_argument("--peer", action="append", default=[],
+                        help="ssh host whose ~/.cache/reviews-md digests are pulled in (repeatable)")
+    args = parser.parse_args()
+    host = socket.gethostname().split(".")[0]
+    out = args.out or Path.home() / ".cache" / "reviews-md" / host
+    out.mkdir(parents=True, exist_ok=True)
+    written = kept = failed = 0
+    for page in sorted(args.src.glob("**/*.html")):
+        rel = page.relative_to(args.src)
+        if len(rel.parts) > 3:
+            continue
+        target = out / rel.with_suffix(".md")
+        if target.exists() and target.stat().st_mtime >= page.stat().st_mtime:
+            kept += 1
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(digest(page, host))
+            written += 1
+        except (OSError, ValueError) as error:
+            failed += 1
+            print(f"reviews-index: {page}: {error}", file=sys.stderr)
+    print(f"reviews-index: {written} written, {kept} unchanged, {failed} failed -> {out}")
+    for peer in args.peer:
+        # Each host owns its own digest directory, so a pull never overwrites
+        # this host's digests and a peer that is down only leaves its copy stale.
+        pulled = subprocess.run(["rsync", "-a", "--timeout=60", f"{peer}:.cache/reviews-md/",
+                                 f"{out.parent}/", "--exclude", f"{host}/"], check=False)
+        if pulled.returncode:
+            print(f"reviews-index: pull from {peer} failed ({pulled.returncode})", file=sys.stderr)
+    if not args.no_update and os.environ.get("REVIEWS_INDEX_NO_QMD") != "1":
+        subprocess.run(["qmd", "update"], check=False, stdout=subprocess.DEVNULL)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
