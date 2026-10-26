@@ -2071,14 +2071,14 @@ github_repo() {  # <repo-url>: prints owner/name of a GitHub URL, or fails
   printf '%s\n' "$r"
 }
 merge_gated() {  # <gate stderr log>
-  local id out sha
-  id=$(grep -ao 'gate_id=[A-Za-z0-9-]*' "$1" | tail -n 1)
-  id=${id#gate_id=}
-  # gh-drew requires this gate's own receipt for a release-path repo (its gated_repos).
+  local id out sha head by
+  id=$(grep -ao 'gate_id=[A-Za-z0-9-]*' "$1" | tail -n 1); id=${id#gate_id=}
+  # gh-drew requires this gate's own receipt for a release-path repo (its gated_repos). gh also exits 0 for a PR
+  # already merged from another head (agent-sdk#580, 10-26), so only a merged head equal to the gated sha counts.
   if out=$(BEELINK_GATE_ID="$id" "$gh_drew" pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
-    sha=$("$gh_drew" pr view "$merge_pr" -R "$merge_repo" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null)
-    echo "beelink-gate: merged #$merge_pr ${sha:-unknown} gate_id=${id:-unknown}" >&2
-    return 0
+    read -r head sha by < <("$gh_drew" pr view "$merge_pr" -R "$merge_repo" --json headRefOid,mergeCommit,mergedBy --jq '"\(.headRefOid) \(.mergeCommit.oid // "unknown") \(.mergedBy.login // "unknown")"' 2>/dev/null)
+    [ "${head:-}" = "$merge_sha" ] && { echo "beelink-gate: merged #$merge_pr ${sha:-unknown} by ${by:-unknown} gate_id=${id:-unknown}" >&2; return 0; }
+    out="ALREADY MERGED at ${sha:-unknown} by ${by:-unknown} from head ${head:-unread}, NOT this gate's $merge_sha"
   fi
   echo "beelink-gate: merge of #$merge_pr refused: $(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)" >&2
   return "$MERGE_REFUSED"

@@ -3715,11 +3715,11 @@ test("--merge squash-merges the PR pinned to the gated SHA only after a green ga
     // The gate fetches a GitHub repo over SSH (fetch_url); git rewrites that to the local bare repo, through the environment only.
     const url = "https://github.com/acme/gate-test.git";
     f.env = { ...f.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: "git@github.com:acme/gate-test.git" };
-    // gh-drew is the merge boundary: record each call, and answer the merge commit for `pr view`.
+    // gh-drew is the merge boundary: record each call, and answer `pr view` with the merged head, commit and actor.
     const calls = join(f.root, "gh-drew.calls");
     writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${calls}'
-[ "$1 $2" != "pr view" ] || echo 1111111111111111111111111111111111111111
+[ "$1 $2" != "pr view" ] || echo "\${FAKE_GH_HEAD:-${f.first}} 1111111111111111111111111111111111111111 drewstone"
 exit "\${FAKE_GH_EXIT:-0}"
 `);
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
@@ -3732,7 +3732,13 @@ exit "\${FAKE_GH_EXIT:-0}"
     const green = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: f.env });
     assert.equal(green.status, 0, green.stderr);
     assert.equal(readFileSync(calls, "utf8").split("\n")[0], merge);
-    assert.match(green.stderr.trim().split("\n").at(-1), /^beelink-gate: merged #42 1{40} gate_id=beelink2-[0-9a-f]{32}$/);
+    assert.match(green.stderr.trim().split("\n").at(-1), /^beelink-gate: merged #42 1{40} by drewstone gate_id=beelink2-[0-9a-f]{32}$/);
+
+    // gh exits 0 for a PR already merged from another head (agent-sdk#580): no merge claim for source the gate never ran.
+    const other = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: { ...f.env, FAKE_GH_HEAD: "2".repeat(40) } });
+    assert.equal(other.status, 78, other.stderr);
+    assert.match(other.stderr, new RegExp(`refused: ALREADY MERGED at 1{40} by drewstone from head 2{40}, NOT this gate's ${f.first}`));
+    assert.doesNotMatch(other.stderr, /beelink-gate: merged #42/);
 
     rmSync(calls);
     const refused = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: { ...f.env, FAKE_GH_EXIT: "1" } });
