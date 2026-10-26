@@ -132,7 +132,11 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
     save_unpushed
     bytes=$(du -sb "$dir" 2>/dev/null | cut -f1)
     gtr_write_receipt "$status" "$((SECONDS - started))" "${bytes:-0}" "$base_sha" "${display% }"
-    chmod -R u+w "$dir" 2>/dev/null; rm -rf -- "$dir"
+    # One rename takes the clone out of the pool that admission's lane accounting walks, so the slow
+    # delete runs where no walk sees files vanish (an admission refused on ENOENT mid-rm on 10-26).
+    local gone="${dir%/pool/*}/.retiring-${dir##*/}"
+    mv -T -- "$dir" "$gone" 2>/dev/null || gone=$dir
+    chmod -R u+w "$gone" 2>/dev/null; rm -rf -- "$gone"
     echo "beelink-gate: $GTR_HOST status=$status" >> "$log"
     echo "beelink-gate receipt: sha=$sha install=$install_mode exit=$status duration=$((SECONDS - started))s host=$GTR_HOST class=normal gtr_bytes=${bytes:-0} gate_id=$gate_id" >&2
     exit "$status"
