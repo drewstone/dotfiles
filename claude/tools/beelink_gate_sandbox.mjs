@@ -27,7 +27,9 @@ const resources = (gateClass) => gateClass === 'light'
 const CAPACITY_BACKOFF_MS = 300_000
 const cacheDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'beelink-gate')
 const MAX_LIVE = Number(process.env.BEELINK_GATE_SANDBOX_MAX || 4)
-const HOLD_S = Number(process.env.BEELINK_GATE_SANDBOX_HOLD_S || 45 * 60)
+// The same hold budget as a Beelink gate (BEELINK_GATE_MAX_HOLD, e.g. 90m), default 45 minutes.
+const holdSeconds = (v) => { const m = /^(\d+)([smh]?)$/.exec(v || ''); return m ? Number(m[1]) * ({ s: 1, m: 60, h: 3600 }[m[2]] || 1) : 45 * 60 }
+const HOLD_S = holdSeconds(process.env.BEELINK_GATE_MAX_HOLD)
 const SETTLED = new Set(['succeeded', 'failed', 'cancelled', 'expired'])
 
 const say = (line) => process.stderr.write(`beelink-gate: ${line}\n`)
@@ -59,6 +61,9 @@ const quote = (s) => `'${String(s).replace(/'/g, `'"'"'`)}'`
 // the default branch's origin ref (turbo --filter=...[origin/develop] needs it), the frozen install the
 // Beelink gate runs, then the command. Each step prints a marker; the last one names a failed step.
 function gateScript({ repoUrl, sha, mode, branch, command }) {
+  // A box has no SSH key: lanes' git@github.com URLs failed every fetch (exit 70 on four repos, 07:07-07:27Z).
+  // GitHub repos are fetched over https through gh's credential helper.
+  repoUrl = repoUrl.replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com\/)/, 'https://github.com/')
   const install = mode === 'install' || mode === 'ship'
   return `set -o pipefail
 step() { echo "beelink-gate-sandbox: $1 $(date -u +%H:%M:%SZ)" >&2; }
@@ -72,18 +77,22 @@ rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repo
 git fetch -q --filter=blob:none origin ${sha} || exit 70
 for b in main develop ${branch ? quote(branch) : ''}; do git fetch -q --filter=blob:none origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null; done
 ${branch ? `git checkout -q -B ${quote(branch)} ${sha} && git branch -q --set-upstream-to=origin/${quote(branch)}` : `git checkout -q --detach ${sha}`} || exit 70
-if [ -f .nvmrc ]; then
-  step node
-  v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null | tr -d v)
+# The repo's .nvmrc Node, else 24, the Beelinks' nvm default: the image's Node 22.16 crashed corepack's pnpm 12.15
+# (MODULE_NOT_FOUND) on a repo without .nvmrc (10-26 07:38Z).
+step node
+v=24; [ ! -f .nvmrc ] || v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null | tr -d v)
+{
   case "$have" in "$v"|"$v".*) ;; *)
     f=$(curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/" | grep -o "node-v$v[0-9.]*-linux-x64.tar.xz" | head -1)
     [ -n "$f" ] || f=$(curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/" | grep -o 'node-v[0-9.]*-linux-x64.tar.xz' | head -1)
     rm -rf "$HOME/.node" && mkdir -p "$HOME/.node" && curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/$f" | tar -xJ -C "$HOME/.node" --strip-components=1 || exit 70 ;;
   esac
-fi
+}
 mkdir -p "$HOME/.local/bin" && corepack enable --install-directory "$HOME/.local/bin" 2>/dev/null
+# A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
+if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
-if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile --config.ignore-scripts=false
 elif [ -f package-lock.json ]; then npm ci
 elif [ -f yarn.lock ]; then if grep -q '__metadata' yarn.lock; then yarn install --immutable; else yarn install --frozen-lockfile; fi
 elif [ -f package.json ] && grep -q '"dependencies"\\|"devDependencies"' package.json; then echo 'no supported lockfile' >&2; exit 1
@@ -119,7 +128,14 @@ async function run(argv) {
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
   // Handlers come before create, so a stop during create still deletes the box once its id is known.
   let box, stopping = false
-  const stop = async () => { if (box) await box.delete().catch(() => undefined) }
+  // Delete through the platform's retire path; a failure is retried once and reported, never swallowed.
+  const stop = async () => {
+    if (!box) return
+    for (const attempt of [1, 2]) {
+      try { await box.delete(); return } catch (error) { say(`box ${box.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
+    }
+    say(`box ${box.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+  }
   for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]])
     process.on(signal, () => { stopping = true; stop().finally(() => process.exit(code)) })
   try {
