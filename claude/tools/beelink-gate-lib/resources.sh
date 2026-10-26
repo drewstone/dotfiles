@@ -313,12 +313,13 @@ gate_docker_socket() {
   local skip="" sock="${XDG_RUNTIME_DIR:-/tmp}/beelink-gate-docker-${gate_id#*-}.sock" fd
   [ "${DOCKER_HOST:-unix:///var/run/docker.sock}" = unix:///var/run/docker.sock ] || skip="DOCKER_HOST is $DOCKER_HOST"
   [ -n "$skip$gate_cgroup_joined" ] && [ -w /var/run/docker.sock ] || return 0
-  [ -n "$skip" ] || [ "$(timeout 5 docker info --format '{{.CgroupDriver}}' 2>/dev/null)" = systemd ] || skip="the daemon's cgroup driver is not systemd"
+  [ -n "$skip" ] || [ "$(DOCKER_HOST=unix:///var/run/docker.sock timeout 5 docker info --format '{{.CgroupDriver}}' 2>&1)" = systemd ] || skip="the daemon's cgroup driver is not systemd"
   [ -z "$skip" ] || { echo "beelink-gate: gate containers keep the daemon's cgroup: $skip" >&2; return 0; }
   ( for fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do exec {fd}>&-; done
     exec python3 - "$sock" "beelinkgate-docker-g${gate_id#*-}.slice" <<'PY'
-import asyncio, json, os, re, sys
+import asyncio, json, os, re, signal, sys
 listen, parent = sys.argv[1], sys.argv[2].encode()
+signal.signal(signal.SIGTERM, lambda *_: (os.unlink(listen), os._exit(0)))  # the unit's stop removes the socket
 
 async def pipe(reader, writer):
     while data := await reader.read(1 << 16):
@@ -336,19 +337,27 @@ async def serve(client_r, client_w):
             lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'connection'] + [b'Connection: close']
         method, target, version = lines[0].split(b' ')
         body = b''
-        if method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/build(\?.*)?', target) and b'cgroupparent=' not in target:
+        if method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/build(\?.*)?', target) and not re.search(rb'[?&]cgroupparent=[^&]', target):
+            target = re.sub(rb'([?&])cgroupparent=(&|$)', rb'\1', target).rstrip(b'&?')  # clients before v28 send it empty
             lines[0] = b' '.join((method, target + (b'&' if b'?' in target else b'?') + b'cgroupparent=' + parent, version))
-        elif method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target) and b'content-length' in fields:
-            body = await client_r.readexactly(int(fields[b'content-length']))
+        elif method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target):
+            if fields.get(b'transfer-encoding', b'').lower() == b'chunked':  # docker-java (Testcontainers) streams it
+                while size := int((await client_r.readuntil(b'\r\n')).split(b';')[0], 16):
+                    body += (await client_r.readexactly(size + 2))[:-2]
+                while await client_r.readuntil(b'\r\n') != b'\r\n':
+                    pass
+                lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'transfer-encoding']
+            else:
+                body = await client_r.readexactly(int(fields.get(b'content-length', b'0')))
+                lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'content-length']
             try:
                 spec = json.loads(body)
                 host = spec.get('HostConfig') or {}
                 spec['HostConfig'] = {**host, 'CgroupParent': host.get('CgroupParent') or parent.decode()}
                 body = json.dumps(spec).encode()
-                lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'content-length']
-                lines.append(b'Content-Length: %d' % len(body))
             except (ValueError, AttributeError, TypeError):
                 pass  # not a JSON object: the daemon answers it as sent
+            lines.append(b'Content-Length: %d' % len(body))
         up_w.write(b'\r\n'.join(lines) + b'\r\n\r\n' + body)
         upstream = asyncio.ensure_future(pipe(client_r, up_w))
         await pipe(up_r, client_w)
@@ -369,5 +378,6 @@ asyncio.run(main())
 PY
   ) </dev/null >/dev/null 2>&1 &
   local i; for i in $(seq 50); do [ -S "$sock" ] && break; sleep 0.1; done
-  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" || echo "beelink-gate: gate Docker socket did not start; containers keep the daemon's cgroup" >&2
+  # Ryuk (Testcontainers) mounts the daemon socket itself, so its cleanup never depends on this gate's socket.
+  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock || echo "beelink-gate: gate Docker socket did not start; containers keep the daemon's cgroup" >&2
 }
