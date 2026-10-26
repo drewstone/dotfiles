@@ -45,14 +45,9 @@ try:
                                     capture_output=True, text=True, timeout=3)
         if configured.returncode or configured.stdout.strip() != str(policy['io_weight']):
             raise ValueError()
-    try:
-        weights = dict(line.split() for line in (root/'io.weight').read_text().splitlines())
-        if int(weights['default']) != policy['io_weight']:
-            raise ValueError()
-    except FileNotFoundError:
-        if os.path.lexists(root/'io.weight') or not all((root/name).is_file() for name in ('io.stat', 'io.pressure')):
-            raise ValueError()
-        print('beelink-gate: UNSUPPORTED kernel io.weight; systemd IOWeight configured, device enforcement unproved', file=sys.stderr)
+    # The Beelinks' WSL2 kernel has no io.weight: systemd IOWeight is configured, device enforcement is unproved.
+    if not all((root/name).is_file() for name in ('io.stat', 'io.pressure')):
+        raise ValueError()
     group = root / sys.argv[1]
     memory_key = 'dev_memory_bytes' if sys.argv[1] == 'beelinkgate-dev.slice' else 'normal_memory_bytes'
     if int((group/'memory.max').read_text()) != policy[memory_key]:
@@ -114,7 +109,6 @@ max_cpu_pressure() {
   fi
   echo "$maximum"
 }
-load_limit() { max_cpu_pressure; }
 host_pressure_now() {
   python3 - "$(pressure_file)" <<'PY'
 import math, pathlib, re, sys
@@ -265,17 +259,13 @@ gate_worker_budget() {
   echo "$each"
 }
 
-# Containers a gate starts are the gate's work: on 10-26 a custody test's container wrote 23 GB/h into the daemon
-# default user.slice, uncounted. The gate's own Docker socket gives create (and legacy build) an unset cgroup parent of
-# beelinkgate-docker-g<gate>.slice: counted per gate under the gate slice, not inside its class caps, since a container
-# a gate leaves running (shared fixtures do) would otherwise starve later gates. Requests get Connection: close, so one
-# head is parsed per connection and the rest, upgrades and streams included, is spliced untouched.
+# A gate's containers are its work (one wrote 23 GB/h into the daemon's user.slice, 10-26): its own Docker socket gives
+# create an unset cgroup parent under the gate slice, outside class caps that a fixture left running would starve.
+# Connection: close keeps one request per connection, so only its head is parsed and the rest is spliced untouched.
 gate_docker_socket() {
-  local skip="" sock="${XDG_RUNTIME_DIR:-/tmp}/beelink-gate-docker-${gate_id#*-}.sock" fd
-  [ "${DOCKER_HOST:-unix:///var/run/docker.sock}" = unix:///var/run/docker.sock ] || skip="DOCKER_HOST is $DOCKER_HOST"
-  [ -n "$skip$gate_cgroup_joined" ] && [ -w /var/run/docker.sock ] || return 0
-  [ -n "$skip" ] || [ "$(DOCKER_HOST=unix:///var/run/docker.sock timeout 5 docker info --format '{{.CgroupDriver}}' 2>&1)" = systemd ] || skip="the daemon's cgroup driver is not systemd"
-  [ -z "$skip" ] || { echo "beelink-gate: gate containers keep the daemon's cgroup: $skip" >&2; return 0; }
+  local sock="${XDG_RUNTIME_DIR:-/tmp}/beelink-gate-docker-${gate_id#*-}.sock" fd
+  [ -n "$gate_cgroup_joined" ] && [ -w /var/run/docker.sock ] || return 0
+  [ "${DOCKER_HOST:-unix:///var/run/docker.sock}" = unix:///var/run/docker.sock ] || { echo "beelink-gate: DOCKER_HOST is $DOCKER_HOST; gate containers keep its cgroup" >&2; return 0; }
   ( for fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do exec {fd}>&-; done
     exec python3 - "$sock" "beelinkgate-docker-g${gate_id#*-}.slice" <<'PY'
 import asyncio, json, os, re, signal, sys
@@ -295,21 +285,11 @@ async def serve(client_r, client_w):
         fields = {k.strip().lower(): v.strip() for k, _, v in (line.partition(b':') for line in lines[1:])}
         upgrade = b'upgrade' in fields.get(b'connection', b'').lower()
         method, target, version = lines[0].split(b' ')
-        create = method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target)
-        drop = (b'content-length', b'transfer-encoding')[:2 if create else 0] + (() if upgrade else (b'connection',))
+        create = method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target) and b'content-length' in fields
+        drop = (b'content-length',)[:create and 1] + (() if upgrade else (b'connection',))
         lines = [line for line in lines if line.partition(b':')[0].strip().lower() not in drop] + [b'Connection: close'][upgrade:]
-        body = b''
-        if method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/build(\?.*)?', target) and not re.search(rb'[?&]cgroupparent=[^&]', target):
-            target = re.sub(rb'([?&])cgroupparent=(&|$)', rb'\1', target).rstrip(b'&?')  # clients before v28 send it empty
-            lines[0] = b' '.join((method, target + (b'&' if b'?' in target else b'?') + b'cgroupparent=' + parent, version))
-        elif create:
-            if fields.get(b'transfer-encoding', b'').lower() == b'chunked':  # docker-java (Testcontainers) streams it
-                while size := int((await client_r.readuntil(b'\r\n')).split(b';')[0], 16):
-                    body += (await client_r.readexactly(size + 2))[:-2]
-                while await client_r.readuntil(b'\r\n') != b'\r\n':
-                    pass
-            else:
-                body = await client_r.readexactly(int(fields.get(b'content-length', b'0')))
+        body = await client_r.readexactly(int(fields[b'content-length'])) if create else b''
+        if create:
             try:
                 spec = json.loads(body)
                 host = spec.get('HostConfig') or {}
@@ -338,6 +318,5 @@ asyncio.run(main())
 PY
   ) </dev/null >/dev/null 2>&1 &
   local i; for i in $(seq 50); do [ -S "$sock" ] && break; sleep 0.1; done
-  # Ryuk (Testcontainers) mounts the daemon socket itself, so its cleanup never depends on this gate's socket.
-  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock || echo "beelink-gate: gate Docker socket did not start; containers keep the daemon's cgroup" >&2
+  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" || echo "beelink-gate: gate Docker socket did not start; containers keep the daemon's cgroup" >&2
 }

@@ -1207,7 +1207,7 @@ remote_gate() {
   [[ "$cache_root" = /* ]] || die "cache root must be absolute"
   [[ "$cache_max" =~ ^[1-9][0-9]*$ ]] || die "invalid cache size cap"
   [[ "$max_concurrent" =~ ^[1-9][0-9]*$ ]] || die "invalid concurrent gate cap"
-  # Validate here: a die inside a later $(load_limit) would only end that subshell.
+  # Validate here: a die inside a later $(max_cpu_pressure) would only end that subshell.
   admission_begin
   trap 'admission_early_exit "$?"' EXIT
   initial_disk_admission
