@@ -1484,8 +1484,11 @@ PYTURBO
   export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$checkout/.git/beelink-gate-target}"
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
   # Nested installs use the same store and cannot wait for a purge prompt.
+  # pnpm 11 reads pnpm_config_*, not npm_config_*: a nested `pnpm licenses` fell back to store/v10 and missed
+  # packages the install had put in store/v11 (Braid #176, 10-26). Set both spellings to the same store.
   export npm_config_store_dir="${npm_config_store_dir:-$HOME/.local/share/pnpm/store}"
-  export npm_config_confirm_modules_purge=false
+  export pnpm_config_store_dir="${pnpm_config_store_dir:-$npm_config_store_dir}"
+  export npm_config_confirm_modules_purge=false pnpm_config_confirm_modules_purge=false
   # Divide workers across active gates, preserving caller overrides.
   gate_workers=$(gate_worker_budget "$cache_root/.locks")
   export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$gate_workers}"
