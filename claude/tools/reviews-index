@@ -99,6 +99,7 @@ def main() -> int:
     out = args.out or Path.home() / ".cache" / "reviews-md" / host
     out.mkdir(parents=True, exist_ok=True)
     written = kept = failed = 0
+    unsummarized: list[Path] = []
     for page in sorted(args.src.glob("**/*.html")):
         rel = page.relative_to(args.src)
         if len(rel.parts) > 3:
@@ -109,12 +110,21 @@ def main() -> int:
             continue
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(digest(page, host))
+            text = digest(page, host)
+            target.write_text(text)
             written += 1
+            if "\n- summary: " not in text:
+                unsummarized.append(page)
         except (OSError, ValueError) as error:
             failed += 1
             print(f"reviews-index: {page}: {error}", file=sys.stderr)
     print(f"reviews-index: {written} written, {kept} unchanged, {failed} failed -> {out}")
+    # The page contract (CLAUDE.md) asks for a <meta name="description">; a
+    # page without one is found only by its raw text.
+    for page in unsummarized[-10:]:
+        print(f"reviews-index: no <meta name=\"description\"> summary: {page}", file=sys.stderr)
+    if unsummarized:
+        print(f"reviews-index: {len(unsummarized)} of {written} new pages have no summary", file=sys.stderr)
     for peer in args.peer:
         # Each host owns its own digest directory, so a pull never overwrites
         # this host's digests and a peer that is down only leaves its copy stale.
