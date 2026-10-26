@@ -134,8 +134,8 @@ import json, sys, time
 known, memory = sys.argv[3] == '1', float(sys.argv[4])
 pressure, limit = float(sys.argv[1]) if known else None, float(sys.argv[2])
 print(json.dumps({'mode':'host_psi', 'metric':'some_avg10', 'observed_at':time.time(), 'some_avg10':pressure, 'limit':limit,
-                  'class_memory_some_avg10':memory, 'class_memory_limit':10.0, 'held':not known or pressure > limit or memory > 10,
-                  'reason':'host_psi_unavailable' if not known else 'class_memory_psi' if memory > 10 else 'host_psi'}, separators=(',', ':')))
+                  'held':not known or pressure > limit or memory > 10, 'reason':'host_psi_unavailable' if not known else
+                  'class_memory_psi' if memory > 10 else 'host_psi', 'class_memory_some_avg10':memory, 'class_memory_limit':10.0}, separators=(',', ':')))
 PY
 }
 wait_for_load() {
