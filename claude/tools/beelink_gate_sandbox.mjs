@@ -71,7 +71,9 @@ export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
 export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo"
 # C/C++ with the image's gcc, as on the Beelinks: nix's cc has no static glibc, and sidecar's -static
 # process-supervisor failed '-lc not found' (api-latency, 10-26).
-[ ! -x /usr/bin/gcc ] || export CC="\${CC:-/usr/bin/gcc}" CXX="\${CXX:-/usr/bin/g++}"
+# COMPILER_PATH too: gcc's collect2 otherwise takes nix binutils' ld from PATH, which has no static glibc either
+# (slim-edge: sidecar still '-lc' after #723).
+[ ! -x /usr/bin/gcc ] || export CC="\${CC:-/usr/bin/gcc}" CXX="\${CXX:-/usr/bin/g++}" COMPILER_PATH="\${COMPILER_PATH:-/usr/bin}"
 # The box's cgroup allows 512 pids and threads count: turbo's 10 parallel builds, each Node plus rolldown's rayon
 # pool, hit EAGAIN ('global thread pool has not been initialized', slim-edge 09:14Z). Callers can still override.
 export TURBO_CONCURRENCY="\${TURBO_CONCURRENCY:-4}" RAYON_NUM_THREADS="\${RAYON_NUM_THREADS:-2}"
@@ -115,7 +117,7 @@ if git ls-files '*.py' | grep -q .; then
 fi
 # Login shells (bash -lc in gate commands) reset PATH to the image's /usr/bin, whose git 2.39 lacks
 # check-attr --source (factory census, 10-26 08:2xZ). Beelink login shells keep the gate's tools; so does the box.
-printf '%s\n' "export PATH=\"$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}\$PATH\"" "\${CC:+export CC=$CC CXX=$CXX}" '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
+printf '%s\n' "export PATH=\"$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}\$PATH\"" "\${CC:+export CC=$CC CXX=$CXX COMPILER_PATH=$COMPILER_PATH}" '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
 # A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
 if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
