@@ -343,11 +343,15 @@ An `auto` gate moves to a one-shot Tangle sandbox when both beelinks refuse or a
 `BEELINK_GATE_SANDBOX_AFTER` (default `5m`) with no beelink that can admit it now. `--sandbox` (or the target
 `sandbox`) goes there directly. `beelink-gate-lib/placement.sh` owns the choice and `beelink-gate-lib/sandbox.mjs`
 runs the job: the factory owner key (`FACTORY_SANDBOX_KEY`, else `~/.config/tangle/factory.key`), a shallow fetch
-of the exact SHA (private repos through the owner's `GH_TOKEN` secret and `gh auth git-credential`, as factory's
-`src/sandbox.ts` does), the frozen install, then the command, with output streamed and the box deleted after. The
-receipt line keeps its format with `host=sandbox cache=none node=image gate_id=sandbox-<hex>` and the row goes to
-the launcher's `sandbox-receipts.jsonl`, which `--receipt` reads. A box that cannot be created leaves an auto gate
-waiting for a beelink; a `--sandbox` gate exits 75. `BEELINK_GATE_SANDBOX=0` turns the fallback off,
+of the exact SHA, the frozen install with the repo's pnpm, then the command, with output streamed line by line through
+redaction and the box deleted after. A public repo's box gets no token and `ownerContext: 'isolated'`; a private
+repo's gets the owner's `GH_TOKEN` bound to `github.com`, so the box holds only a placeholder the egress proxy swaps
+in the header `gh auth git-credential` makes, and install and command run with it unset. A `sh|bash -c` command runs
+under pipefail and `--light` keeps its no-browser and core-second guards, as on a beelink. The receipt line keeps its
+format with `host=sandbox cache=none node=image gate_id=sandbox-<hex>`; the row goes to the launcher's
+`sandbox-receipts.jsonl` as a local log that `--receipt` does not read, because the launcher can write it, so
+release-path merges (gh-drew's receipt check) stay beelink-only. A box that cannot be created or cannot fetch the
+commit leaves an auto gate waiting for a beelink; a `--sandbox` gate exits 75. `BEELINK_GATE_SANDBOX=0` turns the fallback off,
 `BEELINK_GATE_SANDBOX_RESOURCES` (JSON `{cpuCores, memoryMB, diskGB}`) sizes the box, and `--ship` never uses it.
 A sandbox has no turbo cache, sparse checkout, mise Node or warm pnpm store.
 

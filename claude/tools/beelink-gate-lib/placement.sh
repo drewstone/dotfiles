@@ -109,17 +109,15 @@ sandbox_ready() {
     && command -v node >/dev/null && github_repo "$repo_url" >/dev/null \
     && { [ -n "${FACTORY_SANDBOX_KEY:-}" ] || [ -s "$HOME/.config/tangle/factory.key" ]; }
 }
-sandbox_due() {
-  local after
-  after=$(seconds_of "${BEELINK_GATE_SANDBOX_AFTER:-5m}") || die "invalid BEELINK_GATE_SANDBOX_AFTER: ${BEELINK_GATE_SANDBOX_AFTER:-}"
-  (( SECONDS - launched >= after )) && sandbox_ready
-}
+# sandbox_after: BEELINK_GATE_SANDBOX_AFTER in seconds, validated at launch (0 = at once).
+sandbox_due() { (( SECONDS - launched >= ${sandbox_after:-300} )) && sandbox_ready; }
 
 # Runs the gate in a one-shot Tangle sandbox and returns its exit. The beelink
-# queue places are given back only once a box exists; sandbox_started=0 means
-# none did, so an auto gate may keep waiting for a beelink.
+# queue places are given back only once a box holds the commit; sandbox_started=0
+# means none did, so an auto gate may keep waiting for a beelink. A HUP, INT or
+# TERM ends the launcher once the box is gone, never the placement loop.
 run_sandbox_gate() {  # <seconds already waited> <command> [args...]
-  local waited=$1 started pid rc display saved
+  local waited=$1 started pid rc display saved sandbox_signal=""
   shift
   [ "$install_mode" != ship ] || die "--sandbox cannot run --ship: its proof is signed with a beelink key"
   github_repo "$repo_url" >/dev/null || die "--sandbox needs a GitHub repo URL, not $repo_url"
@@ -128,11 +126,14 @@ run_sandbox_gate() {  # <seconds already waited> <command> [args...]
   started=$(mktemp) || die "cannot create a temporary file"
   printf -v display '%q ' "$@"
   saved=$(trap -p HUP INT TERM)
-  BEELINK_GATE_SANDBOX_STARTED="$started" BEELINK_GATE_SANDBOX_DISPLAY="${display% }" node "$gate_source_root/beelink-gate-lib/sandbox.mjs" \
+  BEELINK_GATE_SANDBOX_STARTED="$started" BEELINK_GATE_SANDBOX_DISPLAY="${display% }" \
+    BEELINK_GATE_SANDBOX_PNPM_FN="$(declare -f repo_manager_version repo_pnpm_version)" node "$gate_source_root/beelink-gate-lib/sandbox.mjs" \
     "$repo_url" "$sha" "$install_mode" "$([ "$gate_class" = dev ] && echo dev || { [ "$install_mode" = light ] && echo light || echo normal; })" \
     "$waited" "$STATE_DIR" "$@" & pid=$!
   # The box script deletes its box on any of these before it exits.
-  trap 'kill -TERM "$pid" 2>/dev/null' HUP INT TERM
+  trap 'sandbox_signal=129; kill -HUP "$pid" 2>/dev/null' HUP
+  trap 'sandbox_signal=130; kill -INT "$pid" 2>/dev/null' INT
+  trap 'sandbox_signal=143; kill -TERM "$pid" 2>/dev/null' TERM
   while kill -0 "$pid" 2>/dev/null && [ ! -s "$started" ]; do sleep 1; done
   if [ -s "$started" ] && [ -n "$checkout_reservation_dir" ]; then stop_checkout_reservations; checkout_reservation_dir=""; fi
   wait "$pid"; rc=$?
@@ -140,6 +141,9 @@ run_sandbox_gate() {  # <seconds already waited> <command> [args...]
   trap - HUP INT TERM; eval "$saved"
   sandbox_started=0; [ ! -s "$started" ] || sandbox_started=1
   rm -f "$started"
+  if [ -n "$sandbox_signal" ]; then
+    kill -s "$(kill -l $((sandbox_signal - 128)))" "$$"; exit "$sandbox_signal"
+  fi
   [ "$sandbox_started" = 1 ] || sandbox_off=1
   return "$rc"
 }
