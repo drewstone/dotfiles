@@ -92,6 +92,9 @@ v=24; [ ! -f .nvmrc ] || v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null
   esac
 }
 mkdir -p "$HOME/.local/bin" && corepack enable --install-directory "$HOME/.local/bin" 2>/dev/null
+# Login shells (bash -lc in gate commands) reset PATH to the image's /usr/bin, whose git 2.39 lacks
+# check-attr --source (factory census, 10-26 08:2xZ). Beelink login shells keep the gate's tools; so does the box.
+printf '%s\n' "export PATH=\"$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}\$PATH\"" '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
 # A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
 if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
