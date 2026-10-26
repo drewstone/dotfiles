@@ -35,9 +35,16 @@ PYTHON
   return 0
 }
 
+# A waiting gate passes here on every slot poll (2 s), and each check starts two Python processes;
+# with dozens of gates waiting that load starved the host they waited on (beelink1 10-26: 82 gate
+# processes, ~800% CPU). Recheck one host at most every BEELINK_GATE_RELEASE_RECHECK_SECONDS (30).
 admit_release_priority() {
   local reason
+  if [ "${release_priority_host:-}" = "$1" ] && (( SECONDS - ${release_priority_at:--100000} < ${BEELINK_GATE_RELEASE_RECHECK_SECONDS:-30} )); then
+    return 0
+  fi
   reason=$(release_priority_reason "$1") || { admission_outcome=refused admission_reason=release_priority; tempfail "$(utc_in_minutes 5)" "$1 $reason"; }
+  release_priority_host=$1 release_priority_at=$SECONDS
 }
 
 # Windows owns the update policy; WSL owns the local clock and time-zone rules.
@@ -498,6 +505,13 @@ admission_stage() {
   [ "${admission_done:-0}" = 0 ] && [ -n "${admission_path:-}" ] || return 0
   [ "$1" != "${admission_current_stage:-}" ] || return 0
   admission_current_stage=$1
+  # Wait loops alternate `checks` and their wait stage on every poll, and each record starts Python.
+  # A stage is recorded the first time it appears; a repeat at most every 15 s.
+  case " ${admission_seen_stages:-} " in
+    *" $1 "*) (( SECONDS - ${admission_stage_at:-0} < 15 )) && return 0 ;;
+    *) admission_seen_stages="${admission_seen_stages:-} $1" ;;
+  esac
+  admission_stage_at=$SECONDS
   admission_record stage "$1"
 }
 admission_checkpoint() { admission_record checkpoint; }
