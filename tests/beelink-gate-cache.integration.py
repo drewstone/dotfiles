@@ -21,8 +21,13 @@ def main():
     owner = Path(__file__).resolve().parents[1] / "claude/tools/beelink-gate"
     source = owner.read_text()
     # Load the actual owner functions; no alternative implementation or fake executables.
-    functions = source[source.index("sparse_normalize() {"):source.index("# The checkout shape")]
-    functions += source[source.index("sparse_apply() {"):source.index("# A writer holds")]
+    def function(name):  # the owner's definition through its closing brace, not a neighbouring comment
+        start = source.index(name + "() {")
+        first_end = source.index("\n", start)
+        if source[start:first_end].rstrip().endswith("}"):
+            return source[start:first_end] + "\n"
+        return source[start:source.index("\n}", start) + 2] + "\n"
+    functions = function("sparse_normalize") + function("sparse_apply")
     functions += (owner.parent / "beelink-gate-lib/cache.sh").read_text()
     with tempfile.TemporaryDirectory(prefix="gate-cache-integration-") as directory:
         root = Path(directory)

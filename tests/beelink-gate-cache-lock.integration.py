@@ -35,8 +35,9 @@ def run_case(lock_name, timeout):
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         (repo / "allocated").write_bytes(b"x" * 16_777_216)
         source = GATE.read_text()
-        helpers = "\n".join(function(source, name) for name in
-                            ["sparse_normalize", "sparse_apply"])
+        resources = (ROOT / "claude/tools/beelink-gate-lib/resources.sh").read_text()
+        helpers = "\n".join([function(source, "sparse_normalize"), function(source, "sparse_apply")]
+                            + [function(resources, name) for name in ["gate_slice", "cgroup_root", "gate_cgroup"]])
         module = ROOT / "claude/tools/beelink-gate-lib/cache.sh"
         prune = module.read_text() if module.exists() else function(source, "prune_cache")
         script = helpers + "\n" + prune + '\nprune_cache "$1" "$2" 8388608\n'
@@ -104,9 +105,10 @@ def wait_until(predicate, message, seconds=3):
 def reservation_case(source, refusal, expected_id=True):
     """Local reservation/watcher seam; managed systemd admission is not exercised.
 
-    Execute production source slices as in the cache cases. The disk predicate
-    reads real df, with a fixture policy threshold; the privileged lifecycle
-    policy reader is outside this seam. No executable or function is mocked.
+    Execute production source slices as in the cache cases. The disk predicate is
+    the gate's own check_floor over real df, through the fixture admission
+    provider (tests/fixtures/beelink-gate/disk_policy.py) whose minimum the
+    fixture raises; the root-protected provider is outside this seam.
     """
     admission = (ROOT / "claude/tools/beelink-gate-lib/admission.sh").read_text()
     common = "\n".join(function(source, name) for name in
@@ -128,15 +130,19 @@ def reservation_case(source, refusal, expected_id=True):
     def handoffs(begin, end):
         return "\n".join(re.findall(marker, remote[begin:end], re.M))
 
-    floor_body = function(source, "check_floor")
-    floor_body = floor_body[floor_body.index("  available=$(free_bytes)"):-2]
+    resources = (ROOT / "claude/tools/beelink-gate-lib/resources.sh").read_text()
+    floor = "\n".join([function(resources, "limits_file"), function(source, "gate_disk"),
+                       function(source, "check_floor")])
     echo = next(line for line in function(admission, "acquire_checkout_admission").splitlines()
                 if line.startswith('  echo "beelink-gate: lock, host slot'))
     floor_refusal = remote[remote.index('    # The host can cross its floor'):]
     floor_refusal = floor_refusal[:floor_refusal.index('\n  fi')]
-    placement = common + "\nfixture_disk_predicate() {\n" + floor_body + "\n}\n" + r'''
+    placement = common + "\n" + floor + "\n" + r'''
 set -uo pipefail
 root=$1 refusal=$2 gate_id=$3
+beelink_gate_disk_source=$(cat "$BEELINK_GATE_DISK_SOURCE")
+# The minimum check_floor admits against: 1 byte passes, free + 1 GiB refuses.
+minimum() { printf '{"admission_floor_bytes": %s}' "$1" > "$(dirname "$BEELINK_GATE_DISK_POLICY")/admission.json"; }
 beelink=beelink1 waited=0 urgent=0 placed_auto=1
 TEMPFAIL=75 NOT_ADMITTED=76
 exec {lock_fd}>"$root/checkout.lock"
@@ -145,17 +151,17 @@ exec {slot_fd}>"$root/slot.lock"
 flock -x "$slot_fd"
 ''' + echo + r'''
 if [ "$refusal" = 2 ]; then
-  host=$beelink reserve=0 floor_bytes=$(( $(free_bytes) + 1073741824 ))
-  if ! fixture_disk_predicate; then
+  minimum $(( $(free_bytes) + 1073741824 ))
+  if ! check_floor "$beelink"; then
 ''' + floor_refusal + '\n  fi\nfi\n' + handoffs(0, guards[0].start()) + r'''
 git -C "$root/checkout" fetch -q origin HEAD || exit $?
 git -C "$root/checkout" checkout -q --detach FETCH_HEAD || exit $?
 ''' + "\n"
     for index, guard in enumerate(guards):
         # Raise only a private fixture threshold; never fill the host disk.
-        placement += "floor_ok=0\n( host=$beelink reserve=0; floor_bytes=1; "
-        placement += f'if [ "$refusal" = "{index}" ]; then floor_bytes=$(( $(free_bytes) + 1073741824 )); fi\n'
-        placement += "fixture_disk_predicate\n) || floor_ok=1\n" + guard.group() + "\n"
+        placement += "floor_ok=0\nminimum 1\n"
+        placement += f'if [ "$refusal" = "{index}" ]; then minimum $(( $(free_bytes) + 1073741824 )); fi\n'
+        placement += 'check_floor "$beelink" || floor_ok=1\n' + guard.group() + "\n"
         end = (guards[index + 1].start() if index == 0 else
                remote.index("  cancel_if_requested", guard.end()))
         placement += handoffs(guard.end(), end) + "\n"
@@ -222,10 +228,17 @@ watch_checkout_admission "$1" "$4"
                                             *map(str, files), gate_id if expected_id else ""],
                                            stderr=stream, start_new_session=True)
             with log.open("a") as output:
+                policy = root / "disk-policy"
+                policy.mkdir(exist_ok=True)
+                (policy / "disk_policy.py").write_bytes((ROOT / "tests/fixtures/beelink-gate/disk_policy.py").read_bytes())
+                (policy / "disk_policy.py").chmod(0o644)  # a group-writable provider is refused
                 child = subprocess.Popen(["bash", "-c", placement, "placement", str(root),
                                           str(refusal), gate_id], stdin=subprocess.PIPE,
                                          stdout=output, stderr=output, text=True,
-                                         start_new_session=True)
+                                         start_new_session=True,
+                                         env={**os.environ, "BEELINK_GATE_DISK_POLICY": str(policy / "disk_policy.py"),
+                                              "BEELINK_GATE_DISK_SOURCE": str(ROOT / "claude/tools/beelink_gate_disk.py"),
+                                              "BEELINK_GATE_LIMITS_FILE": str(root / "no-limits")})
                 wait_until(lambda: child.poll() is not None or (root / "guards-passed").exists(),
                            "placement did not reach its disk guard", seconds=5)
                 # Observe two completed negative polls, or the watcher's exit;
