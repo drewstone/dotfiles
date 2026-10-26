@@ -148,6 +148,7 @@ acquire_slot() {
     admission_stage checks
     admit_release_priority "$beelink"
     blocked=fifo
+    [ "${urgent:-0}" != 1 ] || touch "$marker.$$"
     if [ "${urgent:-0}" = 1 ] || ! urgent_ahead "$marker"; then
       blocked=host_slot
       for ((i = 0; i < max; i++)); do
@@ -289,7 +290,7 @@ acquire_checkout_admission() {
     # Each older waiter reserves one free checkout; with two free and one older
     # waiter, this gate still takes the second.
     local ahead=0 skipped=0 checkout_wait_stage=checkout_lock
-    touch "$ticket"
+    touch "$ticket"; (( ! urgent )) || touch "$urgent_marker.$$"
     (( urgent )) || ahead=$(older_tickets_ahead "$ticket_prefix" "$enqueued")
     for ((k = 0; k < copies; k++)); do
       if (( ! urgent )) && urgent_ahead "$urgent_marker"; then checkout_wait_stage=fifo; break; fi
@@ -616,12 +617,16 @@ older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tick
   echo "$n"
 }
 # An urgent gate leaves a marker while it waits; every other gate waiting for the same thing steps aside.
-urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
-  local m pid
+urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate, polling here now
+  local m pid now
+  now=$(date +%s)
   for m in "$1".*; do
     [ -e "$m" ] || continue
     pid=${m##*.}
     [ "$pid" != "$$" ] || continue
+    # An urgent auto gate's reservation marker on a host it is not polling held both free agent-container
+    # checkouts on beelink1 for 33 min (10-26 07:55Z); like FIFO tickets, only a refreshed marker counts.
+    (( $(stat -c %Y "$m" 2>/dev/null || echo 0) >= now - 30 )) || continue
     if waiter_alive "$m" "$pid"; then return 0; fi
     rm -f "$m"  # left by a gate that died
   done
