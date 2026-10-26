@@ -106,25 +106,16 @@ free_bytes() {
 }
 
 check_floor() {
-  local host="$1" reserve="${2:-0}" available floor_bytes
-  floor_bytes=$(effective_disk_floor_bytes "$host") || return 3
+  local host="$1" reserve="${2:-0}" available path refusal status=0
+  path=$(limits_file) && [ -n "$path" ] || return 3
   available=$(free_bytes)
   last_floor_available=$available
-  if (( available < floor_bytes )); then
-    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor; use the other beelink or ask the host owner to recover capacity\n' \
-      "$host" "$available" "$floor_bytes" >&2
-    return 3
-  fi
-  if (( reserve > 0 && available < floor_bytes + reserve )); then
-    printf 'beelink-gate: REFUSED %s has %s bytes free, below its %s byte disk floor plus %s bytes last-seen install reserve; use the other beelink or ask the host owner to recover capacity\n' \
-      "$host" "$available" "$floor_bytes" "$reserve" >&2
-    return 3
-  fi
+  refusal=$(gate_disk admit "$host" "$path" "$reserve" "$available") || status=$?
+  (( status == 0 )) && return 0
+  (( status == 3 )) || return 3
+  printf 'beelink-gate: REFUSED %s; use the other beelink or ask the host owner to recover capacity\n' "$refusal" >&2
+  return 3
 }
-
-# A .beelink-gate/sparse-checkout file's patterns, without comments, blank
-# lines or trailing spaces (stdin to stdout).
-sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
 
 # The checkout shape an install reserve was measured on: full, or sha256 of
 # the normalized patterns of the .beelink-gate/sparse-checkout read on stdin.
