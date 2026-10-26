@@ -28,7 +28,7 @@ FUNCTION_HUG = tuple(_P["functionHug"])
 def logic(path, head=None):
     """A file whose lines count toward production size: logic or a workflow, and not a test, declaration, vendored path or dated record.
 
-    An extensionless file (bin/fleet, claude/tools/gh-drew) is logic when its first line runs an interpreter; `head` is
+    An extensionless file (fleet/fleet, github/gh-drew) is logic when its first line runs an interpreter; `head` is
     its first bytes, and without them such a file is only a candidate (see `candidate`)."""
     named = LOGIC.search(path) or WORKFLOW.search(path)
     return bool((named or (head is not None and extensionless(path) and SHEBANG.match(head)))
