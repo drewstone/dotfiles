@@ -2,9 +2,14 @@
 # Complete, validated source bundling, transport and job staging.
 # Sourced by beelink-gate and embedded into every submitted script.
 
-# The gh-drew beside this tool, not whatever PATH holds: a watcher that ran beelink-gate by its full path
-# had no ~/bin on PATH, and --merge failed after a passing gate. Never plain gh, another identity.
-gh_drew="${gate_source_root:+$gate_source_root/gh-drew}"; [ -x "${gh_drew:-}" ] || gh_drew=$(command -v gh-drew || true)
+# gh-drew from its install, not only from PATH: a watcher that ran beelink-gate by its full path had no ~/bin
+# on PATH, and --merge failed after a passing gate. gh-drew lives in tangle-tools github/ (tangle-tools#2104) and
+# tangle-tools-deploy links it into ~/.local/bin and ~/bin. Never plain gh, another identity.
+gh_drew=""
+for candidate in "${gate_source_root:+$gate_source_root/gh-drew}" "$HOME/.local/bin/gh-drew" "$HOME/bin/gh-drew"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] && { gh_drew=$candidate; break; }
+done
+[ -n "$gh_drew" ] || gh_drew=$(command -v gh-drew || true)
 
 emit_gate_source() {
   local generated status
