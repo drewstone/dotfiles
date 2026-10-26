@@ -288,9 +288,8 @@ def refusal(manager: str, argv: list[str], cwd: Path):
         return None
     return (f"gtr-install-guard: refused {manager} install in {root}, a checkout on GTR. Installs and gates run on "
             "a Beelink: push the commit, then from GTR run "
-            "beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command> "
-            "(the gate does the frozen install in its own cache). If no Beelink admits it within 5 minutes, "
-            "reserve space with storage-lifecycle admit, then gate in a fresh clone under ~/.cache/gtr-gate/; if admission refuses, keep waiting for a Beelink. Retire the clone through wt-remove and release its exact lease after. "
+            "beelink-gate auto <repo-url> <full-sha> -- <command> "
+            "(the gate does the frozen install in its own cache, and on drew-gtr-pro under a storage lease when no Beelink admits it within 5 minutes). "
             "Any other new clone, inside _wt or not, is a checkout too. "
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 

@@ -52,6 +52,7 @@ gate_cache_source="$gate_source_root/beelink-gate-lib/cache.sh"
 gate_admission_source="$gate_source_root/beelink-gate-lib/admission.sh"
 gate_resources_source="$gate_source_root/beelink-gate-lib/resources.sh"
 gate_jobs_source="$gate_source_root/beelink-gate-lib/jobs.sh"
+gate_gtr_source="$gate_source_root/beelink-gate-lib/gtr.sh"
 gate_disk_source="$gate_source_root/beelink_gate_disk.py"
 gate_release_source="$gate_source_root/beelink_gate_release.py"
 gate_metrics_source="$gate_source_root/beelink_gate_metrics.py"
@@ -70,6 +71,8 @@ beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 . "$gate_resources_source" || exit $?
 # shellcheck source=beelink-gate-lib/jobs.sh
 . "$gate_jobs_source" || exit $?
+# shellcheck source=beelink-gate-lib/gtr.sh
+. "$gate_gtr_source" || exit $?
 # BEELINK_GATE_INSTALLER_END
 
 
@@ -1013,6 +1016,19 @@ print("beelink-gate timing: " + json.dumps(timing, sort_keys=True), file=sys.std
 PY
   }
 
+# The command as a gate runs it, in command_with_umask. The submitted user unit can inherit
+# umask 0002, so the command gets a non-group-writable default without changing the gate
+# shell's mask for receipts and bundles. A pipeline exits with its last stage: `sh -c 'node --test ... | tail -12'`
+# exited 0 on a failing test, and --merge merged discovery-lab #2097 red. A shell -c command runs under
+# pipefail, so a failing stage fails the gate; the receipt still names the command as requested.
+# Any single-dash option cluster holding c counts: beelink1's receipts held 89 `bash -lc` gates (16 piped) and a
+# `bash -euc` (gtr-disk review of dotfiles #535).
+gate_command_argv() {
+  local -a run=("$@")
+  [[ "${1##*/}" =~ ^(sh|dash|bash)$ && "${2:-}" =~ ^-[A-Za-z]*c[A-Za-z]*$ ]] && run=(/usr/bin/bash -o pipefail "${@:2}")
+  command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${run[@]}")
+}
+
 remote_gate() {
   unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_ADMISSION_SAMPLE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS BEELINK_GATE_TURBO_REQUESTED_DIR
   [ "$#" -ge 7 ] || die "invalid remote request"
@@ -1489,19 +1505,7 @@ PYTURBO
   local tick cpu_before cpu_after
   tick=$(getconf CLK_TCK 2>/dev/null || echo 100)
   cpu_before=$(children_cpu_ticks)
-  # The submitted user unit can inherit umask 0002. Give the requested command
-  # a predictable non-group-writable default without changing the gate shell's
-  # mask for receipts, bundles, and other state written after the command.
-  # A pipeline exits with its last stage: `sh -c 'node --test ... | tail -12'` exited 0 on a failing test, and --merge
-  # merged discovery-lab #2097 red. A shell -c command runs under pipefail, so a failing stage fails the
-  # gate; the receipt still names the command as requested.
-  local -a run_command=("${command[@]}")
-  # Any single-dash option cluster holding c counts: beelink1's receipts held 89 `bash -lc` gates (16 piped) and a
-  # `bash -euc` (gtr-disk review of dotfiles #535).
-  if [[ "${command[0]##*/}" =~ ^(sh|dash|bash)$ && "${command[1]:-}" =~ ^-[A-Za-z]*c[A-Za-z]*$ ]]; then
-    run_command=(/usr/bin/bash -o pipefail "${command[@]:1}")
-  fi
-  local -a command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${run_command[@]}")
+  gate_command_argv "${command[@]}"
   if (( light )); then
     # No browser: Playwright finds no installed browser and fails the test that wants one.
     mkdir -p "$checkout/.git/beelink-gate-no-browsers"
@@ -1575,6 +1579,10 @@ if [ "${1:-}" = --receipts ]; then
   fi
   retained_admission_observations "${2:-48}"
   exit $?
+fi
+
+if [ "${1:-}" = --gtr-run ]; then
+  shift; gtr_run "$@"; exit $?
 fi
 
 # ---- launcher: runs on the Mac, GTR or a beelink ----
@@ -1663,6 +1671,12 @@ choose_beelink() {
     # load wait. Keep probing rather than queue on an overloaded host while
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
+    # No Beelink admitted the gate within 5 minutes, or none can start it: try drew-gtr-pro, at most once a minute.
+    if (( SECONDS >= gtr_next_try )) && { (( SECONDS - launched >= GTR_AFTER_SECONDS )) \
+      || { [ -z "$best" ] && [[ "${seen[beelink1]:-}" != *state=busy* && "${seen[beelink2]:-}" != *state=busy* ]]; }; }; then
+      echo "beelink-gate: no beelink admitted this gate after $((SECONDS - launched))s; trying $GTR_HOST" >&2
+      echo "$GTR_HOST"; return 0
+    fi
     if [ -n "$best" ]; then
       check_checkout_reservations
       [ -z "${checkout_reservation_lost[$best]:-}" ] || continue
@@ -1823,15 +1837,18 @@ fi
 # 1 with none, 75 when a beelink cannot be read and the others hold no row (a partial read is never "none").
 # Rows from the beelinks that answered still print with exit 0: a passing receipt is enough, and on
 # 2026-10-18 beelink2 offline for hours made every discovery-lab merge refuse despite beelink1 receipts.
+host_receipts() {  # <host> <hours> [cpu sampler]
+  if [ "$1" = "$GTR_HOST" ]; then gtr_receipts; else heartbeat=0 on_beelink "$1" --receipts "${@:2}"; fi
+}
 if [ "${1:-}" = --receipt ]; then
   [ "$#" = 3 ] && [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "usage: beelink-gate --receipt <repo-url> <sha (40 hex)>"
   key=$(python3 -c 'import re,sys; u=sys.argv[1]; m=re.match(r"^(?:git@([^:]+):|ssh://git@([^/]+)/|https?://([^/]+)/)(.+?)(?:\.git)?/?$", u); print(f"{m.group(1) or m.group(2) or m.group(3)}/{m.group(4)}" if m else "")' "$2")
   [ -n "$key" ] || die "--receipt: cannot read a host/owner/repo from $2"
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   host_rows=$(mktemp) found=$(mktemp) unread=""
-  for host in beelink1 beelink2; do
-    if heartbeat=0 on_beelink "$host" --receipts 720 > "$host_rows" 2>/dev/null \
-      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts 720 > "$host_rows" 2>/dev/null; }; then
+  for host in beelink1 beelink2 "$GTR_HOST"; do
+    if host_receipts "$host" 720 > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; host_receipts "$host" 720 > "$host_rows" 2>/dev/null; }; then
       python3 - "$host_rows" "$host" "$key" "$3" >> "$found" <<'PY'
 import json, sys
 path, host, key, sha = sys.argv[1:]
@@ -1854,7 +1871,7 @@ PY
   # agent-runtime#1832 refused with only "could not read beelink2" while beelink1 held no receipt either.
   # Only with a host unread: gh-drew reads any stderr here as "a beelink was not read".
   if [ ! -s "$found" ] && [ -n "$unread" ]; then
-    read_hosts=$(for host in beelink1 beelink2; do [[ " $unread " == *" $host "* ]] || printf '%s ' "$host"; done)
+    read_hosts=$(for host in beelink1 beelink2 "$GTR_HOST"; do [[ " $unread " == *" $host "* ]] || printf '%s ' "$host"; done)
     echo "beelink-gate: --receipt found no receipt for $3 on ${read_hosts:-no reachable beelink}(unknown:$unread)" >&2
   fi
   rm -f "$host_rows" "$found"
@@ -1879,11 +1896,11 @@ if [ "${1:-}" = --report ]; then
   cpu_source=$(encode "$(cat "$report_dir/beelink_gate_cpu.py")") || die "cannot load CPU sampler"
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   receipts_file=$(mktemp) host_rows=$(mktemp) missing=""
-  for host in beelink1 beelink2; do
+  for host in beelink1 beelink2 "$GTR_HOST"; do
     # One retry, then a loud partial: one dropped B1 read silently
     # turned a 352-run window into a B2-only 115 runs at 1.0 runs per merged PR.
-    if heartbeat=0 on_beelink "$host" --receipts "$hours" "$cpu_source" > "$host_rows" 2>/dev/null \
-      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; heartbeat=0 on_beelink "$host" --receipts "$hours" "$cpu_source" > "$host_rows" 2>/dev/null; }; then
+    if host_receipts "$host" "$hours" "$cpu_source" > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; host_receipts "$host" "$hours" "$cpu_source" > "$host_rows" 2>/dev/null; }; then
       sed "s/^{/{\"from\": \"$host\", /" "$host_rows" >> "$receipts_file"
     else
       echo "beelink-gate: --report could not read $host's receipts" >&2
@@ -1939,90 +1956,9 @@ if [ "${1:-}" = --cancel-job ]; then
   tempfail "$(utc_in_minutes 5)" "cancellation unconfirmed for $2; remote gate may still be running under its existing hold; retry beelink-gate --cancel-job $2"
 fi
 
-# --summary: a red gate's test counts and failing tests, printed last so a
-# caller's tail still shows the cause. It reads the node test runner's spec
-# reporter ("ℹ tests 3" counts, the "✖ failing tests:" section), TAP
-# ("# tests 3" counts, each "not ok" line with its indented diagnostics) and
-# vitest ("Test Files  1 failed | 2 passed (3)" counts, each "FAIL  file > test"
-# line with its error's first line).
+# --summary: a red gate's test counts and failing tests, printed last (beelink_gate_summary.py).
 summarize_output() {  # <exit code> <output file>...
-  python3 - "$@" <<'PY' >&2
-import re, sys
-code, paths = sys.argv[1], sys.argv[2:]
-ansi = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-keys = "tests|suites|pass|fail|cancelled|skipped|todo|duration_ms"
-count = re.compile(rf"^(?:ℹ|#) ({keys}) (\S+)$")
-not_ok = re.compile(r"^(\s*)not ok\b")
-vitest_count = re.compile(r"^\s*(Test Files|Tests)\s{2,}((?:\d+ [a-z]+(?: \| )?)+) \((\d+)\)$")
-vitest_fail = re.compile(r"^\s*FAIL\s{1,2}\S")
-groups, blocks = [], []
-def close(block, kind):
-    # A suite's own "not ok" only says that a subtest failed; the subtest's block has the cause.
-    if kind == "tap" and any("failureType: 'subtestsFailed'" in l for l in block):
-        return
-    while block and not block[-1].strip():
-        block.pop()
-    blocks.append(block)
-for path in paths:
-    group, block, kind, depth = {}, None, None, 0
-    try:
-        lines = open(path, encoding="utf-8", errors="replace")
-    except OSError:
-        continue
-    with lines:
-        for raw in lines:
-            line = ansi.sub("", raw.rstrip("\r\n"))
-            if block is not None and kind == "vitest":
-                # A vitest failure ends at its "⎯" rule or the next FAIL; keep the error's first line.
-                if not (line.startswith("⎯") or vitest_fail.match(line)):
-                    if line.strip() and len(block) < 2:
-                        block.append(line)
-                    continue
-                close(block, kind)
-                block = None
-            if block is not None:
-                indent = len(line) - len(line.lstrip())
-                if not line.strip() or (kind == "spec" and (indent or line.startswith(("test at ", "✖ ")))) \
-                        or (kind == "tap" and indent > depth):
-                    block.append(line)
-                    continue
-                close(block, kind)
-                block = None
-            match = count.match(line)
-            if match:
-                group[match[1]] = match[2]
-                continue
-            if (match := vitest_count.match(line)):
-                prefix = "files_" if match[1] == "Test Files" else ""
-                group["files" if prefix else "tests"] = match[3]
-                for n, state in re.findall(r"(\d+) ([a-z]+)", match[2]):
-                    group[prefix + state] = n
-                continue
-            if group:
-                groups.append(group)
-                group = {}
-            if line == "✖ failing tests:":
-                block, kind = [line], "spec"
-            elif vitest_fail.match(line):
-                block, kind = [line.strip()], "vitest"
-            elif (match := not_ok.match(line)):
-                block, kind, depth = [line], "tap", len(match[1])
-    if block is not None:
-        close(block, kind)
-    if group:
-        groups.append(group)
-print(f"beelink-gate: summary of the failed command (exit {code})")
-shown = [l for b in blocks for l in b]
-limit = 200
-for l in shown[:limit]:
-    print(l)
-if len(shown) > limit:
-    print(f"beelink-gate: summary omitted {len(shown) - limit} more failing-test lines; the full output is above")
-for g in groups:
-    print("beelink-gate: summary " + " ".join(f"{k}={v}" for k, v in g.items()))
-if not blocks and not groups:
-    print("beelink-gate: summary found no test counts or failing tests in the command output")
-PY
+  python3 "$gate_source_root/beelink_gate_summary.py" "$@" >&2
 }
 
 # --merge PR: after a green gate, `gh-drew pr merge PR -R owner/repo --squash
@@ -2229,15 +2165,22 @@ run_cancelable() {
   fi
   "$@"
 }
-launched=$SECONDS placements=0
+launched=$SECONDS placements=0 gtr_next_try=0
 while :; do
   frontend_phase placement_probe_wait
   case "$requested" in
     beelink1|100.98.195.7) target=$(place_named beelink1) ;;
     beelink2|100.127.22.51) target=$(place_named beelink2) ;;
     auto) target=$(choose_beelink) || exit $? ;;
+    "$GTR_HOST") target=$GTR_HOST ;;
     *) die "unknown beelink: $requested" ;;
   esac
+  if [ "$target" = "$GTR_HOST" ]; then
+    gtr_gate "$@"
+    [ "$requested" = auto ] || [ -n "${BEELINK_GATE_GTR_AUTO:-}" ] || tempfail "$(utc_in_minutes 5)" "$GTR_HOST storage admission refused; gate on a Beelink"
+    [ "$requested" = auto ] || exit "$NOT_ADMITTED"
+    gtr_next_try=$((SECONDS + 60)); continue
+  fi
   update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
   encoded=()
   for arg in "$target" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do

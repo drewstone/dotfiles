@@ -8,19 +8,16 @@ wrapper as `<name>.gtr-original`; allowed commands delegate to it.
 The wrapper refuses pnpm, npm and yarn installs (frozen included, and the same through
 `corepack`) in any git checkout on GTR, not only inside `~/code/_wt` and `~/webb/_wt`: an
 agent refused in `_wt` cloned `~/code/gate-gtm-20261010` and gated there. It
-points to `beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command>`. Exempt: the
+points to `beelink-gate auto <repo-url> <full-sha> -- <command>`. Exempt: the
 deploy-managed service checkouts tangle-tools-deploy installs (`~/.config/fleet/checkouts`,
 `DISCO_LAB` in `~/.config/fleet/lab.env`, the tangle-tools deploy clone), the beelink-gate cache,
 global installs, lockfile-only resolution, and directories that are not checkouts. Outside
 the fallback root, `uv` installs stay refused only inside `_wt`, because GTR tools use
 `uv run` from their checkouts.
 
-When a Beelink has not admitted a gate within 5 minutes, reserve its actual worst-case
-growth through `storage-lifecycle admit` before creating a fresh clone under
-`~/.cache/gtr-gate`. If admission refuses, keep waiting for a Beelink. Run the same
-frozen install, typecheck and touched integration checks, retire the clone through
-`wt-remove`, and release the exact lease after its producer has finished. Retention
-refusals keep the clone and its charged bytes.
+`beelink-gate` owns the fallback: a gate no Beelink admits within 5 minutes runs under
+`storage-lifecycle run-lane` in a fresh clone under `~/.cache/gtr-gate` and removes it before the lease ends
+([agent work](../../docs/processes/agent-work.md#choose-the-host-and-checkout)).
 
 Recognized package installs in the fallback root require the lifecycle owner
 `storage_lifecycle.admission.lease_receipt` from the installed Tangle Tools. The
