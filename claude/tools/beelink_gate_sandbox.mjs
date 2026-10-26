@@ -92,7 +92,7 @@ mkdir -p "$HOME/.local/bin" && corepack enable --install-directory "$HOME/.local
 # A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
 if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
-if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile --config.ignore-scripts=false
 elif [ -f package-lock.json ]; then npm ci
 elif [ -f yarn.lock ]; then if grep -q '__metadata' yarn.lock; then yarn install --immutable; else yarn install --frozen-lockfile; fi
 elif [ -f package.json ] && grep -q '"dependencies"\\|"devDependencies"' package.json; then echo 'no supported lockfile' >&2; exit 1
