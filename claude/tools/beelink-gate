@@ -110,7 +110,10 @@ free_bytes() {
 }
 
 check_floor() {
-  local host="$1" reserve="${2:-0}" available path refusal status=0
+  local host="$1" reserve="${2:-0}" available path refusal status=0 here
+  # Free space and live reservations are this machine's, so the lifecycle policy is asked about this machine:
+  # in production that is always the gate's host, and the gate tests (which pose as beelink2) pass on beelink1.
+  here=$(canonical_beelink "$(hostname)" 2>/dev/null); [ -z "$here" ] || host=$here
   path=$(limits_file) && [ -n "$path" ] || return 3
   available=$(free_bytes)
   last_floor_available=$available
