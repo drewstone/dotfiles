@@ -1,5 +1,5 @@
 [Unit]
-Description=Merge green tangle-network/%i PRs (instance <repo>:<base>; dotfiles claude/tools/merge-on-green)
+Description=Merge green tangle-network/%i PRs (instance <repo>:<base>; tangle-tools github/merge-on-green)
 Documentation=file://%h/bin/merge-on-green
 
 [Service]

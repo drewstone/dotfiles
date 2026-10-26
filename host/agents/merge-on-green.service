@@ -1,5 +1,5 @@
 [Unit]
-Description=Merge green agent-container PRs into develop (dotfiles claude/tools/merge-on-green)
+Description=Merge green agent-container PRs into develop (tangle-tools github/merge-on-green)
 Documentation=file://%h/bin/merge-on-green
 
 [Service]
