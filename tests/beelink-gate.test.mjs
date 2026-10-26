@@ -3763,6 +3763,62 @@ exit "\${FAKE_GH_EXIT:-0}"
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// #14798 merged a lockfile pnpm could not read past a green gate (10-26 failure sweep #12): a --merge gate checks the
+// PR's GitHub merge commit with pnpm install --frozen-lockfile --lockfile-only before it merges.
+test("--merge refuses a PR whose merge commit's pnpm lockfile is broken, waits on a stale merge ref, and merges a sound one", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const url = "https://github.com/acme/gate-test.git";
+    f.env = { ...f.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: "git@github.com:acme/gate-test.git" };
+    const calls = join(f.root, "gh-drew.calls");
+    writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${calls}'
+[ "$1 $2" != "pr view" ] || echo "\${FAKE_GH_HEAD} 1111111111111111111111111111111111111111 drewstone"
+`);
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    // pnpm's own refusal for a lockfile it cannot read; any other lockfile installs.
+    writeFileSync(join(f.root, "bin", "pnpm"), `#!/usr/bin/env bash
+printf "%s\\n" "$*" >> "$PNPM_LOG"
+[[ " $* " == *" --lockfile-only "* ]] && grep -q BROKEN pnpm-lock.yaml && { echo "ERR_PNPM_BROKEN_LOCKFILE The lockfile at pnpm-lock.yaml is broken" >&2; exit 1; }
+exit 0
+`);
+    chmodSync(join(f.root, "bin", "pnpm"), 0o755);
+    writeFileSync(join(f.source, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    f.git(["add", "pnpm-lock.yaml"]); f.git(["commit", "-qm", "the PR"]);
+    const head = f.git(["rev-parse", "HEAD"]);
+    // GitHub's refs/pull/42/merge: the base (first) merged with the PR head, its lockfile as given.
+    const merge = (lockfile, parent = head) => {
+      writeFileSync(join(f.root, "merge-lock"), lockfile);
+      const blob = f.git(["hash-object", "-w", join(f.root, "merge-lock")]);
+      f.git(["read-tree", head]); f.git(["update-index", "--add", "--cacheinfo", `100644,${blob},pnpm-lock.yaml`]);
+      const commit = f.git(["commit-tree", f.git(["write-tree"]), "-p", f.first, "-p", parent, "-m", "Merge"]);
+      f.git(["push", "-q", "--force", f.bare, `${head}:refs/heads/pr`, `${commit}:refs/pull/42/merge`]);
+      f.git(["read-tree", "HEAD"]);
+    };
+    const gateMerge = () => run(gate, ["--merge", "42", "--no-install", "beelink2", url, head, "--", "true"], { env: { ...f.env, FAKE_GH_HEAD: head } });
+
+    merge("BROKEN\n");
+    const broken = gateMerge();
+    assert.equal(broken.status, 1, broken.stderr);
+    assert.match(broken.stderr, /checking the lockfile of #42's merge commit/);
+    assert.match(broken.stderr, /ERR_PNPM_BROKEN_LOCKFILE/);
+    assert.equal(existsSync(calls), false, "a broken merge lockfile merged");
+
+    merge("lockfileVersion: '9.0'\n", f.second);
+    const stale = gateMerge();
+    assert.equal(stale.status, 75, stale.stderr);
+    assert.match(stale.stderr, /TEMPFAIL .*#42's merge ref is unfetchable or not yet at the gated commit/);
+    assert.equal(existsSync(calls), false, "a stale merge ref merged");
+
+    merge("lockfileVersion: '9.0'\n");
+    const sound = gateMerge();
+    assert.equal(sound.status, 0, sound.stderr);
+    assert.match(sound.stderr, /beelink-gate: merged #42 1{40} by drewstone/);
+    assert.match(readFileSync(f.pnpmLog, "utf8"), /install --frozen-lockfile --lockfile-only --ignore-scripts/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 // An SSH-placed GTR gate runs in a non-login shell without ~/bin or ~/.local/bin on PATH (2026-10-26:
 // "setsid: failed to execute storage-lifecycle"). The gate's own resolver must still find the installed command.
 test("the GTR gate finds the installed storage-lifecycle when PATH does not have it", () => {

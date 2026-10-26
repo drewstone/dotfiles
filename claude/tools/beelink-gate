@@ -1527,9 +1527,9 @@ PYTURBO
     echo "beelink-gate: LIGHT GATE OVER BUDGET: the command used ${cpu_s} core-seconds of the ${light_cpu} it declared; run it as a normal gate" >&2
     status=1
   fi
+  [ "$status" -ne 0 ] || { check_merge_lockfile; status=$?; }
   if [ "$status" -eq 0 ] && [ "$install_mode" = ship ]; then
-    run_preview
-    status=$?
+    run_preview; status=$?
     [ "$status" -ne 0 ] || publish_proof
   fi
   exit "$status"
@@ -2126,7 +2126,7 @@ if [ -n "$merge_pr" ]; then
   [ "$install_mode" != ship ] || die "--merge cannot be combined with --ship"
   { [ "$#" -ge 5 ] && [ "$4" = -- ]; } || die "$usage"
   merge_repo=$(github_repo "$2") || die "--merge needs a GitHub repo URL, not $2"
-  merge_sha=$3
+  merge_sha=$3; export BEELINK_GATE_PR=$merge_pr  # the gate checks this PR's merge commit (check_merge_lockfile)
 fi
 if [ -n "$retry_minutes" ] || [ "$summary" = 1 ] || [ -n "$merge_pr" ]; then
   run_wrapped "$retry_minutes" "$summary" ${launch_options[@]+"${launch_options[@]}"} "$@"

@@ -3,11 +3,9 @@
 # Sourced by beelink-gate and bundled into its staged source; never run alone.
 gate_shared_turbo_install=1
 
-# The package-manager version the repo's own CI installs with: package.json
-# packageManager (what corepack and the setup actions read), else the version
-# pinned on that manager's setup action in a workflow or a composite action
-# (.github/actions/*/action.yml), where repos keep their one shared setup step.
-# Only an exact x.y.z is used.
+# The package-manager version the repo's own CI installs with: package.json packageManager (what corepack and the
+# setup actions read), else the version pinned on that manager's setup action in a workflow or a composite action
+# (.github/actions/*/action.yml), where repos keep their one shared setup step. Only an exact x.y.z is used.
 repo_manager_version() {  # <manager> <setup action> <action version key>
   local manager=$1 action=$2 key=$3 version
   version=$(node -e 'const m = new RegExp("^" + process.argv[1] + "@([^+]+)").exec(require("./package.json").packageManager || ""); if (m) console.log(m[1])' "$manager" 2>/dev/null)
@@ -31,11 +29,9 @@ repo_pnpm_version() { repo_manager_version pnpm pnpm/action-setup version; }
 gate_mise_version=2026.7.11
 gate_mise_sha256_x64=d31578a16ae2708385249b439c95533068e04b9507a118e905aa6768905671fc
 
-# Repos that declare checks' tools in mise.toml (actionlint, zizmor, ...) run
-# them through `mise exec`, and no Beelink account has mise. Install exactly
-# the tools the repo declares, with mise's data, cache and state under the
-# checkout's .git so they stay inside the gate cache cap, and keep the host's
-# global mise config out of it.
+# Repos that declare checks' tools in mise.toml (actionlint, zizmor, ...) run them through `mise exec`, and no Beelink
+# account has mise. Install exactly the tools the repo declares, with mise's data, cache and state under the
+# checkout's .git so they stay inside the gate cache cap, and keep the host's global mise config out of it.
 install_mise_tools() {
   [ "$(uname -m)" = x86_64 ] || die "mise.toml: beelink-gate pins mise for x86_64 only, not $(uname -m)"
   local dir="$checkout/.git/beelink-gate-bin" mise_root="$checkout/.git/beelink-gate-mise" bin have
@@ -58,10 +54,9 @@ install_mise_tools() {
 
 has_bun_lock() { [ -f bun.lock ] || [ -f bun.lockb ]; }
 
-# Install and run with the repo's Bun: the Beelink accounts carry none, and a
-# host-wide Bun would drift from the version CI pins. npm publishes Bun's
-# binaries, so npx fetches that exact version once into its cache; the shim
-# links the binary itself, so nested `bun --filter` scripts pay no npx start.
+# Install and run with the repo's Bun: the Beelink accounts carry none, and a host-wide Bun would drift from the
+# version CI pins. npm publishes Bun's binaries, so npx fetches that exact version once into its cache; the shim links
+# the binary itself, so nested `bun --filter` scripts pay no npx start.
 install_bun_dependencies() {
   local want have bin
   want=$(repo_manager_version bun oven-sh/setup-bun bun-version) \
@@ -85,9 +80,8 @@ install_bun_dependencies() {
   echo "beelink-gate: frozen Bun $want install completed" >&2
 }
 
-# Corepack owns the repository's exact Yarn version/hash. The shim also keeps
-# later `yarn` commands on that version without changing host-wide shims or
-# letting Corepack add packageManager to an otherwise unchanged repository.
+# Corepack owns the repository's exact Yarn version/hash. The shim also keeps later `yarn` commands on that version
+# without changing host-wide shims or letting Corepack add packageManager to an otherwise unchanged repository.
 prepare_yarn_launcher() {
   local corepack_bin
   corepack_bin=$(command -v corepack) || die "corepack unavailable on beelink for Yarn"
@@ -118,11 +112,9 @@ install_yarn_dependencies() {
   echo "beelink-gate: frozen Yarn $yarn_version install completed" >&2
 }
 
-# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm")
-# and gate_node_bin. pnpm may launch its own Node, so a gate read
-# plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3
-# (ABI 127 vs 137). Probe Yarn through its launcher too (including PnP); npm
-# uses the PATH node.
+# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm") and gate_node_bin. pnpm may launch
+# its own Node, so a gate read plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3 (ABI 127
+# vs 137). Probe Yarn through its launcher too (including PnP); npm uses the PATH node.
 resolve_gate_node() {
   local probe='process.versions.modules+" "+process.version+" "+process.execPath' out="" via=node
   if [ "${repo_manager:-}" != yarn ] && [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
@@ -143,12 +135,10 @@ resolve_gate_node() {
 }
 
 prepare_gate_dependencies() {
-  # Install and run with the repo's Node (.nvmrc), as its CI does, so the install
-  # and the command load the same native addon ABI. pnpm keys a native package's
-  # build on the Node that installs it: agent-app#1036 installed under
-  # the beelink's default Node 22, its `bash -lc` command ran under nvm's default 24,
-  # and better-sqlite3 failed with "Module did not self-register". With an nvm Node
-  # first on PATH, a login shell keeps it.
+  # Install and run with the repo's Node (.nvmrc), as its CI does, so the install and the command load the same native
+  # addon ABI. pnpm keys a native package's build on the Node that installs it: agent-app#1036 installed under the
+  # beelink's default Node 22, its `bash -lc` command ran under nvm's default 24, and better-sqlite3 failed with
+  # "Module did not self-register". With an nvm Node first on PATH, a login shell keeps it.
   if [ -s .nvmrc ]; then
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
       # shellcheck disable=SC1091
@@ -168,9 +158,8 @@ prepare_gate_dependencies() {
       echo "beelink-gate: using the login shell's node $("$login_node" -v 2>/dev/null) for the install and the command" >&2
     fi
   fi
-  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces
-  # minimumReleaseAge and pnpm 10 ignores it, so a gate on 10 passed an install
-  # that CI on 11 refused. The shim covers the install, the command and ship.sh.
+  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces minimumReleaseAge and pnpm 10 ignores
+  # it, so a gate on 10 passed an install that CI on 11 refused. The shim covers the install, the command and ship.sh.
   local want_pnpm have_pnpm repo_manager
   # This private cache directory survives git clean; never reuse another
   # revision's package-manager shim, even when its manager has changed.
@@ -191,9 +180,8 @@ prepare_gate_dependencies() {
   fi
   if [ "$install_mode" = ship ]; then
     [ -f scripts/ship.sh ] || die "--ship: $owner/$repo at ${sha:0:12} has no scripts/ship.sh"
-    # Size the test pool to the cores the host has spare: other gates and lanes
-    # share it, and a real-browser test starved beside eight workers on a host
-    # at load 50 timed out at 120 s.
+    # Size the test pool to the cores the host has spare: other gates and lanes share it, and a real-browser test
+    # starved beside eight workers on a host at load 50 timed out at 120 s.
     local cores load spare workers
     cores=$(nproc)
     load=${BEELINK_GATE_LOAD:-$(cut -d' ' -f1 /proc/loadavg)}
@@ -257,10 +245,9 @@ prepare_gate_dependencies() {
   fi
 }
 
-# The reserve a receipt records is the 10 GiB headroom plus the most this gate's
-# own bytes grew since just before its fetch (gate_bytes); host free space also
-# moves with other lanes' writes and decides only the floor. A measurement that
-# fails records the cold reserve, never less.
+# The reserve a receipt records is the 10 GiB headroom plus the most this gate's own bytes grew since just before its
+# fetch (gate_bytes); host free space also moves with other lanes' writes and decides only the floor. A measurement
+# that fails records the cold reserve, never less.
 observe_install_reserve() {  # <when>
   (( install_reserve_bytes > 0 )) || return 0
   local now started grown observed
@@ -302,19 +289,16 @@ start_disk_observation() {
   fi
 }
 
-# Gate end order: the end store scan while this gate still owns the checkout,
-# then the checkout release, then the observer's final sample and collect, so
-# the receipt covers release but never the global cache reclaim that follows.
+# Gate end order: the end store scan while this gate still owns the checkout, then the checkout release, then the
+# observer's final sample and collect, so the receipt covers release but never the global cache reclaim that follows.
 release_checkout_before_reclaim() {
   finish_disk_scan
   release_gate_turbo_cache
   local boundary=before_checkout_release
   if [ "$watchdog" != 1 ] && cd "$cache_root"; then
-    # Release before global cache work; the next gate owns the checkout and holder.
-    # Claim the release only when the held lock was actually unlocked: a missing
-    # descriptor or a failed unlock keeps the lock, skips reclaim and fails closed.
-    # The holder goes first, while this gate still owns the lock, so it never
-    # deletes the next gate's record.
+    # Release before global cache work; the next gate owns the checkout and holder. Claim the release only when the
+    # held lock was actually unlocked: a missing descriptor or a failed unlock keeps the lock, skips reclaim and fails
+    # closed. The holder goes first, while this gate still owns the lock, so it never deletes the next gate's record.
     rm -f "$lock.holder"
     if [ -n "${lock_fd:-}" ] && flock -u "$lock_fd"; then
       lock_released=1 boundary=after_checkout_release_before_cache_reclaim
@@ -353,4 +337,17 @@ finish_disk_observation() {
     export BEELINK_GATE_DISK_OBSERVATION
     kill -0 "$disk_pid" 2>/dev/null || rm -rf -- "$disk_dir"
   fi
+}
+
+# A PR's merge result must install: #14798 merged a lockfile pnpm could not read past a green gate (10-26 sweep #12).
+# GitHub's merge ref is checked out beside the checkout; a broken lockfile is red, an unfetchable or stale ref is 75.
+check_merge_lockfile() {
+  [ -n "$gate_pr" ] && [ -f pnpm-lock.yaml ] || return 0
+  local tree="$checkout/.git/beelink-gate-merge" ref=refs/beelink-gate/merge rc
+  step timeout 120 git fetch -q origin "+refs/pull/$gate_pr/merge:$ref" && [ "$(git rev-parse "$ref^2" 2>/dev/null)" = "$(git rev-parse HEAD)" ] \
+    || { tempfail_line "$(utc_in_minutes 5)" "#$gate_pr's merge ref is unfetchable or not yet at the gated commit"; return "$TEMPFAIL"; }
+  git -c core.sparseCheckout=false worktree add -q -f --detach "$tree" "$ref" || return "$TEMPFAIL"
+  echo "beelink-gate: checking the lockfile of #$gate_pr's merge commit $(git rev-parse --short "$ref")" >&2
+  step env -C "$tree" pnpm install --frozen-lockfile --lockfile-only --ignore-scripts --store-dir "$HOME/.local/share/pnpm/store"; rc=$?
+  git worktree remove -f "$tree"; return "$rc"
 }
