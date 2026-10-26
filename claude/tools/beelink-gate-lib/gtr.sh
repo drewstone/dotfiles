@@ -80,7 +80,10 @@ gtr_gate() {  # <command>...
   fi
   pid=$!
   local saved_traps; saved_traps=$(trap -p TERM INT HUP)
-  trap 'kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; wait "$pid"; rm -f "$log"; exit 143' TERM INT HUP
+  # A stop goes to the gate under run-lane, which then records its receipt and removes its clone; run-lane
+  # sees it fail and releases the lease. TERM to run-lane itself kept the lease (it releases only on a
+  # known outcome) and leaked 17.3 GB of the gate lane on 10-26. The SSH path has no child here: ssh stops.
+  trap 'pkill -TERM -P "$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; wait "$pid"; rm -f "$log"; exit 143' TERM INT HUP
   while kill -0 "$pid" 2>/dev/null; do
     # Once GTR admits the gate, its FIFO places on the Beelinks go to the gates behind it.
     if [ -n "${checkout_reservation_dir:-}" ] && grep -q "^beelink-gate: $GTR_HOST admitted" "$log"; then
