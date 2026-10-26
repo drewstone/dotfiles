@@ -6,6 +6,7 @@
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PSK_FILE="${WIFI_PSK_FILE:-}"
 REPLACE_PSK="${REPLACE_PSK:-0}"
+WIFI_BAND="${WIFI_BAND:-}"
 NM_CONF=/etc/NetworkManager/conf.d/zz-wifi-powersave-off.conf
 
 # -e no: nmcli -g escapes colons and backslashes in values, which breaks
@@ -116,6 +117,14 @@ wifi_replace_psk() {
   load_psk && nm_store_psk "$u"
 }
 
+# The band applies at the next activation, so the profile reconnects now; on a failure it
+# goes back to any band, keeping a remote box reachable.
+wifi_set_band() {
+  nm_set "$1" 802-11-wireless.band "$WIFI_BAND" && as_root nmcli connection up uuid "$1" >/dev/null && return 0
+  nm_set "$1" 802-11-wireless.band "" && as_root nmcli connection up uuid "$1" >/dev/null
+  return 1
+}
+
 install_nm_conf() {
   root_install 0644 "$HOST_DIR/wifi/zz-wifi-powersave-off.conf" "$NM_CONF" &&
     as_root nmcli general reload conf
@@ -139,7 +148,7 @@ module_wifi() {
   fi
   ensure "$NM_CONF" root_file_is 0644 "$HOST_DIR/wifi/zz-wifi-powersave-off.conf" "$NM_CONF" -- install_nm_conf
   want_root_file 0755 "$HOST_DIR/wifi/wifi-watchdog" /usr/local/sbin/wifi-watchdog
-  local unit
+  local unit u
   for unit in wifi-watchdog.service wifi-watchdog.timer; do
     ensure "/etc/systemd/system/$unit" root_file_is 0644 "$HOST_DIR/wifi/$unit" "/etc/systemd/system/$unit" -- install_wifi_unit "$unit"
   done
@@ -156,6 +165,10 @@ module_wifi() {
       if wifi_psk_is_stored && { [ -n "$WIFI_PSK_FILE" ] || { [ "$REPLACE_PSK" = 1 ] && ! checking; }; }; then
         ensure "'$WIFI_SSID' holds the passphrase $from" wifi_psk_matches -- wifi_replace_psk
       fi
+      # GTR 2026-10-26: both outages were a firmware reset, then a reassociation to the
+      # DFS 5640 MHz access point that timed out its handshake; 2.4 GHz has no DFS channels.
+      u="$(wifi_uuid_for_ssid "$WIFI_SSID")"
+      [ -z "${WIFI_BAND_SET:-}" ] || ensure "'$WIFI_SSID' band ${WIFI_BAND:-any}" nm_prop_is "$u" 802-11-wireless.band "$WIFI_BAND" -- wifi_set_band "$u"
     fi
   fi
 

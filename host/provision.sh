@@ -25,6 +25,7 @@
 #   --wifi-psk-file FILE   read its passphrase from FILE (/dev/stdin works);
 #                          without it the wifi module asks on the terminal
 #   --replace-psk          replace a different passphrase the profile stores
+#   --wifi-band bg|a|any   pin --wifi-ssid's profile to 2.4 GHz (bg) or 5 GHz (a)
 #   --no-autologin         GDM waits for a person to log in (desktop); by
 #                          default it logs this user in at boot
 #   --list                 print the module names and exit
@@ -64,6 +65,7 @@ while [ $# -gt 0 ]; do
     --wifi-ssid) WIFI_SSID="${2:?--wifi-ssid needs an SSID}"; shift ;;
     --wifi-psk-file) WIFI_PSK_FILE="${2:?--wifi-psk-file needs a file}"; shift ;;
     --replace-psk) REPLACE_PSK=1 ;;
+    --wifi-band) WIFI_BAND="${2:?--wifi-band needs bg, a or any}"; [ "$WIFI_BAND" != any ] || WIFI_BAND=""; WIFI_BAND_SET=1; shift ;;
     --no-autologin) AUTOLOGIN=0 ;;
     --list) printf '%s\n' "${ALL_MODULES[@]}"; exit 0 ;;
     -h | --help) usage; exit 0 ;;
