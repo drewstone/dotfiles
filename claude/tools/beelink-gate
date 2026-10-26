@@ -1710,9 +1710,9 @@ choose_beelink() {
     # load wait. Keep probing rather than queue on an overloaded host while
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
-    # Past the wait budget, a host that cannot start the gate now (full slots, over its load limit) loses to a
-    # sandbox: overloaded hosts kept ranking "best", so waiting gates looped back to them and never left.
-    if (( best_rank >= 2 )) && sandbox_due; then echo sandbox; return 0; fi
+    # Past the wait budget, a host that cannot start the gate now, or already gave a placement back, loses to a
+    # sandbox: probes kept ranking a free slot admission refused (agent-sdk sent back 4 times in 9m44s, 10-26).
+    if (( best_rank >= 2 || placements > 0 )) && sandbox_due; then echo sandbox; return 0; fi
     if [ -n "$best" ]; then
       check_checkout_reservations
       [ -z "${checkout_reservation_lost[$best]:-}" ] || continue
@@ -1728,7 +1728,7 @@ choose_beelink() {
       # The probe line leads with load and the admission mode (host-psi); a disk-floor
       # refusal read as CPU pressure on 10-25. Name each host's actual reason first.
       echo "beelink-gate: refused because beelink1: $(refusal_reason "${seen[beelink1]:-}"); beelink2: $(refusal_reason "${seen[beelink2]:-}")" >&2
-      if [ "$sandbox_off" = 0 ]; then echo sandbox; return 0; fi
+      if sandbox_ready; then echo sandbox; return 0; fi
       # The earliest time either refusing host names.
       next=$(printf '%s\n' "$(field next "${seen[beelink1]:-}")" "$(field next "${seen[beelink2]:-}")" | grep -E '^[0-9]{4}-' | sort | head -1)
       tempfail "${next:-$(utc_in_minutes 5)}" "no beelink can start this gate"
@@ -2267,7 +2267,8 @@ run_cancelable() {
 # has waited BEELINK_GATE_SANDBOX_AFTER (default 5m), runs the same command on a Tangle sandbox.
 sandbox_after=$(seconds_of "${BEELINK_GATE_SANDBOX_AFTER:-5m}") || die "invalid BEELINK_GATE_SANDBOX_AFTER"
 sandbox_off=$([ "$requested" = auto ] && [ "${BEELINK_GATE_SANDBOX:-1}" != 0 ] && echo 0 || echo 1)
-sandbox_due() { [ "$sandbox_off" = 0 ] && (( SECONDS - launched >= sandbox_after )); }
+sandbox_ready() { [ "$sandbox_off" = 0 ] && (( SECONDS >= sandbox_next )); }
+sandbox_due() { sandbox_ready && (( SECONDS - launched >= sandbox_after )); }
 run_sandbox() {
   # Checkout reservations stay up: when no box can start, the gate keeps its place on the Beelinks.
   local receipt rc host row node_pid
@@ -2313,13 +2314,13 @@ PY
 # placements it re-execs itself, keeping its wait, once the installed gate source has changed.
 gate_source_digest() { cat "$gate_source_root/beelink-gate" "$gate_source_root"/beelink-gate-lib/*.sh "$gate_source_root"/beelink_gate_*.py "$gate_source_root"/beelink_gate_*.mjs 2>/dev/null | cksum; }
 launch_digest=$(gate_source_digest)
-launched=$((SECONDS - ${BEELINK_GATE_LAUNCH_WAIT:-0})) placements=0
-unset BEELINK_GATE_LAUNCH_WAIT
+launched=$((SECONDS - ${BEELINK_GATE_LAUNCH_WAIT:-0})) placements=${BEELINK_GATE_LAUNCH_PLACEMENTS:-0} sandbox_next=0
+unset BEELINK_GATE_LAUNCH_WAIT BEELINK_GATE_LAUNCH_PLACEMENTS
 while :; do
   if [ "$(gate_source_digest)" != "$launch_digest" ]; then
-    echo "beelink-gate: the installed gate source changed; restarting this launcher on it, keeping its $((SECONDS - launched))s wait" >&2
+    echo "beelink-gate: the installed gate source changed; restarting this launcher on it, keeping its $((SECONDS - launched))s wait and $placements given-back placements" >&2
     stop_checkout_reservations
-    BEELINK_GATE_LAUNCH_WAIT=$((SECONDS - launched)) exec "$BASH" "$gate_source_root/beelink-gate" "${gate_argv[@]}"
+    BEELINK_GATE_LAUNCH_WAIT=$((SECONDS - launched)) BEELINK_GATE_LAUNCH_PLACEMENTS=$placements exec "$BASH" "$gate_source_root/beelink-gate" "${gate_argv[@]}"
   fi
   frontend_phase placement_probe_wait
   case "$requested" in
@@ -2333,8 +2334,7 @@ while :; do
   if [ "$target" = sandbox ]; then
     run_sandbox "$@" && exit 0
     rc=$?; [ "$rc" = "$TEMPFAIL" ] && [ "$requested" = auto ] || exit "$rc"
-    sandbox_off=1
-    echo "beelink-gate: no sandbox could start; waiting for a beelink again" >&2
+    sandbox_next=$((SECONDS + 300)); echo "beelink-gate: no sandbox could start; a beelink, or a sandbox again in 5 min" >&2
     continue
   fi
   if [ "$target" = "$GTR_HOST" ]; then

@@ -162,20 +162,20 @@ async function run(argv) {
   const lastStage = () => { try { return (readFileSync(logPath, 'utf8').match(/beelink-gate-sandbox: (\S+)[^\n]*\n(?![\s\S]*beelink-gate-sandbox: )/) || [])[1] || 'none' } catch { return 'none' } }
   let box, stopping = false
   // Delete through the platform's retire path every box carrying this gate's name: a warm create that timed out
-  // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). A failure is retried
-  // once and reported, never swallowed.
+  // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). Stop first: a busy
+  // sidecar refuses delete (503, sessions not sealed) and two quick tries left 2 of 4 boxes alive (10-26 10:45Z).
   const boxName = `${BOX_PREFIX}${id.slice(0, 12)}`
   const named = async () => (await client.list().catch(() => [])).filter((b) => b.name === boxName && b.status !== 'deleted')
   const retire = async (target) => {
-    for (const attempt of [1, 2]) {
-      try { await target.delete(); return } catch (error) { say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
+    await target.stop().catch((error) => say(`box ${target.id} stop failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`))
+    for (const attempt of [1, 2, 3, 4]) {
+      try { await target.delete(); return } catch (error) { say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
     }
     say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
   }
   const stop = async () => {
     if (box) await retire(box)
-    for (const other of await named()) {
-      if (other.id === box?.id) continue
+    for (const other of (await named()).filter((b) => b.id !== box?.id)) {
       const found = await client.get(other.id).catch(() => null)
       if (found) { say(`retiring stray box ${other.id} of this gate`); await retire(found) }
     }
