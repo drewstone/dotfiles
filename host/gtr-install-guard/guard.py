@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Refuse package installs and direct GTR worktree creates; delegate all other invocations.
 
-Installs and gates belong on a Beelink (`beelink-gate beelink1|beelink2 <repo> <sha> -- <cmd>`).
+Installs and gates belong on a Beelink (`beelink-gate auto <repo> <sha> -- <cmd>`).
 GTR is resource-constrained and shared by many agent sessions.
 
 pnpm, npm and yarn installs (including `--frozen-lockfile`, and the same through `corepack`) are
@@ -274,7 +274,7 @@ def refusal(manager: str, argv: list[str], cwd: Path):
     if any(value and inside_worktree(value, cwd) for value in candidates):
         return (f"gtr-install-guard: refused {manager} install into a GTR _wt worktree. "
                 "Run the frozen install and checks through "
-                "beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command>.")
+                "beelink-gate auto <repo-url> <full-sha> -- <command>.")
     fallback = fallback_refusal(candidates, cwd)
     if fallback:
         return fallback
@@ -288,7 +288,7 @@ def refusal(manager: str, argv: list[str], cwd: Path):
     return (f"gtr-install-guard: refused {manager} install in {root}, a checkout on GTR. Installs and gates run on "
             "a Beelink: push the commit, then from GTR run "
             "beelink-gate auto <repo-url> <full-sha> -- <command> "
-            "(the gate does the frozen install in its own cache, and on drew-gtr-pro under a storage lease when no Beelink admits it within 5 minutes). "
+            "(the gate does the frozen install in its own cache on a Beelink, or in a Tangle sandbox when no Beelink admits it within 5 minutes). "
             "Any other new clone, inside _wt or not, is a checkout too. "
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 

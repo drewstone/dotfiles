@@ -50,7 +50,7 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 | Local gate before merge (rules 8-9) | `beelink-gate --merge <pr> auto <repo-url> <sha> -- <typecheck and touched integration tests>`; not admitted on a Beelink within 5 minutes it runs in a Tangle sandbox (`BEELINK_GATE_SANDBOX=0` for gates needing nix, Docker, KVM or root); `drew-gtr-pro` gates only when named; agent-container pushes and `merge-on-green` merges |
 | Production benchmark | `pnpm --dir products/sandbox/evals exec tsx run.ts --preset full --cells eu1,us1 --target production` from `drew-gtr-pro`, keys from the tangle-devops vault; never GitHub Actions |
 | What did earlier agents already find? | `qmd search -c reviews '<terms>'`: every page under `~/reviews` on the Mac and drew-gtr-pro, refreshed hourly by `reviews-index`; read and link it before a new analysis |
-| Is X built? (rule 5) | `have <terms>`, plus `git grep` on `origin/<default>`; search a checkout with the `fff` tools first when listed |
+| Is X built? (rule 5) | `have <terms>`, plus `git grep` on `origin/<default>`; search a checkout with the `fff` tools first when listed, and `rg` for multiline or case-sensitive regexes |
 | Start, steer, stop agents (rule 3) | `fleet start`, `fleet send`, `fleet stop`; `acct status` for seat room |
 | Research (rule 4) | Discovery: `disco run` |
 | Agent-app work (rule 4) | `agent-ask` |
