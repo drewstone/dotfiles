@@ -44,6 +44,9 @@ test("repairs worktree metadata before checking out a claimed branch", () => {
       cwd: repo,
     });
     assert.equal(result.status, 0, result.stderr);
+    // A ready seed is one whose bootstrap finished; prepare_tree records that in its git dir.
+    const seedGitDir = run("git", ["rev-parse", "--absolute-git-dir"], { cwd: seed }).stdout.trim();
+    writeFileSync(join(seedGitDir, "adc-wt-bootstrapped"), "");
 
     mkdirSync(fakeBin, { recursive: true });
     const fakePnpm = join(fakeBin, "pnpm");
