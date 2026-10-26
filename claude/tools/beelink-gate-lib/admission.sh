@@ -148,6 +148,7 @@ acquire_slot() {
     admission_stage checks
     admit_release_priority "$beelink"
     blocked=fifo
+    [ "${urgent:-0}" != 1 ] || touch "$marker.$$"
     if [ "${urgent:-0}" = 1 ] || ! urgent_ahead "$marker"; then
       blocked=host_slot
       for ((i = 0; i < max; i++)); do
@@ -249,6 +250,12 @@ acquire_checkout_admission() {
   # not hold the repo's checkout. One ADC gate held it for 1766s of
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
+  # From here the gate competes for a checkout: keep its ticket (and urgent marker) fresh wherever a pass
+  # blocks, capacity-writer waits and release lookups included. Only fresh entries hold a free checkout.
+  local fresh=("$ticket"); (( ! urgent )) || fresh+=("$urgent_marker.$$")
+  touch "${fresh[@]}"
+  # touch -c never recreates a ticket the gate's exit already removed; the loop ends with its gate.
+  ( while sleep 10; do kill -0 $$ 2>/dev/null && [ -e "$ticket" ] || exit 0; touch -c "${fresh[@]}"; done ) & local refresher=$!
   while [ -z "$lock" ]; do
     admission_stage checks
     admit_release_priority "$beelink"
@@ -323,6 +330,7 @@ acquire_checkout_admission() {
     admission_stage "$checkout_wait_stage"
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
+  kill "$refresher" 2>/dev/null; wait "$refresher" 2>/dev/null
   exec {capacity_fd}>&-
   exec {writer_fd}>&-
   rm -f "$urgent_marker.$$" "$ticket"
@@ -586,7 +594,8 @@ older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tick
   # reservation ticket and its own, under one token. Every gate compares those same
   # pairs, so two gates can never each count the other as ahead.
   local t rest since pid token key me_since=$2 me_pid=$$ n=0
-  local -A key_since=() key_pid=()
+  local -A key_since=() key_pid=() key_ready=()
+  local now; now=$(date +%s)
   for t in "$1".*.*; do
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
@@ -599,22 +608,31 @@ older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tick
     fi
     if ! waiter_alive "$t" "$pid"; then rm -f "$t"; continue; fi
     key=${token:-$pid}
+    # Only a gate polling for a checkout now holds one free: its claim loop refreshes the ticket.
+    # A ticket left while its gate waits for load, or an auto reservation whose gate waits or runs
+    # on the other host, kept beelink2's free discovery-lab checkout empty for 15 min on 10-26.
+    (( $(stat -c %Y "$t" 2>/dev/null || echo 0) >= now - 30 )) && key_ready[$key]=1
     if [ -z "${key_since[$key]:-}" ] || (( since < key_since[$key] || (since == key_since[$key] && pid < key_pid[$key]) )); then
       key_since[$key]=$since key_pid[$key]=$pid
     fi
   done
   for key in "${!key_since[@]}"; do
+    [ -n "${key_ready[$key]:-}" ] || continue
     if (( key_since[$key] < me_since || (key_since[$key] == me_since && key_pid[$key] < me_pid) )); then n=$((n + 1)); fi
   done
   echo "$n"
 }
 # An urgent gate leaves a marker while it waits; every other gate waiting for the same thing steps aside.
-urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate
-  local m pid
+urgent_ahead() {  # <marker prefix>: a live urgent waiter other than this gate, polling here now
+  local m pid now
+  now=$(date +%s)
   for m in "$1".*; do
     [ -e "$m" ] || continue
     pid=${m##*.}
     [ "$pid" != "$$" ] || continue
+    # An urgent auto gate's reservation marker on a host it is not polling held both free agent-container
+    # checkouts on beelink1 for 33 min (10-26 07:55Z); like FIFO tickets, only a refreshed marker counts.
+    (( $(stat -c %Y "$m" 2>/dev/null || echo 0) >= now - 30 )) || continue
     if waiter_alive "$m" "$pid"; then return 0; fi
     rm -f "$m"  # left by a gate that died
   done
