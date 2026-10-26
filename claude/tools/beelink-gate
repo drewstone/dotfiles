@@ -1250,7 +1250,7 @@ remote_gate() {
   lock=""
   acquire_checkout_admission
   started=$SECONDS display=""
-  timing_file="" timing_phase=precheck fetch_s="" pre_command_s="" command_s="" cleanup_s=""
+  timing_file="" fetch_s="" pre_command_s="" command_s="" cleanup_s=""
   local deadline=$((SECONDS + max_hold))
   printf -v display '%q ' "${command[@]}"
   # Each step is its own process group (timeout's), bounded by the remaining
@@ -1288,7 +1288,6 @@ remote_gate() {
     local status=$?
     trap - EXIT
     local cleanup_started=$SECONDS
-    timing_phase=cleanup
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
     reap_leftovers
     # Snapshot this command's summaries before releasing or evicting its checkout.
@@ -1379,9 +1378,8 @@ PYTURBO
       rm -rf -- "$checkout" || exit $?
     fi
   fi
-  # This gate's own precheck prune may evict its checkout and a partial cache is
-  # rebuilt: it then clones, so a warm admission is judged again on the cold
-  # reserve before anything is fetched.
+  # A partial cache was just rebuilt: the gate clones, so a warm admission is
+  # judged again on the cold reserve before anything is fetched.
   if [ ! -d "$checkout/.git" ] && [ -n "$admitted_shape" ]; then
     admitted_shape=""
     if [ "$reserve_heat" = warm ]; then
@@ -1636,7 +1634,7 @@ TRANSPORT_KILL_GRACE_SECONDS=2
 STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
 
 if [ "${1:-}" = --disk-floor-bytes ]; then disk_floor_query "$@"; exit $?; fi
-if [ "${1:-}" = --prune-cache ]; then prune_cache "$2" "" "$3"; exit $?; fi
+if [ "${1:-}" = --prune-cache ]; then while rm -- "$2/.locks/prune-requested" 2>/dev/null; do prune_cache "$2" "" "$3"; done; exit 0; fi
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
