@@ -7,7 +7,6 @@ limits_file() { echo "${BEELINK_GATE_LIMITS_FILE:-${XDG_CONFIG_HOME:-$HOME/.conf
 pressure_file() { echo "${BEELINK_GATE_HOST_PRESSURE:-/proc/pressure/cpu}"; }
 loadavg_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
 metric_name() { echo 'host CPU pressure (some avg10)'; }
-limit_basis() { echo "% host some avg10 in $(pressure_file)"; }
 gate_slice() {
   if [ "${dev:-${BEELINK_GATE_CLASS:-}}" = 1 ] || [ "${BEELINK_GATE_CLASS:-}" = dev ]; then echo beelinkgate-dev.slice
   else echo beelinkgate-normal.slice; fi
@@ -17,44 +16,6 @@ cgroup_root() { echo "${BEELINK_GATE_CGROUP_ROOT:-/sys/fs/cgroup}"; }
 self_cgroup_file() { echo "${BEELINK_GATE_SELF_CGROUP:-/proc/self/cgroup}"; }
 gate_cgroup() { echo "$(cgroup_root)/beelinkgate.slice/$(gate_slice)"; }
 
-# Missing old groups are drained; unreadable or malformed recursive kernel
-# population evidence cannot release this transitional cap handoff.
-legacy_gate_drained() {
-  local group=beelink-gate
-  [ "$(gate_slice)" != beelinkgate-dev.slice ] || group="beelink-gate-dev"
-  local status=0
-  python3 - "$group" <<'PY'
-import os, pathlib, sys
-path = pathlib.Path(os.environ.get('BEELINK_GATE_CGROUP_ROOT', '/sys/fs/cgroup'), sys.argv[1])
-try:
-    path.stat()
-except FileNotFoundError:
-    sys.exit(0)
-except OSError:
-    sys.exit(2)
-try:
-    lines = [line.split() for line in (path / 'cgroup.events').read_text().splitlines()]
-    values = [value for key, value in lines if key == 'populated']
-    if len(values) != 1 or values[0] not in ('0', '1'):
-        raise ValueError()
-    sys.exit(int(values[0]))
-except (OSError, ValueError):
-    sys.exit(2)
-PY
-  status=$?
-  [ "$status" = 0 ] || return "$status"
-  legacy_user_gate_units_drained
-}
-require_legacy_gate_drained() {
-  local status=0
-  legacy_gate_drained || status=$?
-  [ "$status" = 0 ] || {
-    admission_outcome=refused admission_reason=legacy_gate_unknown
-    [ "$status" != 1 ] || admission_reason=legacy_gate_live
-    tempfail_line "$(utc_in_minutes 5)" "legacy gate class has not proved drained (status=$status); no new managed work"
-    return 75
-  }
-}
 
 verify_gate_unit() {
   local expected actual
@@ -84,14 +45,9 @@ try:
                                     capture_output=True, text=True, timeout=3)
         if configured.returncode or configured.stdout.strip() != str(policy['io_weight']):
             raise ValueError()
-    try:
-        weights = dict(line.split() for line in (root/'io.weight').read_text().splitlines())
-        if int(weights['default']) != policy['io_weight']:
-            raise ValueError()
-    except FileNotFoundError:
-        if os.path.lexists(root/'io.weight') or not all((root/name).is_file() for name in ('io.stat', 'io.pressure')):
-            raise ValueError()
-        print('beelink-gate: UNSUPPORTED kernel io.weight; systemd IOWeight configured, device enforcement unproved', file=sys.stderr)
+    # The Beelinks' WSL2 kernel has no io.weight: systemd IOWeight is configured, device enforcement is unproved.
+    if not all((root/name).is_file() for name in ('io.stat', 'io.pressure')):
+        raise ValueError()
     group = root / sys.argv[1]
     memory_key = 'dev_memory_bytes' if sys.argv[1] == 'beelinkgate-dev.slice' else 'normal_memory_bytes'
     if int((group/'memory.max').read_text()) != policy[memory_key]:
@@ -153,7 +109,6 @@ max_cpu_pressure() {
   fi
   echo "$maximum"
 }
-load_limit() { max_cpu_pressure; }
 host_pressure_now() {
   python3 - "$(pressure_file)" <<'PY'
 import math, pathlib, re, sys
@@ -167,7 +122,6 @@ except (OSError, ValueError, KeyError, StopIteration):
     sys.exit(1)
 PY
 }
-load_now() { host_pressure_now || echo 100; }
 over_limit() {
   awk -v cur="$1" -v cap="$2" 'BEGIN { exit !(cur + 0 > cap + 0) }'
   [ "$?" -ne 1 ]
@@ -195,7 +149,6 @@ wait_for_load() {
   while :; do
     admission_stage checks
     admit_release_priority "$beelink"
-    require_legacy_gate_drained || return 75
     sample=$(host_psi_admission) || return 75
     if [ -n "${deadline:-}" ] && (( SECONDS >= deadline )); then
       timed_out=1
@@ -304,4 +257,66 @@ gate_worker_budget() {
   local each=$(( $(nproc) / running ))
   (( each >= 2 )) || each=2
   echo "$each"
+}
+
+# A gate's containers are its work (one wrote 23 GB/h into the daemon's user.slice, 10-26): its own Docker socket gives
+# create an unset cgroup parent under the gate slice, outside class caps that a fixture left running would starve.
+# Connection: close keeps one request per connection, so only its head is parsed and the rest is spliced untouched.
+gate_docker_socket() {
+  local sock="${XDG_RUNTIME_DIR:-/tmp}/beelink-gate-docker-${gate_id#*-}.sock" fd
+  [ -n "$gate_cgroup_joined" ] && [ -w /var/run/docker.sock ] || return 0
+  [ "${DOCKER_HOST:-unix:///var/run/docker.sock}" = unix:///var/run/docker.sock ] || { echo "beelink-gate: DOCKER_HOST is $DOCKER_HOST; gate containers keep its cgroup" >&2; return 0; }
+  ( for fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do exec {fd}>&-; done
+    exec python3 - "$sock" "beelinkgate-docker-g${gate_id#*-}.slice" <<'PY'
+import asyncio, json, os, re, signal, sys
+listen, parent = sys.argv[1], sys.argv[2].encode()
+signal.signal(signal.SIGTERM, lambda *_: (os.unlink(listen), os._exit(0)))  # the unit's stop removes the socket
+
+async def pipe(reader, writer):
+    while data := await reader.read(1 << 16):
+        writer.write(data); await writer.drain()
+    writer.write_eof()
+
+async def serve(client_r, client_w):
+    up_w = None
+    try:
+        up_r, up_w = await asyncio.open_unix_connection('/var/run/docker.sock', limit=1 << 20)
+        lines = (await client_r.readuntil(b'\r\n\r\n'))[:-4].split(b'\r\n')
+        fields = {k.strip().lower(): v.strip() for k, _, v in (line.partition(b':') for line in lines[1:])}
+        upgrade = b'upgrade' in fields.get(b'connection', b'').lower()
+        method, target, version = lines[0].split(b' ')
+        create = method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target) and b'content-length' in fields
+        drop = ((b'content-length',) if create else ()) + (() if upgrade else (b'connection',))
+        lines = [line for line in lines if line.partition(b':')[0].strip().lower() not in drop] + [b'Connection: close'][upgrade:]
+        body = await client_r.readexactly(int(fields[b'content-length'])) if create else b''
+        if create:
+            try:
+                spec = json.loads(body)
+                host = spec.get('HostConfig') or {}
+                spec['HostConfig'] = {**host, 'CgroupParent': host.get('CgroupParent') or parent.decode()}
+                body = json.dumps(spec).encode()
+            except (ValueError, AttributeError, TypeError):
+                pass  # not a JSON object: the daemon answers it as sent
+            lines.append(b'Content-Length: %d' % len(body))
+        up_w.write(b'\r\n'.join(lines) + b'\r\n\r\n' + body)
+        upstream = asyncio.ensure_future(pipe(client_r, up_w))
+        await pipe(up_r, client_w)
+        await upstream if upgrade else upstream.cancel()
+    except Exception:
+        pass
+    finally:
+        for writer in (client_w, up_w):
+            writer and writer.close()
+
+async def main():
+    server = await asyncio.start_unix_server(serve, path=listen + '.new', limit=1 << 20)
+    os.chmod(listen + '.new', 0o600)
+    os.rename(listen + '.new', listen)  # appears only once it accepts
+    await server.serve_forever()
+
+asyncio.run(main())
+PY
+  ) </dev/null >/dev/null 2>&1 &
+  local i; for i in $(seq 50); do [ -S "$sock" ] && break; sleep 0.1; done
+  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" || echo "beelink-gate: gate Docker socket did not start; containers keep the daemon's cgroup" >&2
 }

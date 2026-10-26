@@ -98,7 +98,9 @@ function fixture() {
   mkdirSync(join(host, "self"));
   writeFileSync(join(host, "resource-policy.json"), JSON.stringify(policy), { mode: 0o644 });
   writeFileSync(join(slices, "cpu.weight"), "100\n");
-  writeFileSync(join(slices, "io.weight"), "default 100\n");
+  // The Beelinks' WSL2 kernel exposes io.stat and io.pressure but no io.weight.
+  writeFileSync(join(slices, "io.stat"), "");
+  writeFileSync(join(slices, "io.pressure"), "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
   writeFileSync(join(slices, "beelinkgate-normal.slice", "memory.max"), `${policy.normal_memory_bytes}\n`);
   writeFileSync(join(slices, "beelinkgate-normal.slice", "cpu.max"), `${cpus().length * policy.normal_cpu_percent_per_host_cpu * 1000} 100000\n`);
   writeFileSync(join(slices, "beelinkgate-dev.slice", "memory.max"), `${policy.dev_memory_bytes}\n`);
@@ -3132,6 +3134,9 @@ test("--report counts a renamed repo under its current name and marks a missing 
     // GitHub resolves the old name to the new one; search answers 2 merged PRs.
     writeFileSync(join(f.root, "bin", "gh-drew"), '#!/usr/bin/env bash\n[[ "$*" == *repos/o/old* ]] && { echo o/r; exit 0; }\necho 2\n');
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    // The report reads GTR's receipts locally only on GTR; elsewhere it asks the fake ssh, which
+    // returns none, so beelink2 counted 4 runs. Run as GTR on every host.
+    writeFileSync(join(f.root, "bin", "hostname"), "#!/bin/sh\necho drew-GTR-Pro\n", { mode: 0o755 });
     const drops = join(f.root, "receipt-drops");
     const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_RECEIPT_DROPS: drops, BEELINK_GATE_PROBE_RETRY_SECONDS: "0" };
     writeFileSync(drops, "1\n");
