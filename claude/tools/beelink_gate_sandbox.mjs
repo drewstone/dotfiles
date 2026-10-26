@@ -142,7 +142,7 @@ async function run(argv) {
   const capacityOff = path.join(cacheDir(), 'sandbox-capacity-refused')
   if (existsSync(capacityOff) && Date.now() - statSync(capacityOff).mtimeMs < CAPACITY_BACKOFF_MS) tempfail(`platform refused a create (${readFileSync(capacityOff, 'utf8').trim().slice(0, 400)}); no create for 5 minutes`)
   // Warm source boxes hold snapshots, not gates, so they do not count toward the cap.
-  const live = (await client.list().catch(() => [])).filter((b) => b.name?.startsWith(BOX_PREFIX) && !b.name.startsWith(`${BOX_PREFIX}warm-`) && !['deleted', 'stopped', 'failed'].includes(b.status))
+  const live = (await client.list().catch((error) => tempfail(`cannot list gate boxes, so the ${MAX_LIVE}-box cap is unchecked: ${String(error.message).slice(0, 160)}`))).filter((b) => b.name?.startsWith(BOX_PREFIX) && !b.name.startsWith(`${BOX_PREFIX}warm-`) && !['deleted', 'stopped', 'failed'].includes(b.status))
   if (live.length >= MAX_LIVE) tempfail(`cap reached: ${live.length} of ${MAX_LIVE} gate boxes live`)
   const id = randomBytes(16).toString('hex')
   const gateId = `sandbox-${id}`
@@ -169,7 +169,7 @@ async function run(argv) {
   const retire = async (target) => {
     await target.stop().catch((error) => say(`box ${target.id} stop failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`))
     for (const attempt of [1, 2, 3, 4]) {
-      try { await target.delete(); return } catch (error) { say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
+      try { await target.delete(); return } catch (error) { if (error.status === 404) return; say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
     }
     say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
   }
@@ -326,7 +326,7 @@ async function listLive() {
   if (!key) return
   const { Sandbox } = await sdk()
   const client = new Sandbox({ apiKey: key, baseUrl: process.env.BEELINK_GATE_SANDBOX_URL || 'https://sandbox.tangle.tools' })
-  for (const b of await client.list().catch(() => []))
+  for (const b of await client.list())  // a failed listing is an error, never 'no boxes' (slim-ops 34f, 14:5xZ)
     if (b.name?.startsWith(BOX_PREFIX) && !['deleted', 'stopped', 'failed'].includes(b.status))
       console.log(JSON.stringify({ box: b.id, name: b.name, status: b.status, created: b.createdAt }))
 }
