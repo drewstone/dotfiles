@@ -596,7 +596,7 @@ commands never read out of the checkout by committing
 Discovery Lab does for `/pursuits/`. The gate sets the patterns before checkout and applies them to idle checkouts when
 it prunes, before evicting any, and the receipt records `sparse`. A gate refuses before fetching when
 its root filesystem is below the lifecycle admission floor explicitly exported through Tangle Tools'
-`fleet/disk_policy.py`, or a stricter local `disk_floor_gib` limit. The lifecycle installer derives the protected
+`storage_lifecycle/disk_policy.py`, or a stricter local `disk_floor_gib` limit. The lifecycle installer derives the protected
 applied export from its admission owner and validated configuration; Fleet's higher alert buffer remains advisory.
 Every account, including runners, reads only that protected publication. The installer validates private inputs
 and fences readers before a supported config change; it never requires runner access to private home/config paths. The existing
