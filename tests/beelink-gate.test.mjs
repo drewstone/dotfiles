@@ -3219,7 +3219,7 @@ test("auto takes back its place on a beelink whose checkout reservation died, on
     for (let i = 0; i < 400 && !/urgent priority reserved on both beelinks/.test(stderr); i++) await sleepMs(25);
     assert.match(stderr, /urgent priority reserved on both beelinks/);
     const reservations = spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).stdout.split("\n")
-      .filter((line) => line.includes("--urgent-reserve") && line.includes("100.98.195.7") && line.includes(f.root));
+      .filter((line) => line.includes("--urgent-reserve") && line.includes(encode("beelink1")) && line.includes(encode(f.url)));
     assert.ok(reservations.length > 0, "beelink1 reservation process found");
     for (const line of reservations) process.kill(Number(line.trim().split(/\s+/)[0]), "SIGKILL");
     for (let i = 0; i < 400 && !/beelink1 answered again; checkout place reserved/.test(stderr); i++) await sleepMs(25);
