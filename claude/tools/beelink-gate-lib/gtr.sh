@@ -41,9 +41,11 @@ PY
 gtr_gate() {  # <command>...
   local rc pid log id dir bytes q admitted flag=()
   case "$install_mode" in install|no-install) ;;
-    *) echo "beelink-gate: drew-gtr-pro runs install and --no-install gates only, not --$install_mode" >&2; return "$NOT_ADMITTED" ;; esac
+    *) [ "$requested" != "$GTR_HOST" ] || die "drew-gtr-pro runs install and --no-install gates only, not --$install_mode"
+       return "$NOT_ADMITTED" ;; esac
   if [ "${gate_class:-}" = dev ] || [ -n "${gate_branch:-}" ]; then
-    echo "beelink-gate: --dev and --branch gates stay on the Beelinks" >&2; return "$NOT_ADMITTED"
+    [ "$requested" != "$GTR_HOST" ] || die "--dev and --branch gates run on the Beelinks, not drew-gtr-pro"
+    return "$NOT_ADMITTED"
   fi
   [ "$install_mode" = install ] || flag=(--no-install)
   log=$(mktemp) || return "$NOT_ADMITTED"
@@ -63,6 +65,7 @@ gtr_gate() {  # <command>...
     ssh -n "${SSH_OPTIONS[@]}" "$GTR_HOST" "$q" 2> >(tee -a "$log" >&2) &
   fi
   pid=$!
+  local saved_traps; saved_traps=$(trap -p TERM INT HUP)
   trap 'kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; wait "$pid"; rm -f "$log"; exit 143' TERM INT HUP
   while kill -0 "$pid" 2>/dev/null; do
     # Once GTR admits the gate, its FIFO places on the Beelinks go to the gates behind it.
@@ -72,7 +75,7 @@ gtr_gate() {  # <command>...
     sleep 1
   done
   wait "$pid"; rc=$?
-  trap - TERM INT HUP
+  trap - TERM INT HUP; eval "$saved_traps"
   admitted=$(grep -c "^beelink-gate: $GTR_HOST admitted" "$log")
   # Here the gate's status is its own last line, not run-lane's exit.
   if [ "$admitted" = 0 ]; then
@@ -102,19 +105,22 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   started=$SECONDS base_sha="" gtr_status=""
   max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
   printf -v display '%q ' "${command[@]}"
+  # A lost launcher closes stderr: the receipt, the clone's removal and the status line come before any output.
   gtr_finish() {
     local status=$1 bytes
-    trap - EXIT TERM INT HUP
+    trap '' PIPE; trap - EXIT TERM INT HUP
     [ -z "$current" ] || kill -TERM "$current" 2>/dev/null
     reap_leftovers
     bytes=$(du -sb "$dir" 2>/dev/null | cut -f1)
     gtr_write_receipt "$status" "$((SECONDS - started))" "${bytes:-0}" "$base_sha" "${display% }"
     chmod -R u+w "$dir" 2>/dev/null; rm -rf -- "$dir"
     echo "beelink-gate: $GTR_HOST status=$status" >> "$log"
+    echo "beelink-gate receipt: sha=$sha install=$install_mode exit=$status duration=$((SECONDS - started))s host=$GTR_HOST class=normal gtr_bytes=${bytes:-0} gate_id=$gate_id" >&2
     exit "$status"
   }
-  trap 'gtr_finish "${gtr_status:-$?}"' EXIT
-  trap 'gtr_finish 143' TERM; trap 'gtr_finish 129' HUP; trap 'gtr_finish 130' INT
+  # A gate that ends before its command returned is never green, whatever $? says.
+  trap 's=$?; gtr_finish "${gtr_status:-$(( s ? s : 1 ))}"' EXIT
+  trap 'gtr_finish 143' TERM; trap 'gtr_finish 129' HUP; trap 'gtr_finish 130' INT; trap 'gtr_finish 141' PIPE
   # Each step is bounded by the gate's remaining hold, as on a Beelink, and its leftovers are stopped.
   step() {
     local left=$((started + max_hold - SECONDS)) rc
@@ -142,7 +148,6 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
 }
 
 gtr_write_receipt() {  # <status> <ran_s> <clone bytes> <base sha> <command>
-  echo "beelink-gate receipt: sha=$sha install=$install_mode command=$5 exit=$1 duration=$2s host=$GTR_HOST class=normal gtr_bytes=$3 gate_id=$gate_id" >&2
   mkdir -p "$STATE_DIR" && python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$sha" "$install_mode" "$5" "$1" "$2" "$3" "$4" "$gate_id" <<'PY'
 import fcntl, json, os, sys, time
 path, repo, sha, mode, command, status, ran, size, base, gate_id = sys.argv[1:]
