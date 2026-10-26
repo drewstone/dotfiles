@@ -508,7 +508,9 @@ def main() -> None:
     if manager in ("pnpm", "pnpx", "corepack"):
         try:
             admission, caches = lifecycle()
-            with caches.package_producer(admission.Config.load(), hashlib.sha256(Path(__file__).read_bytes()).hexdigest()):
+            cfg = admission.Config.load()
+            with caches.package_fence(cfg, shared=True):
+                caches.producer_owner().update(cfg, hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
                 os.execv(real, [real, *argv])
         except (OSError, RuntimeError) as error:
             print("gtr-install-guard: PNPM producer custody refused: " + str(error), file=sys.stderr)
