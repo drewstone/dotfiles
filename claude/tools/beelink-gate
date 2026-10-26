@@ -1567,6 +1567,38 @@ if [ "${1:-}" = --probe ]; then
   remote_probe "$@"
   exit $?
 fi
+# Live gates on this beelink, one JSON line each, for --queue: waiting (with the admission stage
+# it waits in) or running, and how long since the launcher first asked for it.
+if [ "${1:-}" = --queue-jobs ]; then
+  python3 - "$STATE_DIR/jobs" <<'PY'
+import datetime as dt, json, re, sys, time
+from pathlib import Path
+now = dt.datetime.now(dt.timezone.utc)
+for job in Path(sys.argv[1]).iterdir():
+    if not re.fullmatch(r"beelink[12]-[0-9a-f]{32}", job.name) or (job / "exit").exists():
+        continue
+    try:
+        pid = int((job / "gate.pid").read_text().split()[0])
+        env = dict(kv.split("=", 1) for kv in Path(f"/proc/{pid}/environ").read_bytes().decode(errors="replace").split("\0") if "=" in kv)
+        a = json.loads((job / "admission.json").read_text())
+    except (OSError, ValueError, IndexError):
+        continue
+    age = (now - dt.datetime.fromisoformat(a["began_at"])).total_seconds() if a.get("began_at") else 0
+    waiting = a.get("boundary") != "lock_slot_admitted"
+    print(json.dumps({"gate_id": job.name, "host": a.get("host"), "repo": a.get("repo"), "sha": (a.get("sha") or "")[:12],
+                      "class": a.get("class"), "lane": env.get("BEELINK_GATE_LANE", ""), "pr": env.get("BEELINK_GATE_PR", ""),
+                      "state": f"waiting:{a.get('active_stage') or 'checks'}" if waiting else "running",
+                      "waited_s": round((a.get("placed_wait_s") or 0) + (age if waiting else 0))}))
+PY
+  exit 0
+fi
+# A sandbox-placed gate's receipt, kept with this beelink's so --receipt and --report read it unchanged.
+if [ "${1:-}" = --sandbox-receipt ]; then
+  [ "$#" = 2 ] || die "invalid sandbox receipt"
+  row=$(decode "$2" | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); assert r["placement"]=="sandbox" and r["gate_id"].startswith("sandbox-") and type(r["exit"]) is int; print(json.dumps(r))') || die "invalid sandbox receipt"
+  mkdir -p "$STATE_DIR" && printf '%s\n' "$row" >> "$STATE_DIR/receipts.jsonl"
+  exit $?
+fi
 # The beelink's receipts, for --report.
 if [ "${1:-}" = --receipts ]; then
   cat "$STATE_DIR/receipts.jsonl" 2>/dev/null || exit 75
@@ -1669,6 +1701,7 @@ choose_beelink() {
       echo "beelink-gate: auto chose $best after ${waited}s (beelink1: ${seen[beelink1]:-?}; beelink2: ${seen[beelink2]:-?})" >&2
       echo "$best"; return 0
     fi
+    if sandbox_due; then echo sandbox; return 0; fi
     if [ "${seen[beelink1]:-}" = unreachable ] && [ "${seen[beelink2]:-}" = unreachable ]; then
       tempfail "$(utc_in_minutes 5)" "no beelink is reachable from $(hostname)"
     fi
@@ -1677,6 +1710,7 @@ choose_beelink() {
       # The probe line leads with load and the admission mode (host-psi); a disk-floor
       # refusal read as CPU pressure on 10-25. Name each host's actual reason first.
       echo "beelink-gate: refused because beelink1: $(refusal_reason "${seen[beelink1]:-}"); beelink2: $(refusal_reason "${seen[beelink2]:-}")" >&2
+      if [ "$sandbox_off" = 0 ]; then echo sandbox; return 0; fi
       # The earliest time either refusing host names.
       next=$(printf '%s\n' "$(field next "${seen[beelink1]:-}")" "$(field next "${seen[beelink2]:-}")" | grep -E '^[0-9]{4}-' | sort | head -1)
       tempfail "${next:-$(utc_in_minutes 5)}" "no beelink can start this gate"
@@ -1823,6 +1857,42 @@ fi
 # 1 with none, 75 when a beelink cannot be read and the others hold no row (a partial read is never "none").
 # Rows from the beelinks that answered still print with exit 0: a passing receipt is enough, and on
 # 2026-10-18 beelink2 offline for hours made every discovery-lab merge refuse despite beelink1 receipts.
+# --queue: every live gate on both beelinks and every live gate sandbox, longest wait first,
+# then one QUEUE line with the 2-hour p90 admission wait from receipts (the fleet wall reads it).
+if [ "${1:-}" = --queue ]; then
+  launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
+  rows=$(mktemp)
+  for host in beelink1 beelink2; do
+    heartbeat=0 on_beelink "$host" --queue-jobs >> "$rows" 2>/dev/null || echo "{\"host\": \"$host\", \"state\": \"unread\"}" >> "$rows"
+    heartbeat=0 on_beelink "$host" --receipts 2 2>/dev/null | sed -n 's/^\({"\)/{"receipt": 1, "/p' >> "$rows"
+  done
+  node "$(dirname "$(readlink -f "$0")")/beelink_gate_sandbox.mjs" live 2>/dev/null | sed 's/^{/{"host": "sandbox", "state": "running", /' >> "$rows"
+  python3 - "$rows" <<'PY'
+import datetime as dt, json, sys
+since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+rows, waits = [], []
+for line in open(sys.argv[1]):
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    if not r.get("receipt"):
+        rows.append(r)
+    elif isinstance(r.get("waited_s"), (int, float)) and dt.datetime.fromisoformat(r["at"].replace("Z", "+00:00")) >= since:
+        waits.append(r["waited_s"])
+rows.sort(key=lambda r: (not str(r.get("state", "")).startswith("waiting"), -(r.get("waited_s") or 0)))
+print(f"{'host':9} {'state':22} {'waited':>7}  {'repo':40} {'sha':12} {'lane':28} gate")
+for r in rows:
+    print(f"{r.get('host') or '':9} {r.get('state') or '':22} {str(r.get('waited_s', '')):>7}  {str(r.get('repo') or '').split('/', 1)[-1][-40:]:40} "
+          f"{r.get('sha') or '':12} {str(r.get('lane') or '')[:28]:28} {r.get('gate_id') or r.get('box') or ''}")
+waits.sort()
+p90 = waits[min(len(waits) - 1, int(0.9 * len(waits)))] if waits else None
+print(f"QUEUE waiting={sum(str(r.get('state', '')).startswith('waiting') for r in rows)} "
+      f"running={sum(r.get('state') == 'running' for r in rows)} wait_p90_2h_s={p90} receipts_2h={len(waits)}")
+PY
+  rm -f "$rows"
+  exit 0
+fi
 if [ "${1:-}" = --receipt ]; then
   [ "$#" = 3 ] && [[ "$3" =~ ^[0-9a-f]{40}$ ]] || die "usage: beelink-gate --receipt <repo-url> <sha (40 hex)>"
   key=$(python3 -c 'import re,sys; u=sys.argv[1]; m=re.match(r"^(?:git@([^:]+):|ssh://git@([^/]+)/|https?://([^/]+)/)(.+?)(?:\.git)?/?$", u); print(f"{m.group(1) or m.group(2) or m.group(3)}/{m.group(4)}" if m else "")' "$2")
@@ -2087,7 +2157,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] <beelink1|beelink2|auto|sandbox> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
@@ -2229,6 +2299,40 @@ run_cancelable() {
   fi
   "$@"
 }
+# Sandbox placement (beelink_gate_sandbox.mjs): an auto gate that both Beelinks refuse, or that
+# has waited BEELINK_GATE_SANDBOX_AFTER (default 5m), runs the same command on a Tangle sandbox.
+sandbox_after=$(seconds_of "${BEELINK_GATE_SANDBOX_AFTER:-5m}") || die "invalid BEELINK_GATE_SANDBOX_AFTER"
+sandbox_off=$([ "$requested" = auto ] && [ "${BEELINK_GATE_SANDBOX:-1}" != 0 ] && echo 0 || echo 1)
+sandbox_due() { [ "$sandbox_off" = 0 ] && (( SECONDS - launched >= sandbox_after )); }
+run_sandbox() {
+  # Checkout reservations stay up: when no box can start, the gate keeps its place on the Beelinks.
+  local receipt rc host row node_pid
+  receipt=$(mktemp) || return "$TEMPFAIL"
+  # Creates from this launcher start at least BEELINK_GATE_SANDBOX_SPACING (20 s) apart, so a burst of
+  # waiting gates never hits the platform's create path at once.
+  local spacing=${BEELINK_GATE_SANDBOX_SPACING:-20} stamp="${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate/sandbox-create" last spacing_fd
+  mkdir -p "${stamp%/*}" && exec {spacing_fd}>"$stamp.lock" && flock "$spacing_fd" || return "$TEMPFAIL"
+  last=$(cat "$stamp" 2>/dev/null || echo 0)
+  (( $(date +%s) - last >= spacing )) || sleep $(( spacing - ($(date +%s) - last) ))
+  date +%s > "$stamp"; exec {spacing_fd}>&-
+  BEELINK_GATE_SANDBOX_RECEIPT=$receipt BEELINK_GATE_PLACED_WAIT=$((SECONDS - launched)) \
+    node "$(dirname "$(readlink -f "$0")")/beelink_gate_sandbox.mjs" run "$repo_url" "$sha" "$install_mode" \
+    "${gate_class:-$([ "$install_mode" = light ] && echo light || echo normal)}" "${gate_branch:-}" -- "$@" &
+  node_pid=$!
+  # A stop reaches the runner, which deletes its box; bash would otherwise hold the trap until node returns.
+  trap 'kill -TERM "$node_pid" 2>/dev/null; wait "$node_pid"; exit 143' HUP INT TERM
+  wait "$node_pid"; rc=$?
+  trap - HUP INT TERM
+  if [ -s "$receipt" ]; then
+    row=$(encode "$(cat "$receipt")")
+    for host in beelink1 beelink2; do
+      heartbeat=0 on_beelink "$host" --sandbox-receipt "$row" && { row=""; break; }
+    done
+    [ -z "$row" ] || echo "beelink-gate: sandbox receipt not stored on a beelink: $(cat "$receipt")" >&2
+  fi
+  rm -f "$receipt"
+  return "$rc"
+}
 launched=$SECONDS placements=0
 while :; do
   frontend_phase placement_probe_wait
@@ -2236,8 +2340,16 @@ while :; do
     beelink1|100.98.195.7) target=$(place_named beelink1) ;;
     beelink2|100.127.22.51) target=$(place_named beelink2) ;;
     auto) target=$(choose_beelink) || exit $? ;;
+    sandbox) target=sandbox sandbox_off=1 ;;
     *) die "unknown beelink: $requested" ;;
   esac
+  if [ "$target" = sandbox ]; then
+    run_sandbox "$@" && exit 0
+    rc=$?; [ "$rc" = "$TEMPFAIL" ] && [ "$requested" = auto ] || exit "$rc"
+    sandbox_off=1
+    echo "beelink-gate: no sandbox could start; waiting for a beelink again" >&2
+    continue
+  fi
   update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
   encoded=()
   for arg in "$target" "$repo_url" "$sha" "$install_mode" "$window_day" "$window_hour" "$@"; do
