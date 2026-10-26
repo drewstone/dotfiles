@@ -111,7 +111,7 @@ if git ls-files '*.py' | grep -q .; then
     [ -n "$url" ] && rm -rf "$HOME/.python" && mkdir -p "$HOME/.python" && curl -fsSL "$url" | tar -xz -C "$HOME/.python" --strip-components=1 || exit 70
     for b in python3 python "python$pv" pip3 pip; do [ -e "$HOME/.python/bin/$b" ] && ln -sf "$HOME/.python/bin/$b" "$HOME/.local/bin/$b"; done
     python3 --version >&2 ;;
-  esac
+  esac; export UV_PYTHON="$(command -v python3)"  # uvx built tools on the image's /usr/bin/python3.11, not PATH's 3.12 (10-26)
 fi
 # Login shells (bash -lc in gate commands) reset PATH to the image's /usr/bin, whose git 2.39 lacks
 # check-attr --source (factory census, 10-26 08:2xZ). Beelink login shells keep the gate's tools; so does the box.
