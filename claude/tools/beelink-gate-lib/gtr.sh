@@ -160,6 +160,10 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   [ "$(git -C "$checkout" rev-parse HEAD)" = "${sha,,}" ] || die "checkout SHA mismatch"
   gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads | sort -u | tr '\n' ' ') gate_refs_taken=1
   cd "$checkout" || exit $?
+  # pnpm 11+ keeps metadata in <cache-dir>/v11, and GTR's ~/.cache/pnpm/v11 links to the SMR traces drive
+  # (/mnt/traces/adc-egress-cache-recovery-20261002), which starved Discovery on 10-26. The install and the
+  # command keep their cache on NVMe; pnpm 12 reads this variable, not npm_config_cache_dir.
+  export pnpm_config_cache_dir="$HOME/.cache/pnpm-gate"
   prepare_gate_dependencies || exit $?
   gate_command_argv "${command[@]}"
   echo "beelink-gate: running ${display% } on $GTR_HOST" >&2
