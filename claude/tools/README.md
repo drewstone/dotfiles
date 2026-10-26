@@ -338,6 +338,23 @@ beelink-gate --no-install beelink2 git@github.com:owner/repo.git <full-sha> -- n
 ```
 
 The command streams output and a receipt with the SHA, command, exit code, and duration.
+
+An `auto` gate moves to a one-shot Tangle sandbox when both beelinks refuse or are unreachable, or after
+`BEELINK_GATE_SANDBOX_AFTER` (default `5m`) with no beelink that can admit it now. `--sandbox` (or the target
+`sandbox`) goes there directly. `beelink-gate-lib/placement.sh` owns the choice and `beelink-gate-lib/sandbox.mjs`
+runs the job: the factory owner key (`FACTORY_SANDBOX_KEY`, else `~/.config/tangle/factory.key`), a shallow fetch
+of the exact SHA (private repos through the owner's `GH_TOKEN` secret and `gh auth git-credential`, as factory's
+`src/sandbox.ts` does), the frozen install, then the command, with output streamed and the box deleted after. The
+receipt line keeps its format with `host=sandbox cache=none node=image gate_id=sandbox-<hex>` and the row goes to
+the launcher's `sandbox-receipts.jsonl`, which `--receipt` reads. A box that cannot be created leaves an auto gate
+waiting for a beelink; a `--sandbox` gate exits 75. `BEELINK_GATE_SANDBOX=0` turns the fallback off,
+`BEELINK_GATE_SANDBOX_RESOURCES` (JSON `{cpuCores, memoryMB, diskGB}`) sizes the box, and `--ship` never uses it.
+A sandbox has no turbo cache, sparse checkout, mise Node or warm pnpm store.
+
+```bash
+beelink-gate --sandbox --light auto https://github.com/owner/repo <full-sha> -- node --version
+```
+
 `beelink-gate --report 24` reads both hosts' records and current process/cgroup
 CPU samples. Add `--json` for per-gate wait, wall and phase timings, sample
 coverage, runnable threads and cgroup quotas; add `--since <UTC timestamp>` for
