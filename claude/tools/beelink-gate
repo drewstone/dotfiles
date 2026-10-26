@@ -1502,7 +1502,7 @@ PYTURBO
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   # Queue ownership transfers only after the last reversible placement guard.
   [ -z "$gate_id" ] || echo "beelink-gate: placement handoff gate_id=$gate_id" >&2
-  cancel_if_requested
+  cancel_if_requested; gate_docker_socket
   export BEELINK_GATE_PHASE_FILE="$timing_file"
   echo "beelink-gate: running ${display% }" >&2
   pre_command_s=$((SECONDS - started))
