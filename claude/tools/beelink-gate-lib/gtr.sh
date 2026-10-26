@@ -15,10 +15,13 @@ gtr_receipts() {
   else bounded_transport "$GTR_HOST receipts" ssh "${SSH_OPTIONS[@]}" "$GTR_HOST" "$read"; fi
 }
 
-# The lease's bytes: the clone this repo's newest GTR gate measured plus a quarter, else 3 GiB. The lane's
-# 4 GiB storage quota also counts its other bytes, so asking for all of it is always refused.
+# The lease's bytes: the clone this repo's newest GTR gate measured plus a quarter; with no GTR receipt, the
+# Beelinks' cold install reserve for this checkout shape (a cold discovery-lab install is 21.5 GB, and a 3 GiB
+# guess let it start), else 3 GiB. A request over the lane quota is refused by storage-lifecycle, and the gate
+# keeps waiting for a Beelink.
 gtr_reserve_bytes() {
-  python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" <<'PY'
+  local beelink_cold=$(( ${matched_reserve[beelink1]:-0} > ${matched_reserve[beelink2]:-0} ? ${matched_reserve[beelink1]:-0} : ${matched_reserve[beelink2]:-0} ))
+  python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$beelink_cold" <<'PY'
 import json, sys
 newest = 0
 try:
@@ -31,7 +34,7 @@ try:
             newest = row["gtr_bytes"]
 except OSError:
     pass
-print(max(1 << 30, newest * 5 // 4) if newest else 3 << 30)
+print(max(1 << 30, newest * 5 // 4) if newest else int(sys.argv[3]) or 3 << 30)
 PY
 }
 
