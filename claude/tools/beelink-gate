@@ -2098,6 +2098,8 @@ merge_gated() {  # <gate stderr log>
 }
 
 # The source owner runs retry/summary wrappers and retains their one request scope.
+# The launcher's own argv, to re-exec itself when its installed source changes while it waits.
+gate_argv=("$@")
 install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0 retry_minutes="" summary=0
 launch_options=()
 while [ "$#" -gt 0 ]; do
@@ -2311,8 +2313,19 @@ PY
   rm -f "$receipt"
   return "$rc"
 }
-launched=$SECONDS placements=0 gtr_next_try=0
+# A launcher waits for hours with the code it loaded at start: gates started before #707/#715 never saw the
+# sandbox or the FIFO fix (14 agent-container gates waiting 15-120 min on beelink1, 10-26 08:37Z). Between
+# placements it re-execs itself, keeping its wait, once the installed gate source has changed.
+gate_source_digest() { cat "$gate_source_root/beelink-gate" "$gate_source_root"/beelink-gate-lib/*.sh "$gate_source_root"/beelink_gate_*.py "$gate_source_root"/beelink_gate_*.mjs 2>/dev/null | cksum; }
+launch_digest=$(gate_source_digest)
+launched=$((SECONDS - ${BEELINK_GATE_LAUNCH_WAIT:-0})) placements=0 gtr_next_try=0
+unset BEELINK_GATE_LAUNCH_WAIT
 while :; do
+  if [ "$(gate_source_digest)" != "$launch_digest" ]; then
+    echo "beelink-gate: the installed gate source changed; restarting this launcher on it, keeping its $((SECONDS - launched))s wait" >&2
+    stop_checkout_reservations
+    BEELINK_GATE_LAUNCH_WAIT=$((SECONDS - launched)) exec "$BASH" "$gate_source_root/beelink-gate" "${gate_argv[@]}"
+  fi
   frontend_phase placement_probe_wait
   case "$requested" in
     beelink1|100.98.195.7) target=$(place_named beelink1) ;;
