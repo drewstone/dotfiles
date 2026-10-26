@@ -180,7 +180,7 @@ job_cancel_remote() {  # <id> [1: queued only]
   # TERM, and holding it held each stop to TimeoutStopSec (90 s), past the 30 s transport deadline (10-19).
   flock -u "$lock_fd"
   if [ -d "$dir" ] && [ ! -f "$dir/exit" ]; then
-    unit="beelink-gate-$id.service"
+    echo "beelink-gate: canceled gate_id=$id by --cancel-job at $(date -u +%FT%TZ)" >> "$dir/stderr.log"; unit="beelink-gate-$id.service"
     manager=$(job_manager "$dir") || return 75
     [ "$manager" != system ] || control=(sudo -n /usr/bin/systemctl)
     "${control[@]}" stop "$unit" >&2 || true
@@ -212,7 +212,7 @@ job_cancel_remote() {  # <id> [1: queued only]
     # The unit's cgroup may have killed runner.sh before its exit: an attach then reads this terminal 75 and its reason
     # instead of waiting forever. A gate that finished before the stop keeps the exit runner.sh published.
     flock "$lock_fd" || return 75
-    [ -f "$dir/exit" ] || { echo "beelink-gate: canceled gate_id=$id by --cancel-job at $(date -u +%FT%TZ)" >> "$dir/stderr.log"; printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"; }
+    [ -f "$dir/exit" ] || { printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"; }
   fi
   echo "beelink-gate: canceled gate_id=$id" >&2
 }
