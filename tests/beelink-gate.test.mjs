@@ -2761,12 +2761,21 @@ test("the receipt separates capacity-claim wait from cache pruning and the comma
   const f = fixture();
   const locks = join(f.cache, ".locks");
   const marker = join(f.root, "capacity-held");
+  const release = join(f.root, "capacity-release");
   mkdirSync(locks, { recursive: true });
-  const holder = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c", `touch '${marker}'; sleep 3`], { stdio: "ignore" });
+  // The cleanup holds the lock until the gate reports its claim waiting: a fixed 3 s raced gate startup on a loaded host.
+  const holder = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c", `touch '${marker}'; until [ -e '${release}' ]; do sleep 0.05; done`], { stdio: "ignore" });
   try {
     for (let i = 0; i < 2400 && !existsSync(marker); i++) await sleepMs(20);
     assert.equal(existsSync(marker), true);
-    const result = f.call(f.first, ["true"], { noInstall: true });
+    const child = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 6000 && !/for capacity cleanup/.test(stderr); i++) await sleepMs(20);
+    assert.match(stderr, /for capacity cleanup/);
+    writeFileSync(release, "");
+    const result = { status: await done, stderr };
     assert.equal(result.status, 0, result.stderr);
     const row = receipts(f).at(-1);
     assert.ok(row.timing.capacity_claim_wait_ms >= 500, JSON.stringify(row.timing));
@@ -2777,6 +2786,7 @@ test("the receipt separates capacity-claim wait from cache pruning and the comma
     assert.ok(row.timing.fetch_s >= 0 && row.timing.command_s >= 0 && row.timing.cleanup_s >= 0);
     assert.match(result.stderr, /beelink-gate timing: /);
   } finally {
+    writeFileSync(release, "");
     holder.kill();
     rmSync(f.root, { recursive: true, force: true });
   }
