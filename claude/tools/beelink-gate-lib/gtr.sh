@@ -6,6 +6,17 @@
 GTR_HOST=drew-gtr-pro
 gtr_self() { [ "$(hostname | tr '[:upper:]' '[:lower:]')" = "$GTR_HOST" ]; }
 
+# The installed storage-lifecycle (tangle-tools disk-guard/bin, linked into ~/.local/bin and ~/bin). A gate placed on
+# GTR over SSH runs bin/beelink-gate in a non-login shell whose PATH has neither: `setsid storage-lifecycle` then
+# failed to execute and the GTR gate never ran (2026-10-26).
+gtr_lifecycle() {
+  local candidate
+  for candidate in "$(command -v storage-lifecycle 2>/dev/null)" "$HOME/.local/bin/storage-lifecycle" "$HOME/bin/storage-lifecycle"; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
 # GTR's receipts.jsonl, read here on GTR or over SSH; a host that never gated has none.
 gtr_receipts() {
   # shellcheck disable=SC2016 # expands on GTR
@@ -51,7 +62,7 @@ PY
 # admit it (storage-lifecycle refused, GTR unreachable), so the caller keeps waiting for a Beelink.
 # GTR says "drew-gtr-pro admitted" on stderr once it has the lease; nothing else counts as admission.
 gtr_gate() {  # <command>...
-  local rc pid log id dir bytes q admitted flag=()
+  local rc pid log id dir bytes lifecycle q admitted flag=()
   case "$install_mode" in install|no-install) ;;
     *) [ "$requested" != "$GTR_HOST" ] || die "drew-gtr-pro runs install and --no-install gates only, not --$install_mode"
        return "$NOT_ADMITTED" ;; esac
@@ -66,9 +77,11 @@ gtr_gate() {  # <command>...
     id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
     dir="$HOME/.cache/gtr-gate/pool/$id"
     bytes=$(gtr_reserve_bytes) || { rm -f "$log"; return "$NOT_ADMITTED"; }
+    lifecycle=$(gtr_lifecycle) \
+      || { echo "beelink-gate: storage-lifecycle is not installed on $GTR_HOST; waiting for a Beelink" >&2; rm -f "$log"; return "$NOT_ADMITTED"; }
     echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane op-company:beelink-gate-gtr reserves $bytes bytes for $dir" >&2
     # Its own session, so a stop reaches run-lane, the gate and the command together.
-    setsid storage-lifecycle run-lane --lane op-company:beelink-gate-gtr --path "$dir" --bytes "$bytes" -- \
+    setsid "$lifecycle" run-lane --lane op-company:beelink-gate-gtr --path "$dir" --bytes "$bytes" -- \
       env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
       "$BASH" "$gate_source_root/beelink-gate" --gtr-run "$(encode "$log")" "$(encode "$dir")" "$(encode "$repo_url")" "$(encode "$sha")" "$(encode "$install_mode")" "$@" &
   else
