@@ -40,11 +40,11 @@ from skill_ledger import core as L  # noqa: E402
 from skill_ledger import outcomes as O  # noqa: E402
 
 V1_FIELDS = ("durationMin", "traceDir", "transcriptPath", "operatorOverride")
-VIZ = os.path.join(os.path.dirname(os.path.realpath(__file__)), "viz")
+VIZ = shutil.which("viz") or os.path.expanduser("~/.local/bin/viz")  # tangle-tools viz/
 
 
 def viz(kind: str, header, rows, *args) -> str | None:
-    """Draw with viz (claude/tools/viz) from TSV; None when it is missing or fails, so the
+    """Draw with viz (tangle-tools viz/) from TSV; None when it is missing or fails, so the
     built-in renderer in skill_ledger/core.py draws instead."""
     if not os.path.exists(VIZ) or not L.which("node"):
         return None
