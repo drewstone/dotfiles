@@ -119,7 +119,7 @@ run_codex() {
       fi
       PATH="$(dirname "$node_bin"):$(dirname "$candidate"):$PATH" exec "$node_bin" "$(dirname "$self")/codex-routing/app-server.mjs" "$self" "$candidate" "$@"
     fi
-    PATH="$(dirname "$candidate"):$PATH" exec acct run -- "$candidate" "$@"
+    PATH="$(dirname "$candidate"):$PATH" exec acct run --subscription-only -- "$candidate" "$@"
   fi
 
   PATH="$(dirname "$candidate"):$PATH" exec "$candidate" "$@"
