@@ -68,10 +68,10 @@ function gateScript({ repoUrl, sha, mode, branch, command }) {
   return `set -o pipefail
 step() { echo "beelink-gate-sandbox: $1 $(date -u +%H:%M:%SZ)" >&2; }
 export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
-export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo"
+export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo" TMPDIR="$HOME/.tmp"
 # The image's C toolchain ahead of nix's, whose cc and ld have no static glibc (sidecar -static: '-lc not found').
 # PATH links, not CC: turbo's strict env mode drops CC and COMPILER_PATH (slim-edge/slim-ops after #723).
-mkdir -p "$HOME/.local/bin"; for t in cc gcc g++ c++ ld as ar; do [ ! -x "/usr/bin/$t" ] || ln -sf "/usr/bin/$t" "$HOME/.local/bin/$t"; done
+mkdir -p "$HOME/.local/bin" "$HOME/.tmp"; for t in cc gcc g++ c++ ld as ar; do [ ! -x "/usr/bin/$t" ] || ln -sf "/usr/bin/$t" "$HOME/.local/bin/$t"; done
 # The box's cgroup allows 512 pids and threads count: turbo's 10 parallel builds, each Node plus rolldown's rayon
 # pool, hit EAGAIN ('global thread pool has not been initialized', slim-edge 09:14Z). Callers can still override.
 export TURBO_CONCURRENCY="\${TURBO_CONCURRENCY:-4}" RAYON_NUM_THREADS="\${RAYON_NUM_THREADS:-2}"
@@ -80,10 +80,12 @@ export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.http
 # Every git in the box authenticates, whatever environment a command gives it: a partial clone fetches blobs
 # lazily, and a nested git without the env helper failed 'could not read Username' (platform mapped planner, 08:45Z).
 gh_bin=$(command -v gh) && git config --global credential.https://github.com.helper "!$gh_bin auth git-credential"
+# Scratch on the 40 GB workspace, not the 4 GiB /tmp tmpfs (G7/G8 stage 16 GiB); the egress CA in npm and git config,
+# which turbo's strict env cannot strip (G4: pnpm dlx 'self-signed certificate in certificate chain', 10-26).
+[ -z "\${SSL_CERT_FILE:-}" ] || { echo "cafile=$SSL_CERT_FILE" >> "$HOME/.npmrc"; git config --global http.sslCAInfo "$SSL_CERT_FILE"; }
 git config --global user.name ${quote(gitIdentity('user.name') || 'beelink-gate')}; git config --global user.email ${quote(gitIdentity('user.email') || 'beelink-gate@users.noreply.github.com')}
-step fetch
 # A box restored from a warm snapshot already holds the repo's objects, Node, pnpm store and turbo cache.
-if [ -d repo/.git ]; then cd repo && git remote set-url origin ${quote(repoUrl)}; else rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)}; fi || exit 70
+step fetch; if [ -d repo/.git ]; then cd repo && git remote set-url origin ${quote(repoUrl)}; else rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)}; fi || exit 70
 # A commit origin does not have is this gate's input, not the box: exit 71 never turns sandbox placement off.
 git fetch -q --filter=blob:none origin ${sha} || { echo "beelink-gate-sandbox: ${sha} is not on origin; push it first" >&2; exit 71; }
 for b in main develop ${branch ? quote(branch) : ''}; do git fetch -q --filter=blob:none origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null; done
@@ -93,13 +95,11 @@ git clean -ffdxq -e .turbo
 # (MODULE_NOT_FOUND) on a repo without .nvmrc (10-26 07:38Z).
 step node
 v=24; [ ! -f .nvmrc ] || v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null | tr -d v)
-{
   case "$have" in "$v"|"$v".*) ;; *)
     f=$(curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/" | grep -o "node-v$v[0-9.]*-linux-x64.tar.xz" | head -1)
     [ -n "$f" ] || f=$(curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/" | grep -o 'node-v[0-9.]*-linux-x64.tar.xz' | head -1)
     rm -rf "$HOME/.node" && mkdir -p "$HOME/.node" && curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/$f" | tar -xJ -C "$HOME/.node" --strip-components=1 || exit 70 ;;
   esac
-}
 corepack enable --install-directory "$HOME/.local/bin" 2>/dev/null
 # Python the way the Beelinks have it: .python-version, else 3.12. The image's python3 is 3.11, and tangle-tools'
 # f-strings need 3.12 (disco-evolve-run, 08:55Z). Only repos with Python files pay for it.
