@@ -98,6 +98,12 @@ test("corepack enable without a directory leaves the guarded shims alone", () =>
   const r = run("corepack", ["enable"], gate);
   assert.equal(r.status, 0);
   assert.equal(r.out, "");
+  const fresh = join(HOME, "fresh-node/bin");  // an enrolled prefix whose shims were never enabled
+  mkdirSync(fresh, { recursive: true });
+  copyFileSync(GUARD, join(fresh, "corepack"));
+  writeFileSync(join(fresh, "corepack.gtr-original"), "#!/bin/sh\necho ran\n", { mode: 0o755 });
+  const refused = spawnSync("python3", [join(fresh, "corepack"), "enable"], { cwd: gate, encoding: "utf8" });
+  assert.equal(refused.status, 125, refused.stderr);
 });
 
 test("uv keeps its _wt-only rule", () => {

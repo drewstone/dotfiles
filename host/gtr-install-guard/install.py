@@ -52,7 +52,8 @@ def install(prefixes=()) -> int:
             # reinstall rewrote it (2026-10-26, beside an original chained into an older Node).
             if not path.is_file():
                 raise RuntimeError(f"not a regular executable: {path}")
-            os.replace(path, original)
+            if not original.exists() or path.resolve() != original.resolve():  # a link to the original moves nothing
+                os.replace(path, original)
         temporary = Path(str(path) + ".gtr-new")
         temporary.symlink_to(DEST)
         os.replace(temporary, path)
