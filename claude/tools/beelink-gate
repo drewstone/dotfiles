@@ -111,15 +111,16 @@ free_bytes() {
 
 check_floor() {
   local host="$1" reserve="${2:-0}" available path refusal status=0 here
-  # Free space and live reservations are this machine's, so the lifecycle policy is asked about this machine:
-  # in production that is always the gate's host, and the gate tests (which pose as beelink2) pass on beelink1.
+  # Free space and reservations belong to this machine's lifecycle policy.
   here=$(canonical_beelink "$(hostname)" 2>/dev/null); [ -z "$here" ] || host=$here
-  path=$(limits_file) && [ -n "$path" ] || return 3
+  path=$(limits_file) && [ -n "$path" ] || { admission_outcome=refused admission_reason=disk_policy_unknown; return 3; }
   available=$(free_bytes)
   last_floor_available=$available
   refusal=$(gate_disk admit "$host" "$path" "$reserve" "$available") || status=$?
   (( status == 0 )) && return 0
+  admission_outcome=refused admission_reason=disk_policy_unknown
   (( status == 3 )) || return 3
+  admission_reason=disk_floor
   printf 'beelink-gate: REFUSED %s; use the other beelink or ask the host owner to recover capacity\n' "$refusal" >&2
   return 3
 }
@@ -1222,7 +1223,6 @@ remote_gate() {
     || die "cannot read install reserve receipts"
   if ! check_floor "$beelink" "$install_reserve_bytes"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its disk floor"
-    admission_outcome=refused admission_reason=disk_floor
     tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
@@ -1368,7 +1368,7 @@ PYTURBO
   admit_release_priority "$beelink"
   # Prune before fetch costs minutes on a busy disk (270 s on beelink1 10-25), and a
   # placement that then meets PSI at the fetch wait yields 76 with that work wasted.
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "host CPU PSI held before cache prune"
+  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "admission held before cache prune: ${admission_reason:-unknown}"
   if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
     cache_note=unpruned
     echo "beelink-gate: WARNING cache over its cap with only active checkouts left; running anyway (the disk floor guards disk space)" >&2
@@ -1446,7 +1446,7 @@ PYTURBO
     die "--branch $gate_branch: origin has it at ${branch_head:-no such branch}, not $sha; push the branch or gate its head"
   fi
   echo "beelink-gate: fetching $sha and ${#tracking_refspecs[@]} tracking branch(es) into $checkout" >&2
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "host CPU PSI held before fetch"
+  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "admission held before fetch: ${admission_reason:-unknown}"
   local fetch_started=$SECONDS fetch_status
   step timeout 1200 git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}"
   fetch_status=$?
@@ -1475,9 +1475,7 @@ PYTURBO
   gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads refs/beelink-gate-saved | sort -u | tr '\n' ' ')
   gate_refs_taken=1
   # Keep this gate's fetched checkout locked and intact through the final floor check.
-  local floor_ok=0
-  check_floor "$beelink" || floor_ok=1
-  (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
+  check_floor "$beelink" || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor or its policy is unknown"
 
   # Rust output lives inside .git, which checkout and clean leave alone, so it
   # survives between gates and the LRU cap counts and evicts it with its repo.
@@ -1498,7 +1496,7 @@ PYTURBO
   export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$gate_workers}"
   cd "$checkout" || exit $?
   prepare_gate_dependencies || exit $?
-  floor_ok=0
+  local floor_ok=0
   check_floor "$beelink" || floor_ok=1
   observe_install_reserve "after install"
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
@@ -1522,6 +1520,7 @@ PYTURBO
     step "${command_with_umask[@]}"
   fi
   local status=$?
+  (( status != TEMPFAIL )) || admission_reason=command_tempfail
   command_s=$((SECONDS - command_started))
   cpu_after=$(children_cpu_ticks)
   cpu_s=$(awk -v a="$cpu_before" -v b="$cpu_after" -v t="$tick" 'BEGIN { printf "%.1f", (b - a) / t }')

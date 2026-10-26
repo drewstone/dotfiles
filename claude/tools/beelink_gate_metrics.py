@@ -341,7 +341,15 @@ def admission_summary(rows):
                 and all(seconds(n) for n in r["stages_s"].values())
                 and sum(r["stages_s"].values()) <= r["observed_s"] + .00001]
     complete = [r for r in observed if r.get("coverage") == "complete"]
+    tempfail = {"schema": 1, **{key: collections.Counter() for key in ("capacity", "noncapacity", "unknown")}}
+    classes = {**dict.fromkeys(("disk_floor", "host_psi", "capacity_writer"), "capacity"),
+               **dict.fromkeys(("release_priority", "windows_update", "cancel_marker", "observed_signal", "legacy_gate_live", "command_tempfail"), "noncapacity")}
+    for row in observed:
+        if row.get("exit") == 75:
+            reason = row.get("terminal_reason") or row.get("reason") or "unstated"
+            tempfail[classes.get(reason, "unknown")][reason] += 1
     return {"observed_n": len(observed), "unknown_n": len(rows) - len(observed), "complete_n": len(complete), "partial_n": len(observed) - len(complete),
+            "tempfail": tempfail,
             "stages_sum_s": {stage: round(sum(r["stages_s"][stage] for r in observed), 6) if observed else None for stage in ADMISSION_STAGES},
             "remote_start_to_lock_slot_admitted_p90_s": percentile([r["remote_start_to_lock_slot_admitted_s"] for r in complete if seconds(r.get("remote_start_to_lock_slot_admitted_s")) and r["remote_start_to_lock_slot_admitted_s"] <= r["observed_s"]], .9),
             "scope": "retained observed placement prefixes; missing/no-ID population completeness unknown, carried wait not summed; stage percentiles are not additive"}

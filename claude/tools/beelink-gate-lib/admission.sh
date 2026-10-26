@@ -196,24 +196,19 @@ not_admitted() {
   echo "beelink-gate: not admitted on $beelink within ${admit_wait}s ($1); placing the gate again" >&2
   exit "$NOT_ADMITTED"
 }
-# A host auto chose can fall below its disk floor between the probe and the
-# gate's own check: docker images filled beelink2 by 14 GiB in
-# 40 min, and a gate placed there exited TEMPFAIL while beelink1 had room. An
-# auto placement gives such a host back, and the launcher's next probe sees it
-# refused and picks the other host, or exits TEMPFAIL when both refuse.
+# A probe is a hint: give back an auto placement if its later floor check
+# refuses. Keep that check's explicit capacity or unknown-policy reason.
 give_back_host() {
-  admission_outcome=replaced admission_reason=disk_floor
+  admission_outcome=replaced
   rm -f "${urgent_markers[@]}" 2>/dev/null
   echo "beelink-gate: $beelink gave the gate back before admission ($1); placing the gate again" >&2
   exit "$NOT_ADMITTED"
 }
 
-# A placement probe is a hint. Preserve auto handoff if capacity changes before
-# this gate starts; a named host retains its ordinary temporary refusal.
+# Preserve auto handoff after a failed live floor check; named hosts refuse.
 initial_disk_admission() {
   if ! check_floor "$beelink"; then
     (( placed_auto == 0 )) || give_back_host "$beelink is below its operational disk floor or its policy is unknown"
-    admission_outcome=refused admission_reason=disk_floor
     tempfail "$(utc_in_minutes 15)" "$beelink is below its operational disk floor or its policy is unknown"
   fi
 }
@@ -525,7 +520,7 @@ admission_stage() {
 admission_checkpoint() { admission_record checkpoint; }
 admission_admitted() {
   [ "${admission_done:-0}" = 0 ] || return 0
-  admission_done=1
+  admission_done=1 admission_outcome=admitted
   admission_record admitted
 }
 admission_terminal() {
@@ -534,8 +529,6 @@ admission_terminal() {
     admission_outcome=canceled admission_reason=cancel_marker
   elif [ -n "${admission_signal:-}" ]; then
     admission_outcome=canceled admission_reason=observed_signal
-  elif [ "${admission_outcome:-incomplete}" = incomplete ] && [ "${admission_done:-0}" = 1 ]; then
-    admission_outcome=admitted
   fi
   # Once admitted, terminal metadata cannot extend even a failed end snapshot.
   [ "${admission_done:-0}" != 1 ] || action=terminal

@@ -349,6 +349,11 @@ remote waiting are not in those percentiles. A missing host is partial, never
 zero. CPU samples are current observations; cgroup rows overlap and must not
 be summed. Process accounting excludes short-lived tasks, with coverage and
 unattributed CPU reported.
+`admission_wait.summary.tempfail` separates explicit capacity reasons from
+noncapacity exits and unknowns. A command's exit 75 is `command_tempfail`, not
+capacity evidence. Missing historical reasons stay `unstated`; retained log
+diagnoses do not rewrite native observations. Disk policy and legacy-drain
+uncertainty stay unknown, and terminal reasons do not extend admission timing.
 The same sample retains up to 64 `legacy_gate_members`, including idle processes
 that can hold the transition drain but disappear from the top-CPU list. Coverage
 reports the observed and retained counts; group rows include kernel population

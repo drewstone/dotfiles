@@ -46,6 +46,8 @@ require_legacy_gate_drained() {
   local status=0
   legacy_gate_drained || status=$?
   [ "$status" = 0 ] || {
+    admission_outcome=refused admission_reason=legacy_gate_unknown
+    [ "$status" != 1 ] || admission_reason=legacy_gate_live
     tempfail_line "$(utc_in_minutes 5)" "legacy gate class has not proved drained (status=$status); no new managed work"
     return 75
   }
@@ -184,7 +186,7 @@ wait_for_load() {
   local beelink=$1 budget since=$load_wait_started reported=-60 sample held why pause left
   budget=$(seconds_of "${BEELINK_GATE_LOAD_WAIT:-30m}") || die 'invalid BEELINK_GATE_LOAD_WAIT'
   admission_stage checks
-  verify_gate_unit || return 75
+  verify_gate_unit || { admission_reason=containment_unknown; return 75; }
   while :; do
     admission_stage checks
     admit_release_priority "$beelink"
@@ -198,7 +200,10 @@ wait_for_load() {
     held=$(python3 -c 'import json,sys; print(int(json.loads(sys.argv[1])["held"]))' "$sample") || return 75
     [ "$held" = 1 ] || break
     why="host CPU PSI some avg10 holds admission: $sample"
-    if (( SECONDS - since >= budget )); then admission_outcome=refused admission_reason=host_psi; echo "beelink-gate: REFUSED $beelink $why" >&2; return 3; fi
+    if (( SECONDS - since >= budget )); then
+      admission_outcome=refused admission_reason=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$sample")
+      echo "beelink-gate: REFUSED $beelink $why" >&2; return 3
+    fi
     if (( SECONDS - reported >= 60 )); then echo "beelink-gate: waiting $((SECONDS-since))s of ${budget}s: $why" >&2; reported=$SECONDS; fi
     admission_expired && not_admitted "$why"
     pause=${BEELINK_GATE_LOAD_POLL_SECONDS:-15}
