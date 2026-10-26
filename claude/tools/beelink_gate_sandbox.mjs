@@ -9,7 +9,7 @@
 //   beelink_gate_sandbox.mjs run <repo-url> <sha> <mode> <class> [branch] -- <command> [args...]
 //   beelink_gate_sandbox.mjs live    (prints live gate boxes, for --queue)
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -69,6 +69,12 @@ function gateScript({ repoUrl, sha, mode, branch, command }) {
 step() { echo "beelink-gate-sandbox: $1 $(date -u +%H:%M:%SZ)" >&2; }
 export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
 export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo"
+# C/C++ with the image's gcc, as on the Beelinks: nix's cc has no static glibc, and sidecar's -static
+# process-supervisor failed '-lc not found' (api-latency, 10-26).
+[ ! -x /usr/bin/gcc ] || export CC="\${CC:-/usr/bin/gcc}" CXX="\${CXX:-/usr/bin/g++}"
+# The box's cgroup allows 512 pids and threads count: turbo's 10 parallel builds, each Node plus rolldown's rayon
+# pool, hit EAGAIN ('global thread pool has not been initialized', slim-edge 09:14Z). Callers can still override.
+export TURBO_CONCURRENCY="\${TURBO_CONCURRENCY:-4}" RAYON_NUM_THREADS="\${RAYON_NUM_THREADS:-2}"
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= \\
   GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
 # Every git in the box authenticates, whatever environment a command gives it: a partial clone fetches blobs
@@ -109,7 +115,7 @@ if git ls-files '*.py' | grep -q .; then
 fi
 # Login shells (bash -lc in gate commands) reset PATH to the image's /usr/bin, whose git 2.39 lacks
 # check-attr --source (factory census, 10-26 08:2xZ). Beelink login shells keep the gate's tools; so does the box.
-printf '%s\n' "export PATH=\"$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}\$PATH\"" '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
+printf '%s\n' "export PATH=\"$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}\$PATH\"" "\${CC:+export CC=$CC CXX=$CXX}" '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
 # A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
 if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
@@ -152,25 +158,47 @@ async function run(argv) {
   // Handlers come before create, so a stop during create still deletes the box once its id is known.
   const warm = await warmStart(client, repo)
   if (warm) say(`starting from warm snapshot ${warm.fromSnapshot.slice(0, 12)} of ${warm.fromSandboxId}`)
+  const logPath = path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local/state'), 'beelink-gate', 'sandbox-logs', `${gateId}.log`)
+  const lastStage = () => { try { return (readFileSync(logPath, 'utf8').match(/beelink-gate-sandbox: (\S+)[^\n]*\n(?![\s\S]*beelink-gate-sandbox: )/) || [])[1] || 'none' } catch { return 'none' } }
   let box, stopping = false
-  // Delete through the platform's retire path; a failure is retried once and reported, never swallowed.
-  const stop = async () => {
-    if (!box) return
+  // Delete through the platform's retire path every box carrying this gate's name: a warm create that timed out
+  // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). A failure is retried
+  // once and reported, never swallowed.
+  const boxName = `${BOX_PREFIX}${id.slice(0, 12)}`
+  const named = async () => (await client.list().catch(() => [])).filter((b) => b.name === boxName && b.status !== 'deleted')
+  const retire = async (target) => {
     for (const attempt of [1, 2]) {
-      try { await box.delete(); return } catch (error) { say(`box ${box.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
+      try { await target.delete(); return } catch (error) { say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
     }
-    say(`box ${box.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+    say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+  }
+  const stop = async () => {
+    if (box) await retire(box)
+    for (const other of await named()) {
+      if (other.id === box?.id) continue
+      const found = await client.get(other.id).catch(() => null)
+      if (found) { say(`retiring stray box ${other.id} of this gate`); await retire(found) }
+    }
   }
   for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]])
     process.on(signal, () => { stopping = true; stop().finally(() => process.exit(code)) })
   try {
-    const spec = { name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
+    const spec = { name: boxName, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
       maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } }
     // A refused warm restore falls back to one cold create; a capacity refusal does not.
-    box = await client.create({ ...spec, ...warm }).catch((error) => {
+    const create = (opts) => client.create(opts).catch(async (error) => {
+      // A transient 503 that names a short retry ("Plan lookup unavailable; retry shortly", 5 s at 09:20Z) is
+      // retried once after that delay; only capacity refusals and a second failure stand the launcher down.
+      if (error.status !== 503 || error.code === 'CAPACITY_EXHAUSTED' || !(error.retryAfterMs > 0 && error.retryAfterMs <= 30_000)) throw error
+      say(`create got 503 '${String(error.message).slice(0, 80)}'; retrying once in ${error.retryAfterMs} ms`)
+      await new Promise((r) => setTimeout(r, error.retryAfterMs))
+      return client.create(opts)
+    })
+    box = await create({ ...spec, ...warm }).catch(async (error) => {
       if (!warm || error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) throw error
       say(`warm restore refused (${error.code || error.status}); creating cold`)
-      return client.create(spec)
+      for (const partial of await named()) await client.get(partial.id).then((b) => b && retire(b)).catch(() => undefined)
+      return create(spec)
     })
   } catch (error) {
     // Every field the SDK error carries (request id, origin, endpoint, cell metadata) is evidence the capacity
@@ -194,16 +222,20 @@ async function run(argv) {
       envKeys: ['PATH', 'NIX_BIN_PATH', 'GH_TOKEN'], deadlineAt: Date.now() + HOLD_S * 1000,
       restart: { maxAttempts: 1, initialBackoffMs: 1000, maxBackoffMs: 1000, exitCodes: [], afterInterruption: false } })
     say(`sandbox ${box.id} admitted after ${Math.round((created - started) / 1000)}s; running ${command.join(' ')}`)
+    // The box and its files go with it; the gate's log is kept here as it streams, so a launcher or box killed
+    // mid-run still leaves its last stage (slim-ops a264 ended 137 during install with nothing retained).
+    mkdirSync(path.dirname(logPath), { recursive: true })
     let shown = 0
+    const keep = (text) => { process.stdout.write(text); try { appendFileSync(logPath, text) } catch {} }
     const pollUntil = Date.now() + (HOLD_S + 120) * 1000
     while (!SETTLED.has(record?.state) && Date.now() < pollUntil) {
       await new Promise((r) => setTimeout(r, 5000))
       const log = await box.read('gate.log').catch(() => '')
-      if (log.length > shown) { process.stdout.write(log.slice(shown)); shown = log.length }
+      if (log.length > shown) { keep(log.slice(shown)); shown = log.length }
       record = await box.process.jobs.get('gate').catch(() => record)
     }
     const log = await box.read('gate.log').catch(() => '')
-    if (log.length > shown) process.stdout.write(log.slice(shown))
+    if (log.length > shown) keep(log.slice(shown))
     // Only a recorded exit counts: a killed, expired or unreadable job has none, and must not read as 0.
     const written = (await box.read('gate.exit').catch(() => '')).trim()
     if (/^\d+$/.test(written)) exit = Number(written)
@@ -213,7 +245,7 @@ async function run(argv) {
   } finally {
     await stop()
   }
-  if (exit === null) tempfail(`gate on ${box.id} ended ${record?.state ?? 'unsubmitted'} without an exit code`)
+  if (exit === null) tempfail(`gate on ${box.id} ended ${record?.state ?? 'unsubmitted'} without an exit code at stage ${lastStage()}; log ${logPath}`)
   if (exit === 71) tempfail(`${sha} is not on origin ${repoUrl}; push it, then gate again`)
   // Exit 70 is a bootstrap step (fetch, Node) that failed before the command: not a red gate.
   if (exit === 70) {
@@ -224,7 +256,8 @@ async function run(argv) {
   const ranS = Math.round((Date.now() - created) / 1000)
   const receipt = { gate_id: gateId, at: new Date().toISOString(), host: 'sandbox', placement: 'sandbox', box: box.id, repo, sha, mode,
     class: gateClass || 'normal', command: command.join(' '), exit, ran_s: ranS, waited_s: Number(process.env.BEELINK_GATE_PLACED_WAIT || 0) + Math.round((created - started) / 1000),
-    lane: process.env.BEELINK_GATE_LANE || '', launcher: hostname(), pr_number: process.env.BEELINK_GATE_PR || null }
+    lane: process.env.BEELINK_GATE_LANE || '', launcher: hostname(), pr_number: process.env.BEELINK_GATE_PR || null,
+    log: logPath, last_stage: lastStage() }
   if (process.env.BEELINK_GATE_SANDBOX_RECEIPT) writeFileSync(process.env.BEELINK_GATE_SANDBOX_RECEIPT, `${JSON.stringify(receipt)}\n`)
   say(`receipt: sha=${sha} install=${mode} exit=${exit} duration=${ranS}s placement=sandbox box=${box.id} gate_id=${gateId}`)
   process.exit(exit)
