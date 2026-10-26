@@ -176,14 +176,16 @@ acquire_slot() {
   done
 }
 
-
 NOT_ADMITTED=76
 cancel_if_requested() {
   [ -z "${gate_id:-}" ] || [ ! -f "$STATE_DIR/jobs/.canceled/$gate_id" ] || {
-    admission_outcome=canceled admission_reason=cancel_marker
-    echo "beelink-gate: canceled gate_id=$gate_id before command" >&2
-    exit 75
-  }
+    admission_outcome=canceled admission_reason=cancel_marker; echo "beelink-gate: canceled gate_id=$gate_id before command" >&2; exit 75; }
+}
+# Under the job lock --cancel-job --queued-only takes, a cancel lands first or finds command-started and refuses (10-26).
+claim_command_start() {
+  [ -n "${gate_id:-}" ] && [ -d "$STATE_DIR/jobs/$gate_id" ] || return 0
+  local fd; exec {fd}>"$STATE_DIR/jobs/.locks/$gate_id.lock" && flock "$fd" || exit 75
+  cancel_if_requested; : > "$STATE_DIR/jobs/$gate_id/command-started"; exec {fd}>&-
 }
 admission_expired() {
   cancel_if_requested

@@ -28,6 +28,7 @@ fi
 #                    [--urgent] [--pin-host] <beelink1|beelink2|auto|drew-gtr-pro> <repo-url> <sha> -- <command> [args...]
 #        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #        beelink-gate --attach <gate-id>
+#        beelink-gate --cancel-job [--queued-only] <gate-id>   (--queued-only exits 3, leaving a gate whose command started)
 #        beelink-gate --receipt <repo-url> <sha>
 #        beelink-gate --report [hours] [--json] [--since timestamp]
 # auto overflows to a Tangle sandbox after 5 min without Beelink admission; drew-gtr-pro (named) gates only there, at once.
@@ -1501,7 +1502,7 @@ PYTURBO
   (( floor_ok == 0 )) || tempfail "$(utc_in_minutes 15)" "$beelink is below its disk floor"
   # Queue ownership transfers only after the last reversible placement guard.
   [ -z "$gate_id" ] || echo "beelink-gate: placement handoff gate_id=$gate_id" >&2
-  cancel_if_requested; gate_docker_socket
+  claim_command_start; gate_docker_socket
   export BEELINK_GATE_PHASE_FILE="$timing_file"
   echo "beelink-gate: running ${display% }" >&2
   pre_command_s=$((SECONDS - started))
@@ -1556,9 +1557,8 @@ if [ "${1:-}" = --job-attach ]; then
   exit $?
 fi
 if [ "${1:-}" = --job-cancel ]; then
-  [ "$#" = 2 ] || die "invalid job cancellation"
-  job_cancel_remote "$2"
-  exit $?
+  [ "$#" = 2 ] || [ "$#" = 3 ] && [ "${3:-queued-only}" = queued-only ] || die "invalid job cancellation"
+  job_cancel_remote "$2" "${3:+1}"; exit $?
 fi
 if [ "${1:-}" = --job-result ]; then
   [ "$#" = 2 ] || die "invalid job result"
@@ -2020,19 +2020,19 @@ if [ "${1:-}" = --attach ]; then
   exit "$rc"
 fi
 if [ "${1:-}" = --cancel-job ]; then
+  queued_only=(); [ "${2:-}" != --queued-only ] || { queued_only=(queued-only); shift; }
   [ "$#" = 2 ] && [[ "$2" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || die "invalid cancellation id"
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   target=${2%%-*}
-  # A manager's cgroup can vanish immediately after scheduling this unit.
-  # Limit the existing retry loop to five elapsed minutes. Never
-  # start a call or sleep unless its full transport bound still fits.
+  # A manager's cgroup can vanish right after scheduling this unit: retry for at most five minutes, and never start a
+  # call or sleep unless its full transport bound still fits.
   cancel_deadline=$((SECONDS + 300))
   cancel_call_bound=$((TRANSPORT_TIMEOUT_SECONDS + TRANSPORT_KILL_GRACE_SECONDS))
   for ((attempt=0; attempt<60 && SECONDS + cancel_call_bound <= cancel_deadline; attempt++)); do
-    heartbeat=0 on_beelink "$target" --job-cancel "$2"
+    heartbeat=0 on_beelink "$target" --job-cancel "$2" ${queued_only[@]+"${queued_only[@]}"}
     cancel_status=$?
     case "$cancel_status" in
-      0) exit 0 ;;
+      0|3) exit "$cancel_status" ;;  # 3: --queued-only refused a gate whose command started
       130|143)
         echo "beelink-gate: cancellation unconfirmed for $2; cancellation transport interrupted, remote state unknown" >&2
         exit "$cancel_status"

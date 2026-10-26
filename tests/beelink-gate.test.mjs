@@ -501,10 +501,8 @@ test("stopping a queued remote unit terminates its gate after it leaves the unit
   }
 });
 
-test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
-  const f = fixture();
-  installFakeSsh(f);
-  const units = installFakeUnits(f);
+// A systemctl whose stop TERMs the fake unit's runner, as a real unit stop does.
+function installStoppingSystemctl(f) {
   writeFileSync(join(f.root, "bin", "systemctl"), `#!/usr/bin/env bash
 [[ "$1" == --user ]] && shift
 # The managed slices' IOWeight and no legacy user units, as FAKE_SYSTEMCTL answers.
@@ -520,6 +518,61 @@ fi
 exit 1
 `);
   chmodSync(join(f.root, "bin", "systemctl"), 0o755);
+}
+
+// The 10-26 drain cancelled queued gates from a --queue snapshot; a gate admitted in between could have lost its
+// command. --queued-only decides under the job lock the command start also takes.
+test("--cancel-job --queued-only cancels a queued gate and refuses one whose command started", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = installFakeUnits(f);
+  installStoppingSystemctl(f);
+  const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held"), release = join(f.root, "release"), started = join(f.root, "started");
+  const launch = (command) => {
+    const child = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", command], { env });
+    const out = { stderr: "", done: new Promise((done) => child.once("close", done)) };
+    child.stderr.on("data", (chunk) => { out.stderr += chunk; });
+    return { child, out };
+  };
+  const holder = launch(`touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`);
+  let waiter;
+  try {
+    for (let i = 0; i < 2400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), holder.out.stderr);
+    const runningId = holder.out.stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    waiter = launch(`touch '${started}'`);
+    for (let i = 0; i < 2400 && !/checkouts on beelink2/.test(waiter.out.stderr); i++) await sleepMs(25);
+    const queuedId = waiter.out.stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(runningId && queuedId, `${holder.out.stderr}\n${waiter.out.stderr}`);
+
+    const refused = run(gate, ["--cancel-job", "--queued-only", runningId], { env, timeout: 20_000 });
+    assert.equal(refused.status, 3, refused.stderr);
+    assert.match(refused.stderr, /refused: gate_id=beelink2-[0-9a-f]{32} started its command; --queued-only leaves it running/);
+    assert.equal(existsSync(join(f.root, "state", "jobs", runningId, "exit")), false, "the running gate keeps running");
+
+    const canceled = run(gate, ["--cancel-job", "--queued-only", queuedId], { env, timeout: 20_000 });
+    assert.equal(canceled.status, 0, canceled.stderr);
+    const job = join(f.root, "state", "jobs", queuedId);
+    assert.equal(readFileSync(join(job, "exit"), "utf8").trim(), "75");
+    assert.match(readFileSync(join(job, "stderr.log"), "utf8"), new RegExp(`canceled gate_id=${queuedId} (before command|by --cancel-job at \\d{4}-)`));
+
+    writeFileSync(release, "\n");
+    assert.equal(await holder.out.done, 0, holder.out.stderr);
+    assert.equal(existsSync(started), false, "the canceled gate's command never ran");
+  } finally {
+    writeFileSync(release, "\n");
+    holder.child.kill("SIGKILL");
+    waiter?.child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = installFakeUnits(f);
+  installStoppingSystemctl(f);
   const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
   const held = join(f.root, "held");
   const release = join(f.root, "release");

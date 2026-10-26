@@ -167,18 +167,17 @@ except (OSError, ValueError):
 PYMANAGER
 }
 
-job_cancel_remote() {
+job_cancel_remote() {  # <id> [1: queued only]
   local id=$1 dir unit state lock_fd gate_pid i manager
   local -a control=(systemctl --user)
   dir=$(job_dir_for "$id")
   mkdir -p "$STATE_DIR/jobs/.locks" "$STATE_DIR/jobs/.canceled" || return 75
   exec {lock_fd}> "$STATE_DIR/jobs/.locks/$id.lock" || return 75
   flock "$lock_fd" || return 75
+  if [ -n "${2:-}" ] && [ -f "$dir/command-started" ]; then echo "beelink-gate: refused: gate_id=$id started its command; --queued-only leaves it running" >&2; return 3; fi
   : > "$STATE_DIR/jobs/.canceled/$id" || return 75
-  # The marker is set, so a later job_submit refuses. Release before the stop:
-  # runner.sh takes this lock to publish its exit on TERM, and holding it here
-  # held every stop of a live gate to TimeoutStopSec (90 s), past the 30 s
-  # transport deadline, so each first --cancel-job was unconfirmed (10-19).
+  # Marker set, so a later job_submit refuses. Release before the stop: runner.sh takes this lock to publish its exit on
+  # TERM, and holding it held each stop to TimeoutStopSec (90 s), past the 30 s transport deadline (10-19).
   flock -u "$lock_fd"
   if [ -d "$dir" ] && [ ! -f "$dir/exit" ]; then
     unit="beelink-gate-$id.service"
@@ -210,11 +209,10 @@ job_cancel_remote() {
         return 75
       fi
     fi
-    # The unit's cgroup may have killed runner.sh before it wrote its exit.
-    # An attach then sees a terminal TEMPFAIL instead of waiting indefinitely.
-    # A gate that finished before the stop keeps the exit runner.sh published.
+    # The unit's cgroup may have killed runner.sh before its exit: an attach then reads this terminal 75 and its reason
+    # instead of waiting forever. A gate that finished before the stop keeps the exit runner.sh published.
     flock "$lock_fd" || return 75
-    [ -f "$dir/exit" ] || { printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"; }
+    [ -f "$dir/exit" ] || { echo "beelink-gate: canceled gate_id=$id by --cancel-job at $(date -u +%FT%TZ)" >> "$dir/stderr.log"; printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"; }
   fi
   echo "beelink-gate: canceled gate_id=$id" >&2
 }
