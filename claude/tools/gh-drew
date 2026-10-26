@@ -559,7 +559,7 @@ review_guard() {
 # ran its src/ tests and turned the Runtime release red. So a `pr merge`, or an `api -X PUT
 # repos/<o>/<r>/pulls/<n>/merge`, of a repo below needs: the merge pinned to the PR's head
 # (--match-head-commit <head>, or -f sha=<head>), and a beelink-gate receipt for that head (read from the
-# beelinks and drew-gtr-pro by `beelink-gate --receipt`) with exit 0, mode install and class normal. Any command counts: Drew's
+# beelinks and GitHub commit statuses (sandbox gates) by `beelink-gate --receipt`) with exit 0, mode install and class normal. Any command counts: Drew's
 # merge model (AGENTS.md) is a fast gate on the integration tests a change touches, then merge, with the
 # full suite after merge; the Lab's full `pnpm test` failed a different unrelated test on 3 of 4 gates that night
 # (shared /tmp fixtures, OOM timing under load), blocking merges without catching a bug. Under `beelink-gate --merge`, BEELINK_GATE_ID names the gate and that receipt must be the one.

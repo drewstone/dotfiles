@@ -16,8 +16,8 @@ The rules say what a good agent does anywhere; [Our tools](#our-tools) says whic
 
 ## Ship
 
-8. Code is checked at three points only: a local gate before merge, pre-deploy checks in the deploy path, post-deploy checks against the served release. No `pull_request` or push CI; deploy workflows keep preflight, smoke, canary and rollback.
-9. Merge as soon as the local gate passes; when CI is slower than a direct deploy, deploy directly. Read every review on a PR and answer each finding with a fix or evidence; never request hosted reviews.
+8. Code is checked at three points only: a gate before merge, pre-deploy checks in the deploy path, post-deploy checks against the served release. No `pull_request` or push CI; deploy workflows keep preflight, smoke, canary and rollback.
+9. Merge as soon as the gate passes; when CI is slower than a direct deploy, deploy directly. Read every review on a PR and answer each finding with a fix or evidence; never request hosted reviews.
 10. Never revert a merged change; fix forward. A red develop, cut or release goes to its author with the failing tests, and the release owner lands the fix if the author cannot.
 11. Nothing waits on a stale hold, dead owner, slow check or unpromoted release: whoever sees it merges or promotes it through the maintained path. Only a precondition a PR names, a real review finding or Drew's decision holds work, and a hold names what it protects and dies when that ends.
 12. Proof is a few strong integration tests and frequent live runs. Never write or maintain unit or mock tests; delete one that breaks on a valid API change ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)). Reuse proof until its inputs change.
@@ -47,7 +47,7 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 | Need | Tool |
 |---|---|
 | GitHub as Drew or Tangle (rule: never another identity) | `gh-drew` (login `drewstone`) |
-| Local gate before merge (rules 8-9) | `beelink-gate --merge <pr> auto <repo-url> <sha> -- <typecheck and touched integration tests>`; not admitted on a Beelink within 5 minutes it gates on `drew-gtr-pro` under a `storage-lifecycle` lease (name `drew-gtr-pro` to gate there at once), and `gh-drew` accepts that receipt; agent-container pushes and `merge-on-green` merges |
+| Gate before merge (rules 8-9) | Inside a graph run, its check; otherwise `beelink-gate --merge <pr> auto <repo-url> <sha> -- <typecheck and touched integration tests>`, which runs in a Tangle sandbox when no Beelink admits it within 5 minutes; agent-container pushes and `merge-on-green` merges |
 | Production benchmark | `pnpm --dir products/sandbox/evals exec tsx run.ts --preset full --cells eu1,us1 --target production` from `drew-gtr-pro`, keys from the tangle-devops vault; never GitHub Actions |
 | What did earlier agents already find? | `qmd search -c reviews '<terms>'`: every page under `~/reviews` on the Mac and drew-gtr-pro, refreshed hourly by `reviews-index`; read and link it before a new analysis |
 | Is X built? (rule 5) | `have <terms>`, plus `git grep` on `origin/<default>`; search a checkout with the `fff` tools first when listed |
