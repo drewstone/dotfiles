@@ -75,7 +75,8 @@ git config --global user.name ${quote(gitIdentity('user.name') || 'beelink-gate'
 step fetch
 # A box restored from a warm snapshot already holds the repo's objects, Node, pnpm store and turbo cache.
 if [ -d repo/.git ]; then cd repo && git remote set-url origin ${quote(repoUrl)}; else rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)}; fi || exit 70
-git fetch -q --filter=blob:none origin ${sha} || exit 70
+# A commit origin does not have is this gate's input, not the box: exit 71 never turns sandbox placement off.
+git fetch -q --filter=blob:none origin ${sha} || { echo "beelink-gate-sandbox: ${sha} is not on origin; push it first" >&2; exit 71; }
 for b in main develop ${branch ? quote(branch) : ''}; do git fetch -q --filter=blob:none origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null; done
 ${branch ? `git checkout -qf -B ${quote(branch)} ${sha} && git branch -q --set-upstream-to=origin/${quote(branch)}` : `git checkout -qf --detach ${sha}`} || exit 70
 git clean -ffdxq -e .turbo
@@ -187,6 +188,7 @@ async function run(argv) {
     await stop()
   }
   if (exit === null) tempfail(`gate on ${box.id} ended ${record?.state ?? 'unsubmitted'} without an exit code`)
+  if (exit === 71) tempfail(`${sha} is not on origin ${repoUrl}; push it, then gate again`)
   // Exit 70 is a bootstrap step (fetch, Node) that failed before the command: not a red gate.
   if (exit === 70) {
     mkdirSync(path.dirname(offMarker), { recursive: true })
