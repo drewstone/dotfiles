@@ -24,7 +24,7 @@ case "$*" in
   "api graphql -f query={viewer{login}} --jq .data.viewer.login") echo drewstone ;;
   "api rate_limit --jq .resources.core.remaining") echo 4000 ;;
   "api rate_limit --jq .resources.core.reset") echo 1790332087 ;;
-  "pr create"*)
+  "pr create"*|"pr create --repo"*|"pr create -R"*)
     if [[ -n "\${FAKE_CREATE_LOG:-}" ]]; then echo create >>"$FAKE_CREATE_LOG"; fi
     sleep "\${FAKE_CREATE_DELAY:-0}"
     if [[ "\${FAKE_CREATE_NO_URL:-}" == 1 ]]; then echo "Opening in your browser."
@@ -53,9 +53,10 @@ echo "\${FAKE_PR_STATE-OPEN}"
   return { root, wip, reads, ledger: join(wip, `${LANE}.tsv`), env };
 }
 
-function create(s, extra = {}) {
-  return spawnSync(ghDrew, ["pr", "create", "--title", "t", "--body", "b"],
-    { env: { ...s.env, ...extra }, encoding: "utf8" });
+// Outside any checkout, so the target repository is unknown and every open PR of the lane counts.
+function create(s, extra = {}, repo = []) {
+  return spawnSync(ghDrew, ["pr", "create", ...repo, "--title", "t", "--body", "b"],
+    { env: { ...s.env, ...extra }, encoding: "utf8", cwd: s.root });
 }
 
 function seed(s, url) {
@@ -104,6 +105,19 @@ test("a successful create without a printed URL keeps its status and records no 
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /Opening in your browser/);
     assert.ok(!existsSync(s.ledger));
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test("a lane's open PR blocks a second PR in its repository only (73 cross-repository refusals 10-19..26)", () => {
+  const s = sandbox();
+  try {
+    seed(s, OPEN_PR);
+    const other = create(s, { TANGLE_RUN_ID: LANE }, ["--repo", "o/other"]);
+    assert.equal(other.status, 0, other.stderr);
+    assert.ok(other.stdout.includes(NEW_PR));
+    const same = create(s, { TANGLE_RUN_ID: LANE }, ["-R", "O/R"]);
+    assert.equal(same.status, 1);
+    assert.ok(same.stderr.includes(`already has open PR ${OPEN_PR}`), same.stderr);
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
@@ -162,7 +176,7 @@ test("two simultaneous creates in one lane admit only one GitHub call", async ()
     const env = { ...s.env, TANGLE_PR_WIP_KEY: "fleet--first", FAKE_CREATE_DELAY: "0.3",
       FAKE_CREATE_LOG: calls };
     const run = () => new Promise((resolveResult) => {
-      const child = spawn(ghDrew, ["pr", "create", "--title", "t", "--body", "b"], { env });
+      const child = spawn(ghDrew, ["pr", "create", "--title", "t", "--body", "b"], { env, cwd: s.root });
       let stderr = "";
       child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
       child.on("close", (status) => resolveResult({ status, stderr }));
