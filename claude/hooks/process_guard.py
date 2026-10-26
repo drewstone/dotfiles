@@ -18,8 +18,8 @@ while their briefs said not to:
                 the newest entry can be another session's; an agent popped one.
                 The entry must be named, the checkout must be a `_wt` worktree this session
                 created (wt-new's .wt-owner, or a `git worktree add` in this session's
-                transcripts), and a named entry must come from the branch checked out there. A bare pop of
-                the entry the same command pushed passes in a one-worktree checkout (119 GTR refusals, 10-17..24).
+                transcripts), and a named entry must come from the branch checked out there. A bare pop of the entry
+                the same command pushed passes in a one-worktree checkout (119 GTR refusals, 10-17..24).
   mac-build     whole-repo installs, builds, test runs, turbo runs, image builds and signoff
                 on the Mac (10 cores; agents drove its load to 120). Single test files stay
                 local. Allowed when the command sets CC_ALLOW_MAC_BUILD=1.
@@ -46,10 +46,10 @@ while their briefs said not to:
                 `declare -x`/`set`, `env | grep X`, `printenv | ...`, reading /proc/<pid>/environ, `printenv KEY`
                 or `echo $X_TOKEN` for a secret-named variable, and env redirected into a file. Fleet lane
                 environments carry live credentials: a subagent ran `env | grep TANGLE_` to find
-                its lane id and printed the lane's sk-tan- router key into the transcript, which forced a
-                production key rotation. Names only stay allowed (`cut -d= -f1`, `sed 's/=.*/=<set>/'`, awk, `wc`),
-                as do `env VAR=x cmd`, `printenv` of a non-secret or *_FILE/*_PATH name, and a non-command `env`.
-                Override: CC_ALLOW_ENV_DUMP=1, set by Drew for the session.
+                its lane id and printed the lane's sk-tan- router key, forcing a production key rotation. Names only
+                (`cut -d= -f1`, `sed 's/=.*/=<set>/'`, awk, `wc`, `grep -o '^(A|B)='`) pass, as do `grep '^(PORT|TMPDIR)='`
+                of exact non-secret names, `env VAR=x cmd`, `printenv` of a non-secret name, and a non-command `env`;
+                override CC_ALLOW_ENV_DUMP=1, set by Drew for the session.
 
   ledger-write  `echo '{...}' >> .agent/climb.jsonl`, `tee -a reports/climb/ledger.jsonl`: rows written
                 around `climb-log append`, which checks that every reported number names its selection
@@ -59,12 +59,10 @@ while their briefs said not to:
                 the Mac's bash 3.2 the read can outlive its timeout and each poll leaks a tail. Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
 
 Commands inside `ssh host '...'`, `bash -c`, `eval` and heredocs fed to a shell are parsed too (an admin
-merge run on a Beelink has the same effect on GitHub); the Mac build rule skips remote commands.
-
-So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host
+merge run on a Beelink has the same effect on GitHub); the Mac build rule skips remote commands. So are
+ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host
 bash -s < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root: a
 bare `git stash pop` ran from scratchpad/gate1699.sh. A repository's own scripts are not read.
-
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
 redacted. Fail-open: an unparsable payload exits 0 with no output.
 """
@@ -728,8 +726,11 @@ def env_names_only(argv):
     if prog == "awk":
         return any(a in ("-F=", "-F", "=") for a in args) and any(re.search(r"print\s+\$1\b\s*}", a) for a in args)
     flags, pat = "".join(a[1:] for a in args if re.match(r"^-[a-zA-Z]+$", a)), next((a for a in args if a[:1] != "-"), "")
-    if prog in ("grep", "egrep", "rg"):  # counts, file names, or -o of an anchored name pattern that cannot reach `=`
-        return bool(re.search(r"[clLq]", flags)) or ("o" in flags and pat[:1] == "^" and not re.search(r"[.=\\]|\[\^", pat))
+    if prog in ("grep", "egrep", "rg"):  # counts, file names, -o of an anchored name pattern, or exact non-secret names
+        alts = re.fullmatch(r"\^\(([\w|]+)\)=", pat)  # ^(A|B)= or ^A=|^B=: 10-19..26 refused 9 reads of PORT, TMPDIR...
+        alts = alts.group(1).split("|") if alts else [a[1:-1] for a in pat.split("|") if re.fullmatch(r"\^\w+=", a)]
+        exact = "v" not in flags and len(alts) == pat.count("|") + 1 and not any(ENV_SECRET_VAR.search(a) for a in alts)
+        return bool(re.search(r"[clLq]", flags)) or exact or ("o" in flags and pat[:1] == "^" and not re.search(r"[.\\]|\[\^|=[^|)]", pat))
     return prog in ("wc", "sha256sum", "shasum", "sha1sum", "md5sum", "b2sum", "b3sum")  # a count or a fingerprint
 
 
@@ -1187,8 +1188,7 @@ def worktree_owner(toplevel):
     return None
 
 
-STASH_WHY = ("Every worktree of a repo shares one stash list, so the newest entry can be another session's "
-             "work.")
+STASH_WHY = "Every worktree of a repo shares one stash list, so the newest entry can be another session's work."
 
 
 def rule_shared_stash(cmd, payload):

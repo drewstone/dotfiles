@@ -56,6 +56,11 @@ if "format-traces-drive" in cmd:
     print("To test it, run tests/provision.hostlab.sh: it erases a scratch disk in a throwaway VM (hostlab run).", file=err)
     sys.exit(2)
 
+# A heredoc that `cat` or `tee` writes to a file is data: 10 of the 16 refusals left after the
+# word-end fix (10-19..26) were source files and messages naming shutdown or reboot. A heredoc fed
+# to a shell (`bash -s <<EOF`) is still judged.
+cmd = re.sub(r"(\b(?:cat|tee)\b[^\n]*<<-?\s*['\"]?([A-Za-z_]\w*)['\"]?[^\n]*\n)(?:.*?\n)??\2(?=\n|$)", r"\1", cmd, flags=re.S)
+
 # The VM lane is the allowed venue; a command handed to it passes whole. The
 # eraser rule above comes first, so a hostlab command that names it is refused.
 if re.search(r"(^|[\s;&|(])hostlab\s+(run|shell|build|ssh)\b", cmd):
@@ -92,7 +97,9 @@ RULES = [
     (r"(?:mkfs(?:\.\w+)?|mke2fs|mkswap|wipefs|blkdiscard|sgdisk|sfdisk|fdisk|parted)\s+(?:\S+\s+)*" + ROOT_DISK, "writing a real disk"),
     (r"dd\s+(?:\S+\s+)*of=" + ROOT_DISK, "dd onto a real disk"),
     (r"(?:echo|printf)\s+\S+\s*>\s*/proc/sysrq-trigger", "sysrq reboots or crashes the host"),
-    (r"(?:systemctl\s+(?:reboot|poweroff|halt|kexec)|reboot|poweroff|halt|shutdown|init\s+[06])\b", "rebooting or powering off the host"),
+    # The verb must end its word: in `grep -E "lifecycle/(quiesce|shutdown)"` and `grep "a|reboot|b"` it is a
+    # pattern. All 48 refusals of this rule from 10-19 to 10-26 were patterns like these.
+    (r"(?:systemctl\s+(?:reboot|poweroff|halt|kexec)|reboot|poweroff|halt|shutdown|init\s+[06])(?=\s|$|[;&\n])", "rebooting or powering off the host"),
 ]
 
 # Listing forms are read-only and pass.
@@ -123,7 +130,7 @@ for pat, why in RULES:
         verb_text = m.group(1)
         # Listing flags may follow the device (`parted /dev/nvme0n1 print`), so
         # judge the whole command segment, not only the matched span.
-        segment = re.split(r"[;&|\n]", cmd[m.start(1):], 1)[0]
+        segment = re.split(r"[;&|\n]", cmd[m.start(1):], maxsplit=1)[0]
         if is_listing(segment):
             continue
         err = sys.stderr

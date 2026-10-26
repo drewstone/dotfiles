@@ -3613,7 +3613,7 @@ test("--summary ends a red gate with the suite's counts and failing tests from s
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("--retry resubmits after TEMPFAIL, re-attaches a gate whose connection dropped, and stops when the window would pass", () => {
+test("--retry resubmits after TEMPFAIL, a dropped attach re-attaches by itself, and --retry stops when the window would pass", () => {
   const f = fixture();
   try {
     installFakeSsh(f);
@@ -3635,9 +3635,9 @@ exec '${join(f.root, "bin", "ssh")}' "$@"
     assert.equal(result.stdout, "first\n");
     assert.match(result.stderr, /TEMPFAIL next_allowed=\S+Z cannot read the Windows Update schedule of beelink2/);
     assert.match(result.stderr, /--retry 5: attempt 1 got TEMPFAIL; attempt 2 starts at/);
-    const id = result.stderr.match(/attach connection lost for (beelink2-[0-9a-f]{32})/)?.[1];
-    assert.ok(id, result.stderr);
-    assert.match(result.stderr, new RegExp(`--retry 5: attempt 2 got TEMPFAIL; attempt 3 re-attaches to ${id} and starts at`));
+    // The dropped attach re-attaches inside the same attempt instead of returning a TEMPFAIL for the caller to retry.
+    assert.match(result.stderr, /attach connection lost for beelink2-[0-9a-f]{32}; re-attaching \(attempt 1 of 6\)/);
+    assert.doesNotMatch(result.stderr, /attempt 3/);
     // One gate ran: the re-attach replayed it instead of submitting a second one.
     const submits = readFileSync(join(f.root, "ssh-remote-commands"), "utf8").split("\n").filter((line) => line.includes("--job-submit"));
     assert.equal(submits.length, 1, submits.join("\n"));

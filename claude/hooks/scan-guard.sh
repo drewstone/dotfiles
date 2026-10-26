@@ -19,7 +19,15 @@
 #
 # Bounded finds stay allowed on a broad root: `-maxdepth` up to 3, or `-xdev` on
 # /mnt (its own filesystem, without the archive drive). `-xdev` on / or the home
-# still walks every checkout. Codex runs this hook too (~/.codex/hooks.json,
+# still walks every checkout.
+#
+# Linux hosts (drew-gtr-pro, the Beelinks, sandboxes; also any command after `ssh`) are judged by
+# their own harm, the archive drive and multi-million-entry walks, not the Mac's CPU. From 10-19 to
+# 10-26 202 of 319 refusals were there, mostly bounded finds. Measured on drew-gtr-pro 10-26 at
+# load 30: `find ~ -maxdepth 4` 5.5 s, `find / -xdev -maxdepth 6` 16 s, ~/.config 0.6 s,
+# ~/.claude 1.5 s, ~/.codex 0.2 s. So there a find with `-maxdepth` up to 6 passes unless it can
+# enter /mnt/traces (a root of /, /mnt or /mnt/traces without -xdev), and the small config trees
+# pass. Codex runs this hook too (~/.codex/hooks.json,
 # installed by claude/install.sh); a Codex session's
 # `find / -name ...` walked /mnt/traces for 35+ min on drew-gtr-pro because only
 # Claude ran the guard.
@@ -31,11 +39,12 @@ exec 2>/dev/null
 
 payload="$(cat 2>/dev/null || true)"
 [ -z "$payload" ] && exit 0
-printf '%s' "$payload" | grep -qE '\b(grep|rg|find|fd|du)\b' || exit 0
+# A JSON payload escapes a newline as \n, so a search on a line of its own follows a letter: no word boundary here.
+printf '%s' "$payload" | grep -qE '(grep|rg|find|fd|du)' || exit 0
 command -v python3 >/dev/null || exit 0
 
 read -r -d '' GUARD_PY <<'PY'
-import json, os, re, shlex, sys
+import json, os, platform, re, shlex, sys
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
@@ -58,6 +67,10 @@ BROAD = {"/", "/home", "/mnt", "/mnt/traces", home, home + "/", home + "/.local"
 # A relative or implicit path resolves against the session's cwd: a lane ran `grep -rln ... .` from
 # ~/code on drew-gtr-pro at 43 MB/s while the box sat at load 90, and the literal "." matched nothing here.
 cwd = d.get("cwd") or os.getcwd()
+# SCAN_GUARD_PLATFORM stands in for uname in tests, so both hosts' rules run on either.
+MAC = (os.environ.get("SCAN_GUARD_PLATFORM") or platform.system()) == "Darwin"
+SMALL = {home + "/.config", home + "/.codex", home + "/.claude"}  # under 2 s to walk on drew-gtr-pro
+ARCHIVE = {"/", "/mnt", "/mnt/traces"}
 
 def norm(tok):
     tok = tok.strip("'\"")
@@ -70,9 +83,10 @@ def resolve(tok, base):
     path = norm(tok)
     if not path.startswith("/"):
         path = os.path.normpath(os.path.join(base, path))
+    path = re.sub(r"^/home/[^/]+(?=/|$)", home, path)  # a remote host's home is judged as this one
     return path.rstrip("/") or "/"
 
-def broad_roots(seg, base):
+def broad_roots(seg, base, mac):
     try:
         toks = shlex.split(seg)
     except ValueError:
@@ -109,25 +123,45 @@ def broad_roots(seg, base):
     # With no path operand they search the cwd.
     if not args:
         args = ["."]
-    broad = {norm(b) for b in BROAD}
+    broad = {norm(b) for b in BROAD} - (set() if mac else SMALL)
     hits = [t for t in args if resolve(t, base) in broad]
     if prog == "find" and hits:
         depth = next((toks[i + 1] for i, t in enumerate(toks[:-1]) if t == "-maxdepth"), None)
-        if depth is not None and depth.isdigit() and int(depth) <= 3:
+        depth = int(depth) if depth is not None and depth.isdigit() else None
+        xdev = "-xdev" in toks or "-mount" in toks
+        if depth is not None and depth <= 3:
             return []
-        if "-xdev" in toks or "-mount" in toks:
+        if xdev:
             hits = [t for t in hits if resolve(t, base) != "/mnt"]
+        if not mac and depth is not None and depth <= 6:
+            hits = [t for t in hits if resolve(t, base) in ARCHIVE and not xdev]
     return hits
 
+# A heredoc that `cat` or `tee` writes to a file is data, not a command: a test script of scan cases was refused.
+cmd = re.sub(r"(\b(?:cat|tee)\b[^\n]*<<-?\s*['\"]?([A-Za-z_]\w*)['\"]?[^\n]*\n)(?:.*?\n)??\2(?=\n|$)", r"\1", cmd, flags=re.S)
 hits = []
-# Follow `cd` within the command, so `cd ~/code && grep -r x .` is judged from ~/code.
-for seg in re.split(r"\|\||&&|;|\||\n", cmd):
-    seg = seg.strip()
-    m = re.match(r"cd\s+(\S+)\s*$", seg)
-    if m:
-        cwd = resolve(m.group(1), cwd)
-        continue
-    hits += broad_roots(seg, cwd)
+# Everything after the first `ssh` runs on a Linux host, from that host's home.
+ssh = re.search(r"(?:^|[\s;&|(])ssh\s", cmd)
+parts = [(cmd, cwd, MAC)]
+if ssh:
+    remote = cmd[ssh.start():]
+    try:  # the remote script is the operand after ssh's options and the host
+        toks, i = shlex.split(remote), 1
+        while i < len(toks) and toks[i].startswith("-"):
+            i += 2 if toks[i][-1] in "bcDEeFIiJLlmOopQRSWw" and len(toks[i]) == 2 else 1
+        remote = toks[i + 1] if len(toks) == i + 2 else remote
+    except ValueError:
+        pass
+    parts = [(cmd[:ssh.start()], cwd, MAC), (remote, home, False)]
+for text, base, mac in parts:
+    # Follow `cd` within the command, so `cd ~/code && grep -r x .` is judged from ~/code.
+    for seg in re.split(r"\|\||&&|;|\||\n", text):
+        seg = seg.strip()
+        m = re.match(r"cd\s+(\S+)\s*$", seg)
+        if m:
+            base = resolve(m.group(1), base)
+            continue
+        hits += broad_roots(seg, base, mac)
 if hits:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
@@ -135,7 +169,8 @@ if hits:
         "permissionDecisionReason": (
             f"scan-guard: recursive search over a broad tree ({', '.join(sorted(set(hits)))}) is blocked. "
             "On the Mac these ran 4-10 min at full CPU while load was 50-110; on drew-gtr-pro `find /` "
-            "walked the archive drive for up to 75 min and stalled its trace capture. Use `git grep` in the "
+            "walked the archive drive for up to 75 min and stalled its trace capture. On Linux a find with "
+            "-maxdepth up to 6 passes (add -xdev on /). Use `git grep` in the "
             "owning repo, `fd <name> <path>` or `find <path> -maxdepth 3` on a named directory, `qmd` for the "
             "markdown docs, the specific state file, or vault secrets by key name (dotenvx get -f <file>)."
         ),

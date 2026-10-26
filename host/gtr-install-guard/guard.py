@@ -21,7 +21,7 @@ refused only inside a `_wt` worktree, because GTR tools use uv from their checko
 On a Beelink, /usr/local/bin/git is a shell shim (beelink-git) that runs this file, with `git.worktree-cap.json` beside it,
 only for `worktree` commands. There it applies only the
 worktree cap: a `git worktree add` into `_wt` must name its fleet lane, and is refused while that lane
-already holds `cap` worktrees there or the filesystem has less than `floor_bytes` free. The refusal
+already holds `cap` worktrees there or the tree does not fit Tangle Tools' size-aware storage admission. The refusal
 lists the longest-idle trees to release with wt-remove. Installs stay allowed: Beelinks are where they run.
 """
 import os
@@ -400,12 +400,42 @@ def cap_refusal(config: dict, target, lane: str):
         return (f"beelink-worktree-cap: refused git worktree add for {lane}: it holds {len(mine)} of "
                 f"{config['cap']} worktrees on {host}. Release one first; longest idle:{release_list(mine, lane)}")
     free = free_bytes(resolved(target[0], target[1])[0])
-    if free is not None and free < config["floor_bytes"]:
-        return (f"beelink-worktree-cap: refused git worktree add for {lane}: {host} has "
-                f"{free / 2**30:.0f} GiB free, under its {config['floor_bytes'] / 2**30:.0f} GiB floor. "
+    verdict = admission(config, host, request_bytes(target[1]), free) if free is not None else None
+    if verdict and not verdict["fits"]:
+        return (f"beelink-worktree-cap: refused git worktree add for {lane}: {host} has {free / 2**30:.0f} GiB free "
+                f"- {verdict['reserved_bytes'] / 2**30:.0f} GiB reserved - {verdict['requested_bytes'] / 2**30:.1f} GiB "
+                f"for this tree, under the {verdict['minimum_bytes'] / 2**30:.0f} GiB lifecycle minimum. "
                 "Free space first; run storage-lifecycle run --exclusive-inventory --max-seconds 20 "
                 "for the read-only owner/allocation ranking. Removal still requires wt-remove.")
     return None
+
+
+def request_bytes(cwd: Path) -> int:
+    """A new tree's own size: the tracked bytes at HEAD of the repository it is added from."""
+    import subprocess
+    try:
+        out = subprocess.run(["/usr/bin/git", "-C", str(cwd), "ls-tree", "-r", "-l", "--full-tree", "HEAD"],
+                             capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    return sum(int(f[3]) for f in (line.split(None, 4) for line in out.splitlines()) if len(f) > 3 and f[3].isdigit())
+
+
+def admission(config: dict, host: str, request: int, free: int):
+    """Tangle Tools' size-aware admission (free - live reservations - request >= its minimum), the rule
+    beelink-gate uses. The fixed 160 GiB floor it replaces refused 33 adds from 10-19 to 10-26 at 123-153 GiB
+    free, for trees of a few GiB. An unreadable owner admits: an unknown is not disk pressure."""
+    import importlib.util
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "fleet_disk_policy", config.get("admission_policy", "/usr/local/libexec/tangle-fleet-disk-policy.py"))
+        owner = importlib.util.module_from_spec(spec)
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(owner)
+        return owner.admission_headroom(host, "/", request, free)
+    except Exception as error:  # noqa: BLE001  any owner failure is an unknown
+        print(f"beelink-worktree-cap: storage admission unreadable ({type(error).__name__}); add admitted", file=sys.stderr)
+        return None
 
 
 def capped_add(real: str, argv: list[str], target, lane: str, config: dict) -> int:

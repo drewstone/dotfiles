@@ -94,10 +94,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
-          },
-          {
-            "type": "command",
             "command": "$HOME/.claude/hooks/audit-freshness-check.sh"
           },
           {

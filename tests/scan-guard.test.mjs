@@ -7,8 +7,9 @@ import test from "node:test";
 
 const hook = resolve("claude/hooks/scan-guard.sh");
 const repo = mkdtempSync(join(tmpdir(), "scan-guard-repo-"));
-const decide = (command, cwd = repo) => {
-  const out = spawnSync("bash", [hook], { input: JSON.stringify({ tool_name: "Bash", cwd, tool_input: { command } }), encoding: "utf8" });
+const decide = (command, cwd = repo, platform = "") => {
+  const env = { ...process.env, SCAN_GUARD_PLATFORM: platform };
+  const out = spawnSync("bash", [hook], { input: JSON.stringify({ tool_name: "Bash", cwd, tool_input: { command } }), encoding: "utf8", env });
   assert.equal(out.status, 0);
   return out.stdout.trim() ? JSON.parse(out.stdout).hookSpecificOutput : null;
 };
@@ -47,6 +48,31 @@ test("does not read script assignments, rg replacements or empty operands as bro
     assert.equal(decide(command), null, command);
   }
   assert.equal(decide("grep -rl key ''", "/")?.permissionDecision, "deny");
+});
+
+test("on Linux, and after ssh, only walks that reach the archive drive or millions of entries are refused (10-19..26 refusals)", () => {
+  // 202 of 319 refusals in that week were on Linux hosts, mostly finds bounded at depth 4-6 (16 s at most on drew-gtr-pro).
+  for (const command of [
+    "find / -xdev -maxdepth 6 -name config.toml 2>/dev/null | head",
+    "find ~ -maxdepth 4 -type d -name agent-interface -not -path '*/node_modules/*'",
+    "find /home/drew/.local/share -maxdepth 6 -name opencode.db",
+    "grep -rl ORCHESTRATOR_ADMIN ~/.config",
+  ]) {
+    assert.equal(decide(command, repo, "Linux"), null, command);
+  }
+  for (const command of ["find / -maxdepth 6 -name x", "find ~ -name spans.jsonl", "grep -rl key ~/.local/state", "find /mnt -maxdepth 5 -name x"]) {
+    assert.equal(decide(command, repo, "Linux")?.permissionDecision, "deny", command);
+  }
+  // From the Mac, a command after ssh is judged by the remote host's rules, with its own home.
+  assert.equal(decide("ssh -o BatchMode=yes drew-gtr-pro 'find /home/drew/code -maxdepth 6 -name x'", repo, "Darwin"), null);
+  assert.equal(decide("ssh gtr 'cd ~/wt/x/src && grep -n BATCH -r .. | head'", repo, "Darwin"), null);
+  assert.equal(decide("ssh gtr 'find / -name x'", repo, "Darwin")?.permissionDecision, "deny");
+  assert.equal(decide("find ~ -maxdepth 4 -name x; ssh gtr true", repo, "Darwin")?.permissionDecision, "deny");
+});
+
+test("a heredoc that cat writes to a file is data", () => {
+  assert.equal(decide("cat > /tmp/t.sh <<'EOF'\nfind ~ -name x\nEOF\nbash -n /tmp/t.sh", repo, "Darwin"), null);
+  assert.equal(decide("bash -s <<'EOF'\nfind ~ -name x\nEOF", repo, "Darwin")?.permissionDecision, "deny");
 });
 
 test.after(() => rmSync(repo, { recursive: true, force: true }));
