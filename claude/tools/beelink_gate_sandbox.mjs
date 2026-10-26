@@ -169,7 +169,7 @@ async function run(argv) {
   const retire = async (target) => {
     await target.stop().catch((error) => say(`box ${target.id} stop failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`))
     for (const attempt of [1, 2, 3, 4]) {
-      try { await target.delete(); return } catch (error) { if (error.status === 404) return; say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
+      try { await target.delete(); return } catch (error) { if (error.status === 404 || await client.get(target.id).then((b) => !b || b.status === 'deleted', () => false)) return; say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
     }
     say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
   }
