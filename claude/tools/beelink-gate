@@ -1698,6 +1698,9 @@ choose_beelink() {
     # load wait. Keep probing rather than queue on an overloaded host while
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
+    # Past the wait budget, a host that cannot start the gate now (full slots, over its load limit) loses to a
+    # sandbox: overloaded hosts kept ranking "best", so waiting gates looped back to them and never left.
+    if (( best_rank >= 2 )) && sandbox_due; then echo sandbox; return 0; fi
     if [ -n "$best" ]; then
       check_checkout_reservations
       [ -z "${checkout_reservation_lost[$best]:-}" ] || continue

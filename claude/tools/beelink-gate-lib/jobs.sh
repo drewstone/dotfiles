@@ -268,7 +268,9 @@ while True:
                                     capture_output=True, text=True, timeout=float(sys.argv[3]))
             live = status.returncode == 0 and status.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating')
         except (OSError, UnicodeError, subprocess.TimeoutExpired):
-            live = False
+            # An unread status is unknown, not stopped: a daemon-reload at load 118 on beelink2
+            # (10-26 05:27Z) timed these reads out and every attached launcher reported a live gate stopped.
+            live = True
         if not live:
             # runner.sh can publish its exit between the receipt check above and this
             # unit read; re-read it so a finished gate is never reported as TEMPFAIL.

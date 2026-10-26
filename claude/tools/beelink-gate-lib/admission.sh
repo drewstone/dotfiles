@@ -289,6 +289,7 @@ acquire_checkout_admission() {
     # Each older waiter reserves one free checkout; with two free and one older
     # waiter, this gate still takes the second.
     local ahead=0 skipped=0 checkout_wait_stage=checkout_lock
+    touch "$ticket"
     (( urgent )) || ahead=$(older_tickets_ahead "$ticket_prefix" "$enqueued")
     for ((k = 0; k < copies; k++)); do
       if (( ! urgent )) && urgent_ahead "$urgent_marker"; then checkout_wait_stage=fifo; break; fi
@@ -586,7 +587,8 @@ older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tick
   # reservation ticket and its own, under one token. Every gate compares those same
   # pairs, so two gates can never each count the other as ahead.
   local t rest since pid token key me_since=$2 me_pid=$$ n=0
-  local -A key_since=() key_pid=()
+  local -A key_since=() key_pid=() key_ready=()
+  local now; now=$(date +%s)
   for t in "$1".*.*; do
     [ -e "$t" ] || continue
     rest=${t#"$1".}; since=${rest%%.*}; pid=${rest#*.}
@@ -599,11 +601,16 @@ older_tickets_ahead() {  # <ticket prefix> <my epoch>: how many live, older tick
     fi
     if ! waiter_alive "$t" "$pid"; then rm -f "$t"; continue; fi
     key=${token:-$pid}
+    # Only a gate polling for a checkout now holds one free: its claim loop refreshes the ticket.
+    # A ticket left while its gate waits for load, or an auto reservation whose gate waits or runs
+    # on the other host, kept beelink2's free discovery-lab checkout empty for 15 min on 10-26.
+    (( $(stat -c %Y "$t" 2>/dev/null || echo 0) >= now - 30 )) && key_ready[$key]=1
     if [ -z "${key_since[$key]:-}" ] || (( since < key_since[$key] || (since == key_since[$key] && pid < key_pid[$key]) )); then
       key_since[$key]=$since key_pid[$key]=$pid
     fi
   done
   for key in "${!key_since[@]}"; do
+    [ -n "${key_ready[$key]:-}" ] || continue
     if (( key_since[$key] < me_since || (key_since[$key] == me_since && key_pid[$key] < me_pid) )); then n=$((n + 1)); fi
   done
   echo "$n"

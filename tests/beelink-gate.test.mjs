@@ -3407,6 +3407,22 @@ test("a free checkout goes to the oldest waiting gate, not the first to poll", a
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a free checkout is not held for an older ticket whose gate is not polling for one", () => {
+  const f = fixture();
+  const older = spawn("sleep", ["60"], { stdio: "ignore" });
+  try {
+    // An older gate waiting for load, or an auto reservation whose gate runs on the other host,
+    // never refreshes its ticket here. beelink2's free checkout sat empty for 15 min behind such tickets.
+    mkdirSync(join(f.cache, ".locks"), { recursive: true });
+    const ticket = join(f.cache, ".locks", `queue-local-owner-repo.${Math.floor(Date.now() / 1000) - 600}.${older.pid}`);
+    writeFileSync(ticket, "");
+    const stale = Date.now() / 1000 - 60;
+    utimesSync(ticket, stale, stale);
+    const run = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_ADMIT_WAIT: "10" } });
+    assert.equal(run.status, 0, run.stderr);
+  } finally { older.kill(); rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("an auto gate keeps its reservation's place in line, so it and a newer gate never wait for each other", async () => {
   const f = fixture();
   const owners = [];

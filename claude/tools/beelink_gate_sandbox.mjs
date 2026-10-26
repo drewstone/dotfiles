@@ -27,7 +27,9 @@ const resources = (gateClass) => gateClass === 'light'
 const CAPACITY_BACKOFF_MS = 300_000
 const cacheDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'beelink-gate')
 const MAX_LIVE = Number(process.env.BEELINK_GATE_SANDBOX_MAX || 4)
-const HOLD_S = Number(process.env.BEELINK_GATE_SANDBOX_HOLD_S || 45 * 60)
+// The same hold budget as a Beelink gate (BEELINK_GATE_MAX_HOLD, e.g. 90m), default 45 minutes.
+const holdSeconds = (v) => { const m = /^(\d+)([smh]?)$/.exec(v || ''); return m ? Number(m[1]) * ({ s: 1, m: 60, h: 3600 }[m[2]] || 1) : 45 * 60 }
+const HOLD_S = holdSeconds(process.env.BEELINK_GATE_MAX_HOLD)
 const SETTLED = new Set(['succeeded', 'failed', 'cancelled', 'expired'])
 
 const say = (line) => process.stderr.write(`beelink-gate: ${line}\n`)
