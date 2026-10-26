@@ -17,7 +17,7 @@ import { randomBytes } from 'node:crypto'
 const TEMPFAIL = 75
 // The SDK version factory's managed jobs run on (factory package.json); bump both together.
 const SDK_VERSION = '0.64.40'
-const BOX_PREFIX = 'beelink-gate-'
+const BOX_PREFIX = 'beelink-gate-', gateBox = (name) => /^beelink-gate-[0-9a-f]{12}$/.test(name || '')  // the cap counts gate-id names only
 // Production hosts refused 16 GB with CAPACITY_EXHAUSTED on 2026-10-26 and admitted 8 GB in 2.5 s.
 // A light gate (no install, at most 120 core-seconds) gets a small box; every other class gets 8 CPU / 8 GB.
 const resources = (gateClass) => gateClass === 'light'
@@ -142,7 +142,7 @@ async function run(argv) {
   const capacityOff = path.join(cacheDir(), 'sandbox-capacity-refused')
   if (existsSync(capacityOff) && Date.now() - statSync(capacityOff).mtimeMs < CAPACITY_BACKOFF_MS) tempfail(`platform refused a create (${readFileSync(capacityOff, 'utf8').trim().slice(0, 400)}); no create for 5 minutes`)
   // Warm source boxes hold snapshots, not gates, so they do not count toward the cap.
-  const live = (await client.list().catch((error) => tempfail(`cannot list gate boxes, so the ${MAX_LIVE}-box cap is unchecked: ${String(error.message).slice(0, 160)}`))).filter((b) => b.name?.startsWith(BOX_PREFIX) && !b.name.startsWith(`${BOX_PREFIX}warm-`) && !['deleted', 'stopped', 'failed'].includes(b.status))
+  const live = (await client.list().catch((error) => tempfail(`cannot list gate boxes, so the ${MAX_LIVE}-box cap is unchecked: ${String(error.message).slice(0, 160)}`))).filter((b) => gateBox(b.name) && !['deleted', 'stopped', 'failed'].includes(b.status))
   if (live.length >= MAX_LIVE) tempfail(`cap reached: ${live.length} of ${MAX_LIVE} gate boxes live`)
   const id = randomBytes(16).toString('hex')
   const gateId = `sandbox-${id}`
@@ -327,7 +327,7 @@ async function listLive() {
   const { Sandbox } = await sdk()
   const client = new Sandbox({ apiKey: key, baseUrl: process.env.BEELINK_GATE_SANDBOX_URL || 'https://sandbox.tangle.tools' })
   for (const b of await client.list())  // a failed listing is an error, never 'no boxes' (slim-ops 34f, 14:5xZ)
-    if (b.name?.startsWith(BOX_PREFIX) && !['deleted', 'stopped', 'failed'].includes(b.status))
+    if (gateBox(b.name) && !['deleted', 'stopped', 'failed'].includes(b.status))
       console.log(JSON.stringify({ box: b.id, name: b.name, status: b.status, created: b.createdAt }))
 }
 
