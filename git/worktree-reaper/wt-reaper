@@ -431,7 +431,6 @@ def scan_processes(use_sudo, log):
     Any live process the scan cannot inspect makes the whole scan incomplete:
     a root daemon may hold a worktree, and its ancestry proves nothing.
     """
-    hint = ''
     if IS_LINUX:
         try:
             if use_sudo:
