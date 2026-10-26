@@ -223,7 +223,10 @@ prepare_gate_dependencies() {
     install_bun_dependencies || return $?
   elif [ -f pnpm-lock.yaml ]; then
     command -v pnpm >/dev/null || die "pnpm unavailable on beelink"
-    install_step pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store" || exit $?
+    # The repo's allowBuilds decide which lifecycle scripts run, as in its CI, not the host user's pnpm
+    # config: GTR's ~/.config/pnpm/config.yaml sets ignoreScripts, so pnpm 12 left every build pending
+    # and blueprint-agent's cpu-features had no addon (#2853). pnpm honors this flag, not npm_config_*.
+    install_step pnpm install --frozen-lockfile --config.ignore-scripts=false --store-dir "$HOME/.local/share/pnpm/store" || exit $?
   elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
     command -v npm >/dev/null || die "npm unavailable on beelink"
     install_step npm ci --cache "$HOME/.npm" || exit $?

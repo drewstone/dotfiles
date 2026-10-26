@@ -700,7 +700,7 @@ rebuild_native_addons() {
   done <<< "$stale"
   echo "beelink-gate: rebuilding native addons for node $gate_node: ${reasons[*]}" >&2
   for dir in "${dirs[@]}"; do rm -rf -- "$dir/build" || return $?; done
-  step pnpm rebuild --store-dir "$HOME/.local/share/pnpm/store" "${names[@]}" || return $?
+  step pnpm rebuild --config.ignore-scripts=false --store-dir "$HOME/.local/share/pnpm/store" "${names[@]}" || return $?
   after=$(BEELINK_GATE_RUN=$run_token stale_native_addons); scan_rc=$?
   reap_leftovers
   (( scan_rc == 0 )) || return "$scan_rc"
