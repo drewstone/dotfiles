@@ -2,9 +2,8 @@
 # The drew-gtr-pro fallback gate: one gate in a fresh clone under a storage-lifecycle lease.
 # Sourced by beelink-gate; it runs on GTR only, never in a staged Beelink gate.
 # shellcheck disable=SC2154,SC2034 # repo_url, sha, install_mode, host, owner, repo and launched are the launcher's.
-# (SC2034: GTR_AFTER_SECONDS and beelink are read by beelink-gate and prepare_gate_dependencies.)
+# (SC2034: beelink is read by prepare_gate_dependencies.)
 GTR_HOST=drew-gtr-pro
-GTR_AFTER_SECONDS=300
 gtr_self() { [ "$(hostname | tr '[:upper:]' '[:lower:]')" = "$GTR_HOST" ]; }
 
 # GTR's receipts.jsonl, read here on GTR or over SSH; a host that never gated has none.
