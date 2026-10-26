@@ -3192,6 +3192,47 @@ test("an --urgent auto gate is never given an admission deadline, so it keeps it
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// beelink1's WSL restart (2026-10-26 16:47Z) killed waiting auto gates' beelink1 reservations, and each then
+// ignored beelink1 for its whole attempt (Lab2427 waited 30+ min on a full beelink2).
+test("auto takes back its place on a beelink whose checkout reservation died, once that beelink answers", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const cachePrefix = join(f.root, "host-cache");
+  const holders = [];
+  let child;
+  try {
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) {
+      const locks = join(`${cachePrefix}-${ip}`, ".locks");
+      mkdirSync(locks, { recursive: true });
+      const holder = spawn("python3", ["-c", 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
+        join(locks, "local-owner-repo.lock")], { stdio: ["ignore", "pipe", "ignore"] });
+      holders.push(holder);
+      await new Promise((ok) => holder.stdout.once("data", ok));
+    }
+    let stderr = "";
+    const done = new Promise((ok) => {
+      child = spawn("bash", [gate, "--urgent", "--no-install", "auto", f.url, f.first, "--", "true"],
+        { env: { ...f.env, FAKE_CACHE_PREFIX: cachePrefix, BEELINK_GATE_REPO_CHECKOUTS: "1", BEELINK_GATE_AUTO_POLL_SECONDS: "0.2" } });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("close", (status) => ok(status));
+    });
+    for (let i = 0; i < 400 && !/urgent priority reserved on both beelinks/.test(stderr); i++) await sleepMs(25);
+    assert.match(stderr, /urgent priority reserved on both beelinks/);
+    const reservations = spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).stdout.split("\n")
+      .filter((line) => line.includes("--urgent-reserve") && line.includes("100.98.195.7") && line.includes(f.root));
+    assert.ok(reservations.length > 0, "beelink1 reservation process found");
+    for (const line of reservations) process.kill(Number(line.trim().split(/\s+/)[0]), "SIGKILL");
+    for (let i = 0; i < 400 && !/beelink1 answered again; checkout place reserved/.test(stderr); i++) await sleepMs(25);
+    assert.match(stderr, /beelink1 checkout reservation ended/);
+    assert.match(stderr, /beelink1 answered again; checkout place reserved/);
+    holders[0].kill("SIGKILL");
+    assert.equal(await done, 0, stderr);
+  } finally {
+    child?.kill("SIGKILL");
+    for (const holder of holders) holder.kill("SIGKILL");
+  }
+});
+
 test("urgent auto reserves both hosts before either checkout frees", async () => {
   const f = fixture();
   installFakeSsh(f);
