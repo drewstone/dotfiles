@@ -32,7 +32,7 @@ contracts       agent-interface · agent-trace-contract · runtime-contracts
 
 ## Owners
 
-The copies column lists known copies still to fold into the owner. Remove an entry in the same PR that deletes that copy.
+The copies column lists known copies still to fold into the owner. The lane that deletes a copy removes its entry here the same day.
 
 ### Contracts
 
@@ -103,6 +103,6 @@ The copies column lists known copies still to fold into the owner. Remove an ent
 ## Keeping this current
 
 - This file is the only list of owners. Docs, skills, memories and lane briefs link here and don't restate it.
-- Change a row in the same PR that moves a concept, adds an owner or deletes a copy.
-- Before a sweep or a consolidation proposal, read this file and the newest sweep (`qmd search -c reviews 'consolidation sweep'`). Measure only what neither covers.
+- Change a row on the day a concept moves, an owner is added or a copy is deleted. A change inside dotfiles goes in the same PR.
+- Before a sweep or a consolidation proposal, read this file and the newest sweep (`qmd search -c reviews 'consolidation sweep'`; the 2026-10-26 one is `~/reviews/2026-10-26-consolidation-sweep.md` on the Mac and drew-gtr-pro). Measure only what neither covers.
 - Line counts, versions and dates live in census, npm and git, never here.
