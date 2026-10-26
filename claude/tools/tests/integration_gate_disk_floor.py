@@ -31,12 +31,11 @@ checked(['useradd','-M','-d','/home','gatefloor']);user=pwd.getpwnam('gatefloor'
 checked(['useradd','-M','-d','/runner','ghrunner-ci']);runner=pwd.getpwnam('ghrunner-ci');runner_home=volume/'runner';runner_home.mkdir();os.chown(runner_home,runner.pw_uid,runner.pw_gid)
 Path('/etc/sudoers.d/gatefloor').write_text('gatefloor ALL=(root) NOPASSWD: ALL\n');os.chmod('/etc/sudoers.d/gatefloor',0o440)
 with tarfile.open('/dev/disk/by-id/virtio-hostlab-policy') as archive:archive.extractall('/opt/gate-policy',filter='data')
-with tarfile.open('/dev/disk/by-id/virtio-hostlab-baseline') as archive:archive.extractall('/opt/gate-baseline',filter='data')
 current=Path('/opt/gate-current');current.mkdir()
 for source in Path('/work/claude/tools').glob('beelink*'):
     if source.is_dir():shutil.copytree(source,current/source.name)
     else:shutil.copy2(source,current/source.name)
-for root in [Path('/opt/gate-policy'),Path('/opt/gate-baseline'),current]:
+for root in [Path('/opt/gate-policy'),current]:
     for p in [root,*root.rglob('*')]:
         if not p.is_symlink():os.chmod(p,0o755 if p.is_dir() else 0o644)
 os.chmod(current/'beelink-gate',0o755);Path('/usr/local/bin/beelink-gate').symlink_to(current/'beelink-gate')
@@ -74,19 +73,23 @@ print('RED runner account cannot use prior provider because owner home/config re
 policy.write_bytes(fixed_provider);public=runner_query();assert public.returncode==0 and int(public.stdout)==actual_floor,(public.returncode,public.stderr)
 print('PASS actual public CLI under ghrunner-ci reads protected applied policy without private home/config access',flush=True)
 
-cli=current/'beelink-gate';baseline=Path('/opt/gate-baseline/claude/tools/beelink-gate');old=run(baseline,'--disk-floor-bytes','beelink1');new=run(cli,'--disk-floor-bytes','beelink1');assert old.returncode==new.returncode==0,(old.stderr,new.stderr);alert=int(old.stdout);admission=int(new.stdout);assert admission==actual_floor<alert
-space=os.statvfs(home);initial=space.f_bavail*space.f_frsize;midpoint=(alert+admission)//2;reserve=volume/'native-unwritten-reserve';checked(['fallocate','-l',str(initial-midpoint),reserve]);space=os.statvfs(home);available=space.f_bavail*space.f_frsize;assert admission<available<alert,(admission,available,alert)
+cli=current/'beelink-gate';new=run(cli,'--disk-floor-bytes','beelink1');assert new.returncode==0,new.stderr;admission=int(new.stdout);assert admission==actual_floor
+# Admission is free - live lifecycle reservations - request >= the lifecycle minimum (run with --scratch 80G).
+space=os.statvfs(home);available=space.f_bavail*space.f_frsize;assert available>admission+2*1024**3,(available,admission)
 sha=sys.argv[1];assert len(sha)==40;args=['beelink1','https://github.com/octocat/Hello-World.git',sha,'no-install','Sunday','3','touch','/home/build-executed'];encoded=[base64.b64encode(a.encode()).decode() for a in args]
 sentinel=home/'operator-notes';sentinel.write_text('unarchived native fixture retained\n');os.chown(sentinel,user.pw_uid,user.pw_gid);sentinel_hash=hashlib.sha256(sentinel.read_bytes()).hexdigest()
-wrong=run(baseline,'--remote',*encoded);assert wrong.returncode==75 and 'byte disk floor' in wrong.stderr,wrong.stderr;assert not (home/'build-executed').exists();print('RED reproduced: current shipped gate refuses actual admission <= ext4 free < Fleet alert',flush=True)
-fixed=run(cli,'--remote',*encoded);assert 'below its '+str(alert)+' byte disk floor' not in fixed.stderr,fixed.stderr
+leases=state/'leases.json'
+def reserve_live(size):
+    leases.write_text(json.dumps({'a'*32:{'lane':'op-test:producer','paths':['/home/producer'],'bytes':size,'released':False}}));os.chmod(leases,0o600);os.chown(leases,user.pw_uid,user.pw_gid)
+reserve_live(0);fixed=run(cli,'--remote',*encoded);assert 'byte disk floor' not in fixed.stderr,fixed.stderr
 assert fixed.returncode==0 or fixed.returncode==75 and 'managed containment, legacy drain or host CPU PSI unavailable' in fixed.stderr,(fixed.returncode,fixed.stdout[-1200:],fixed.stderr[-2400:])
 if fixed.returncode==0:
- assert (home/'build-executed').is_file();print('PASS real fixed gate executes requested command below alert but above actual storage admission',flush=True)
+ assert (home/'build-executed').is_file();print('PASS real gate executes when free minus live reservations and request clears the lifecycle minimum',flush=True)
 else:
- assert not (home/'build-executed').exists();print('PASS real fixed gate passes storage admission and preserves subsequent native containment/CPU guard; full execution deferred to live pinned host',flush=True)
-limits=home/'.config/beelink-gate/limits';limits.parent.mkdir(parents=True,exist_ok=True);limits.write_text('disk_floor_gib='+str(math.ceil(alert/1024**3)+1)+'\n');os.chown(limits,user.pw_uid,user.pw_gid)
-strict=run(cli,'--disk-floor-bytes','beelink1');assert int(strict.stdout)>alert;denied=run(cli,'--remote',*encoded);assert denied.returncode==75 and 'byte disk floor' in denied.stderr;limits.write_text('disk_floor_gib=100\n');assert int(run(cli,'--disk-floor-bytes','beelink1').stdout)==admission;print('PASS higher local admission retained and lower override cannot undercut lifecycle owner',flush=True)
+ assert not (home/'build-executed').exists();print('PASS real gate passes request-size admission and preserves subsequent native containment/CPU guard; full execution deferred to live pinned host',flush=True)
+held=available-admission+1024**3;reserve_live(held);denied=run(cli,'--remote',*encoded);assert denied.returncode==75 and 'byte disk floor' in denied.stderr and str(held)+' bytes reserved' in denied.stderr,denied.stderr;reserve_live(0);print('PASS a live lifecycle reservation that leaves less than the minimum refuses and names every term',flush=True)
+limits=home/'.config/beelink-gate/limits';limits.parent.mkdir(parents=True,exist_ok=True);limits.write_text('disk_floor_gib='+str(math.ceil(available/1024**3)+1)+'\n');os.chown(limits,user.pw_uid,user.pw_gid)
+retired=run(cli,'--disk-floor-bytes','beelink1');assert int(retired.stdout)==admission and 'retired' in retired.stderr,retired.stderr;limits.unlink();print('PASS a static local disk_floor_gib no longer charges every gate',flush=True)
 extra=volume/'native-unwritten-below-floor';checked(['fallocate','-l',str(available-admission+1024*1024),extra]);denied=run(cli,'--remote',*encoded);assert denied.returncode==75 and 'byte disk floor' in denied.stderr;extra.unlink();print('PASS actual ext4 below real storage admission still refuses',flush=True)
 negative=[base64.b64encode(a.encode()).decode() for a in [*args[:-2],'touch','/home/negative-executed']]
 def refuses_growth():
@@ -133,4 +136,4 @@ for unsafe in (export,):
 assert not (home/'negative-executed').exists()
 print('PASS FIFO export and bool/float schema refuse promptly with zero command growth',flush=True)
 assert hashlib.sha256(sentinel.read_bytes()).hexdigest()==sentinel_hash;print('PASS unprotected export refuses; unarchived fixture and existing cleanup helper retained',flush=True)
-print(json.dumps({'admission_bytes':admission,'alert_bytes':alert,'actual_ext4_free_between':available,'gate_exit':fixed.returncode,'pinned_public_sha':sha,'provider_sha256':hashlib.sha256(policy.read_bytes()).hexdigest(),'gate_disk_sha256':hashlib.sha256((current/'beelink_gate_disk.py').read_bytes()).hexdigest(),'collector_lock_holder':os.getpid(),'provider_config_sha256':record['source_sha256'],'runner_private_config_readable':False,'runner_public_query_exit':public.returncode}),flush=True)
+print(json.dumps({'admission_bytes':admission,'actual_ext4_free':available,'gate_exit':fixed.returncode,'pinned_public_sha':sha,'provider_sha256':hashlib.sha256(policy.read_bytes()).hexdigest(),'gate_disk_sha256':hashlib.sha256((current/'beelink_gate_disk.py').read_bytes()).hexdigest(),'collector_lock_holder':os.getpid(),'provider_config_sha256':record['source_sha256'],'runner_private_config_readable':False,'runner_public_query_exit':public.returncode}),flush=True)
