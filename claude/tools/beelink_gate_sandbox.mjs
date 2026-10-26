@@ -170,10 +170,18 @@ async function run(argv) {
     const spec = { name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
       maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } }
     // A refused warm restore falls back to one cold create; a capacity refusal does not.
-    box = await client.create({ ...spec, ...warm }).catch((error) => {
+    const create = (opts) => client.create(opts).catch(async (error) => {
+      // A transient 503 that names a short retry ("Plan lookup unavailable; retry shortly", 5 s at 09:20Z) is
+      // retried once after that delay; only capacity refusals and a second failure stand the launcher down.
+      if (error.status !== 503 || error.code === 'CAPACITY_EXHAUSTED' || !(error.retryAfterMs > 0 && error.retryAfterMs <= 30_000)) throw error
+      say(`create got 503 '${String(error.message).slice(0, 80)}'; retrying once in ${error.retryAfterMs} ms`)
+      await new Promise((r) => setTimeout(r, error.retryAfterMs))
+      return client.create(opts)
+    })
+    box = await create({ ...spec, ...warm }).catch((error) => {
       if (!warm || error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) throw error
       say(`warm restore refused (${error.code || error.status}); creating cold`)
-      return client.create(spec)
+      return create(spec)
     })
   } catch (error) {
     // Every field the SDK error carries (request id, origin, endpoint, cell metadata) is evidence the capacity
