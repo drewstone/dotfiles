@@ -127,8 +127,10 @@ async function run(argv) {
   const gateId = `sandbox-${id}`
   const repo = repoUrl.replace(/^(?:git@([^:]+):|ssh:\/\/git@([^/]+)\/|https?:\/\/([^/]+)\/)(.+?)(?:\.git)?\/?$/, (_, a, b, c, r) => `${a || b || c}/${r}`)
   // A repo whose bootstrap failed in a box (no access, no Node) buys no box for an hour, across --retry and lanes.
-  const offMarker = path.join(cacheDir(), `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}`)
-  if (existsSync(offMarker) && Date.now() - statSync(offMarker).mtimeMs < 3600_000) tempfail(`off for ${repo} after a bootstrap failure: ${readFileSync(offMarker, 'utf8').trim()}`)
+  // Keyed by repo and commit, for 15 minutes: enough to stop --retry buying a box per attempt for a commit
+  // that cannot bootstrap, without one bad commit closing the sandbox to every gate of the repo (10-26 08:14Z).
+  const offMarker = path.join(cacheDir(), `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}-${sha.slice(0, 12)}`)
+  if (existsSync(offMarker) && Date.now() - statSync(offMarker).mtimeMs < 900_000) tempfail(`off for ${repo} ${sha.slice(0, 12)} after a bootstrap failure: ${readFileSync(offMarker, 'utf8').trim()}`)
   const started = Date.now()
   const RESOURCES = resources(gateClass)
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
