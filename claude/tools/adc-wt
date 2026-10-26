@@ -33,6 +33,10 @@ fi
 POOL="${ADC_WT_POOL:-$REPO/.worktrees}"
 SEED_PREFIX="wt-warm-"
 export TURBO_CACHE_DIR="${TURBO_CACHE_DIR:-$HOME/.cache/turbo/adc}"
+# GTR runs no installs, builds or tests (its install guard refuses them in any checkout), so its pool
+# holds SOURCE-ONLY trees: no bootstrap; installs, types and tests go through beelink-gate.
+SOURCE_ONLY=0
+[ "$(hostname | tr '[:upper:]' '[:lower:]')" = drew-gtr-pro ] && SOURCE_ONLY=1
 
 log() { echo "[adc-wt $(date +%H:%M:%S)] $*"; }
 
@@ -91,8 +95,10 @@ pool_tree_is_valid() {
 # prepare_tree marks a finished bootstrap in the tree's own git dir (no untracked file): a tree whose
 # bootstrap failed is clean and valid, and was counted ready.
 pool_tree_is_ready() {
+  local marker=adc-wt-bootstrapped
+  [ "$SOURCE_ONLY" = 0 ] || marker=adc-wt-source-only
   pool_tree_is_valid "$1" && git -C "$1" diff --quiet HEAD 2>/dev/null \
-    && [ -f "$(git -C "$1" rev-parse --absolute-git-dir)/adc-wt-bootstrapped" ]
+    && [ -f "$(git -C "$1" rev-parse --absolute-git-dir)/$marker" ]
 }
 
 # The repo owns this: scripts/bootstrap-worktree.sh runs the frozen install, the
@@ -106,6 +112,11 @@ pool_tree_is_ready() {
 prepare_tree() {
   local dir="$1"
   local logfile
+  if [ "$SOURCE_ONLY" = 1 ]; then
+    touch "$(git -C "$dir" rev-parse --absolute-git-dir)/adc-wt-source-only"
+    log "ready (source-only; installs, types and tests run through beelink-gate): $dir"
+    return 0
+  fi
   logfile="$(mktemp -t adc-wt-bootstrap-XXXXXX.log)"
   if ! ( cd "$dir" && bash scripts/bootstrap-worktree.sh >"$logfile" 2>&1 ); then
     log "bootstrap FAILED in $dir — last 20 lines of $logfile:"
@@ -218,8 +229,12 @@ cmd_claim() {
   # failure — five agents each lost a gate run to "Cannot find
   # module" before finding the cause. pnpm no-ops when the tree already
   # matches, so this costs nothing in the common case.
-  ( cd "$claimed" && CI=true pnpm install --frozen-lockfile >/dev/null 2>&1 ) \
-    || log "dependency refresh failed — run 'CI=true pnpm install --frozen-lockfile' in $claimed"
+  if [ "$SOURCE_ONLY" = 1 ]; then
+    log "source-only tree: no dependencies here; gate with beelink-gate auto <repo-url> <sha> -- <checks>" >&2
+  else
+    ( cd "$claimed" && CI=true pnpm install --frozen-lockfile >/dev/null 2>&1 ) \
+      || log "dependency refresh failed — run 'CI=true pnpm install --frozen-lockfile' in $claimed"
+  fi
   echo "$claimed"
 }
 
@@ -250,7 +265,7 @@ cmd_status() {
       *) claimed=$((claimed + 1)) ;;
     esac
   done
-  echo "ready:        $ready"
+  echo "ready:        $ready$([ "$SOURCE_ONLY" = 0 ] || echo ' (source-only: no installs or tests on this host; gate with beelink-gate)')"
   echo "dirty seeds:  $dirty (valid trees with uncommitted tracked changes; never claimed)"
   echo "unprepared:   $unprepared (clean trees whose bootstrap did not finish; never claimed)"
   echo "claimed:      $claimed"
