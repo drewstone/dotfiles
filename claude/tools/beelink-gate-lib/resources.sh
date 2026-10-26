@@ -125,17 +125,17 @@ PY
 # The class slice's memory pressure holds admission too: 11 normal gates in its 24 GiB memory.max swapped 17 GB and
 # stalled every gate (memory some avg60 11.4, full 9.2) while CPU pressure admitted more (beelink1, 10-26 16:2xZ).
 host_psi_admission() {
-  local pressure="" known=1 limit memory
+  local pressure="" known=1 limit memory io
   pressure=$(host_pressure_now) || known=0
   limit=$(max_cpu_pressure) || return 75
-  memory=$(host_pressure_now "$(gate_cgroup)/memory.pressure" 2>/dev/null) || memory=0
-  python3 - "$pressure" "$limit" "$known" "$memory" <<'PY'
+  memory=$(host_pressure_now "$(gate_cgroup)/memory.pressure" 2>/dev/null) || memory=0; io=$(host_pressure_now "$(gate_cgroup)/io.pressure" 2>/dev/null) || io=null
+  python3 - "$pressure" "$limit" "$known" "$memory" "$io" <<'PY'
 import json, sys, time
-known, memory = sys.argv[3] == '1', float(sys.argv[4])
+known, memory, io = sys.argv[3] == '1', float(sys.argv[4]), json.loads(sys.argv[5])  # io: recorded, not yet held
 pressure, limit = float(sys.argv[1]) if known else None, float(sys.argv[2])
 print(json.dumps({'mode':'host_psi', 'metric':'some_avg10', 'observed_at':time.time(), 'some_avg10':pressure, 'limit':limit,
                   'held':not known or pressure > limit or memory > 10, 'reason':'host_psi_unavailable' if not known else
-                  'class_memory_psi' if memory > 10 else 'host_psi', 'class_memory_some_avg10':memory, 'class_memory_limit':10.0}, separators=(',', ':')))
+                  'class_memory_psi' if memory > 10 else 'host_psi', 'class_memory_some_avg10':memory, 'class_io_some_avg10':io}, separators=(',', ':')))
 PY
 }
 wait_for_load() {
