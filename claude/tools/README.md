@@ -509,6 +509,10 @@ No-install/light directory sizes stay unknown. Docker queries are bounded,
 read-only and optional: remote/unreadable/changed contexts remain unknown, and
 `docker system df` reports logical daemon usage, not allocated filesystem bytes.
 
+`beelink-gate --queue` lists every live gate on both Beelinks, waiting gates first with the admission stage each
+waits in (`checks`, `host_psi`, `fifo`, `checkout_lock`, `host_slot`), its lane and its wait, then one line
+`QUEUE waiting=… running=… wait_p90_2h_s=…` from the last 2 hours of receipts.
+
 Host release priority is a hard admission guard. The existing host limits
 file's `release_critical=1` blocks new normal, light, dev, urgent and starved
 gates. Its owning release/host operator keeps the hold through the owned Build,
