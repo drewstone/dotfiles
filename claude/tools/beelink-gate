@@ -117,6 +117,10 @@ check_floor() {
   return 3
 }
 
+# A .beelink-gate/sparse-checkout file's patterns, without comments, blank
+# lines or trailing spaces (stdin to stdout). #703 dropped it while three callers remained.
+sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
+
 # The checkout shape an install reserve was measured on: full, or sha256 of
 # the normalized patterns of the .beelink-gate/sparse-checkout read on stdin.
 sparse_spec_of() {
@@ -158,12 +162,6 @@ sparse_apply() {  # <checkout> <rev> [--shrink-only]
     printf '%s\n' "$want" | git -C "$1" sparse-checkout set --no-cone --stdin
   fi
 }
-
-
-# A writer holds the fd lock for its brief intent and rename. If it dies,
-# flock releases that lock; a claimant can then remove its abandoned marker.
-
-
 
 # Lanes may point CARGO_TARGET_DIR at ~/.cache/<repo>-build, outside the capped
 # cache. Sweep entries of those cargo target dirs (CACHEDIR.TAG) untouched for
