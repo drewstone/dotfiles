@@ -22,7 +22,7 @@
 #   ~/.config/systemd/user/cli-bridge-llm.slice(.d/10-cpu-cap.conf)
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #   /etc/systemd/system/ci.slice.d/50-gate-priority.conf, beelink-gate-cgroup.service
-#                                          Beelinks: gates yield CPU/IO to release and deploy work
+#                                          Beelinks: gate CPU/IO weight and memory caps
 #   /etc/systemd/system/nix-daemon.service.d/60-nix-profile-requalify.conf
 #                                          Beelinks: re-qualify the Nix daemon for profile admission on every start
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf

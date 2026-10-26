@@ -509,6 +509,16 @@ No-install/light directory sizes stay unknown. Docker queries are bounded,
 read-only and optional: remote/unreadable/changed contexts remain unknown, and
 `docker system df` reports logical daemon usage, not allocated filesystem bytes.
 
+An `auto` gate that both Beelinks refuse, or that has waited `BEELINK_GATE_SANDBOX_AFTER` (default 5m), runs the
+same command on a Tangle sandbox through [`beelink_gate_sandbox.mjs`](beelink_gate_sandbox.mjs): one managed process
+job on an 8 CPU / 8 GB box with the repo's `.nvmrc` Node, a frozen install and the gated commit, at most
+`BEELINK_GATE_SANDBOX_MAX` (4) boxes live. Its receipt (`placement: sandbox`) is stored on a Beelink, so `--receipt`
+and gh-drew read it unchanged. Name `sandbox` as the host to place there directly. It needs
+`~/.config/tangle/beelink-gate-sandbox.key`; without one, or when the platform refuses the box, the gate keeps
+waiting for a Beelink. `BEELINK_GATE_SANDBOX=0` turns it off. `beelink-gate --queue` lists every live gate on both
+Beelinks and in sandboxes, waiting gates first with the stage they wait in, then `QUEUE waiting=… running=…
+wait_p90_2h_s=…`.
+
 Host release priority is a hard admission guard. The existing host limits
 file's `release_critical=1` blocks new normal, light, dev, urgent and starved
 gates. Its owning release/host operator keeps the hold through the owned Build,
