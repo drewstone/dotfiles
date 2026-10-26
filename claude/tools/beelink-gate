@@ -76,7 +76,6 @@ beelink_gate_disk_source=$(cat "$gate_disk_source") || exit $?
 . "$gate_gtr_source" || exit $?
 # BEELINK_GATE_INSTALLER_END
 
-
 tempfail_line() { echo "beelink-gate: TEMPFAIL next_allowed=$1 $2" >&2; }
 tempfail() { tempfail_line "$1" "$2"; exit "$TEMPFAIL"; }
 utc_in_minutes() {
@@ -98,7 +97,6 @@ effective_disk_floor_bytes() {
   path=$(limits_file) && [ -n "$path" ] || return 75
   gate_disk floor "$1" "$path"
 }
-
 
 free_bytes() {
   local available root_available
@@ -1611,6 +1609,7 @@ if [ "${1:-}" = --sandbox-receipt ]; then
 fi
 # The beelink's receipts, for --report.
 if [ "${1:-}" = --receipts ]; then
+  [[ "${2:-}" != sha:* ]] || { grep -F -- "${2#sha:}" "$STATE_DIR/receipts.jsonl"; [ "$?" != 2 ] || exit 75; exit 0; }  # one commit's rows
   cat "$STATE_DIR/receipts.jsonl" 2>/dev/null || exit 75
   if [ -n "${3:-}" ]; then
     BEELINK_GATE_RELEASE_STATE="$STATE_DIR/release-priority.json" BEELINK_GATE_ADMISSION_SAMPLE="$(host_psi_admission || echo '{"mode":"host_psi","held":true,"reason":"unavailable"}')" python3 -c "$(decode "$3")" || echo '{"kind":"host_cpu_sample","error":"CPU sample unavailable"}'
@@ -1913,8 +1912,8 @@ if [ "${1:-}" = --receipt ]; then
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   host_rows=$(mktemp) found=$(mktemp) unread=""
   for host in beelink1 beelink2 "$GTR_HOST"; do
-    if host_receipts "$host" 720 > "$host_rows" 2>/dev/null \
-      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; host_receipts "$host" 720 > "$host_rows" 2>/dev/null; }; then
+    if host_receipts "$host" "sha:$3" > "$host_rows" 2>/dev/null \
+      || { sleep "${BEELINK_GATE_PROBE_RETRY_SECONDS:-2}"; host_receipts "$host" "sha:$3" > "$host_rows" 2>/dev/null; }; then
       python3 - "$host_rows" "$host" "$key" "$3" >> "$found" <<'PY'
 import json, sys
 path, host, key, sha = sys.argv[1:]
@@ -2174,6 +2173,7 @@ unset BEELINK_GATE_RESERVATION_TOKEN
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
 frontend_key=$(parse_repo_url "$repo_url"; printf '%s/%s/%s' "$host" "$owner" "$repo")
 frontend_record metadata "$frontend_key" "$sha" "${gate_class:-$([ "$install_mode" = light ] && echo light || echo normal)}"
+pre_placement_checks "$@"
 frontend_phase reserve_lookup
 # The gated commit's checkout shape, read before any beelink fetches it, so each
 # host's reserve comes from a receipt of the same shape (last_install_reserve_bytes).

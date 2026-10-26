@@ -25,15 +25,14 @@ gtr_receipts() {
   else bounded_transport "$GTR_HOST receipts" ssh "${SSH_OPTIONS[@]}" "$GTR_HOST" "$read"; fi
 }
 
-# The lease's bytes: the most any measurement says this gate can grow. That is the repo's largest GTR
-# clone plus a quarter, or the growth in the Beelinks' install reserve for its checkout shape
-# (last_install_reserve_bytes: their newest cold receipt, which is the 10 GiB headroom plus measured
-# growth), whichever is larger; a repo no host has measured asks for the whole 10 GiB. The newest clone
-# is not enough: a gate that failed before its install measured 140 MB, and the next leased 317 MB for a
-# 2.5 GB clone. Every GTR gate leases in the op-company:beelink-gate-gtr lane (tangle-tools
-# storage_lifecycle/hosts/drew-GTR-Pro.json), never its caller's 4 GiB fleet lane, which refused an
-# agent-container gate; the install guard accepts only an op-<operator>:<window> lane. A refusal keeps
-# the gate waiting for a Beelink.
+# The lease's bytes: the most any measurement says this gate can grow. That is the repo's largest GTR clone plus a
+# quarter, or the growth in the Beelinks' install reserve for its checkout shape (last_install_reserve_bytes: their
+# newest cold receipt, which is the 10 GiB headroom plus measured growth), whichever is larger; a repo no host has
+# measured asks for the whole 10 GiB. The newest clone is not enough: a gate that failed before its install measured 140
+# MB, and the next leased 317 MB for a 2.5 GB clone. Every GTR gate leases in the op-company:beelink-gate-gtr lane
+# (tangle-tools storage_lifecycle/hosts/drew-GTR-Pro.json), never its caller's 4 GiB fleet lane, which refused an
+# agent-container gate; the install guard accepts only an op-<operator>:<window> lane. A refusal keeps the gate waiting
+# for a Beelink.
 gtr_reserve_bytes() {
   local peer=0 value beelink_bytes
   for value in "${matched_reserve[@]}"; do [[ "$value" =~ ^[0-9]+$ ]] && (( value > peer )) && peer=$value; done
