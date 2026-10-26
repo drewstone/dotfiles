@@ -192,11 +192,10 @@ release_gate_turbo_cache() {
   }
 }
 
-# The cache prunes outside any gate slot, in one user unit per cache root: inline, the precheck and cleanup prunes
-# held gate slots 726 min/day (48 h of receipts to 10-26 21:45Z). A request while that unit runs is a no-op.
+# Prunes outside any gate slot, in one user unit per cache root (a request while it runs is a no-op): inline, the
+# precheck and cleanup prunes held gate slots 726 min/day (48 h of receipts to 10-26 21:45Z).
 prune_detached() {  # <cache root> <cap>
-  local unit name envs=(-E HOME -E PATH); unit=beelink-gate-cache-prune-$(printf '%s' "$1" | sha256sum | cut -c1-12)
-  for name in ${!BEELINK_GATE_@} ${!XDG_@}; do envs+=(-E "$name"); done
+  local unit name envs=(-E HOME -E PATH); unit=beelink-gate-cache-prune-$(printf '%s' "$1" | sha256sum | cut -c1-12); for name in ${!BEELINK_GATE_@} ${!XDG_@}; do envs+=(-E "$name"); done
   systemd-run --user --collect --quiet --unit="$unit" "${envs[@]}" /usr/bin/bash "$0" --prune-cache "$1" "$2" >/dev/null 2>&1 \
     || systemctl --user is-active --quiet "$unit" || echo "beelink-gate: WARNING the cache prune could not start; the next gate asks again" >&2
 }

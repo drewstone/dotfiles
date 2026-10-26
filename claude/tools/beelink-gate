@@ -1635,9 +1635,7 @@ TRANSPORT_KILL_GRACE_SECONDS=2
 # below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
 STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
 
-if [ "${1:-}" = --disk-floor-bytes ]; then
-  disk_floor_query "$@"; exit $?
-fi
+if [ "${1:-}" = --disk-floor-bytes ]; then disk_floor_query "$@"; exit $?; fi
 if [ "${1:-}" = --prune-cache ]; then prune_cache "$2" "" "$3"; exit $?; fi
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
