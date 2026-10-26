@@ -23,6 +23,8 @@
 #                                          cli-bridge LLM scopes capped at 24 of 32 cores (GTR only)
 #   /etc/systemd/system/ci.slice.d/50-gate-priority.conf, beelink-gate-cgroup.service
 #                                          Beelinks: gates yield CPU/IO to release and deploy work
+#   /etc/systemd/system/nix-daemon.service.d/60-nix-profile-requalify.conf
+#                                          Beelinks: re-qualify the Nix daemon for profile admission on every start
 #   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
 #                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
@@ -238,6 +240,8 @@ install_beelink_gate_priority() {
   want_file 0644 "$TMP/ci-priority.conf" /etc/systemd/system/ci.slice.d/50-gate-priority.conf
   sed "s/@CI_WEIGHT@/$ci_weight/" "$SCRIPT_DIR/cgroup/50-nix-daemon-priority.conf" > "$TMP/nix-daemon-priority.conf"
   want_file 0644 "$TMP/nix-daemon-priority.conf" /etc/systemd/system/nix-daemon.service.d/50-gate-priority.conf
+  want_file 0755 "$SCRIPT_DIR/cgroup/nix-profile-requalify" /usr/local/libexec/nix-profile-requalify
+  want_file 0644 "$SCRIPT_DIR/cgroup/60-nix-profile-requalify.conf" /etc/systemd/system/nix-daemon.service.d/60-nix-profile-requalify.conf
   local gate_cpu gate_io normal_memory dev_memory normal_percent normal_quota
   read -r gate_cpu gate_io normal_memory dev_memory normal_percent < <(python3 - "$SCRIPT_DIR/cgroup/beelink-gate-policy.json" <<'PYTHON'
 import json, sys

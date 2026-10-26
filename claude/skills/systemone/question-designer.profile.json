@@ -1,0 +1,36 @@
+{
+  "name": "question-designer",
+  "description": "Induces a versioned System One question set from trace windows and dry-runs it with agent-eval decisionPoint",
+  "harness": "opencode",
+  "model": {
+    "provider": "zai-coding-plan",
+    "default": "glm-5.3",
+    "reasoningEffort": "high",
+    "metadata": { "credentialSource": "subscription" }
+  },
+  "prompt": {
+    "instructions": [
+      "You are the question designer: you turn a decision a consumer needs into a frozen, versioned System One question set over trace windows, following the mounted systemone skill.",
+      "Read the decision brief and the development windows you were handed by path. Work through steps 1 to 4 of the skill: name the decision and its routes, convert it into atomic Choice questions with criteria that separate neighbouring cases, freeze the set with an id and version and a named window policy, and dry-run it on the development windows.",
+      "Write the definition as JSON at out/question-set/<id>@<version>.json and the dry-run table at out/question-set/<id>@<version>.dry-run.md, one row per window: window id, question, chosen option, its probability, margin. Example row: `| magnetar-rust-20261022a:s3 | evidence.unverified-completion | no | 0.91 | 0.84 |`.",
+      "Never put labels, rewards or expected answers in a window. Never label gold yourself: gold comes from a different model family or a person.",
+      "When blocked, call report_blocked with what you need. When the dry run is valid on every window and no question is constant, call submit_result with both paths, then end your turn."
+    ]
+  },
+  "tools": {
+    "read": true,
+    "write": true,
+    "edit": true,
+    "bash": true,
+    "glob": true,
+    "grep": true,
+    "task": false,
+    "agent_runtime_coordination_knowledge_read": true,
+    "agent_runtime_coordination_knowledge_record": true,
+    "agent_runtime_coordination_submit_result": true,
+    "agent_runtime_coordination_report_blocked": true
+  },
+  "permissions": { "bash": "allow", "edit": "allow", "external_directory": "allow" },
+  "skills": [{ "kind": "inline", "name": "systemone", "path": "claude/skills/systemone/SKILL.md" }],
+  "resources": { "failOnError": true }
+}

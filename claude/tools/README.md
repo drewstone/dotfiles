@@ -792,3 +792,7 @@ The [upstream npm package](https://github.com/tangle-network/traces#install) own
 Deploy a qualified package with that installer, using `--prefix "$HOME/.local"` when needed; disable npm lifecycle scripts when deploying a prebuilt CLI.
 `traces --version` names the installed artifact independently of any source checkout. Keep the package's bin directory ahead of Homebrew's unrelated command.
 This installer retires only its former links to the checkout wrapper; it preserves npm links and independently managed files.
+
+## reviews-index
+
+Turns every page under `~/reviews` into a markdown digest in `~/.cache/reviews-md/<host>/` (title, summary, sections, text, links and the page path) and runs `qmd update`, so `qmd search -c reviews '<terms>'` finds analyses other agents wrote. `--peer <ssh-host>` pulls that host's digests; each host owns its own directory. Cron runs it hourly on the Mac (`--peer gtr`) and on drew-gtr-pro (`--peer drews-macbook-pro`).
