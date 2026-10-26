@@ -515,7 +515,9 @@ job on an 8 CPU / 8 GB box with the repo's `.nvmrc` Node, a frozen install and t
 `BEELINK_GATE_SANDBOX_MAX` (4) boxes live. Its receipt is a `beelink-gate` commit status on the gated SHA
 (`exit= mode= class= gate=`), which `--receipt` and gh-drew read from any host; a copy on a Beelink feeds `--report`. Name `sandbox` as the host to place there directly. It needs
 `~/.config/tangle/beelink-gate-sandbox.key`; without one, or when the platform refuses the box, the gate keeps
-waiting for a Beelink. `BEELINK_GATE_SANDBOX=0` turns it off. `beelink-gate --queue` lists every live gate on both
+waiting for a Beelink. `BEELINK_GATE_SANDBOX=0` turns it off. `node beelink_gate_sandbox.mjs warm <repo-url>` builds the repo's
+store-only warm source box (Node, pnpm store, git objects); gates then start from its newest snapshot
+(agent-container: install 23 s instead of 72-140 s) and fall back to a cold box if the restore is refused. `beelink-gate --queue` lists every live gate on both
 Beelinks and in sandboxes, waiting gates first with the stage they wait in, then `QUEUE waiting=… running=…
 wait_p90_2h_s=…`.
 

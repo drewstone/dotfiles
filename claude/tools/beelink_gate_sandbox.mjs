@@ -68,15 +68,17 @@ function gateScript({ repoUrl, sha, mode, branch, command }) {
   return `set -o pipefail
 step() { echo "beelink-gate-sandbox: $1 $(date -u +%H:%M:%SZ)" >&2; }
 export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
-export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1
+export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo"
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= \\
   GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
 git config --global user.name ${quote(gitIdentity('user.name') || 'beelink-gate')}; git config --global user.email ${quote(gitIdentity('user.email') || 'beelink-gate@users.noreply.github.com')}
 step fetch
-rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)} || exit 70
+# A box restored from a warm snapshot already holds the repo's objects, Node, pnpm store and turbo cache.
+if [ -d repo/.git ]; then cd repo && git remote set-url origin ${quote(repoUrl)}; else rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)}; fi || exit 70
 git fetch -q --filter=blob:none origin ${sha} || exit 70
 for b in main develop ${branch ? quote(branch) : ''}; do git fetch -q --filter=blob:none origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null; done
-${branch ? `git checkout -q -B ${quote(branch)} ${sha} && git branch -q --set-upstream-to=origin/${quote(branch)}` : `git checkout -q --detach ${sha}`} || exit 70
+${branch ? `git checkout -qf -B ${quote(branch)} ${sha} && git branch -q --set-upstream-to=origin/${quote(branch)}` : `git checkout -qf --detach ${sha}`} || exit 70
+git clean -ffdxq -e .turbo
 # The repo's .nvmrc Node, else 24, the Beelinks' nvm default: the image's Node 22.16 crashed corepack's pnpm 12.15
 # (MODULE_NOT_FOUND) on a repo without .nvmrc (10-26 07:38Z).
 step node
@@ -127,6 +129,8 @@ async function run(argv) {
   const RESOURCES = resources(gateClass)
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
   // Handlers come before create, so a stop during create still deletes the box once its id is known.
+  const warm = await warmStart(client, repo)
+  if (warm) say(`starting from warm snapshot ${warm.fromSnapshot.slice(0, 12)} of ${warm.fromSandboxId}`)
   let box, stopping = false
   // Delete through the platform's retire path; a failure is retried once and reported, never swallowed.
   const stop = async () => {
@@ -139,8 +143,14 @@ async function run(argv) {
   for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]])
     process.on(signal, () => { stopping = true; stop().finally(() => process.exit(code)) })
   try {
-    box = await client.create({ name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
-      maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } })
+    const spec = { name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
+      maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } }
+    // A refused warm restore falls back to one cold create; a capacity refusal does not.
+    box = await client.create({ ...spec, ...warm }).catch((error) => {
+      if (!warm || error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) throw error
+      say(`warm restore refused (${error.code || error.status}); creating cold`)
+      return client.create(spec)
+    })
   } catch (error) {
     if (error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) {
       mkdirSync(cacheDir(), { recursive: true })
@@ -192,6 +202,64 @@ async function run(argv) {
   process.exit(exit)
 }
 
+const warmName = (repo) => `${BOX_PREFIX}warm-${repo.split('/').slice(-2).join('-').replace(/[^A-Za-z0-9-]/g, '-')}`.slice(0, 63)
+
+// The newest synced snapshot of the repo's warm source box: Node, pnpm store, git objects and turbo cache.
+async function warmStart(client, repo) {
+  if (process.env.BEELINK_GATE_SANDBOX_WARM === '0') return null
+  const source = (await client.list().catch(() => [])).find((b) => b.name === warmName(repo) && b.status !== 'deleted')
+  if (!source) return null
+  const box = await client.get(source.id).catch(() => null)
+  const snaps = (await box?.listSnapshots().catch(() => []) ?? []).filter((s) => s.remoteSync === 'synced' && s.tags?.includes('beelink-gate-warm'))
+  snaps.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  return snaps[0] ? { fromSnapshot: snaps[0].snapshotId, fromSandboxId: source.id } : null
+}
+
+// `warm <repo-url> [ref]`: build the repo's warm source box at its default branch with a frozen install (no typecheck:
+// a fresh agent-container checkout's turbo check-types hung 43 min without its workspace builds), drop node_modules (a store-only snapshot restored in 41 s against 83 s with them, and the
+// install took 26 s either way), snapshot it and stop it. The previous source box is deleted once the new one is synced.
+async function warmBuild([repoUrl, ref = '']) {
+  const key = apiKey()
+  if (!key) tempfail('warm has no key')
+  const { Sandbox } = await sdk()
+  const client = new Sandbox({ apiKey: key, baseUrl: process.env.BEELINK_GATE_SANDBOX_URL || 'https://sandbox.tangle.tools' })
+  const repo = repoUrl.replace(/^(?:git@([^:]+):|ssh:\/\/git@([^/]+)\/|https?:\/\/([^/]+)\/)(.+?)(?:\.git)?\/?$/, (_, a, b, c, r) => `${a || b || c}/${r}`)
+  const head = ref || spawnSync('git', ['ls-remote', repoUrl, 'HEAD'], { encoding: 'utf8' }).stdout.split(/\s/)[0]
+  if (!/^[0-9a-f]{40}$/.test(head)) tempfail(`warm cannot read ${repoUrl} HEAD`)
+  const old = (await client.list().catch(() => [])).filter((b) => b.name === warmName(repo) && b.status !== 'deleted')
+  const box = await client.create({ name: warmName(repo), resources: resources('normal'), secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
+    maxLifetimeSeconds: 7200, idleTimeoutSeconds: 3600, retry: { capacity: false } })
+  say(`warm ${repo} at ${head} on ${box.id}`)
+  try {
+    const script = gateScript({ repoUrl, sha: head, mode: 'install', branch: '', command: ['bash', '-c',
+      'find . -name node_modules -type d -prune -exec rm -rf {} +'] })
+    await box.write('gate.sh', script)
+    let record = await box.process.jobs.submit({ id: 'warm', executable: 'bash', args: ['-c', 'bash gate.sh > gate.log 2>&1; echo $? > gate.exit'], cwd: '.',
+      envKeys: ['PATH', 'NIX_BIN_PATH', 'GH_TOKEN'], deadlineAt: Date.now() + 3600_000,
+      restart: { maxAttempts: 1, initialBackoffMs: 1000, maxBackoffMs: 1000, exitCodes: [], afterInterruption: false } })
+    while (!SETTLED.has(record?.state)) { await new Promise((r) => setTimeout(r, 10000)); record = await box.process.jobs.get('warm').catch(() => record) }
+    const exit = (await box.read('gate.exit').catch(() => '')).trim()
+    if (exit !== '0') { process.stdout.write((await box.read('gate.log').catch(() => '')).slice(-4000)); throw new Error(`warm bootstrap exit ${exit || 'unknown'}`) }
+    // The snapshot call can time out at the edge (524) after the platform accepted it; the listing is the truth.
+    await box.snapshot({ tags: ['beelink-gate-warm'], wait: false }).catch((e) => say(`snapshot call: ${e.status || e.message}`))
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 15000))
+      const synced = (await box.listSnapshots().catch(() => [])).find((s) => s.remoteSync === 'synced')
+      if (synced) {
+        say(`warm ${repo}: snapshot ${synced.snapshotId} ${synced.sizeBytes} bytes synced`)
+        await box.stop().catch((e) => say(`stop: ${e.message}`))
+        for (const prior of old) await (await client.get(prior.id))?.delete().catch(() => undefined)
+        return
+      }
+    }
+    throw new Error('snapshot never synced')
+  } catch (error) {
+    await box.delete().catch(() => undefined)
+    say(`warm ${repo} failed: ${error.message}`)
+    process.exit(1)
+  }
+}
+
 async function listLive() {
   const key = apiKey()
   if (!key) return
@@ -205,4 +273,5 @@ async function listLive() {
 const [action, ...rest] = process.argv.slice(2)
 if (action === 'run') await run(rest)
 else if (action === 'live') await listLive()
-else { say('usage: beelink_gate_sandbox.mjs run|live ...'); process.exit(64) }
+else if (action === 'warm') await warmBuild(rest)
+else { say('usage: beelink_gate_sandbox.mjs run|live|warm ...'); process.exit(64) }
