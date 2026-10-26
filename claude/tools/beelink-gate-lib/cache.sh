@@ -192,6 +192,12 @@ release_gate_turbo_cache() {
   }
 }
 
+# The cache prunes outside any gate slot, one prune per host (the unit name): inline, the precheck and cleanup
+# prunes held gate slots 726 min/day (48 h of receipts to 10-26 21:45Z). A request while one runs is a no-op.
+prune_detached() {  # <cache root> <cap>
+  systemd-run --user --collect --quiet --unit=beelink-gate-cache-prune /usr/bin/bash "$0" --prune-cache "$1" "$2" >/dev/null 2>&1 \
+    || systemctl --user is-active --quiet beelink-gate-cache-prune || echo "beelink-gate: WARNING the cache prune could not start; the next gate asks again" >&2
+}
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
     python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_normalize sparse_apply)" "$gate_turbo_cache_python" "$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup)" <<'PY'

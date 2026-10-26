@@ -1322,10 +1322,7 @@ PYTURBO
     release_checkout_before_reclaim
     if [ "${lock_released:-0}" = 1 ]; then
       # Cache capacity cannot turn a successful command red; the disk floor guards starts.
-      if ! prune_cache "$cache_root" "" "$cache_max"; then
-        cache_note=unpruned
-        echo "beelink-gate: WARNING cache over its cap; the command's exit ($status) stands" >&2
-      fi
+      prune_detached "$cache_root" "$cache_max"
       prune_build_dirs "$build_root" "$cache_root/.locks" "" "${BEELINK_GATE_BUILD_MAX_AGE_SECONDS:-86400}"
     elif [ "$watchdog" != 1 ] && [ "$status" -eq 0 ]; then
       status=3
@@ -1365,13 +1362,9 @@ PYTURBO
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
   admit_release_priority "$beelink"
-  # Prune before fetch costs minutes on a busy disk (270 s on beelink1 10-25), and a
-  # placement that then meets PSI at the fetch wait yields 76 with that work wasted.
+  # A placement that meets PSI at the fetch wait yields 76; wait here, before this gate's prune request.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "admission held before cache prune: ${admission_reason:-unknown}"
-  if ! prune_cache "$cache_root" "$checkout" "$cache_max"; then
-    cache_note=unpruned
-    echo "beelink-gate: WARNING cache over its cap with only active checkouts left; running anyway (the disk floor guards disk space)" >&2
-  fi
+  prune_detached "$cache_root" "$cache_max"
 
   if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
     die "cache path is not an owned checkout: $checkout"
@@ -1645,6 +1638,7 @@ STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
 if [ "${1:-}" = --disk-floor-bytes ]; then
   disk_floor_query "$@"; exit $?
 fi
+if [ "${1:-}" = --prune-cache ]; then prune_cache "$2" "" "$3"; exit $?; fi
 
 # Runs this script with arguments on a beelink: locally on itself, else in WSL
 # over SSH. stdin carries the script (SSH) and then stays open as the heartbeat.
