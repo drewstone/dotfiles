@@ -1,0 +1,12 @@
+#!/bin/sh
+# Re-qualify the live nix-daemon for agent-container profile admission, for the
+# host the previous root receipt names, with the newest installed admission copy.
+# Nothing to do on a host that was never qualified.
+set -eu
+receipt=/etc/nix/profile-build-qualification.json
+[ -r "$receipt" ] || exit 0
+host=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["host"])' "$receipt")
+case "$host" in beelink1|beelink2) ;; *) exit 0 ;; esac
+cli=$(ls -dt /usr/local/libexec/nix-profile-admission/*/infra/nix/profile-build-space.py 2>/dev/null | head -n 1)
+[ -n "$cli" ] || exit 0
+exec python3 "$cli" --qualify-daemon "$host"
