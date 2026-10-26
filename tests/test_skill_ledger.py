@@ -7,6 +7,7 @@ temporary directory, and puts a gh-drew stub first on PATH, so nothing reads rea
 import datetime as dt
 import hashlib
 import json
+import shutil
 import os
 import subprocess
 import sys
@@ -60,6 +61,8 @@ class Sandbox(unittest.TestCase):
         stub = self.bin / "gh-drew"
         stub.write_text("#!/bin/sh\necho '{\"data\": {}}'\n")
         stub.chmod(0o755)
+        # The real installed climb-log (tangle-tools climb-log/), so the export goes through its checked append.
+        (self.bin / "climb-log").symlink_to(shutil.which("climb-log"))
         self.transcript = self.claude / "projects" / "-work-proj" / f"{SID}.jsonl"
         self.env = {
             "PATH": f"{self.bin}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
@@ -337,7 +340,7 @@ class ScoreboardTest(Sandbox):
         self.assertEqual(layers, ["operator", "operator tools"])
         self.assertEqual(len(rows), len({r["id"] for r in rows}))
         self.assertTrue(all("quote" not in r for r in rows))
-        tool = Path(__file__).resolve().parent.parent / "claude" / "tools" / "climb-log"
+        tool = shutil.which("climb-log")
         lint = subprocess.run([str(tool), "check", "--ledger", str(ledger), "--since", "2000-01-01"],
                               capture_output=True, text=True)
         self.assertEqual(lint.returncode, 0, lint.stdout)
@@ -371,7 +374,7 @@ class LeadScorecardTest(Sandbox):
         self.assertIn("operator:time-to-recover", hills)
         ledger = self.work / "lead-climb.jsonl"
         ledger.write_text("\n".join(climb) + "\n")
-        tool = Path(__file__).resolve().parent.parent / "claude" / "tools" / "climb-log"
+        tool = shutil.which("climb-log")
         lint = subprocess.run([str(tool), "check", "--ledger", str(ledger), "--since", "2000-01-01"],
                               capture_output=True, text=True)
         self.assertEqual(lint.returncode, 0, lint.stdout)

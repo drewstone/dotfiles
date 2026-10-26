@@ -251,7 +251,8 @@ def coverage(all_rows):
     return out
 
 
-CLIMB_LOG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "climb-log")
+# climb-log is a tangle-tools command (climb-log/), installed into ~/.local/bin by tangle-tools-deploy.
+CLIMB_LOG = shutil.which("climb-log") or os.path.expanduser("~/.local/bin/climb-log")
 
 
 def climb_measurement(skill, sha, summary, floor, at):
@@ -322,7 +323,7 @@ def climb_rows(groups, corrections, opts, at, floor):
 
 def append_climb(path: str, rows: list) -> int:
     """Append through climb-log, which checks every row and skips ids the ledger already has."""
-    proc = subprocess.run([sys.executable, CLIMB_LOG, "append", "--ledger", path, "--skip-existing"],
+    proc = subprocess.run([CLIMB_LOG, "append", "--ledger", path, "--skip-existing"],
                           input="".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
                           capture_output=True, text=True)
     if proc.returncode != 0:

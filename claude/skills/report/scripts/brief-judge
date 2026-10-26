@@ -427,7 +427,8 @@ def last_score(ledger):
     return best
 
 
-CLIMB_LOG = pathlib.Path(__file__).resolve().parents[3] / "tools" / "climb-log"
+# climb-log is a tangle-tools command (climb-log/), installed into ~/.local/bin by tangle-tools-deploy.
+CLIMB_LOG = shutil.which("climb-log") or str(pathlib.Path.home() / ".local/bin/climb-log")
 UNCALIBRATED = {"verdict": "UNCALIBRATED",
                 "next": "score one deliverable the person rejected and one they praised, kept beside the ledger, "
                         "and report the judge's agreement (docs/processes/climb.md#judging-a-deliverable)"}
@@ -482,7 +483,7 @@ def append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge
         "prediction": prediction or "none: the first score is the hill's baseline",
         "outcome": outcome,
     }
-    proc = subprocess.run([sys.executable, str(CLIMB_LOG), "append", "--ledger", str(ledger), "--project", str(root)],
+    proc = subprocess.run([CLIMB_LOG, "append", "--ledger", str(ledger), "--project", str(root)],
                           input=json.dumps(row, ensure_ascii=False), capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or f"climb-log exited {proc.returncode}")
