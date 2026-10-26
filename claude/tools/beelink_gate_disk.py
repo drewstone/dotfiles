@@ -29,8 +29,8 @@ STOP_GRACE_S = math.ceil(8 * DOCKER_QUERY_S + 2 * INTERVAL_S)
 SCHEMA = 1
 
 
-def effective_floor(host, limits):
-    """Read lifecycle producer admission, independently of Fleet alert buffers; local limits may raise it."""
+def _admission_owner(host):
+    """Load Tangle Tools' protected admission provider; the lifecycle installer owns its value."""
     if host not in ('beelink1', 'beelink2'):
         raise ValueError('unknown remote beelink')
     policy = Path('/usr/local/libexec/tangle-fleet-disk-policy.py')
@@ -47,26 +47,37 @@ def effective_floor(host, limits):
     spec.loader.exec_module(owner)
     if owner.SCHEMA != 1:
         raise ValueError('authoritative fleet disk policy schema unknown')
-    floor = owner.admission_floor_bytes(host, '/')
+    return owner
+
+
+def _retired_local_floor(limits):
+    # A static local floor charged every gate for the largest producer; admission is by request size now.
+    limits = Path(limits)
+    if (limits.is_file() and not limits.is_symlink()
+            and any(line.startswith('disk_floor_gib=') for line in limits.read_text().splitlines())):
+        print('beelink-gate: disk_floor_gib in ' + str(limits) + ' is retired and ignored; '
+              'admission is free - live reservations - request >= the lifecycle minimum', file=sys.stderr)
+
+
+def effective_floor(host, limits):
+    """The lifecycle minimum a gate must leave free after live reservations and its own request."""
+    _retired_local_floor(limits)
+    floor = _admission_owner(host).admission_floor_bytes(host, '/')
     if type(floor) is not int or floor <= 0:
         raise ValueError('authoritative storage admission floor unknown')
-    limits = Path(limits)
-    if limits.exists() or limits.is_symlink():
-        if not limits.is_file():
-            raise ValueError('invalid disk floor limits file')
-        values = [line.partition('=')[2] for line in limits.read_text().splitlines()
-                  if line.startswith('disk_floor_gib=')]
-        if len(values) > 1 or values and not re.fullmatch(r'[0-9]{1,4}', values[0]):
-            raise ValueError('invalid or duplicate disk_floor_gib')
-        if values:
-            override = int(values[0])
-            if override > 1024:
-                raise ValueError('invalid disk_floor_gib')
-            local = override * 1024 ** 3
-            if local < floor:
-                print('beelink-gate: local disk limit is below the storage admission floor; using lifecycle policy', file=sys.stderr)
-            floor = max(floor, local)
     return floor
+
+
+def admission(host, limits, request, free):
+    """Admit by the gate's own size: free - live lifecycle reservations - request >= minimum."""
+    _retired_local_floor(limits)
+    verdict = _admission_owner(host).admission_headroom(host, '/', int(request), int(free))
+    if verdict['fits']:
+        return None
+    return (f"{host} has {verdict['free_bytes']} bytes free - {verdict['reserved_bytes']} bytes reserved - "
+            f"{verdict['requested_bytes']} bytes requested = "
+            f"{verdict['free_bytes'] - verdict['reserved_bytes'] - verdict['requested_bytes']}, "
+            f"below its {verdict['minimum_bytes']} byte disk floor")
 
 
 def write_json(path, value):
@@ -705,11 +716,14 @@ if __name__ == "__main__":
         sys.exit(signal_sampler(Path(arguments[0]), int(arguments[1]), arguments[2]))
     elif action == "grace":
         print(STOP_GRACE_S)
-    elif action == "floor":
+    elif action in ("floor", "admit"):
         try:
-            print(effective_floor(*arguments))
+            refusal = admission(*arguments) if action == "admit" else print(effective_floor(*arguments))
         except (OSError, ValueError, TypeError, KeyError, AttributeError, ImportError, SyntaxError):
             print('beelink-gate: authoritative disk floor unavailable or invalid; growth refused', file=sys.stderr)
             sys.exit(75)
+        if refusal:
+            print(refusal)
+            sys.exit(3)
     else:
         sys.exit(64)
