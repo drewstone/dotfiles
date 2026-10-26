@@ -160,7 +160,7 @@ async function run(argv) {
   if (warm) say(`starting from warm snapshot ${warm.fromSnapshot.slice(0, 12)} of ${warm.fromSandboxId}`)
   const logPath = path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local/state'), 'beelink-gate', 'sandbox-logs', `${gateId}.log`)
   const lastStage = () => { try { return (readFileSync(logPath, 'utf8').match(/beelink-gate-sandbox: (\S+)[^\n]*\n(?![\s\S]*beelink-gate-sandbox: )/) || [])[1] || 'none' } catch { return 'none' } }
-  let box, stopping = false
+  let box, stopping = false, boxRetired = null
   // Delete through the platform's retire path every box carrying this gate's name: a warm create that timed out
   // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). Stop first: a busy
   // sidecar refuses delete (503, sessions not sealed) and two quick tries left 2 of 4 boxes alive (10-26 10:45Z).
@@ -169,12 +169,12 @@ async function run(argv) {
   const retire = async (target) => {
     await target.stop().catch((error) => say(`box ${target.id} stop failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`))
     for (const attempt of [1, 2, 3, 4]) {
-      try { await target.delete(); return } catch (error) { if (error.status === 404 || await client.get(target.id).then((b) => !b || b.status === 'deleted', () => false)) return; say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
+      try { await target.delete(); return true } catch (error) { if (error.status === 404 || await client.get(target.id).then((b) => !b || b.status === 'deleted', () => false)) return true; if (error.status === 409 && /final snapshot/i.test(error.message)) await target.snapshot().catch((e) => say(`box ${target.id} final snapshot failed: ${e.message}`)); say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
     }
-    say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+    say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`); return false
   }
   const stop = async () => {
-    if (box) await retire(box)
+    if (box) boxRetired = await retire(box)
     for (const other of (await named()).filter((b) => b.id !== box?.id)) {
       const found = await client.get(other.id).catch(() => null)
       if (found) { say(`retiring stray box ${other.id} of this gate`); await retire(found) }
@@ -257,7 +257,7 @@ async function run(argv) {
   const receipt = { gate_id: gateId, at: new Date().toISOString(), host: 'sandbox', placement: 'sandbox', box: box.id, repo, sha, mode,
     class: gateClass || 'normal', command: command.join(' '), exit, ran_s: ranS, waited_s: Number(process.env.BEELINK_GATE_PLACED_WAIT || 0) + Math.round((created - started) / 1000),
     lane: process.env.BEELINK_GATE_LANE || '', launcher: hostname(), pr_number: process.env.BEELINK_GATE_PR || null,
-    log: logPath, last_stage: lastStage() }
+    log: logPath, last_stage: lastStage(), box_retired: boxRetired }
   if (process.env.BEELINK_GATE_SANDBOX_RECEIPT) writeFileSync(process.env.BEELINK_GATE_SANDBOX_RECEIPT, `${JSON.stringify(receipt)}\n`)
   say(`receipt: sha=${sha} install=${mode} exit=${exit} duration=${ranS}s placement=sandbox box=${box.id} gate_id=${gateId}`)
   process.exit(exit)
