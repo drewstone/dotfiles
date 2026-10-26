@@ -109,8 +109,8 @@ max_cpu_pressure() {
   fi
   echo "$maximum"
 }
-host_pressure_now() {
-  python3 - "$(pressure_file)" <<'PY'
+host_pressure_now() {  # [pressure file]: some avg10 of the host's CPU, or of the named file
+  python3 - "${1:-$(pressure_file)}" <<'PY'
 import math, pathlib, re, sys
 try:
     line = next(line for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line.startswith('some '))
@@ -122,22 +122,20 @@ except (OSError, ValueError, KeyError, StopIteration):
     sys.exit(1)
 PY
 }
-over_limit() {
-  awk -v cur="$1" -v cap="$2" 'BEGIN { exit !(cur + 0 > cap + 0) }'
-  [ "$?" -ne 1 ]
-}
+# The class slice's memory pressure holds admission too: 11 normal gates in its 24 GiB memory.max swapped 17 GB and
+# stalled every gate (memory some avg60 11.4, full 9.2) while CPU pressure admitted more (beelink1, 10-26 16:2xZ).
 host_psi_admission() {
-  local pressure="" known=1 limit
+  local pressure="" known=1 limit memory
   pressure=$(host_pressure_now) || known=0
   limit=$(max_cpu_pressure) || return 75
-  python3 - "$pressure" "$limit" "$known" <<'PY'
+  memory=$(host_pressure_now "$(gate_cgroup)/memory.pressure" 2>/dev/null) || memory=0
+  python3 - "$pressure" "$limit" "$known" "$memory" <<'PY'
 import json, sys, time
-known = sys.argv[3] == '1'
+known, memory = sys.argv[3] == '1', float(sys.argv[4])
 pressure, limit = float(sys.argv[1]) if known else None, float(sys.argv[2])
-print(json.dumps({'mode':'host_psi', 'metric':'some_avg10', 'observed_at':time.time(),
-                  'some_avg10':pressure, 'limit':limit,
-                  'held':not known or pressure > limit,
-                  'reason':'host_psi_unavailable' if not known else 'host_psi'}, separators=(',', ':')))
+print(json.dumps({'mode':'host_psi', 'metric':'some_avg10', 'observed_at':time.time(), 'some_avg10':pressure, 'limit':limit,
+                  'held':not known or pressure > limit or memory > 10, 'reason':'host_psi_unavailable' if not known else
+                  'class_memory_psi' if memory > 10 else 'host_psi', 'class_memory_some_avg10':memory, 'class_memory_limit':10.0}, separators=(',', ':')))
 PY
 }
 wait_for_load() {

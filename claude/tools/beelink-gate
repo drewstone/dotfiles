@@ -1656,7 +1656,7 @@ refusal_reason() {
     *) local why; why=$(sed -n 's/.* reason=//p' <<<"$1"); echo "$(field state "$1")${why:+ ($why)}" ;;
   esac
 }
-overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1"); [ -n "$load" ] && [ -n "$limit" ] && over_limit "$load" "$limit"; }
+overloaded() { local load limit; load=$(field load "$1") limit=$(field limit "$1"); [ -n "$load" ] && [ -n "$limit" ] && { awk -v cur="$load" -v cap="$limit" 'BEGIN { exit !(cur + 0 > cap + 0) }'; [ "$?" -ne 1 ]; }; }
 
 # A named beelink over its load limit hands the gate to the other one when that
 # one can start it under its own limit; otherwise the gate stays and waits there.
