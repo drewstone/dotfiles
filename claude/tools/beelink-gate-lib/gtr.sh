@@ -15,13 +15,20 @@ gtr_receipts() {
   else bounded_transport "$GTR_HOST receipts" ssh "${SSH_OPTIONS[@]}" "$GTR_HOST" "$read"; fi
 }
 
-# The lease's bytes: the clone this repo's newest GTR gate measured plus a quarter; with no GTR receipt, the
-# Beelinks' cold install reserve for this checkout shape (a cold discovery-lab install is 21.5 GB, and a 3 GiB
-# guess let it start), else 3 GiB. A request over the lane quota is refused by storage-lifecycle, and the gate
+# The lease's bytes: the most any measurement says this gate can grow. That is the repo's newest GTR
+# clone plus a quarter, or the growth in the Beelinks' install reserve for its checkout shape
+# (last_install_reserve_bytes: their newest cold receipt, which is the 10 GiB headroom plus measured
+# growth), whichever is larger; a repo no host has measured asks for the whole 10 GiB. A 3 GiB default
+# leased Discovery Lab's 5.2 GB clone. A lane quota below the honest request refuses it, and the gate
 # keeps waiting for a Beelink.
 gtr_reserve_bytes() {
-  local beelink_cold=$(( ${matched_reserve[beelink1]:-0} > ${matched_reserve[beelink2]:-0} ? ${matched_reserve[beelink1]:-0} : ${matched_reserve[beelink2]:-0} ))
-  python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$beelink_cold" <<'PY'
+  local peer=0 value beelink_bytes pack_kb
+  # A --no-install gate grows only by its clone: the repo's newest GTR clone plus a quarter, else four times
+  # GitHub's packed size (Discovery Lab: 1.36 GB packed, 5.2 GB cloned), at least 1 GiB. The 10 GiB install
+  # headroom refused trace-capture-fix's no-install gate against a 4 GiB lane quota (07:30Z).
+  if [ "$install_mode" = no-install ]; then
+    pack_kb=$("$(command -v gh-drew || command -v gh)" api "repos/$owner/$repo" --jq .size 2>/dev/null) || pack_kb=0
+    python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "${pack_kb:-0}" <<'PY'
 import json, sys
 newest = 0
 try:
@@ -34,7 +41,30 @@ try:
             newest = row["gtr_bytes"]
 except OSError:
     pass
-print(max(1 << 30, newest * 5 // 4) if newest else int(sys.argv[3]) or 3 << 30)
+pack = int(sys.argv[3]) * 1024 if sys.argv[3].isdigit() else 0
+print(max(1 << 30, newest * 5 // 4 if newest else 4 * pack))
+PY
+    return
+  fi
+  for value in "${matched_reserve[@]}"; do [[ "$value" =~ ^[0-9]+$ ]] && (( value > peer )) && peer=$value; done
+  beelink_bytes=$(last_install_reserve_bytes "$GTR_HOST" "$host/$owner/$repo" install "${BEELINK_GATE_SPARSE_SPEC:-}" "$peer" "" cold) || return 1
+  python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$beelink_bytes" <<'PY'
+import json, sys
+newest = 0
+try:
+    for line in open(sys.argv[1], errors="replace"):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("repo") == sys.argv[2] and isinstance(row.get("gtr_bytes"), int):
+            newest = row["gtr_bytes"]
+except OSError:
+    pass
+headroom = 10 * 1024 ** 3
+beelink = int(sys.argv[3])
+growth = beelink - headroom if beelink > headroom else headroom
+print(max(growth, newest * 5 // 4) if newest else max(growth, 1 << 30))
 PY
 }
 
@@ -55,8 +85,9 @@ gtr_gate() {  # <command>...
   if gtr_self; then
     parse_repo_url "$repo_url"
     id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-    dir="$HOME/.cache/gtr-gate/$id" bytes=$(gtr_reserve_bytes)
-    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane reserves $bytes bytes for $dir" >&2
+    dir="$HOME/.cache/gtr-gate/$id"
+    bytes=$(gtr_reserve_bytes) || { rm -f "$log"; return "$NOT_ADMITTED"; }
+    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane ${BEELINK_GATE_LANE:-gtr-gate} reserves $bytes bytes for $dir" >&2
     # Its own session, so a stop reaches run-lane, the gate and the command together.
     setsid storage-lifecycle run-lane --lane "${BEELINK_GATE_LANE:-gtr-gate}" --path "$dir" --bytes "$bytes" -- \
       env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
