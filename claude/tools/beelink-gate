@@ -1912,13 +1912,7 @@ if [ "${1:-}" = --attach ]; then
   frontend_phase attach
   heartbeat=0 on_beelink "$target" --job-attach "$2"
   rc=$?
-  if [ "$rc" = 255 ]; then
-    # SSH also exits 255 on transport loss. A completed command may itself
-    # have returned 255; ask the job's exit file before calling it a loss.
-    frontend_phase result_read
-    result=$(heartbeat=0 on_beelink "$target" --job-result "$2" 2>/dev/null) || result=""
-    [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $2; run beelink-gate --attach $2 again"
-  fi
+  if [ "$rc" = 255 ]; then frontend_phase result_read; job_reattach "$target" "$2"; fi
   if [ "$rc" != 255 ]; then frontend_record placement returned "$2" attach "$rc"; fi
   exit "$rc"
 fi
@@ -2297,11 +2291,7 @@ while :; do
     heartbeat=0 run_cancelable on_beelink "$target" --job-attach "$gate_id"
     rc=$?
   fi
-  if [ "$rc" = 255 ]; then
-    frontend_phase result_read
-    result=$(heartbeat=0 on_beelink "$target" --job-result "$gate_id" 2>/dev/null) || result=""
-    [ "$result" = 255 ] || tempfail "$(utc_in_minutes 5)" "attach connection lost for $gate_id; run beelink-gate --attach $gate_id again"
-  fi
+  if [ "$rc" = 255 ]; then frontend_phase result_read; job_reattach "$target" "$gate_id"; fi
   if [ "$rc" != 255 ]; then
     frontend_record placement "$([ "$rc" = "$NOT_ADMITTED" ] && echo not_admitted || echo returned)" "$gate_id" "" "$rc"
   fi

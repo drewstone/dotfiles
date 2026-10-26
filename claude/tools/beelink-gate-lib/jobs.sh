@@ -288,3 +288,21 @@ job_result_remote() {
   [[ "$code" =~ ^([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])$ ]] || return 1
   printf '%s\n' "$code"
 }
+
+# A lost SSH transport re-attaches by itself: the submitted gate keeps running on the Beelink.
+# From 10-19 to 10-26 each of 50 "attach connection lost" exits cost the caller its own retry.
+# Sets rc to the gate's exit; TEMPFAIL only when six re-attaches (about two minutes) all lose the link.
+job_reattach() {  # <target> <gate-id>
+  local attempt result
+  for attempt in 1 2 3 4 5 6; do
+    # SSH also exits 255 on transport loss; a completed command may itself have returned 255.
+    result=$(heartbeat=0 on_beelink "$1" --job-result "$2" 2>/dev/null) || result=""
+    if [ "$result" = 255 ]; then rc=255; return 0; fi
+    echo "beelink-gate: attach connection lost for $2; re-attaching (attempt $attempt of 6)" >&2
+    sleep $((1 << attempt))
+    heartbeat=0 on_beelink "$1" --job-attach "$2"
+    rc=$?
+    [ "$rc" = 255 ] || return 0
+  done
+  tempfail "$(utc_in_minutes 5)" "attach connection lost for $2; run beelink-gate --attach $2 again"
+}
