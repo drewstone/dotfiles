@@ -2314,13 +2314,13 @@ PY
 # placements it re-execs itself, keeping its wait, once the installed gate source has changed.
 gate_source_digest() { cat "$gate_source_root/beelink-gate" "$gate_source_root"/beelink-gate-lib/*.sh "$gate_source_root"/beelink_gate_*.py "$gate_source_root"/beelink_gate_*.mjs 2>/dev/null | cksum; }
 launch_digest=$(gate_source_digest)
-launched=$((SECONDS - ${BEELINK_GATE_LAUNCH_WAIT:-0})) placements=0 sandbox_next=0
-unset BEELINK_GATE_LAUNCH_WAIT
+launched=$((SECONDS - ${BEELINK_GATE_LAUNCH_WAIT:-0})) placements=${BEELINK_GATE_LAUNCH_PLACEMENTS:-0} sandbox_next=0
+unset BEELINK_GATE_LAUNCH_WAIT BEELINK_GATE_LAUNCH_PLACEMENTS
 while :; do
   if [ "$(gate_source_digest)" != "$launch_digest" ]; then
-    echo "beelink-gate: the installed gate source changed; restarting this launcher on it, keeping its $((SECONDS - launched))s wait" >&2
+    echo "beelink-gate: the installed gate source changed; restarting this launcher on it, keeping its $((SECONDS - launched))s wait and $placements given-back placements" >&2
     stop_checkout_reservations
-    BEELINK_GATE_LAUNCH_WAIT=$((SECONDS - launched)) exec "$BASH" "$gate_source_root/beelink-gate" "${gate_argv[@]}"
+    BEELINK_GATE_LAUNCH_WAIT=$((SECONDS - launched)) BEELINK_GATE_LAUNCH_PLACEMENTS=$placements exec "$BASH" "$gate_source_root/beelink-gate" "${gate_argv[@]}"
   fi
   frontend_phase placement_probe_wait
   case "$requested" in
