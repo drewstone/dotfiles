@@ -3177,18 +3177,21 @@ test("auto retries a dropped probe instead of calling a busy beelink unreachable
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("an --urgent auto gate is never given an admission deadline, so it keeps its host and its place", () => {
+// An urgent gate keeps its host until the sandbox mark, then gives it back once so a CPU-pressure hold can
+// overflow to a sandbox (#14831 sat 7 min behind PSI on 2026-10-26); with sandboxes off it keeps its host.
+test("an --urgent auto gate's admission deadline is the sandbox mark, and none when sandboxes are off", () => {
   const f = fixture();
   try {
     const env = loadedHosts(f, 0.5, 0.5);
-    const normal = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
-    assert.equal(normal.status, 0, normal.stderr);
-    assert.match(readFileSync(join(f.root, "ssh-remote-command"), "utf8"), /BEELINK_GATE_ADMIT_WAIT=60 /);
-    const urgent = run(gate, ["--urgent", "--no-install", "auto", f.url, f.first, "--", "true"], { env });
-    assert.equal(urgent.status, 0, urgent.stderr);
-    const sent = readFileSync(join(f.root, "ssh-remote-command"), "utf8");
-    assert.match(sent, /BEELINK_GATE_URGENT=1 /);
-    assert.doesNotMatch(sent, /BEELINK_GATE_ADMIT_WAIT/);
+    const sent = (extra, args = ["--urgent"]) => {
+      const result = run(gate, [...args, "--no-install", "auto", f.url, f.first, "--", "true"], { env: { ...env, ...extra } });
+      assert.equal(result.status, 0, result.stderr);
+      return readFileSync(join(f.root, "ssh-remote-command"), "utf8");
+    };
+    assert.match(sent({}, []), /BEELINK_GATE_ADMIT_WAIT=60 /);
+    assert.match(sent({}), /BEELINK_GATE_URGENT=1 .*BEELINK_GATE_ADMIT_WAIT=300 |BEELINK_GATE_ADMIT_WAIT=300 .*BEELINK_GATE_URGENT=1 /);
+    assert.match(sent({ BEELINK_GATE_SANDBOX_AFTER: "90s" }), /BEELINK_GATE_ADMIT_WAIT=90 /);
+    assert.doesNotMatch(sent({ BEELINK_GATE_SANDBOX: "0" }), /BEELINK_GATE_ADMIT_WAIT/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
