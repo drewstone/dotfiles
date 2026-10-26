@@ -1,6 +1,7 @@
 {
   "about": "The one classification every census instrument and ratchet reads (git/census/README.md). Patterns are regular expressions both Python and JavaScript accept.",
   "logic": "\\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|sh|bash|sql|rb|java|kt|swift|sol)$",
+  "shebang": "^#!\\s*/\\S*?(?:/env(?:\\s+-\\S+)*\\s+)?(?:\\S*/)?(python[0-9.]*|bash|sh|zsh|dash|node|deno|bun|ruby|perl|tsx|ts-node)(\\s|$)",
   "workflow": "(^|/)\\.github/workflows/[^/]+\\.ya?ml$",
   "exempt": "(\\.stories\\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$|\\.d\\.ts$|\\.min\\.js$|\\.(test|spec)\\.[^/]+$|_test\\.go$|(^|/)test_[^/]+\\.py$|(^|/)(__tests__|tests?|e2e|fixtures|testdata|generated|vendor|node_modules|dist|build|migrations)/)",
   "test": "(\\.stories\\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$|\\.(test|spec)\\.[^/]+$|_test\\.go$|(^|/)test_[^/]+\\.py$|(^|/)(__tests__|tests?|e2e)/)",

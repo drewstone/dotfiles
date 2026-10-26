@@ -57,8 +57,8 @@ def turbo_register(root, identity, gate_id, normal_group, descriptor):
     if not re.fullmatch(r'beelink[12]-[0-9a-f]{32}', gate_id):
         raise ValueError('invalid shared Turbo gate ID')
     expected = str(normal_group / f'beelink-gate-{gate_id}.service')
-    joined = Path('/proc/self/cgroup').read_text().strip()
-    if joined != '0::' + expected.removeprefix('/sys/fs/cgroup'):
+    joined = Path(os.environ.get('BEELINK_GATE_SELF_CGROUP', '/proc/self/cgroup')).read_text().strip()
+    if joined != '0::' + expected.removeprefix(os.environ.get('BEELINK_GATE_CGROUP_ROOT', '/sys/fs/cgroup')):
         raise ValueError('shared Turbo requires the actual managed normal unit')
     turbo_directory(root)
     for part in pool.relative_to(root).parts:

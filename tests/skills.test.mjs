@@ -448,3 +448,17 @@ test('operator scenarios keep every question, expected action and owning rule', 
   })
   assert.deepEqual(missing, [], `rerun the operator scenarios, then point each row at its current rule:\n${missing.join('\n')}`)
 })
+
+// beelink2's limits lost release_critical=1 at 04:59Z on 2026-10-26 while a host was drained and 32 gates
+// landed on it. The installer owns links, never a host's runtime keys: an install leaves the file byte-identical.
+test('installer leaves operator-set beelink-gate limits, including release_critical, byte-identical', () => {
+  withHome((home) => {
+    const limits = join(home, '.config', 'beelink-gate', 'limits')
+    mkdirSync(dirname(limits), { recursive: true })
+    const held = '# operator: release-only hold while the host drains\nrelease_critical=1\nmax_cpu_pressure=55\ndisk_floor_gib=150\n'
+    writeFileSync(limits, held, { mode: 0o600 })
+    const result = spawnSync('bash', [join(repoRoot, 'claude', 'install.sh')], { encoding: 'utf8', env: installerEnv(home) })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(readFileSync(limits, 'utf8'), held)
+  })
+})

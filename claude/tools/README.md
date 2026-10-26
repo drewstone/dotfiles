@@ -622,7 +622,7 @@ Every account, including runners, reads only that protected publication. The ins
 and fences readers before a supported config change; it never requires runner access to private home/config paths. The existing
 `--disk-floor-bytes` query reports that effective policy from the requested host: local same-host reads
 need no SSH, and remote reads use the existing bounded staged transport without recursive routing; an unavailable owner
-refuses growth. A second floor
+refuses growth. A fixture host (`tests/beelink-gate.test.mjs`) names its own host inputs: `BEELINK_GATE_DISK_POLICY` (a provider of the same contract, `tests/fixtures/beelink-gate/disk_policy.py`), `BEELINK_GATE_RESOURCE_POLICY`, `BEELINK_GATE_CGROUP_ROOT` and `BEELINK_GATE_SELF_CGROUP`; a named policy may belong to the running account, and real hosts never set them. A second floor
 check after installation keeps the requested command from starting if its
 install consumed the reserve.
 
@@ -677,7 +677,7 @@ beelink-gate --retry 60 --summary auto git@github.com:owner/repo.git <full-sha> 
 `--light` is for small checks such as a shell syntax check, a linter or one
 test file. It installs no dependencies, gets no browser, and declares at most
 `BEELINK_GATE_LIGHT_CPU` core-seconds of command CPU (default and maximum 120).
-It is admitted up to 2.5x the host's cores rather than 1.5x. It has its own
+Host CPU PSI admits it like every other gate. It has its own
 host slots (`BEELINK_GATE_LIGHT_SLOTS`, default 2) and its own
 `<repo>@light` checkout, so it never waits behind a normal gate. It holds for
 at most 10 minutes. A light command that uses more CPU than it declared fails

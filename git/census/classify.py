@@ -16,6 +16,7 @@ DECLARATION = re.compile(_P["declaration"])
 CONVENTION = frozenset(_P["conventionNames"])
 HISTORY = tuple(_P["history"])
 TRIVIAL = re.compile(_P["trivial"])
+SHEBANG = re.compile(_P["shebang"])
 WINDOW = _P["window"]
 FILE_LIMIT = _P["fileLimit"]
 FUNCTION_LIMIT = _P["functionLimit"]
@@ -24,9 +25,28 @@ FILE_HUG = tuple(_P["fileHug"])
 FUNCTION_HUG = tuple(_P["functionHug"])
 
 
-def logic(path):
-    """A file whose lines count toward production size: logic or a workflow, and not a test, declaration, vendored path or dated record."""
-    return bool((LOGIC.search(path) or WORKFLOW.search(path)) and not EXEMPT.search(path) and not history(path))
+def logic(path, head=None):
+    """A file whose lines count toward production size: logic or a workflow, and not a test, declaration, vendored path or dated record.
+
+    An extensionless file (bin/fleet, claude/tools/gh-drew) is logic when its first line runs an interpreter; `head` is
+    its first bytes, and without them such a file is only a candidate (see `candidate`)."""
+    named = LOGIC.search(path) or WORKFLOW.search(path)
+    return bool((named or (head is not None and extensionless(path) and SHEBANG.match(head)))
+                and not EXEMPT.search(path) and not history(path))
+
+
+def candidate(path):
+    """A path that is logic by name, or extensionless and so logic if its first line is an interpreter: read its head."""
+    return logic(path) or bool(extensionless(path) and not EXEMPT.search(path) and not history(path))
+
+
+def extensionless(path):
+    name = path.rsplit("/", 1)[-1]
+    return bool(name) and "." not in name
+
+
+def head_of(data):
+    return data[:200].decode(errors="replace")
 
 
 def source(path):
