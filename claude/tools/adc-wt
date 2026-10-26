@@ -85,6 +85,13 @@ pool_tree_is_valid() {
   [ "$registered" -eq 1 ]
 }
 
+# A tree is ready only when it is a valid pool worktree with no uncommitted tracked changes: a dirty
+# seed made `git checkout -B` refuse a claim (2026-10-26) and was recycled back into the pool. A dirty
+# tree is never reset here; warm and claim pass it by and status counts it, so its owner can inspect it.
+pool_tree_is_ready() {
+  pool_tree_is_valid "$1" && git -C "$1" diff --quiet HEAD 2>/dev/null
+}
+
 # The repo owns this: scripts/bootstrap-worktree.sh runs the frozen install, the
 # workspace build, and the native-addon heal in one idempotent shot. Run it with
 # cwd INSIDE the tree — `pnpm -C <dir>` leaves the addon heal pointed at the
@@ -103,6 +110,10 @@ prepare_tree() {
     return 1
   fi
   rm -f "$logfile"
+  if ! git -C "$dir" diff --quiet HEAD; then
+    log "bootstrap left uncommitted tracked changes in $dir ($(git -C "$dir" diff --shortstat HEAD)); not ready"
+    return 1
+  fi
   log "ready: $dir"
 }
 
@@ -112,10 +123,10 @@ cmd_warm() {
   ( cd "$REPO" && git fetch origin --quiet ) || true
   for d in "$POOL"/"${SEED_PREFIX}"*; do
     [ -d "$d" ] || continue
-    if pool_tree_is_valid "$d"; then
+    if pool_tree_is_ready "$d"; then
       have=$((have + 1))
     else
-      log "skipping invalid ready-tree candidate: $d"
+      log "skipping invalid or dirty ready-tree candidate: $d"
     fi
   done
   log "pool has $have, want $want (shared cache: $TURBO_CACHE_DIR)"
@@ -153,8 +164,8 @@ cmd_claim() {
   fi
   for d in "$POOL"/"${SEED_PREFIX}"*; do
     [ -d "$d" ] || continue
-    if ! pool_tree_is_valid "$d"; then
-      log "skipping invalid ready-tree candidate: $d" >&2
+    if ! pool_tree_is_ready "$d"; then
+      log "skipping invalid or dirty ready-tree candidate: $d" >&2
       continue
     fi
     dir="$d"; break
@@ -222,17 +233,18 @@ cmd_status() {
   echo "repo:         $REPO"
   echo "pool:         $POOL"
   echo "shared cache: $TURBO_CACHE_DIR ($(du -sh "$TURBO_CACHE_DIR" 2>/dev/null | cut -f1 || echo 0))"
-  local ready=0 claimed=0
+  local ready=0 dirty=0 claimed=0
   for d in "$POOL"/*; do
     [ -d "$d" ] || continue
     case "$(basename "$d")" in
       ${SEED_PREFIX}*)
-        if pool_tree_is_valid "$d"; then ready=$((ready + 1)); fi
+        if pool_tree_is_ready "$d"; then ready=$((ready + 1)); elif pool_tree_is_valid "$d"; then dirty=$((dirty + 1)); fi
         ;;
       *) claimed=$((claimed + 1)) ;;
     esac
   done
   echo "ready:        $ready"
+  echo "dirty seeds:  $dirty (valid trees with uncommitted tracked changes; never claimed)"
   echo "claimed:      $claimed"
 }
 
