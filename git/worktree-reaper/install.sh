@@ -53,6 +53,7 @@ if [ "$(uname -s)" = Darwin ] && mac_lifecycle_owns_worktrees; then
 fi
 
 install -d "$HOME/.local/bin" "$HOME/.local/state/wt-reaper"
+install -m 0644 "$SCRIPT_DIR/wt_reaper_mac.py" "$(dirname "$BIN")/wt_reaper_mac.py"
 install -m 0755 "$SCRIPT_DIR/wt-reaper" "$BIN"
 /usr/bin/python3 "$BIN" --help >/dev/null
 

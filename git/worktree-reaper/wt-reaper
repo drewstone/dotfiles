@@ -43,22 +43,17 @@ rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
     the .webm files and trace.raw.zip, once journeys/out/<journey>/timings.json
     in a --journey-out directory names that start and out/<journey>/video holds
     <label>-*.mp4 and, for a raw trace, the scrubbed <label>-trace.zip.
-  - beelink-gate checkouts beyond the configured count: <repo>@N under
-    --gate-cache with N >= --gate-checkouts, removed only while this process
-    holds that checkout's gate lock.
-  - pnpm store files no project links (Linux): `pnpm store prune` per store
-    version, at most once every 20 hours, only in a quiet window while it
-    holds every beelink-gate slot; see DerivedPass.pnpm_store.
+  - Linux caches delegate to storage-lifecycle's declared budgets and native GC.
+    Beelink-gate itself owns checkout eviction under its existing cache budget.
 
-Removal uses the installed wt-remove retention owner; local refs remain intact.
 Reflog expiry rewrites do not count as new work; recorded event times do.
 
 Python 3.9 compatible: macOS runs it with /usr/bin/python3.
 """
 
 import argparse
-import fcntl
 import glob
+import importlib
 import json
 import math
 import os
@@ -164,12 +159,10 @@ def git(args, cwd, check=True, timeout=300):
 
 
 def git_ok(args, cwd, timeout=120):
-    """True when the git command exits 0; the same read-only environment as git()."""
-    env = dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', LC_ALL='C')
     try:
-        return subprocess.run(['git'] + args, cwd=cwd, env=env, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=timeout).returncode == 0
-    except subprocess.TimeoutExpired:
+        git(args, cwd, timeout=timeout)
+        return True
+    except (Skip, subprocess.TimeoutExpired):
         return False
 
 
@@ -248,13 +241,16 @@ def check_in_progress(gitdir):
             raise Skip(reason)
 
 
-def newest_git_activity(gitdir, common_dir, branch):
+def storage_owner(name):
     owner = os.path.expanduser('~/.local/share/tangle-tools')
     if owner not in sys.path:
         sys.path.insert(0, owner)
+    return importlib.import_module('storage_lifecycle.' + name)
+
+
+def newest_git_activity(gitdir, common_dir, branch):
     try:
-        from storage_lifecycle.worktree_activity import latest_git_activity
-        return latest_git_activity(gitdir, common_dir, branch)
+        return storage_owner('worktree_activity').latest_git_activity(gitdir, common_dir, branch)
     except (ImportError, OSError, ValueError) as exc:
         raise Skip('Git activity owner unavailable or unsafe: %s' % exc) from exc
 
@@ -273,7 +269,10 @@ def mount_points():
     """Every mount point on this host (a bind mount keeps the same st_dev)."""
     points = set()
     if IS_LINUX:
-        for pairs in (_mountinfo('self') or {}).values():
+        tables = storage_owner('proc_scan').mountinfo('self')
+        if tables is None:
+            raise Skip('canonical Linux mount inventory is unavailable')
+        for pairs in tables.values():
             points.update(point for _, point in pairs)
     else:
         out = subprocess.run(['/sbin/mount'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -402,230 +401,17 @@ def check_pushed(path):
 
 # ---------------------------------------------------------------- processes
 
-def _readlink(path):
-    try:
-        return os.readlink(path)
-    except OSError:
-        return None
-
-
-def _mountinfo(pid):
-    """Map (major:minor) -> list of (fs_root, mount_point) for a process."""
-    mounts = {}
-    try:
-        with open('/proc/%s/mountinfo' % pid, encoding='utf-8', errors='replace') as fh:
-            for line in fh:
-                f = line.split()
-                if len(f) < 5:
-                    continue
-                unesc = lambda s: re.sub(r'\\([0-7]{3})', lambda m: chr(int(m.group(1), 8)), s)
-                mounts.setdefault(f[2], []).append((unesc(f[3]), unesc(f[4])))
-    except OSError:
-        return None
-    return mounts
-
-
-def _translate(path, their_mounts, host_mounts):
-    """Map a path seen in another mount namespace to host paths."""
-    best = None
-    for dev, pairs in their_mounts.items():
-        for fs_root, point in pairs:
-            if inside(path, point) and (best is None or len(point) > len(best[2])):
-                best = (dev, fs_root, point)
-    if best is None:
-        return []
-    dev, fs_root, point = best
-    fs_path = os.path.normpath(fs_root + '/' + path[len(point):])
-    out = []
-    for host_root, host_point in host_mounts.get(dev, []):
-        if inside(fs_path, host_root):
-            out.append(os.path.normpath(host_point + '/' + fs_path[len(host_root):]))
-    return out
-
-
-SCAN_ROUNDS = 6
-
-
-def _unix_sockets(pid, cache, inodes=()):
-    """inode -> bound path for pathname Unix sockets in pid's network namespace.
-
-    The table is cached per namespace, but a socket bound after the cache was
-    filled would be missed, so an inode absent from the cached table rereads it.
-    """
-    ns = _readlink('/proc/%d/ns/net' % pid)
-    cached = cache.get(ns)
-    if cached is not None and all(i in cached for i in inodes):
-        return cached
-    table = {}
-    try:
-        with open('/proc/%d/net/unix' % pid, encoding='utf-8', errors='replace') as fh:
-            next(fh, None)
-            for line in fh:
-                f = line.split(None, 7)
-                if len(f) == 8 and not f[7].startswith('@'):  # '@' is abstract: no file
-                    table[f[6]] = f[7].rstrip('\n')
-    except OSError:
-        table = None
-    if ns:
-        cache[ns] = table
-    return table
-
-
-def _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets=None):
-    """Paths one Linux process holds, or None when it cannot be read."""
-    sockets = {} if sockets is None else sockets
-    base = '/proc/%d' % pid
-    found, ok = [], True
-    for link in ('cwd', 'root', 'exe'):
-        target = _readlink(base + '/' + link)
-        if target is None:
-            if os.path.exists(base) and link != 'exe':
-                ok = False
-            continue
-        found.append(target)
-    try:
-        inodes = []
-        for fd in os.listdir(base + '/fd'):
-            target = _readlink(base + '/fd/' + fd)
-            if target and target.startswith('/'):
-                found.append(target)
-            elif target and target.startswith('socket:['):
-                inodes.append(target[8:-1])
-        if inodes:
-            # A pathname-bound Unix socket shows as socket:[inode]; map it to
-            # its bound path so a live service's socket file counts as held.
-            table = _unix_sockets(pid, sockets, inodes)
-            if table is None:
-                ok = False
-            else:
-                bound = [table[i] for i in inodes if i in table]
-                found.extend(b for b in bound if b.startswith('/'))
-                if any(not b.startswith('/') for b in bound):
-                    ok = False  # bound by relative path: its directory is unknown
-    except FileNotFoundError:
-        return []  # exited
-    except OSError:
-        ok = False
-    try:
-        with open(base + '/maps', encoding='utf-8', errors='replace') as fh:
-            for line in fh:
-                f = line.split(None, 5)
-                if len(f) == 6 and f[5].startswith('/'):
-                    found.append(f[5].rstrip('\n'))
-    except FileNotFoundError:
-        pass
-    except OSError:
-        ok = False
-    if not ok:
-        return None if os.path.exists(base) else []
-    ns = _readlink(base + '/ns/mnt')
-    if ns and ns != self_ns:
-        if ns not in ns_mounts:
-            ns_mounts[ns] = _mountinfo(pid)
-        if ns_mounts[ns] is None:
-            return None
-        translated = []
-        for p in found:
-            for q in _with_undeleted(p):
-                translated.extend(_translate(q, ns_mounts[ns], host_mounts))
-        found = translated
-    return [q for p in found for q in _with_undeleted(p)]
-
-
-DELETED = ' (deleted)'
-
-
-def _with_undeleted(path):
-    """The path as read, plus the form without the kernel's ' (deleted)' suffix.
-
-    A real directory may be named '... (deleted)', so both forms count as held.
-    """
-    if path.endswith(DELETED):
-        return [path, path[:-len(DELETED)]]
-    return [path]
-
-
-def proc_dump():
-    """Every path a process holds on Linux: cwd, root, exe, fds and mapped files.
-
-    Returns (paths, unreadable_pids). Paths of processes in another mount
-    namespace are translated to host paths through mountinfo. The walk
-    repeats over PIDs that appeared while it ran until a listing shows no
-    new PID; if that never happens, the new PIDs count as unreadable.
-    """
-    self_ns = _readlink('/proc/self/ns/mnt')
-    host_mounts = _mountinfo('self') or {}
-    ns_mounts, sockets = {}, {}
-    paths, unreadable, scanned = set(), [], {os.getpid()}
-    for _ in range(SCAN_ROUNDS):
-        pids = {int(p) for p in os.listdir('/proc') if p.isdigit()} - scanned
-        if not pids:
-            return paths, unreadable
-        for pid in sorted(pids):
-            found = _proc_one(pid, self_ns, host_mounts, ns_mounts, sockets)
-            if found is None:
-                unreadable.append(pid)
-            else:
-                paths.update(found)
-        scanned |= pids
-    pids = {int(p) for p in os.listdir('/proc') if p.isdigit()} - scanned
-    return paths, unreadable + sorted(pids)
-
-
-MAC_LSOF = ['/usr/sbin/lsof', '-n', '-P', '-w', '-F', 'pn']
-MAC_SUDOERS_HINT = ('add "%s ALL=(root) NOPASSWD: /usr/sbin/lsof" with visudo -f /etc/sudoers.d/wt-reaper'
-                    % os.environ.get('USER', 'drew'))
-
-
-def _lsof(extra, use_sudo):
-    """Run lsof; returns (stdout or None, used_sudo).
-
-    Exit 1 with no output is normal for `-p` when those PIDs have exited;
-    the full listing (no extra args) must produce output.
-    """
-    def usable(proc):
-        return proc.returncode == 0 or (proc.returncode == 1 and (proc.stdout or extra))
-    if use_sudo:
-        proc = subprocess.run(['sudo', '-n'] + MAC_LSOF + extra, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, timeout=600)
-        if usable(proc) and b'password' not in proc.stderr:
-            return proc.stdout, True
-    proc = subprocess.run(MAC_LSOF + extra, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=600)
-    if usable(proc):
-        return proc.stdout, False
-    return None, False
-
-
-def _mac_scan(use_sudo):
-    """lsof snapshot, then lsof -p for PIDs that appeared, until none appear."""
-    paths, seen, attempted = set(), set(), set()
-    hint = ''
-    extra = []
-    for _ in range(SCAN_ROUNDS):
-        out, used_sudo = _lsof(extra, use_sudo)
-        if out is None:
-            raise Skip('lsof failed')
-        if not used_sudo:
-            hint = '; lsof needs root to see other accounts: ' + MAC_SUDOERS_HINT
-        for line in out.decode('utf-8', 'surrogateescape').splitlines():
-            if line.startswith('p'):
-                seen.add(int(line[1:]))
-            elif line.startswith('n/'):
-                # lsof may append ' (...)' notes, but a path can itself contain
-                # ' ('. Hold every candidate prefix; extra holds only skip more.
-                name = line[1:]
-                paths.add(name)
-                cut = name.find(' (')
-                while cut != -1:
-                    paths.add(name[:cut])
-                    cut = name.find(' (', cut + 1)
-        missing = set(process_table()) - seen - attempted - {os.getpid()}
-        if not missing:
-            break
-        attempted |= missing
-        extra = ['-p', ','.join(str(p) for p in sorted(missing))]
-    unreadable = sorted(set(process_table()) - seen - {os.getpid()})
-    return paths, unreadable, hint
+def proc_dump(use_sudo=False):
+    """Use the maintained, root-protected Linux reader; never a second scanner."""
+    command = (['sudo', '-n'] if use_sudo else []) + ['/usr/local/libexec/tangle-storage-proc-scan']
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300, check=True)
+    data = json.loads(result.stdout)
+    if (not isinstance(data, dict) or not isinstance(data.get('paths'), list)
+            or any(not isinstance(p, str) or not p.startswith('/') for p in data['paths'])
+            or not isinstance(data.get('unreadable'), list)
+            or any(type(p) is not int or p <= 0 for p in data['unreadable'])):
+        raise Skip('canonical Linux process reader returned incomplete data')
+    return set(data['paths']), data['unreadable']
 
 
 def process_table():
@@ -675,16 +461,18 @@ def _scan_processes(use_sudo, log):
     if IS_LINUX:
         paths, unreadable = proc_dump()
         if unreadable and use_sudo:
-            proc = subprocess.run(
-                ['sudo', '-n', sys.executable, os.path.abspath(__file__), '--proc-dump'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-            if proc.returncode == 0:
-                data = json.loads(proc.stdout.decode('utf-8', 'surrogateescape'))
-                paths.update(data['paths'])
-                unreadable = data['unreadable']
+            try:
+                privileged, unreadable = proc_dump(True)
+                paths.update(privileged)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                raise Skip('canonical privileged Linux process reader unavailable') from error
         hint = '; the Linux scan needs passwordless sudo to read other accounts\' processes'
     elif IS_MAC:
-        paths, unreadable, hint = _mac_scan(use_sudo)
+        from wt_reaper_mac import scan
+        try:
+            paths, unreadable, hint = scan(use_sudo, process_table)
+        except RuntimeError as error:
+            raise Skip(str(error)) from error
     else:
         raise Skip('unsupported platform %s' % sys.platform)
     table = process_table()
@@ -858,8 +646,6 @@ def run(args):
         derived = DerivedPass(args, log)
         derived.dependencies(seen, removed)
         derived.journeys()
-        derived.gate_checkouts()
-        derived.pnpm_store()
         counts.update(derived.counts)
     log.write(event='summary', mode=mode, host=socket.gethostname(),
               **counts)
@@ -963,86 +749,6 @@ def dependency_dirs(rpath):
     return ignored
 
 
-# Store layout version -> the pnpm major that writes it.
-PNPM_STORE_MAJOR = {'v3': '9', 'v10': '10', 'v11': '11'}
-PNPM_INSTALL_VERBS = {'install', 'i', 'add', 'fetch', 'update', 'up', 'upgrade', 'dlx', 'import', 'store',
-                      'deploy', 'link', 'remove', 'rm', 'uninstall'}
-
-
-def free_bytes(path):
-    st = os.statvfs(path)
-    return st.f_bavail * st.f_frsize
-
-
-# A gate takes the first free slot-<i>.lock (or light-slot-<i>.lock) below its
-# configured count, creating the file as it goes, and a launcher may set that
-# count. Holding every existing file is not enough: a gate could create the next
-# one. The prune holds at least this many of each pool, and one past any index
-# already on disk, so a gate configured for up to this many slots cannot start.
-GATE_SLOTS_HELD = 16
-
-
-def gate_slots(locks):
-    """The slot lock files the store prune must hold; none when this host has no gate cache."""
-    if not os.path.isdir(locks):
-        return []
-    names = os.listdir(locks)
-    paths = []
-    for pool in ('slot', 'light-slot'):
-        seen = [int(m.group(1)) for m in (re.match(r'^%s-(\d+)\.lock$' % pool, n) for n in names) if m]
-        count = max([GATE_SLOTS_HELD] + [i + 2 for i in seen])
-        paths += [os.path.join(locks, '%s-%d.lock' % (pool, i)) for i in range(count)]
-    return paths
-
-
-def newest(paths):
-    def key(p):
-        return [int(x) if x.isdigit() else 0 for x in re.split(r'[./]', p.split('/')[-3].lstrip('v'))]
-    return sorted(paths, key=key)[-1] if paths else None
-
-
-def pnpm_release(root, major):
-    """The newest pnpm <major>.x in the corepack cache, as the script its package.json names for `pnpm`, or None.
-
-    pnpm 10 names bin/pnpm.cjs and pnpm 11 bin/pnpm.mjs. Looking only for dist/pnpm.cjs found no pnpm 11, so the
-    v11 store (7.7 GB on beelink1, 7.2 GB on beelink2 on 2026-10-14) was never pruned. A native pnpm binary
-    (pnpm 12) is not a node script and is skipped.
-    """
-    if not major:
-        return None
-    found = []
-    for manifest in glob.glob(os.path.join(glob.escape(os.path.expanduser(root)), major + '.*', 'package.json')):
-        try:
-            with open(manifest, encoding='utf-8') as fh:
-                bins = json.load(fh).get('bin')
-        except (OSError, ValueError, AttributeError):
-            continue
-        entry = bins if isinstance(bins, str) else bins.get('pnpm') if isinstance(bins, dict) else None
-        if not isinstance(entry, str) or not entry.endswith(('.js', '.cjs', '.mjs')):
-            continue
-        release = os.path.dirname(manifest)
-        script = os.path.normpath(os.path.join(release, entry))
-        if inside(script, release) and os.path.isfile(script):
-            found.append(([int(x) for x in os.path.basename(release).split('.') if x.isdigit()], script))
-    return max(found)[1] if found else None
-
-
-def pnpm_installs(proc='/proc'):
-    """Running pnpm commands that write the store (install, add, fetch, ...), as short descriptions."""
-    found = []
-    for cmdline in glob.glob(os.path.join(glob.escape(proc), '[0-9]*', 'cmdline')):
-        try:
-            with open(cmdline, 'rb') as fh:
-                args = [a.decode('utf-8', 'replace') for a in fh.read().split(b'\0') if a]
-        except OSError:
-            continue
-        for i, arg in enumerate(args):
-            if os.path.basename(arg) in ('pnpm', 'pnpm.cjs', 'pnpm.mjs', 'pnpm.js'):
-                rest = [a for a in args[i + 1:] if not a.startswith('-')]
-                if rest and rest[0] in PNPM_INSTALL_VERBS:
-                    found.append(' '.join(args)[:120])
-                break
-    return found
 
 
 class DerivedPass:
@@ -1207,124 +913,6 @@ class DerivedPass:
                             continue
                     self.done('journey-raw', f, freed, 'mp4 and scrubbed trace are in %s' % out)
 
-    def pnpm_store(self):
-        """Prune each pnpm store version, at most once a day, only in a quiet window that no gate can enter.
-
-        Quiet: overnight (01:00-05:00 local), or 1-minute load under the core count with no gate lock file
-        touched in the last 15 minutes (a gate truncates its checkout lock and slot lock as it takes or polls
-        them, so a starting or waiting gate is never quiet). The pass then takes every beelink-gate host slot without waiting (a gate installs
-        only while it holds one), confirms no pnpm install runs, prunes, and releases. On 2026-10-11 the
-        unreferenced store files were 11.1 GiB on beelink2 and 5.6 GiB on beelink1; a window that waited
-        for slots held L1's queue behind it, so this one never waits.
-        """
-        store = os.path.expanduser(self.args.pnpm_store)
-        locks = os.path.join(os.path.expanduser(self.args.gate_cache), '.locks')
-        stamp = os.path.expanduser(self.args.pnpm_stamp)
-        if not IS_LINUX or not os.path.isdir(store):
-            return
-        try:
-            if time.time() - os.path.getmtime(stamp) < 20 * 3600:
-                return
-        except OSError:
-            pass
-        hour = time.localtime().tm_hour
-        load1, cores = os.getloadavg()[0], self.args.quiet_load or os.cpu_count() or 1
-        try:
-            recent = max([e.stat().st_mtime for e in os.scandir(locks) if e.is_file(follow_symlinks=False)] or [0])
-        except OSError:
-            recent = 0
-        if not (1 <= hour < 5) and not (load1 < cores and time.time() - recent >= 15 * 60):
-            self.log.write(decision='keep-derived', rule='pnpm-store', path=store,
-                           reason='not quiet: load %.1f on %d cores, last gate lock %s ago' % (load1, cores, ago(recent)))
-            return
-        held = []
-        try:
-            for slot in gate_slots(locks):
-                try:
-                    fd = os.open(slot, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-                    # A slot file this pass creates was never touched by a gate; dated at the epoch, it
-                    # leaves the next run's quiet check to the gates' own touches.
-                    os.utime(fd, (0, 0))
-                except FileExistsError:
-                    fd = os.open(slot, os.O_RDWR | os.O_NOFOLLOW)
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except OSError:
-                    os.close(fd)
-                    self.log.write(decision='keep-derived', rule='pnpm-store', path=store,
-                                   reason='a gate holds %s' % os.path.basename(slot))
-                    return
-                held.append(fd)
-            busy = pnpm_installs(self.args.proc)
-            if busy:
-                self.log.write(decision='keep-derived', rule='pnpm-store', path=store, reason='pnpm install running: %s' % busy[0])
-                return
-            node = shutil.which('node') or newest(glob.glob(os.path.expanduser('~/.nvm/versions/node/*/bin/node')))
-            for version in sorted(os.listdir(store)):
-                pnpm = pnpm_release(self.args.pnpm_releases, PNPM_STORE_MAJOR.get(version))
-                if not pnpm or not node:
-                    self.log.write(decision='keep-derived', rule='pnpm-store', path=os.path.join(store, version),
-                                   reason='no node or no pnpm release for this store version')
-                    continue
-                before = free_bytes(store)
-                if self.args.dry_run:
-                    self.done('pnpm-store', os.path.join(store, version), 0, 'quiet window; every gate slot held')
-                    continue
-                try:
-                    proc = subprocess.run([node, pnpm, 'store', 'prune', '--store-dir', store],
-                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800)
-                except subprocess.TimeoutExpired:
-                    self.log.write(decision='keep-derived', rule='pnpm-store', path=store, reason='prune timed out')
-                    return
-                if proc.returncode != 0:
-                    self.log.write(decision='keep-derived', rule='pnpm-store', path=os.path.join(store, version),
-                                   reason='pnpm store prune exited %d' % proc.returncode)
-                    continue
-                self.done('pnpm-store', os.path.join(store, version), max(0, free_bytes(store) - before),
-                          'quiet window; every gate slot held')
-            if not self.args.dry_run:
-                os.makedirs(os.path.dirname(stamp), exist_ok=True)
-                with open(stamp, 'w'):
-                    pass
-        finally:
-            for fd in held:
-                os.close(fd)
-
-    def gate_checkouts(self):
-        cache = os.path.expanduser(self.args.gate_cache)
-        locks = os.path.join(cache, '.locks')
-        if not os.path.isdir(locks):
-            return
-        suffix = re.compile(r'^(?P<repo>.+)@(?P<n>\d+)$')
-        for path in sorted(glob.glob(os.path.join(glob.escape(cache), '*', '*', '*'))):
-            match = suffix.match(os.path.basename(path))
-            if not match or int(match.group('n')) < self.args.gate_checkouts or not os.path.isdir(path) or os.path.islink(path):
-                continue
-            host, owner = path.split(os.sep)[-3:-1]
-            lock = os.path.join(locks, '%s-%s-%s.lock' % (host, owner, os.path.basename(path)))
-            try:
-                fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o644)
-            except OSError as exc:
-                self.log.write(decision='keep-derived', rule='gate-checkout', path=path, reason=str(exc))
-                continue
-            try:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except OSError:
-                    self.log.write(decision='keep-derived', rule='gate-checkout', path=path, reason='a gate holds its lock')
-                    continue
-                freed = unique_bytes(path)
-                if not self.args.dry_run:
-                    try:
-                        shutil.rmtree(path)
-                        if os.path.exists(lock + '.holder'):
-                            os.remove(lock + '.holder')
-                    except OSError as exc:
-                        self.log.write(decision='keep-derived', rule='gate-checkout', path=path, reason=str(exc))
-                        continue
-                self.done('gate-checkout', path, freed, 'beyond the %d configured checkouts' % self.args.gate_checkouts)
-            finally:
-                os.close(fd)
 
 
 def recheck(rpath, main_path, common_dir, args, log):
@@ -1358,7 +946,6 @@ def main(argv=None):
     parser.add_argument('--log-file', default=os.path.expanduser('~/.local/state/wt-reaper/wt-reaper.log'))
     parser.add_argument('--no-log-file', action='store_true')
     parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the process scan')
-    parser.add_argument('--proc-dump', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--no-derived', action='store_true', help='skip the derived-file passes')
     # 2026-10-11: discovery-lab retires its beelink run roots through the Lab (archive, then sha256-checked
     # removal), so nothing under ~/code/_runs is this reaper's, whole trees or derived files.
@@ -1369,18 +956,7 @@ def main(argv=None):
     parser.add_argument('--journey-state', default='~/.local/state/gtm-journeys')
     parser.add_argument('--journey-out', action='append', help='journeys out directory glob (repeatable); '
                         'default ~/code/_wt/*/journeys/out')
-    parser.add_argument('--gate-cache', default=os.environ.get('BEELINK_GATE_CACHE_ROOT', '~/.cache/beelink-gate'))
-    parser.add_argument('--gate-checkouts', type=int, default=int(os.environ.get('BEELINK_GATE_REPO_CHECKOUTS', '2')))
-    parser.add_argument('--pnpm-store', default='~/.local/share/pnpm/store')
-    parser.add_argument('--pnpm-releases', default='~/.cache/node/corepack/v1/pnpm', help='corepack cache of pnpm releases')
-    parser.add_argument('--pnpm-stamp', default='~/.local/state/wt-reaper/pnpm-store-pruned')
-    parser.add_argument('--quiet-load', type=float, help='1-minute load below which a host is quiet; default its core count')
-    parser.add_argument('--proc', default='/proc', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if args.proc_dump:
-        paths, unreadable = proc_dump()
-        json.dump({'paths': sorted(paths), 'unreadable': unreadable}, sys.stdout)
-        return 0
     if os.geteuid() == 0:
         # Root would see and remove other accounts' worktrees and would
         # create root-owned state in a user's repositories.
@@ -1391,8 +967,6 @@ def main(argv=None):
         parser.error('--idle-hours must be a finite positive number')
     if not math.isfinite(args.dependency_idle_hours) or args.dependency_idle_hours <= 0:
         parser.error('--dependency-idle-hours must be a finite positive number')
-    if args.gate_checkouts < 1:
-        parser.error('--gate-checkouts must be at least 1')
     if args.journey_out is None:
         args.journey_out = ['~/code/_wt/*/journeys/out']
     if args.keep is None:

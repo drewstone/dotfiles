@@ -97,7 +97,7 @@ def main() -> int:
             return check(prefixes)
         admission, caches = guard.lifecycle()
         cfg = admission.Config.load()
-        with caches.package_install_fence(cfg):
+        with caches.package_fence(cfg):
             result = {"--install": install, "--uninstall": uninstall}[selected](prefixes)
             if selected == "--install" and not prefixes:
                 guard.package_sources(HOME)

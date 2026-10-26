@@ -486,19 +486,6 @@ class ScanLastTest(unittest.TestCase):
         self.assertEqual(order[-5:-1], ['evaluate', 'scan', 'evaluate', 'scan'], order)
 
 
-class MacLsofParseTest(unittest.TestCase):
-    """A path containing ' (' must still be held in full."""
-
-    def test_parenthesized_path_is_held(self):
-        mod = load_reaper()
-        out = b'p42\nn/Users/me/tree (old)/src\nn/Users/me/x.db (deleted)\n'
-        mod._lsof = lambda extra, use_sudo: (out, True)
-        mod.process_table = lambda: {42: 'S', os.getpid(): 'R'}
-        paths, unreadable, _ = mod._mac_scan(True)
-        self.assertEqual(unreadable, [])
-        self.assertTrue(mod.inside('/Users/me/tree (old)/src', '/Users/me/tree (old)'))
-        self.assertIn('/Users/me/tree (old)/src', paths)
-        self.assertIn('/Users/me/x.db', paths)
 
 
 @unittest.skipIf(os.geteuid() == 0, 'wt-reaper refuses to run as root')
@@ -552,35 +539,6 @@ class RecheckFetchTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(path))
 
 
-@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
-class ScanConvergenceTest(unittest.TestCase):
-    """A process that appears after the first /proc listing is still inspected."""
-
-    def test_late_process_is_scanned(self):
-        mod = load_reaper()
-        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-scan-'))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        child = subprocess.Popen(['sleep', '60'], cwd=tmp)
-        self.addCleanup(child.wait)
-        self.addCleanup(child.kill)
-        real_listdir = mod.os.listdir
-        calls = []
-
-        def listdir(path):
-            entries = real_listdir(path)
-            if path == '/proc':
-                calls.append(1)
-                if len(calls) == 1:
-                    return [e for e in entries if e != str(child.pid)]
-            return entries
-
-        mod.os.listdir = listdir
-        try:
-            paths, _ = mod.proc_dump()
-        finally:
-            mod.os.listdir = real_listdir
-        self.assertIn(tmp, paths)
-        self.assertGreaterEqual(len(calls), 2)
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
@@ -605,24 +563,6 @@ class UnixSocketTest(unittest.TestCase):
         self.assertIn(sock, paths)
 
 
-    def test_socket_bound_after_cache_fill_is_held(self):
-        mod = load_reaper()
-        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-sock2-'))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        sock = os.path.join(tmp, '.cache', 'late.sock')
-        os.makedirs(os.path.dirname(sock))
-        cache = {}
-        self.assertIsNotNone(mod._unix_sockets(os.getpid(), cache))
-        child = subprocess.Popen(
-            [sys.executable, '-c', 'import os,socket,sys,time; os.chdir("/"); s=socket.socket(socket.AF_UNIX); '
-             's.bind(sys.argv[1]); s.listen(); print("ok", flush=True); time.sleep(60)', sock],
-            stdout=subprocess.PIPE)
-        self.addCleanup(child.stdout.close)
-        self.addCleanup(child.wait)
-        self.addCleanup(child.kill)
-        child.stdout.readline()
-        found = mod._proc_one(child.pid, mod._readlink('/proc/self/ns/mnt'), mod._mountinfo('self') or {}, {}, cache)
-        self.assertIn(sock, found or [])
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
@@ -641,7 +581,7 @@ class DeletedSuffixTest(unittest.TestCase):
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
         child.stdout.readline()
-        found = mod._proc_one(child.pid, mod._readlink('/proc/self/ns/mnt'), mod._mountinfo('self') or {}, {}, {})
+        found, _ = mod.proc_dump()
         self.assertIn(tree, found or [])
 
 
@@ -830,7 +770,7 @@ class DerivedFilesTest(unittest.TestCase):
         f.write(out, 'j1-new-customer/video/founder-trace.zip', 'scrubbed\n')
         time.sleep(IDLE_HOURS * 3600 + 1.0)
         cls.rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--journey-state', state,
-                              '--journey-out', out, '--gate-cache', os.path.join(f.tmp, 'no-gate-cache'), derived=True)
+                              '--journey-out', out, derived=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -859,33 +799,6 @@ class DerivedFilesTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(self.old_run, name)), name)
 
 
-class GateCheckoutTest(unittest.TestCase):
-    """A beelink-gate checkout beyond the configured count goes only while its lock is free."""
-
-    def test_stale_gate_checkout_is_removed_and_a_locked_one_stays(self):
-        f = Fixture()
-        try:
-            cache = os.path.join(f.tmp, 'gate')
-            for name in ('repo', 'repo@1', 'repo@2', 'repo@3', 'repo@light'):
-                f.write(os.path.join(cache, 'github.com', 'owner', name), 'file.txt', 'x\n')
-            locks = os.path.join(cache, '.locks')
-            os.makedirs(locks)
-            held = os.path.join(locks, 'github.com-owner-repo@3.lock')
-            holder = subprocess.Popen(
-                [sys.executable, '-c', 'import fcntl,sys,time; fh=open(sys.argv[1],"w"); fcntl.flock(fh, fcntl.LOCK_EX); '
-                 'print("held", flush=True); time.sleep(60)', held], stdout=subprocess.PIPE)
-            f.procs.append(holder)
-            self.assertEqual(holder.stdout.readline().strip(), b'held')
-            rows = run_reaper(f.root, '--gate-cache', cache, '--gate-checkouts', '2', '--journey-state',
-                              os.path.join(f.tmp, 'none'), '--dependency-idle-hours', '1000', derived=True)
-            base = os.path.join(cache, 'github.com', 'owner')
-            self.assertFalse(os.path.exists(os.path.join(base, 'repo@2')))
-            for name in ('repo', 'repo@1', 'repo@3', 'repo@light'):
-                self.assertTrue(os.path.isdir(os.path.join(base, name)), name)
-            kept = [r for r in rows if r.get('rule') == 'gate-checkout' and r.get('decision') == 'keep-derived']
-            self.assertEqual([r['path'] for r in kept], [os.path.join(base, 'repo@3')])
-        finally:
-            f.cleanup()
 
 
 @unittest.skipUnless(SCAN_COMPLETE, NEEDS_SCAN)
@@ -903,7 +816,7 @@ class KeptPathTest(unittest.TestCase):
                 f.write(wt, 'node_modules/x/index.js', 'x\n')
             time.sleep(IDLE_HOURS * 3600 + 1.0)
             rows = run_reaper(f.root, '--dependency-idle-hours', str(IDLE_HOURS), '--keep', os.path.join(f.root, '_runs'),
-                              '--journey-state', os.path.join(f.tmp, 'none'), '--gate-cache', os.path.join(f.tmp, 'none'),
+                              '--journey-state', os.path.join(f.tmp, 'none'),
                               derived=True)
             self.assertFalse(os.path.exists(control), 'the control tree is reaped as usual')
             self.assertTrue(os.path.isfile(os.path.join(kept, 'node_modules', 'x', 'index.js')))
@@ -913,139 +826,6 @@ class KeptPathTest(unittest.TestCase):
             f.cleanup()
 
 
-@unittest.skipUnless(sys.platform.startswith('linux'), 'the store prune runs on Linux hosts only')
-class PnpmStorePruneTest(unittest.TestCase):
-    """The store prune runs only in a quiet window while it holds every gate slot, and never waits for one."""
-
-    def setUp(self):
-        self.f = Fixture()
-        t = self.f.tmp
-        self.store = os.path.join(t, 'store')
-        os.makedirs(os.path.join(self.store, 'v10', 'files'))
-        self.releases = os.path.join(t, 'corepack')
-        self.release('10.33.4', {'pnpm': 'bin/pnpm.cjs', 'pnpx': 'bin/pnpx.cjs'})
-        self.calls = os.path.join(t, 'node-calls')
-        bindir = os.path.join(t, 'bin')
-        # The fake prune records its arguments, then tries the slots a gate would create next: none may be free.
-        self.f.write(bindir, 'node', '#!/bin/sh\necho "$@" >> %s\n%s -c %s %s >> %s\n' % (
-            self.calls, sys.executable, shlex.quote(
-                'import fcntl,os,sys\n'
-                'for n in ("slot-2.lock", "slot-9.lock", "light-slot-1.lock"):\n'
-                '    fd = os.open(os.path.join(sys.argv[1], n), os.O_RDWR | os.O_CREAT)\n'
-                '    try:\n'
-                '        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); print("FREE", n)\n'
-                '    except OSError:\n'
-                '        pass\n'), os.path.join(t, 'gate', '.locks'), self.calls))
-        os.chmod(os.path.join(bindir, 'node'), 0o755)
-        self.proc = os.path.join(t, 'proc')
-        os.makedirs(self.proc)
-        self.locks = os.path.join(t, 'gate', '.locks')
-        os.makedirs(self.locks)
-        # Only slot-0 and light-slot-0 exist, as on a host where one gate of each class has run.
-        for name in ('slot-0.lock', 'light-slot-0.lock', 'github.com-owner-repo.lock'):
-            open(os.path.join(self.locks, name), 'w').close()
-        self.age_locks()
-        self.env_path = bindir + os.pathsep + os.environ['PATH']
-
-    def tearDown(self):
-        self.f.cleanup()
-
-    def release(self, version, bins):
-        """A corepack cache entry laid out as the published package: package.json names the pnpm entry."""
-        self.f.write(self.releases, version + '/package.json', json.dumps({'name': 'pnpm', 'version': version, 'bin': bins}))
-        entry = bins if isinstance(bins, str) else bins['pnpm']
-        self.f.write(self.releases, version + '/' + entry, '// fake pnpm\n')
-
-    def age_locks(self, seconds=3600):
-        for name in os.listdir(self.locks):
-            os.utime(os.path.join(self.locks, name), (time.time() - seconds, time.time() - seconds))
-
-    def reap(self, hour=12, quiet_load=100000):
-        # POSIX TZ "TST<n>" is UTC minus n hours (the name needs three letters), so this fixes the reaper's local hour.
-        tz = 'TST%d' % (time.gmtime().tm_hour - hour)
-        env = dict(os.environ, PATH=self.env_path, TZ=tz, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
-        proc = subprocess.run([sys.executable, REAPER, '--root', self.f.root, '--no-log-file', '--idle-hours', '1000',
-                               '--dependency-idle-hours', '1000', '--journey-state', os.path.join(self.f.tmp, 'none'),
-                               '--gate-cache', os.path.join(self.f.tmp, 'gate'), '--pnpm-store', self.store,
-                               '--pnpm-releases', self.releases, '--pnpm-stamp', os.path.join(self.f.tmp, 'stamp'),
-                               '--quiet-load', str(quiet_load), '--proc', self.proc],
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
-        return [r for r in parse(proc.stdout.decode()) if r.get('rule') == 'pnpm-store']
-
-    def pruned(self):
-        if not os.path.exists(self.calls):
-            return False
-        with open(self.calls) as fh:
-            self.assertEqual(fh.read().split(), [os.path.join(self.releases, '10.33.4', 'bin', 'pnpm.cjs'),
-                                                 'store', 'prune', '--store-dir', self.store])
-        os.remove(self.calls)
-        return True
-
-    def test_prunes_only_with_every_slot_free_and_at_most_once_a_day(self):
-        holder = subprocess.Popen(
-            [sys.executable, '-c', 'import fcntl,sys,time; fh=open(sys.argv[1],"a"); fcntl.flock(fh, fcntl.LOCK_EX); '
-             'print("held", flush=True); time.sleep(60)', os.path.join(self.locks, 'light-slot-0.lock')], stdout=subprocess.PIPE)
-        self.f.procs.append(holder)
-        self.assertEqual(holder.stdout.readline().strip(), b'held')
-        rows = self.reap()
-        self.assertFalse(self.pruned(), 'no prune while a gate holds a slot')
-        self.assertIn('a gate holds light-slot-0.lock', rows[0]['reason'])
-        holder.kill()
-        holder.wait()
-        rows = self.reap()
-        self.assertTrue(self.pruned())
-        self.assertEqual(rows[0]['decision'], 'remove-derived')
-        self.reap()
-        self.assertFalse(self.pruned(), 'at most once a day')
-
-    def test_each_store_version_is_pruned_by_the_newest_pnpm_script_of_its_major(self):
-        # pnpm 11 names bin/pnpm.mjs; until 2026-10-14 the reaper looked only for dist/pnpm.cjs and never pruned v11.
-        os.makedirs(os.path.join(self.store, 'v11', 'files'))
-        os.makedirs(os.path.join(self.store, 'v12', 'files'))
-        self.release('11.17.0', {'pnpm': 'bin/pnpm.mjs'})
-        self.release('11.25.0', {'pnpm': 'bin/pnpm.mjs'})
-        self.release('11.9.0', {'pnpm': 'bin/pnpm.mjs'})
-        self.release('12.6.0', {'pnpm': 'pnpm'})  # a native binary: node cannot run it
-        rows = {r['path']: r for r in self.reap()}
-        with open(self.calls) as fh:
-            calls = [line.split() for line in fh if 'store' in line]
-        self.assertEqual(calls, [
-            [os.path.join(self.releases, '10.33.4', 'bin', 'pnpm.cjs'), 'store', 'prune', '--store-dir', self.store],
-            [os.path.join(self.releases, '11.25.0', 'bin', 'pnpm.mjs'), 'store', 'prune', '--store-dir', self.store]])
-        self.assertEqual(rows[os.path.join(self.store, 'v11')]['decision'], 'remove-derived')
-        self.assertIn('bytes', rows[os.path.join(self.store, 'v11')])
-        self.assertEqual(rows[os.path.join(self.store, 'v12')]['decision'], 'keep-derived')
-
-    def test_a_native_pnpm_binary_is_not_a_release_node_can_run(self):
-        self.release('12.6.0', {'pnpm': 'pnpm'})
-        self.assertIsNone(load_reaper().pnpm_release(self.releases, '12'))
-        self.release('12.7.0', 'bin/pnpm.mjs')  # a string bin names the pnpm entry too
-        self.assertEqual(load_reaper().pnpm_release(self.releases, '12'),
-                         os.path.join(self.releases, '12.7.0', 'bin', 'pnpm.mjs'))
-
-    def test_a_release_whose_manifest_points_outside_it_is_not_run(self):
-        os.makedirs(os.path.join(self.store, 'v11', 'files'))
-        self.f.write(self.releases, '11.25.0/package.json', json.dumps({'bin': {'pnpm': '../10.33.4/bin/pnpm.cjs'}}))
-        rows = {r['path']: r for r in self.reap()}
-        self.assertEqual(rows[os.path.join(self.store, 'v11')]['reason'], 'no node or no pnpm release for this store version')
-
-    def test_a_gate_that_started_recently_or_a_running_install_keeps_the_store_until_overnight(self):
-        self.age_locks(5 * 60)
-        rows = self.reap()
-        self.assertFalse(self.pruned(), 'a gate lock touched 5 minutes ago')
-        self.assertIn('not quiet', rows[0]['reason'])
-        self.age_locks()
-        rows = self.reap(quiet_load=0.0001)
-        self.assertFalse(self.pruned(), 'load over the limit')
-        self.assertIn('not quiet', rows[0]['reason'])
-        self.f.write(self.proc, '4242/cmdline', '\0'.join(['node', '/x/pnpm/dist/pnpm.cjs', 'install', '--frozen-lockfile']) + '\0')
-        self.assertIn('pnpm install running', self.reap()[0]['reason'])
-        self.assertFalse(self.pruned())
-        os.remove(os.path.join(self.proc, '4242', 'cmdline'))
-        self.age_locks(60)
-        self.reap(hour=2, quiet_load=0.0001)
-        self.assertTrue(self.pruned(), 'overnight is quiet whatever the load and the last gate')
 
 
 if __name__ == '__main__':
