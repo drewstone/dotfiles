@@ -9,6 +9,7 @@
 #   /etc/modprobe.d, udev rule, system.conf.d, watchdog.service drop-in
 #                                          a frozen root resets the box in ~4 min (measured)
 #   /etc/systemd/system/user.slice.d/50-agent-cap.conf
+#   /etc/systemd/system/user@.service.d/60-io-delegate.conf
 #                                          every agent process capped together (host/cgroup)
 #   /etc/sysctl.d/60-host-guard-writeback.conf
 #                                          dirty data bounded, so the watchdog sync stays short
@@ -444,6 +445,7 @@ echo "== agent cap and writeback"
 # but never restarts the watchdog.
 cap_before=$CHANGED; CHANGED=0
 want_file 0644 "$SCRIPT_DIR/cgroup/50-agent-cap.conf" /etc/systemd/system/user.slice.d/50-agent-cap.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/60-user-io-delegate.conf" /etc/systemd/system/user@.service.d/60-io-delegate.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/60-writeback.conf" /etc/sysctl.d/60-host-guard-writeback.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/61-vfs-cache.conf" /etc/sysctl.d/61-host-guard-vfs-cache.conf
 want_file 0644 "$SCRIPT_DIR/cgroup/62-inotify.conf" /etc/sysctl.d/62-host-guard-inotify.conf
