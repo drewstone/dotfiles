@@ -15,7 +15,8 @@ gtr_receipts() {
   else bounded_transport "$GTR_HOST receipts" ssh "${SSH_OPTIONS[@]}" "$GTR_HOST" "$read"; fi
 }
 
-# The lease's bytes: the clone this repo's newest GTR gate measured plus a quarter, else the 4 GiB lane quota.
+# The lease's bytes: the clone this repo's newest GTR gate measured plus a quarter, else 3 GiB. The lane's
+# 4 GiB storage quota also counts its other bytes, so asking for all of it is always refused.
 gtr_reserve_bytes() {
   python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" <<'PY'
 import json, sys
@@ -30,80 +31,100 @@ try:
             newest = row["gtr_bytes"]
 except OSError:
     pass
-print(max(1 << 30, newest * 5 // 4) if newest else 4 << 30)
+print(max(1 << 30, newest * 5 // 4) if newest else 3 << 30)
 PY
 }
 
-# Runs the gate on GTR and exits with its status. Returns NOT_ADMITTED only when
-# storage-lifecycle did not admit it, so the caller keeps waiting for a Beelink.
+# Runs the gate on GTR and exits with its status. Returns NOT_ADMITTED when GTR did not
+# admit it (storage-lifecycle refused, GTR unreachable), so the caller keeps waiting for a Beelink.
+# GTR says "drew-gtr-pro admitted" on stderr once it has the lease; nothing else counts as admission.
 gtr_gate() {  # <command>...
-  local rc lane flag=() q
-  case "$install_mode" in install) ;; no-install) flag=(--no-install) ;;
+  local rc pid log id dir bytes q admitted flag=()
+  case "$install_mode" in install|no-install) ;;
     *) echo "beelink-gate: drew-gtr-pro runs install and --no-install gates only, not --$install_mode" >&2; return "$NOT_ADMITTED" ;; esac
-  [ "${gate_class:-}" != dev ] || { echo "beelink-gate: a --dev gate does not fall back to drew-gtr-pro" >&2; return "$NOT_ADMITTED"; }
-  if ! gtr_self; then
-    printf -v q '%q ' env BEELINK_GATE_GTR_AUTO="$([ "$requested" = auto ] && echo 1)" BEELINK_GATE_PR="${BEELINK_GATE_PR:-}" \
-      BEELINK_GATE_LANE="$BEELINK_GATE_LANE" BEELINK_GATE_MAX_HOLD="${BEELINK_GATE_MAX_HOLD:-}" BEELINK_GATE_PLACED_WAIT=$((SECONDS - launched)) \
-      bin/beelink-gate "${flag[@]}" "$GTR_HOST" "$repo_url" "$sha" -- "$@"
-    ssh -n "${SSH_OPTIONS[@]}" "$GTR_HOST" "$q"; rc=$?
-    [ "$rc" = "$NOT_ADMITTED" ] && return "$rc"
-    exit "$rc"
+  if [ "${gate_class:-}" = dev ] || [ -n "${gate_branch:-}" ]; then
+    echo "beelink-gate: --dev and --branch gates stay on the Beelinks" >&2; return "$NOT_ADMITTED"
   fi
-  local id dir marker bytes
-  parse_repo_url "$repo_url"
-  id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-  dir="$HOME/.cache/gtr-gate/$id" marker=$(mktemp) bytes=$(gtr_reserve_bytes)
-  lane=${BEELINK_GATE_LANE:-gtr-gate}
-  echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane $lane reserves $bytes bytes for $dir" >&2
-  storage-lifecycle run-lane --lane "$lane" --path "$dir" --bytes "$bytes" -- \
-    env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
-    "$BASH" "$0" --gtr-run "$(encode "$marker")" "$(encode "$dir")" "$(encode "$repo_url")" "$(encode "$sha")" "$(encode "$install_mode")" "$@" &
-  local pid=$!
-  # Once GTR admits the gate, its FIFO places on the Beelinks go to the gates behind it.
-  while [ -n "${checkout_reservation_dir:-}" ] && kill -0 "$pid" 2>/dev/null; do
-    if [ -s "$marker" ]; then stop_checkout_reservations; checkout_reservation_dir=""; fi
+  [ "$install_mode" = install ] || flag=(--no-install)
+  log=$(mktemp) || return "$NOT_ADMITTED"
+  if gtr_self; then
+    parse_repo_url "$repo_url"
+    id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    dir="$HOME/.cache/gtr-gate/$id" bytes=$(gtr_reserve_bytes)
+    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane reserves $bytes bytes for $dir" >&2
+    # Its own session, so a stop reaches run-lane, the gate and the command together.
+    setsid storage-lifecycle run-lane --lane "${BEELINK_GATE_LANE:-gtr-gate}" --path "$dir" --bytes "$bytes" -- \
+      env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
+      "$BASH" "$gate_source_root/beelink-gate" --gtr-run "$(encode "$log")" "$(encode "$dir")" "$(encode "$repo_url")" "$(encode "$sha")" "$(encode "$install_mode")" "$@" &
+  else
+    printf -v q '%q ' env BEELINK_GATE_GTR_AUTO=1 BEELINK_GATE_PR="${BEELINK_GATE_PR:-}" BEELINK_GATE_LANE="$BEELINK_GATE_LANE" \
+      BEELINK_GATE_MAX_HOLD="${BEELINK_GATE_MAX_HOLD:-}" BEELINK_GATE_PLACED_WAIT=$((SECONDS - launched)) \
+      bin/beelink-gate ${flag[@]+"${flag[@]}"} "$GTR_HOST" "$repo_url" "$sha" -- "$@"
+    ssh -n "${SSH_OPTIONS[@]}" "$GTR_HOST" "$q" 2> >(tee -a "$log" >&2) &
+  fi
+  pid=$!
+  trap 'kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; wait "$pid"; rm -f "$log"; exit 143' TERM INT HUP
+  while kill -0 "$pid" 2>/dev/null; do
+    # Once GTR admits the gate, its FIFO places on the Beelinks go to the gates behind it.
+    if [ -n "${checkout_reservation_dir:-}" ] && grep -q "^beelink-gate: $GTR_HOST admitted" "$log"; then
+      stop_checkout_reservations; checkout_reservation_dir=""
+    fi
     sleep 1
   done
   wait "$pid"; rc=$?
-  if [ ! -s "$marker" ]; then
-    rm -f "$marker"
-    echo "beelink-gate: drew-gtr-pro storage admission did not admit $id (run-lane exit $rc); waiting for a Beelink" >&2
+  trap - TERM INT HUP
+  admitted=$(grep -c "^beelink-gate: $GTR_HOST admitted" "$log")
+  # Here the gate's status is its own last line, not run-lane's exit.
+  if [ "$admitted" = 0 ]; then
+    rm -f "$log"
+    echo "beelink-gate: $GTR_HOST did not admit this gate (exit $rc); waiting for a Beelink" >&2
     return "$NOT_ADMITTED"
   fi
-  # The gate writes its status last; a gate killed before that has only "admitted".
-  rc=$(tail -n 1 "$marker"); rm -f "$marker"
+  if gtr_self; then rc=$(sed -n "s/^beelink-gate: $GTR_HOST status=//p" "$log" | tail -n 1); fi
+  rm -f "$log"
+  [ "$rc" != 255 ] || tempfail "$(utc_in_minutes 5)" "lost the connection to $GTR_HOST after it admitted the gate; its receipt (beelink-gate --receipt) records the result"
   [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
   exit "$rc"
 }
 
 # The gate itself, under run-lane's lease: clone, frozen install, command, receipt, clone removed.
-gtr_run() {  # <marker> <dir> <repo-url> <sha> <mode> <command>...
-  local marker dir repo_url
-  marker=$(decode "$1") dir=$(decode "$2") repo_url=$(decode "$3") sha=$(decode "$4") install_mode=$(decode "$5")
+# Every exit path, a signal included, writes a receipt; only a command that returned writes its status.
+gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
+  # Global, as in remote_gate: gtr_finish reads this state from the EXIT trap after gtr_run returned.
+  log=$(decode "$1") dir=$(decode "$2") repo_url=$(decode "$3") sha=$(decode "$4") install_mode=$(decode "$5")
   shift 5
-  command=("$@") beelink=$GTR_HOST checkout="$dir/checkout" gate_id=${BEELINK_GATE_ID:-}
+  command=("$@") beelink=$GTR_HOST checkout="$dir/checkout" gate_id=${BEELINK_GATE_ID:-} reaped=0 current=""
+  # The command must not learn its gate's id: it could append a passing receipt for it.
+  unset BEELINK_GATE_ID
+  run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
   parse_repo_url "$repo_url"
-  echo admitted > "$marker" || exit 75
-  local started=$SECONDS max_hold base_sha="" status display
+  echo "beelink-gate: $GTR_HOST admitted gate_id=$gate_id" | tee -a "$log" >&2 || exit 75
+  started=$SECONDS base_sha="" gtr_status=""
   max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
   printf -v display '%q ' "${command[@]}"
   gtr_finish() {
     local status=$1 bytes
-    trap - EXIT
+    trap - EXIT TERM INT HUP
+    [ -z "$current" ] || kill -TERM "$current" 2>/dev/null
+    reap_leftovers
     bytes=$(du -sb "$dir" 2>/dev/null | cut -f1)
     gtr_write_receipt "$status" "$((SECONDS - started))" "${bytes:-0}" "$base_sha" "${display% }"
     chmod -R u+w "$dir" 2>/dev/null; rm -rf -- "$dir"
-    echo "$status" >> "$marker"
+    echo "beelink-gate: $GTR_HOST status=$status" >> "$log"
     exit "$status"
   }
-  trap 'gtr_finish $?' EXIT
-  # Each step is bounded by the gate's remaining hold, as on a Beelink.
+  trap 'gtr_finish "${gtr_status:-$?}"' EXIT
+  trap 'gtr_finish 143' TERM; trap 'gtr_finish 129' HUP; trap 'gtr_finish 130' INT
+  # Each step is bounded by the gate's remaining hold, as on a Beelink, and its leftovers are stopped.
   step() {
-    local left=$((started + max_hold - SECONDS))
+    local left=$((started + max_hold - SECONDS)) rc
     (( left > 0 )) || { echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2; return 124; }
-    timeout -k 30 "$left" "$@" </dev/null
+    BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "$@" </dev/null & current=$!
+    wait "$current"; rc=$?
+    current=""
+    reap_leftovers
+    return "$rc"
   }
-  reap_leftovers() { :; }
   mkdir -p "$dir" || exit 75
   git clone --quiet --no-checkout --filter=blob:none "$(fetch_url "$repo_url")" "$checkout" || exit 75
   git -C "$checkout" fetch --quiet --filter=blob:none origin "$sha" || exit 75
@@ -116,6 +137,8 @@ gtr_run() {  # <marker> <dir> <repo-url> <sha> <mode> <command>...
   gate_command_argv "${command[@]}"
   echo "beelink-gate: running ${display% } on $GTR_HOST" >&2
   step "${command_with_umask[@]}"
+  gtr_status=$?
+  return "$gtr_status"
 }
 
 gtr_write_receipt() {  # <status> <ran_s> <clone bytes> <base sha> <command>

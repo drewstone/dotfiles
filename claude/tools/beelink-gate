@@ -25,11 +25,12 @@ fi
 # shellcheck disable=SC2317 # receipt, finish and signal handlers run through traps.
 # Gate a pushed revision in a locked Beelink cache; see README.md for the full contract.
 # Usage: beelink-gate [--no-install|--light|--dev] [--branch NAME] [--merge PR]
-#                    [--urgent] [--pin-host] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+#                    [--urgent] [--pin-host] <beelink1|beelink2|auto|drew-gtr-pro> <repo-url> <sha> -- <command> [args...]
 #        beelink-gate --ship <beelink1|beelink2|auto> <repo-url> <sha>
 #        beelink-gate --attach <gate-id>
 #        beelink-gate --receipt <repo-url> <sha>
 #        beelink-gate --report [hours] [--json] [--since timestamp]
+# auto falls back to drew-gtr-pro after 5 min without Beelink admission; drew-gtr-pro gates only there, at once.
 # --cancel-on-term cancels an exact submitted gate; --retry MINUTES retries TEMPFAIL.
 # --light is dependency/browser free and capped at120 command core-seconds and10minutes.
 # --dev has separate checkout/slots at low priority; gate the final head without it.
@@ -1016,6 +1017,18 @@ print("beelink-gate timing: " + json.dumps(timing, sort_keys=True), file=sys.std
 PY
   }
 
+reap_leftovers() {  # stop every process that still carries run_token
+  local signal paths
+  for signal in TERM KILL; do
+    mapfile -t paths < <(grep -lzx -- "BEELINK_GATE_RUN=$run_token" /proc/[0-9]*/environ 2>/dev/null)
+    paths=("${paths[@]#/proc/}"); paths=("${paths[@]%/environ}")
+    (( ${#paths[@]} )) || return 0
+    [ "$signal" = KILL ] || reaped=$((reaped + ${#paths[@]}))
+    kill -"$signal" "${paths[@]}" 2>/dev/null
+    [ "$signal" = KILL ] || sleep 2
+  done
+}
+
 # The command as a gate runs it, in command_with_umask. The submitted user unit can inherit
 # umask 0002, so the command gets a non-group-writable default without changing the gate
 # shell's mask for receipts and bundles. A pipeline exits with its last stage: `sh -c 'node --test ... | tail -12'`
@@ -1110,17 +1123,6 @@ remote_gate() {
   # that leaves the step's group (setsid, a daemonizing dev server) keeps it,
   # so the gate can still find and stop it. Global: finish reads it from the EXIT trap.
   run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
-  reap_leftovers() {  # stop every process that still carries run_token
-    local signal paths
-    for signal in TERM KILL; do
-      mapfile -t paths < <(grep -lzx -- "BEELINK_GATE_RUN=$run_token" /proc/[0-9]*/environ 2>/dev/null)
-      paths=("${paths[@]#/proc/}"); paths=("${paths[@]%/environ}")
-      (( ${#paths[@]} )) || return 0
-      [ "$signal" = KILL ] || reaped=$((reaped + ${#paths[@]}))
-      kill -"$signal" "${paths[@]}" 2>/dev/null
-      [ "$signal" = KILL ] || sleep 2
-    done
-  }
   stop() {
     trap - TERM INT HUP
     [ -z "$current" ] || { kill -TERM -- "-$current" 2>/dev/null; sleep 2; kill -KILL -- "-$current" 2>/dev/null; }
@@ -1671,8 +1673,9 @@ choose_beelink() {
     # load wait. Keep probing rather than queue on an overloaded host while
     # the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
-    # No Beelink admitted the gate within 5 minutes, or none can start it: try drew-gtr-pro, at most once a minute.
-    if (( SECONDS >= gtr_next_try )) && { (( SECONDS - launched >= GTR_AFTER_SECONDS )) \
+    # No Beelink admitted the gate within 5 minutes and none is free now, or none can start it:
+    # try drew-gtr-pro, at most once a minute.
+    if (( SECONDS >= gtr_next_try )) && { (( SECONDS - launched >= GTR_AFTER_SECONDS && best_rank >= 2 )) \
       || { [ -z "$best" ] && [[ "${seen[beelink1]:-}" != *state=busy* && "${seen[beelink2]:-}" != *state=busy* ]]; }; }; then
       echo "beelink-gate: no beelink admitted this gate after $((SECONDS - launched))s; trying $GTR_HOST" >&2
       echo "$GTR_HOST"; return 0
@@ -2023,7 +2026,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] <beelink1|beelink2|auto> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] <beelink1|beelink2|auto|drew-gtr-pro> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac

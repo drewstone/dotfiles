@@ -147,10 +147,9 @@ def fallback_refusal(values: list[str], cwd: Path):
             admission.lease_receipt(path, requester_pid=os.getpid())
     except Exception as error:
         return ("gtr-install-guard: fallback install requires a live matching "
-                "storage-lifecycle lease: " + str(error) + ". Reserve the actual "
-                "bytes with storage-lifecycle admit or run-lane; if refused, keep "
-                "waiting for a Beelink. Preserve retention checks and release the "
-                "exact lease after the producer finishes.")
+                "storage-lifecycle lease: " + str(error) + ". Gate with "
+                "beelink-gate drew-gtr-pro|auto <repo-url> <full-sha> -- <command>, "
+                "which takes and releases that lease.")
     return None
 
 
