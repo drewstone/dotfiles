@@ -250,6 +250,12 @@ acquire_checkout_admission() {
   # not hold the repo's checkout. One ADC gate held it for 1766s of
   # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
   wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
+  # From here the gate competes for a checkout: keep its ticket (and urgent marker) fresh wherever a pass
+  # blocks, capacity-writer waits and release lookups included. Only fresh entries hold a free checkout.
+  local fresh=("$ticket"); (( ! urgent )) || fresh+=("$urgent_marker.$$")
+  touch "${fresh[@]}"
+  # touch -c never recreates a ticket the gate's exit already removed; the loop ends with its gate.
+  ( while sleep 10; do kill -0 $$ 2>/dev/null && [ -e "$ticket" ] || exit 0; touch -c "${fresh[@]}"; done ) & local refresher=$!
   while [ -z "$lock" ]; do
     admission_stage checks
     admit_release_priority "$beelink"
@@ -290,7 +296,6 @@ acquire_checkout_admission() {
     # Each older waiter reserves one free checkout; with two free and one older
     # waiter, this gate still takes the second.
     local ahead=0 skipped=0 checkout_wait_stage=checkout_lock
-    touch "$ticket"; (( ! urgent )) || touch "$urgent_marker.$$"
     (( urgent )) || ahead=$(older_tickets_ahead "$ticket_prefix" "$enqueued")
     for ((k = 0; k < copies; k++)); do
       if (( ! urgent )) && urgent_ahead "$urgent_marker"; then checkout_wait_stage=fifo; break; fi
@@ -325,6 +330,7 @@ acquire_checkout_admission() {
     admission_stage "$checkout_wait_stage"
     if (( urgent )); then sleep 1 & wait $!; else sleep 5 & wait $!; fi
   done
+  kill "$refresher" 2>/dev/null; wait "$refresher" 2>/dev/null
   exec {capacity_fd}>&-
   exec {writer_fd}>&-
   rm -f "$urgent_marker.$$" "$ticket"

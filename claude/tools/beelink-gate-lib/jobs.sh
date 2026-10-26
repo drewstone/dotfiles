@@ -267,10 +267,13 @@ while True:
             status = subprocess.run([*control, "show", unit, "-p", "ActiveState", "--value"],
                                     capture_output=True, text=True, timeout=float(sys.argv[3]))
             live = status.returncode == 0 and status.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating')
+            unread = 0
         except (OSError, UnicodeError, subprocess.TimeoutExpired):
             # An unread status is unknown, not stopped: a daemon-reload at load 118 on beelink2
             # (10-26 05:27Z) timed these reads out and every attached launcher reported a live gate stopped.
-            live = True
+            # Five unread statuses in a row (about 5 min) mean systemd itself is wedged: give the caller 75.
+            unread = locals().get("unread", 0) + 1
+            live = unread < 5
         if not live:
             # runner.sh can publish its exit between the receipt check above and this
             # unit read; re-read it so a finished gate is never reported as TEMPFAIL.

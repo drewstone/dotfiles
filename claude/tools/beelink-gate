@@ -1944,15 +1944,17 @@ PY
   # Sandbox gates record their receipt as a commit status on the SHA, readable without a Beelink.
   if [[ "$key" == github.com/* ]]; then
     if statuses=$("$(command -v gh-drew || command -v gh)" api "repos/${key#github.com/}/commits/$3/statuses" --paginate \
-        --jq '.[] | select(.context == "beelink-gate") | [.created_at, .description] | @tsv' 2>/dev/null); then
+        --jq '.[] | select(.context == "beelink-gate" and .creator.login == "drewstone") | [.created_at, .state, .description] | @tsv' 2>/dev/null); then
       printf '%s\n' "$statuses" > "$host_rows"
       python3 - "$key" "$3" "$host_rows" >> "$found" <<'PY'
 import json, re, sys
 key, sha, path = sys.argv[1:]
 for line in open(path):
-    at, _, desc = line.rstrip("\n").partition("\t")
+    at, state, desc = (line.rstrip("\n").split("\t", 2) + ["", ""])[:3]
     f = dict(re.findall(r"(\w+)=(\S+)", desc))
-    if {"exit", "mode", "class", "gate"} <= f.keys() and f["exit"].lstrip("-").isdigit():
+    # Only gh-drew's own statuses count (the jq filter), and the state must agree with the recorded exit.
+    if {"exit", "mode", "class", "gate"} <= f.keys() and f["exit"].lstrip("-").isdigit() \
+            and (state == "success") == (int(f["exit"]) == 0):
         print(json.dumps({"from": "github", "gate_id": f["gate"], "at": at, "host": "sandbox", "placement": "sandbox",
                           "repo": key, "sha": sha, "mode": f["mode"], "class": f["class"], "exit": int(f["exit"]), "command": ""}))
 PY
