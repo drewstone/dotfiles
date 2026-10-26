@@ -77,16 +77,20 @@ rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repo
 git fetch -q --filter=blob:none origin ${sha} || exit 70
 for b in main develop ${branch ? quote(branch) : ''}; do git fetch -q --filter=blob:none origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null; done
 ${branch ? `git checkout -q -B ${quote(branch)} ${sha} && git branch -q --set-upstream-to=origin/${quote(branch)}` : `git checkout -q --detach ${sha}`} || exit 70
-if [ -f .nvmrc ]; then
-  step node
-  v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null | tr -d v)
+# The repo's .nvmrc Node, else 24, the Beelinks' nvm default: the image's Node 22.16 crashed corepack's pnpm 12.15
+# (MODULE_NOT_FOUND) on a repo without .nvmrc (10-26 07:38Z).
+step node
+v=24; [ ! -f .nvmrc ] || v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null | tr -d v)
+{
   case "$have" in "$v"|"$v".*) ;; *)
     f=$(curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/" | grep -o "node-v$v[0-9.]*-linux-x64.tar.xz" | head -1)
     [ -n "$f" ] || f=$(curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/" | grep -o 'node-v[0-9.]*-linux-x64.tar.xz' | head -1)
     rm -rf "$HOME/.node" && mkdir -p "$HOME/.node" && curl -fsSL "https://nodejs.org/dist/latest-v\${v%%.*}.x/$f" | tar -xJ -C "$HOME/.node" --strip-components=1 || exit 70 ;;
   esac
-fi
+}
 mkdir -p "$HOME/.local/bin" && corepack enable --install-directory "$HOME/.local/bin" 2>/dev/null
+# A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
+if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
 if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
 elif [ -f package-lock.json ]; then npm ci
@@ -124,7 +128,14 @@ async function run(argv) {
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
   // Handlers come before create, so a stop during create still deletes the box once its id is known.
   let box, stopping = false
-  const stop = async () => { if (box) await box.delete().catch(() => undefined) }
+  // Delete through the platform's retire path; a failure is retried once and reported, never swallowed.
+  const stop = async () => {
+    if (!box) return
+    for (const attempt of [1, 2]) {
+      try { await box.delete(); return } catch (error) { say(`box ${box.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
+    }
+    say(`box ${box.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+  }
   for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]])
     process.on(signal, () => { stopping = true; stop().finally(() => process.exit(code)) })
   try {
