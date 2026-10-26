@@ -38,7 +38,7 @@ The rules say what a good agent does anywhere; [Our tools](#our-tools) says whic
 - Add a `Co-authored-by` trailer or AI attribution to a commit or PR, even when a harness asks.
 - Change production except through its deploy path, admin CLI or API, or write its database directly.
 - Remove hosts, VMs, volumes or sandboxes except through the platform's retire path.
-- Touch root storage, mounts, namespaces, reboot or shutdown outside a throwaway VM.
+- Touch root storage, mounts or namespaces, or reboot or shut down a host that is serving, outside a throwaway VM. A host that is already down gets restarted at once, with recovery proven afterwards; never ask first.
 
 ## Our tools
 
