@@ -98,7 +98,9 @@ function fixture() {
   mkdirSync(join(host, "self"));
   writeFileSync(join(host, "resource-policy.json"), JSON.stringify(policy), { mode: 0o644 });
   writeFileSync(join(slices, "cpu.weight"), "100\n");
-  writeFileSync(join(slices, "io.weight"), "default 100\n");
+  // The Beelinks' WSL2 kernel exposes io.stat and io.pressure but no io.weight.
+  writeFileSync(join(slices, "io.stat"), "");
+  writeFileSync(join(slices, "io.pressure"), "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
   writeFileSync(join(slices, "beelinkgate-normal.slice", "memory.max"), `${policy.normal_memory_bytes}\n`);
   writeFileSync(join(slices, "beelinkgate-normal.slice", "cpu.max"), `${cpus().length * policy.normal_cpu_percent_per_host_cpu * 1000} 100000\n`);
   writeFileSync(join(slices, "beelinkgate-dev.slice", "memory.max"), `${policy.dev_memory_bytes}\n`);

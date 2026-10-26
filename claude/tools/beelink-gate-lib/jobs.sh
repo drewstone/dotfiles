@@ -103,7 +103,6 @@ managed_unit_run() {
   [ -f "$script" ] && [ ! -L "$script" ] || return 75
   uid=$(id -u) gid=$(id -g)
   [[ "$uid" =~ ^[1-9][0-9]*$ && "$gid" =~ ^[0-9]+$ ]] || return 75
-  require_legacy_gate_drained || return 75
   local -a vars=("BEELINK_GATE_ID=$id" "BEELINK_GATE_SYSTEMD_MANAGER=system"
     "HOME=$HOME" "PATH=$PATH" "USER=$(id -un)" "LOGNAME=$(id -un)" "SHELL=/bin/bash"
     "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$uid}")
@@ -218,19 +217,6 @@ job_cancel_remote() {
     [ -f "$dir/exit" ] || { printf '75\n' > "$dir/exit.cancel.tmp" && mv -- "$dir/exit.cancel.tmp" "$dir/exit"; }
   fi
   echo "beelink-gate: canceled gate_id=$id" >&2
-}
-
-legacy_user_gate_units_drained() {
-  local units
-  units=$(timeout --kill-after=1 3 systemctl --user list-units --all \
-    --type=service --state=active,activating --no-legend --plain 'beelink-gate-beelink*.service' 2>/dev/null) || return 2
-  [ -z "$units" ] && return 0
-  # Only these old unit names are supported. Unknown listing output is not
-  # evidence of a drained lifecycle; a live unit may not have joined raw yet.
-  while read -r unit _; do
-    [[ "$unit" =~ ^beelink-gate-beelink[12]-[0-9a-f]{32}\.service$ ]] || return 2
-  done <<< "$units"
-  return 1
 }
 
 job_attach_remote() {
