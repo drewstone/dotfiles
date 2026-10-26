@@ -8,11 +8,13 @@
 // The checks are patterns, so treat a count as a lead to read in the transcript, not a verdict.
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const { barsModel, barsText, tableModel, tableText, fmtDuration } = await import(join(here, '..', '..', '..', 'tools', 'viz-kit', 'core.mjs'))
+// viz-kit is tangle-tools viz/, read from its deploy clone.
+const { barsModel, barsText, tableModel, tableText, fmtDuration } = await import(join(homedir(), '.local', 'share', 'tangle-tools', 'viz', 'viz-kit', 'core.mjs'))
 
 const args = process.argv.slice(2)
 const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : fallback }

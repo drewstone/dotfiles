@@ -67,7 +67,7 @@ test("refuses installs in any GTR checkout, including the clone outside _wt from
   ]) {
     const r = run(manager, args, cwd);
     assert.equal(r.status, 125, `${manager} ${args.join(" ")} in ${cwd} ran: ${r.out}${r.err}`);
-    assert.match(r.err, /beelink-gate beelink1\|beelink2 <repo-url> <full-sha> -- <command>/);
+    assert.match(r.err, /beelink-gate auto <repo-url> <full-sha> -- <command>/);
   }
 });
 

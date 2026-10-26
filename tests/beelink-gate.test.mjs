@@ -3700,3 +3700,24 @@ exit "\${FAKE_GH_EXIT:-0}"
     assert.equal(existsSync(calls), false, "a refused request called gh-drew");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+
+// An SSH-placed GTR gate runs in a non-login shell without ~/bin or ~/.local/bin on PATH (2026-10-26:
+// "setsid: failed to execute storage-lifecycle"). The gate's own resolver must still find the installed command.
+test("the GTR gate finds the installed storage-lifecycle when PATH does not have it", () => {
+  const home = mkdtempSync(join(tmpdir(), "gtr-lifecycle-"));
+  try {
+    const lib = resolve("claude/tools/beelink-gate-lib/gtr.sh");
+    const resolveIn = () => spawnSync("bash", ["-c", 'source "$1"; gtr_lifecycle', "gtr", lib],
+      { encoding: "utf8", env: { HOME: home, PATH: "/usr/bin:/bin" } });
+    assert.equal(resolveIn().status, 1, "no installed storage-lifecycle resolves to nothing");
+    const installed = join(home, ".local", "bin", "storage-lifecycle");
+    mkdirSync(dirname(installed), { recursive: true });
+    writeFileSync(installed, "#!/bin/sh\n");
+    chmodSync(installed, 0o755);
+    const found = resolveIn();
+    assert.equal(found.status, 0, found.stderr);
+    assert.equal(found.stdout.trim(), installed);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

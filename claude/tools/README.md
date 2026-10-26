@@ -21,113 +21,17 @@ load adjacent routing helpers, using Node from PATH or the managed nvm default
 and Python for read-only session lookup. Deploy tangle-tools `acct run` support
 first. Existing brokers and running lanes keep their current processes.
 
-## gh-drew
+## gh, gh-drew
 
-Run `gh` as `drewstone` with the token from the environment or the devops vault.
-Below 150 core calls left (`GH_DREW_MIN_CORE`), it refuses reads and keeps the rest for writes.
-
-Before `pr merge`, `--auto` included, it reads the PR's head, review threads and comments in one GraphQL query:
-
-- An unresolved review thread that a Codex reviewer started and no person has answered refuses the merge, naming each finding's `path:line`, title and link.
-- A Codex review running on the head is waited for, up to `GH_DREW_REVIEW_WAIT` seconds (default 600), then refuses with exit 75.
-- A PR that opened or turned ready under 30 s ago, with no Codex comment yet, waits out those 30 s: Codex comments 12 to 16 s after either.
-- No Codex comment, a usage-limit comment, a failed review, or a finished review whose findings are all answered or resolved carries on.
-- `GH_DREW_REVIEW_OVERRIDE=<reason>` merges without the check and logs the reason. A read that fails refuses.
-
-Before `run cancel <id>`, or a request to `repos/<o>/<r>/actions/runs/<id>/cancel` or `force-cancel`, it reads the run's event and workflow.
-A scheduled run of `benchmark-production.yml` or `create-waterfall.yml` that is in progress is refused (exit 1, logged as `refused`) before anything changes; company-01 approved this.
-A `workflow_dispatch` run of either, a scheduled one that has not started (it has measured nothing, and such runs held the production deploy lock), and a scheduled run of any other workflow stay cancellable. A read that fails refuses.
-
-Each call appends one line to `~/.local/state/gh-drew/calls-<hour>.tsv` (`GH_DREW_LOG_DIR`):
-
-```text
-epoch  outcome  caller  session  directory  command shape
-1790332581  called  pr-drive-watch  tmux:%7  ~/code/lane  api repos/o/r/actions/runs?status=queued
-```
-
-- The caller is the first ancestor that is not a shell or launcher; an interpreter is named by its script.
-- The session is the tmux pane, else the systemd service, else the Claude Code session.
-- The shape keeps subcommands, the API path, numbers and repository names.
-  It never holds the token or a flag value, such as a body, a field or a header.
-- On Linux the line costs about 0.8 ms and no fork. Files older than 25 hours are deleted.
-
-The fleet invariant "GitHub core quota" in tangle-tools reads these files to name the top callers.
+`gh` and `gh-drew` are tangle-tools commands: see [tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md).
 
 ## gh-read
 
-Run a read-only `gh` call as the `tangletools` machine account (`TANGLETOOLS_GH_TOKEN`), which has its own 5,000-call core quota.
-Automated fleet reads use it so they never spend drewstone's quota, which merges, PR writes and deploy dispatches need.
-
-- It accepts `gh api` GETs, GraphQL queries without a mutation, `search`, and `list`, `view`, `status`, `checks` and `diff` of `pr`, `issue`, `run`, `release`, `workflow`, `repo`, `label`, `cache` and `ruleset`.
-  Everything else exits 3 before `gh` runs; use `gh-drew` for it.
-- It runs through `gh-drew`, so the identity check and log format are the same.
-  Calls are logged to `~/.local/state/gh-read/` (`GH_READ_LOG_DIR`), apart from Drew's.
-- Reads stop under 500 core calls left (`GH_READ_MIN_CORE`), so the auto-approver keeps its share of the same quota.
+`gh-read` is a tangle-tools command: see [tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md).
 
 ## viz
 
-Charts drawn to scale from data, for the terminal and for brief pages.
-It reads JSON or TSV from a file or stdin, needs no network or packages, and prints the same bytes for the same input.
-
-```bash
-viz bars causes.tsv --total 171 --source "reliability endpoint" --asof 2026-10-10   # shares, and any (unaccounted) remainder
-viz grouped success.tsv --target 95                    # cells may be ratios like 33/36: the bar is the rate, the label keeps the denominator
-viz spark latency.tsv --unit s                         # one line per numeric column, with first→last, min, max and n
-viz strip canary.tsv                                   # ✓/✗ cells on a time axis, the pass rate and the longest failing run
-viz bars causes.tsv --total 171 --color emoji          # colored squares for a markdown chat; VIZ_COLOR=emoji sets the default
-viz stack turn.tsv --unit s                            # parts of one whole; a group column adds a rollup
-viz waterfall outage.tsv --unit m --start 00:45 --end 07:31   # offset rows with clock ranges; the span must equal the parts
-viz timeline events.tsv                                # events with the gap since the previous one
-viz table repos.tsv --sum
-viz brief spec.json                                    # a brief spec as a terminal status
-viz brief spec.json -o page.html                       # the same spec as an artifact-ready page
-```
-
-Width follows the terminal, then `$COLUMNS`, then 80; `--width` overrides it, and every line fits.
-Parts that exceed their whole, ratios above their denominator and values past `--max` exit 2 with the row named; a whole larger than its parts prints the remainder as its own row.
-A chart without `--source` warns on stderr.
-The models live in `viz-kit/core.mjs`, and `viz-kit/brief.mjs` checks brief specs and fills the report skill's [brief kit](../skills/report/references/brief-kit.md).
-Run `viz --help` for every option.
-
-### Color in a markdown chat
-
-Claude Code renders chat as markdown with about two text colors and drops ANSI escapes, but emoji keep their color.
-`--color emoji`, or `VIZ_COLOR=emoji` in the environment, draws every chart with them; `--color plain` overrides the variable, and plain output is unchanged.
-Plain is the default everywhere. ; emoji squares are opt-in, for a chart that needs them.
-
-| Mark | Plain | Emoji |
-|---|---|---|
-| bar by tone | `█` | 🟩 good · 🟨 warn · 🟧 serious · 🟥 bad or crit · 🟦 accent or no tone · ⬜ remainder or unaccounted |
-| series and groups | `█ ▓ ▒ ░` | 🟦 first · 🟪 second · 🟫 third, then status hues |
-| status cell | `✓ ! ✗ ·` | 🟢 good · 🟡 warn · 🟠 serious · 🔴 bad · ⚪ no signal · 🔵 info · 👉 needs you |
-| strip cell | `✓ ✗ ! - ·` | ✅ pass · ❌ fail · ⚠️ warn · ➖ skip · ⚪ no report |
-| target | `┆` | 🏁 |
-
-An emoji is two columns wide, so a bar holds half as many squares as a block bar has cells.
-Each square stands for one round unit, the scale divided by the squares that fit and rounded up to 1, 1.5, 2, 2.5, 3, 4, 5, 6 or 8 times a power of ten, and the footer states it (`1 square = 5%`).
-A bar is its value in those units, rounded to the nearest whole square, so it reads to scale within half a square; a nonzero value keeps at least one square.
-Stacks and waterfalls tile the same squares from rounded running totals, as their block forms do.
-Paste a chart into chat inside a ```` ```text ```` fence, where its columns hold.
-
-In emoji mode, `viz brief spec.json` prints the chat status as markdown to paste as it is: a bold headline with the decision and the hill's number, then 🎯 Focus, 📊 Evidence, 🛠️ Doing, 🧠 Learned and ⏭️ Next, with each chart in its own text fence.
-The [brief kit](../skills/report/references/brief-kit.md#chat-status) lists the spec field behind each line; `--section` still prints whole sections.
-
-An excerpt of the [example spec](../skills/report/assets/brief-example.json)'s status, from the [golden file](../../tests/fixtures/viz/brief-example.emoji.txt):
-
-````markdown
-**Pin Apple Pay to SDK 4.1 tonight and gate every deploy on a canary · time to restore checkout 0.6 h vs target < 1 h (from 9.2 h)**
-
-📊 **Evidence**
-**Payment success by day, card and Apple Pay**
-```text
-10-10  card      🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦🟦    39,950/40,100 99.6%
-       applepay  🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪🟪              🏁      6,170/9,950 62.0%
-scale 0–100% · 1 square = 5% · 🏁 SLO 99.5%
-```
-
-🛠️ **Doing**
-🔴 **Apple Pay declines at the gateway** · Down since 10-10 21:05Z · Token format changed in SDK 4.2; 38% of Apple Pay attempts fail. · owner payments-lane · next: pin SDK 4.1, ship
-````
+`viz` is a tangle-tools command: see [tangle-tools viz/README.md](https://github.com/tangle-network/tangle-tools/blob/main/viz/README.md).
 
 ## agent-ask
 
@@ -246,87 +150,11 @@ for 10+ minutes — a hypothesis; could be a crash or an interrupt instead).
 
 ## pr-gate
 
-The 2-minute merge gate: fetch + merge the default branch (auto-resolving
-CHANGELOG-only conflicts by keeping both sides), run the repo's own quick
-check, push, and merge through `gh-drew`. Never waits on CI.
-
-```bash
-pr-gate 802                          # repo inferred from origin, dir = cwd
-pr-gate 802 --repo owner/name --dir ~/webb/_wt/some-branch
-pr-gate 802 --dry-run
-pr-gate 802 --admin                  # force --admin on the gh merge
-```
-
-A repo opts into the quick check by adding an executable `.pr-gate` file at
-its root (same idea as a checked-in `.ai-agent-hooks.mjs`: the repo owns the
-content — frozen install, typecheck, an optional proof command). No file
-means no quick check; pr-gate still does the merge/push/gh-merge steps. Any
-merge conflict outside CHANGELOG.md stops the gate for manual resolution.
+`pr-gate` is a tangle-tools command: see [tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md).
 
 ## merge-on-green
 
-Merges every green agent-container PR into develop, and every green PR in the other product repos into their default branch (below). The agent-container instance runs every 2 minutes on drew-gtr-pro (`host/agents/merge-on-green.timer`), as drewstone through `gh-drew`, so its merges fire develop CI and release automation like any merge. Its open-PR read goes through `gh-read`, so the heaviest GraphQL query in the fleet does not spend drewstone's quota.
-
-A PR merges when it is not a draft, not conflicting and not a release branch; Fast Checks, Build and Type Check succeeded on its head; no check failed; no unresolved review thread opens with P0 or P1; it has no `hold` label or hold phrase ("do not merge", "merge only after"); and its head is at least 2 minutes old. The merge pins that head (`--match-head-commit`). Failed, missing or skipped gates leave the head unchanged for its author to diagnose and fix forward. Only a conflict reported by GitHub permits merging develop into the branch; a conflict git cannot resolve gets one comment per head. gh-drew's Codex review check runs on each merge without waiting (`GH_DREW_REVIEW_WAIT=0`), so a PR whose review is still running or has an unanswered Codex finding is refused and tried again on the next tick.
-
-```bash
-merge-on-green --dry-run                 # print decisions, merge nothing
-cat ~/.local/state/merge-on-green/status.md       # what each open PR waits on
-cat ~/.local/state/merge-on-green/ownership.md    # org-wide aged PR ownership, from the primary timer
-tail ~/.local/state/merge-on-green/decisions.jsonl
-```
-
-The primary timer also passes `--owner-org tangle-network --owner-org drewstone`. Before the merge queue's probe, it searches both owners for every open PR aged at least 24 hours, reads all comment pages, and records the complete sample in `ownership.json` and `ownership.md`. The two org searches use the owner's visibility through `gh-drew`: the machine reader cannot see every private repository. Comment reads use `gh-read`, falling back to the owner only for permission failures. A trusted owner/member/collaborator comment has separate `Owner:`, `Blocker:`, and `Next action:` lines. This establishes assignment text; the closer still verifies that the named lane is live and receives the handoff. The closer closes a PR only with supersession proof; a PR whose remaining precondition is a decision or confirmation owed by Drew or a lead stays open and is routed to that lead. Missing assignments go to `op-company:pr-closer` through Fleet's durable inbox when the breach set changes; the initial status, changed breach sets and clearance notices are deduplicated after durable acceptance. The sweep refreshes within the timer's half-hour budget; incomplete searches and failed reads leave a visible `ownership-error.txt` beside the last successful snapshot. `--owner-only` runs this sweep without touching the merge queue or security settings; add `--dry-run --state-dir /tmp/mog-owner-proof` for read-only GitHub verification without an inbox notice. Archived repositories stay read-only: their PRs are listed as `archived: read-only, no action` and excluded from actionable alerts. The report retains the total aged and strict unassigned counts, so this operational exclusion does not silently change a task that included archived PRs. The sweep never comments on PRs, removes holds, or changes merge eligibility.
-
-The PR list reads review metadata; full threads and review summaries are cached by
-repository, PR, head and review activity. Resolution/reopening, original-comment edits,
-reply counts and summary edits invalidate the cache. Drafts, release branches and
-author holds need no full review read. A merge passes its fresh per-tick response to
-`gh-drew`, which still runs its normal review and author-hold checks; manual merges
-continue to read live. Secondary limits defer the queue until `Retry-After` (or an
-increasing delay) has elapsed, then retry the same PR first.
-
-A commit pushed to a branch after its PR merged never reaches the base on its own. Each tick reads the PRs merged in the last 6 hours; for a branch that moved since, with no open PR on it, `git cherry` in the merge mirror keeps the commits whose patch the base lacks, and the bot opens one follow-up PR from that branch ("<title> (commits pushed after #N merged)") and comments on #N. Judged (PR, head) pairs are kept in `stranded.json` in the state directory.
-
-Each tick logs actual GitHub HTTP calls, remaining quotas, cache hits/misses and any
-deferral to the journal and `ticks.jsonl` in the state directory. It includes calls
-inside `gh-drew`; API debug traces stay in memory. Use `--dry-run --state-dir DIR`
-with a separate directory for read-only cold/warm comparisons.
-
-To keep a ready PR open, add the `hold` label and a comment that says why: the precondition and its owner. A `hold` that no comment explains (a comment saying hold or held, from 10 minutes before the label onward) or body hold phrase explains is released after 30 minutes, with a comment naming who added it and when, and the pass records `hold-expired` in its decision log. The read that checks this runs only for held PRs and is cached until the PR changes.
-
-### The other product repos
-
-Every other repo in `host/agents/merge-on-green.repos` (the product stack and the agent apps) runs its own `merge-on-green@<repo>:<base>.timer` every 5 minutes on drew-gtr-pro, with `--base` set to that repo's default branch and state under `~/.local/state/merge-on-green-org/<repo>/`. Its gate is every check on the head (`MERGE_ON_GREEN_REQUIRED=*`: success, neutral or skipped; any red or pending check waits). Most of these repos run no PR CI, so a head with no checks merges only when gh-drew finds a passed beelink-gate receipt for that exact head (`GH_DREW_REQUIRE_RECEIPT=1`, the same check discovery-lab and agent-runtime always get); a refused head is asked again after 10 minutes. Drafts, holds, review threads and conflicts work as above. It uses a merge commit when the repo allows one, else squash. A PR that waits for Drew (pricing, public claims) carries the `hold` label. Each tick first runs `--probe`, a 2-point GraphQL read of every open PR's head, draft flag, labels, check rollup and update time; the full read (about 28 points at `MERGE_ON_GREEN_PAGE=25`) runs only when that changed, every 30 minutes while a ready PR is open, and hourly otherwise, so the inventory stays inside tangletools' shared `gh-read` quota.
-
-Both timer services set `MERGE_ON_GREEN_SECURITY_UPDATES=1`. The existing bot checks security alerts and Dependabot security updates daily and enables either setting when disabled. Its per-repo `security-updates.json` records the verified result. Dry runs report needed changes without writing settings. Dependabot PRs use the same head checks, reviews, holds, and receipts as other PRs. A settings error is reported and retried without holding otherwise mergeable fixes.
-
-The timer inventory owns release-slot policy: a `slot` field after an instance marks a repository whose default merge deploys. On those repositories, a bot-authored PR receives `hold` on first sight and whenever its head changes; any earlier grant is cleared. When it adds `hold`, it comments why on the PR, so a slot hold never reads as a forgotten one. An operator must grant that revision a slot with `release-slot-granted` and remove `hold` before the normal gate can merge it; the grant label is checked on its own, so removing `hold` alone never merges a bot PR. The reviewed head is persisted per PR. Every slot hold is recorded in the existing decision log. Dry runs make no label changes. Manual invocations read the same inventory.
-
-```bash
-# Install or add a repo: link the template from the durable checkout, then enable one timer per line.
-ln -sf ~/code/dotfiles/host/agents/merge-on-green@.service ~/code/dotfiles/host/agents/merge-on-green@.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-grep -v '^#' ~/code/dotfiles/host/agents/merge-on-green.repos | while read -r i policy; do systemctl --user enable --now "merge-on-green@$i.timer"; done
-merge-on-green --repo tangle-network/gtm-agent --base master --state-dir /tmp/mog-dry --dry-run   # what one repo would do
-cat ~/.local/state/merge-on-green-org/*/status.md                                                   # what each open PR waits on
-```
-
-To give a release a clean CI window, pause it on drew-gtr-pro, where the timer runs. While paused, each pass still runs but merges only PRs labelled `release-critical`; version PRs (`changeset-release/*`) stay with release.yml, paused or not, and every other PR gets one line, `paused until … (reason): skipped #N`. A pause ends on its own at its `until`; `pause` refuses more than 120 minutes, so a longer hold is a new pause.
-
-```bash
-# A login shell puts ~/bin (gh-drew) on PATH, as the timer's unit does.
-ssh drew-gtr-pro "bash -lc 'merge-on-green pause --minutes 60 --reason \"version PR #11196 CI window\"'"
-ssh drew-gtr-pro "bash -lc 'merge-on-green status'"   # paused or not, reason, until, who, allowlist
-ssh drew-gtr-pro "bash -lc 'merge-on-green resume'"   # ends the pause and the repo variable
-```
-
-From any host, the repo variable pauses the same way; it ends at its until or 120 minutes after it was set, whichever is first:
-
-```bash
-# GNU date; on macOS use $(date -u -v+60M +%FT%TZ)
-gh-drew variable set MERGE_ON_GREEN_PAUSED -R tangle-network/agent-container --body "$(date -u -d '+60 min' +%FT%TZ) version PR #11196"
-```
+`merge-on-green` is a tangle-tools command: see [tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md).
 
 ## beelink-gate
 

@@ -16,7 +16,7 @@ For a page, put the same data in a brief with the `strip`, `waterfall` and `even
 
 ## Example: the Oct 10 chat outage
 
-The segments are in [outage.tsv](../../../../tests/fixtures/viz/outage.tsv), one row per segment with `label`, `value` in minutes, `group` and `tone`.
+The segments are in [outage.tsv](https://github.com/tangle-network/tangle-tools/blob/main/viz/tests/fixtures/outage.tsv), one row per segment with `label`, `value` in minutes, `group` and `tone`.
 
 ```text
 $ viz waterfall outage.tsv --unit m --start 00:45 --end 07:31 --title "Where the 406 minutes went, Oct 10 UTC" \

@@ -1,7 +1,0 @@
-Release checks
-check       passed  state         minutes
-──────────  ──────  ────────────  ───────
-typecheck   ✅      🟢 green            2
-unit tests  ✅      🟡 flaky            9
-canary      ❌      🔴 red             14
-load test   —       ⚪ no signal        —

@@ -13,15 +13,43 @@
 # it at "connected (local only)" after Wi-Fi drops. A Wi-Fi device that is
 # connected or connecting stays alone, so an upstream outage never bounces it.
 nmcli -t -f TYPE,STATE device 2>/dev/null | grep '^wifi:connect' >/dev/null && exit 0
-nmcli -t -f TIMESTAMP,UUID,TYPE,AUTOCONNECT connection show |
-  awk -F: '$3 == "802-11-wireless" && $4 == "yes" { print $1, $2 }' |
-  sort -rn |
-  while read -r _ uuid; do
+# Profiles most recently used first. Only those whose SSID the radio can see now: on 2026-10-26 every
+# tick spent 25 s on an out-of-range profile after the home network failed. When a wedged firmware
+# returns an empty scan, keep the most recent profile so the box still retries home.
+profiles="$(nmcli -t -f TIMESTAMP,UUID,TYPE,AUTOCONNECT connection show |
+  awk -F: '$3 == "802-11-wireless" && $4 == "yes" { print $1, $2 }' | sort -rn | awk '{ print $2 }')"
+visible="$(nmcli -t -f SSID device wifi list --rescan auto 2>/dev/null | sort -u)"
+candidates="" seen=0
+for uuid in $profiles; do
+  ssid="$(nmcli -e no -g 802-11-wireless.ssid connection show uuid "$uuid" 2>/dev/null)"
+  printf '%s\n' "$visible" | grep -qxF -- "$ssid" && candidates="$candidates $uuid" && seen=1
+done
+[ -n "$candidates" ] || candidates="$(printf '%s\n' "$profiles" | head -n 1)"
+# Retry within this run until 50 s have passed: a firmware reset can fail the 4-way handshake for
+# minutes (NetworkManager then reports need-auth/no-secrets with no agent to ask), and one try per
+# minute left the box offline 5 min. The timer starts the next run a minute after this one ends.
+try_all() {
+  for uuid in $candidates; do
     name="$(nmcli -g connection.id connection show uuid "$uuid" 2>/dev/null)"
     logger -t wifi-watchdog "no Wi-Fi connection; bringing up $name"
-    if nmcli --wait 45 connection up uuid "$uuid" >/dev/null 2>&1; then
+    if nmcli --wait 30 connection up uuid "$uuid" >/dev/null 2>&1; then
       logger -t wifi-watchdog "reconnected $name"
       exit 0
     fi
     logger -t wifi-watchdog "reconnect of $name failed"
   done
+}
+end=$(( $(date +%s) + 50 ))
+while [ "$(date +%s)" -lt "$end" ]; do
+  try_all
+  sleep 5
+done
+# A visible network that failed for the whole window points at wedged firmware, not a missing
+# network: reset the radio once (operator decision 2026-10-26 11:02Z; the box is already offline,
+# so this cannot cause an outage), then try again. No driver reload: that needs root. The log lines
+# give reset and reconnect times to compare with the ~4 min the firmware took to recover by itself.
+[ "$seen" = 1 ] || exit 0
+logger -t wifi-watchdog "radio reset: visible network failed for 50 s"
+nmcli radio wifi off && sleep 3 && nmcli radio wifi on
+sleep 5
+try_all
