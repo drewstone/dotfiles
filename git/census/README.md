@@ -7,7 +7,7 @@ so a number means the same thing wherever it is read.
 
 | File | Owns |
 |---|---|
-| `patterns.json` | The classification: what is a logic file, a test, a source file, an exported declaration, dated history; the limits and hugging bands. |
+| `patterns.json` | The classification: what is a logic file, a test, a source file, an exported declaration, dated history; the limits and hugging bands. An extensionless file is logic when its first line runs an interpreter (`shebang`). |
 | `classify.py` | `patterns.json` for Python. `loc-ratchet`, `dup-export-ratchet` and `doc-ref-ratchet` import it. |
 | `functions.cjs` | Function spans and class member counts from TypeScript and Python ASTs. `fn-ratchet.cjs` imports it. |
 | `python_functions.py` | Python AST parsing for both the census and staged function ratchet; a syntax error refuses the scan. |

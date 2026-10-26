@@ -92,6 +92,19 @@ test("census floors measure a sparse worktree against its base and refuse a rise
   assert.match(r.stdout, /xrepo_windows: not measured, no --peer named/);
 });
 
+test("an extensionless script counts by its interpreter line, in the census and the loc ratchet alike", () => {
+  const { dir, git } = repo({ "bin/tool": "#!/usr/bin/env python3\nprint(1)\n", "bin/run": "#!/bin/bash\necho\n",
+    "LICENSE": "MIT\n", "Makefile": "all:\n", "src/a.ts": "export const a = 1\n" });
+  const listed = run(dir, census, ["files", ".", "HEAD"]);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.deepEqual(listed.stdout.trim().split("\n").map((row) => row.split("\t")[0]).sort(), ["bin/run", "bin/tool", "src/a.ts"]);
+  write(dir, { "bin/tool": "#!/usr/bin/env python3\n" + lines(1005, (i) => `v${i} = ${i}`) });
+  git("add", "-A");
+  const refused = run(dir, join(hooks, "loc-ratchet"), []);
+  assert.equal(refused.status, 1, refused.stderr);
+  assert.match(refused.stderr, /bin\/tool: 1006 lines \(was 2\)/);
+});
+
 test("a scan that reads no logic file, or has no parser, is refused rather than reported as 0", () => {
   const { dir } = repo({ "README.md": "# docs only\n" });
   const empty = run(dir, census, ["measure", ".", "HEAD"]);
