@@ -14,12 +14,13 @@ function hook(payload) {
 }
 const decide = (payload) => hook(payload)?.permissionDecision ?? "allow";
 
-test("a subagent cannot wait on an in-session background command", () => {
-  assert.equal(decide({ transcript_path: SUB, tool_name: "Bash", tool_input: { command: "gh run watch 1", run_in_background: true } }), "deny");
-  assert.equal(decide({ agent_id: "a1", tool_name: "Bash", tool_input: { command: "sleep 60", run_in_background: true } }), "deny");
-  const loop = "until ssh gtr 'test -s ~/x.verdict.json'; do sleep 120; done";
-  assert.equal(decide({ agent_id: "a1", tool_name: "Bash", tool_input: { command: loop, run_in_background: true } }), "deny");
-  assert.equal(decide({ agent_id: "a1", tool_name: "Bash", tool_input: { command: "tail -F build.log", run_in_background: true } }), "deny");
+test("a subagent's background wait on its own log runs in the foreground (346 refusals 10-19..26)", () => {
+  const log = "/tmp/claude-1000/-home-drew-code/s1/scratchpad/gate1.log";
+  for (const command of [`until grep -q '^exit=' ${log}; do sleep 20; done; tail -15 ${log}`, "tail -F build.log", "sleep 60"]) {
+    const out = hook({ agent_id: "a1", tool_name: "Bash", tool_input: { command, run_in_background: true } });
+    assert.equal(out.permissionDecision, "allow", command);
+    assert.deepEqual(out.updatedInput, { command, timeout: 600000 });
+  }
 });
 
 test("a subagent's background work runs in the foreground instead of being refused", () => {
@@ -31,9 +32,14 @@ test("a subagent's background work runs in the foreground instead of being refus
   assert.match(out.additionalContext, /foreground/);
 });
 
-test("a subagent cannot use Monitor or spawn agents", () => {
-  assert.equal(decide({ transcript_path: SUB, tool_name: "Monitor", tool_input: {} }), "deny");
-  assert.equal(decide({ transcript_path: SUB, tool_name: "Agent", tool_input: { prompt: "land PR" } }), "deny");
+test("a subagent cannot use Monitor, and is told the foreground wait that passes", () => {
+  const out = hook({ transcript_path: SUB, tool_name: "Monitor", tool_input: {} });
+  assert.equal(out.permissionDecision, "deny");
+  assert.match(out.permissionDecisionReason, /one foreground Bash call/);
+});
+
+test("a subagent's Agent call is left to agent-cap-guard", () => {
+  assert.equal(decide({ transcript_path: SUB, tool_name: "Agent", tool_input: { prompt: "Split host-agent docker e2e suites" } }), "allow");
 });
 
 test("a subagent's foreground commands are untouched", () => {

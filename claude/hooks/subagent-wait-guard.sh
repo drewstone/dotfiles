@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# PreToolUse guard: a subagent never waits inside the session and never spawns agents.
+# PreToolUse guard: a subagent never keeps itself alive on in-session watchers.
 #
 # Subagents kept themselves alive for hours on in-session background
 # watchers ("Waiting on the background event watcher"), re-reading 300k-900k tokens
-# of context on every wake, and spawned their own "land PR" agents. Waiting belongs
-# in a nohup script on gtr or a Beelink that acts and writes one result line; the
-# subagent ends its turn once its code is pushed and the script is armed.
+# of context on every wake. A foreground call is one tool call with no wake-ups, so it costs none of that.
 #
 # Only when the caller is a subagent:
 #   - Bash with run_in_background: true runs in the foreground instead (timeout 600000, the
-#     cap; a longer call is moved to the background by the harness), unless the command
-#     waits (sleep, a while/until loop, wait, watch, tail -f), which is denied. From 10-17 to
-#     10-24 this refusal fired 188 times on the Mac, mostly on beelink-gate runs, tests and
-#     builds, and the subagent's next call was usually the same command in the foreground.
-#   - the Monitor tool is denied
-#   - the Agent tool is denied (no sub-agents spawned by subagents)
+#     cap; a longer call is moved to the background by the harness). That includes waits on the
+#     subagent's own gate logs and task files: from 10-19 to 10-26 the old refusal of a background
+#     wait fired 346 times, 286 of them on local logs the subagent itself had started, and the next
+#     call was the same wait in the foreground. Waiting on PR CI stays ci-wait-guard's refusal.
+#   - the Monitor tool is denied: each event wakes the subagent and re-reads its context. The same
+#     wait as one foreground Bash call passes.
+#   - the Agent tool passes: agent-cap-guard.py counts every live agent of the session, nested ones
+#     included. The 123 refused spawns from 10-19 to 10-26 were reviews, sweeps and file splits.
 # The main session is not affected. rtk-rewrite.sh leaves a subagent's background call to
 # this hook: when two hooks return updatedInput, the last one to finish wins.
 #
@@ -30,7 +30,6 @@ command -v python3 >/dev/null || exit 0
 
 read -r -d '' GUARD_PY <<'PY'
 import json
-import re
 import sys
 
 try:
@@ -48,41 +47,25 @@ if not is_subagent:
 tool = d.get("tool_name") or ""
 inp = d.get("tool_input") or {}
 
-reason = None
 if tool == "Bash" and inp.get("run_in_background"):
-    command = str(inp.get("command") or "")
-    if not re.search(r"\b(?:sleep|wait|watch|until|while)\b|--watch\b|\btail\s+-[a-zA-Z]*[fF]", command):
-        updated = {k: v for k, v in inp.items() if k != "run_in_background"}
-        updated["timeout"] = 600000
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow",
-            "permissionDecisionReason": "subagent-wait-guard: ran in the foreground",
-            "updatedInput": updated,
-            "additionalContext": "subagent-wait-guard ran this command in the foreground with a 10-minute "
-                                 "timeout: subagents never wait in-session on background work.",
-        }}))
-        sys.exit(0)
-    reason = "Subagents never wait in-session."
-elif tool == "Monitor":
-    reason = "Subagents never watch or wait in-session."
-elif tool == "Agent":
-    reason = "Subagents never spawn their own agents."
-if reason is None:
+    updated = {k: v for k, v in inp.items() if k != "run_in_background"}
+    updated["timeout"] = 600000
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": "subagent-wait-guard: ran in the foreground",
+        "updatedInput": updated,
+        "additionalContext": "subagent-wait-guard ran this command in the foreground with a 10-minute "
+                             "timeout: subagents never wait in-session on background work.",
+    }}))
+    sys.exit(0)
+if tool != "Monitor":
     sys.exit(0)
 
-# A detached receipt script on drew-gtr-pro ran under a non-login shell,
-# found neither gh-drew nor beelink-gate, exited 127 at once, and the PR waited
-# unmerged behind a result file nobody had checked.
-msg = (reason + " To land an agent-container PR, push it and stop: merge-on-green merges it "
-       "once Fast Checks, Build and Type Check are green; never wait for it or write your own "
-       "merge script. "
-       "For other waiting, arm a nohup script on drew-gtr-pro or a Beelink that does the "
-       "waiting, acts on the result and writes one line to a results file, started with "
-       "`setsid nohup bash -lc '<script>'` so PATH has gh-drew and beelink-gate; read its "
-       "log once before you end your turn: exit 127 means a command is not on PATH. "
-       "Then end your turn with your final report. Do the work yourself instead of "
-       "delegating it.")
+msg = ("Subagents never watch in-session: each Monitor event wakes you and re-reads your context. "
+       "Run the same wait as one foreground Bash call (it gets a 10-minute timeout), for example "
+       "`until grep -q '^exit=' <log>; do sleep 15; done; tail -40 <log>`. For a longer wait, end your "
+       "turn with your report and name the log to read.")
 print(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "PreToolUse",

@@ -41,6 +41,7 @@ const blocked = [
   "sudo reboot",
   "sudo systemctl poweroff",
   "sudo shutdown -h now",
+  "bash -s <<'EOF'\nsudo reboot\nEOF",
   "HOST_BLAST_GUARD=off sudo fsfreeze -f /tmp",
   "sudo HOST_BLAST_GUARD=off unshare -m true",
   'S=/tmp/s; sudo umount -l "$S/mnt/parent"; bash "$S/proof.sh" 2>&1 | tail -120; sudo fsfreeze -f $S/mnt/parent',
@@ -102,6 +103,11 @@ const blocked = [
 const allowed = [
   "grep -rn fsfreeze packages/",
   "git log --oneline | grep reboot",
+  // 10-19..26 refusals: the verb sat inside a grep alternation after `(` or `|`.
+  'git grep -nE "lifecycle/(quiesce|shutdown)|/health" origin/develop -- scripts/lib',
+  "ls tests/integration | grep -E 'computer-use|ports|mcp-auth|shutdown|events'",
+  "grep -cE 'halt|reboot' log.txt",
+  "cat > run.sh <<'EOF'\n#!/bin/bash\nsudo shutdown -h now\nEOF\nbash -n run.sh",
   "sudo fsfreeze -u /mnt/parent",
   'ssh root@1.2.3.4 "sudo fsfreeze -f /mnt/parent"',
   "ssh box 'sudo dmsetup suspend x && sudo reboot'",

@@ -35,11 +35,10 @@ test("waiting on PR checks is refused", () => {
   assert.match(out.reason, /gh run watch <id> --exit-status/);
 });
 
-test("polling a background task's output is refused with the one read to run instead", () => {
+test("waiting on a background task's own output is the caller's work, not CI (98 refusals 10-19..26)", () => {
   const f = "/private/tmp/claude-501/x/s1/tasks/b6357tl1l.output";
-  const out = decide(`until [ -s ${f} ]; do sleep 5; done; tail -60 ${f}`);
-  assert.equal(out.decision, "deny");
-  assert.ok(out.reason.includes(`\`tail -n 40 ${f}\``), out.reason);
+  assert.equal(decide(`until [ -s ${f} ]; do sleep 5; done; tail -60 ${f}`).decision, "allow");
+  assert.equal(decide(`until grep -qE "^label=b1 variant|build failed" ${f}; do sleep 5; done; grep -E "^label=" ${f}`).decision, "allow");
 });
 
 test("one read of PR checks or a task file is allowed", () => {

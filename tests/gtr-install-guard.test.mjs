@@ -100,7 +100,18 @@ test("uv keeps its _wt-only rule", () => {
 });
 
 // On a Beelink the Git entrypoint has git.worktree-cap.json beside it: each fleet lane may hold
-// `cap` worktrees under _wt, nothing new lands under the free-space floor, and installs are not refused.
+// `cap` worktrees under _wt, a new tree must fit Tangle Tools' size-aware admission, and installs are not refused.
+// The admission owner is a separate module (/usr/local/libexec/tangle-fleet-disk-policy.py); this stand-in
+// answers with its contract: free - reservations - request >= minimum.
+function policy(home, reserved, minimum) {
+  const path = join(home, "policy.py");
+  writeFileSync(path, `def admission_headroom(host, path, request_bytes, free_bytes):
+    headroom = free_bytes - ${reserved} - request_bytes - ${minimum}
+    return {"free_bytes": free_bytes, "reserved_bytes": ${reserved}, "requested_bytes": request_bytes,
+            "minimum_bytes": ${minimum}, "headroom_bytes": headroom, "fits": headroom >= 0}
+`);
+  return path;
+}
 function beelinkGit(config) {
   const home = mkdtempSync(join(tmpdir(), "beelink-cap-"));
   const bin = join(home, "bin");
@@ -122,7 +133,7 @@ function beelinkGit(config) {
 }
 
 test("a Beelink worktree add into _wt needs a lane, records it, and stops at the lane cap", () => {
-  const { home, repo, git } = beelinkGit({ cap: 2, floor_bytes: 0 });
+  const { home, repo, git } = beelinkGit({ cap: 2, });
   const add = (name, env) => git(["worktree", "add", "-q", "--detach", join(home, "code/_wt", name)], env);
 
   const anonymous = add("anon");
@@ -150,7 +161,7 @@ test("a Beelink worktree add into _wt needs a lane, records it, and stops at the
 });
 
 test("a Beelink counts nested _wt trees and records the lane when a post-checkout hook fails", () => {
-  const { home, repo, git } = beelinkGit({ cap: 2, floor_bytes: 0 });
+  const { home, repo, git } = beelinkGit({ cap: 2, });
   const lane = { FLEET_LANE: "op-company:hooks" };
   mkdirSync(join(repo, ".git/hooks"), { recursive: true });
   writeFileSync(join(repo, ".git/hooks/post-checkout"), "#!/bin/sh\nexit 3\n", { mode: 0o755 });
@@ -163,48 +174,31 @@ test("a Beelink counts nested _wt trees and records the lane when a post-checkou
   assert.match(third.err, /holds 2 of 2/);
 });
 
-test("a Beelink under its free-space floor refuses new _wt worktrees and names idle trees", () => {
-  const { home, git } = beelinkGit({ cap: 4, floor_bytes: 0 });
+test("a Beelink refuses a _wt worktree that does not fit size-aware admission, and names the inventory to read", () => {
+  const { home, git } = beelinkGit({ cap: 4 });
   assert.equal(git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/x1")], { FLEET_LANE: "op-a:one" }).status, 0);
-  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER }));
+  // Reservations larger than any disk: the tree cannot fit.
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, admission_policy: policy(home, Number.MAX_SAFE_INTEGER, 50e9) }));
   const r = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/f1")], { FLEET_LANE: "op-company:wt-cap" });
   assert.equal(r.status, 125);
-  assert.match(r.err, /under its \d+ GiB floor/);
-  assert.match(r.err, new RegExp(`\\n  wt-remove ${join(home, "code/_wt/x1")}`), "another lane's tree keeps wt-remove's idle guard");
-  assert.doesNotMatch(r.err, /OWNER_RELEASED/);
+  assert.match(r.err, /GiB reserved - [\d.]+ GiB for this tree, under the 47 GiB lifecycle minimum/);
+  assert.match(r.err, /storage-lifecycle run --exclusive-inventory/);
   assert.ok(!existsSync(join(home, "code/_wt/f1")));
 });
 
-test("a floor refusal ranks exclusive bytes and marks source salvage and clean unowned reuse candidates", () => {
-  const { home, repo, git } = beelinkGit({ cap: 6, floor_bytes: 0 });
-  const root = join(home, "code/_wt");
-  for (const name of ["shared", "unique", "source"]) {
-    assert.equal(git(["worktree", "add", "-q", "--detach", join(root, name)],
-      { FLEET_LANE: "op-a:one" }).status, 0);
-  }
-  const head = git(["-C", repo, "rev-parse", "HEAD"]).out.trim();
-  assert.equal(git(["-C", repo, "update-ref", "refs/remotes/origin/main", head]).status, 0);
-  mkdirSync(join(root, "shared/node_modules"));
-  mkdirSync(join(root, "unique/node_modules"));
-  const outside = join(home, "shared-build.bin");
-  writeFileSync(outside, Buffer.alloc(8 * 1024 * 1024));
-  linkSync(outside, join(root, "shared/node_modules/build.bin"));
-  writeFileSync(join(root, "unique/node_modules/build.bin"), Buffer.alloc(2 * 1024 * 1024));
-  writeFileSync(join(root, "source/0"), "keep this source\n");
-  const admin = readFileSync(join(root, "unique/.git"), "utf8").trim().slice("gitdir: ".length);
-  rmSync(join(admin, "fleet-lane"));
-  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 6, floor_bytes: Number.MAX_SAFE_INTEGER }));
-  const refused = git(["worktree", "add", "-q", "--detach", join(root, "new")], { FLEET_LANE: "op-b:two" });
-  assert.equal(refused.status, 125, refused.err);
-  assert.ok(refused.err.indexOf(`${root}/unique`) < refused.err.indexOf(`${root}/shared`), refused.err);
-  assert.match(refused.err, /source[^\n]*salvage-copy-required/);
-  assert.match(refused.err, /Unowned clean reuse candidates[^\n]*unique/);
+test("a tree that fits admits however little is free above the minimum, and an unreadable owner admits (10-19..26: 33 refusals at 123-153 GiB free)", () => {
+  const { home, git } = beelinkGit({ cap: 4, admission_policy: "/nonexistent/policy.py" });
+  const unknown = git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/u1")], { FLEET_LANE: "op-a:one" });
+  assert.equal(unknown.status, 0, unknown.err);
+  assert.match(unknown.err, /storage admission unreadable/);
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, admission_policy: policy(home, 0, 1) }));
+  assert.equal(git(["worktree", "add", "-q", "--detach", join(home, "code/_wt/u2")], { FLEET_LANE: "op-a:one" }).status, 0);
 });
 
 test("a symlink to the installed Git wrapper delegates through the wrapper's own preserved executable", () => {
   // ADC's run-devtools.test.mjs links `which git` into a temporary bin; the alias has no
   // git.gtr-original beside it, and every signoff failed with "missing preserved executable".
-  const { home, repo } = beelinkGit({ cap: 4, floor_bytes: 0 });
+  const { home, repo } = beelinkGit({ cap: 4, });
   const stub = join(home, "stub-bin");
   mkdirSync(stub);
   symlinkSync(join(home, "bin/git"), join(stub, "git"));
@@ -226,8 +220,8 @@ test("the Beelink shim sends only worktree commands to Python", () => {
   assert.match(r.stdout, /^git version/);
 });
 
-test("a Beelink worktree move into _wt is held to the same cap and floor as an add", () => {
-  const { home, git } = beelinkGit({ cap: 1, floor_bytes: 0 });
+test("a Beelink worktree move into _wt is held to the same cap and admission as an add", () => {
+  const { home, git } = beelinkGit({ cap: 1, });
   const lane = { FLEET_LANE: "op-devplatform:mover" };
   const outside = (name) => join(home, "code/repo/.worktrees", name);
   assert.equal(git(["worktree", "add", "-q", "--detach", outside("m1")], lane).status, 0, "outside _wt is not capped");
@@ -239,10 +233,10 @@ test("a Beelink worktree move into _wt is held to the same cap and floor as an a
   const second = git(["worktree", "move", "-f", outside("m2"), join(home, "code/_wt/m2")], lane);
   assert.equal(second.status, 125, "the moved tree counts against the lane");
   assert.match(second.err, /holds 1 of 1/);
-  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, floor_bytes: Number.MAX_SAFE_INTEGER }));
+  writeFileSync(join(home, "bin/git.worktree-cap.json"), JSON.stringify({ cap: 4, admission_policy: policy(home, Number.MAX_SAFE_INTEGER, 1) }));
   const floor = git(["worktree", "move", outside("m2"), join(home, "code/_wt/m3")], lane);
   assert.equal(floor.status, 125, "lane-10080 moved a tree into _wt under the floor on 2026-10-12");
-  assert.match(floor.err, /floor/);
+  assert.match(floor.err, /lifecycle minimum/);
 });
 
 test("GTR refuses a worktree move into _wt like an add", () => {

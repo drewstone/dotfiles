@@ -76,7 +76,7 @@ This is the single definition of disk use on GTR and the Beelinks, and of gate a
 |---|---|---|
 | GTR | At least 200 GiB free on `/` | the op-company operator: maintained producers and cleanup paths |
 | GTR | Each lane's worktrees within 1 GiB; no new worktree below 36 GiB free | `storage-lifecycle create` (rules below) |
-| Beelinks | At most 4 `_wt` worktrees per lane; none created below 200 GiB free | the Git shim, from [`beelink-worktree-cap.json`](../../host/gtr-install-guard/beelink-worktree-cap.json) |
+| Beelinks | At most 4 `_wt` worktrees per lane; a new one must fit size-aware storage admission (free - reservations - its size >= the lifecycle minimum) | the Git shim, from [`beelink-worktree-cap.json`](../../host/gtr-install-guard/beelink-worktree-cap.json) |
 | Beelinks | Gate cache at most 40 GiB, least recently used idle checkout evicted first; idle checkouts first shrink to their repo's sparse patterns; Rust output inside it | `beelink-gate` |
 | Beelinks | Cargo output in `~/.cache/<repo>-build` untouched for 24 h is removed after each gate | `beelink-gate`, holding the repo's gate locks and cargo's own locks |
 | Beelinks | New gates honor the operational floor from Tangle Tools `fleet/disk_policy.py` plus their existing allowance; `disk_floor_gib=` in `~/.config/beelink-gate/limits` may raise it; query `beelink-gate --disk-floor-bytes` | `beelink-gate` |

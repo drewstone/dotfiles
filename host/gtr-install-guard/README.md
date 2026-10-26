@@ -82,7 +82,9 @@ package installs are not refused, since Beelinks are where they run.
   `host/ssh/20-fleet-lane-accept.conf`). The lane is recorded as `fleet-lane` in the new worktree's admin directory.
 - A lane at its configured `cap` is refused, listing its longest-idle trees: `OWNER_RELEASED=1 wt-remove <path>` for the lane's own,
   plain `wt-remove <path>` (which keeps its idle guard) for another lane's.
-  The live `floor_bytes` also refuses adds. Its message points to the existing read-only
+  An add that does not fit Tangle Tools' size-aware admission (free - live reservations - the tree's tracked bytes >= the
+  lifecycle minimum, `admission_headroom` in `/usr/local/libexec/tangle-fleet-disk-policy.py`, the rule `beelink-gate` uses)
+  is refused; an unreadable owner admits with a note. Its message points to the existing read-only
   `storage-lifecycle run --exclusive-inventory --max-seconds 20`; the guard does not duplicate allocation or salvage scans.
 - Counting, checkout and the lane record run under one per-lane lock, and the record is written whenever the tree exists,
   so parallel adds and a failing post-checkout hook still count. Trees nested up to 3 levels under a root count.
