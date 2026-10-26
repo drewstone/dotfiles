@@ -214,10 +214,11 @@ def measure(checkout, rev, scopes=()):
     except (OSError, ValueError):
         pass
     paths = git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1]
-    logic, source = [p for p in paths if C.logic(p)], [p for p in paths if C.source(p)]
+    logic, source = [p for p in paths if C.candidate(p)], [p for p in paths if C.source(p)]
     function_paths = [p for p in paths if C.function_source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
     blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
+    logic = [p for p in logic if C.logic(p, C.head_of(blobs[p]))]
     sizes = production_sizes(checkout, tree, {p: blobs[p] for p in logic})
     if not sizes:
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
@@ -348,8 +349,9 @@ def production_sizes(checkout, tree, blobs):
 
 def files(checkout, rev):
     tree = tree_of(checkout, rev)
-    logic = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.logic(p)]
+    logic = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.candidate(p)]
     blobs = read_blobs(checkout, tree, logic)
+    blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
     sizes = production_sizes(checkout, tree, blobs)
     return "".join(f"{p}\t{C.line_count(b)}\t{'logic' if p in sizes else 'exempt'}\n" for p, b in blobs.items())
 
