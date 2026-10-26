@@ -134,7 +134,7 @@ async function run(argv) {
   const client = new Sandbox({ apiKey: key, baseUrl: process.env.BEELINK_GATE_SANDBOX_URL || 'https://sandbox.tangle.tools' })
   // A global cap across launchers: gate boxes are named, so the live list is the count.
   const capacityOff = path.join(cacheDir(), 'sandbox-capacity-refused')
-  if (existsSync(capacityOff) && Date.now() - statSync(capacityOff).mtimeMs < CAPACITY_BACKOFF_MS) tempfail(`platform refused capacity at ${readFileSync(capacityOff, 'utf8').trim()}; no create for 5 minutes`)
+  if (existsSync(capacityOff) && Date.now() - statSync(capacityOff).mtimeMs < CAPACITY_BACKOFF_MS) tempfail(`platform refused a create (${readFileSync(capacityOff, 'utf8').trim().slice(0, 400)}); no create for 5 minutes`)
   // Warm source boxes hold snapshots, not gates, so they do not count toward the cap.
   const live = (await client.list().catch(() => [])).filter((b) => b.name?.startsWith(BOX_PREFIX) && !b.name.startsWith(`${BOX_PREFIX}warm-`) && !['deleted', 'stopped', 'failed'].includes(b.status))
   if (live.length >= MAX_LIVE) tempfail(`cap reached: ${live.length} of ${MAX_LIVE} gate boxes live`)
@@ -173,11 +173,17 @@ async function run(argv) {
       return client.create(spec)
     })
   } catch (error) {
+    // Every field the SDK error carries (request id, origin, endpoint, cell metadata) is evidence the capacity
+    // owner asks for; on 10-26 only 'SERVER_ERROR' was kept for two 503s.
+    const evidence = JSON.stringify({ at: new Date().toISOString(), message: String(error.message).slice(0, 400),
+      // Scalars only, and nothing credential-shaped: SDK objects can carry the API key (memory sdk-objects-embed-api-keys).
+      ...Object.fromEntries(Object.entries(error).filter(([k, v]) => ['string', 'number', 'boolean'].includes(typeof v)
+        && !/key|token|secret|auth|header|cookie|password/i.test(k))) })
     if (error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) {
       mkdirSync(cacheDir(), { recursive: true })
-      writeFileSync(capacityOff, `${new Date().toISOString()} ${error.code || error.status}\n`)
+      writeFileSync(capacityOff, `${evidence}\n`)
     }
-    tempfail(`create refused: ${error.code || error.status || ''} ${String(error.message).slice(0, 200)}`)
+    tempfail(`create refused: ${evidence.slice(0, 600)}`)
   }
   if (stopping) { await stop(); process.exit(143) }
   const created = Date.now()
