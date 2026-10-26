@@ -72,6 +72,9 @@ export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$P
 # C/C++ with the image's gcc, as on the Beelinks: nix's cc has no static glibc, and sidecar's -static
 # process-supervisor failed '-lc not found' (api-latency, 10-26).
 [ ! -x /usr/bin/gcc ] || export CC="\${CC:-/usr/bin/gcc}" CXX="\${CXX:-/usr/bin/g++}"
+# The box's cgroup allows 512 pids and threads count: turbo's 10 parallel builds, each Node plus rolldown's rayon
+# pool, hit EAGAIN ('global thread pool has not been initialized', slim-edge 09:14Z). Callers can still override.
+export TURBO_CONCURRENCY="\${TURBO_CONCURRENCY:-4}" RAYON_NUM_THREADS="\${RAYON_NUM_THREADS:-2}"
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= \\
   GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
 # Every git in the box authenticates, whatever environment a command gives it: a partial clone fetches blobs
