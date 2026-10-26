@@ -59,6 +59,9 @@ const quote = (s) => `'${String(s).replace(/'/g, `'"'"'`)}'`
 // the default branch's origin ref (turbo --filter=...[origin/develop] needs it), the frozen install the
 // Beelink gate runs, then the command. Each step prints a marker; the last one names a failed step.
 function gateScript({ repoUrl, sha, mode, branch, command }) {
+  // A box has no SSH key: lanes' git@github.com URLs failed every fetch (exit 70 on four repos, 07:07-07:27Z).
+  // GitHub repos are fetched over https through gh's credential helper.
+  repoUrl = repoUrl.replace(/^(?:git@github\.com:|ssh:\/\/git@github\.com\/)/, 'https://github.com/')
   const install = mode === 'install' || mode === 'ship'
   return `set -o pipefail
 step() { echo "beelink-gate-sandbox: $1 $(date -u +%H:%M:%SZ)" >&2; }
