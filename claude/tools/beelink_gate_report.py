@@ -43,11 +43,14 @@ for line in open(path):
 # gh owns persistence/expiry. Cache age is not returned by its API command, so
 # expose the maximum possible staleness without calling a cached response fresh.
 GITHUB_METADATA_CACHE_SECONDS = GITHUB_CACHE_SECONDS
+# A repo's current name changes only on a rename, and GitHub redirects the old one meanwhile. At the 5-minute
+# window fleet-ops-watch's half-hourly report re-read all 97 repos each run, its top GitHub caller (2026-10-26).
+CANONICAL_CACHE_SECONDS = 7 * 86400
 canonical_names = {}
 canonical_unknown = set()
-def github(args):
+def github(args, cache_s=GITHUB_METADATA_CACHE_SECONDS):
     try:
-        return subprocess.run([gh, "api", "--cache", f"{GITHUB_METADATA_CACHE_SECONDS}s", *args], capture_output=True, text=True, timeout=15)
+        return subprocess.run([gh, "api", "--cache", f"{cache_s}s", *args], capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired) as error:
         return subprocess.CompletedProcess(args, 124 if isinstance(error, subprocess.TimeoutExpired) else 127, "", "metadata unavailable")
 def canonical(repo):
@@ -57,7 +60,7 @@ def canonical(repo):
         canonical_unknown.add(repo)
         return repo
     if repo not in canonical_names:
-        out = github([f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"])
+        out = github([f"repos/{repo[len('github.com/'):]}", "--jq", ".full_name"], CANONICAL_CACHE_SECONDS)
         name = out.stdout.strip()
         if out.returncode == 0 and name.count("/") == 1:
             canonical_names[repo] = f"github.com/{name}"
@@ -104,6 +107,7 @@ if not json_output:
     with ThreadPoolExecutor(max_workers=4) as pool:
         merged_counts = dict(zip(by_repo, pool.map(merged, by_repo)))
 print(f"GITHUB_METADATA enabled={bool(gh)} cache_max_age_s={GITHUB_METADATA_CACHE_SECONDS} "
+      f"canonical_cache_max_age_s={CANONICAL_CACHE_SECONDS} "
       f"actual_cache_age=unknown canonical_unknown={sorted(canonical_unknown)} "
       f"merged_unknown={sorted(repo for repo, count in merged_counts.items() if count is None)}")
 for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
@@ -217,6 +221,7 @@ if json_output:
                                 "frontend_requests": frontend,
                                 "github_metadata": {"enabled": bool(gh),
                                                     "cache_max_age_s": GITHUB_METADATA_CACHE_SECONDS,
+                                                    "canonical_cache_max_age_s": CANONICAL_CACHE_SECONDS,
                                                     "cache_age_s": None,
                                                     "canonical_names": {repo: name for repo, name in canonical_names.items() if repo not in canonical_unknown},
                                                     "canonical_unknown": sorted(canonical_unknown),
