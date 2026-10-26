@@ -1020,6 +1020,34 @@ print("beelink-gate timing: " + json.dumps(timing, sort_keys=True), file=sys.std
 PY
   }
 
+# Bundle command-created commits unreachable from remotes before a checkout is reused or a GTR clone
+# removed. Exclude refs present before the command, so later gates do not save them again.
+save_unpushed() {
+  [ -d "$checkout/.git" ] && [ "$gate_refs_taken" = 1 ] || return 0
+  local new stamp heads h restore=""
+  local -a before=()
+  [ -z "$gate_refs_before" ] || read -ra before <<< "$gate_refs_before"
+  new=$(git -C "$checkout" rev-list --count HEAD --branches --not --remotes "$sha" "${before[@]}" 2>/dev/null) || return 0
+  (( new > 0 )) || return 0
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  bundle_note="$STATE_DIR/bundles/$owner-$repo-${sha:0:12}-$stamp.bundle"
+  if mkdir -p "${bundle_note%/*}" &&
+    git -C "$checkout" bundle create "$bundle_note" HEAD --branches --not --remotes "$sha" "${before[@]}" >/dev/null 2>&1; then
+    # HEAD may hold nothing new when the commit is on a branch; name each saved head.
+    heads=$(git bundle list-heads "$bundle_note" 2>/dev/null | awk '{ print $2 }')
+    for h in $heads; do restore+=" $h:refs/gate-bundle/${h#refs/heads/}"; done
+    echo "beelink-gate: $new commit(s) not on the remote saved to $bundle_note; restore: git fetch $bundle_note$restore" >&2
+  else
+    # No bundle: keep the commits as refs inside the checkout, which the next
+    # gate's checkout and clean leave alone, rather than lose them.
+    bundle_note="refs/beelink-gate-saved/$stamp"
+    git -C "$checkout" update-ref "$bundle_note/HEAD" HEAD 2>/dev/null
+    for h in $(git -C "$checkout" for-each-ref --format='%(refname:short)' refs/heads); do
+      git -C "$checkout" update-ref "$bundle_note/$h" "refs/heads/$h" 2>/dev/null
+    done
+    echo "beelink-gate: WARNING could not write a bundle; $new unpushed commit(s) kept as $bundle_note/* in $checkout" >&2
+  fi
+}
 reap_leftovers() {  # stop every process that still carries run_token
   local signal paths
   for signal in TERM KILL; do
@@ -1256,34 +1284,6 @@ remote_gate() {
     local left=$((deadline - SECONDS))
     (( left < 60 )) || left=60
     gate_bytes "$left" "$checkout" "${package_stores[@]}"
-  }
-  # Bundle command-created commits unreachable from remotes before checkout reuse.
-  # Exclude refs present before the command, so later gates do not save them again.
-  save_unpushed() {
-    [ -d "$checkout/.git" ] && [ "$gate_refs_taken" = 1 ] || return 0
-    local new stamp heads h restore=""
-    local -a before=()
-    [ -z "$gate_refs_before" ] || read -ra before <<< "$gate_refs_before"
-    new=$(git -C "$checkout" rev-list --count HEAD --branches --not --remotes "$sha" "${before[@]}" 2>/dev/null) || return 0
-    (( new > 0 )) || return 0
-    stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-    bundle_note="$STATE_DIR/bundles/$owner-$repo-${sha:0:12}-$stamp.bundle"
-    if mkdir -p "${bundle_note%/*}" &&
-      git -C "$checkout" bundle create "$bundle_note" HEAD --branches --not --remotes "$sha" "${before[@]}" >/dev/null 2>&1; then
-      # HEAD may hold nothing new when the commit is on a branch; name each saved head.
-      heads=$(git bundle list-heads "$bundle_note" 2>/dev/null | awk '{ print $2 }')
-      for h in $heads; do restore+=" $h:refs/gate-bundle/${h#refs/heads/}"; done
-      echo "beelink-gate: $new commit(s) not on the remote saved to $bundle_note; restore: git fetch $bundle_note$restore" >&2
-    else
-      # No bundle: keep the commits as refs inside the checkout, which the next
-      # gate's checkout and clean leave alone, rather than lose them.
-      bundle_note="refs/beelink-gate-saved/$stamp"
-      git -C "$checkout" update-ref "$bundle_note/HEAD" HEAD 2>/dev/null
-      for h in $(git -C "$checkout" for-each-ref --format='%(refname:short)' refs/heads); do
-        git -C "$checkout" update-ref "$bundle_note/$h" "refs/heads/$h" 2>/dev/null
-      done
-      echo "beelink-gate: WARNING could not write a bundle; $new unpushed commit(s) kept as $bundle_note/* in $checkout" >&2
-    fi
   }
   finish() {
     local status=$?
