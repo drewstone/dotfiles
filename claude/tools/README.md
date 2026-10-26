@@ -356,8 +356,8 @@ events and current/maximum memory. This reads no arguments or working directorie
 and performs no extra process scan; unreadable or exited processes remain unknown.
 
 Every gate class runs as the caller's unprivileged UID in a SYSTEM-managed
-unit beneath the top-level `beelinkgate.slice`. Its low aggregate CPU and IO
-weights, normal quota and normal/dev memory limits have one source:
+unit beneath the top-level `beelinkgate.slice`. Its CPU and IO weights (100, the
+same as runner and user slices), normal quota and normal/dev memory limits have one source:
 [`host/cgroup/beelink-gate-policy.json`](../../host/cgroup/beelink-gate-policy.json).
 The maintained host installer renders and checks that policy through the host
 role; no runner restart or process migration is needed. Per-gate unit counts do
