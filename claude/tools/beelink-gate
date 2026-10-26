@@ -2217,12 +2217,10 @@ case "$install_mode" in
 esac
 export BEELINK_GATE_SPARSE_SPEC
 requested=$target admit_wait_launch="" placed_wait_launch=0; [ -z "${BEELINK_GATE_RESERVE_BYTES:-}" ] || { [ "$target" = drew-gtr-pro ] && [[ "$BEELINK_GATE_RESERVE_BYTES" =~ ^[1-9][0-9]{0,14}$ ]]; } || die "BEELINK_GATE_RESERVE_BYTES is a whole number of bytes (1-15 digits) for named drew-gtr-pro gates only"
-# An --urgent gate stays on the first host auto places it on: giving the host
-# back drops its urgent marker and with it its place ahead of every normal gate.
-# An urgent fix for a red ADC develop (#10345) was re-placed for
-# 1413 s while normal gates re-took the checkout each time it let go.
-if [ "$requested" = auto ] && [ "${BEELINK_GATE_URGENT:-0}" != 1 ]; then
-  admit_wait_launch=$(seconds_of "${BEELINK_GATE_REPLACE_WAIT:-60s}") || die "invalid BEELINK_GATE_REPLACE_WAIT: ${BEELINK_GATE_REPLACE_WAIT:-}"
+# An --urgent gate keeps its first host (re-placed every 60 s, #10345's fix lost the checkout for 1413 s) until the
+# sandbox mark, then gives it back once so a CPU-pressure hold can overflow to a sandbox (#14831 held 7 min, 10-26).
+if [ "$requested" = auto ] && { [ "${BEELINK_GATE_URGENT:-0}" != 1 ] || [ "${BEELINK_GATE_SANDBOX:-1}" != 0 ]; }; then
+  admit_wait_launch=$(seconds_of "$([ "${BEELINK_GATE_URGENT:-0}" = 1 ] && echo "${BEELINK_GATE_SANDBOX_AFTER:-5m}" || echo "${BEELINK_GATE_REPLACE_WAIT:-60s}")") || die "invalid BEELINK_GATE_REPLACE_WAIT or BEELINK_GATE_SANDBOX_AFTER"
 fi
 starve_after_launch=$(seconds_of "${BEELINK_GATE_STARVE_AFTER:-10m}") || die "invalid BEELINK_GATE_STARVE_AFTER: ${BEELINK_GATE_STARVE_AFTER:-}"
 if [ "$requested" = auto ]; then
