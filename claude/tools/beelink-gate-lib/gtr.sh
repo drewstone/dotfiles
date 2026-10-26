@@ -162,12 +162,12 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
     reap_leftovers
     return "$rc"
   }
-  # Each step runs in a user scope capped at half the CPUs and 40% of memory, and says it is admitted, so a harness
-  # that demands an admitted gate (hostlab capture) can run here; without a user manager it runs unbounded and unsaid.
-  local cpu=$(( $(nproc) * 50 )) mem=$(( $(awk '/^MemTotal/{print $2}' /proc/meminfo) * 4096 / 10 ))
-  export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
-  systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" --) \
-    && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
+  # Each step runs on half the CPUs (affinity, which availableParallelism reads) in a user scope capped there and at
+  # 32 GiB, and says it is admitted: hostlab's harness then sizes its VM 8 vCPU / 16 GiB. No user manager: unbounded, unsaid.
+  local cpus=$(( $(nproc --all) / 2 )) mem=$(( 32 << 30 )) cpu
+  cpu=$(( cpus * 100 )); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
+  systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" -- taskset -c "0-$((cpus - 1))") \
+    && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpus\":$cpus,\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
   mkdir -p "$dir" || exit 75
   git clone --quiet --no-checkout --filter=blob:none "$(fetch_url "$repo_url")" "$checkout" || exit 75
   git -C "$checkout" fetch --quiet --filter=blob:none origin "$sha" || exit 75
