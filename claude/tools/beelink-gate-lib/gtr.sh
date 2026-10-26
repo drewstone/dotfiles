@@ -15,10 +15,17 @@ gtr_receipts() {
   else bounded_transport "$GTR_HOST receipts" ssh "${SSH_OPTIONS[@]}" "$GTR_HOST" "$read"; fi
 }
 
-# The lease's bytes: the clone this repo's newest GTR gate measured plus a quarter, else 3 GiB. The lane's
-# 4 GiB storage quota also counts its other bytes, so asking for all of it is always refused.
+# The lease's bytes: the most any measurement says this gate can grow. That is the repo's newest GTR
+# clone plus a quarter, or the growth in the Beelinks' install reserve for its checkout shape
+# (last_install_reserve_bytes: their newest cold receipt, which is the 10 GiB headroom plus measured
+# growth), whichever is larger; a repo no host has measured asks for the whole 10 GiB. A 3 GiB default
+# leased Discovery Lab's 5.2 GB clone. A lane quota below the honest request refuses it, and the gate
+# keeps waiting for a Beelink.
 gtr_reserve_bytes() {
-  python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" <<'PY'
+  local peer=0 value beelink_bytes
+  for value in "${matched_reserve[@]}"; do [[ "$value" =~ ^[0-9]+$ ]] && (( value > peer )) && peer=$value; done
+  beelink_bytes=$(last_install_reserve_bytes "$GTR_HOST" "$host/$owner/$repo" install "${BEELINK_GATE_SPARSE_SPEC:-}" "$peer" "" cold) || return 1
+  python3 - "$STATE_DIR/receipts.jsonl" "$host/$owner/$repo" "$beelink_bytes" <<'PY'
 import json, sys
 newest = 0
 try:
@@ -31,7 +38,10 @@ try:
             newest = row["gtr_bytes"]
 except OSError:
     pass
-print(max(1 << 30, newest * 5 // 4) if newest else 3 << 30)
+headroom = 10 * 1024 ** 3
+beelink = int(sys.argv[3])
+growth = beelink - headroom if beelink > headroom else headroom
+print(max(growth, newest * 5 // 4) if newest else max(growth, 1 << 30))
 PY
 }
 
@@ -52,8 +62,9 @@ gtr_gate() {  # <command>...
   if gtr_self; then
     parse_repo_url "$repo_url"
     id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-    dir="$HOME/.cache/gtr-gate/$id" bytes=$(gtr_reserve_bytes)
-    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane reserves $bytes bytes for $dir" >&2
+    dir="$HOME/.cache/gtr-gate/$id"
+    bytes=$(gtr_reserve_bytes) || { rm -f "$log"; return "$NOT_ADMITTED"; }
+    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane ${BEELINK_GATE_LANE:-gtr-gate} reserves $bytes bytes for $dir" >&2
     # Its own session, so a stop reaches run-lane, the gate and the command together.
     setsid storage-lifecycle run-lane --lane "${BEELINK_GATE_LANE:-gtr-gate}" --path "$dir" --bytes "$bytes" -- \
       env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
