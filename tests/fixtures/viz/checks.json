@@ -1,5 +1,0 @@
-{ "title": "Release checks", "columns": ["check", "passed", "state", "minutes"], "rows": [
-  { "check": "typecheck", "passed": true, "state": { "pill": "green", "tone": "good" }, "minutes": 2 },
-  { "check": "unit tests", "passed": true, "state": { "pill": "flaky", "tone": "warn" }, "minutes": 9 },
-  { "check": "canary", "passed": false, "state": { "pill": "red", "tone": "crit" }, "minutes": 14 },
-  { "check": "load test", "passed": null, "state": { "pill": "no signal", "tone": "blind" }, "minutes": null } ] }
