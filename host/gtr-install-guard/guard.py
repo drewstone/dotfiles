@@ -147,10 +147,9 @@ def fallback_refusal(values: list[str], cwd: Path):
             admission.lease_receipt(path, requester_pid=os.getpid())
     except Exception as error:
         return ("gtr-install-guard: fallback install requires a live matching "
-                "storage-lifecycle lease: " + str(error) + ". Reserve the actual "
-                "bytes with storage-lifecycle admit or run-lane; if refused, keep "
-                "waiting for a Beelink. Preserve retention checks and release the "
-                "exact lease after the producer finishes.")
+                "storage-lifecycle lease: " + str(error) + ". Gate with "
+                "beelink-gate drew-gtr-pro|auto <repo-url> <full-sha> -- <command>, "
+                "which takes and releases that lease.")
     return None
 
 
@@ -288,9 +287,8 @@ def refusal(manager: str, argv: list[str], cwd: Path):
         return None
     return (f"gtr-install-guard: refused {manager} install in {root}, a checkout on GTR. Installs and gates run on "
             "a Beelink: push the commit, then from GTR run "
-            "beelink-gate beelink1|beelink2 <repo-url> <full-sha> -- <command> "
-            "(the gate does the frozen install in its own cache). If no Beelink admits it within 5 minutes, "
-            "reserve space with storage-lifecycle admit, then gate in a fresh clone under ~/.cache/gtr-gate/; if admission refuses, keep waiting for a Beelink. Retire the clone through wt-remove and release its exact lease after. "
+            "beelink-gate auto <repo-url> <full-sha> -- <command> "
+            "(the gate does the frozen install in its own cache, and on drew-gtr-pro under a storage lease when no Beelink admits it within 5 minutes). "
             "Any other new clone, inside _wt or not, is a checkout too. "
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 
