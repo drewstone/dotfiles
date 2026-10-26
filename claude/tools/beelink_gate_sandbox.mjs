@@ -71,6 +71,9 @@ export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
 export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo"
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= \\
   GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+# Every git in the box authenticates, whatever environment a command gives it: a partial clone fetches blobs
+# lazily, and a nested git without the env helper failed 'could not read Username' (platform mapped planner, 08:45Z).
+gh_bin=$(command -v gh) && git config --global credential.https://github.com.helper "!$gh_bin auth git-credential"
 git config --global user.name ${quote(gitIdentity('user.name') || 'beelink-gate')}; git config --global user.email ${quote(gitIdentity('user.email') || 'beelink-gate@users.noreply.github.com')}
 step fetch
 # A box restored from a warm snapshot already holds the repo's objects, Node, pnpm store and turbo cache.
