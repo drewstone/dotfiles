@@ -34,6 +34,7 @@ import collections
 import datetime as dt
 import json
 import os
+import shutil
 import re
 import subprocess
 import sys
@@ -322,7 +323,8 @@ def render(report) -> str:
     return "\n".join(lines)
 
 
-CLIMB_LOG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "climb-log")
+# climb-log is a tangle-tools command (climb-log/), installed into ~/.local/bin by tangle-tools-deploy.
+CLIMB_LOG = shutil.which("climb-log") or os.path.expanduser("~/.local/bin/climb-log")
 # hill -> (value, n, unit, metric, selectBy, how the day's items were chosen)
 HILLS = {
     "operator:corrections": lambda d: (d["corrected"], d["judged"], "corrections", "operator corrections", "event",
@@ -387,7 +389,7 @@ def main(argv):
         rows = climb_rows(report)
         if values.get("--append"):
             path = values["--append"]
-            proc = subprocess.run([sys.executable, CLIMB_LOG, "append", "--ledger", path, "--skip-existing"],
+            proc = subprocess.run([CLIMB_LOG, "append", "--ledger", path, "--skip-existing"],
                                   input="".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
                                   capture_output=True, text=True)
             if proc.returncode != 0:

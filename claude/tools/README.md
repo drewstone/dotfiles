@@ -688,17 +688,7 @@ beelink-gate --light auto git@github.com:owner/repo.git <full-sha> -- bash -c 'b
 
 ## climb-log
 
-Writes and lints a project's climb ledger (`reports/climb/ledger.jsonl` in Discovery Lab, else `.agent/climb.jsonl`; [climb.md](../../docs/processes/climb.md#every-number-names-its-sample)).
-A baseline or result that reports a number needs a `measurement` block naming its metric, unit, selection rule, `selectBy`, `n`, basis and window; a per-release number also names one `codeVersion` and its `deployedAt`, and a baseline row names its instrument and calibration.
-`brief-judge`, `skill-scoreboard --climb` and `lead-scorecard --climb` append through it, and process-guard refuses shell writes into a ledger.
-`check` also rejects, at any date, what a `merge=union` merge can get wrong: a split or interleaved line and a repeated row; `append` names a ledger that lacks the attribute.
-
-```bash
-climb-log schema                                   # the contract, with an example row
-climb-log append --file row.json                   # check, then append; prints the id (refuses: nothing written)
-climb-log check                                    # lint rows written since 2026-10-11; exit 1 on a failing row
-climb-log hills --json                             # each hill's instrument and calibration verdict
-```
+`climb-log` is a tangle-tools command: see [tangle-tools climb-log/README.md](https://github.com/tangle-network/tangle-tools/blob/main/climb-log/README.md).
 
 ## skill-run-log, skill-scoreboard, lead-scorecard
 
@@ -728,58 +718,7 @@ lead-scorecard decision ask <id> --question "<what only Drew can decide>"
 
 ## have
 
-Answers "do we already have X?" before anyone says something is missing.
-One grep for one spelling found nothing for a sandbox start-latency harness that existed as a directory of evals, two workflows disabled by hand and a task on the board.
-`have` sweeps all of those at once and prints one ranked report.
-
-```bash
-have sandbox eval harness            # paths, scripts, workflows with state, content and tasks, best first
-have --in widgets eval harness       # only repositories whose name or path contains "widgets"
-have --offline otel span             # no fetch, no GitHub API
-have --only workflows,boards canary  # run only these sweeps; --skip drops some
-```
-
-A term is stemmed and widened with synonyms, so `eval harness` also looks for bench, perf, latency, waterfall, canary, probe, ratchet and baseline.
-Terms that name one idea share a concept, and a hit that covers more concepts ranks higher.
-The report opens with `WHERE TO LOOK FIRST`, then lists each sweep; every hit carries its exact location:
-
-| Sweep | Reads | Location printed |
-|---|---|---|
-| paths | `git ls-tree -r` of `origin/<default>` in every repository under the roots, after a `git fetch -q` (reused for 10 minutes) | `repo:dir/` with a file count and sample names |
-| scripts | `package.json` scripts, by name or command | `repo:path/package.json   scripts.<name> = <command>` |
-| workflows | workflow files on the default branch, then the GitHub API for state and the latest run | `repo:.github/workflows/<file>   disabled_manually; last run failure 2026-09-08` |
-| content | `git grep -c --all-match -i` on the default branch: files with a word of every concept | `repo:path   N matching lines` |
-| boards | the task and note sources named in the config | `tasks:<label> #<id>`, `notes:<label>:<file>:<line>` |
-
-It never reads a working tree, so a stale or sparse checkout cannot hide a file.
-A checkout with no `origin` is read at its local default branch and the report says so.
-Clones of one repository count once.
-A `NO HITS` report holds only for what its `searched:` lines list.
-Exit status is 0 with hits, 1 with none, 2 on a usage error.
-
-GitHub reads use `$GH` (else the config's `gh`, else `gh`) and cost one call per 100 workflows of each repository that holds a shown workflow, plus one per shown workflow for its latest run.
-Answers are cached for 15 minutes under `~/.cache/have/` (`--refresh` rereads); `HAVE_GH_BUDGET` (default 60) caps the calls in one run, and a rate-limit or quota refusal stops them with the sweep marked unread.
-
-### Config
-
-`have` reads `~/.config/have/config` (or `--config FILE`, or `$HAVE_CONFIG`); with no config it searches the repository it is run in.
-The file is local and untracked: it names the machine's roots and task sources, so it never belongs in this repository.
-One `key = value` per line; a line that starts with `#` is a comment.
-
-```text
-root = ~/code                    scan this directory and the repositories up to `depth` levels below it
-repo = ~/src/one-repo            one checkout
-github = owner/name              a repository with no checkout here: tree and workflows by API
-gh = gh                          the GitHub CLI command
-depth = 2                        levels below a root (default 2)
-exclude = */archive/*            skip checkouts whose path matches this glob
-synonyms = soak, burn-in         words that stand for one another (repeatable)
-tasks board = my-tasks --json    run with sh -c; prints JSON (a list of objects with id, title, state) or text in which each task starts at a line that begins with an id such as #12 or ABC-12
-notes memory = ~/notes           search the .md and .txt files below this directory
-```
-
-`tasks` commands run as the user, so list only commands you would run by hand.
-Directories whose names start with `.` or `_` are not scanned for repositories.
+`have` is a tangle-tools command: see [tangle-tools have/README.md](https://github.com/tangle-network/tangle-tools/blob/main/have/README.md).
 
 ## skills
 
@@ -810,4 +749,5 @@ This installer retires only its former links to the checkout wrapper; it preserv
 
 ## reviews-index
 
-Turns every page under `~/reviews` into a markdown digest in `~/.cache/reviews-md/<host>/` (title, summary, sections, text, links and the page path) and runs `qmd update`, so `qmd search -c reviews '<terms>'` finds analyses other agents wrote. `--peer <ssh-host>` pulls that host's digests; each host owns its own directory. Cron runs it hourly on the Mac (`--peer gtr`) and on drew-gtr-pro (`--peer drews-macbook-pro`).
+`reviews-index` is a tangle-tools command: see [tangle-tools reviews-index/README.md](https://github.com/tangle-network/tangle-tools/blob/main/reviews-index/README.md).
+
