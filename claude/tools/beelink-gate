@@ -2216,7 +2216,7 @@ case "$install_mode" in
     ;;
 esac
 export BEELINK_GATE_SPARSE_SPEC
-requested=$target admit_wait_launch="" placed_wait_launch=0
+requested=$target admit_wait_launch="" placed_wait_launch=0; [ -z "${BEELINK_GATE_RESERVE_BYTES:-}" ] || { [ "$target" = drew-gtr-pro ] && [[ "$BEELINK_GATE_RESERVE_BYTES" =~ ^[1-9][0-9]{0,14}$ ]]; } || die "BEELINK_GATE_RESERVE_BYTES is a whole number of bytes (1-15 digits) for named drew-gtr-pro gates only"
 # An --urgent gate stays on the first host auto places it on: giving the host
 # back drops its urgent marker and with it its place ahead of every normal gate.
 # An urgent fix for a red ADC develop (#10345) was re-placed for
