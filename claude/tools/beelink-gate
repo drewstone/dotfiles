@@ -2338,8 +2338,7 @@ while :; do
   fi
   if [ "$target" = "$GTR_HOST" ]; then
     gtr_gate "$@"
-    [ -n "${BEELINK_GATE_GTR_AUTO:-}" ] || tempfail "$(utc_in_minutes 5)" "$GTR_HOST storage admission refused; gate on a Beelink"
-    exit "$NOT_ADMITTED"
+    tempfail "$(utc_in_minutes 5)" "$GTR_HOST storage admission refused; gate on a Beelink"
   fi
   update_window_of "$target" || tempfail "$(utc_in_minutes 5)" "cannot read the Windows Update schedule of $target"
   encoded=()

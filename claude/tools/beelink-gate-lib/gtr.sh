@@ -63,13 +63,8 @@ PY
 # GTR says "drew-gtr-pro admitted" on stderr once it has the lease; nothing else counts as admission.
 gtr_gate() {  # <command>...
   local rc pid log id dir bytes lifecycle q admitted flag=()
-  case "$install_mode" in install|no-install) ;;
-    *) [ "$requested" != "$GTR_HOST" ] || die "drew-gtr-pro runs install and --no-install gates only, not --$install_mode"
-       return "$NOT_ADMITTED" ;; esac
-  if [ "${gate_class:-}" = dev ] || [ -n "${gate_branch:-}" ]; then
-    [ "$requested" != "$GTR_HOST" ] || die "--dev and --branch gates run on the Beelinks, not drew-gtr-pro"
-    return "$NOT_ADMITTED"
-  fi
+  case "$install_mode" in install|no-install) ;; *) die "drew-gtr-pro runs install and --no-install gates only, not --$install_mode" ;; esac
+  [ "${gate_class:-}" != dev ] && [ -z "${gate_branch:-}" ] || die "--dev and --branch gates run on the Beelinks, not drew-gtr-pro"
   [ "$install_mode" = install ] || flag=(--no-install)
   log=$(mktemp) || return "$NOT_ADMITTED"
   if gtr_self; then
@@ -85,7 +80,7 @@ gtr_gate() {  # <command>...
       env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
       "$BASH" "$gate_source_root/beelink-gate" --gtr-run "$(encode "$log")" "$(encode "$dir")" "$(encode "$repo_url")" "$(encode "$sha")" "$(encode "$install_mode")" "$@" &
   else
-    printf -v q '%q ' env BEELINK_GATE_GTR_AUTO=1 BEELINK_GATE_PR="${BEELINK_GATE_PR:-}" BEELINK_GATE_LANE="$BEELINK_GATE_LANE" \
+    printf -v q '%q ' env BEELINK_GATE_PR="${BEELINK_GATE_PR:-}" BEELINK_GATE_LANE="$BEELINK_GATE_LANE" \
       BEELINK_GATE_MAX_HOLD="${BEELINK_GATE_MAX_HOLD:-}" BEELINK_GATE_PLACED_WAIT=$((SECONDS - launched)) \
       bin/beelink-gate ${flag[@]+"${flag[@]}"} "$GTR_HOST" "$repo_url" "$sha" -- "$@"
     ssh -n "${SSH_OPTIONS[@]}" "$GTR_HOST" "$q" 2> >(tee -a "$log" >&2) &
@@ -161,12 +156,18 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   step() {
     local left=$((started + max_hold - SECONDS)) rc
     (( left > 0 )) || { echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2; return 124; }
-    BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "$@" </dev/null & current=$!
+    BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "${gtr_scope[@]}" "$@" </dev/null & current=$!
     wait "$current"; rc=$?
     current=""
     reap_leftovers
     return "$rc"
   }
+  # Each step runs in a user scope capped at half the CPUs and 40% of memory, and says it is admitted, so a harness
+  # that demands an admitted gate (hostlab capture) can run here; without a user manager it runs unbounded and unsaid.
+  local cpu=$(( $(nproc) * 50 )) mem=$(( $(awk '/^MemTotal/{print $2}' /proc/meminfo) * 4096 / 10 ))
+  export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
+  systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" --) \
+    && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
   mkdir -p "$dir" || exit 75
   git clone --quiet --no-checkout --filter=blob:none "$(fetch_url "$repo_url")" "$checkout" || exit 75
   git -C "$checkout" fetch --quiet --filter=blob:none origin "$sha" || exit 75
