@@ -401,19 +401,6 @@ def check_pushed(path):
 
 # ---------------------------------------------------------------- processes
 
-def proc_dump(use_sudo=False):
-    """Use the maintained, root-protected Linux reader; never a second scanner."""
-    command = (['sudo', '-n'] if use_sudo else []) + ['/usr/local/libexec/tangle-storage-proc-scan']
-    result = subprocess.run(command, capture_output=True, text=True, timeout=300, check=True)
-    data = json.loads(result.stdout)
-    if (not isinstance(data, dict) or not isinstance(data.get('paths'), list)
-            or any(not isinstance(p, str) or not p.startswith('/') for p in data['paths'])
-            or not isinstance(data.get('unreadable'), list)
-            or any(type(p) is not int or p <= 0 for p in data['unreadable'])):
-        raise Skip('canonical Linux process reader returned incomplete data')
-    return set(data['paths']), data['unreadable']
-
-
 def process_table():
     """pid -> ps state letters for every process (works on Linux and macOS)."""
     out = subprocess.run(['ps', '-axo', 'pid=,stat='], stdout=subprocess.PIPE,
@@ -438,20 +425,7 @@ def alive(pid, table):
     return state is not None and not state.startswith('Z')
 
 
-def scan_processes(use_sudo, log, attempts=3, pause=3.0):
-    """Scan until complete. A process that exits or starts mid-scan makes a
-    scan incomplete; retry a few times before giving up."""
-    for attempt in range(1, attempts + 1):
-        try:
-            return _scan_processes(use_sudo, log)
-        except Skip as exc:
-            if attempt == attempts:
-                raise
-            log.write(event='proc-scan-retry', attempt=attempt, reason=str(exc))
-            time.sleep(pause)
-
-
-def _scan_processes(use_sudo, log):
+def scan_processes(use_sudo, log):
     """Return every path a live process holds, or raise Skip.
 
     Any live process the scan cannot inspect makes the whole scan incomplete:
@@ -459,14 +433,16 @@ def _scan_processes(use_sudo, log):
     """
     hint = ''
     if IS_LINUX:
-        paths, unreadable = proc_dump()
-        if unreadable and use_sudo:
-            try:
-                privileged, unreadable = proc_dump(True)
-                paths.update(privileged)
-            except (OSError, ValueError, subprocess.SubprocessError) as error:
-                raise Skip('canonical privileged Linux process reader unavailable') from error
-        hint = '; the Linux scan needs passwordless sudo to read other accounts\' processes'
+        try:
+            if use_sudo:
+                owner = storage_owner('core')
+                return owner.Live.scan(owner.Config.load()).paths
+            data = storage_owner('proc_scan').dump()
+            if data['unreadable']:
+                raise Skip('process scan incomplete: native reader reports unreadable processes')
+            return set(data['paths'])
+        except (OSError, RuntimeError, ValueError) as error:
+            raise Skip('canonical process visibility unavailable: %s' % error) from error
     elif IS_MAC:
         from wt_reaper_mac import scan
         try:

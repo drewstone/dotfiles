@@ -101,8 +101,8 @@ Linux cache policy and native PNPM GC belong to the existing Tangle Tools
 `storage-cache.service`, with producer custody in `storage_lifecycle/cache_producers.py`.
 Beelink-gate owns its locked checkout eviction. The reaper no longer has a second
 quiet-window, argv scan, store-version planner or checkout deletion loop.
-Its Linux liveness reader is the root-protected
-`/usr/local/libexec/tangle-storage-proc-scan`; unknown/missing coverage retains
+Its Linux liveness reader is the existing storage-lifecycle `Live.scan` and
+`proc_scan` owner, including the protected helper; unknown/missing coverage retains
 work. The Mac lsof reader is `git/worktree-reaper/wt_reaper_mac.py`, installed
 beside the existing command. Worktree retention and removal remain with wt-remove.
 

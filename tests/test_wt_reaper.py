@@ -75,14 +75,10 @@ def scan_is_complete():
         def write(self, **_):
             pass
     try:
-        mod._scan_processes(True, Quiet())
+        mod.scan_processes(True, Quiet())
         return True
     except mod.Skip:
-        try:  # a process may have exited mid-scan; one retry
-            mod._scan_processes(True, Quiet())
-            return True
-        except mod.Skip:
-            return False
+        return False
 
 
 SCAN_COMPLETE = scan_is_complete()
@@ -541,68 +537,12 @@ class RecheckFetchTest(unittest.TestCase):
 
 
 
-@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
-class UnixSocketTest(unittest.TestCase):
-    """A bound Unix socket counts as a held path."""
-
-    def test_bound_socket_path_is_held(self):
-        mod = load_reaper()
-        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-sock-'))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        sock = os.path.join(tmp, '.cache', 'svc.sock')
-        os.makedirs(os.path.dirname(sock))
-        child = subprocess.Popen(
-            [sys.executable, '-c', 'import os,socket,sys,time; os.chdir("/"); s=socket.socket(socket.AF_UNIX); '
-             's.bind(sys.argv[1]); s.listen(); print("ok", flush=True); time.sleep(60)', sock],
-            stdout=subprocess.PIPE)
-        self.addCleanup(child.stdout.close)
-        self.addCleanup(child.wait)
-        self.addCleanup(child.kill)
-        child.stdout.readline()
-        paths, _ = mod.proc_dump()
-        self.assertIn(sock, paths)
 
 
 
 
-@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
-class DeletedSuffixTest(unittest.TestCase):
-    """A directory literally named '... (deleted)' still counts as held."""
-
-    def test_literal_deleted_name_is_held(self):
-        mod = load_reaper()
-        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-del-'))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        tree = os.path.join(tmp, 'tree (deleted)')
-        os.makedirs(tree)
-        child = subprocess.Popen([sys.executable, '-c', 'import time; print("ok", flush=True); time.sleep(60)'],
-                                 cwd=tree, stdout=subprocess.PIPE)
-        self.addCleanup(child.stdout.close)
-        self.addCleanup(child.wait)
-        self.addCleanup(child.kill)
-        child.stdout.readline()
-        found, _ = mod.proc_dump()
-        self.assertIn(tree, found or [])
 
 
-@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc walk')
-class RelativeSocketTest(unittest.TestCase):
-    """A socket bound by relative path has no known directory: the process is unreadable."""
-
-    def test_relative_socket_makes_process_unreadable(self):
-        mod = load_reaper()
-        tmp = os.path.realpath(tempfile.mkdtemp(prefix='wt-reaper-rsock-'))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        child = subprocess.Popen(
-            [sys.executable, '-c', 'import os,socket,time; s=socket.socket(socket.AF_UNIX); '
-             's.bind("rel.sock"); os.chdir("/"); s.listen(); print("ok", flush=True); time.sleep(60)'],
-            cwd=tmp, stdout=subprocess.PIPE)
-        self.addCleanup(child.stdout.close)
-        self.addCleanup(child.wait)
-        self.addCleanup(child.kill)
-        child.stdout.readline()
-        _, unreadable = mod.proc_dump()
-        self.assertIn(child.pid, unreadable)
 
 
 class MountTest(unittest.TestCase):
