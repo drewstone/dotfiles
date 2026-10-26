@@ -45,6 +45,8 @@ async function sdk() {
   return import(entry)
 }
 
+// Beelink gates commit in fixtures and merges under the host user's git identity; the box uses the launcher's.
+const gitIdentity = (key) => spawnSync('git', ['config', '--get', key], { encoding: 'utf8' }).stdout?.trim() || ''
 const quote = (s) => `'${String(s).replace(/'/g, `'"'"'`)}'`
 
 // The in-box gate: the repo's .nvmrc Node, its packageManager through corepack, the gated commit with
@@ -58,6 +60,7 @@ export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
 export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= \\
   GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+git config --global user.name ${quote(gitIdentity('user.name') || 'beelink-gate')}; git config --global user.email ${quote(gitIdentity('user.email') || 'beelink-gate@users.noreply.github.com')}
 step fetch
 rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)} || exit 70
 git fetch -q --filter=blob:none origin ${sha} || exit 70
