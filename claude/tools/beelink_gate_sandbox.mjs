@@ -71,11 +71,15 @@ export HOME=$(getent passwd "$(id -u)" | cut -d: -f6); cd "$HOME"
 export PATH="$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 TURBO_CACHE_DIR="$HOME/.cache/turbo/repo"
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= \\
   GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+# Every git in the box authenticates, whatever environment a command gives it: a partial clone fetches blobs
+# lazily, and a nested git without the env helper failed 'could not read Username' (platform mapped planner, 08:45Z).
+gh_bin=$(command -v gh) && git config --global credential.https://github.com.helper "!$gh_bin auth git-credential"
 git config --global user.name ${quote(gitIdentity('user.name') || 'beelink-gate')}; git config --global user.email ${quote(gitIdentity('user.email') || 'beelink-gate@users.noreply.github.com')}
 step fetch
 # A box restored from a warm snapshot already holds the repo's objects, Node, pnpm store and turbo cache.
 if [ -d repo/.git ]; then cd repo && git remote set-url origin ${quote(repoUrl)}; else rm -rf repo && git init -q repo && cd repo && git remote add origin ${quote(repoUrl)}; fi || exit 70
-git fetch -q --filter=blob:none origin ${sha} || exit 70
+# A commit origin does not have is this gate's input, not the box: exit 71 never turns sandbox placement off.
+git fetch -q --filter=blob:none origin ${sha} || { echo "beelink-gate-sandbox: ${sha} is not on origin; push it first" >&2; exit 71; }
 for b in main develop ${branch ? quote(branch) : ''}; do git fetch -q --filter=blob:none origin "+refs/heads/$b:refs/remotes/origin/$b" 2>/dev/null; done
 ${branch ? `git checkout -qf -B ${quote(branch)} ${sha} && git branch -q --set-upstream-to=origin/${quote(branch)}` : `git checkout -qf --detach ${sha}`} || exit 70
 git clean -ffdxq -e .turbo
@@ -91,6 +95,21 @@ v=24; [ ! -f .nvmrc ] || v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null
   esac
 }
 mkdir -p "$HOME/.local/bin" && corepack enable --install-directory "$HOME/.local/bin" 2>/dev/null
+# Python the way the Beelinks have it: .python-version, else 3.12. The image's python3 is 3.11, and tangle-tools'
+# f-strings need 3.12 (disco-evolve-run, 08:55Z). Only repos with Python files pay for it.
+if git ls-files '*.py' | grep -q .; then
+  pv=3.12; [ ! -f .python-version ] || pv=$(head -1 .python-version | tr -d ' \\n' | cut -d. -f1,2)
+  case "$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" in "$pv") ;; *)
+    step python
+    url=$(gh api repos/astral-sh/python-build-standalone/releases/latest --jq '.assets[].browser_download_url' | grep -E "/cpython-$pv\\.[0-9]+\\+[0-9]+-x86_64-unknown-linux-gnu-install_only\\.tar\\.gz$" | head -1)
+    [ -n "$url" ] && rm -rf "$HOME/.python" && mkdir -p "$HOME/.python" && curl -fsSL "$url" | tar -xz -C "$HOME/.python" --strip-components=1 || exit 70
+    for b in python3 python "python$pv" pip3 pip; do [ -e "$HOME/.python/bin/$b" ] && ln -sf "$HOME/.python/bin/$b" "$HOME/.local/bin/$b"; done
+    python3 --version >&2 ;;
+  esac
+fi
+# Login shells (bash -lc in gate commands) reset PATH to the image's /usr/bin, whose git 2.39 lacks
+# check-attr --source (factory census, 10-26 08:2xZ). Beelink login shells keep the gate's tools; so does the box.
+printf '%s\n' "export PATH=\"$HOME/.node/bin:$HOME/.local/bin:\${NIX_BIN_PATH:+$NIX_BIN_PATH:}\$PATH\"" '[ -f ~/.bashrc ] && . ~/.bashrc' > "$HOME/.bash_profile"
 # A package manager that cannot start is the box's toolchain, not the gated code: bootstrap, never a red gate.
 if [ -f pnpm-lock.yaml ]; then pnpm --version >/dev/null || exit 70; elif [ -f yarn.lock ]; then yarn --version >/dev/null || exit 70; fi
 ${install ? `step install
@@ -123,8 +142,10 @@ async function run(argv) {
   const gateId = `sandbox-${id}`
   const repo = repoUrl.replace(/^(?:git@([^:]+):|ssh:\/\/git@([^/]+)\/|https?:\/\/([^/]+)\/)(.+?)(?:\.git)?\/?$/, (_, a, b, c, r) => `${a || b || c}/${r}`)
   // A repo whose bootstrap failed in a box (no access, no Node) buys no box for an hour, across --retry and lanes.
-  const offMarker = path.join(cacheDir(), `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}`)
-  if (existsSync(offMarker) && Date.now() - statSync(offMarker).mtimeMs < 3600_000) tempfail(`off for ${repo} after a bootstrap failure: ${readFileSync(offMarker, 'utf8').trim()}`)
+  // Keyed by repo and commit, for 15 minutes: enough to stop --retry buying a box per attempt for a commit
+  // that cannot bootstrap, without one bad commit closing the sandbox to every gate of the repo (10-26 08:14Z).
+  const offMarker = path.join(cacheDir(), `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}-${sha.slice(0, 12)}`)
+  if (existsSync(offMarker) && Date.now() - statSync(offMarker).mtimeMs < 900_000) tempfail(`off for ${repo} ${sha.slice(0, 12)} after a bootstrap failure: ${readFileSync(offMarker, 'utf8').trim()}`)
   const started = Date.now()
   const RESOURCES = resources(gateClass)
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
@@ -187,6 +208,7 @@ async function run(argv) {
     await stop()
   }
   if (exit === null) tempfail(`gate on ${box.id} ended ${record?.state ?? 'unsubmitted'} without an exit code`)
+  if (exit === 71) tempfail(`${sha} is not on origin ${repoUrl}; push it, then gate again`)
   // Exit 70 is a bootstrap step (fetch, Node) that failed before the command: not a red gate.
   if (exit === 70) {
     mkdirSync(path.dirname(offMarker), { recursive: true })
