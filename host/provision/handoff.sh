@@ -56,8 +56,9 @@ module_handoff() {
       'gh ssh-key add ~/.ssh/id_ed25519.pub --title "$(hostname -s)"'
   fi
   if command -v tailscale >/dev/null 2>&1 && ! tailscale status >/dev/null 2>&1; then
-    manual "Join the tailnet (a browser sign-in; the box then answers as $(hostname -s | tr '[:upper:]' '[:lower:]') over MagicDNS):" \
-      "sudo tailscale up --ssh --operator=$USER"
+    # No --ssh: tailscaled's root SSH server is the tailworm path; hosts serve OpenSSH.
+    manual "Join the tailnet (a browser sign-in), then approve the box and add its tailnet IP to the policy's hosts and grants in the admin console:" \
+      "sudo tailscale up --operator=$USER"
   fi
   # Credential files, not the CLIs: a status call can refresh a token, and
   # --check must not change anything.
