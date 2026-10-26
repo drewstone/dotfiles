@@ -85,13 +85,25 @@ test("deploy-managed service checkouts, the gate cache and non-installs still ru
     ["pnpm", ["typecheck"], gate],
     ["pnpm", ["exec", "vitest", "run", "tests/a.test.ts"], gate],
     ["npm", ["view", "@tangle-network/agent-app", "version"], gate],
-    ["corepack", ["enable"], gate],
+    ["corepack", ["enable", "--install-directory", "/tmp/x"], gate],
     ["uv", ["run", "python", "-m", "fleet"], gate],
   ]) {
     const r = run(manager, args, cwd);
     assert.equal(r.status, 0, `${manager} ${args.join(" ")} in ${cwd} refused: ${r.err}`);
     assert.match(r.out, /^ran/);
   }
+});
+
+test("corepack enable without a directory leaves the guarded shims alone", () => {
+  const r = run("corepack", ["enable"], gate);
+  assert.equal(r.status, 0);
+  assert.equal(r.out, "");
+  const fresh = join(HOME, "fresh-node/bin");  // an enrolled prefix whose shims were never enabled
+  mkdirSync(fresh, { recursive: true });
+  copyFileSync(GUARD, join(fresh, "corepack"));
+  writeFileSync(join(fresh, "corepack.gtr-original"), "#!/bin/sh\necho ran\n", { mode: 0o755 });
+  const refused = spawnSync("python3", [join(fresh, "corepack"), "enable"], { cwd: gate, encoding: "utf8" });
+  assert.equal(refused.status, 125, refused.stderr);
 });
 
 test("uv keeps its _wt-only rule", () => {

@@ -501,6 +501,15 @@ def main() -> None:
                 raise SystemExit(125)
             raise SystemExit(capped_add(real, argv, target, fleet_lane(), config))
         os.execv(real, [real, *argv])
+    if manager == "corepack" and [w for w in argv if w[:1] != "-"][:1] in (["enable"], ["disable"]) \
+            and not any(w.startswith("--install-directory") for w in argv):
+        # Without a directory it rewrites the shared Node's bin over these guards (2026-10-26).
+        if (entry.parent / "pnpm").exists() and (entry.parent / "yarn").exists():
+            print("gtr-install-guard: corepack enable skipped: pnpm and yarn already resolve here", file=sys.stderr)
+            raise SystemExit(0)
+        print("gtr-install-guard: refused corepack enable into a guarded Node; pass --install-directory, "
+              "or enable before host/gtr-install-guard/install.py enrolls the prefix", file=sys.stderr)
+        raise SystemExit(125)
     message = refusal(manager, argv, Path.cwd())
     if message:
         print(message, file=sys.stderr)

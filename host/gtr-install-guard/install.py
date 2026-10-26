@@ -42,18 +42,17 @@ def install(prefixes=()) -> int:
             if not original.exists():
                 raise RuntimeError(f"guarded entry lost its original: {path}")
             continue
-        if original.exists():
-            if path.exists() or path.is_symlink():
-                raise RuntimeError(f"existing original conflicts with unguarded entry: {path}")
-        else:
-            if path == GIT_ENTRY and not path.exists() and not path.is_symlink():
-                # Preserve the system Git as the delegation target; the guard owns only ~/bin/git.
-                # A home without bin/ (root's on GTR) failed here, so every install left /root/bin/git drifted.
-                path.parent.mkdir(parents=True, exist_ok=True)
-                original.symlink_to("/usr/bin/git")
-            else:
-                if not path.is_file():
-                    raise RuntimeError(f"not a regular executable: {path}")
+        if path == GIT_ENTRY and not path.exists() and not path.is_symlink() and not original.exists():
+            # Preserve the system Git as the delegation target; the guard owns only ~/bin/git.
+            # A home without bin/ (root's on GTR) failed here, so every install left /root/bin/git drifted.
+            path.parent.mkdir(parents=True, exist_ok=True)
+            original.symlink_to("/usr/bin/git")
+        elif path.exists() or path.is_symlink() or not original.exists():
+            # An unguarded entry is newer than any saved original: `corepack enable` or a Node
+            # reinstall rewrote it (2026-10-26, beside an original chained into an older Node).
+            if not path.is_file():
+                raise RuntimeError(f"not a regular executable: {path}")
+            if not original.exists() or path.resolve() != original.resolve():  # a link to the original moves nothing
                 os.replace(path, original)
         temporary = Path(str(path) + ".gtr-new")
         temporary.symlink_to(DEST)
