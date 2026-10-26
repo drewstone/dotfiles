@@ -88,8 +88,11 @@ pool_tree_is_valid() {
 # A tree is ready only when it is a valid pool worktree with no uncommitted tracked changes: a dirty
 # seed made `git checkout -B` refuse a claim (2026-10-26) and was recycled back into the pool. A dirty
 # tree is never reset here; warm and claim pass it by and status counts it, so its owner can inspect it.
+# prepare_tree marks a finished bootstrap in the tree's own git dir (no untracked file): a tree whose
+# bootstrap failed is clean and valid, and was counted ready.
 pool_tree_is_ready() {
-  pool_tree_is_valid "$1" && git -C "$1" diff --quiet HEAD 2>/dev/null
+  pool_tree_is_valid "$1" && git -C "$1" diff --quiet HEAD 2>/dev/null \
+    && [ -f "$(git -C "$1" rev-parse --absolute-git-dir)/adc-wt-bootstrapped" ]
 }
 
 # The repo owns this: scripts/bootstrap-worktree.sh runs the frozen install, the
@@ -114,6 +117,7 @@ prepare_tree() {
     log "bootstrap left uncommitted tracked changes in $dir ($(git -C "$dir" diff --shortstat HEAD)); not ready"
     return 1
   fi
+  touch "$(git -C "$dir" rev-parse --absolute-git-dir)/adc-wt-bootstrapped"
   log "ready: $dir"
 }
 
@@ -233,18 +237,22 @@ cmd_status() {
   echo "repo:         $REPO"
   echo "pool:         $POOL"
   echo "shared cache: $TURBO_CACHE_DIR ($(du -sh "$TURBO_CACHE_DIR" 2>/dev/null | cut -f1 || echo 0))"
-  local ready=0 dirty=0 claimed=0
+  local ready=0 dirty=0 unprepared=0 claimed=0
   for d in "$POOL"/*; do
     [ -d "$d" ] || continue
     case "$(basename "$d")" in
       ${SEED_PREFIX}*)
-        if pool_tree_is_ready "$d"; then ready=$((ready + 1)); elif pool_tree_is_valid "$d"; then dirty=$((dirty + 1)); fi
+        if pool_tree_is_ready "$d"; then ready=$((ready + 1))
+        elif pool_tree_is_valid "$d"; then
+          if git -C "$d" diff --quiet HEAD 2>/dev/null; then unprepared=$((unprepared + 1)); else dirty=$((dirty + 1)); fi
+        fi
         ;;
       *) claimed=$((claimed + 1)) ;;
     esac
   done
   echo "ready:        $ready"
   echo "dirty seeds:  $dirty (valid trees with uncommitted tracked changes; never claimed)"
+  echo "unprepared:   $unprepared (clean trees whose bootstrap did not finish; never claimed)"
   echo "claimed:      $claimed"
 }
 
