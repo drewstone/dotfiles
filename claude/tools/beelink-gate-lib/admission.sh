@@ -43,7 +43,7 @@ admit_release_priority() {
   if [ "${release_priority_host:-}" = "$1" ] && (( SECONDS - ${release_priority_at:--100000} < ${BEELINK_GATE_RELEASE_RECHECK_SECONDS:-30} )); then
     return 0
   fi
-  reason=$(release_priority_reason "$1") || { admission_outcome=refused admission_reason=release_priority; tempfail "$(utc_in_minutes 5)" "$1 $reason"; }
+  reason=$(release_priority_reason "$1") || refuse_or_replace release_priority "$1 $reason"
   release_priority_host=$1 release_priority_at=$SECONDS
 }
 
@@ -125,11 +125,7 @@ wait_for_capacity_writer() {
   (( intent_started_ms )) || intent_started_ms=$now_ms
   elapsed_ms=$((now_ms - intent_started_ms))
   if (( elapsed_ms >= intent_wait_limit * 1000 )); then
-    if (( placed_auto )); then
-      not_admitted "capacity writer intent exceeded ${intent_wait_limit}s"
-    fi
-    admission_outcome=refused admission_reason=capacity_writer
-    tempfail "$(utc_in_minutes 5)" "capacity writer intent exceeded ${intent_wait_limit}s on $beelink"
+    refuse_or_replace capacity_writer "capacity writer intent exceeded ${intent_wait_limit}s on $beelink"
   fi
   if (( SECONDS - last_report >= 60 )); then
     echo "beelink-gate: waiting $((elapsed_ms / 1000))s for capacity writer on $beelink" >&2
@@ -189,6 +185,11 @@ admission_expired() {
   cancel_if_requested
   [ -n "${admit_by:-}" ] && (( SECONDS >= admit_by ))
 }
+# A refused auto gate gives its host back (76) to be placed again; a named one TEMPFAILs (75 cost ~113 gates/day, 10-26).
+refuse_or_replace() {  # <admission reason> <message>
+  (( ${placed_auto:-0} )) && not_admitted "$2"
+  admission_outcome=refused admission_reason=$1; tempfail "$(utc_in_minutes 5)" "$2"
+}
 not_admitted() {
   admission_outcome=replaced admission_reason=placement_budget
   [ -z "${lock:-}" ] || rm -f "$lock.holder"
@@ -241,10 +242,9 @@ acquire_checkout_admission() {
   ticket_body "$reservation_token" > "$ticket"; urgent_markers+=("$ticket")
   # Every exit while waiting (a pressure timeout, a cancel) takes the ticket
   # and markers with it; finish replaces this trap once the checkout is held.
-  # Wait for load before taking a checkout: a gate that only waits for load must
-  # not hold the repo's checkout. One ADC gate held it for 1766s of
-  # load wait plus 1119s of run, and the next ADC gate queued behind all of it.
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
+  # Wait for load before taking a checkout: a gate only waiting for load must not hold it (one ADC gate held it for
+  # 1766 s of load wait plus 1119 s of run, and the next ADC gate queued behind all of it).
+  wait_for_load "$beelink" || refuse_or_replace host_psi "$beelink $(metric_name) stayed over its limit"
   # From here the gate competes for a checkout: keep its ticket (and urgent marker) fresh wherever a pass
   # blocks, capacity-writer waits and release lookups included. Only fresh entries hold a free checkout.
   local fresh=("$ticket"); (( ! urgent )) || fresh+=("$urgent_marker.$$")
@@ -345,7 +345,7 @@ acquire_checkout_admission() {
     acquire_slot "$cache_root/.locks" "$max_concurrent"
   fi
   unset BEELINK_GATE_LIGHT_SLOTS BEELINK_GATE_DEV_SLOTS
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "$beelink $(metric_name) stayed over its limit"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "$beelink $(metric_name) stayed over its limit"
   unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since + placed_wait))
   admission_admitted
