@@ -1680,7 +1680,7 @@ choose_beelink() {
   local -A seen=()
   local auto_started=$SECONDS
   while :; do
-    check_checkout_reservations
+    check_checkout_reservations; [ -z "$checkout_reservation_dir" ] || touch "$checkout_reservation_dir/placing"
     best="" best_rank=9 best_load="" light_busy=""
     for target in beelink1 beelink2; do
       # A host whose reservation died (beelink1's restart, 10-26 16:47Z, left gates ignoring it for 30+ min) gets its
@@ -1768,14 +1768,14 @@ reserve_checkout() {
   ticket_body "$token" > "$marker" || die "cannot create checkout reservation"
   trap 'rm -f "$marker"; exit 143' HUP INT TERM
   echo "beelink-gate-$priority-reserved $beelink"
-  # The launcher keeps stdin open. EOF removes the reservation even if its
-  # session dies; a timeout merely means that no heartbeat bytes arrived.
+  # The launcher keeps stdin open; EOF removes the reservation even if its session dies. A line (5 s) from an urgent launcher
+  # still placing keeps its marker fresh for urgent_ahead: stale, #14868 saw normal gates take each freed checkout (10-26).
   while :; do
     IFS= read -r -t 5 _; rc=$?
     (( rc == 0 || rc > 128 )) || break
+    (( rc != 0 )) || touch -c "$marker"
   done
-  rm -f "$marker"
-  trap - HUP INT TERM
+  rm -f "$marker"; trap - HUP INT TERM
 }
 
 checkout_reservation_dir="" checkout_monitor_pid="" checkout_priority=""
@@ -1803,7 +1803,7 @@ launch_checkout_place() {  # <host>: start this gate's place on one host, at the
   local host=$1 file="$checkout_reservation_dir/$1.$SECONDS"
   local -a args=("$(encode "$host")" "$(encode "$repo_url")" "$(encode "$([ "$gate_class" = dev ] && echo dev || echo "$install_mode")")")
   [ "$checkout_priority" != normal ] || args+=("$(encode normal)" "$(encode "$reservation_epoch")" "$(encode "$reservation_token")")
-  BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "${args[@]}" >"$file" 2>"$file.err" &
+  BEELINK_GATE_HEARTBEAT_BEAT=$([ "$checkout_priority" != urgent ] || echo "$checkout_reservation_dir/placing") BEELINK_GATE_HEARTBEAT_STOP="$file.stop" heartbeat=1 on_beelink "$host" --urgent-reserve "${args[@]}" >"$file" 2>"$file.err" &
   checkout_reservation_pid[$host]=$! checkout_reservation_file[$host]=$file
 }
 await_checkout_place() {  # <host>: 0 once it reserved; otherwise it is lost and auto places only on the other beelink
