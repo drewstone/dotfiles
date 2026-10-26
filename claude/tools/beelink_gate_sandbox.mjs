@@ -156,18 +156,29 @@ async function run(argv) {
   const warm = await warmStart(client, repo)
   if (warm) say(`starting from warm snapshot ${warm.fromSnapshot.slice(0, 12)} of ${warm.fromSandboxId}`)
   let box, stopping = false
-  // Delete through the platform's retire path; a failure is retried once and reported, never swallowed.
-  const stop = async () => {
-    if (!box) return
+  // Delete through the platform's retire path every box carrying this gate's name: a warm create that timed out
+  // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). A failure is retried
+  // once and reported, never swallowed.
+  const boxName = `${BOX_PREFIX}${id.slice(0, 12)}`
+  const named = async () => (await client.list().catch(() => [])).filter((b) => b.name === boxName && b.status !== 'deleted')
+  const retire = async (target) => {
     for (const attempt of [1, 2]) {
-      try { await box.delete(); return } catch (error) { say(`box ${box.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
+      try { await target.delete(); return } catch (error) { say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`) }
     }
-    say(`box ${box.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+    say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
+  }
+  const stop = async () => {
+    if (box) await retire(box)
+    for (const other of await named()) {
+      if (other.id === box?.id) continue
+      const found = await client.get(other.id).catch(() => null)
+      if (found) { say(`retiring stray box ${other.id} of this gate`); await retire(found) }
+    }
   }
   for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]])
     process.on(signal, () => { stopping = true; stop().finally(() => process.exit(code)) })
   try {
-    const spec = { name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
+    const spec = { name: boxName, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
       maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } }
     // A refused warm restore falls back to one cold create; a capacity refusal does not.
     const create = (opts) => client.create(opts).catch(async (error) => {
@@ -178,9 +189,10 @@ async function run(argv) {
       await new Promise((r) => setTimeout(r, error.retryAfterMs))
       return client.create(opts)
     })
-    box = await create({ ...spec, ...warm }).catch((error) => {
+    box = await create({ ...spec, ...warm }).catch(async (error) => {
       if (!warm || error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) throw error
       say(`warm restore refused (${error.code || error.status}); creating cold`)
+      for (const partial of await named()) await client.get(partial.id).then((b) => b && retire(b)).catch(() => undefined)
       return create(spec)
     })
   } catch (error) {
