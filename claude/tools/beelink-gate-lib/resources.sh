@@ -7,7 +7,6 @@ limits_file() { echo "${BEELINK_GATE_LIMITS_FILE:-${XDG_CONFIG_HOME:-$HOME/.conf
 pressure_file() { echo "${BEELINK_GATE_HOST_PRESSURE:-/proc/pressure/cpu}"; }
 loadavg_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
 metric_name() { echo 'host CPU pressure (some avg10)'; }
-limit_basis() { echo "% host some avg10 in $(pressure_file)"; }
 gate_slice() {
   if [ "${dev:-${BEELINK_GATE_CLASS:-}}" = 1 ] || [ "${BEELINK_GATE_CLASS:-}" = dev ]; then echo beelinkgate-dev.slice
   else echo beelinkgate-normal.slice; fi
@@ -167,7 +166,6 @@ except (OSError, ValueError, KeyError, StopIteration):
     sys.exit(1)
 PY
 }
-load_now() { host_pressure_now || echo 100; }
 over_limit() {
   awk -v cur="$1" -v cap="$2" 'BEGIN { exit !(cur + 0 > cap + 0) }'
   [ "$?" -ne 1 ]
@@ -307,90 +305,69 @@ gate_worker_budget() {
 }
 
 # Containers a gate starts are the gate's work: on 10-26 a custody test's container wrote 23 GB/h into the daemon
-# default user.slice, outside every gate cap and IO count. The gate's own Docker socket sets an unset CgroupParent on
-# container create to a slice under the gate's class slice; every other request and stream passes through unchanged.
+# default user.slice, uncounted. The gate's own Docker socket gives create (and legacy build) an unset cgroup parent of
+# beelinkgate-docker-g<gate>.slice: counted per gate under the gate slice, not inside its class caps, since a container
+# a gate leaves running (shared fixtures do) would otherwise starve later gates. Requests get Connection: close, so one
+# head is parsed per connection and the rest, upgrades and streams included, is spliced untouched.
 gate_docker_socket() {
-  [ -z "${DOCKER_HOST:-}" ] && [ -n "${gate_cgroup_joined:-}" ] && [ -w /var/run/docker.sock ] || return 0
-  local sock="${XDG_RUNTIME_DIR:-/tmp}/beelink-gate-docker-${gate_id#*-}.sock"
-  python3 - "$sock" /var/run/docker.sock "$(gate_slice | sed 's/\.slice$//')-g${gate_id#*-}.slice" <<'PY' &
+  local skip="" sock="${XDG_RUNTIME_DIR:-/tmp}/beelink-gate-docker-${gate_id#*-}.sock" fd
+  [ "${DOCKER_HOST:-unix:///var/run/docker.sock}" = unix:///var/run/docker.sock ] || skip="DOCKER_HOST is $DOCKER_HOST"
+  [ -n "$skip$gate_cgroup_joined" ] && [ -w /var/run/docker.sock ] || return 0
+  [ -n "$skip" ] || [ "$(timeout 5 docker info --format '{{.CgroupDriver}}' 2>/dev/null)" = systemd ] || skip="the daemon's cgroup driver is not systemd"
+  [ -z "$skip" ] || { echo "beelink-gate: gate containers keep the daemon's cgroup: $skip" >&2; return 0; }
+  ( for fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do exec {fd}>&-; done
+    exec python3 - "$sock" "beelinkgate-docker-g${gate_id#*-}.slice" <<'PY'
 import asyncio, json, os, re, sys
-listen, upstream, parent = sys.argv[1:4]
-create = re.compile(rb'^POST (/v[\d.]+)?/containers/create(\?\S*)? HTTP/1\.[01]$')
-
-async def head(reader):
-    lines = (await reader.readuntil(b'\r\n\r\n'))[:-4].split(b'\r\n')
-    return lines, {k.strip().lower(): v.strip() for k, _, v in (line.partition(b':') for line in lines[1:])}
-
-async def body(reader, writer, fields, keep=False):
-    data = b''
-    if fields.get(b'transfer-encoding', b'').lower() == b'chunked':
-        while True:
-            line = await reader.readuntil(b'\r\n')
-            size = int(line.split(b';')[0], 16)
-            if size == 0:  # the last chunk, then trailer lines up to a blank one
-                while (trailer := await reader.readuntil(b'\r\n')) != b'\r\n':
-                    line += trailer
-                keep or writer.write(line + b'\r\n')
-                return data
-            chunk = await reader.readexactly(size + 2)
-            if keep: data += chunk[:-2]
-            else: writer.write(line + chunk); await writer.drain()
-    left = int(fields.get(b'content-length', b'0'))
-    while left:
-        chunk = await reader.read(min(left, 1 << 16))
-        if not chunk: raise ConnectionError()
-        left -= len(chunk)
-        if keep: data += chunk
-        else: writer.write(chunk); await writer.drain()
-    return data
+listen, parent = sys.argv[1], sys.argv[2].encode()
 
 async def pipe(reader, writer):
-    try:
-        while chunk := await reader.read(1 << 16):
-            writer.write(chunk); await writer.drain()
-        writer.can_write_eof() and writer.write_eof()
-    except (ConnectionError, OSError):
-        pass
+    while data := await reader.read(1 << 16):
+        writer.write(data); await writer.drain()
+    writer.write_eof()
 
 async def serve(client_r, client_w):
-    up_r, up_w = await asyncio.open_unix_connection(upstream)
+    up_w = None
     try:
-        while True:
-            lines, fields = await head(client_r)
-            if create.match(lines[0]):
-                spec = json.loads(await body(client_r, None, fields, keep=True) or b'{}')
-                host = spec.setdefault('HostConfig', {}) or {}
-                spec['HostConfig'] = host
-                host['CgroupParent'] = host.get('CgroupParent') or parent
-                data = json.dumps(spec).encode()
-                lines = [lines[0]] + [l for l in lines[1:] if l.split(b':')[0].strip().lower() not in (b'content-length', b'transfer-encoding')]
-                up_w.write(b'\r\n'.join(lines + [b'Content-Length: %d' % len(data)]) + b'\r\n\r\n' + data)
-            else:
-                up_w.write(b'\r\n'.join(lines) + b'\r\n\r\n')
-                await body(client_r, up_w, fields)
-            await up_w.drain()
-            status, answer = await head(up_r)
-            client_w.write(b'\r\n'.join(status) + b'\r\n\r\n'); await client_w.drain()
-            code = status[0].split(b' ')[1]
-            if lines[0].startswith(b'HEAD ') or code in (b'204', b'304'):
-                continue
-            if code == b'101' or not (b'content-length' in answer or b'chunked' in answer.get(b'transfer-encoding', b'').lower()):
-                await asyncio.gather(pipe(client_r, up_w), pipe(up_r, client_w))  # upgraded, hijacked or close-delimited
-                return
-            await body(up_r, client_w, answer)
-    except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError, IndexError):
+        up_r, up_w = await asyncio.open_unix_connection('/var/run/docker.sock', limit=1 << 20)
+        lines = (await client_r.readuntil(b'\r\n\r\n'))[:-4].split(b'\r\n')
+        fields = {k.strip().lower(): v.strip() for k, _, v in (line.partition(b':') for line in lines[1:])}
+        upgrade = b'upgrade' in fields.get(b'connection', b'').lower()
+        if not upgrade:
+            lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'connection'] + [b'Connection: close']
+        method, target, version = lines[0].split(b' ')
+        body = b''
+        if method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/build(\?.*)?', target) and b'cgroupparent=' not in target:
+            lines[0] = b' '.join((method, target + (b'&' if b'?' in target else b'?') + b'cgroupparent=' + parent, version))
+        elif method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target) and b'content-length' in fields:
+            body = await client_r.readexactly(int(fields[b'content-length']))
+            try:
+                spec = json.loads(body)
+                host = spec.get('HostConfig') or {}
+                spec['HostConfig'] = {**host, 'CgroupParent': host.get('CgroupParent') or parent.decode()}
+                body = json.dumps(spec).encode()
+                lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'content-length']
+                lines.append(b'Content-Length: %d' % len(body))
+            except (ValueError, AttributeError, TypeError):
+                pass  # not a JSON object: the daemon answers it as sent
+        up_w.write(b'\r\n'.join(lines) + b'\r\n\r\n' + body)
+        upstream = asyncio.ensure_future(pipe(client_r, up_w))
+        await pipe(up_r, client_w)
+        await upstream if upgrade else upstream.cancel()
+    except Exception:
         pass
     finally:
         for writer in (client_w, up_w):
-            writer.close()
+            writer and writer.close()
 
 async def main():
-    server = await asyncio.start_unix_server(serve, path=listen)
-    os.chmod(listen, 0o600)
+    server = await asyncio.start_unix_server(serve, path=listen + '.new', limit=1 << 20)
+    os.chmod(listen + '.new', 0o600)
+    os.rename(listen + '.new', listen)  # appears only once it accepts
     await server.serve_forever()
 
 asyncio.run(main())
 PY
+  ) </dev/null >/dev/null 2>&1 &
   local i; for i in $(seq 50); do [ -S "$sock" ] && break; sleep 0.1; done
-  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" || echo "beelink-gate: gate Docker socket did not start; containers stay in the daemon's default slice" >&2
+  [ -S "$sock" ] && export DOCKER_HOST="unix://$sock" || echo "beelink-gate: gate Docker socket did not start; containers keep the daemon's cgroup" >&2
 }
