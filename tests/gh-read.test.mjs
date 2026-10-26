@@ -16,7 +16,7 @@ function sandbox() {
   const bin = join(home, "bin");
   mkdirSync(bin, { recursive: true });
   // gh-read finds gh-drew beside itself, as install.sh links both into ~/bin.
-  for (const tool of ["gh-read", "gh-drew", "gh"]) copyFileSync(resolve("claude/tools", tool), join(bin, tool));
+  for (const tool of ["gh-read", "gh-drew", "gh-drew-pr-wip.sh", "gh"]) copyFileSync(resolve("claude/tools", tool), join(bin, tool));
   const realGh = join(root, "real-gh");
   const ran = join(root, "ran");
   writeFileSync(realGh, `#!/usr/bin/env bash

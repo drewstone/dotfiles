@@ -735,10 +735,10 @@ reclaim_dead_holder() {
   kill -0 "$pid" 2>/dev/null && return 0
   self_sid=$(ps -o sid= -p $$ | tr -d ' ')
   [ "$sid" != "$self_sid" ] || return 0
-  for p in /proc/[0-9]*; do
-    p=${p#/proc/}
-    [ "$p" != $$ ] || continue
-    [ "$(ps -o sid= -p "$p" 2>/dev/null | tr -d ' ')" = "$sid" ] || continue
+  # One process listing: a ps per /proc entry took minutes on a host with thousands of processes.
+  local psid
+  while read -r p psid; do
+    [ "$p" != $$ ] && [ "$psid" = "$sid" ] || continue
     for fd in /proc/"$p"/fd/*; do
       target=$(readlink "$fd" 2>/dev/null) || continue
       if [ "$target" = "$lock" ]; then
@@ -746,7 +746,7 @@ reclaim_dead_holder() {
         break
       fi
     done
-  done
+  done < <(ps -eo pid=,sid=)
   [ "${#candidates[@]}" -gt 0 ] || return 0
   for p in "${candidates[@]}"; do
     echo "beelink-gate: reclaiming lock from dead gate $pid: killing leftover pid $p ($(tr '\0' ' ' < /proc/"$p"/cmdline 2>/dev/null | cut -c1-120))" >&2

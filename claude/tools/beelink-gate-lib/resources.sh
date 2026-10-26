@@ -12,7 +12,10 @@ gate_slice() {
   if [ "${dev:-${BEELINK_GATE_CLASS:-}}" = 1 ] || [ "${BEELINK_GATE_CLASS:-}" = dev ]; then echo beelinkgate-dev.slice
   else echo beelinkgate-normal.slice; fi
 }
-gate_cgroup() { echo "/sys/fs/cgroup/beelinkgate.slice/$(gate_slice)"; }
+# Kernel and root-owned host paths. A fixture host names its own tree; every real host reads these defaults.
+cgroup_root() { echo "${BEELINK_GATE_CGROUP_ROOT:-/sys/fs/cgroup}"; }
+self_cgroup_file() { echo "${BEELINK_GATE_SELF_CGROUP:-/proc/self/cgroup}"; }
+gate_cgroup() { echo "$(cgroup_root)/beelinkgate.slice/$(gate_slice)"; }
 
 # Missing old groups are drained; unreadable or malformed recursive kernel
 # population evidence cannot release this transitional cap handoff.
@@ -21,8 +24,8 @@ legacy_gate_drained() {
   [ "$(gate_slice)" != beelinkgate-dev.slice ] || group="beelink-gate-dev"
   local status=0
   python3 - "$group" <<'PY'
-import pathlib, sys
-path = pathlib.Path('/sys/fs/cgroup', sys.argv[1])
+import os, pathlib, sys
+path = pathlib.Path(os.environ.get('BEELINK_GATE_CGROUP_ROOT', '/sys/fs/cgroup'), sys.argv[1])
 try:
     path.stat()
 except FileNotFoundError:
@@ -56,18 +59,20 @@ verify_gate_unit() {
   expected="/beelinkgate.slice/$(gate_slice)/beelink-gate-${gate_id:-}.service"
   [[ "${gate_id:-}" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || return 75
   [ "$(id -u)" != 0 ] || return 75
-  actual=$(sed -n 's/^0:://p' /proc/self/cgroup) || return 75
+  actual=$(sed -n 's/^0:://p' "$(self_cgroup_file)") || return 75
   [ "$actual" = "$expected" ] || { echo 'beelink-gate: refused work outside its managed system unit' >&2; return 75; }
   python3 - "$(gate_slice)" <<'PY'
 import json, os, pathlib, stat, subprocess, sys
+named = os.environ.get('BEELINK_GATE_RESOURCE_POLICY')
+owners = (0, os.getuid()) if named else (0,)
 try:
-    fd = os.open('/etc/beelink-gate/resource-policy.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    fd = os.open(named or '/etc/beelink-gate/resource-policy.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd) as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 4096:
+        if not stat.S_ISREG(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022 or info.st_size > 4096:
             raise ValueError()
         policy = json.load(stream)
-    root = pathlib.Path('/sys/fs/cgroup/beelinkgate.slice')
+    root = pathlib.Path(os.environ.get('BEELINK_GATE_CGROUP_ROOT', '/sys/fs/cgroup'), 'beelinkgate.slice')
     if type(policy['cpu_weight']) is not int or type(policy['io_weight']) is not int:
         raise ValueError()
     if int((root/'cpu.weight').read_text()) != policy['cpu_weight']:
@@ -229,10 +234,10 @@ worker_capacity() {
   python3 - "$(gate_cgroup)" "${cache_root:-${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}}/.locks" "${slot_fd:-}" "$(max_cpu_pressure)" "${1:-0}" <<'PY'
 import fcntl, json, math, os, pathlib, sys, time
 group, locks, held, pressure_limit = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), bool(sys.argv[3]), float(sys.argv[4])
-root = pathlib.Path('/sys/fs/cgroup')
+root = pathlib.Path(os.environ.get('BEELINK_GATE_CGROUP_ROOT', '/sys/fs/cgroup')).resolve()
 try:
     group = group.resolve(strict=True)
-    joined = pathlib.Path('/proc/self/cgroup').read_text().strip().startswith('0::/' + str(group.relative_to(root)) + '/')
+    joined = pathlib.Path(os.environ.get('BEELINK_GATE_SELF_CGROUP', '/proc/self/cgroup')).read_text().strip().startswith('0::/' + str(group.relative_to(root)) + '/')
     if sys.argv[5] == '1' and not joined:
         raise ValueError('membership unverified')
     cpus, finite = float(len(os.sched_getaffinity(0))), False

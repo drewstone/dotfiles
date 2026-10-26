@@ -33,13 +33,17 @@ def _admission_owner(host):
     """Load Tangle Tools' protected admission provider; the lifecycle installer owns its value."""
     if host not in ('beelink1', 'beelink2'):
         raise ValueError('unknown remote beelink')
-    policy = Path('/usr/local/libexec/tangle-fleet-disk-policy.py')
-    for parent in policy.parents:
+    # Fixture gates name their own provider of the same contract (tests/fixtures/beelink-gate/disk_policy.py);
+    # that is a beelink's own account choosing its own floor, which it can do by editing this file anyway.
+    named = os.environ.get('BEELINK_GATE_DISK_POLICY')
+    policy = Path(named or '/usr/local/libexec/tangle-fleet-disk-policy.py')
+    owners = (0, os.getuid()) if named else (0,)
+    for parent in () if named else policy.parents:
         info = parent.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
             raise ValueError('authoritative fleet disk policy ancestors are unprotected')
     info = policy.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+    if not stat.S_ISREG(info.st_mode) or info.st_uid not in owners or info.st_mode & 0o022:
         raise ValueError('authoritative fleet disk policy is not a protected regular library')
     spec = importlib.util.spec_from_file_location('fleet_disk_policy', policy)
     owner = importlib.util.module_from_spec(spec)
