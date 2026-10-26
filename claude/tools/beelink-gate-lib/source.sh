@@ -210,9 +210,9 @@ on_beelink() {
       cat "$source_file"
     fi
     while kill -0 "$me" 2>/dev/null && { [ -z "${BEELINK_GATE_HEARTBEAT_STOP:-}" ] || [ ! -e "$BEELINK_GATE_HEARTBEAT_STOP" ]; }; do
-      sleep 5 & sleeper=$!
-      wait "$sleeper" || true
-      sleeper=""
+      # A beat while the launcher touched BEELINK_GATE_HEARTBEAT_BEAT in the last 10 s: it is still placing this gate.
+      [ -z "${BEELINK_GATE_HEARTBEAT_BEAT:-}" ] || (( $(stat -c %Y "$BEELINK_GATE_HEARTBEAT_BEAT" 2>/dev/null || echo 0) < $(date +%s) - 10 )) || printf '\n'
+      sleep 5 & sleeper=$!; wait "$sleeper" || true; sleeper=""
     done
   }
   stop_heartbeat() {
