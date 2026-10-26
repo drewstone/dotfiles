@@ -62,7 +62,7 @@ PY
 # admit it (storage-lifecycle refused, GTR unreachable), so the caller keeps waiting for a Beelink.
 # GTR says "drew-gtr-pro admitted" on stderr once it has the lease; nothing else counts as admission.
 gtr_gate() {  # <command>...
-  local rc pid log id dir bytes lifecycle q admitted flag=()
+  local rc pid log id dir bytes derived lifecycle q admitted flag=()
   case "$install_mode" in install|no-install) ;; *) die "drew-gtr-pro runs install and --no-install gates only, not --$install_mode" ;; esac
   [ "${gate_class:-}" != dev ] && [ -z "${gate_branch:-}" ] || die "--dev and --branch gates run on the Beelinks, not drew-gtr-pro"
   [ "$install_mode" = install ] || flag=(--no-install)
@@ -71,16 +71,16 @@ gtr_gate() {  # <command>...
     parse_repo_url "$repo_url"
     id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
     dir="$HOME/.cache/gtr-gate/pool/$id"
-    bytes=$(gtr_reserve_bytes) || { rm -f "$log"; return "$NOT_ADMITTED"; }
+    derived=$(gtr_reserve_bytes) || { rm -f "$log"; return "$NOT_ADMITTED"; }; bytes=$(( derived > ${BEELINK_GATE_RESERVE_BYTES:-0} ? derived : BEELINK_GATE_RESERVE_BYTES ))  # a declared reserve only raises
     lifecycle=$(gtr_lifecycle) \
       || { echo "beelink-gate: storage-lifecycle is not installed on $GTR_HOST; waiting for a Beelink" >&2; rm -f "$log"; return "$NOT_ADMITTED"; }
-    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane op-company:beelink-gate-gtr reserves $bytes bytes for $dir" >&2
+    echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane op-company:beelink-gate-gtr reserves $bytes bytes (derived $derived, declared ${BEELINK_GATE_RESERVE_BYTES:-none}) for $dir" >&2
     # Its own session, so a stop reaches run-lane, the gate and the command together.
     setsid "$lifecycle" run-lane --lane op-company:beelink-gate-gtr --path "$dir" --bytes "$bytes" -- \
-      env BEELINK_GATE_ID="$id" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
+      env BEELINK_GATE_ID="$id" BEELINK_GATE_RESERVE_DERIVED="$derived" BEELINK_GATE_LEASE_BYTES="$bytes" BEELINK_GATE_PLACED_WAIT=$(( ${BEELINK_GATE_PLACED_WAIT:-0} + SECONDS - launched )) \
       "$BASH" "$gate_source_root/beelink-gate" --gtr-run "$(encode "$log")" "$(encode "$dir")" "$(encode "$repo_url")" "$(encode "$sha")" "$(encode "$install_mode")" "$@" &
   else
-    printf -v q '%q ' env BEELINK_GATE_PR="${BEELINK_GATE_PR:-}" BEELINK_GATE_LANE="$BEELINK_GATE_LANE" \
+    printf -v q '%q ' env BEELINK_GATE_PR="${BEELINK_GATE_PR:-}" BEELINK_GATE_LANE="$BEELINK_GATE_LANE" BEELINK_GATE_RESERVE_BYTES="${BEELINK_GATE_RESERVE_BYTES:-}" \
       BEELINK_GATE_MAX_HOLD="${BEELINK_GATE_MAX_HOLD:-}" BEELINK_GATE_PLACED_WAIT=$((SECONDS - launched)) \
       bin/beelink-gate ${flag[@]+"${flag[@]}"} "$GTR_HOST" "$repo_url" "$sha" -- "$@"
     ssh -n "${SSH_OPTIONS[@]}" "$GTR_HOST" "$q" 2> >(tee -a "$log" >&2) &
@@ -194,7 +194,7 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": "drew-g
        "mode": mode, "command": command, "exit": int(status), "waited_s": int(os.environ.get("BEELINK_GATE_PLACED_WAIT") or 0),
        "ran_s": int(ran), "class": "normal", "gate_id": gate_id, "base_sha": base or None,
        "pr_number": int(pr) if pr.isdigit() else None, "lane": os.environ.get("BEELINK_GATE_LANE") or None,
-       "gtr_bytes": int(size), "checkout_temperature": "cold", "bundle": os.environ.get("GTR_BUNDLE") or None}
+       "gtr_bytes": int(size), **{k: int(os.environ[e]) if os.environ.get(e) else None for k, e in (("reserve_declared", "BEELINK_GATE_RESERVE_BYTES"), ("reserve_derived", "BEELINK_GATE_RESERVE_DERIVED"), ("lease_bytes", "BEELINK_GATE_LEASE_BYTES"))}, "checkout_temperature": "cold", "bundle": os.environ.get("GTR_BUNDLE") or None}
 with open(path, "a") as out:
     fcntl.flock(out, fcntl.LOCK_EX)
     out.write(json.dumps(row) + "\n")
