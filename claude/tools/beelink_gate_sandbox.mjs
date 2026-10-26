@@ -9,7 +9,7 @@
 //   beelink_gate_sandbox.mjs run <repo-url> <sha> <mode> <class> [branch] -- <command> [args...]
 //   beelink_gate_sandbox.mjs live    (prints live gate boxes, for --queue)
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -99,50 +99,63 @@ async function run(argv) {
   const id = randomBytes(16).toString('hex')
   const gateId = `sandbox-${id}`
   const repo = repoUrl.replace(/^(?:git@([^:]+):|ssh:\/\/git@([^/]+)\/|https?:\/\/([^/]+)\/)(.+?)(?:\.git)?\/?$/, (_, a, b, c, r) => `${a || b || c}/${r}`)
+  // A repo whose bootstrap failed in a box (no access, no Node) buys no box for an hour, across --retry and lanes.
+  const offMarker = path.join(process.env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'beelink-gate', `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}`)
+  if (existsSync(offMarker) && Date.now() - statSync(offMarker).mtimeMs < 3600_000) tempfail(`off for ${repo} after a bootstrap failure: ${readFileSync(offMarker, 'utf8').trim()}`)
   const started = Date.now()
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
-  let box
+  // Handlers come before create, so a stop during create still deletes the box once its id is known.
+  let box, stopping = false
+  const stop = async () => { if (box) await box.delete().catch(() => undefined) }
+  for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]])
+    process.on(signal, () => { stopping = true; stop().finally(() => process.exit(code)) })
   try {
     box = await client.create({ name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
       maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } })
   } catch (error) {
     tempfail(`create refused: ${error.code || error.status || ''} ${String(error.message).slice(0, 200)}`)
   }
+  if (stopping) { await stop(); process.exit(143) }
   const created = Date.now()
-  let exit = 1, outcome = 'unknown'
-  const stop = async () => { await box.delete().catch(() => undefined) }
-  process.on('SIGTERM', () => { stop().finally(() => process.exit(143)) })
-  process.on('SIGINT', () => { stop().finally(() => process.exit(130)) })
+  let exit = null, record
   try {
     await box.write('gate.sh', gateScript({ repoUrl, sha, mode, branch, command }))
-    const job = await box.process.jobs.submit({ id: 'gate', executable: 'bash', args: ['-c', 'bash gate.sh > gate.log 2>&1; echo $? > gate.exit'], cwd: '.',
+    record = await box.process.jobs.submit({ id: 'gate', executable: 'bash', args: ['-c', 'bash gate.sh > gate.log 2>&1; echo $? > gate.exit'], cwd: '.',
       envKeys: ['PATH', 'NIX_BIN_PATH', 'GH_TOKEN'], deadlineAt: Date.now() + HOLD_S * 1000,
       restart: { maxAttempts: 1, initialBackoffMs: 1000, maxBackoffMs: 1000, exitCodes: [], afterInterruption: false } })
     say(`sandbox ${box.id} admitted after ${Math.round((created - started) / 1000)}s; running ${command.join(' ')}`)
-    let shown = 0, record = job
-    for (;;) {
+    let shown = 0
+    const pollUntil = Date.now() + (HOLD_S + 120) * 1000
+    while (!SETTLED.has(record?.state) && Date.now() < pollUntil) {
       await new Promise((r) => setTimeout(r, 5000))
       const log = await box.read('gate.log').catch(() => '')
       if (log.length > shown) { process.stdout.write(log.slice(shown)); shown = log.length }
       record = await box.process.jobs.get('gate').catch(() => record)
-      if (record && SETTLED.has(record.state)) break
     }
     const log = await box.read('gate.log').catch(() => '')
     if (log.length > shown) process.stdout.write(log.slice(shown))
-    const code = Number((await box.read('gate.exit').catch(() => '')).trim())
-    exit = Number.isInteger(code) && String(code) !== '' ? code : (record.lastExitCode ?? 1)
-    // Exit 70 is a bootstrap step (fetch, Node) that failed before the command: not a red gate.
-    outcome = exit === 70 ? 'bootstrap_failed' : 'returned'
+    // Only a recorded exit counts: a killed, expired or unreadable job has none, and must not read as 0.
+    const written = (await box.read('gate.exit').catch(() => '')).trim()
+    if (/^\d+$/.test(written)) exit = Number(written)
+    else if (['succeeded', 'failed'].includes(record?.state) && Number.isInteger(record.lastExitCode)) exit = record.lastExitCode
+  } catch (error) {
+    say(`sandbox ${box.id} job failed before a result: ${String(error.message).slice(0, 200)}`)
   } finally {
     await stop()
+  }
+  if (exit === null) tempfail(`gate on ${box.id} ended ${record?.state ?? 'unsubmitted'} without an exit code`)
+  // Exit 70 is a bootstrap step (fetch, Node) that failed before the command: not a red gate.
+  if (exit === 70) {
+    mkdirSync(path.dirname(offMarker), { recursive: true })
+    writeFileSync(offMarker, `${box.id} bootstrap exit 70 at ${new Date().toISOString()}\n`)
+    tempfail(`bootstrap failed before the command on ${box.id}`)
   }
   const ranS = Math.round((Date.now() - created) / 1000)
   const receipt = { gate_id: gateId, at: new Date().toISOString(), host: 'sandbox', placement: 'sandbox', box: box.id, repo, sha, mode,
     class: gateClass || 'normal', command: command.join(' '), exit, ran_s: ranS, waited_s: Number(process.env.BEELINK_GATE_PLACED_WAIT || 0) + Math.round((created - started) / 1000),
-    lane: process.env.BEELINK_GATE_LANE || '', launcher: hostname(), pr_number: process.env.BEELINK_GATE_PR || null, outcome }
+    lane: process.env.BEELINK_GATE_LANE || '', launcher: hostname(), pr_number: process.env.BEELINK_GATE_PR || null }
   if (process.env.BEELINK_GATE_SANDBOX_RECEIPT) writeFileSync(process.env.BEELINK_GATE_SANDBOX_RECEIPT, `${JSON.stringify(receipt)}\n`)
   say(`receipt: sha=${sha} install=${mode} exit=${exit} duration=${ranS}s placement=sandbox box=${box.id} gate_id=${gateId}`)
-  if (outcome === 'bootstrap_failed') tempfail(`bootstrap failed before the command on ${box.id}`)
   process.exit(exit)
 }
 
