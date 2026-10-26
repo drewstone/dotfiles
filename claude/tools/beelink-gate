@@ -1942,7 +1942,7 @@ PY
   done
   # Sandbox gates record their receipt as a commit status on the SHA, readable without a Beelink.
   if [[ "$key" == github.com/* ]]; then
-    if statuses=$("$(command -v gh-drew || command -v gh)" api "repos/${key#github.com/}/commits/$3/statuses" --paginate \
+    if statuses=$("$gh_drew" api "repos/${key#github.com/}/commits/$3/statuses" --paginate \
         --jq '.[] | select(.context == "beelink-gate" and .creator.login == "drewstone") | [.created_at, .state, .description] | @tsv' 2>/dev/null); then
       printf '%s\n' "$statuses" > "$host_rows"
       python3 - "$key" "$3" "$host_rows" >> "$found" <<'PY'
@@ -2006,7 +2006,7 @@ if [ "${1:-}" = --report ]; then
   done
   rm -f "$host_rows"
   frontend_local_records "$hours" >> "$receipts_file"
-  merged_lookup=$(command -v gh-drew || command -v gh || true)
+  merged_lookup=$gh_drew
   report_module=$report_dir/beelink_gate_report.py
   python3 "$report_module" "$receipts_file" "$hours" "$merged_lookup" "$missing" "$report_format" "$report_since"
   status=$?
@@ -2084,8 +2084,8 @@ merge_gated() {  # <gate stderr log>
   id=$(grep -ao 'gate_id=[A-Za-z0-9-]*' "$1" | tail -n 1)
   id=${id#gate_id=}
   # gh-drew requires this gate's own receipt for a release-path repo (its gated_repos).
-  if out=$(BEELINK_GATE_ID="$id" gh-drew pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
-    sha=$(gh-drew pr view "$merge_pr" -R "$merge_repo" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null)
+  if out=$(BEELINK_GATE_ID="$id" "$gh_drew" pr merge "$merge_pr" -R "$merge_repo" --squash --match-head-commit "$merge_sha" 2>&1); then
+    sha=$("$gh_drew" pr view "$merge_pr" -R "$merge_repo" --json mergeCommit --jq '.mergeCommit.oid // ""' 2>/dev/null)
     echo "beelink-gate: merged #$merge_pr ${sha:-unknown} gate_id=${id:-unknown}" >&2
     return 0
   fi
@@ -2190,7 +2190,7 @@ commit_sparse_spec() {  # <repo-url> <sha>; prints nothing when it cannot tell
   local host owner repo gh raw err
   parse_repo_url "$1" 2>/dev/null || return 0
   if [ "$host" = github.com ]; then
-    gh=$(command -v gh-drew || command -v gh) || return 0
+    gh=$gh_drew; [ -x "$gh" ] || return 0
     err=$(mktemp) || return 0
     if raw=$("$gh" api "repos/$owner/$repo/contents/.beelink-gate/sparse-checkout?ref=$2" --jq .content 2>"$err"); then
       printf '%s' "$raw" | tr -d '\n' | base64 --decode | sparse_spec_of
@@ -2291,7 +2291,7 @@ run_sandbox() {
   if [ -s "$receipt" ]; then
     # The receipt of record is a commit status on the gated SHA (context beelink-gate), which --receipt and
     # gh-drew read from any host; the Beelink copy only feeds --report and is best effort.
-    python3 - "$receipt" <<'PY' | xargs -0 -r "$(command -v gh-drew || command -v gh)" api -X POST >/dev/null || echo "beelink-gate: sandbox receipt status not posted: $(cat "$receipt")" >&2
+    python3 - "$receipt" <<'PY' | xargs -0 -r "$gh_drew" api -X POST >/dev/null || echo "beelink-gate: sandbox receipt status not posted: $(cat "$receipt")" >&2
 import json, re, sys
 r = json.load(open(sys.argv[1]))
 m = re.fullmatch(r"github\.com/([^/]+/[^/]+)", r["repo"])
