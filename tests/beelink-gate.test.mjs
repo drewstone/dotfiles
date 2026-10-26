@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn as spawnProcess, spawnSync } from "node:child_process";
@@ -3270,6 +3270,13 @@ test("urgent auto reserves both hosts before either checkout frees", async () =>
     for (const ip of ["100.98.195.7", "100.127.22.51"]) {
       assert.ok(readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).some((n) => n.startsWith("urgent-local-owner-repo.")), `${ip} reserved`);
     }
+    // A placing urgent gate keeps its markers fresh past urgent_ahead's 30 s window: stale ones let normal gates take
+    // every freed checkout from #14868's urgent gate for 30 min (10-26). Backdated, they are refreshed by its beats.
+    const markerOf = (ip) => join(`${cachePrefix}-${ip}`, ".locks", readdirSync(join(`${cachePrefix}-${ip}`, ".locks")).find((n) => n.startsWith("urgent-local-owner-repo.")));
+    const fresh = (ip) => statSync(markerOf(ip)).mtimeMs > Date.now() - 30_000;
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) utimesSync(markerOf(ip), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    for (let i = 0; i < 150 && !["100.98.195.7", "100.127.22.51"].every(fresh); i++) await sleepMs(100);
+    for (const ip of ["100.98.195.7", "100.127.22.51"]) assert.ok(fresh(ip), `${ip}: the placing urgent gate's marker went stale`);
     const normal = launch(false, "beelink2");
     await sleepMs(300);
     holders[1].kill("SIGKILL");
