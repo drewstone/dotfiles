@@ -830,7 +830,6 @@ remote_probe() {
   read -r probe_load probe_limit held < <(python3 -c 'import json,sys; x=json.loads(sys.argv[1]); print(x["some_avg10"] if x["some_avg10"] is not None else 100, x["limit"], int(x["held"]))' "$capacity")
   host_cpu=$(host_pressure_now || echo unknown)
   if [ "$held" = 1 ]; then state=busy; reason="host PSI some avg10 admission held"; fi
-  if ! legacy_gate_drained; then state=busy; reason="legacy gate class has not proved drained"; fi
   printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s admission=%s capacity=%s reason=%s\n' \
     "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$mode" "$capacity" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 
@@ -1213,7 +1212,7 @@ remote_gate() {
   trap 'admission_early_exit "$?"' EXIT
   initial_disk_admission
   max_cpu_pressure >/dev/null
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "managed containment, legacy drain or host CPU PSI unavailable"
+  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "managed containment or host CPU PSI unavailable"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi

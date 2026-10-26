@@ -16,44 +16,6 @@ cgroup_root() { echo "${BEELINK_GATE_CGROUP_ROOT:-/sys/fs/cgroup}"; }
 self_cgroup_file() { echo "${BEELINK_GATE_SELF_CGROUP:-/proc/self/cgroup}"; }
 gate_cgroup() { echo "$(cgroup_root)/beelinkgate.slice/$(gate_slice)"; }
 
-# Missing old groups are drained; unreadable or malformed recursive kernel
-# population evidence cannot release this transitional cap handoff.
-legacy_gate_drained() {
-  local group=beelink-gate
-  [ "$(gate_slice)" != beelinkgate-dev.slice ] || group="beelink-gate-dev"
-  local status=0
-  python3 - "$group" <<'PY'
-import os, pathlib, sys
-path = pathlib.Path(os.environ.get('BEELINK_GATE_CGROUP_ROOT', '/sys/fs/cgroup'), sys.argv[1])
-try:
-    path.stat()
-except FileNotFoundError:
-    sys.exit(0)
-except OSError:
-    sys.exit(2)
-try:
-    lines = [line.split() for line in (path / 'cgroup.events').read_text().splitlines()]
-    values = [value for key, value in lines if key == 'populated']
-    if len(values) != 1 or values[0] not in ('0', '1'):
-        raise ValueError()
-    sys.exit(int(values[0]))
-except (OSError, ValueError):
-    sys.exit(2)
-PY
-  status=$?
-  [ "$status" = 0 ] || return "$status"
-  legacy_user_gate_units_drained
-}
-require_legacy_gate_drained() {
-  local status=0
-  legacy_gate_drained || status=$?
-  [ "$status" = 0 ] || {
-    admission_outcome=refused admission_reason=legacy_gate_unknown
-    [ "$status" != 1 ] || admission_reason=legacy_gate_live
-    tempfail_line "$(utc_in_minutes 5)" "legacy gate class has not proved drained (status=$status); no new managed work"
-    return 75
-  }
-}
 
 verify_gate_unit() {
   local expected actual
@@ -193,7 +155,6 @@ wait_for_load() {
   while :; do
     admission_stage checks
     admit_release_priority "$beelink"
-    require_legacy_gate_drained || return 75
     sample=$(host_psi_admission) || return 75
     if [ -n "${deadline:-}" ] && (( SECONDS >= deadline )); then
       timed_out=1
@@ -333,23 +294,22 @@ async def serve(client_r, client_w):
         lines = (await client_r.readuntil(b'\r\n\r\n'))[:-4].split(b'\r\n')
         fields = {k.strip().lower(): v.strip() for k, _, v in (line.partition(b':') for line in lines[1:])}
         upgrade = b'upgrade' in fields.get(b'connection', b'').lower()
-        if not upgrade:
-            lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'connection'] + [b'Connection: close']
         method, target, version = lines[0].split(b' ')
+        create = method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target)
+        drop = (b'content-length', b'transfer-encoding')[:2 if create else 0] + (() if upgrade else (b'connection',))
+        lines = [line for line in lines if line.partition(b':')[0].strip().lower() not in drop] + [b'Connection: close'][upgrade:]
         body = b''
         if method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/build(\?.*)?', target) and not re.search(rb'[?&]cgroupparent=[^&]', target):
             target = re.sub(rb'([?&])cgroupparent=(&|$)', rb'\1', target).rstrip(b'&?')  # clients before v28 send it empty
             lines[0] = b' '.join((method, target + (b'&' if b'?' in target else b'?') + b'cgroupparent=' + parent, version))
-        elif method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target):
+        elif create:
             if fields.get(b'transfer-encoding', b'').lower() == b'chunked':  # docker-java (Testcontainers) streams it
                 while size := int((await client_r.readuntil(b'\r\n')).split(b';')[0], 16):
                     body += (await client_r.readexactly(size + 2))[:-2]
                 while await client_r.readuntil(b'\r\n') != b'\r\n':
                     pass
-                lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'transfer-encoding']
             else:
                 body = await client_r.readexactly(int(fields.get(b'content-length', b'0')))
-                lines = [line for line in lines if line.partition(b':')[0].strip().lower() != b'content-length']
             try:
                 spec = json.loads(body)
                 host = spec.get('HostConfig') or {}
