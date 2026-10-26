@@ -48,6 +48,8 @@ def install(prefixes=()) -> int:
         else:
             if path == GIT_ENTRY and not path.exists() and not path.is_symlink():
                 # Preserve the system Git as the delegation target; the guard owns only ~/bin/git.
+                # A home without bin/ (root's on GTR) failed here, so every install left /root/bin/git drifted.
+                path.parent.mkdir(parents=True, exist_ok=True)
                 original.symlink_to("/usr/bin/git")
             else:
                 if not path.is_file():
