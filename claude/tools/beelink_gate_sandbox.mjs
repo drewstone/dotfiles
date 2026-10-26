@@ -19,7 +19,13 @@ const TEMPFAIL = 75
 const SDK_VERSION = '0.64.40'
 const BOX_PREFIX = 'beelink-gate-'
 // Production hosts refused 16 GB with CAPACITY_EXHAUSTED on 2026-10-26 and admitted 8 GB in 2.5 s.
-const RESOURCES = { cpuCores: Number(process.env.BEELINK_GATE_SANDBOX_CPUS || 8), memoryMB: Number(process.env.BEELINK_GATE_SANDBOX_MEMORY_MB || 8192), diskGB: 40 }
+// A light gate (no install, at most 120 core-seconds) gets a small box; every other class gets 8 CPU / 8 GB.
+const resources = (gateClass) => gateClass === 'light'
+  ? { cpuCores: 2, memoryMB: 4096, diskGB: 20 }
+  : { cpuCores: Number(process.env.BEELINK_GATE_SANDBOX_CPUS || 8), memoryMB: Number(process.env.BEELINK_GATE_SANDBOX_MEMORY_MB || 8192), diskGB: 40 }
+// Each refused create counts toward the cell's create-failure streak; after one, no launcher here creates for 5 minutes.
+const CAPACITY_BACKOFF_MS = 300_000
+const cacheDir = () => path.join(process.env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'beelink-gate')
 const MAX_LIVE = Number(process.env.BEELINK_GATE_SANDBOX_MAX || 4)
 const HOLD_S = Number(process.env.BEELINK_GATE_SANDBOX_HOLD_S || 45 * 60)
 const SETTLED = new Set(['succeeded', 'failed', 'cancelled', 'expired'])
@@ -97,15 +103,19 @@ async function run(argv) {
   const { Sandbox } = await sdk()
   const client = new Sandbox({ apiKey: key, baseUrl: process.env.BEELINK_GATE_SANDBOX_URL || 'https://sandbox.tangle.tools' })
   // A global cap across launchers: gate boxes are named, so the live list is the count.
-  const live = (await client.list().catch(() => [])).filter((b) => b.name?.startsWith(BOX_PREFIX) && !['deleted', 'stopped', 'failed'].includes(b.status))
+  const capacityOff = path.join(cacheDir(), 'sandbox-capacity-refused')
+  if (existsSync(capacityOff) && Date.now() - statSync(capacityOff).mtimeMs < CAPACITY_BACKOFF_MS) tempfail(`platform refused capacity at ${readFileSync(capacityOff, 'utf8').trim()}; no create for 5 minutes`)
+  // Warm source boxes hold snapshots, not gates, so they do not count toward the cap.
+  const live = (await client.list().catch(() => [])).filter((b) => b.name?.startsWith(BOX_PREFIX) && !b.name.startsWith(`${BOX_PREFIX}warm-`) && !['deleted', 'stopped', 'failed'].includes(b.status))
   if (live.length >= MAX_LIVE) tempfail(`cap reached: ${live.length} of ${MAX_LIVE} gate boxes live`)
   const id = randomBytes(16).toString('hex')
   const gateId = `sandbox-${id}`
   const repo = repoUrl.replace(/^(?:git@([^:]+):|ssh:\/\/git@([^/]+)\/|https?:\/\/([^/]+)\/)(.+?)(?:\.git)?\/?$/, (_, a, b, c, r) => `${a || b || c}/${r}`)
   // A repo whose bootstrap failed in a box (no access, no Node) buys no box for an hour, across --retry and lanes.
-  const offMarker = path.join(process.env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'beelink-gate', `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}`)
+  const offMarker = path.join(cacheDir(), `sandbox-off-${repo.replace(/[^A-Za-z0-9._-]/g, '_')}`)
   if (existsSync(offMarker) && Date.now() - statSync(offMarker).mtimeMs < 3600_000) tempfail(`off for ${repo} after a bootstrap failure: ${readFileSync(offMarker, 'utf8').trim()}`)
   const started = Date.now()
+  const RESOURCES = resources(gateClass)
   say(`gate_id=${gateId}; placing on a Tangle sandbox (${RESOURCES.cpuCores} CPU, ${RESOURCES.memoryMB} MB)`)
   // Handlers come before create, so a stop during create still deletes the box once its id is known.
   let box, stopping = false
@@ -116,6 +126,10 @@ async function run(argv) {
     box = await client.create({ name: `${BOX_PREFIX}${id.slice(0, 12)}`, resources: RESOURCES, secrets: ['GH_TOKEN'], egressPolicy: { mode: 'open' },
       maxLifetimeSeconds: HOLD_S + 600, idleTimeoutSeconds: HOLD_S, deleteAfterStoppedSeconds: 300, retry: { capacity: false } })
   } catch (error) {
+    if (error.code === 'CAPACITY_EXHAUSTED' || error.status === 503) {
+      mkdirSync(cacheDir(), { recursive: true })
+      writeFileSync(capacityOff, `${new Date().toISOString()} ${error.code || error.status}\n`)
+    }
     tempfail(`create refused: ${error.code || error.status || ''} ${String(error.message).slice(0, 200)}`)
   }
   if (stopping) { await stop(); process.exit(143) }
