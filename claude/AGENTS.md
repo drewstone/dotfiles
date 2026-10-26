@@ -61,6 +61,7 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 
 ## Read when relevant
 
+- Shared code: before adding, copying or moving a shared concept, or proposing a consolidation: [vision](../docs/vision.md).
 - Repository changes, delegation, host work: [work process](../docs/processes/agent-work.md).
 - Analysis, review, plan, proposal or run status: [the climb](../docs/processes/climb.md).
 - Stalled or repeating work: [session efficiency](skills/reflect/references/session-efficiency.md).
