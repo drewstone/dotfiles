@@ -286,7 +286,7 @@ async def serve(client_r, client_w):
         upgrade = b'upgrade' in fields.get(b'connection', b'').lower()
         method, target, version = lines[0].split(b' ')
         create = method == b'POST' and re.fullmatch(rb'(/v[\d.]+)?/containers/create(\?.*)?', target) and b'content-length' in fields
-        drop = (b'content-length',)[:create and 1] + (() if upgrade else (b'connection',))
+        drop = ((b'content-length',) if create else ()) + (() if upgrade else (b'connection',))
         lines = [line for line in lines if line.partition(b':')[0].strip().lower() not in drop] + [b'Connection: close'][upgrade:]
         body = await client_r.readexactly(int(fields[b'content-length'])) if create else b''
         if create:
