@@ -117,6 +117,10 @@ check_floor() {
   return 3
 }
 
+# A .beelink-gate/sparse-checkout file's patterns, without comments, blank
+# lines or trailing spaces (stdin to stdout).
+sparse_normalize() { sed -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d'; }
+
 # The checkout shape an install reserve was measured on: full, or sha256 of
 # the normalized patterns of the .beelink-gate/sparse-checkout read on stdin.
 sparse_spec_of() {
