@@ -103,7 +103,7 @@ v=24; [ ! -f .nvmrc ] || v=$(tr -d 'v \\n' < .nvmrc); have=$(node -v 2>/dev/null
 corepack enable --install-directory "$HOME/.local/bin" 2>/dev/null
 # Python the way the Beelinks have it: .python-version, else 3.12. The image's python3 is 3.11, and tangle-tools'
 # f-strings need 3.12 (disco-evolve-run, 08:55Z). Only repos with Python files pay for it.
-if git ls-files '*.py' | grep -q .; then
+if [ -n "$(git ls-files '*.py' | head -1)" ]; then  # not grep -q: under pipefail its early exit SIGPIPEs git, and this never ran
   pv=3.12; [ ! -f .python-version ] || pv=$(head -1 .python-version | tr -d ' \\n' | cut -d. -f1,2)
   case "$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)" in "$pv") ;; *)
     step python
@@ -111,7 +111,7 @@ if git ls-files '*.py' | grep -q .; then
     [ -n "$url" ] && rm -rf "$HOME/.python" && mkdir -p "$HOME/.python" && curl -fsSL "$url" | tar -xz -C "$HOME/.python" --strip-components=1 || exit 70
     for b in python3 python "python$pv" pip3 pip; do [ -e "$HOME/.python/bin/$b" ] && ln -sf "$HOME/.python/bin/$b" "$HOME/.local/bin/$b"; done
     python3 --version >&2 ;;
-  esac; export UV_PYTHON="$(command -v python3)"  # uvx built tools on the image's /usr/bin/python3.11, not PATH's 3.12 (10-26)
+  esac; export UV_PYTHON="$pv" UV_PYTHON_PREFERENCE=only-managed  # uv ignores nix's python3 ('system interpreter required') and took /usr/bin/python3.11
 fi
 # Login shells (bash -lc in gate commands) reset PATH to the image's /usr/bin, whose git 2.39 lacks
 # check-attr --source (factory census, 10-26 08:2xZ). Beelink login shells keep the gate's tools; so does the box.
