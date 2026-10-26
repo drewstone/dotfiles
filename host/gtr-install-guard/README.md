@@ -15,7 +15,8 @@ global installs, lockfile-only resolution, and directories that are not checkout
 the fallback root, `uv` installs stay refused only inside `_wt`, because GTR tools use
 `uv run` from their checkouts.
 
-A gate no Beelink admits within 5 minutes runs in a Tangle sandbox, never on GTR
+`beelink-gate` owns the fallback: a gate no Beelink admits within 5 minutes runs under
+`storage-lifecycle run-lane` in a fresh clone under `~/.cache/gtr-gate` and removes it before the lease ends
 ([agent work](../../docs/processes/agent-work.md#choose-the-host-and-checkout)).
 
 Recognized package installs in the fallback root require the lifecycle owner
