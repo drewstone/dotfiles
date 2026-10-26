@@ -3132,6 +3132,9 @@ test("--report counts a renamed repo under its current name and marks a missing 
     // GitHub resolves the old name to the new one; search answers 2 merged PRs.
     writeFileSync(join(f.root, "bin", "gh-drew"), '#!/usr/bin/env bash\n[[ "$*" == *repos/o/old* ]] && { echo o/r; exit 0; }\necho 2\n');
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    // The report reads GTR's receipts locally only on GTR; elsewhere it asks the fake ssh, which
+    // returns none, so beelink2 counted 4 runs. Run as GTR on every host.
+    writeFileSync(join(f.root, "bin", "hostname"), "#!/bin/sh\necho drew-GTR-Pro\n", { mode: 0o755 });
     const drops = join(f.root, "receipt-drops");
     const env = { ...f.env, FAKE_WU_DAY: String(f.windowDay), FAKE_WU_HOUR: String(f.windowHour), FAKE_RECEIPT_DROPS: drops, BEELINK_GATE_PROBE_RETRY_SECONDS: "0" };
     writeFileSync(drops, "1\n");
