@@ -3905,6 +3905,31 @@ esac
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// A GTR hostlab suite leased 6.13 GB and wrote 12.6 GB (a /tmp nix-closure.tar and 4 images) under GTR's floor (10-27).
+// A GTR gate's TMPDIR is in its leased dir, its bytes count there, and past 1.5x the lease its command is stopped.
+test("a GTR gate counts its TMPDIR toward its lease and is stopped past 1.5x it, with the overrun in its receipt", () => {
+  const f = fixture();
+  try {
+    const gtr = (lease, name) => {
+      const dir = join(f.root, "pool", name), log = join(f.root, `${name}.log`);
+      const args = [log, dir, f.url, f.first, "no-install"].map(encode);
+      return run("bash", [gate, "--gtr-run", ...args, "bash", "-c", 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20'], { timeout: 120_000,
+        env: { ...f.env, BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
+    };
+    const over = gtr(1_000_000, "a".repeat(32));
+    assert.equal(over.status, 124, over.stderr);
+    assert.match(over.stderr, /stopping the command at \d+ bytes, past 1\.5x its 1000000-byte lease/);
+    const within = gtr(1_000_000_000, "b".repeat(32));
+    assert.equal(within.status, 0, within.stderr);
+    const rows = readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const [stopped, passed] = [`drew-gtr-pro-${"a".repeat(32)}`, `drew-gtr-pro-${"b".repeat(32)}`].map((id) => rows.find((row) => row.gate_id === id));
+    assert.equal(stopped.exit, 124);
+    assert.ok(stopped.overrun_bytes > 1_500_000, JSON.stringify(stopped));
+    assert.equal(passed.overrun_bytes, null);
+    assert.ok(passed.gtr_bytes >= 3_000_000, `the TMPDIR blob counts: ${JSON.stringify(passed)}`);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("--merge squash-merges the PR pinned to the gated SHA only after a green gate, and never from a dev gate", () => {
   const f = fixture();
   try {
