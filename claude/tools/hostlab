@@ -105,14 +105,11 @@ reap_log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$CACHE/reap.lo
 
 need() {
   local b kvm_gid account_groups active_groups
-  for b in qemu-system-x86_64 qemu-img cloud-localds ssh ssh-keygen python3 timeout; do
-    command -v "$b" >/dev/null 2>&1 || die "missing $b (sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client)"
-  done
+  for b in qemu-system-x86_64 qemu-img cloud-localds ssh ssh-keygen python3 timeout; do command -v "$b" >/dev/null 2>&1 || die "missing $b (sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client)"; done
   if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
     kvm_gid=$(getent group kvm 2>/dev/null | cut -d: -f3) || kvm_gid=""
     if [[ "$kvm_gid" =~ ^[0-9]+$ ]] && [ "$(stat -c %g /dev/kvm 2>/dev/null)" = "$kvm_gid" ]; then
-      account_groups=$(id -G "$(id -un)" 2>/dev/null || true)
-      active_groups=$(id -G)
+      account_groups=$(id -G "$(id -un)" 2>/dev/null || true) active_groups=$(id -G)
       if [[ " $account_groups " == *" $kvm_gid "* && " $active_groups " != *" $kvm_gid "* ]]; then
         die "/dev/kvm is inaccessible: the account belongs to kvm, but this process does not. A lingering systemd user manager can keep old groups; run this hostlab call through sg kvm -c 'hostlab ...'"
       fi
@@ -355,12 +352,19 @@ cmd_build() {
   echo "hostlab: base image ready at $BASE_IMG"
 }
 
-# Under a GTR gate the VM's disks are the gate's bytes: its run is tagged with the gate (gtr_used_bytes counts it) and
-# disks whose virtual size exceeds the gate's storage lease refuse (a 16 GB lease booted 125 GiB of disks, 10-27).
+# Under a GTR gate a VM whose disks fit the gate's lease is tagged with it, so gtr_used_bytes counts it (10-27).
 gate_lease_fits() {
   [ -n "${BEELINK_GATE_LEASE_DIR:-}" ] && [ -f "$BASE_IMG" ] || return 0  # no base image: vm_boot refuses below
   local want; want=$(( $(qemu-img info --output=json "$BASE_IMG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])') + $(numfmt --from=iec "$SCRATCH") ))
-  (( want <= ${BEELINK_GATE_LEASE_BYTES:-0} )) || die "the VM's disks are $want bytes virtual, over the ${BEELINK_GATE_LEASE_BYTES:-0}-byte storage lease of gate $BEELINK_GATE_LEASE_DIR; shrink --scratch or declare BEELINK_GATE_RESERVE_BYTES"
+  (( want <= ${BEELINK_GATE_LEASE_BYTES:-0} )) || GATE_VM_BYTES=$want
+}
+# Disks over the gate's lease take op-company:beelink-gate-gtr-hostlab (tangle-tools hosts/drew-GTR-Pro.json: at most 65 GB,
+# only while free stays over the 295 GB floor; operator 10-27). A unit holds it while qemu runs; a refusal stops the boot.
+gate_vm_lease() {  # <run dir> <id>
+  systemd-run --user --unit="hostlab-lease-$2" --collect --quiet ${STORAGE_LIFECYCLE_CONFIG:+-E STORAGE_LIFECYCLE_CONFIG} "$(command -v storage-lifecycle || echo "$HOME/.local/bin/storage-lifecycle")" run-lane --lane op-company:beelink-gate-gtr-hostlab --path "$1" --bytes "$GATE_VM_BYTES" -- \
+    bash -c 'touch "$0/leased"; for _ in $(seq 120); do [ -s "$0/qemu.pid" ] && break; sleep 5; done; while kill -0 "$(cat "$0/qemu.pid" 2>/dev/null)" 2>/dev/null; do sleep 30; done' "$1"
+  while [ ! -e "$1/leased" ] && [ "$(systemctl --user show -p ActiveState --value "hostlab-lease-$2")" != inactive ]; do sleep 1; done
+  [ -e "$1/leased" ] || { rm -rf "$1"; die "no VM reservation for $GATE_VM_BYTES bytes in op-company:beelink-gate-gtr-hostlab: $(journalctl --user -u "hostlab-lease-$2" -o cat | grep -m1 -o '"reason": "[^"]*"' || echo 'see its journal')"; }
 }
 
 vm_boot() {
@@ -372,10 +376,10 @@ vm_boot() {
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
   local id dir port i
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
-  dir="$RUNS/$id"; mkdir -m 700 "$dir"
+  dir="$RUNS/$id"; mkdir -m 700 "$dir"; [ -z "${GATE_VM_BYTES:-}" ] || gate_vm_lease "$dir" "$id"
   # Recorded before qemu starts, so the reaper never sees an unowned run.
   # Command substitution keeps $$ as the hostlab process: the caller.
-  printf '%s\n' "$OWNER" > "$dir/owner"; echo "$KEEP" > "$dir/keep"; [ -z "${BEELINK_GATE_LEASE_DIR:-}" ] || echo "$BEELINK_GATE_LEASE_DIR" > "$dir/gate"
+  printf '%s\n' "$OWNER" > "$dir/owner"; echo "$KEEP" > "$dir/keep"; [ -z "${BEELINK_GATE_LEASE_DIR:-}" ] || [ -n "${GATE_VM_BYTES:-}" ] || echo "$BEELINK_GATE_LEASE_DIR" > "$dir/gate"
   echo "$$ $(proc_start $$)" > "$dir/caller"
   for i in "${!INPUT_NAMES[@]}"; do printf '%s\t%s\n' "${INPUT_NAMES[$i]}" "${INPUT_FILES[$i]}" >> "$dir/read-only-inputs"; done
   if [ "$KEEP" = 1 ]; then echo $(( $(date +%s) + $(to_seconds "$TTL") )) > "$dir/expires"; else echo none > "$dir/expires"; fi
@@ -426,9 +430,7 @@ parse_opts() {
         [ $# -ge 2 ] && [[ "$2" = *=* ]] || die "--read-only-input needs NAME=FILE"
         input_name="${2%%=*}"; input_file="${2#*=}"
         [[ "$input_name" =~ ^[a-z][a-z0-9-]{0,11}$ ]] && [ -n "$input_file" ] || die "invalid read-only input name or file"
-        for prior in "${INPUT_NAMES[@]}"; do
-          [ "$prior" != "$input_name" ] || die "duplicate read-only input name: $input_name"
-        done
+        for prior in "${INPUT_NAMES[@]}"; do [ "$prior" != "$input_name" ] || die "duplicate read-only input name: $input_name"; done
         INPUT_NAMES+=("$input_name"); INPUT_FILES+=("$input_file"); shift 2 ;;
       --) shift; break ;;
       -h|--help) usage; exit 0 ;;
@@ -499,9 +501,7 @@ cmd_ssh() {
   local id="${1:-}"; [ -n "$id" ] || die "ssh needs a VM ID (hostlab status)"
   shift; [ "${1:-}" = "--" ] && shift
   local dir="$RUNS/$id"; [ -f "$dir/port" ] || die "no VM $id"
-  if [ $# -gt 0 ]; then
-    exec ssh $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 "cd /work && $*"
-  fi
+  [ $# -eq 0 ] || exec ssh $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 "cd /work && $*"
   exec ssh -t $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 'cd /work && exec bash -l'
 }
 
