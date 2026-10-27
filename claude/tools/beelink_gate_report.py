@@ -112,7 +112,7 @@ print(f"GITHUB_METADATA enabled={bool(gh)} cache_max_age_s={GITHUB_METADATA_CACH
       f"merged_unknown={sorted(repo for repo, count in merged_counts.items() if count is None)}")
 for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
     m = merged_counts[repo]
-    waits = sorted(r.get("waited_s", 0) for r in rs)
+    waits = sorted(r["waited_s"] for r in rs if isinstance(r.get("waited_s"), (int, float))) or ["?"]
     keys = collections.Counter((r.get("sha"), r.get("mode"), r.get("command")) for r in rs)
     repeats = sum(n - 1 for n in keys.values())
     modes = collections.Counter(r.get("class") if r.get("class") in ("dev", "light") else r.get("mode") for r in rs)
@@ -120,7 +120,7 @@ for repo, rs in sorted(by_repo.items(), key=lambda kv: -len(kv[1])):
     ratio = f"{len(rs) / m:.1f}" if m else "-"
     total_runs += len(rs)
     total_merged += m or 0
-    print(f"{repo[len('github.com/'):] if repo.startswith('github.com/') else repo:38} {len(rs):5} {m if m is not None else '?':>6} {ratio:>7} {waits[len(waits) // 2]:7}s {repeats:7}  "
+    print(f"{repo[len('github.com/'):] if repo.startswith('github.com/') else repo:38} {len(rs):5} {m if m is not None else '?':>6} {ratio:>7} {waits[len(waits) // 2]:>7}s {repeats:7}  "
           + " ".join(f"{k}={v}" for k, v in modes.most_common()) + " / " + " ".join(f"{k}={v}" for k, v in exits.most_common()))
 if total_merged:
     print(f"TOTAL {total_runs} runs / {total_merged} merged PRs = {total_runs / total_merged:.1f} runs per merged PR (target <= 1.5)"
@@ -167,7 +167,7 @@ for r in rows:
     by_host[r.get("host", "?")].append(r)
 for host, rs in sorted(by_host.items()):
     hp = sorted(r["start_host_cpu_pressure"] for r in rs if isinstance(r.get("start_host_cpu_pressure"), (int, float)))
-    waits = sorted(r.get("waited_s", 0) for r in rs)
+    waits = sorted(r["waited_s"] for r in rs if isinstance(r.get("waited_s"), (int, float))) or ["?"]
     p50 = f"{hp[len(hp) // 2]:.1f}" if hp else "-"
     print(f"HOST {host}: {len(rs)} runs, p50 wait {waits[len(waits) // 2]}s, host cpu avg60 at admission p50 {p50} "
           f"({len(hp)} measured), timeouts {sum(1 for r in rs if r.get('exit') == 124 or r.get('timed_out'))}")
