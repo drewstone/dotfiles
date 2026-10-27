@@ -1,57 +1,56 @@
 #!/usr/bin/env -S python3 -S
+"""Emit the drew-default claude-code AgentProfile, every resource a GitHub ref pinned to one pushed commit."""
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
+REPOSITORY = "drewstone/dotfiles"
+# Skills that need no Mac, fleet host or local CLI; each mounts with its sibling files.
+SKILLS = ["be-ambitious", "codebase-design", "converge", "critical-audit", "diagnose", "evolve", "finalize",
+          "ground-truth", "grilling", "harden", "hypothesize", "reflect", "simplify", "tdd", "verify", "writing-for-agents"]
+HOOKS = ["secret_scan.py", "process_guard.py", "git-push-preflight.sh", "ci-wait-guard.sh", "poll-guard.sh", "scan-guard.sh"]
+PERMISSIONS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Emit an AgentProfile JSON from Claude dotfiles.")
-    parser.add_argument("--source", required=True, help="Path to dotfiles/claude source directory")
-    parser.add_argument("--out", required=True, help="Output JSON path")
-    parser.add_argument("--name", required=True, help="Profile name")
-    parser.add_argument("--description", default="", help="Profile description")
-    parser.add_argument("--skills", default="", help="Comma-separated skill names. Empty means all skills in source.")
-    parser.add_argument("--include-prompt", action="store_true", help="Include CLAUDE.md as prompt.systemPrompt")
-    parser.add_argument("--permission", action="append", default=[], help="Permission entry like Bash=allow")
-    return parser.parse_args()
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument("--out", required=True, help="Output JSON path")
+parser.add_argument("--ref", default="origin/main", help="Pushed dotfiles commit the resources pin to")
+args = parser.parse_args()
+repo = Path(__file__).resolve().parents[2]
+git = lambda *argv: subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True, text=True).stdout
+sha = git("rev-parse", f"{args.ref}^{{commit}}").strip()
+show = lambda path: git("show", f"{sha}:claude/{path}").strip()
+ref = lambda path, **extra: {"kind": "github", "repository": REPOSITORY, "path": f"claude/{path}", "ref": sha, **extra}
 
+# CLAUDE.md pulls AGENTS.md and RTK.md in with @-lines; Claude Code expands them, a profile cannot.
+claude = show("CLAUDE.md").splitlines()
+included = [show(line[1:].strip()) for line in claude if line.startswith("@")]
+instructions = [*included, "\n".join(line for line in claude if not line.startswith("@")).strip()]
 
-def main():
-    args = parse_args()
-    source = Path(args.source).expanduser().resolve()
-    out = Path(args.out).expanduser().resolve()
-    skills_dir = source / "skills"
-    if args.skills.strip():
-        skills = [skill.strip() for skill in args.skills.split(",") if skill.strip()]
-    else:
-        skills = sorted(
-            entry.name
-            for entry in skills_dir.iterdir()
-            if entry.is_dir() and (entry / "SKILL.md").exists()
-        ) if skills_dir.exists() else []
+files, skills = [], []
+for skill in SKILLS:
+    for path in git("ls-tree", "-r", "--name-only", sha, f"claude/skills/{skill}").split():
+        rel = path.removeprefix("claude/")
+        (skills.append(ref(rel, name=skill)) if rel.endswith(f"{skill}/SKILL.md")
+         else files.append({"path": f".claude/{rel}", "resource": ref(rel)}))
+files += [{"path": f".claude/hooks/{hook}", "resource": ref(f"hooks/{hook}"), "executable": True} for hook in HOOKS]
 
-    permissions = {}
-    for item in args.permission:
-        if "=" not in item:
-            raise SystemExit(f"invalid --permission {item!r}; expected KEY=VALUE")
-        key, value = item.split("=", 1)
-        permissions[key] = value
+settings = json.loads(show("settings.json"))
+hooks = {}
+for event, group, hook in ((e, g, h) for e, gs in settings["hooks"].items() for g in gs for h in g["hooks"]):
+    if (name := hook["command"].removeprefix("$HOME/.claude/hooks/")) in HOOKS:
+        hooks.setdefault(event, []).append({"command": f"$CLAUDE_PROJECT_DIR/.claude/hooks/{name}", "matcher": group.get("matcher", "*"),
+                                            **({"timeoutMs": hook["timeout"] * 1000} if "timeout" in hook else {})})
 
-    profile = {
-        "name": args.name,
-        "description": args.description,
-        "skills": skills,
-    }
-    if permissions:
-        profile["permissions"] = permissions
-    if args.include_prompt:
-        prompt_path = source / "CLAUDE.md"
-        if prompt_path.exists():
-            profile["prompt"] = {"systemPrompt": prompt_path.read_text().strip()}
-
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(profile, indent=2) + "\n")
-
-
-if __name__ == "__main__":
-    main()
+profile = {
+    "name": "drew-default",
+    "description": f"Drew's Claude Code defaults from {REPOSITORY}@{sha[:12]}.",
+    "harness": "claude-code",
+    "model": {"provider": "anthropic", "default": settings["model"], "reasoningEffort": settings["effortLevel"],
+              "metadata": {"credentialSource": "subscription"}},
+    "prompt": {"instructions": instructions},
+    "permissions": {tool: "allow" for tool in PERMISSIONS},
+    "resources": {"skills": skills, "files": files, "failOnError": True},
+    "hooks": hooks,
+}
+Path(args.out).expanduser().write_text(json.dumps(profile, indent=2) + "\n")
