@@ -33,11 +33,10 @@ const SETTLED = new Set(['succeeded', 'failed', 'cancelled', 'expired'])
 
 const say = (line) => process.stderr.write(`beelink-gate: ${line}\n`)
 const tempfail = (why) => { say(`TEMPFAIL next_allowed=${new Date(Date.now() + 300_000).toISOString().slice(0, 19)}Z sandbox ${why}`); process.exit(TEMPFAIL) }
+// A missing or revoked key refuses with 77, never retried: a Mac kept a key revoked at a rotation (operator 10-27 21:42Z).
+const keyRefusal = (why) => { say(`sandbox key ${why}; launch sandbox-fallback gates from drew-gtr-pro`); process.exit(77) }
 
-function apiKey() {
-  const file = path.join(homedir(), '.config', 'tangle', 'beelink-gate-sandbox.key')
-  return process.env.BEELINK_GATE_SANDBOX_KEY?.trim() || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '')
-}
+const apiKey = (file = path.join(homedir(), '.config', 'tangle', 'beelink-gate-sandbox.key')) => process.env.BEELINK_GATE_SANDBOX_KEY?.trim() || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '')
 
 // The SDK is installed once per launcher into the gate's cache at the pinned version.
 async function sdk() {
@@ -137,14 +136,15 @@ async function run(argv) {
   const [repoUrl, sha, mode, gateClass, branch = ''] = argv.slice(0, sep)
   const command = argv.slice(sep + 1)
   const key = apiKey()
-  if (!key) tempfail('placement has no key: set BEELINK_GATE_SANDBOX_KEY or ~/.config/tangle/beelink-gate-sandbox.key')
+  if (!key) keyRefusal('missing: no BEELINK_GATE_SANDBOX_KEY and no ~/.config/tangle/beelink-gate-sandbox.key on this launcher')
   const { Sandbox } = await sdk()
   const client = new Sandbox({ apiKey: key, baseUrl: process.env.BEELINK_GATE_SANDBOX_URL || 'https://sandbox.tangle.tools' })
   // A global cap across launchers: gate boxes are named, so the live list is the count.
   const capacityOff = path.join(cacheDir(), 'sandbox-capacity-refused')
   if (existsSync(capacityOff) && Date.now() - statSync(capacityOff).mtimeMs < CAPACITY_BACKOFF_MS) tempfail(`platform refused a create (${readFileSync(capacityOff, 'utf8').trim().slice(0, 400)}); no create for 5 minutes`)
   // Warm source boxes hold snapshots, not gates, so they do not count toward the cap.
-  const live = (await client.list().catch((error) => tempfail(`cannot list gate boxes, so the ${MAX_LIVE}-box cap is unchecked: ${String(error.message).slice(0, 160)}`))).filter((b) => gateBox(b.name) && !['deleted', 'stopped', 'failed'].includes(b.status))
+  const live = (await client.list().catch((error) => error.status === 401 ? keyRefusal(`${key.slice(0, 12)}… (${process.env.BEELINK_GATE_SANDBOX_KEY ? 'BEELINK_GATE_SANDBOX_KEY' : '~/.config/tangle/beelink-gate-sandbox.key'}) is revoked or invalid: ${String(error.message).slice(0, 120)}`)
+    : tempfail(`cannot list gate boxes, so the ${MAX_LIVE}-box cap is unchecked: ${String(error.message).slice(0, 160)}`))).filter((b) => gateBox(b.name) && !['deleted', 'stopped', 'failed'].includes(b.status))
   if (live.length >= MAX_LIVE) tempfail(`cap reached: ${live.length} of ${MAX_LIVE} gate boxes live`)
   const id = randomBytes(16).toString('hex')
   const gateId = `sandbox-${id}`

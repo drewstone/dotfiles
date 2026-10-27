@@ -2290,7 +2290,7 @@ while :; do
   esac
   if [ "$target" = sandbox ]; then
     run_sandbox "$@" && exit 0
-    rc=$?; [ "$rc" = "$TEMPFAIL" ] && [ "$requested" = auto ] || exit "$rc"
+    rc=$?; [ "$rc" = 77 ] && [ "$requested" = auto ] && { sandbox_off=1; echo "beelink-gate: sandbox placement OFF for this launcher (key refused above); waiting for a beelink" >&2; continue; }; [ "$rc" = "$TEMPFAIL" ] && [ "$requested" = auto ] || exit "$rc"
     sandbox_next=$((SECONDS + 300)); echo "beelink-gate: no sandbox could start; a beelink, or a sandbox again in 5 min" >&2
     continue
   fi

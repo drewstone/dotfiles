@@ -258,6 +258,23 @@ test("a login-shell command's exit does not run a level-1 ~/.bash_logout that tu
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a sandbox placement with a missing or revoked key refuses with 77 and names drew-gtr-pro", () => {
+  // 10-27: a Mac launcher kept a key revoked at a rotation; its sandbox gates failed quietly as retryable tempfails.
+  const runner = resolve("claude/tools/beelink_gate_sandbox.mjs");
+  const home = mkdtempSync(join(tmpdir(), "gate-key-"));
+  try {
+    const args = ["run", "https://github.com/drewstone/dotfiles.git", "0".repeat(40), "light", "light", "--", "true"];
+    const env = { ...process.env, HOME: home, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(process.env.HOME, ".cache") };
+    delete env.BEELINK_GATE_SANDBOX_KEY;
+    const missing = spawnSync("node", [runner, ...args], { encoding: "utf8", env, timeout: 60_000 });
+    assert.equal(missing.status, 77, missing.stderr);
+    assert.match(missing.stderr, /sandbox key missing: .*launch sandbox-fallback gates from drew-gtr-pro/);
+    const revoked = spawnSync("node", [runner, ...args], { encoding: "utf8", env: { ...env, BEELINK_GATE_SANDBOX_KEY: `sk-tan-${"x".repeat(43)}` }, timeout: 180_000 });
+    assert.equal(revoked.status, 77, revoked.stderr);
+    assert.match(revoked.stderr, /sandbox key sk-tan-xxxxx… \(BEELINK_GATE_SANDBOX_KEY\) is revoked or invalid: .*launch sandbox-fallback gates from drew-gtr-pro/);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
 test("receipts identify the base, PR, lane, and observable reason for a repeated gate", () => {
   const f = fixture();
   try {
