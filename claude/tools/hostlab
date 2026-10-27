@@ -203,16 +203,11 @@ qemu_start() {
   local dir="$1" port="$2" workdir="$3" i input_id LC_ALL=C
   sha256sum "$HOSTLAB_SOURCE" "$BOOT_DIAGNOSTICS" \
     "$(dirname "$HOSTLAB_SOURCE")/beelink_gate_cpu.py" | awk '{print $1}' > "$dir/source-sha256"
-  local -a input=() qmp=()
-  local sock
+  local -a input=() qmp=(); local sock
   # QMP lives in a short private dir, because a Unix socket path must stay under
   # 108 bytes and real run dirs exceed that (113 bytes for tangle-devops #585).
   # Diagnostics never block a boot: without a socket, QEMU starts without QMP.
-  if sock="$(qmp_socket_path "$dir")"; then
-    qmp=(-qmp "unix:${sock//,/,,},server=on,wait=off")
-  else
-    sock=unavailable
-  fi
+  if sock="$(qmp_socket_path "$dir")"; then qmp=(-qmp "unix:${sock//,/,,},server=on,wait=off"); else sock=unavailable; fi
   (umask 077; printf '%s\n' "$sock" > "$dir/qmp.path"); chmod 600 "$dir/qmp.path"
   for i in "${!INPUT_NAMES[@]}"; do
     input_id="hostlab-${INPUT_NAMES[$i]}"
@@ -220,6 +215,9 @@ qemu_start() {
     input+=(-drive "if=none,id=$input_id,format=raw,file=${INPUT_FILES[$i]//,/,,},readonly=on"
       -device "virtio-blk-pci,drive=$input_id,serial=$input_id")
   done
+  # The host's /nix/store at the guest's /nix/store, read-only in QEMU itself (a guest write fails EROFS): packets copied
+  # a 21.8 GB closure into every VM, ~134 GB for the pre-cut journey (operator 10-27). The base image has no /nix.
+  [ ! -d /nix/store ] || input+=(-virtfs "local,path=/nix/store,mount_tag=nixstore,security_model=none,readonly=on,id=nixstore")
   # Explicit devices preserve root/scratch/seed/input order. Mixing implicit
   # if=virtio drives with explicit inputs lets QEMU realize the inputs first.
   # Prefer the OS disk in firmware instead of an unindexed raw input disk.
@@ -390,9 +388,11 @@ vm_boot() {
     echo "hostname: hostlab-${id##*-}"
     echo "mounts:"
     echo "  - [work, /work, 9p, 'trans=virtio,version=9p2000.L,msize=512000,_netdev', '0', '0']"
+    echo "  - [nixstore, /nix/store, 9p, 'trans=virtio,version=9p2000.L,msize=512000,ro,nofail,_netdev', '0', '0']"
     echo "mount_default_fields: [None, None, 'auto', 'defaults,nofail', '0', '2']"
     echo "runcmd:"
     echo "  - mountpoint -q /work || mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 work /work"
+    echo "  - mkdir -p /nix/store && { mountpoint -q /nix/store || mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000,ro nixstore /nix/store || true; }"
   } > "$dir/user-data"
   printf 'instance-id: hostlab-%s\nlocal-hostname: hostlab-%s\n' "$id" "${id##*-}" > "$dir/meta-data"
   cloud-localds "$dir/seed.img" "$dir/user-data" "$dir/meta-data" 2>/dev/null
