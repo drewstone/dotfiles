@@ -154,7 +154,7 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   local cpus=$(( $(nproc --all) / 2 )) mem=$(( 32 << 30 )) cpu; cpu=$(( cpus * 100 )); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
   systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" -- taskset -c "0-$((cpus - 1))") \
     && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpus\":$cpus,\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
-  mkdir -p "$dir/tmp" || exit 75; export TMPDIR="$dir/tmp"; gtr_images_before=$(docker image ls -q --no-trunc 2>/dev/null | sort -u)
+  mkdir -p "$dir/tmp" || exit 75; export TMPDIR="$dir/tmp" BEELINK_GATE_LEASE_DIR="$dir"; gtr_images_before=$(docker image ls -q --no-trunc 2>/dev/null | sort -u)
   git clone --quiet --no-checkout --filter=blob:none "$(fetch_url "$repo_url")" "$checkout" || exit 75
   git -C "$checkout" fetch --quiet --filter=blob:none origin "$sha" || exit 75
   base_sha=$(git -C "$checkout" rev-parse origin/HEAD 2>/dev/null)
@@ -171,10 +171,10 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   return "$gtr_status"
 }
 
-# The gate's bytes: its leased dir (clone, TMPDIR) and the Docker images made since it started. A hostlab suite leased
-# 6.13 GB, wrote a /tmp nix-closure.tar and 4 hc-* images (12.6 GB), and GTR fell below its floor (10-27).
+# The gate's bytes: its leased dir (clone, TMPDIR), Docker images made since it started and hostlab runs tagged with it
+# (10-27: a 6.13 GB lease wrote 12.6 GB of images and a /tmp tar; a 16 GB lease's VM disks reached 39.8 GB outside it).
 gtr_used_bytes() {
-  local size images=0 id; size=$(du -sb "$dir" 2>/dev/null | cut -f1)
+  local size images=0 id; size=$(du -sb "$dir" $(grep -lxF "$dir" "${HOSTLAB_HOME:-$HOME/.cache/hostlab}"/runs/*/gate 2>/dev/null | xargs -r -n1 dirname) 2>/dev/null | awk '{ n += $1 } END { print n + 0 }')
   for id in $(comm -13 <(printf '%s\n' "$gtr_images_before") <(docker image ls -q --no-trunc 2>/dev/null | sort -u)); do images=$(( images + $(docker image inspect -f '{{.Size}}' "$id" 2>/dev/null || echo 0) )); done
   echo $(( ${size:-0} + images ))
 }

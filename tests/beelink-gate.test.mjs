@@ -3907,19 +3907,22 @@ esac
 
 // A GTR hostlab suite leased 6.13 GB and wrote 12.6 GB (a /tmp nix-closure.tar and 4 images) under GTR's floor (10-27).
 // A GTR gate's TMPDIR is in its leased dir, its bytes count there, and past 1.5x the lease its command is stopped.
-test("a GTR gate counts its TMPDIR toward its lease and is stopped past 1.5x it, with the overrun in its receipt", () => {
+test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease and is stopped past 1.5x it, with the overrun in its receipt", () => {
   const f = fixture();
   try {
-    const gtr = (lease, name) => {
+    const gtr = (lease, name, script = 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20') => {
       const dir = join(f.root, "pool", name), log = join(f.root, `${name}.log`);
       const args = [log, dir, f.url, f.first, "no-install"].map(encode);
-      return run("bash", [gate, "--gtr-run", ...args, "bash", "-c", 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20'], { timeout: 120_000,
+      return run("bash", [gate, "--gtr-run", ...args, "bash", "-c", script], { timeout: 120_000,
         // The real PATH: the fixture's fake systemd-run records units instead of running the step's command.
-        env: { ...f.env, PATH: process.env.PATH, BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
+        env: { ...f.env, PATH: process.env.PATH, HOSTLAB_HOME: join(f.root, "hostlab"), BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
     };
     const over = gtr(1_000_000, "a".repeat(32));
     assert.equal(over.status, 124, over.stderr);
     assert.match(over.stderr, /stopping the command at \d+ bytes, past 1\.5x its 1000000-byte lease/);
+    // hostlab writes the gate's id into a run it boots under a gate (10-27: a 16 GB lease's VM disks reached 39.8 GB).
+    const vm = gtr(1_000_000, "c".repeat(32), 'r="$HOSTLAB_HOME/runs/r1"; mkdir -p "$r" && echo "$BEELINK_GATE_LEASE_DIR" > "$r/gate" && head -c 3000000 /dev/zero > "$r/disk.qcow2"; sleep 20');
+    assert.equal(vm.status, 124, vm.stderr);
     const within = gtr(1_000_000_000, "b".repeat(32));
     assert.equal(within.status, 0, within.stderr);
     const rows = readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
