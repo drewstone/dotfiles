@@ -4087,3 +4087,14 @@ test("the GTR gate finds the installed storage-lifecycle when PATH does not have
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a gate's Docker socket streams each fresh proxy's first attached run in full", () => {
+  // Without a strong task reference, asyncio garbage-collected the attach handler: 15 of 16 fresh proxies
+  // dropped a run's whole output while docker still returned its exit code (agent-container #15055's gate, 10-27).
+  const lib = resolve("claude/tools/beelink-gate-lib/resources.sh");
+  const script = `source "${lib}"; img=busybox:1.36; docker pull -q "$img" >/dev/null || exit 9
+for i in $(seq 12); do gate_cgroup_joined=1 gate_id="test-$$-$i"; (gate_docker_socket; docker run --rm "$img" sh -c 'echo A; sleep 1; echo B; exit 7'; echo "rc=$?"; kill $! 2>/dev/null); done`;
+  const result = run("bash", ["-c", script], { env: { ...process.env, DOCKER_HOST: "", XDG_RUNTIME_DIR: mkdtempSync(join(tmpdir(), "gate-docker-")) }, timeout: 300_000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "A\nB\nrc=7\n".repeat(12), result.stderr);
+});
