@@ -3914,7 +3914,8 @@ test("a GTR gate counts its TMPDIR toward its lease and is stopped past 1.5x it,
       const dir = join(f.root, "pool", name), log = join(f.root, `${name}.log`);
       const args = [log, dir, f.url, f.first, "no-install"].map(encode);
       return run("bash", [gate, "--gtr-run", ...args, "bash", "-c", 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20'], { timeout: 120_000,
-        env: { ...f.env, BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
+        // The real PATH: the fixture's fake systemd-run records units instead of running the step's command.
+        env: { ...f.env, PATH: process.env.PATH, BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
     };
     const over = gtr(1_000_000, "a".repeat(32));
     assert.equal(over.status, 124, over.stderr);
