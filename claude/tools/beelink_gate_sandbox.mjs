@@ -127,7 +127,7 @@ step command
 ${command.map(quote).join(' ')}
 ${/^[1-9][0-9]*$/.test(process.env.BEELINK_GATE_PR || '') ? `rc=$?; m="$HOME/.tmp/merge"; [ "$rc" != 0 ] || [ ! -f pnpm-lock.yaml ] || { step merge-lockfile  # as check_merge_lockfile
   git fetch -q origin "+refs/pull/${process.env.BEELINK_GATE_PR}/merge:refs/beelink-gate/merge" && [ "$(git rev-parse refs/beelink-gate/merge^2)" = "$(git rev-parse HEAD)" ] && rm -rf "$m" && mkdir -p "$m" && git archive refs/beelink-gate/merge | tar -x -C "$m" || exit 75
-  (cd "$m" && pnpm install --frozen-lockfile --lockfile-only --ignore-scripts); rc=$?; rm -rf "$m"; }; exit "$rc"` : ''}
+  (cd "$m" && pnpm install --frozen-lockfile --lockfile-only --ignore-scripts) || rc=65; rm -rf "$m"; }; exit "$rc"` : ''}
 `
 }
 

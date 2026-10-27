@@ -3991,7 +3991,7 @@ exit 0
 
     merge("BROKEN\n");
     const broken = gateMerge();
-    assert.equal(broken.status, 1, broken.stderr);
+    assert.equal(broken.status, 65, broken.stderr);  // not the command's red, so the red-input cache never replays it
     assert.match(broken.stderr, /checking the lockfile of #42's merge commit/);
     assert.match(broken.stderr, /ERR_PNPM_BROKEN_LOCKFILE/);
     assert.deepEqual(merges(), [], "a broken merge lockfile merged");
