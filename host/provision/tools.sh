@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # tools: base packages, the OpenSSH server (key-only login, off the LAN), Google Chrome,
-# Tailscale, GitHub CLI and uv.
+# Tailscale, GitHub CLI, uv and cargo-nextest.
 
 # hostlab (the VM lane in AGENTS.md) needs the qemu packages and /dev/kvm.
 # iw reads the Wi-Fi driver's own state (iw dev <dev> link, iw dev <dev> get
@@ -289,6 +289,18 @@ install_uv() {
     env UV_NO_MODIFY_PATH=1 sh "$WORK/uv-install.sh" >/dev/null 2>&1
 }
 
+# Gates for Rust repositories that document 'cargo nextest run' (blueprint, docktopus) need
+# nextest on every host; beelink-gate puts ~/.local/bin on PATH, where cargo finds subcommands.
+NEXTEST_VERSION=0.9.148
+NEXTEST_SHA256=223ba936714cc861a9cdedad5a8eb664dfdd69d6fbdf6cea6aa8184f523290dc
+nextest_current() { "$HOME/.local/bin/cargo-nextest" nextest --version 2>/dev/null | grep -q "^cargo-nextest $NEXTEST_VERSION "; }
+install_nextest() {
+  local tgz="$WORK/cargo-nextest.tar.gz"
+  fetch "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-gnu.tar.gz" "$tgz" &&
+    sha256_ok "$tgz" "$NEXTEST_SHA256" && tar -xzf "$tgz" -C "$WORK" cargo-nextest &&
+    install -D -m 0755 "$WORK/cargo-nextest" "$HOME/.local/bin/cargo-nextest"
+}
+
 # Runner accounts cannot read this user's home, so the Nix profile publisher
 # reads the gate's disk floor (beelink-gate --disk-floor-bytes) from a
 # root-owned copy of the gate and of this host's limits file. The installed
@@ -335,7 +347,7 @@ install_gate_cli() {
 }
 
 module_tools() {
-  section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv"
+  section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv, cargo-nextest"
   # shellcheck disable=SC2086 # the list splits on purpose
   want_pkgs $BASE_PACKAGES
   ensure "ssh accepts keys only ($SSHD_KEYS_ONLY, effective in sshd -G)" sshd_keys_only -- install_sshd_keys_only
@@ -352,5 +364,6 @@ module_tools() {
   ensure "GitHub CLI apt source" gh_source_ok -- add_gh_source
   ensure "gh from GitHub's apt source" gh_from_github -- install_gh
   ensure "uv in ~/.local/bin" test -x "$HOME/.local/bin/uv" -- install_uv
+  ensure "cargo-nextest $NEXTEST_VERSION in ~/.local/bin" nextest_current -- install_nextest
   ensure "beelink-gate readable by runner accounts ($GATE_LIB)" gate_cli_current -- install_gate_cli
 }
