@@ -331,7 +331,7 @@ import json, sys
 mode, cls, command = sys.argv[1:]
 r = max((r for r in map(json.loads, sys.stdin) if (r.get("mode"), r.get("class"), r.get("command"), r.get("checkout")) == (mode, cls, command, "detached")),
         key=lambda r: r.get("at", ""), default=None)  # the latest identical detached run; only a command red counts
-if r and r["exit"] not in (0, 2, 3, 75, 76, 124, 130, 137, 143) and (r.get("timing") or {}).get("command_s") is not None \
+if r and r["exit"] not in (0, 2, 3, 65, 75, 76, 124, 130, 137, 143) and (r.get("timing") or {}).get("command_s") is not None \
         and not (r.get("timed_out") or r.get("watchdog") or r.get("starved")):  # the command ran to its own exit
     print(r["exit"], "host=%s gate_id=%s at=%s exit=%s" % (r.get("host"), r.get("gate_id"), r.get("at"), r["exit"]))' \
     "$install_mode" "$([ "$install_mode" = light ] && echo light || echo normal)" "${cmd% }")

@@ -1075,10 +1075,9 @@ gate_command_argv() {
 remote_gate() {
   unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_ADMISSION_SAMPLE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS BEELINK_GATE_TURBO_REQUESTED_DIR
   [ "$#" -ge 7 ] || die "invalid remote request"
-  # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
-  # that trap only after unwinding every function, so the state they read is
-  # global, not local: beelink sha install_mode host owner repo cache_root
-  # checkout cache_max launcher build_root lock started display run_token.
+  # finish and receipt run from the EXIT trap. A shell error (set -u) reaches that trap only after unwinding every
+  # function, so the state they read is global, not local: beelink sha install_mode host owner repo cache_root checkout
+  # cache_max launcher build_root lock started display run_token.
   local repo_url key origin actual
   local remote_refs left ref branch window_day window_hour max_hold
   local -a command=()
@@ -1165,8 +1164,7 @@ remote_gate() {
   trap 'admission_signal=INT; stop' INT
   trap 'admission_signal=HUP; stop' HUP
   if [ "${BEELINK_GATE_HEARTBEAT:-0}" = 1 ]; then
-    # A background job's stdin defaults to /dev/null, so pass the heartbeat
-    # through its own descriptor.
+    # A background job's stdin defaults to /dev/null, so pass the heartbeat through its own descriptor.
     exec {heartbeat_fd}<&0
     ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
   fi
@@ -1191,9 +1189,8 @@ remote_gate() {
   unset BEELINK_GATE_BRANCH
   unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
-  # WSL over SSH runs a non-login shell. Expose the installed user's CLI and
-  # build tools without loading profiles or selecting a Rust toolchain.
-  # Keep dotfiles/local commands first; Rustup retains toolchain selection.
+  # WSL over SSH runs a non-login shell. Expose the installed user's CLI and build tools without loading profiles or
+  # selecting a Rust toolchain. Keep dotfiles/local commands first; Rustup retains toolchain selection.
   export PATH="$HOME/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.foundry/bin:$PATH"
   # Nobody can answer a prompt in a gate: Git fails at once instead of waiting
   # for a password or a host-key confirmation.
@@ -1225,10 +1222,9 @@ remote_gate() {
   fi
   admit_window "$beelink" "$window_day" "$window_hour"
   unset BEELINK_GATE_MAX_CONCURRENT
-  # Each repo gets BEELINK_GATE_REPO_CHECKOUTS checkouts per host (default 2):
-  # <repo> and <repo>@1, each with its own lock, so two lanes gating one repo do
-  # not take both beelinks. 38 gates of one repo from one lane
-  # waited 527 min in total behind a single checkout per host.
+  # Each repo gets BEELINK_GATE_REPO_CHECKOUTS checkouts per host (default 2): <repo> and <repo>@1, each with its own
+  # lock, so two lanes gating one repo do not take both beelinks. 38 gates of one repo from one lane waited 527 min in
+  # total behind a single checkout per host.
   local copies=${BEELINK_GATE_REPO_CHECKOUTS:-2} k suffix candidate fd capacity_fd writer_fd
   [[ "$copies" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_REPO_CHECKOUTS: $copies"
   # A light gate waits behind no normal gate: it has its own <repo>@light checkout.
@@ -1338,11 +1334,10 @@ PYTURBO
   if mkdir -p "$STATE_DIR" 2>/dev/null; then
     timing_file=$(mktemp "$STATE_DIR/phase.XXXXXXXX" 2>/dev/null) || timing_file=""
   fi
-  # The final admission checks run after lock and slot acquisition so their
-  # refusals need the same cleanup and receipt path as later failures. They are
-  # binding: this gate holds its checkout's lock from here through its install,
-  # so the checkout is warm only if it is here now with the gated commit's
-  # shape, and it stays warm only while it survives to the install (below).
+  # The final admission checks run after lock and slot acquisition so their refusals need the same cleanup and receipt
+  # path as later failures. They are binding: this gate holds its checkout's lock from here through its install, so the
+  # checkout is warm only if it is here now with the gated commit's shape, and it stays warm only while it survives to
+  # the install (below).
   admit_release_priority "$beelink"
   admitted_shape=$(checkout_shape "$checkout") || admitted_shape=""
   reserve_heat=cold
@@ -1517,9 +1512,9 @@ PYTURBO
     echo "beelink-gate: LIGHT GATE OVER BUDGET: the command used ${cpu_s} core-seconds of the ${light_cpu} it declared; run it as a normal gate" >&2
     status=1
   fi
+  [ "$status" -ne 0 ] || { check_merge_lockfile; status=$?; }
   if [ "$status" -eq 0 ] && [ "$install_mode" = ship ]; then
-    run_preview
-    status=$?
+    run_preview; status=$?
     [ "$status" -ne 0 ] || publish_proof
   fi
   exit "$status"
@@ -1626,10 +1621,9 @@ declare -A matched_reserve=() matched_warm_reserve=()
 # Only short control calls use this deadline; submitted gates keep their hold.
 TRANSPORT_TIMEOUT_SECONDS=30
 TRANSPORT_KILL_GRACE_SECONDS=2
-# Staging writes the whole gate script through a fresh WSL session, which starts slowly
-# on a loaded host: at load 120 on 16 cores, beelink1 staging passed 30 s
-# (ci-zero Braid #173) and the gate gave up before submitting. The checkout reservation
-# below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
+# Staging writes the whole gate script through a fresh WSL session, which starts slowly on a loaded host: at load 120 on
+# 16 cores, beelink1 staging passed 30 s (ci-zero Braid #173) and the gate gave up before submitting. The checkout
+# reservation below waits as long for the same reason (pr-closer gateway #65 lost its place at 30 s).
 STAGE_TIMEOUT_SECONDS=${BEELINK_GATE_STAGE_TIMEOUT:-120}
 
 if [ "${1:-}" = --disk-floor-bytes ]; then disk_floor_query "$@"; exit $?; fi
@@ -1689,9 +1683,8 @@ choose_beelink() {
       case "$state:$cache:$([ "${slots:-1}" -gt 0 ] && echo slot || echo full)" in
         free:warm:slot) rank=0 ;; free:cold:slot) rank=1 ;; free:*:full) rank=2 ;; *) continue ;;
       esac
-      # Any host that can admit beats an overloaded one. If both would wait,
-      # a warm cache cannot admit sooner than a cold cache: prefer the host
-      # closer to its pressure limit while keeping a free slot ahead of a full pool.
+      # Any host that can admit beats an overloaded one. If both would wait, a warm cache cannot admit sooner than a
+      # cold cache: prefer the host closer to its pressure limit while keeping a free slot ahead of a full pool.
       if overloaded "$line"; then
         case "$rank" in 0|1) rank=3 ;; *) rank=5 ;; esac
       fi
@@ -1699,9 +1692,8 @@ choose_beelink() {
         best=$target best_rank=$rank best_load=$load
       fi
     done
-    # A repo lock frees in minutes; load over the limit can last the whole
-    # load wait. Keep probing rather than queue on an overloaded host while
-    # the other one is under its limit and only busy with this repo.
+    # A repo lock frees in minutes; load over the limit can last the whole load wait. Keep probing rather than queue on
+    # an overloaded host while the other one is under its limit and only busy with this repo.
     if (( best_rank >= 3 )) && [ -n "$light_busy" ]; then best=""; fi
     # Past the wait budget, a host that cannot start the gate now, or already gave a placement back, loses to a
     # sandbox: probes kept ranking a free slot admission refused (agent-sdk sent back 4 times in 9m44s, 10-26).
@@ -1734,9 +1726,8 @@ choose_beelink() {
   done
 }
 
-# Auto gates need a place on both hosts before they probe. Without a durable
-# normal ticket, a gate spending minutes between probes can lose every freed
-# checkout to a newly arrived gate. Urgent gates use their priority marker.
+# Auto gates need a place on both hosts before they probe. Without a durable normal ticket, a gate spending minutes
+# between probes can lose every freed checkout to a newly arrived gate. Urgent gates use their priority marker.
 reserve_checkout() {
   local beelink repo_url gate_class host owner repo cache_root suffix="" marker rc priority=urgent epoch="" token=""
   beelink=$(decode "$1") repo_url=$(decode "$2") gate_class=$(decode "$3")
@@ -1847,17 +1838,15 @@ if [ "${1:-}" = --urgent-reserve ]; then
   exit 0
 fi
 
-# --receipt <repo-url> <sha>: every receipt both beelinks hold for that repo and
-# SHA, one JSON line each with its gate_id and the host it came from ("from").
-# gh-drew reads this before it merges a release-path PR, so a merge rests on the
-# gate's own receipt, never on a wrapper's exit code: a lane script
-# recorded exit=0 for gate beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose
-# receipt says exit=1, and discovery-lab#2009 merged on it. Exit 0 with rows,
-# 1 with none, 75 when a beelink cannot be read and the others hold no row (a partial read is never "none").
-# Rows from the beelinks that answered still print with exit 0: a passing receipt is enough, and on
-# 2026-10-18 beelink2 offline for hours made every discovery-lab merge refuse despite beelink1 receipts.
-# --queue: every live gate on both beelinks and every live gate sandbox, longest wait first,
-# then one QUEUE line with the 2-hour p90 admission wait from receipts (the fleet wall reads it).
+# --receipt <repo-url> <sha>: every receipt both beelinks hold for that repo and SHA, one JSON line each with its
+# gate_id and the host it came from ("from"). gh-drew reads this before it merges a release-path PR, so a merge rests on
+# the gate's own receipt, never on a wrapper's exit code: a lane script recorded exit=0 for gate
+# beelink2-b1b7743870eff2dc7da8260d77e65fcd, whose receipt says exit=1, and discovery-lab#2009 merged on it. Exit 0 with
+# rows, 1 with none, 75 when a beelink cannot be read and the others hold no row (a partial read is never "none"). Rows
+# from the beelinks that answered still print with exit 0: a passing receipt is enough, and on 2026-10-18 beelink2
+# offline for hours made every discovery-lab merge refuse despite beelink1 receipts. --queue: every live gate on both
+# beelinks and every live gate sandbox, longest wait first, then one QUEUE line with the 2-hour p90 admission wait from
+# receipts (the fleet wall reads it).
 if [ "${1:-}" = --queue ]; then
   launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
   rows=$(mktemp)
@@ -1955,9 +1944,8 @@ PY
   exit "$rc"
 fi
 
-# --report [hours]: gate runs per merged PR by repo, from both beelinks' receipts
-# and GitHub's merged-PR counts, with each repo's modes, exit classes and
-# exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
+# --report [hours]: gate runs per merged PR by repo, from both beelinks' receipts and GitHub's merged-PR counts, with
+# each repo's modes, exit classes and exact-input repeats (same SHA, mode and command), to tell rework from re-runs.
 if [ "${1:-}" = --report ]; then
   shift
   hours=24 report_format="" report_since=""
@@ -2038,13 +2026,11 @@ summarize_output() {  # <exit code> <output file>...
   python3 "$gate_source_root/beelink_gate_summary.py" "$@" >&2
 }
 
-# --merge PR: after a green gate, `gh-drew pr merge PR -R owner/repo --squash
-# --match-head-commit SHA`, so the merge lands exactly the commit the gate ran.
-# gh-drew owns the merge preconditions (merge-on-green's hold, unanswered review
-# threads, a running Codex review), so they are not repeated here. Lanes had
-# each written a wait-for-gate-then-merge script (graph-canary flow.sh and
-# merge-1818.sh). A red or TEMPFAIL gate never merges; a merge
-# gh-drew refuses exits MERGE_REFUSED with its reason.
+# --merge PR: after a green gate, `gh-drew pr merge PR -R owner/repo --squash --match-head-commit SHA`, so the merge
+# lands exactly the commit the gate ran. gh-drew owns the merge preconditions (merge-on-green's hold, unanswered review
+# threads, a running Codex review), so they are not repeated here. Lanes had each written a wait-for-gate-then-merge
+# script (graph-canary flow.sh and merge-1818.sh). A red or TEMPFAIL gate never merges; a merge gh-drew refuses exits
+# MERGE_REFUSED with its reason.
 MERGE_REFUSED=78
 merge_pr="" merge_repo="" merge_sha=""
 github_repo() {  # <repo-url>: prints owner/name of a GitHub URL, or fails
@@ -2115,7 +2101,7 @@ if [ -n "$merge_pr" ]; then
   [ "$install_mode" != ship ] || die "--merge cannot be combined with --ship"
   { [ "$#" -ge 5 ] && [ "$4" = -- ]; } || die "$usage"
   merge_repo=$(github_repo "$2") || die "--merge needs a GitHub repo URL, not $2"
-  merge_sha=$3
+  merge_sha=$3; export BEELINK_GATE_PR=$merge_pr  # the gate checks this PR's merge commit (check_merge_lockfile)
 fi
 if [ -n "$retry_minutes" ] || [ "$summary" = 1 ] || [ -n "$merge_pr" ]; then
   run_wrapped "$retry_minutes" "$summary" ${launch_options[@]+"${launch_options[@]}"} "$@"
@@ -2225,9 +2211,8 @@ if [ "$requested" = auto ]; then
   fi
 fi
 cancel_launcher_job() {
-  # Repeats do nothing: GNU timeout signals the child and then its process group,
-  # and --retry forwards a stop the group also received, so a second TERM would
-  # otherwise end the launcher before it schedules the cancellation. A no-op trap,
+  # Repeats do nothing: GNU timeout signals the child and then its process group, and --retry forwards a stop the group
+  # also received, so a second TERM would otherwise end the launcher before it schedules the cancellation. A no-op trap,
   # unlike an ignored signal, leaves an inline --cancel-job stoppable.
   trap : HUP INT TERM
   frontend_tainted=1
