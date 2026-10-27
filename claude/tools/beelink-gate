@@ -1213,7 +1213,7 @@ remote_gate() {
   trap 'admission_early_exit "$?"' EXIT
   initial_disk_admission
   max_cpu_pressure >/dev/null
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "managed containment or host CPU PSI unavailable"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "admission held at arrival: ${admission_reason:-unknown}"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi
@@ -1363,7 +1363,7 @@ PYTURBO
   admit_window "$beelink" "$window_day" "$window_hour"
   admit_release_priority "$beelink"
   # A placement that meets PSI at the fetch wait yields 76; wait here, before this gate's prune request.
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "admission held before cache prune: ${admission_reason:-unknown}"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "admission held before cache prune: ${admission_reason:-unknown}"
   prune_detached "$cache_root" "$cache_max"
 
   if [ -e "$checkout/.git" ] && [ ! -d "$checkout/.git" ]; then
@@ -1437,7 +1437,7 @@ PYTURBO
     die "--branch $gate_branch: origin has it at ${branch_head:-no such branch}, not $sha; push the branch or gate its head"
   fi
   echo "beelink-gate: fetching $sha and ${#tracking_refspecs[@]} tracking branch(es) into $checkout" >&2
-  wait_for_load "$beelink" || tempfail "$(utc_in_minutes 5)" "admission held before fetch: ${admission_reason:-unknown}"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "admission held before fetch: ${admission_reason:-unknown}"
   local fetch_started=$SECONDS fetch_status
   step timeout 1200 git -C "$checkout" fetch --no-tags origin "$sha" "${tracking_refspecs[@]}"
   fetch_status=$?

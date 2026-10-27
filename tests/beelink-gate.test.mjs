@@ -2705,6 +2705,25 @@ test("auto waits while both hosts are over their pressure limit and runs on the 
     assert.match(stderr, /receipt: .*host=beelink2/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+// A PSI timeout exited 75 for auto gates too, and only 76 re-places: ~113 auto gates a day failed instead of moving
+// to the other host (10-26 failure sweep #3).
+test("a host-pressure timeout gives an auto gate's host back (76) and still fails a named-host gate (75)", async () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(60));
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const held = (auto) => run("bash", [gate, "--remote", ...args], { timeout: 120_000,
+      env: { ...f.env, ...(auto ? { BEELINK_GATE_AUTO: "1" } : {}), BEELINK_GATE_HOST_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    const auto = held(true);
+    assert.equal(auto.status, 76, auto.stderr);
+    assert.match(auto.stderr, /not admitted on beelink2 within .*\(admission held at arrival: host_psi\); placing the gate again/);
+    assert.doesNotMatch(auto.stderr, /TEMPFAIL/);
+    const named = held(false);
+    assert.equal(named.status, 75, named.stderr);
+    assert.match(named.stderr, /TEMPFAIL .*admission held at arrival: host_psi/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
 test("an auto gate whose host falls below its disk floor while it queued gives the host back before checkout", async () => {
   const f = fixture();
   try {
