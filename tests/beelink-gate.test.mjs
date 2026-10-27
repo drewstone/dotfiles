@@ -3986,6 +3986,7 @@ exit 0
       f.git(["push", "-q", "--force", f.bare, `${head}:refs/heads/pr`, `${commit}:refs/pull/42/merge`]);
       f.git(["read-tree", "HEAD"]);
     };
+    const merges = () => (existsSync(calls) ? readFileSync(calls, "utf8").split("\n") : []).filter((line) => line.startsWith("pr merge"));
     const gateMerge = () => run(gate, ["--merge", "42", "--no-install", "beelink2", url, head, "--", "true"], { env: { ...f.env, FAKE_GH_HEAD: head } });
 
     merge("BROKEN\n");
@@ -3993,13 +3994,13 @@ exit 0
     assert.equal(broken.status, 1, broken.stderr);
     assert.match(broken.stderr, /checking the lockfile of #42's merge commit/);
     assert.match(broken.stderr, /ERR_PNPM_BROKEN_LOCKFILE/);
-    assert.equal(existsSync(calls), false, "a broken merge lockfile merged");
+    assert.deepEqual(merges(), [], "a broken merge lockfile merged");
 
     merge("lockfileVersion: '9.0'\n", f.second);
     const stale = gateMerge();
     assert.equal(stale.status, 75, stale.stderr);
     assert.match(stale.stderr, /TEMPFAIL .*#42's merge ref is unfetchable or not yet at the gated commit/);
-    assert.equal(existsSync(calls), false, "a stale merge ref merged");
+    assert.deepEqual(merges(), [], "a stale merge ref merged");
 
     merge("lockfileVersion: '9.0'\n");
     const sound = gateMerge();
