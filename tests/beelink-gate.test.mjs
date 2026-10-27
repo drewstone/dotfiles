@@ -2828,6 +2828,32 @@ test("the starvation backstop also runs a gate past a full slot pool", async () 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// desktop-18ir33v's sdd stalled 7.6% of 5 min at 453 GB/h of gate writes while CPU pressure admitted more (10-27).
+test("host IO pressure over the limits file's max_io_pressure holds admission until it drops; no limit, no IO hold", async () => {
+  const f = fixture();
+  try {
+    const io = join(f.root, "io-pressure"), limits = join(f.root, "limits");
+    writeFileSync(io, pressureLine(40));
+    writeFileSync(limits, "max_io_pressure=30\n");
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_HOST_IO_PRESSURE: io, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 2400 && !/"held":true,"reason":"host_io_psi"/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /holds admission: \{[^\n]*"held":true,"reason":"host_io_psi"[^\n]*"host_io_some_avg10":40\.0,"io_limit":30/);
+    writeFileSync(io, pressureLine(5));
+    assert.equal(await done, 0, stderr);
+    assert.match(stderr, /admission \{[^\n]*"held":false,"reason":"host_psi"[^\n]*"host_io_some_avg10":5\.0,"io_limit":30/);
+    // Without a max_io_pressure line the same IO pressure holds nothing.
+    writeFileSync(io, pressureLine(90));
+    writeFileSync(limits, "max_cpu_pressure=50\n");
+    const free = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_HOST_IO_PRESSURE: io, BEELINK_GATE_LIMITS_FILE: limits } });
+    assert.equal(free.status, 0, free.stderr);
+    assert.match(free.stderr, /"host_io_some_avg10":90\.0,"io_limit":null/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("the host limits file sets the pressure limit and reaches a gate that is already waiting", async () => {
   const f = fixture();
   try {
