@@ -264,7 +264,7 @@ gate_docker_socket() {
   ( for fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do exec {fd}>&-; done
     exec python3 - "$sock" "beelinkgate-docker-g${gate_id#*-}.slice" <<'PY'
 import asyncio, json, os, re, signal, sys
-listen, parent = sys.argv[1], sys.argv[2].encode()
+listen, parent, live = sys.argv[1], sys.argv[2].encode(), set()  # asyncio keeps tasks weakly: GC ended 15/16 first attaches (10-27)
 signal.signal(signal.SIGTERM, lambda *_: (os.unlink(listen), os._exit(0)))  # the unit's stop removes the socket
 
 async def pipe(reader, writer):
@@ -273,7 +273,7 @@ async def pipe(reader, writer):
     writer.write_eof()
 
 async def serve(client_r, client_w):
-    up_w = None
+    up_w = None; live.add(task := asyncio.current_task()); task.add_done_callback(live.discard)
     try:
         up_r, up_w = await asyncio.open_unix_connection('/var/run/docker.sock', limit=1 << 20)
         lines = (await client_r.readuntil(b'\r\n\r\n'))[:-4].split(b'\r\n')
