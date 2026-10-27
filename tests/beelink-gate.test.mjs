@@ -2676,7 +2676,7 @@ test("a host-pressure timeout gives an auto gate's host back (76) and still fail
     const pressure = join(f.root, "pressure");
     writeFileSync(pressure, pressureLine(60));
     const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
-    const held = (auto) => spawnSync("bash", [gate, "--remote", ...args], { encoding: "utf8", timeout: 120_000,
+    const held = (auto) => run("bash", [gate, "--remote", ...args], { timeout: 120_000,
       env: { ...f.env, ...(auto ? { BEELINK_GATE_AUTO: "1" } : {}), BEELINK_GATE_HOST_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
     const auto = held(true);
     assert.equal(auto.status, 76, auto.stderr);

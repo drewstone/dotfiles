@@ -180,7 +180,7 @@ cancel_if_requested() {
 # Under the job lock --cancel-job --queued-only takes, a cancel lands first or finds command-started and refuses (10-26).
 claim_command_start() {
   [ -n "${gate_id:-}" ] && [ -d "$STATE_DIR/jobs/$gate_id" ] || return 0
-  local fd; exec {fd}>"$STATE_DIR/jobs/.locks/$gate_id.lock" && flock "$fd" || exit 75
+  local fd; mkdir -p "$STATE_DIR/jobs/.locks" && exec {fd}>"$STATE_DIR/jobs/.locks/$gate_id.lock" && flock "$fd" || exit 75
   cancel_if_requested; : > "$STATE_DIR/jobs/$gate_id/command-started"; exec {fd}>&-
 }
 admission_expired() {
