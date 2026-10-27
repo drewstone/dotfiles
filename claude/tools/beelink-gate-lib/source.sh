@@ -274,9 +274,8 @@ probe_transport() {  # <host> <phase> <actual command and arguments...>
   return "$rc"
 }
 
-# The policy rarely changes, so the last good read is kept per host. WSL interop
-# (reg.exe) fails under load, and SSH can time out; a read up to seven days old
-# still keeps gates out of the update window.
+# The policy rarely changes, so the last good read is kept per host. WSL interop (reg.exe) fails under load, and SSH can
+# time out; a read up to seven days old still keeps gates out of the update window.
 read_policy() {
   local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache
   cache="$STATE_DIR/policy-$target"
@@ -316,13 +315,35 @@ update_window_of() {
 
 encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
+# Before placement (10-26 failure sweep #10, ~58 gate requests a day): a commit GitHub lacks is refused, and an input
+# whose latest receipt (--receipt) is the command's own red returns it, not a rerun. A slow or failed read never refuses.
+pre_placement_checks() {  # <command>...
+  local err cmd red
+  if [[ "$frontend_key" == github.com/* ]] && [ -x "$gh_drew" ] && err=$(mktemp); then
+    timeout 5 "$gh_drew" api "repos/${frontend_key#github.com/}/commits/$sha" --jq .sha >/dev/null 2>"$err" \
+      || { grep -qE 'HTTP (404|422)' "$err" && die "commit $sha is not on ${frontend_key#github.com/}; push it first"; echo "beelink-gate: could not confirm $sha on GitHub within 5 s; placing it anyway" >&2; }
+    rm -f "$err"
+  fi
+  [ "${BEELINK_GATE_RERUN:-0}" != 1 ] && [ -z "$gate_branch" ] && [ "$gate_class" != dev ] && [[ "$sha" =~ ^[0-9a-f]{40}$ && "$repo_url" =~ ^(git@|ssh://|https?://) ]] || return 0
+  printf -v cmd '%q ' "$@"
+  red=$("$BASH" "$0" --receipt "$repo_url" "$sha" 2>/dev/null | python3 -c '
+import json, sys
+mode, cls, command = sys.argv[1:]
+r = max((r for r in map(json.loads, sys.stdin) if (r.get("mode"), r.get("class"), r.get("command"), r.get("checkout")) == (mode, cls, command, "detached")),
+        key=lambda r: r.get("at", ""), default=None)  # the latest identical detached run; only a command red counts
+if r and r["exit"] not in (0, 2, 3, 75, 76, 124, 130, 137, 143) and (r.get("timing") or {}).get("command_s") is not None \
+        and not (r.get("timed_out") or r.get("watchdog") or r.get("starved")):  # the command ran to its own exit
+    print(r["exit"], "host=%s gate_id=%s at=%s exit=%s" % (r.get("host"), r.get("gate_id"), r.get("at"), r["exit"]))' \
+    "$install_mode" "$([ "$install_mode" = light ] && echo light || echo normal)" "${cmd% }")
+  [ -z "$red" ] || { echo "beelink-gate: identical input already red: ${red#* } (BEELINK_GATE_RERUN=1 runs it again)" >&2; exit "${red%% *}"; }
+}
+
 # One probe line for a beelink, or nothing when it cannot be read.
 probe_of() {
   local target=$1 attempt line rc probe_attempt=0
-  # A busy beelink's sshd drops some new connections (MaxStartups) while
-  # hundreds of lane sessions are open; one dropped probe made auto treat the
-  # host as unreachable for a whole placement round (ADC #10352, 2026-10-12
-  # 00:01Z, beelink2 at load 70 answering SSH in under a second).
+  # A busy beelink's sshd drops some new connections (MaxStartups) while hundreds of lane sessions are open; one dropped
+  # probe made auto treat the host as unreachable for a whole placement round (ADC #10352, 2026-10-12 00:01Z, beelink2
+  # at load 70 answering SSH in under a second).
   for attempt in 1 2 3; do
     probe_attempt=$attempt
     if update_window_of "$target"; then

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Owned gate-cache reclamation; sourced locally and bundled for remote gates.
-# Cache directories are owned by this command. A global lock serializes size
-# decisions; per-repo locks keep active gates out of the eviction set.
+# Owned gate-cache reclamation; sourced locally and bundled for remote gates. Cache directories are owned by this
+# command. A global lock serializes size decisions; per-repo locks keep active gates out of the eviction set.
 # shellcheck disable=SC2154 # State is initialized by the parent remote_gate.
-# One private helper for pool layout, validation and managed-consumer lifetime.
-# Empty gate-ID markers outlive a killed Bash owner: only the kernel unit's
-# absence or populated=0 permits reclamation, never a missing PID or free flock.
+# One private helper for pool layout, validation and managed-consumer lifetime. Empty gate-ID markers outlive a killed
+# Bash owner: only the kernel unit's absence or populated=0 permits reclamation, never a missing PID or free flock.
 gate_turbo_cache_python=$(cat <<'PYTURBOCACHE'
 import hashlib
 import os
@@ -341,9 +339,8 @@ try:
         initial_total = None
         initial_free = free_bytes(root)
         target_free = initial_free + required_reclaim
-        # An idle checkout first shrinks to the sparse patterns its HEAD commits: those
-        # are paths no gated command reads, and the checkout stays warm for the
-        # next gate. LRU eviction then weighs what remains.
+        # An idle checkout first shrinks to the sparse patterns its HEAD commits: those are paths no gated command
+        # reads, and the checkout stays warm for the next gate. LRU eviction then weighs what remains.
         sparsified = False
         for stamp_ns, repo, lock_path, shared in candidates:
             if shared:

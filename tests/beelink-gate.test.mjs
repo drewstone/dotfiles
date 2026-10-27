@@ -3819,6 +3819,65 @@ exec '${join(f.root, "bin", "ssh")}' "$@"
   }
 });
 
+// 10-26 failure sweep #10 (~58 gate requests a day): the same red input queued and ran again, and gates waited for
+// commits never pushed. The launcher reads the commit and the input's latest receipt before it places a gate.
+test("an identical input whose latest receipt is the command's own red returns it unplaced; an unknown commit is refused within 5 s", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const url = "https://github.com/acme/gate-test.git";
+    const env = { ...f.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: "git@github.com:acme/gate-test.git" };
+    writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
+case "$*" in
+  *statuses*) exit 0 ;;
+  *repos/acme/gate-test/commits/*) [ -z "\${FAKE_GH_SLEEP:-}" ] || sleep "$FAKE_GH_SLEEP"
+    [ -z "\${FAKE_GH_MISSING:-}" ] || { echo "gh: No commit found for SHA (HTTP 422)" >&2; exit 1; }; echo ok ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+`);
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    const submits = () => readFileSync(join(f.root, "ssh-remote-commands"), "utf8").split("\n").filter((line) => line.includes("--job-submit")).length;
+    const gateRun = (command, extra = {}) => run(gate, ["--no-install", "beelink2", url, f.first, "--", "bash", "-c", command], { env: { ...env, ...extra } });
+
+    assert.equal(gateRun("exit 7").status, 7);
+    const placed = submits();
+    const cached = gateRun("exit 7");
+    assert.equal(cached.status, 7, cached.stderr);
+    assert.match(cached.stderr, /identical input already red: host=beelink2 gate_id=beelink2-[0-9a-f]{32} at=\S+ exit=7 \(BEELINK_GATE_RERUN=1 runs it again\)/);
+    assert.equal(submits(), placed, "the cached red placed a gate");
+    assert.equal(gateRun("exit 7", { BEELINK_GATE_RERUN: "1" }).status, 7);
+    assert.equal(submits(), placed + 1, "BEELINK_GATE_RERUN=1 runs it again");
+
+    // A TEMPFAIL is not a verdict: the same input runs again.
+    gateRun("exit 75");
+    const tempfailed = submits();
+    gateRun("exit 75");
+    assert.equal(submits(), tempfailed + 1, "a 75 receipt was cached");
+
+    // Neither a red whose command never ran (a failed install) nor a --branch gate's red speaks for this input.
+    const seed = (command, extra) => writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"), `${JSON.stringify({ at: "2099-01-01T00:00:00Z", host: "beelink1",
+      repo: "github.com/acme/gate-test", sha: f.first, mode: "no-install", class: "normal", command: `bash -c exit\\ ${command.slice(5)}`, exit: 9, gate_id: "beelink1-seeded", ...extra })}\n`, { flag: "a" });
+    seed("exit 8", { checkout: "detached", timing: { command_s: null } });
+    seed("exit 6", { checkout: "branch", timing: { command_s: 3 } });
+    for (const command of ["exit 8", "exit 6"]) {
+      const before = submits();
+      gateRun(command);
+      assert.equal(submits(), before + 1, `${command}: a seeded red that does not speak for this input was returned`);
+    }
+
+    const started = Date.now();
+    const missing = gateRun("true", { FAKE_GH_MISSING: "1" });
+    assert.equal(missing.status, 2, missing.stderr);
+    assert.match(missing.stderr, /commit [0-9a-f]{40} is not on acme\/gate-test; push it first/);
+    assert.ok(Date.now() - started < 5_000, `refused after ${Date.now() - started} ms`);
+
+    // A slow lookup never refuses: the gate is placed and runs.
+    const slow = gateRun("true", { FAKE_GH_SLEEP: "8" });
+    assert.equal(slow.status, 0, slow.stderr);
+    assert.match(slow.stderr, /could not confirm [0-9a-f]{40} on GitHub within 5 s; placing it anyway/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("--merge squash-merges the PR pinned to the gated SHA only after a green gate, and never from a dev gate", () => {
   const f = fixture();
   try {
@@ -3836,13 +3895,14 @@ exit "\${FAKE_GH_EXIT:-0}"
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
     const merge = ["pr", "merge", "42", "-R", "acme/gate-test", "--squash", "--match-head-commit", f.first].join(" ");
 
+    const merges = () => (existsSync(calls) ? readFileSync(calls, "utf8").split("\n") : []).filter((line) => line.startsWith("pr merge"));
     const red = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "bash", "-c", "exit 1"], { env: f.env });
     assert.equal(red.status, 1, red.stderr);
-    assert.equal(existsSync(calls), false, "a red gate called gh-drew");
+    assert.deepEqual(merges(), [], "a red gate merged");
 
     const green = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: f.env });
     assert.equal(green.status, 0, green.stderr);
-    assert.equal(readFileSync(calls, "utf8").split("\n")[0], merge);
+    assert.deepEqual(merges(), [merge]);
     assert.match(green.stderr.trim().split("\n").at(-1), /^beelink-gate: merged #42 1{40} by drewstone gate_id=beelink2-[0-9a-f]{32}$/);
 
     // gh exits 0 for a PR already merged from another head (agent-sdk#580): no merge claim for source the gate never ran.
@@ -3863,7 +3923,7 @@ exit "\${FAKE_GH_EXIT:-0}"
     const local = run(gate, ["--merge", "42", "--no-install", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
     assert.equal(local.status, 2);
     assert.match(local.stderr, /--merge needs a GitHub repo URL/);
-    assert.equal(existsSync(calls), false, "a refused request called gh-drew");
+    assert.deepEqual(merges(), [], "a refused request merged");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
