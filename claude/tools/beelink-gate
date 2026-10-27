@@ -802,7 +802,7 @@ remote_probe() {
     state=busy
     for ((k = 0; k < copies; k++)); do
       suffix=$([ "$k" = 0 ] || echo "@$k"); [ "$light" = 1 ] && suffix=@light; [ "$dev" = 1 ] && suffix=@dev
-      lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
+      lock="$cache_root/.locks/$host-$owner-$repo$suffix.lock"; [ ! -e "$(checkout_quarantine "$lock")" ] || { reason="${lock##*/} quarantined"; continue; }
       if [ ! -e "$lock" ]; then state=free free_copy=$suffix; break; fi
       exec {fd}<"$lock" || die "cannot open lock"
       if flock -n -s "$fd"; then state=free free_copy=$suffix; exec {fd}<&-; break; fi
@@ -1449,7 +1449,7 @@ PYTURBO
   else
     git -C "$checkout" checkout --detach --force "$sha" || exit $?
   fi
-  git -C "$checkout" clean -ffdx || exit $?
+  prepare_checkout_clean "$checkout" "$lock" && git -C "$checkout" clean -ffdx || exit $?
   actual=$(git -C "$checkout" rev-parse HEAD) || exit $?
   [ "${actual,,}" = "${sha,,}" ] || die "checkout SHA mismatch: $actual"
   gate_refs_before=$(git -C "$checkout" for-each-ref --format='%(objectname)' refs/heads refs/beelink-gate-saved | sort -u | tr '\n' ' ')

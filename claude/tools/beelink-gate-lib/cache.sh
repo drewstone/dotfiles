@@ -441,3 +441,26 @@ finally:
             pass  # Measurement must not change the gate result.
 PY
 }
+
+# A gate step that ran as root inside a shared checkout (lifecycle-truth #15319 at fc36df4b, 2026-10-27 20:07Z) left
+# files git clean could not remove, and every later gate placed there failed in seconds. A gate's root step must write
+# outside the checkout or chown back at exit. Before clean, give this user's own untracked paths back u+rwX; on any
+# foreign-owned untracked path, name it, mark the checkout quarantined and refuse. Placement skips a marked checkout until
+# an operator restores ownership and removes the marker; nothing retries silently.
+checkout_quarantine() { printf '%s.quarantine' "${1%.lock}"; }
+prepare_checkout_clean() {  # <checkout> <lock>
+  local checkout=$1 marker foreign entry
+  marker=$(checkout_quarantine "$2")
+  local -a untracked=()
+  while IFS= read -r -d '' entry; do untracked+=("$checkout/${entry%/}"); done \
+    < <(git -C "$checkout" ls-files -z --others --directory)
+  (( ${#untracked[@]} )) || return 0
+  foreign=$(find "${untracked[@]}" -xdev ! -user "$(id -u)" -print -quit 2>/dev/null)
+  if [ -n "$foreign" ]; then
+    printf 'checkout=%s\npath=%s\nuid=%s\nat=%s\n' "$checkout" "$foreign" "$(stat -c %u "$foreign")" "$(date -u +%FT%TZ)" > "$marker"
+    echo "beelink-gate: $checkout holds $foreign owned by uid $(stat -c %u "$foreign"), which git clean cannot remove;" \
+      "quarantined it from placement ($marker). Restore ownership, then remove the marker." >&2
+    return 1
+  fi
+  chmod -R u+rwX -- "${untracked[@]}"
+}
