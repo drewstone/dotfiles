@@ -16,9 +16,7 @@ if [ "$bash_major" -lt 4 ]; then
       break
     fi
   done
-  if [ -n "$compatible_bash" ]; then
-    exec "$compatible_bash" "$0" "$@"
-  fi
+  if [ -n "$compatible_bash" ]; then exec "$compatible_bash" "$0" "$@"; fi
   echo "beelink-gate: requires Bash 4 or newer; no compatible Bash was found on PATH or in standard macOS locations" >&2
   exit 2
 fi
@@ -1183,9 +1181,7 @@ remote_gate() {
   # --branch: check the named branch out at the SHA with its upstream set, for
   # merge gates such as ADC's `pnpm signoff` that require HEAD == @{push}.
   local gate_branch=${BEELINK_GATE_BRANCH:-} branch_head=""
-  if [ -n "$gate_branch" ]; then
-    valid_branch_name "$gate_branch" || die "invalid --branch: $gate_branch"
-  fi
+  if [ -n "$gate_branch" ]; then valid_branch_name "$gate_branch" || die "invalid --branch: $gate_branch"; fi
   unset BEELINK_GATE_BRANCH
   unset BEELINK_GATE_HEARTBEAT BEELINK_GATE_LAUNCHER BEELINK_GATE_MAX_HOLD BEELINK_GATE_SHIP_WORKERS
 
@@ -1604,9 +1600,7 @@ if [ "${1:-}" = --receipts ]; then
   exit $?
 fi
 
-if [ "${1:-}" = --gtr-run ]; then
-  shift; gtr_run "$@"; exit $?
-fi
+if [ "${1:-}" = --gtr-run ]; then shift; gtr_run "$@"; exit $?; fi
 
 # ---- launcher: runs on the Mac, GTR or a beelink ----
 
@@ -2062,13 +2056,14 @@ merge_gated() {  # <gate stderr log>
 # The source owner runs retry/summary wrappers and retains their one request scope.
 # The launcher's own argv, to re-exec itself when its installed source changes while it waits.
 gate_argv=("$@")
-install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0 retry_minutes="" summary=0
+install_mode=install gate_branch="" gate_class="" pin_host=0 cancel_on_term=0 retry_minutes="" summary=0 shards=""
 launch_options=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --retry) [[ "${2:-}" =~ ^[1-9][0-9]{0,3}$ ]] && (( 10#$2 <= 1440 )) || die "--retry needs whole minutes from 1 to 1440"
       retry_minutes=$((10#$2)); shift 2; continue ;;
     --summary) summary=1; shift; continue ;;
+    --shards) [[ "${2:-}" =~ ^[2-4]$ ]] || die "--shards needs 2 to 4"; shards=$2; shift 2; continue ;;
     --merge) [[ "${2:-}" =~ ^[1-9][0-9]{0,8}$ ]] || die "--merge needs a pull request number"
       merge_pr=$2; shift 2; continue ;;
     --urgent|--pin-host|--cancel-on-term|--no-install|--light|--dev|--ship) launch_options+=("$1") ;;
@@ -2088,7 +2083,7 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
-usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] <beelink1|beelink2|auto|sandbox|drew-gtr-pro> <repo-url> <sha> -- <command> [args...]
+usage="usage: beelink-gate [--no-install|--light|--dev] [--urgent] [--pin-host] [--cancel-on-term] [--branch <name>] [--retry <minutes>] [--summary] [--merge <pr>] [--shards <2-4>] <beelink1|beelink2|auto|sandbox|drew-gtr-pro> <repo-url> <sha> -- <command> [args...]
        beelink-gate --ship [--retry <minutes>] [--summary] <beelink1|beelink2|auto> <repo-url> <sha>"
 if [ "$gate_class" = dev ]; then
   case "$install_mode" in ship|light) die "--dev cannot be combined with --$install_mode" ;; esac
@@ -2103,6 +2098,7 @@ if [ -n "$merge_pr" ]; then
   merge_repo=$(github_repo "$2") || die "--merge needs a GitHub repo URL, not $2"
   merge_sha=$3; export BEELINK_GATE_PR=$merge_pr  # the gate checks this PR's merge commit (check_merge_lockfile)
 fi
+[ -z "$shards" ] || run_shards "$shards" "$summary" ${launch_options[@]+"${launch_options[@]}"} "$@"
 if [ -n "$retry_minutes" ] || [ "$summary" = 1 ] || [ -n "$merge_pr" ]; then
   run_wrapped "$retry_minutes" "$summary" ${launch_options[@]+"${launch_options[@]}"} "$@"
 fi
@@ -2110,9 +2106,7 @@ if [ "$install_mode" = ship ]; then
   [ "$#" -eq 3 ] || die "$usage"
   set -- "$1" "$2" "$3" -- bash scripts/ship.sh verify
 fi
-if [ "$#" -lt 5 ] || [ "$4" != -- ]; then
-  die "$usage"
-fi
+if [ "$#" -lt 5 ] || [ "$4" != -- ]; then die "$usage"; fi
 target=$1 repo_url=$2 sha=$3
 if [ "$pin_host" = 1 ] && [ "$target" = auto ]; then die "--pin-host requires a named beelink"; fi
 shift 4
@@ -2126,9 +2120,7 @@ fi
 if [ -n "${BEELINK_GATE_MAX_CONCURRENT:-}" ]; then
   [[ "$BEELINK_GATE_MAX_CONCURRENT" =~ ^[1-9][0-9]*$ ]] || die "invalid BEELINK_GATE_MAX_CONCURRENT"
 fi
-if [ -n "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ]; then
-  max_cpu_pressure >/dev/null
-fi
+if [ -n "${BEELINK_GATE_MAX_CPU_PRESSURE:-}" ]; then max_cpu_pressure >/dev/null; fi
 if [ -n "${BEELINK_GATE_STARVE_AFTER:-}" ]; then
   seconds_of "$BEELINK_GATE_STARVE_AFTER" >/dev/null || die "invalid BEELINK_GATE_STARVE_AFTER: $BEELINK_GATE_STARVE_AFTER"
 fi

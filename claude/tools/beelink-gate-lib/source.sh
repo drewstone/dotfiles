@@ -157,7 +157,7 @@ on_beelink() {
   [ "${gate_class:-}" != dev ] || envs+=("BEELINK_GATE_CLASS=dev")
   [ -z "${BEELINK_GATE_SHIP_WORKERS:-}" ] || envs+=("BEELINK_GATE_SHIP_WORKERS=$BEELINK_GATE_SHIP_WORKERS")
   [[ "${BEELINK_GATE_PR:-}" =~ ^[0-9]+$ ]] && envs+=("BEELINK_GATE_PR=$BEELINK_GATE_PR")
-  [ -z "${BEELINK_GATE_LANE:-}" ] || envs+=("BEELINK_GATE_LANE=$BEELINK_GATE_LANE")
+  [ -z "${BEELINK_GATE_LANE:-}" ] || envs+=("BEELINK_GATE_LANE=$BEELINK_GATE_LANE"); [ -z "${BEELINK_GATE_SHARD:-}" ] || envs+=("BEELINK_GATE_SHARD=$BEELINK_GATE_SHARD")
   [ -z "${BEELINK_GATE_RESERVATION_TOKEN:-}" ] || envs+=("BEELINK_GATE_RESERVATION_TOKEN=$BEELINK_GATE_RESERVATION_TOKEN")
   [ -z "${BEELINK_GATE_MAX_CONCURRENT:-}" ] || envs+=("BEELINK_GATE_MAX_CONCURRENT=$BEELINK_GATE_MAX_CONCURRENT")
   [ -z "${BEELINK_GATE_REPO_CHECKOUTS:-}" ] || envs+=("BEELINK_GATE_REPO_CHECKOUTS=$BEELINK_GATE_REPO_CHECKOUTS")
@@ -324,7 +324,7 @@ pre_placement_checks() {  # <command>...
       || { grep -qE 'HTTP (404|422)' "$err" && die "commit $sha is not on ${frontend_key#github.com/}; push it first"; echo "beelink-gate: could not confirm $sha on GitHub within 5 s; placing it anyway" >&2; }
     rm -f "$err"
   fi
-  [ "${BEELINK_GATE_RERUN:-0}" != 1 ] && [ -z "$gate_branch" ] && [ "$gate_class" != dev ] && [[ "$sha" =~ ^[0-9a-f]{40}$ && "$repo_url" =~ ^(git@|ssh://|https?://) ]] || return 0
+  [ "${BEELINK_GATE_RERUN:-0}" != 1 ] && [ -z "${BEELINK_GATE_SHARD:-}" ] && [ -z "$gate_branch" ] && [ "$gate_class" != dev ] && [[ "$sha" =~ ^[0-9a-f]{40}$ && "$repo_url" =~ ^(git@|ssh://|https?://) ]] || return 0
   printf -v cmd '%q ' "$@"
   red=$("$BASH" "$0" --receipt "$repo_url" "$sha" 2>/dev/null | python3 -c '
 import json, sys
@@ -386,6 +386,18 @@ wrap_signal() {  # <exit code>
 wrap_stopped() {  # <exit code> <gate id this wrapper attaches to, or empty>
   [ "$cancel_on_term" != 1 ] || [ -z "$2" ] || schedule_cancellation "$2"
   exit "$1"
+}
+# --shards N: N gates of one input, each with BEELINK_GATE_SHARD=<i>/<N> for its test runner (node --test-shard); auto with 2
+# places one per Beelink; the first non-zero exit wins; --merge needs all green (one host: Lab 367 s at idle, 10-27).
+run_shards() {  # <N> <summary 0|1> <launch options and target repo sha -- command>...
+  local n=$1 summary=$2 i rc=0 r dir host; shift 2; local -a pids=() args=("$@"); dir=$(mktemp -d) || die "cannot allocate the shard logs"; trap 'kill -TERM "${pids[@]}" 2>/dev/null' HUP INT TERM
+  for ((i = 1; i <= n; i++)); do
+    for ((r = 0; r < ${#args[@]}; r++)); do case ${args[r]} in --branch) ((++r)) ;; -*) ;; *) break ;; esac; done; host=${args[r]}; [ "$host" != auto ] || [ "$n" != 2 ] || host=beelink$i
+    BEELINK_GATE_SHARD="$i/$n" "$BASH" "$0" $( [ "$summary" = 0 ] || echo --summary ) ${retry_minutes:+--retry "$retry_minutes"} "${args[@]:0:r}" "$host" "${args[@]:r+1}" \
+      > >(sed -u "s|^|[shard $i/$n] |") 2> >(tee "$dir/$i.err" | sed -u "s|^|[shard $i/$n] |" >&2) & pids+=($!)
+  done
+  for ((i = 0; i < n; i++)); do wait "${pids[i]}"; r=$?; (( rc != 0 )) || rc=$r; done
+  [ -z "$merge_pr" ] || [ "$rc" != 0 ] || merge_gated "$dir/1.err" || rc=$?; rm -rf "$dir"; exit "$rc"
 }
 run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>...
   local minutes=$1 summary=$2 deadline=0 attempt=0 rc line next wait_s reattach="" got tee_out tee_err i
@@ -473,9 +485,7 @@ run_wrapped() {  # <retry minutes, or empty> <summary 0|1> <launcher arguments>.
   if [ "$summary" = 1 ] && [ "$rc" != 0 ] && [ "$rc" != "$TEMPFAIL" ]; then
     summarize_output "$rc" "$dir/out.log" "$dir/err.log"
   fi
-  if [ -n "$merge_pr" ] && [ "$rc" = 0 ]; then
-    merge_gated "$dir/err.log" || rc=$?
-  fi
+  if [ -n "$merge_pr" ] && [ "$rc" = 0 ]; then merge_gated "$dir/err.log" || rc=$?; fi
   exit "$rc"
 }
 
