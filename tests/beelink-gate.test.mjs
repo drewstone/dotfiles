@@ -245,6 +245,19 @@ test("gate command uses a safe default umask when the remote user unit inherits 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test("a login-shell command's exit does not run a level-1 ~/.bash_logout that turns a pass into exit 1", () => {
+  const f = fixture();
+  try {
+    // Ubuntu's default ~/.bash_logout: at SHLVL 1, clear_console, which fails without a tty (slim-ops B2, 10-27).
+    writeFileSync(join(f.home, ".bash_logout"), 'if [ "$SHLVL" = 1 ]; then false; fi\n');
+    const env = { ...f.env, HOME: f.home, ...inUnit(f.root) }; delete env.SHLVL;
+    const remote = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "bash", "-lc", 'set -e; echo "level $SHLVL"; exit 0'].map(encode);
+    const result = run("env", ["-u", "SHLVL", "bash", gate, "--remote", ...remote], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /(?:^|\n)level 2(?:\n|$)/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("receipts identify the base, PR, lane, and observable reason for a repeated gate", () => {
   const f = fixture();
   try {

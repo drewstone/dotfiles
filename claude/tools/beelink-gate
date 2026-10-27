@@ -1063,11 +1063,11 @@ reap_leftovers() {  # stop every process that still carries run_token
 # exited 0 on a failing test, and --merge merged discovery-lab #2097 red. A shell -c command runs under
 # pipefail, so a failing stage fails the gate; the receipt still names the command as requested.
 # Any single-dash option cluster holding c counts: beelink1's receipts held 89 `bash -lc` gates (16 piped) and a
-# `bash -euc` (gtr-disk review of dotfiles #535).
+# `bash -euc` (gtr-disk review of dotfiles #535). SHLVL=1 makes a login shell command level 2: at level 1 its `exit` ran
+# Ubuntu's ~/.bash_logout, whose clear_console fails without a tty, and a passing check exited 1 (slim-ops B2, 10-27).
 gate_command_argv() {
-  local -a run=("$@")
-  [[ "${1##*/}" =~ ^(sh|dash|bash)$ && "${2:-}" =~ ^-[A-Za-z]*c[A-Za-z]*$ ]] && run=(/usr/bin/bash -o pipefail "${@:2}")
-  command_with_umask=(/usr/bin/bash -c 'umask 022; exec "$@"' beelink-gate-command "${run[@]}")
+  local -a run=("$@"); [[ "${1##*/}" =~ ^(sh|dash|bash)$ && "${2:-}" =~ ^-[A-Za-z]*c[A-Za-z]*$ ]] && run=(/usr/bin/bash -o pipefail "${@:2}")
+  command_with_umask=(/usr/bin/bash -c 'umask 022; exec env SHLVL=1 "$@"' beelink-gate-command "${run[@]}")
 }
 
 remote_gate() {
