@@ -36,7 +36,10 @@ const tempfail = (why) => { say(`TEMPFAIL next_allowed=${new Date(Date.now() + 3
 // A missing or revoked key refuses with 77, never retried: a Mac kept a key revoked at a rotation (operator 10-27 21:42Z).
 const keyRefusal = (why) => { say(`sandbox key ${why}; launch sandbox-fallback gates from drew-gtr-pro`); process.exit(77) }
 
-const apiKey = (file = path.join(homedir(), '.config', 'tangle', 'beelink-gate-sandbox.key')) => process.env.BEELINK_GATE_SANDBOX_KEY?.trim() || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '')
+// One source (proposal, needs Drew's yes on custody): the vault's encrypted beelink-gate.env, which every launcher's
+// devops checkout carries; a rotation is one dotenvx set + commit. The per-host key file stays the fallback.
+const vaultKey = (env = path.join(homedir(), 'company', 'devops', 'secrets', 'beelink-gate.env')) => existsSync(env) ? spawnSync('npx', ['-y', '@dotenvx/dotenvx', 'get', 'BEELINK_GATE_SANDBOX_KEY', '-f', env], { encoding: 'utf8', timeout: 60_000 }).stdout?.trim() : ''
+const apiKey = (file = path.join(homedir(), '.config', 'tangle', 'beelink-gate-sandbox.key')) => process.env.BEELINK_GATE_SANDBOX_KEY?.trim() || vaultKey() || (existsSync(file) ? readFileSync(file, 'utf8').trim() : '')
 
 // The SDK is installed once per launcher into the gate's cache at the pinned version.
 async function sdk() {
