@@ -184,15 +184,10 @@ on_beelink() {
       rm -f "$source_file"; return "$TEMPFAIL"
     }
   fi
-  # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
-  # ("exec request failed on channel 0"); a 23 KB patch, base64
-  # encoded in argv, became 41,676 bytes and the submit was reported as a lost
-  # connection. Large arguments ride on stdin ahead of the script instead.
-  # The limit that binds first is cmd.exe's 8,191 characters for the whole line
-  # OpenSSH hands it: wsl.exe, every env assignment and bash -s, not only the
-  # arguments. 7,821 argument bytes passed an arguments-only 8,192 check and the
-  # full line failed "command line too long". Measure the line ssh sends, with a
-  # margin for the cmd.exe /c wrapper.
+  # Windows OpenSSH refuses an exec line past ~32 KB (a 23 KB patch became 41,676 argv bytes, reported as a lost
+  # connection), so large arguments ride on stdin ahead of the script. cmd.exe's 8,191-character limit binds first,
+  # on the whole line (wsl.exe, env assignments, bash -s): 7,821 argument bytes passed an arguments-only check and
+  # failed "command line too long". Measure the line ssh sends, with a margin for the cmd.exe /c wrapper.
   local -a remote_args=("$@")
   local remote_line_bytes
   remote_line_bytes=$(printf '%s ' wsl.exe -- env "${envs[@]}" bash -s -- "$@" | wc -c)
@@ -279,9 +274,8 @@ probe_transport() {  # <host> <phase> <actual command and arguments...>
   return "$rc"
 }
 
-# The policy rarely changes, so the last good read is kept per host. WSL interop
-# (reg.exe) fails under load, and SSH can time out; a read up to seven days old
-# still keeps gates out of the update window.
+# The policy rarely changes, so the last good read is kept per host. WSL interop (reg.exe) fails under load, and SSH can
+# time out; a read up to seven days old still keeps gates out of the update window.
 read_policy() {
   local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache
   cache="$STATE_DIR/policy-$target"
@@ -321,13 +315,35 @@ update_window_of() {
 
 encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
+# Before placement (10-26 failure sweep #10, ~58 gate requests a day): a commit GitHub lacks is refused, and an input
+# whose latest receipt (--receipt) is the command's own red returns it, not a rerun. A slow or failed read never refuses.
+pre_placement_checks() {  # <command>...
+  local err cmd red
+  if [[ "$frontend_key" == github.com/* ]] && [ -x "$gh_drew" ] && err=$(mktemp); then
+    timeout 5 "$gh_drew" api "repos/${frontend_key#github.com/}/commits/$sha" --jq .sha >/dev/null 2>"$err" \
+      || { grep -qE 'HTTP (404|422)' "$err" && die "commit $sha is not on ${frontend_key#github.com/}; push it first"; echo "beelink-gate: could not confirm $sha on GitHub within 5 s; placing it anyway" >&2; }
+    rm -f "$err"
+  fi
+  [ "${BEELINK_GATE_RERUN:-0}" != 1 ] && [ -z "$gate_branch" ] && [ "$gate_class" != dev ] && [[ "$sha" =~ ^[0-9a-f]{40}$ && "$repo_url" =~ ^(git@|ssh://|https?://) ]] || return 0
+  printf -v cmd '%q ' "$@"
+  red=$("$BASH" "$0" --receipt "$repo_url" "$sha" 2>/dev/null | python3 -c '
+import json, sys
+mode, cls, command = sys.argv[1:]
+r = max((r for r in map(json.loads, sys.stdin) if (r.get("mode"), r.get("class"), r.get("command"), r.get("checkout")) == (mode, cls, command, "detached")),
+        key=lambda r: r.get("at", ""), default=None)  # the latest identical detached run; only a command red counts
+if r and r["exit"] not in (0, 2, 3, 75, 76, 124, 130, 137, 143) and (r.get("timing") or {}).get("command_s") is not None \
+        and not (r.get("timed_out") or r.get("watchdog") or r.get("starved")):  # the command ran to its own exit
+    print(r["exit"], "host=%s gate_id=%s at=%s exit=%s" % (r.get("host"), r.get("gate_id"), r.get("at"), r["exit"]))' \
+    "$install_mode" "$([ "$install_mode" = light ] && echo light || echo normal)" "${cmd% }")
+  [ -z "$red" ] || { echo "beelink-gate: identical input already red: ${red#* } (BEELINK_GATE_RERUN=1 runs it again)" >&2; exit "${red%% *}"; }
+}
+
 # One probe line for a beelink, or nothing when it cannot be read.
 probe_of() {
   local target=$1 attempt line rc probe_attempt=0
-  # A busy beelink's sshd drops some new connections (MaxStartups) while
-  # hundreds of lane sessions are open; one dropped probe made auto treat the
-  # host as unreachable for a whole placement round (ADC #10352, 2026-10-12
-  # 00:01Z, beelink2 at load 70 answering SSH in under a second).
+  # A busy beelink's sshd drops some new connections (MaxStartups) while hundreds of lane sessions are open; one dropped
+  # probe made auto treat the host as unreachable for a whole placement round (ADC #10352, 2026-10-12 00:01Z, beelink2
+  # at load 70 answering SSH in under a second).
   for attempt in 1 2 3; do
     probe_attempt=$attempt
     if update_window_of "$target"; then
@@ -517,8 +533,13 @@ frontend_start() {
       fi
     fi
   fi
-  [ -n "$frontend_path" ] || echo 'beelink-gate: optional frontend timing unavailable: source/authority/IO unsupported; request duration unknown' >&2
-  [ -z "$frontend_path" ] || echo "beelink-gate: frontend_observation=$frontend_path" >&2
+  [ -n "$frontend_path" ] || { echo 'beelink-gate: optional frontend timing unavailable: source/authority/IO unsupported; request duration unknown' >&2; return 0; }
+  echo "beelink-gate: frontend_observation=$frontend_path" >&2
+  # A lost ssh client must not end a waiting gate (EPIPE killed queued gates, 10-26 sweep #9): ignore SIGPIPE and keep the
+  # request's output in its directory; GNU tee -p keeps writing it after the terminal's pipe breaks.
+  [ "$frontend_root" = 1 ] && tee -p </dev/null >/dev/null 2>&1 || return 0
+  # The tees ignore a stop to the process group (GNU timeout's), so they outlive the launcher's last lines.
+  trap '' PIPE; exec > >(trap '' TERM INT HUP; exec tee -p -a "${frontend_path%/*}/stdout.log") 2> >(trap '' TERM INT HUP; exec tee -p -a "${frontend_path%/*}/stderr.log" >&2)
 }
 frontend_phase() { frontend_record phase "$1"; }
 frontend_exit() {

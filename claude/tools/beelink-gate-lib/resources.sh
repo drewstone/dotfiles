@@ -66,17 +66,12 @@ PY
   export BEELINK_GATE_SYSTEMD_MANAGER=system BEELINK_GATE_UNIT="beelink-gate-$gate_id.service"
 }
 
-host_max_cpu_pressure() {
-  python3 - "$(limits_file)" <<'PY'
+host_limit() {  # <key: max_cpu_pressure|max_io_pressure> <default, empty for none>: the host limits file's value
+  python3 - "$(limits_file)" "$1" "$2" <<'PY'
 import os, pathlib, re, stat, sys
-path, default = pathlib.Path(sys.argv[1]), 20
-try:
-    path.lstat()
-except FileNotFoundError:
-    print(default)
-    sys.exit(0)
-except OSError:
-    sys.exit(1)
+path, key, default = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if not os.path.lexists(path):
+    print(default); sys.exit(0)
 try:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd) as stream:
@@ -86,23 +81,21 @@ try:
         text = stream.read(65537)
     if len(text) > 65536:
         raise ValueError()
-    rows = [line for line in text.splitlines() if line.strip().startswith('max_cpu_pressure')]
+    rows = [line for line in text.splitlines() if line.strip().startswith(key)]
     if not rows:
         print(default)
-    elif len(rows) == 1 and re.fullmatch(r'max_cpu_pressure=[0-9]{1,3}\s*', rows[0]):
+    elif len(rows) == 1 and re.fullmatch(key + r'=[0-9]{1,3}\s*', rows[0]):
         value = int(rows[0].split('=')[1])
-        if value > 100:
-            raise ValueError()
+        if value > 100: raise ValueError()
         print(value)
-    else:
-        raise ValueError()
+    else: raise ValueError()
 except (OSError, ValueError, UnicodeError):
     sys.exit(1)
 PY
 }
 max_cpu_pressure() {
   local maximum requested=${BEELINK_GATE_MAX_CPU_PRESSURE:-}
-  maximum=$(host_max_cpu_pressure) || die 'invalid host max_cpu_pressure policy'
+  maximum=$(host_limit max_cpu_pressure 20) || die 'invalid host max_cpu_pressure policy'
   if [ -n "$requested" ]; then
     [[ "$requested" =~ ^[0-9]+$ ]] && (( requested <= 100 )) || die 'BEELINK_GATE_MAX_CPU_PRESSURE must be 0-100'
     (( requested >= maximum )) || maximum=$requested
@@ -122,20 +115,24 @@ except (OSError, ValueError, KeyError, StopIteration):
     sys.exit(1)
 PY
 }
-# The class slice's memory pressure holds admission too: 11 normal gates in its 24 GiB memory.max swapped 17 GB and
-# stalled every gate (memory some avg60 11.4, full 9.2) while CPU pressure admitted more (beelink1, 10-26 16:2xZ).
+# The class slice's memory pressure holds admission too (11 normal gates in its 24 GiB memory.max swapped 17 GB while
+# CPU pressure admitted more, beelink1 10-26), and so does host IO pressure over the limits file's max_io_pressure (none
+# by default; desktop-18ir33v's sdd stalled 7.6% of 5 min at 453 GB/h of gate writes, 10-27 02:31Z).
 host_psi_admission() {
-  local pressure="" known=1 limit memory io
+  local pressure="" known=1 limit memory io host_io io_limit
   pressure=$(host_pressure_now) || known=0
-  limit=$(max_cpu_pressure) || return 75
+  limit=$(max_cpu_pressure) || return 75; io_limit=$(host_limit max_io_pressure "") || die 'invalid host max_io_pressure policy'
   memory=$(host_pressure_now "$(gate_cgroup)/memory.pressure" 2>/dev/null) || memory=0; io=$(host_pressure_now "$(gate_cgroup)/io.pressure" 2>/dev/null) || io=null
-  python3 - "$pressure" "$limit" "$known" "$memory" "$io" <<'PY'
+  host_io=$(host_pressure_now "${BEELINK_GATE_HOST_IO_PRESSURE:-/proc/pressure/io}" 2>/dev/null) || host_io=null
+  python3 - "$pressure" "$limit" "$known" "$memory" "$io" "$host_io" "${io_limit:-null}" <<'PY'
 import json, sys, time
-known, memory, io = sys.argv[3] == '1', float(sys.argv[4]), json.loads(sys.argv[5])  # io: recorded, not yet held
+known, memory, io, host_io, io_limit = sys.argv[3] == '1', float(sys.argv[4]), json.loads(sys.argv[5]), json.loads(sys.argv[6]), json.loads(sys.argv[7])
 pressure, limit = float(sys.argv[1]) if known else None, float(sys.argv[2])
+io_held = io_limit is not None and host_io is not None and host_io > io_limit
 print(json.dumps({'mode':'host_psi', 'metric':'some_avg10', 'observed_at':time.time(), 'some_avg10':pressure, 'limit':limit,
-                  'held':not known or pressure > limit or memory > 10, 'reason':'host_psi_unavailable' if not known else
-                  'class_memory_psi' if memory > 10 else 'host_psi', 'class_memory_some_avg10':memory, 'class_io_some_avg10':io}, separators=(',', ':')))
+                  'held':not known or pressure > limit or memory > 10 or io_held, 'reason':'host_psi_unavailable' if not known else
+                  'class_memory_psi' if memory > 10 else 'host_io_psi' if io_held else 'host_psi', 'class_memory_some_avg10':memory,
+                  'class_io_some_avg10':io, 'host_io_some_avg10':host_io, 'io_limit':io_limit}, separators=(',', ':')))
 PY
 }
 wait_for_load() {

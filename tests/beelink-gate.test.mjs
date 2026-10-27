@@ -501,10 +501,8 @@ test("stopping a queued remote unit terminates its gate after it leaves the unit
   }
 });
 
-test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
-  const f = fixture();
-  installFakeSsh(f);
-  const units = installFakeUnits(f);
+// A systemctl whose stop TERMs the fake unit's runner, as a real unit stop does.
+function installStoppingSystemctl(f) {
   writeFileSync(join(f.root, "bin", "systemctl"), `#!/usr/bin/env bash
 [[ "$1" == --user ]] && shift
 # The managed slices' IOWeight and no legacy user units, as FAKE_SYSTEMCTL answers.
@@ -520,6 +518,98 @@ fi
 exit 1
 `);
   chmodSync(join(f.root, "bin", "systemctl"), 0o755);
+}
+
+// The 10-26 drain cancelled queued gates from a --queue snapshot; a gate admitted in between could have lost its
+// command. --queued-only decides under the job lock the command start also takes.
+test("--cancel-job --queued-only cancels a queued gate and refuses one whose command started", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = installFakeUnits(f);
+  installStoppingSystemctl(f);
+  const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held"), release = join(f.root, "release"), started = join(f.root, "started");
+  const launch = (command) => {
+    const child = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", command], { env });
+    const out = { stderr: "", done: new Promise((done) => child.once("close", done)) };
+    child.stderr.on("data", (chunk) => { out.stderr += chunk; });
+    return { child, out };
+  };
+  const holder = launch(`touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`);
+  let waiter;
+  try {
+    for (let i = 0; i < 2400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), holder.out.stderr);
+    const runningId = holder.out.stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    waiter = launch(`touch '${started}'`);
+    for (let i = 0; i < 2400 && !/checkouts on beelink2/.test(waiter.out.stderr); i++) await sleepMs(25);
+    const queuedId = waiter.out.stderr.match(/submitted gate_id=(beelink2-[0-9a-f]{32})/)?.[1];
+    assert.ok(runningId && queuedId, `${holder.out.stderr}\n${waiter.out.stderr}`);
+
+    const refused = run(gate, ["--cancel-job", "--queued-only", runningId], { env, timeout: 20_000 });
+    assert.equal(refused.status, 3, refused.stderr);
+    assert.match(refused.stderr, /refused: gate_id=beelink2-[0-9a-f]{32} started its command; --queued-only leaves it running/);
+    assert.equal(existsSync(join(f.root, "state", "jobs", runningId, "exit")), false, "the running gate keeps running");
+
+    const canceled = run(gate, ["--cancel-job", "--queued-only", queuedId], { env, timeout: 20_000 });
+    assert.equal(canceled.status, 0, canceled.stderr);
+    const job = join(f.root, "state", "jobs", queuedId);
+    assert.equal(readFileSync(join(job, "exit"), "utf8").trim(), "75");
+    assert.match(readFileSync(join(job, "stderr.log"), "utf8"), new RegExp(`canceled gate_id=${queuedId} (before command|by --cancel-job at \\d{4}-)`));
+
+    writeFileSync(release, "\n");
+    assert.equal(await holder.out.done, 0, holder.out.stderr);
+    assert.equal(existsSync(started), false, "the canceled gate's command never ran");
+  } finally {
+    writeFileSync(release, "\n");
+    holder.child.kill("SIGKILL");
+    waiter?.child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+// A queued gate died when its ssh client went away: the next progress line hit EPIPE (10-26 sweep #9). The launcher now
+// ignores SIGPIPE and keeps the request's output in its own directory.
+test("a queued gate whose client goes away keeps its place, runs, and leaves its output in the request directory", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const env = { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held"), release = join(f.root, "release"), ran = join(f.root, "ran");
+  const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
+  let client;
+  try {
+    for (let i = 0; i < 2400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), "the holder runs");
+    client = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${ran}'; echo done-output`], { env });
+    const exited = new Promise((done) => client.once("exit", (code, signal) => done({ code, signal })));
+    let seen = "";
+    client.stderr.on("data", (chunk) => { seen += chunk; });
+    for (let i = 0; i < 2400 && !/checkouts on beelink2/.test(seen); i++) await sleepMs(25);
+    assert.match(seen, /checkouts on beelink2/, "the client's gate is queued");
+    const request = seen.match(/frontend_observation=(\S+)\/frontend\.json/)?.[1];
+    assert.ok(request, seen);
+    // The client goes away: every later write to its stdout or stderr is EPIPE.
+    client.stdout.destroy();
+    client.stderr.destroy();
+    writeFileSync(release, "\n");
+    const { code, signal } = await exited;
+    assert.deepEqual([code, signal], [0, null], `the launcher ended ${code} ${signal}`);
+    assert.ok(existsSync(ran), "the queued gate's command ran");
+    assert.match(readFileSync(join(request, "stdout.log"), "utf8"), /done-output/);
+    assert.match(readFileSync(join(request, "stderr.log"), "utf8"), /receipt: .*exit=0/);
+  } finally {
+    writeFileSync(release, "\n");
+    holder.kill("SIGKILL");
+    client?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const units = installFakeUnits(f);
+  installStoppingSystemctl(f);
   const env = { ...f.env, FAKE_UNITS_DIR: units, BEELINK_GATE_REPO_CHECKOUTS: "1" };
   const held = join(f.root, "held");
   const release = join(f.root, "release");
@@ -1215,25 +1305,6 @@ test("a warm checkout of another shape than the gated commit pays the cold reser
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("a warm checkout that its own prune evicts between admission and install is judged on the cold reserve before it clones", () => {
-  const f = fixture();
-  try {
-    const { spec, seed, gateOn } = shapedReserveFixture(f, 15);
-    assert.equal(gateOn().status, 0);
-    seed({ host: "beelink2", sparse_spec: spec, checkout_temperature: "warm", install_reserve_bytes: 10 * 1024 ** 3 },
-      { host: "beelink2", sparse_spec: spec, checkout_temperature: "cold", install_reserve_bytes: 20 * 1024 ** 3 });
-    // A cap below one checkout: the precheck prune, after admission, evicts this gate's own checkout.
-    const raced = gateOn(undefined, { BEELINK_GATE_CACHE_MAX_BYTES: "1000" });
-    assert.equal(raced.status, 75, raced.stderr);
-    assert.match(raced.stderr, new RegExp(`install reserve 10737418240 bytes from beelink2's newest warm receipt for checkout shape ${spec}`));
-    assert.match(raced.stderr, /evicted LRU cache .*local\/owner\/repo/);
-    assert.match(raced.stderr, /left the cache after admission, so this gate clones it; judging it on the cold reserve/);
-    assert.match(raced.stderr, new RegExp(`install reserve 21474836480 bytes from beelink2's newest cold receipt for checkout shape ${spec}`));
-    assert.match(raced.stderr, /21474836480 bytes requested = -?\d+, below its 214748364800 byte disk floor/);
-    assert.doesNotMatch(raced.stderr, /fetching /);
-  } finally { rmSync(f.root, { recursive: true, force: true }); }
-});
-
 test("the recorded reserve is the gate's own bytes, a store file hardlinked into node_modules counted once, not the host's free-space drop", () => {
   const f = fixture();
   try {
@@ -1407,16 +1478,25 @@ function cacheSlot(f, name, usedSeconds) {
   return dir;
 }
 
-test("evicts the least recently used idle checkout before fetching", () => {
+// A gate's cache prune runs outside its slot, in one user unit per cache root that reruns while requests are
+// pending; the cache is read once that unit is idle with none left.
+function pruneSettled(f, ms = 60_000) {
+  const unit = `beelink-gate-cache-prune-${createHash("sha256").update(f.cache).digest("hex").slice(0, 12)}`;
+  const idle = () => !existsSync(join(f.cache, ".locks", "prune-requested")) && spawnSync("systemctl", ["--user", "is-active", "--quiet", unit]).status !== 0;
+  for (const end = Date.now() + ms; !idle() && Date.now() < end;) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  assert.ok(idle(), `${unit} was still pruning after ${ms} ms`);
+}
+
+test("a gate's detached prune evicts the least recently used idle checkout", () => {
   const f = fixture();
   try {
     const older = cacheSlot(f, "older", 1000);
     const newer = cacheSlot(f, "newer", 2000);
     const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "1300000" } });
     assert.equal(result.status, 0, result.stderr);
+    pruneSettled(f);
     assert.equal(existsSync(older), false);
     assert.equal(existsSync(newer), true);
-    assert.match(result.stderr, /evicted LRU cache .*older/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1427,12 +1507,10 @@ test("cache cap remeasures after evicting a checkout hardlinked to another", () 
     const newer = cacheSlot(f, "newer", 2000);
     rmSync(join(newer, "payload"));
     linkSync(join(older, "payload"), join(newer, "payload"));
-    // The shared payload still occupies the cache after only the older link is removed.
-    // Both idle checkouts must be gone before the command starts under this cap.
-    const result = f.call(f.first, ["bash", "-c", 'test ! -e "$NEWER"'], {
-      env: { BEELINK_GATE_CACHE_MAX_BYTES: "600000", NEWER: newer },
-    });
+    // The shared payload still occupies the cache after only the older link is removed: both idle checkouts go.
+    const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "600000" } });
     assert.equal(result.status, 0, result.stderr);
+    pruneSettled(f);
     assert.equal(existsSync(older), false);
     assert.equal(existsSync(newer), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -1444,9 +1522,8 @@ test("evicts the completed checkout if its command takes the cache over cap", ()
     const result = f.call(f.first, ["node", "-e", 'require("fs").writeFileSync("large.bin",Buffer.alloc(750000))'],
       { env: { BEELINK_GATE_CACHE_MAX_BYTES: "300000" } });
     assert.equal(result.status, 0, result.stderr);
+    pruneSettled(f);
     assert.equal(existsSync(join(f.cache, "local", "owner", "repo")), false);
-    assert.match(result.stderr, /evicted LRU cache .*local\/owner\/repo/);
-    assert.match(result.stderr, /exit=0/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1467,10 +1544,9 @@ exit "$status"
     const vanished = f.call(f.first, ["true"], { env: { DU_FAULT: "No such file or directory" } });
     assert.equal(vanished.status, 0, vanished.stderr);
     const denied = f.call(f.first, ["true"], { env: { DU_FAULT: "Permission denied" } });
-    // Cache accounting never decides the gate: the command's own exit stands, and the receipt says so.
+    // Cache accounting never decides the gate: the command's own exit stands.
     assert.equal(denied.status, 0, denied.stderr);
-    assert.match(denied.stderr, /cache prune failed/);
-    assert.match(denied.stderr, /receipt: .*cache=unpruned/);
+    pruneSettled(f);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -1489,6 +1565,7 @@ test("an active repo lock protects its checkout during LRU eviction", async () =
       assert.equal(existsSync(marker), true);
       const result = f.call(f.first, ["true"], { env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000000" } });
       assert.equal(result.status, 0, result.stderr);
+      pruneSettled(f);
       assert.equal(existsSync(older), true);
       assert.equal(existsSync(newer), false);
     } finally { process.kill(-locker.pid); }
@@ -1582,8 +1659,7 @@ test("the cache prune applies the sparse patterns an idle checkout's HEAD commit
       assert.equal(existsSync(marker), true);
       const result = f.call(f.first, ["true"]);
       assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stderr, /applying repo sparse patterns to \S+discovery-lab: \/\* !\/pursuits\//);
-      assert.doesNotMatch(result.stderr, /restoring its full tree/);
+      pruneSettled(f);
     } finally { locker.kill(); }
     assert.equal(existsSync(join(lab, "pursuits")), false);
     assert.equal(existsSync(join(lab, "prereg", "x", "input.json")), true);
@@ -1809,7 +1885,7 @@ test("Rust output defaults into the gate cache without incremental state and cou
     const result = f.call(f.first, ["node", "-e", 'const fs=require("fs"),p=require("path"),d=p.join(process.env.CARGO_TARGET_DIR,"debug");fs.mkdirSync(d,{recursive:true});fs.writeFileSync(p.join(d,"big"),Buffer.alloc(750000))'],
       { env: { BEELINK_GATE_CACHE_MAX_BYTES: "500000" } });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /evicted LRU cache .*local\/owner\/repo/);
+    pruneSettled(f);
     assert.equal(existsSync(checkout), false);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
@@ -2013,7 +2089,8 @@ test("a launcher cache cap reaches the detached gate's locked pruner", () => {
     const result = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env });
     assert.equal(result.status, 0, result.stderr);
     assert.match(readFileSync(join(f.root, "ssh-remote-commands"), "utf8"), /BEELINK_GATE_CACHE_MAX_BYTES=1000/);
-    assert.match(result.stderr, /beelink-gate: evicted LRU cache/);
+    pruneSettled(f);
+    assert.equal(existsSync(join(f.cache, "local", "owner", "repo")), false, "the cap reached the pruner");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -2628,6 +2705,25 @@ test("auto waits while both hosts are over their pressure limit and runs on the 
     assert.match(stderr, /receipt: .*host=beelink2/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
+// A PSI timeout exited 75 for auto gates too, and only 76 re-places: ~113 auto gates a day failed instead of moving
+// to the other host (10-26 failure sweep #3).
+test("a host-pressure timeout gives an auto gate's host back (76) and still fails a named-host gate (75)", async () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(60));
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const held = (auto) => run("bash", [gate, "--remote", ...args], { timeout: 120_000,
+      env: { ...f.env, ...(auto ? { BEELINK_GATE_AUTO: "1" } : {}), BEELINK_GATE_HOST_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    const auto = held(true);
+    assert.equal(auto.status, 76, auto.stderr);
+    assert.match(auto.stderr, /not admitted on beelink2 within .*\(admission held at arrival: host_psi\); placing the gate again/);
+    assert.doesNotMatch(auto.stderr, /TEMPFAIL/);
+    const named = held(false);
+    assert.equal(named.status, 75, named.stderr);
+    assert.match(named.stderr, /TEMPFAIL .*admission held at arrival: host_psi/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
 test("an auto gate whose host falls below its disk floor while it queued gives the host back before checkout", async () => {
   const f = fixture();
   try {
@@ -2732,6 +2828,32 @@ test("the starvation backstop also runs a gate past a full slot pool", async () 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// desktop-18ir33v's sdd stalled 7.6% of 5 min at 453 GB/h of gate writes while CPU pressure admitted more (10-27).
+test("host IO pressure over the limits file's max_io_pressure holds admission until it drops; no limit, no IO hold", async () => {
+  const f = fixture();
+  try {
+    const io = join(f.root, "io-pressure"), limits = join(f.root, "limits");
+    writeFileSync(io, pressureLine(40));
+    writeFileSync(limits, "max_io_pressure=30\n");
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const child = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_HOST_IO_PRESSURE: io, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 2400 && !/"held":true,"reason":"host_io_psi"/.test(stderr); i++) await sleepMs(50);
+    assert.match(stderr, /holds admission: \{[^\n]*"held":true,"reason":"host_io_psi"[^\n]*"host_io_some_avg10":40\.0,"io_limit":30/);
+    writeFileSync(io, pressureLine(5));
+    assert.equal(await done, 0, stderr);
+    assert.match(stderr, /admission \{[^\n]*"held":false,"reason":"host_psi"[^\n]*"host_io_some_avg10":5\.0,"io_limit":30/);
+    // Without a max_io_pressure line the same IO pressure holds nothing.
+    writeFileSync(io, pressureLine(90));
+    writeFileSync(limits, "max_cpu_pressure=50\n");
+    const free = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_HOST_IO_PRESSURE: io, BEELINK_GATE_LIMITS_FILE: limits } });
+    assert.equal(free.status, 0, free.stderr);
+    assert.match(free.stderr, /"host_io_some_avg10":90\.0,"io_limit":null/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("the host limits file sets the pressure limit and reaches a gate that is already waiting", async () => {
   const f = fixture();
   try {
@@ -2764,9 +2886,7 @@ test("a green command stays green when the cache is over its cap with only activ
     // A cap below one checkout: every prune ends over the cap with nothing idle to evict.
     const result = f.call(f.first, ["bash", "-c", "exit 0"], { noInstall: true, env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000" } });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /WARNING cache over its cap/);
-    assert.match(result.stderr, /receipt: .*exit=0 .*cache=unpruned/);
-    assert.equal(receipts(f).at(-1).cache_unpruned, true);
+    pruneSettled(f);
     const red = f.call(f.first, ["bash", "-c", "exit 7"], { noInstall: true, env: { BEELINK_GATE_CACHE_MAX_BYTES: "1000" } });
     assert.equal(red.status, 7, red.stderr);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
@@ -2776,22 +2896,32 @@ test("the receipt separates capacity-claim wait from cache pruning and the comma
   const f = fixture();
   const locks = join(f.cache, ".locks");
   const marker = join(f.root, "capacity-held");
+  const release = join(f.root, "capacity-release");
   mkdirSync(locks, { recursive: true });
-  const holder = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c", `touch '${marker}'; sleep 3`], { stdio: "ignore" });
+  // The cleanup holds the lock until the gate reports its claim waiting: a fixed 3 s raced gate startup on a loaded host.
+  const holder = spawn("flock", ["-x", join(locks, ".capacity.lock"), "bash", "-c", `touch '${marker}'; until [ -e '${release}' ]; do sleep 0.05; done`], { stdio: "ignore" });
   try {
     for (let i = 0; i < 2400 && !existsSync(marker); i++) await sleepMs(20);
     assert.equal(existsSync(marker), true);
-    const result = f.call(f.first, ["true"], { noInstall: true });
+    const child = spawn("bash", [gate, "--remote", ...["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode)], { env: f.env });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => child.on("close", resolveDone));
+    for (let i = 0; i < 6000 && !/for capacity cleanup/.test(stderr); i++) await sleepMs(20);
+    assert.match(stderr, /for capacity cleanup/);
+    writeFileSync(release, "");
+    const result = { status: await done, stderr };
     assert.equal(result.status, 0, result.stderr);
     const row = receipts(f).at(-1);
     assert.ok(row.timing.capacity_claim_wait_ms >= 500, JSON.stringify(row.timing));
-    assert.ok(row.timing.cache_lock_wait_ms.precheck >= 0, JSON.stringify(row.timing));
+    // The prune runs in its own unit, so the gate's slot holds none of its lock wait or work.
+    assert.deepEqual([row.timing.cache_lock_wait_ms, row.timing.cache_prune_work_ms], [{ precheck: 0, cleanup: 0 }, { precheck: 0, cleanup: 0 }], JSON.stringify(row.timing));
     assert.ok(row.waited_s >= 1, JSON.stringify(row));
     assert.ok(row.timing.pre_command_s >= 0, JSON.stringify(row.timing));
     assert.ok(row.timing.fetch_s >= 0 && row.timing.command_s >= 0 && row.timing.cleanup_s >= 0);
-    assert.ok(row.timing.cache_prune_work_ms.cleanup >= 0);
     assert.match(result.stderr, /beelink-gate timing: /);
   } finally {
+    writeFileSync(release, "");
     holder.kill();
     rmSync(f.root, { recursive: true, force: true });
   }
@@ -3715,6 +3845,65 @@ exec '${join(f.root, "bin", "ssh")}' "$@"
   }
 });
 
+// 10-26 failure sweep #10 (~58 gate requests a day): the same red input queued and ran again, and gates waited for
+// commits never pushed. The launcher reads the commit and the input's latest receipt before it places a gate.
+test("an identical input whose latest receipt is the command's own red returns it unplaced; an unknown commit is refused within 5 s", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    const url = "https://github.com/acme/gate-test.git";
+    const env = { ...f.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: "git@github.com:acme/gate-test.git" };
+    writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
+case "$*" in
+  *statuses*) exit 0 ;;
+  *repos/acme/gate-test/commits/*) [ -z "\${FAKE_GH_SLEEP:-}" ] || sleep "$FAKE_GH_SLEEP"
+    [ -z "\${FAKE_GH_MISSING:-}" ] || { echo "gh: No commit found for SHA (HTTP 422)" >&2; exit 1; }; echo ok ;;
+  *) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+esac
+`);
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    const submits = () => readFileSync(join(f.root, "ssh-remote-commands"), "utf8").split("\n").filter((line) => line.includes("--job-submit")).length;
+    const gateRun = (command, extra = {}) => run(gate, ["--no-install", "beelink2", url, f.first, "--", "bash", "-c", command], { env: { ...env, ...extra } });
+
+    assert.equal(gateRun("exit 7").status, 7);
+    const placed = submits();
+    const cached = gateRun("exit 7");
+    assert.equal(cached.status, 7, cached.stderr);
+    assert.match(cached.stderr, /identical input already red: host=beelink2 gate_id=beelink2-[0-9a-f]{32} at=\S+ exit=7 \(BEELINK_GATE_RERUN=1 runs it again\)/);
+    assert.equal(submits(), placed, "the cached red placed a gate");
+    assert.equal(gateRun("exit 7", { BEELINK_GATE_RERUN: "1" }).status, 7);
+    assert.equal(submits(), placed + 1, "BEELINK_GATE_RERUN=1 runs it again");
+
+    // A TEMPFAIL is not a verdict: the same input runs again.
+    gateRun("exit 75");
+    const tempfailed = submits();
+    gateRun("exit 75");
+    assert.equal(submits(), tempfailed + 1, "a 75 receipt was cached");
+
+    // Neither a red whose command never ran (a failed install) nor a --branch gate's red speaks for this input.
+    const seed = (command, extra) => writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"), `${JSON.stringify({ at: "2099-01-01T00:00:00Z", host: "beelink1",
+      repo: "github.com/acme/gate-test", sha: f.first, mode: "no-install", class: "normal", command: `bash -c exit\\ ${command.slice(5)}`, exit: 9, gate_id: "beelink1-seeded", ...extra })}\n`, { flag: "a" });
+    seed("exit 8", { checkout: "detached", timing: { command_s: null } });
+    seed("exit 6", { checkout: "branch", timing: { command_s: 3 } });
+    for (const command of ["exit 8", "exit 6"]) {
+      const before = submits();
+      gateRun(command);
+      assert.equal(submits(), before + 1, `${command}: a seeded red that does not speak for this input was returned`);
+    }
+
+    const started = Date.now();
+    const missing = gateRun("true", { FAKE_GH_MISSING: "1" });
+    assert.equal(missing.status, 2, missing.stderr);
+    assert.match(missing.stderr, /commit [0-9a-f]{40} is not on acme\/gate-test; push it first/);
+    assert.ok(Date.now() - started < 5_000, `refused after ${Date.now() - started} ms`);
+
+    // A slow lookup never refuses: the gate is placed and runs.
+    const slow = gateRun("true", { FAKE_GH_SLEEP: "8" });
+    assert.equal(slow.status, 0, slow.stderr);
+    assert.match(slow.stderr, /could not confirm [0-9a-f]{40} on GitHub within 5 s; placing it anyway/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("--merge squash-merges the PR pinned to the gated SHA only after a green gate, and never from a dev gate", () => {
   const f = fixture();
   try {
@@ -3732,13 +3921,14 @@ exit "\${FAKE_GH_EXIT:-0}"
     chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
     const merge = ["pr", "merge", "42", "-R", "acme/gate-test", "--squash", "--match-head-commit", f.first].join(" ");
 
+    const merges = () => (existsSync(calls) ? readFileSync(calls, "utf8").split("\n") : []).filter((line) => line.startsWith("pr merge"));
     const red = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "bash", "-c", "exit 1"], { env: f.env });
     assert.equal(red.status, 1, red.stderr);
-    assert.equal(existsSync(calls), false, "a red gate called gh-drew");
+    assert.deepEqual(merges(), [], "a red gate merged");
 
     const green = run(gate, ["--merge", "42", "--no-install", "beelink2", url, f.first, "--", "true"], { env: f.env });
     assert.equal(green.status, 0, green.stderr);
-    assert.equal(readFileSync(calls, "utf8").split("\n")[0], merge);
+    assert.deepEqual(merges(), [merge]);
     assert.match(green.stderr.trim().split("\n").at(-1), /^beelink-gate: merged #42 1{40} by drewstone gate_id=beelink2-[0-9a-f]{32}$/);
 
     // gh exits 0 for a PR already merged from another head (agent-sdk#580): no merge claim for source the gate never ran.
@@ -3759,7 +3949,7 @@ exit "\${FAKE_GH_EXIT:-0}"
     const local = run(gate, ["--merge", "42", "--no-install", "beelink2", f.url, f.first, "--", "true"], { env: f.env });
     assert.equal(local.status, 2);
     assert.match(local.stderr, /--merge needs a GitHub repo URL/);
-    assert.equal(existsSync(calls), false, "a refused request called gh-drew");
+    assert.deepEqual(merges(), [], "a refused request merged");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

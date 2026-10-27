@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Owned gate-cache reclamation; sourced locally and bundled for remote gates.
-# Cache directories are owned by this command. A global lock serializes size
-# decisions; per-repo locks keep active gates out of the eviction set.
+# Owned gate-cache reclamation; sourced locally and bundled for remote gates. Cache directories are owned by this
+# command. A global lock serializes size decisions; per-repo locks keep active gates out of the eviction set.
 # shellcheck disable=SC2154 # State is initialized by the parent remote_gate.
-# One private helper for pool layout, validation and managed-consumer lifetime.
-# Empty gate-ID markers outlive a killed Bash owner: only the kernel unit's
-# absence or populated=0 permits reclamation, never a missing PID or free flock.
+# One private helper for pool layout, validation and managed-consumer lifetime. Empty gate-ID markers outlive a killed
+# Bash owner: only the kernel unit's absence or populated=0 permits reclamation, never a missing PID or free flock.
 gate_turbo_cache_python=$(cat <<'PYTURBOCACHE'
 import hashlib
 import os
@@ -192,6 +190,13 @@ release_gate_turbo_cache() {
   }
 }
 
+# Prunes outside any gate slot, in one user unit per cache root that runs again while requests arrive: inline, the
+# precheck and cleanup prunes held gate slots 726 min/day (48 h of receipts to 10-26 21:45Z).
+prune_detached() {  # <cache root> <cap>
+  : > "$1/.locks/prune-requested"; local unit name envs=(); unit=beelink-gate-cache-prune-$(printf '%s' "$1" | sha256sum | cut -c1-12); for name in $(compgen -e); do envs+=("--setenv=$name"); done
+  systemd-run --user --collect --quiet --unit="$unit" "${envs[@]}" /usr/bin/bash "$0" --prune-cache "$1" "$2" >/dev/null 2>&1 \
+    || systemctl --user is-active --quiet "$unit" || echo "beelink-gate: WARNING the cache prune could not start; the next gate asks again" >&2
+}
 prune_cache() {
   BEELINK_GATE_TIMING_FILE="${timing_file:-}" BEELINK_GATE_TIMING_PHASE="${timing_phase:-precheck}" \
     python3 - "$1" "$2" "$3" "${4:-0}" "$(declare -f sparse_normalize sparse_apply)" "$gate_turbo_cache_python" "$(dev=0 BEELINK_GATE_CLASS='' gate_cgroup)" <<'PY'
@@ -334,9 +339,8 @@ try:
         initial_total = None
         initial_free = free_bytes(root)
         target_free = initial_free + required_reclaim
-        # An idle checkout first shrinks to the sparse patterns its HEAD commits: those
-        # are paths no gated command reads, and the checkout stays warm for the
-        # next gate. LRU eviction then weighs what remains.
+        # An idle checkout first shrinks to the sparse patterns its HEAD commits: those are paths no gated command
+        # reads, and the checkout stays warm for the next gate. LRU eviction then weighs what remains.
         sparsified = False
         for stamp_ns, repo, lock_path, shared in candidates:
             if shared:

@@ -3,8 +3,8 @@
 # Sourced by beelink-gate and bundled into its staged source; never run alone.
 gate_shared_turbo_install=1
 
-# The package-manager version the repo's own CI installs with: package.json packageManager (what corepack and the
-# setup actions read), else the version pinned on that manager's setup action in a workflow or a composite action
+# The package-manager version the repo's own CI installs with: package.json packageManager (what corepack and the setup
+# actions read), else the version pinned on that manager's setup action in a workflow or a composite action
 # (.github/actions/*/action.yml), where repos keep their one shared setup step. Only an exact x.y.z is used.
 repo_manager_version() {  # <manager> <setup action> <action version key>
   local manager=$1 action=$2 key=$3 version
@@ -30,8 +30,8 @@ gate_mise_version=2026.7.11
 gate_mise_sha256_x64=d31578a16ae2708385249b439c95533068e04b9507a118e905aa6768905671fc
 
 # Repos that declare checks' tools in mise.toml (actionlint, zizmor, ...) run them through `mise exec`, and no Beelink
-# account has mise. Install exactly the tools the repo declares, with mise's data, cache and state under the
-# checkout's .git so they stay inside the gate cache cap, and keep the host's global mise config out of it.
+# account has mise. Install exactly the tools the repo declares, with mise's data, cache and state under the checkout's
+# .git so they stay inside the gate cache cap, and keep the host's global mise config out of it.
 install_mise_tools() {
   [ "$(uname -m)" = x86_64 ] || die "mise.toml: beelink-gate pins mise for x86_64 only, not $(uname -m)"
   local dir="$checkout/.git/beelink-gate-bin" mise_root="$checkout/.git/beelink-gate-mise" bin have
@@ -54,9 +54,9 @@ install_mise_tools() {
 
 has_bun_lock() { [ -f bun.lock ] || [ -f bun.lockb ]; }
 
-# Install and run with the repo's Bun: the Beelink accounts carry none, and a host-wide Bun would drift from the
-# version CI pins. npm publishes Bun's binaries, so npx fetches that exact version once into its cache; the shim links
-# the binary itself, so nested `bun --filter` scripts pay no npx start.
+# Install and run with the repo's Bun: the Beelink accounts carry none, and a host-wide Bun would drift from the version
+# CI pins. npm publishes Bun's binaries, so npx fetches that exact version once into its cache; the shim links the
+# binary itself, so nested `bun --filter` scripts pay no npx start.
 install_bun_dependencies() {
   local want have bin
   want=$(repo_manager_version bun oven-sh/setup-bun bun-version) \
@@ -73,9 +73,8 @@ install_bun_dependencies() {
     export PATH="$checkout/.git/beelink-gate-bin:$PATH"
     echo "beelink-gate: using the repo's bun $want (beelink has ${have:-none})" >&2
   fi
-  # Without lifecycle scripts: Bun already runs none for dependencies outside
-  # trustedDependencies, and a root `prepare: lefthook install` refuses on every
-  # Beelink because the global core.hooksPath belongs to the dotfiles hooks.
+  # Without lifecycle scripts: Bun already runs none for dependencies outside trustedDependencies, and a root `prepare:
+  # lefthook install` refuses on every Beelink because the global core.hooksPath belongs to the dotfiles hooks.
   install_step bun install --frozen-lockfile --ignore-scripts || return $?
   echo "beelink-gate: frozen Bun $want install completed" >&2
 }
@@ -112,9 +111,9 @@ install_yarn_dependencies() {
   echo "beelink-gate: frozen Yarn $yarn_version install completed" >&2
 }
 
-# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm") and gate_node_bin. pnpm may launch
-# its own Node, so a gate read plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3 (ABI 127
-# vs 137). Probe Yarn through its launcher too (including PnP); npm uses the PATH node.
+# The Node the repo's scripts run under: gate_abi, gate_node ("v24.1.0 via pnpm") and gate_node_bin. pnpm may launch its
+# own Node, so a gate read plain node=v22.23.3, rebuilt nothing, and pnpm's Node 24 failed better-sqlite3 (ABI 127 vs
+# 137). Probe Yarn through its launcher too (including PnP); npm uses the PATH node.
 resolve_gate_node() {
   local probe='process.versions.modules+" "+process.version+" "+process.execPath' out="" via=node
   if [ "${repo_manager:-}" != yarn ] && [ -d node_modules/.pnpm ] && [ "$install_mode" != no-install ] && [ "$install_mode" != light ]; then
@@ -137,8 +136,8 @@ resolve_gate_node() {
 prepare_gate_dependencies() {
   # Install and run with the repo's Node (.nvmrc), as its CI does, so the install and the command load the same native
   # addon ABI. pnpm keys a native package's build on the Node that installs it: agent-app#1036 installed under the
-  # beelink's default Node 22, its `bash -lc` command ran under nvm's default 24, and better-sqlite3 failed with
-  # "Module did not self-register". With an nvm Node first on PATH, a login shell keeps it.
+  # beelink's default Node 22, its `bash -lc` command ran under nvm's default 24, and better-sqlite3 failed with "Module
+  # did not self-register". With an nvm Node first on PATH, a login shell keeps it.
   if [ -s .nvmrc ]; then
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
       # shellcheck disable=SC1091
@@ -158,8 +157,8 @@ prepare_gate_dependencies() {
       echo "beelink-gate: using the login shell's node $("$login_node" -v 2>/dev/null) for the install and the command" >&2
     fi
   fi
-  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces minimumReleaseAge and pnpm 10 ignores
-  # it, so a gate on 10 passed an install that CI on 11 refused. The shim covers the install, the command and ship.sh.
+  # Install and run with the repo's pnpm, not the beelink's: pnpm 11 enforces minimumReleaseAge and pnpm 10 ignores it,
+  # so a gate on 10 passed an install that CI on 11 refused. The shim covers the install, the command and ship.sh.
   local want_pnpm have_pnpm repo_manager
   # This private cache directory survives git clean; never reuse another
   # revision's package-manager shim, even when its manager has changed.
@@ -246,8 +245,8 @@ prepare_gate_dependencies() {
 }
 
 # The reserve a receipt records is the 10 GiB headroom plus the most this gate's own bytes grew since just before its
-# fetch (gate_bytes); host free space also moves with other lanes' writes and decides only the floor. A measurement
-# that fails records the cold reserve, never less.
+# fetch (gate_bytes); host free space also moves with other lanes' writes and decides only the floor. A measurement that
+# fails records the cold reserve, never less.
 observe_install_reserve() {  # <when>
   (( install_reserve_bytes > 0 )) || return 0
   local now started grown observed
@@ -296,8 +295,8 @@ release_checkout_before_reclaim() {
   release_gate_turbo_cache
   local boundary=before_checkout_release
   if [ "$watchdog" != 1 ] && cd "$cache_root"; then
-    # Release before global cache work; the next gate owns the checkout and holder. Claim the release only when the
-    # held lock was actually unlocked: a missing descriptor or a failed unlock keeps the lock, skips reclaim and fails
+    # Release before global cache work; the next gate owns the checkout and holder. Claim the release only when the held
+    # lock was actually unlocked: a missing descriptor or a failed unlock keeps the lock, skips reclaim and fails
     # closed. The holder goes first, while this gate still owns the lock, so it never deletes the next gate's record.
     rm -f "$lock.holder"
     if [ -n "${lock_fd:-}" ] && flock -u "$lock_fd"; then
