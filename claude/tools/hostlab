@@ -358,17 +358,17 @@ cmd_build() {
 # Under a GTR gate the VM's disks are the gate's bytes: its run is tagged with the gate (gtr_used_bytes counts it) and
 # disks whose virtual size exceeds the gate's storage lease refuse (a 16 GB lease booted 125 GiB of disks, 10-27).
 gate_lease_fits() {
-  [ -n "${BEELINK_GATE_LEASE_DIR:-}" ] || return 0
+  [ -n "${BEELINK_GATE_LEASE_DIR:-}" ] && [ -f "$BASE_IMG" ] || return 0  # no base image: vm_boot refuses below
   local want; want=$(( $(qemu-img info --output=json "$BASE_IMG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])') + $(numfmt --from=iec "$SCRATCH") ))
   (( want <= ${BEELINK_GATE_LEASE_BYTES:-0} )) || die "the VM's disks are $want bytes virtual, over the ${BEELINK_GATE_LEASE_BYTES:-0}-byte storage lease of gate $BEELINK_GATE_LEASE_DIR; shrink --scratch or declare BEELINK_GATE_RESERVE_BYTES"
 }
 
 vm_boot() {
   # vm_boot -> prints RUN DIR; boots an overlay of the base with WORK at /work
-  [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
   gate_lease_fits
   check_free
   need
+  [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
   local id dir port i
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
