@@ -298,6 +298,7 @@ acquire_checkout_admission() {
       if (( ! urgent )) && urgent_ahead "$urgent_marker"; then checkout_wait_stage=fifo; break; fi
       suffix=$([ "$k" = 0 ] || echo "@$k"); (( light == 0 )) || suffix=@light; (( dev == 0 )) || suffix=@dev
       candidate="$cache_root/.locks/$host-$owner-$repo$suffix.lock"
+      [ ! -e "$(checkout_quarantine "$candidate")" ] || continue
       [ ! -L "$candidate" ] && [ ! -L "$candidate.holder" ] || die "lock metadata is a symlink"
       exec {fd}>"$candidate" || die "cannot open lock"
       if flock -n -x "$fd"; then
