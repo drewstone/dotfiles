@@ -326,7 +326,7 @@ pre_placement_checks() {  # <command>...
       || { grep -qE 'HTTP (404|422)' "$err" && die "commit $sha is not on ${frontend_key#github.com/}; push it first"; echo "beelink-gate: could not confirm $sha on GitHub within 5 s; placing it anyway" >&2; }
     rm -f "$err"
   fi
-  [ "${BEELINK_GATE_RERUN:-0}" != 1 ] && [ -z "$gate_branch" ] && [ "$gate_class" != dev ] && [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+  [ "${BEELINK_GATE_RERUN:-0}" != 1 ] && [ -z "$gate_branch" ] && [ "$gate_class" != dev ] && [[ "$sha" =~ ^[0-9a-f]{40}$ && "$repo_url" =~ ^(git@|ssh://|https?://) ]] || return 0
   printf -v cmd '%q ' "$@"
   red=$("$BASH" "$0" --receipt "$repo_url" "$sha" 2>/dev/null | python3 -c '
 import json, sys
