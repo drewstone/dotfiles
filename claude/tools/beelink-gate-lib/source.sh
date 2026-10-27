@@ -334,7 +334,7 @@ mode, cls, command = sys.argv[1:]
 rows = [r for r in map(json.loads, sys.stdin) if (r.get("mode"), r.get("class"), r.get("command")) == (mode, cls, command)]
 r = max(rows, key=lambda r: r.get("at", ""), default=None)  # the latest identical run; only a command red counts
 if r and r["exit"] not in (0, 2, 3, 75, 76, 124, 130, 137, 143) and not (r.get("timed_out") or r.get("watchdog") or r.get("starved")):
-    print(r["exit"], f"host={r.get(\"host\")} gate_id={r.get(\"gate_id\")} at={r.get(\"at\")} exit={r[\"exit\"]}")' \
+    print(r["exit"], "host=%s gate_id=%s at=%s exit=%s" % (r.get("host"), r.get("gate_id"), r.get("at"), r["exit"]))' \
     "$install_mode" "$([ "$install_mode" = light ] && echo light || echo normal)" "${cmd% }")
   [ -z "$red" ] || { echo "beelink-gate: identical input already red: ${red#* } (BEELINK_GATE_RERUN=1 runs it again)" >&2; exit "${red%% *}"; }
 }
