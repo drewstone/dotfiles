@@ -52,7 +52,7 @@ stop_child() {
   [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true
 }
 trap stop_child TERM INT HUP
-bash "$dir/gate.sh" --remote --args-file "$dir/args" > "$dir/stdout.log" 2> "$dir/stderr.log" &
+bash "$dir/gate.sh" --remote --args-file "$dir/args" >> "$dir/stdout.log" 2>> "$dir/stderr.log" &  # append: a cancel's reason line survives the gate's later writes
 child=$!
 birth=$(awk '{print $22}' "/proc/$child/stat" 2>/dev/null)
 printf '%s %s\n' "$child" "$birth" > "$dir/gate.pid.tmp"
