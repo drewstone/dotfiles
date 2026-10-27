@@ -1212,7 +1212,7 @@ remote_gate() {
   trap 'admission_early_exit "$?"' EXIT
   initial_disk_admission
   max_cpu_pressure >/dev/null
-  wait_for_load "$beelink" || refuse_or_replace host_psi "managed containment or host CPU PSI unavailable"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "admission held at arrival: ${admission_reason:-unknown}"
   if [ -L "$cache_root" ] || [ -L "$cache_root/.locks" ] || [ -L "$cache_root/$host" ] || [ -L "$cache_root/$host/$owner" ]; then
     die "cache path contains a symlink"
   fi

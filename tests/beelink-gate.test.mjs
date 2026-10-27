@@ -2640,11 +2640,11 @@ test("a host-pressure timeout gives an auto gate's host back (76) and still fail
       env: { ...f.env, ...(auto ? { BEELINK_GATE_AUTO: "1" } : {}), BEELINK_GATE_HOST_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
     const auto = held(true);
     assert.equal(auto.status, 76, auto.stderr);
-    assert.match(auto.stderr, /not admitted on beelink2 within .*stayed over its limit\); placing the gate again/);
+    assert.match(auto.stderr, /not admitted on beelink2 within .*\(admission held at arrival: host_psi\); placing the gate again/);
     assert.doesNotMatch(auto.stderr, /TEMPFAIL/);
     const named = held(false);
     assert.equal(named.status, 75, named.stderr);
-    assert.match(named.stderr, /TEMPFAIL .*stayed over its limit/);
+    assert.match(named.stderr, /TEMPFAIL .*admission held at arrival: host_psi/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 test("an auto gate whose host falls below its disk floor while it queued gives the host back before checkout", async () => {
