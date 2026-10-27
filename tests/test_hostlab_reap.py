@@ -5,6 +5,7 @@ file names a live or an exited process. One reap pass checks every decision
 and the filesystem result. Linux only, because the reaper reads /proc.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -216,17 +217,26 @@ class HostlabReapTest(unittest.TestCase):
         finally:
             shutil.rmtree(home, ignore_errors=True)
 
-    def test_boot_under_a_gate_refuses_disks_over_its_lease(self):
-        # 10-27: a GTR gate leased 16 GB and its suite booted a VM with 125 GiB of virtual disks outside the lease.
-        if shutil.which('qemu-img') is None or shutil.which('numfmt') is None:
-            self.fail('needs qemu-img and numfmt (hostlab hosts have both)')
+    def test_boot_under_a_gate_takes_the_vm_reservation_or_refuses(self):
+        # 10-27: a GTR gate leased 16 GB and its suite booted 125 GiB of virtual disks outside the lease. Disks over the
+        # gate's lease now need the op-company:beelink-gate-gtr-hostlab reservation, which keeps its floor free.
+        for tool in ('qemu-img', 'numfmt', 'storage-lifecycle', 'systemd-run'):
+            if shutil.which(tool) is None:
+                self.fail('needs %s (hostlab hosts have it)' % tool)
         subprocess.run(['qemu-img', 'create', '-q', '-f', 'qcow2', os.path.join(self.home, 'base.qcow2'), '20G'], check=True)
+        with open(os.path.expanduser('~/.config/storage-lifecycle/config.json')) as f:
+            config = json.load(f)
+        config['lanes']['op-company:beelink-gate-gtr-hostlab'] = {'paths': [self.runs], 'limit_bytes': 200 * 10**9, 'floor_bytes': 1 << 60, 'shared_caches': False}
+        cfg = os.path.join(self.tmp, 'storage-lifecycle.json')
+        with open(cfg, 'w') as f:
+            json.dump(config, f)
         gate = dict(BEELINK_GATE_LEASE_DIR='/pool/drew-gtr-pro-test')
-        r = self.hostlab('run', '--scratch', '105G', '--', 'true', BEELINK_GATE_LEASE_BYTES='16000000000', **gate)
+        r = self.hostlab('run', '--scratch', '105G', '--', 'true', BEELINK_GATE_LEASE_BYTES='16000000000', STORAGE_LIFECYCLE_CONFIG=cfg, **gate)
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("the VM's disks are 134217728000 bytes virtual, over the 16000000000-byte storage lease of gate /pool/drew-gtr-pro-test", r.stderr)
+        self.assertIn('no VM reservation for 134217728000 bytes in op-company:beelink-gate-gtr-hostlab', r.stderr)
+        self.assertIn('free-space floor', r.stderr)
         self.assertEqual(os.listdir(self.runs), [])
-        # Disks that fit pass to the next check; a home on /dev/shm (under 100 GB) stops there, before any boot.
+        # Disks that fit the gate's lease skip the reservation; a home on /dev/shm (under 100 GB) stops at the next check.
         shm = tempfile.mkdtemp(prefix='hostlab-fits-', dir='/dev/shm')
         try:
             shutil.copy(os.path.join(self.home, 'base.qcow2'), shm)
@@ -235,7 +245,6 @@ class HostlabReapTest(unittest.TestCase):
             self.assertIn('a VM needs 100G', fits.stderr)
         finally:
             shutil.rmtree(shm, ignore_errors=True)
-
 
 if __name__ == '__main__':
     unittest.main()
