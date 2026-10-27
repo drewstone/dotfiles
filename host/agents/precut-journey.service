@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the production lifecycle journey on each open agent-container release cut before main moves
+Documentation=https://github.com/tangle-network/agent-container/blob/develop/scripts/ci/precut-journey.mjs
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# GTR only: hostlab VMs take the op-company:beelink-gate-gtr-hostlab lease.
+Environment=FLEET_LANE=op-company:release-path-guard
+# The driver is the merged develop copy, in a sparse clone of scripts/ only;
+# each gate checks out the exact cut head it judges. One pass at a time.
+ExecStart=/bin/bash -lc 'set -euo pipefail; src="%h/.cache/precut-journey/agent-container"; if [ ! -d "$src/.git" ]; then git clone -q --filter=blob:none --sparse https://github.com/tangle-network/agent-container.git "$src"; git -C "$src" sparse-checkout set scripts; fi; git -C "$src" fetch -q origin develop; git -C "$src" checkout -q --detach FETCH_HEAD; GH_TOKEN="$(gh-drew auth token)" exec flock -n "%t/precut-journey.lock" node "$src/scripts/ci/precut-journey.mjs"'
+TimeoutStartSec=50min
