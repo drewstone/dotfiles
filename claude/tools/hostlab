@@ -120,9 +120,7 @@ need() {
     die "/dev/kvm is not accessible (add yourself to the kvm group)"
   fi
   mkdir -p "$CACHE" "$RUNS"
-  if [ ! -f "$KEY" ]; then
-    ssh-keygen -q -t ed25519 -N '' -C hostlab -f "$KEY"
-  fi
+  [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C hostlab -f "$KEY"
 }
 
 # -F /dev/null: the user's ssh config (a ProxyCommand or LocalCommand for
@@ -296,9 +294,7 @@ vm_boot_diagnostics() {
 
 vm_stop() {
   local dir="$1" pid
-  if [ -f "$dir/port" ]; then
-    timeout 8 ssh $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 'poweroff' >/dev/null 2>&1 || true
-  fi
+  [ ! -f "$dir/port" ] || timeout 8 ssh $(ssh_opts) -p "$(cat "$dir/port")" root@127.0.0.1 'poweroff' >/dev/null 2>&1 || true
   if [ -f "$dir/qemu.pid" ]; then
     pid="$(cat "$dir/qemu.pid" 2>/dev/null || true)"
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -352,32 +348,36 @@ cmd_build() {
     [ $((t % 20)) -eq 0 ] && printf 'hostlab: %3ds  %s\n' "$t" "$(grep -aoE 'cloud-init\[[0-9]+\]: .*' "$dir/console.log" 2>/dev/null | tail -1 | cut -c1-100)"
     sleep 5; t=$((t + 5))
   done
-  if ! grep -aq 'hostlab-base-ready\|finished at' "$dir/console.log"; then
-    grep -a 'cloud-init' "$dir/console.log" | tail -5 >&2
-  fi
+  grep -aq 'hostlab-base-ready\|finished at' "$dir/console.log" || grep -a 'cloud-init' "$dir/console.log" | tail -5 >&2
   mv "$dir/disk.qcow2" "$BASE_IMG"
   date -u +%FT%TZ > "$BASE_IMG.built"
   qmp_socket_remove "$dir"; rm -rf "$dir"
   echo "hostlab: base image ready at $BASE_IMG"
 }
 
+# Under a GTR gate the VM's disks are the gate's bytes: its run is tagged with the gate (gtr_used_bytes counts it) and
+# disks whose virtual size exceeds the gate's storage lease refuse (a 16 GB lease booted 125 GiB of disks, 10-27).
+gate_lease_fits() {
+  [ -n "${BEELINK_GATE_ID:-}" ] || return 0
+  local want; want=$(( $(qemu-img info --output=json "$BASE_IMG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])') + $(numfmt --from=iec "$SCRATCH") ))
+  (( want <= ${BEELINK_GATE_LEASE_BYTES:-0} )) || die "the VM's disks are $want bytes virtual, over gate $BEELINK_GATE_ID's ${BEELINK_GATE_LEASE_BYTES:-0}-byte storage lease; shrink --scratch or declare BEELINK_GATE_RESERVE_BYTES"
+}
+
 vm_boot() {
   # vm_boot -> prints RUN DIR; boots an overlay of the base with WORK at /work
+  [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
+  gate_lease_fits
   check_free
   need
-  [ -f "$BASE_IMG" ] || die "no base image; run: hostlab build"
   [ -d "$WORK" ] || die "work dir $WORK does not exist"
   local id dir port i
   id="$(date +%Y%m%d-%H%M%S)-$RANDOM"
   dir="$RUNS/$id"; mkdir -m 700 "$dir"
   # Recorded before qemu starts, so the reaper never sees an unowned run.
   # Command substitution keeps $$ as the hostlab process: the caller.
-  printf '%s\n' "$OWNER" > "$dir/owner"
-  echo "$KEEP" > "$dir/keep"
+  printf '%s\n' "$OWNER" > "$dir/owner"; echo "$KEEP" > "$dir/keep"; [ -z "${BEELINK_GATE_ID:-}" ] || echo "$BEELINK_GATE_ID" > "$dir/gate"
   echo "$$ $(proc_start $$)" > "$dir/caller"
-  for i in "${!INPUT_NAMES[@]}"; do
-    printf '%s\t%s\n' "${INPUT_NAMES[$i]}" "${INPUT_FILES[$i]}" >> "$dir/read-only-inputs"
-  done
+  for i in "${!INPUT_NAMES[@]}"; do printf '%s\t%s\n' "${INPUT_NAMES[$i]}" "${INPUT_FILES[$i]}" >> "$dir/read-only-inputs"; done
   if [ "$KEEP" = 1 ]; then echo $(( $(date +%s) + $(to_seconds "$TTL") )) > "$dir/expires"; else echo none > "$dir/expires"; fi
   qemu-img create -q -f qcow2 -F qcow2 -b "$BASE_IMG" "$dir/disk.qcow2"
   qemu-img create -q -f qcow2 "$dir/scratch.qcow2" "$SCRATCH"

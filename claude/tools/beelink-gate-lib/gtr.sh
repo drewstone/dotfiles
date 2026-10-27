@@ -171,10 +171,10 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   return "$gtr_status"
 }
 
-# The gate's bytes: its leased dir (clone, TMPDIR) and the Docker images made since it started. A hostlab suite leased
-# 6.13 GB, wrote a /tmp nix-closure.tar and 4 hc-* images (12.6 GB), and GTR fell below its floor (10-27).
+# The gate's bytes: its leased dir (clone, TMPDIR), Docker images made since it started and hostlab runs tagged with it
+# (10-27: a 6.13 GB lease wrote 12.6 GB of images and a /tmp tar; a 16 GB lease's VM disks reached 39.8 GB outside it).
 gtr_used_bytes() {
-  local size images=0 id; size=$(du -sb "$dir" 2>/dev/null | cut -f1)
+  local size images=0 id; size=$(du -sb "$dir" $(grep -lxF "${BEELINK_GATE_ID:-none}" "${HOSTLAB_HOME:-$HOME/.cache/hostlab}"/runs/*/gate 2>/dev/null | xargs -r -n1 dirname) 2>/dev/null | awk '{ n += $1 } END { print n + 0 }')
   for id in $(comm -13 <(printf '%s\n' "$gtr_images_before") <(docker image ls -q --no-trunc 2>/dev/null | sort -u)); do images=$(( images + $(docker image inspect -f '{{.Size}}' "$id" 2>/dev/null || echo 0) )); done
   echo $(( ${size:-0} + images ))
 }

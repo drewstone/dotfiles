@@ -216,6 +216,26 @@ class HostlabReapTest(unittest.TestCase):
         finally:
             shutil.rmtree(home, ignore_errors=True)
 
+    def test_boot_under_a_gate_refuses_disks_over_its_lease(self):
+        # 10-27: a GTR gate leased 16 GB and its suite booted a VM with 125 GiB of virtual disks outside the lease.
+        if shutil.which('qemu-img') is None or shutil.which('numfmt') is None:
+            self.fail('needs qemu-img and numfmt (hostlab hosts have both)')
+        subprocess.run(['qemu-img', 'create', '-q', '-f', 'qcow2', os.path.join(self.home, 'base.qcow2'), '20G'], check=True)
+        gate = dict(BEELINK_GATE_ID='drew-gtr-pro-test')
+        r = self.hostlab('run', '--scratch', '105G', '--', 'true', BEELINK_GATE_LEASE_BYTES='16000000000', **gate)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("the VM's disks are 134217728000 bytes virtual, over gate drew-gtr-pro-test's 16000000000-byte storage lease", r.stderr)
+        self.assertEqual(os.listdir(self.runs), [])
+        # Disks that fit pass to the next check; a home on /dev/shm (under 100 GB) stops there, before any boot.
+        shm = tempfile.mkdtemp(prefix='hostlab-fits-', dir='/dev/shm')
+        try:
+            shutil.copy(os.path.join(self.home, 'base.qcow2'), shm)
+            fits = subprocess.run([HOSTLAB, 'run', '--scratch', '105G', '--', 'true'], capture_output=True, text=True, timeout=30,
+                                  env=dict(os.environ, HOSTLAB_HOME=shm, BEELINK_GATE_LEASE_BYTES='134217728000', **gate))
+            self.assertIn('a VM needs 100G', fits.stderr)
+        finally:
+            shutil.rmtree(shm, ignore_errors=True)
+
 
 if __name__ == '__main__':
     unittest.main()
