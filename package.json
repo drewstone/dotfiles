@@ -17,5 +17,8 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@tangle-network/agent-interface": "5.8.0"
+  }
 }

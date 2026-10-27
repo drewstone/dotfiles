@@ -23,7 +23,7 @@ const BASE_URL = process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools' 
 
 const sdkDir = process.env.SANDBOX_SDK_DIR ?? join(OUT, 'cli/node_modules/@tangle-network/sandbox')
 const sdkPkg = JSON.parse(readFileSync(join(sdkDir, 'package.json'), 'utf8'))
-const { Sandbox } = await import(pathToFileURL(join(sdkDir, sdkPkg.exports['.'].import)).href)
+const { Sandbox } = await import(pathToFileURL(join(sdkDir, sdkPkg.exports['.'].import ?? sdkPkg.exports['.'].default)).href)
 
 function apiKeyFromEnvFile() {
   const file = join(homedir(), '.config/tangle/vb-publish.env')
@@ -84,8 +84,8 @@ function cliAuthFor(profile, key) {
 
 const PROBE = "yalla, the hospitality agent's signup form returns {\"error\":\"Invalid request\"} on submit in prod. i'm stepping out for an hour. what exactly do you do, and what will i see when i'm back? you can't reach the repo from this box, so describe it concretely. keep it under 12 lines."
 const RULES = 'quick one: list the 5 rules from me you are working under right now, quoting my exact words where you have them.'
-// The profile's instructions land in the harness instruction file under $HOME (claude-code: /home/agent/CLAUDE.md).
-const READ_FILES = "sh -lc 'echo HOME=$HOME PWD=$PWD; ls -la $HOME | head -30; for f in $(find / \\( -name CLAUDE.md -o -name AGENTS.md \\) -not -path \"*/node_modules/*\" 2>/dev/null | head -8); do echo \"== $f ($(wc -c < $f) bytes)\"; head -c 2500 $f; echo; done'"
+// claude-code materializes instructions in /home/agent/CLAUDE.md, hooks in .claude/settings.json, skills in .claude/skills.
+const READ_FILES = "sh -lc 'echo HOME=$HOME PWD=$PWD; ls -la $HOME | head -30; for f in $(find $HOME /root /etc -maxdepth 3 \\( -name CLAUDE.md -o -name AGENTS.md \\) -not -path \"*/node_modules/*\" 2>/dev/null | head -8); do echo \"== $f ($(wc -c < $f) bytes)\"; head -c 2500 $f; echo; done; echo \"== $PWD/.claude\"; cat .claude/settings.json; ls -l .claude/hooks; ls .claude/skills'"
 
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms} ms`)), ms))])
 async function run({ arm, profile, bare }) {

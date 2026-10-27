@@ -6,12 +6,12 @@
 //        node validate.mjs --scan <file>...       privacy residue check only, for any file (the page, a brief)
 //        node validate.mjs --sandbox <file>...    schema and sandbox-create policy, which runs hooks, with no residue
 //                                                 check: install.sh's profile holds only public dotfiles text
-// ADC_ROOT (default ~/webb/agent-dev-container) is the checkout whose apps/sidecar resolves agent-interface;
-// AGENT_INTERFACE_DIR overrides the package directory; TRACE_MINE_DENYLIST overrides the denylist path.
-import { readFileSync } from 'node:fs'
+// agent-interface comes from AGENT_INTERFACE_DIR, else this repository's node_modules (package.json pins it), else
+// the apps/sidecar of ADC_ROOT (default ~/webb/agent-dev-container); TRACE_MINE_DENYLIST overrides the denylist path.
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const args = process.argv.slice(2)
 if (args.length === 0) throw new Error('usage: node validate.mjs <profiles.json>... | --scan <file>... | --sandbox <file>...')
@@ -31,7 +31,8 @@ if (args[0] === '--scan') {
 }
 
 const ADC = process.env.ADC_ROOT ?? join(homedir(), 'webb/agent-dev-container')
-const pkgDir = process.env.AGENT_INTERFACE_DIR ?? join(ADC, 'apps/sidecar/node_modules/@tangle-network/agent-interface')
+const own = fileURLToPath(new URL('../../../../node_modules/@tangle-network/agent-interface', import.meta.url))
+const pkgDir = process.env.AGENT_INTERFACE_DIR ?? (existsSync(own) ? own : join(ADC, 'apps/sidecar/node_modules/@tangle-network/agent-interface'))
 const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'))
 const m = await import(pathToFileURL(join(pkgDir, pkg.exports['.'].import)).href)
 console.log(`agent-interface ${pkg.version} from ${pkgDir}`)
