@@ -916,7 +916,7 @@ install_step() {
     printf 'beelink-gate receipt: sha=%s install=%s command=%s exit=%s duration=%ss waited=%ss host=%s timed_out=%s watchdog=%s load=%s preview=%s class=%s cpu_s=%s node=%s rebuild=%s cpu_pressure=%s starved=%s cgroup=%s sparse=%s checkout=%s workers=%s reaped=%s bundle=%s host_cpu=%s%s\n' \
       "$sha" "$install_mode" "${display% }" "$status" "$ran" "$waited" "$beelink" "$timed_out" "$watchdog" "${start_load:-?}" "$preview_verdict" \
       "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "${cpu_s:-?}" "${gate_node:-?}" "${native_rebuild:-none}" "${start_pressure:-?}" "$starved" "${gate_cgroup_joined:-none}" "${sparse_source:-none}" "${checkout_temperature:-none}" "${gate_workers:-?}" "$reaped" "${bundle_note:-none}" "${start_host_pressure:-?}" "${gate_id:+ gate_id=$gate_id}" >&2
-    mkdir -p "$STATE_DIR" 2>/dev/null && BEELINK_GATE_METRICS_SOURCE="$beelink_gate_metrics_source" python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
+    mkdir -p "$STATE_DIR" 2>/dev/null && BEELINK_GATE_RECEIPT_CHECKOUT="${gate_branch:+branch}" BEELINK_GATE_METRICS_SOURCE="$beelink_gate_metrics_source" python3 - "$STATE_DIR/receipts.jsonl" "$beelink" "$host/$owner/$repo" "$sha" "$install_mode" \
       "${display% }" "$status" "$waited" "$ran" "$timed_out" "$watchdog" "$launcher" "${start_load:-}" "${preview_result:-}" "${cpu_s:-}" "${gate_node:-}" "${native_rebuild:-}" "${start_pressure:-}" "$starved" "${gate_cgroup_joined:-}" "$( [ "${light:-0}" = 1 ] && echo light || { [ "${dev:-0}" = 1 ] && echo dev || echo normal; } )" "$reaped" "$bundle_note" "${start_host_pressure:-}" "$gate_id" "$base_sha" "$gate_pr" "$gate_lane" "$observed_install_reserve_bytes" "$timing_file" "$fetch_s" "$pre_command_s" "$command_s" "$cleanup_s" "$capacity_claim_wait_ms" "$sparse_source" "$sparse_spec" "$checkout_temperature" "$reserve_gate_bytes" "$reserve_host_drop" "$reserve_basis" "$reserve_du_ms" <<'PY' || true
 import fcntl, json, mmap, os, sys, time
 from pathlib import Path
@@ -931,7 +931,7 @@ row = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "host": beelink
        "node": node or None, "rebuild": rebuild or None, "reaped": int(reaped), "bundle": bundle or None,
        "start_host_cpu_pressure": float(host_cpu) if host_cpu else None, "gate_id": gate_id or None,
        "base_sha": base_sha or None, "pr_number": int(pr_number) if pr_number else None,
-       "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "checkout_temperature": checkout_temperature or None, "reason_scope": "host_last_10000_receipts"}
+       "lane": lane or None, "sparse": sparse or None, "sparse_spec": sparse_spec or None, "checkout_temperature": checkout_temperature or None, "reason_scope": "host_last_10000_receipts", "checkout": os.environ.get("BEELINK_GATE_RECEIPT_CHECKOUT") or "detached"}
 try:
     row["admission"] = json.loads(os.environ.get("BEELINK_GATE_ADMISSION_SAMPLE", "null"))
     row["systemd_manager"] = os.environ.get("BEELINK_GATE_SYSTEMD_MANAGER")

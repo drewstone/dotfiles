@@ -329,9 +329,10 @@ pre_placement_checks() {  # <command>...
   red=$("$BASH" "$0" --receipt "$repo_url" "$sha" 2>/dev/null | python3 -c '
 import json, sys
 mode, cls, command = sys.argv[1:]
-rows = [r for r in map(json.loads, sys.stdin) if (r.get("mode"), r.get("class"), r.get("command")) == (mode, cls, command)]
-r = max(rows, key=lambda r: r.get("at", ""), default=None)  # the latest identical run; only a command red counts
-if r and r["exit"] not in (0, 2, 3, 75, 76, 124, 130, 137, 143) and not (r.get("timed_out") or r.get("watchdog") or r.get("starved")):
+r = max((r for r in map(json.loads, sys.stdin) if (r.get("mode"), r.get("class"), r.get("command"), r.get("checkout")) == (mode, cls, command, "detached")),
+        key=lambda r: r.get("at", ""), default=None)  # the latest identical detached run; only a command red counts
+if r and r["exit"] not in (0, 2, 3, 75, 76, 124, 130, 137, 143) and (r.get("timing") or {}).get("command_s") is not None \
+        and not (r.get("timed_out") or r.get("watchdog") or r.get("starved")):  # the command ran to its own exit
     print(r["exit"], "host=%s gate_id=%s at=%s exit=%s" % (r.get("host"), r.get("gate_id"), r.get("at"), r["exit"]))' \
     "$install_mode" "$([ "$install_mode" = light ] && echo light || echo normal)" "${cmd% }")
   [ -z "$red" ] || { echo "beelink-gate: identical input already red: ${red#* } (BEELINK_GATE_RERUN=1 runs it again)" >&2; exit "${red%% *}"; }

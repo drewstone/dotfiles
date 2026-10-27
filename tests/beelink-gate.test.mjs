@@ -3854,6 +3854,17 @@ esac
     gateRun("exit 75");
     assert.equal(submits(), tempfailed + 1, "a 75 receipt was cached");
 
+    // Neither a red whose command never ran (a failed install) nor a --branch gate's red speaks for this input.
+    const seed = (command, extra) => writeFileSync(join(f.env.BEELINK_GATE_STATE_DIR, "receipts.jsonl"), `${JSON.stringify({ at: "2099-01-01T00:00:00Z", host: "beelink1",
+      repo: "github.com/acme/gate-test", sha: f.first, mode: "no-install", class: "normal", command: `bash -c exit\\ ${command.slice(5)}`, exit: 9, gate_id: "beelink1-seeded", ...extra })}\n`, { flag: "a" });
+    seed("exit 8", { checkout: "detached", timing: { command_s: null } });
+    seed("exit 6", { checkout: "branch", timing: { command_s: 3 } });
+    for (const command of ["exit 8", "exit 6"]) {
+      const before = submits();
+      gateRun(command);
+      assert.equal(submits(), before + 1, `${command}: a seeded red that does not speak for this input was returned`);
+    }
+
     const started = Date.now();
     const missing = gateRun("true", { FAKE_GH_MISSING: "1" });
     assert.equal(missing.status, 2, missing.stderr);
