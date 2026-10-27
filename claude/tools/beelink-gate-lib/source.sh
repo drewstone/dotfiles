@@ -184,15 +184,10 @@ on_beelink() {
       rm -f "$source_file"; return "$TEMPFAIL"
     }
   fi
-  # Windows OpenSSH refuses an exec request whose command line passes about 32 KB
-  # ("exec request failed on channel 0"); a 23 KB patch, base64
-  # encoded in argv, became 41,676 bytes and the submit was reported as a lost
-  # connection. Large arguments ride on stdin ahead of the script instead.
-  # The limit that binds first is cmd.exe's 8,191 characters for the whole line
-  # OpenSSH hands it: wsl.exe, every env assignment and bash -s, not only the
-  # arguments. 7,821 argument bytes passed an arguments-only 8,192 check and the
-  # full line failed "command line too long". Measure the line ssh sends, with a
-  # margin for the cmd.exe /c wrapper.
+  # Windows OpenSSH refuses an exec line past ~32 KB (a 23 KB patch became 41,676 argv bytes, reported as a lost
+  # connection), so large arguments ride on stdin ahead of the script. cmd.exe's 8,191-character limit binds first,
+  # on the whole line (wsl.exe, env assignments, bash -s): 7,821 argument bytes passed an arguments-only check and
+  # failed "command line too long". Measure the line ssh sends, with a margin for the cmd.exe /c wrapper.
   local -a remote_args=("$@")
   local remote_line_bytes
   remote_line_bytes=$(printf '%s ' wsl.exe -- env "${envs[@]}" bash -s -- "$@" | wc -c)
@@ -517,8 +512,13 @@ frontend_start() {
       fi
     fi
   fi
-  [ -n "$frontend_path" ] || echo 'beelink-gate: optional frontend timing unavailable: source/authority/IO unsupported; request duration unknown' >&2
-  [ -z "$frontend_path" ] || echo "beelink-gate: frontend_observation=$frontend_path" >&2
+  [ -n "$frontend_path" ] || { echo 'beelink-gate: optional frontend timing unavailable: source/authority/IO unsupported; request duration unknown' >&2; return 0; }
+  echo "beelink-gate: frontend_observation=$frontend_path" >&2
+  # A lost ssh client must not end a waiting gate (EPIPE killed queued gates, 10-26 sweep #9): ignore SIGPIPE and keep the
+  # request's output in its directory; GNU tee -p keeps writing it after the terminal's pipe breaks.
+  [ "$frontend_root" = 1 ] && tee -p </dev/null >/dev/null 2>&1 || return 0
+  # The tees ignore a stop to the process group (GNU timeout's), so they outlive the launcher's last lines.
+  trap '' PIPE; exec > >(trap '' TERM INT HUP; exec tee -p -a "${frontend_path%/*}/stdout.log") 2> >(trap '' TERM INT HUP; exec tee -p -a "${frontend_path%/*}/stderr.log" >&2)
 }
 frontend_phase() { frontend_record phase "$1"; }
 frontend_exit() {

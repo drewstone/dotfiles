@@ -568,6 +568,43 @@ test("--cancel-job --queued-only cancels a queued gate and refuses one whose com
   }
 });
 
+// A queued gate died when its ssh client went away: the next progress line hit EPIPE (10-26 sweep #9). The launcher now
+// ignores SIGPIPE and keeps the request's output in its own directory.
+test("a queued gate whose client goes away keeps its place, runs, and leaves its output in the request directory", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const env = { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held"), release = join(f.root, "release"), ran = join(f.root, "ran");
+  const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
+  let client;
+  try {
+    for (let i = 0; i < 2400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), "the holder runs");
+    client = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${ran}'; echo done-output`], { env });
+    const exited = new Promise((done) => client.once("exit", (code, signal) => done({ code, signal })));
+    let seen = "";
+    client.stderr.on("data", (chunk) => { seen += chunk; });
+    for (let i = 0; i < 2400 && !/checkouts on beelink2/.test(seen); i++) await sleepMs(25);
+    assert.match(seen, /checkouts on beelink2/, "the client's gate is queued");
+    const request = seen.match(/frontend_observation=(\S+)\/frontend\.json/)?.[1];
+    assert.ok(request, seen);
+    // The client goes away: every later write to its stdout or stderr is EPIPE.
+    client.stdout.destroy();
+    client.stderr.destroy();
+    writeFileSync(release, "\n");
+    const { code, signal } = await exited;
+    assert.deepEqual([code, signal], [0, null], `the launcher ended ${code} ${signal}`);
+    assert.ok(existsSync(ran), "the queued gate's command ran");
+    assert.match(readFileSync(join(request, "stdout.log"), "utf8"), /done-output/);
+    assert.match(readFileSync(join(request, "stderr.log"), "utf8"), /receipt: .*exit=0/);
+  } finally {
+    writeFileSync(release, "\n");
+    holder.kill("SIGKILL");
+    client?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
   const f = fixture();
   installFakeSsh(f);
