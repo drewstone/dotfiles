@@ -3931,6 +3931,36 @@ test("a GTR gate counts its TMPDIR toward its lease and is stopped past 1.5x it,
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+// One CPU-bound host took 367 s for the Lab's whole selection at idle (10-27): --shards splits one input across hosts.
+test("--shards 2 runs one gate per Beelink with BEELINK_GATE_SHARD, fails on any red shard, and merges only when every shard is green", () => {
+  const f = fixture();
+  try {
+    const env = { ...loadedHosts(f, 0.5, 0.5), BEELINK_GATE_LOAD_WAIT: "60s" };
+    const url = "https://github.com/acme/gate-test.git";
+    Object.assign(env, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${f.bare}.insteadOf`, GIT_CONFIG_VALUE_0: "git@github.com:acme/gate-test.git" });
+    const calls = join(f.root, "gh-drew.calls");
+    writeFileSync(join(f.root, "bin", "gh-drew"), `#!/usr/bin/env bash
+printf '%s\n' "$*" >> '${calls}'
+[ "$1 $2" != "pr view" ] || echo "${f.first} 1111111111111111111111111111111111111111 drewstone"
+`);
+    chmodSync(join(f.root, "bin", "gh-drew"), 0o755);
+    const merges = () => (existsSync(calls) ? readFileSync(calls, "utf8").split("\n") : []).filter((line) => line.startsWith("pr merge"));
+    const shard = (script) => run(gate, ["--shards", "2", "--merge", "42", "--no-install", "auto", url, f.first, "--", "bash", "-c", script], { env, timeout: 240_000 });
+
+    const red = shard('echo "ran $BEELINK_GATE_SHARD"; [ "$BEELINK_GATE_SHARD" != 2/2 ] || exit 3');
+    assert.equal(red.status, 3, red.stderr);
+    assert.match(red.stdout, /^\[shard 1\/2\] ran 1\/2$/m);
+    assert.match(red.stdout, /^\[shard 2\/2\] ran 2\/2$/m);
+    assert.match(red.stderr, /\[shard 1\/2\] beelink-gate receipt: .*host=beelink1/);
+    assert.match(red.stderr, /\[shard 2\/2\] beelink-gate receipt: .*host=beelink2/);
+    assert.deepEqual(merges(), [], "a red shard merged");
+
+    const green = shard('echo "ran $BEELINK_GATE_SHARD"');
+    assert.equal(green.status, 0, green.stderr);
+    assert.equal(merges().length, 1, "every shard green merges once");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("--merge squash-merges the PR pinned to the gated SHA only after a green gate, and never from a dev gate", () => {
   const f = fixture();
   try {
