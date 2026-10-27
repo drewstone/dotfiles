@@ -164,14 +164,14 @@ async function run(argv) {
   const lastStage = () => { try { return (readFileSync(logPath, 'utf8').match(/beelink-gate-sandbox: (\S+)[^\n]*\n(?![\s\S]*beelink-gate-sandbox: )/) || [])[1] || 'none' } catch { return 'none' } }
   let box, stopping = false
   // Delete through the platform's retire path every box carrying this gate's name: a warm create that timed out
-  // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). Stop first: a busy
-  // sidecar refuses delete (503, sessions not sealed) and two quick tries left 2 of 4 boxes alive (10-26 10:45Z).
+  // on the client can still be provisioning beside the cold fallback (slim-ops a264, 09:20Z). Cancel, then delete: a stop
+  // backed up each ~10 GB box only to discard it (eu1 10-27); stop only on a 503 'sessions not sealed' (10-26 10:45Z).
   const boxName = `${BOX_PREFIX}${id.slice(0, 12)}`
   const named = async () => (await client.list().catch(() => [])).filter((b) => b.name === boxName && b.status !== 'deleted')
   const retire = async (target) => {
-    await target.stop().catch((error) => say(`box ${target.id} stop failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`))
+    await target.process.jobs.cancel('gate').catch(() => undefined)
     for (const attempt of [1, 2, 3, 4]) {
-      try { await target.delete(); return } catch (error) { if (error.status === 404 || await client.get(target.id).then((b) => !b || b.status === 'deleted', () => false)) return; say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 15_000)) }
+      try { await target.delete(); return } catch (error) { if (error.status === 404 || await client.get(target.id).then((b) => !b || b.status === 'deleted', () => false)) return; say(`box ${target.id} delete attempt ${attempt} failed: ${error.status || ''} ${String(error.message).slice(0, 160)}`); if (error.status === 503) await target.stop().catch(() => undefined); await new Promise((r) => setTimeout(r, 15_000)) }
     }
     say(`box ${target.id} NOT deleted; it stops at its ${HOLD_S + 600}s lifetime and is reclaimed ${300}s after`)
   }
