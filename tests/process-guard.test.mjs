@@ -17,8 +17,9 @@ const ROOT = realpathSync(mkdtempSync(join(tmpdir(), "process-guard-")));
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CC_ALLOW_")));
 
-function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript } = {}) {
-  const payload = { tool_name: "Bash", tool_input: { command }, cwd, session_id: SESSION, transcript_path: transcript };
+function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
+  const tool_input = background ? { command, run_in_background: true } : { command };
+  const payload = { tool_name: "Bash", tool_input, cwd, session_id: SESSION, transcript_path: transcript };
   const r = spawnSync(HOOK, [], {
     input: JSON.stringify(payload),
     env: { ...CLEAN_ENV, HOME, CC_GUARD_UNAME: uname, ...env },
@@ -596,4 +597,24 @@ test("env-dump allows env that is not the command, redacted values and non-secre
 test("env-dump override is Drew's session flag, not a command-line assignment", () => {
   assert.equal(decide("env | grep TANGLE_", { env: { CC_ALLOW_ENV_DUMP: "1" } }), "allow");
   assert.equal(decide("CC_ALLOW_ENV_DUMP=1 env | grep TANGLE_"), "deny");
+});
+
+// ----------------------------------------------------------------------------- detached-gate
+
+test("detached-gate: refuses a beelink-gate backgrounded with & in a foreground call", () => {
+  check([
+    'cd w; FLEET_LANE=a beelink-gate auto https://github.com/o/r abc -- bash -uc "x && y" > g.log 2>&1 &\necho bg',
+    "beelink-gate auto https://github.com/o/r abc -- npm test > g.log 2>&1 & wait",
+  ], "deny");
+  assert.match(reason("beelink-gate auto u s -- true > g.log 2>&1 &"), /run_in_background/);
+});
+
+test("detached-gate: foreground gates, & inside the gate's quoted payload, background calls and the override pass", () => {
+  check([
+    "beelink-gate auto https://github.com/o/r abc -- bash -uc 'a && b' > g.log 2>&1; echo exit=$?",
+    'beelink-gate auto u s -- bash -uc "x; y &" > g.log',
+    "sleep 1 & wait; echo no gate here",
+  ], "allow");
+  assert.equal(decide("beelink-gate auto u s -- true > g.log 2>&1 &", { background: true }), "allow");
+  assert.equal(decide("CC_ALLOW_DETACHED_GATE=1 beelink-gate auto u s -- true > g.log 2>&1 &"), "allow");
 });
