@@ -2944,7 +2944,8 @@ test("an exclusive capacity cleanup blocks a new checkout claim without taking i
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const done = new Promise((resolveDone) => child.on("close", (status) => resolveDone(status)));
-    for (let i = 0; i < 150 && !/waiting \d+s for capacity cleanup/.test(stderr); i++) await sleepMs(20);
+    // The gate's admission (release lookup, PSI sample) runs before the claim: 3 s was too short on a loaded host.
+    for (let i = 0; i < 2400 && !/waiting \d+s for capacity cleanup/.test(stderr); i++) await sleepMs(20);
     assert.match(stderr, /waiting \d+s for capacity cleanup/);
     assert.equal(run("flock", ["-n", "-x", join(locks, "local-owner-repo.lock"), "true"]).status, 0,
       "the gate claimed a checkout before cleanup released the capacity lock");
