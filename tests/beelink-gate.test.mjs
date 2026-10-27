@@ -568,6 +568,43 @@ test("--cancel-job --queued-only cancels a queued gate and refuses one whose com
   }
 });
 
+// A queued gate died when its ssh client went away: the next progress line hit EPIPE (10-26 sweep #9). The launcher now
+// ignores SIGPIPE and keeps the request's output in its own directory.
+test("a queued gate whose client goes away keeps its place, runs, and leaves its output in the request directory", async () => {
+  const f = fixture();
+  installFakeSsh(f);
+  const env = { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const held = join(f.root, "held"), release = join(f.root, "release"), ran = join(f.root, "ran");
+  const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
+  let client;
+  try {
+    for (let i = 0; i < 2400 && !existsSync(held); i++) await sleepMs(25);
+    assert.ok(existsSync(held), "the holder runs");
+    client = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${ran}'; echo done-output`], { env });
+    const exited = new Promise((done) => client.once("exit", (code, signal) => done({ code, signal })));
+    let seen = "";
+    client.stderr.on("data", (chunk) => { seen += chunk; });
+    for (let i = 0; i < 2400 && !/checkouts on beelink2/.test(seen); i++) await sleepMs(25);
+    assert.match(seen, /checkouts on beelink2/, "the client's gate is queued");
+    const request = seen.match(/frontend_observation=(\S+)\/frontend\.json/)?.[1];
+    assert.ok(request, seen);
+    // The client goes away: every later write to its stdout or stderr is EPIPE.
+    client.stdout.destroy();
+    client.stderr.destroy();
+    writeFileSync(release, "\n");
+    const { code, signal } = await exited;
+    assert.deepEqual([code, signal], [0, null], `the launcher ended ${code} ${signal}`);
+    assert.ok(existsSync(ran), "the queued gate's command ran");
+    assert.match(readFileSync(join(request, "stdout.log"), "utf8"), /done-output/);
+    assert.match(readFileSync(join(request, "stderr.log"), "utf8"), /receipt: .*exit=0/);
+  } finally {
+    writeFileSync(release, "\n");
+    holder.kill("SIGKILL");
+    client?.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test("job cancellation does not mark a moved gate terminal until its child stops", async () => {
   const f = fixture();
   installFakeSsh(f);
@@ -2666,6 +2703,25 @@ test("auto waits while both hosts are over their pressure limit and runs on the 
     assert.equal(await closed, 0, stderr);
     assert.match(stderr, /auto chose beelink2 .*beelink1: host=beelink1 state=busy cache=warm .*host_cpu=73\.0/);
     assert.match(stderr, /receipt: .*host=beelink2/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+// A PSI timeout exited 75 for auto gates too, and only 76 re-places: ~113 auto gates a day failed instead of moving
+// to the other host (10-26 failure sweep #3).
+test("a host-pressure timeout gives an auto gate's host back (76) and still fails a named-host gate (75)", async () => {
+  const f = fixture();
+  try {
+    const pressure = join(f.root, "pressure");
+    writeFileSync(pressure, pressureLine(60));
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const held = (auto) => run("bash", [gate, "--remote", ...args], { timeout: 120_000,
+      env: { ...f.env, ...(auto ? { BEELINK_GATE_AUTO: "1" } : {}), BEELINK_GATE_HOST_PRESSURE: pressure, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    const auto = held(true);
+    assert.equal(auto.status, 76, auto.stderr);
+    assert.match(auto.stderr, /not admitted on beelink2 within .*\(admission held at arrival: host_psi\); placing the gate again/);
+    assert.doesNotMatch(auto.stderr, /TEMPFAIL/);
+    const named = held(false);
+    assert.equal(named.status, 75, named.stderr);
+    assert.match(named.stderr, /TEMPFAIL .*admission held at arrival: host_psi/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 test("an auto gate whose host falls below its disk floor while it queued gives the host back before checkout", async () => {
