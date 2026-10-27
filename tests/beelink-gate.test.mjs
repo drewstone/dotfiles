@@ -3921,7 +3921,7 @@ test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease 
     assert.equal(over.status, 124, over.stderr);
     assert.match(over.stderr, /stopping the command at \d+ bytes, past 1\.5x its 1000000-byte lease/);
     // hostlab writes the gate's id into a run it boots under a gate (10-27: a 16 GB lease's VM disks reached 39.8 GB).
-    const vm = gtr(1_000_000, "c".repeat(32), 'r="$HOSTLAB_HOME/runs/r1"; mkdir -p "$r" && echo "$BEELINK_GATE_ID" > "$r/gate" && head -c 3000000 /dev/zero > "$r/disk.qcow2"; sleep 20');
+    const vm = gtr(1_000_000, "c".repeat(32), 'r="$HOSTLAB_HOME/runs/r1"; mkdir -p "$r" && echo "$BEELINK_GATE_LEASE_DIR" > "$r/gate" && head -c 3000000 /dev/zero > "$r/disk.qcow2"; sleep 20');
     assert.equal(vm.status, 124, vm.stderr);
     const within = gtr(1_000_000_000, "b".repeat(32));
     assert.equal(within.status, 0, within.stderr);

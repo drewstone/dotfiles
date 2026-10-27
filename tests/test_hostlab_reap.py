@@ -221,10 +221,10 @@ class HostlabReapTest(unittest.TestCase):
         if shutil.which('qemu-img') is None or shutil.which('numfmt') is None:
             self.fail('needs qemu-img and numfmt (hostlab hosts have both)')
         subprocess.run(['qemu-img', 'create', '-q', '-f', 'qcow2', os.path.join(self.home, 'base.qcow2'), '20G'], check=True)
-        gate = dict(BEELINK_GATE_ID='drew-gtr-pro-test')
+        gate = dict(BEELINK_GATE_LEASE_DIR='/pool/drew-gtr-pro-test')
         r = self.hostlab('run', '--scratch', '105G', '--', 'true', BEELINK_GATE_LEASE_BYTES='16000000000', **gate)
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("the VM's disks are 134217728000 bytes virtual, over gate drew-gtr-pro-test's 16000000000-byte storage lease", r.stderr)
+        self.assertIn("the VM's disks are 134217728000 bytes virtual, over the 16000000000-byte storage lease of gate /pool/drew-gtr-pro-test", r.stderr)
         self.assertEqual(os.listdir(self.runs), [])
         # Disks that fit pass to the next check; a home on /dev/shm (under 100 GB) stops there, before any boot.
         shm = tempfile.mkdtemp(prefix='hostlab-fits-', dir='/dev/shm')

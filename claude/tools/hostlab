@@ -358,9 +358,9 @@ cmd_build() {
 # Under a GTR gate the VM's disks are the gate's bytes: its run is tagged with the gate (gtr_used_bytes counts it) and
 # disks whose virtual size exceeds the gate's storage lease refuse (a 16 GB lease booted 125 GiB of disks, 10-27).
 gate_lease_fits() {
-  [ -n "${BEELINK_GATE_ID:-}" ] || return 0
+  [ -n "${BEELINK_GATE_LEASE_DIR:-}" ] || return 0
   local want; want=$(( $(qemu-img info --output=json "$BASE_IMG" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])') + $(numfmt --from=iec "$SCRATCH") ))
-  (( want <= ${BEELINK_GATE_LEASE_BYTES:-0} )) || die "the VM's disks are $want bytes virtual, over gate $BEELINK_GATE_ID's ${BEELINK_GATE_LEASE_BYTES:-0}-byte storage lease; shrink --scratch or declare BEELINK_GATE_RESERVE_BYTES"
+  (( want <= ${BEELINK_GATE_LEASE_BYTES:-0} )) || die "the VM's disks are $want bytes virtual, over the ${BEELINK_GATE_LEASE_BYTES:-0}-byte storage lease of gate $BEELINK_GATE_LEASE_DIR; shrink --scratch or declare BEELINK_GATE_RESERVE_BYTES"
 }
 
 vm_boot() {
@@ -375,7 +375,7 @@ vm_boot() {
   dir="$RUNS/$id"; mkdir -m 700 "$dir"
   # Recorded before qemu starts, so the reaper never sees an unowned run.
   # Command substitution keeps $$ as the hostlab process: the caller.
-  printf '%s\n' "$OWNER" > "$dir/owner"; echo "$KEEP" > "$dir/keep"; [ -z "${BEELINK_GATE_ID:-}" ] || echo "$BEELINK_GATE_ID" > "$dir/gate"
+  printf '%s\n' "$OWNER" > "$dir/owner"; echo "$KEEP" > "$dir/keep"; [ -z "${BEELINK_GATE_LEASE_DIR:-}" ] || echo "$BEELINK_GATE_LEASE_DIR" > "$dir/gate"
   echo "$$ $(proc_start $$)" > "$dir/caller"
   for i in "${!INPUT_NAMES[@]}"; do printf '%s\t%s\n' "${INPUT_NAMES[$i]}" "${INPUT_FILES[$i]}" >> "$dir/read-only-inputs"; done
   if [ "$KEEP" = 1 ]; then echo $(( $(date +%s) + $(to_seconds "$TTL") )) > "$dir/expires"; else echo none > "$dir/expires"; fi
