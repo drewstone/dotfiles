@@ -1075,10 +1075,9 @@ gate_command_argv() {
 remote_gate() {
   unset BEELINK_GATE_INSTALL_S BEELINK_GATE_PHASE_FILE BEELINK_GATE_ADMISSION_SAMPLE BEELINK_GATE_COMMAND_STARTED_MS BEELINK_GATE_TURBO_OBSERVATIONS BEELINK_GATE_TURBO_REQUESTED_DIR
   [ "$#" -ge 7 ] || die "invalid remote request"
-  # finish and receipt run from the EXIT trap. A shell error (set -u) reaches
-  # that trap only after unwinding every function, so the state they read is
-  # global, not local: beelink sha install_mode host owner repo cache_root
-  # checkout cache_max launcher build_root lock started display run_token.
+  # finish and receipt run from the EXIT trap. A shell error (set -u) reaches that trap only after unwinding every
+  # function, so the state they read is global, not local: beelink sha install_mode host owner repo cache_root checkout
+  # cache_max launcher build_root lock started display run_token.
   local repo_url key origin actual
   local remote_refs left ref branch window_day window_hour max_hold
   local -a command=()
@@ -1165,8 +1164,7 @@ remote_gate() {
   trap 'admission_signal=INT; stop' INT
   trap 'admission_signal=HUP; stop' HUP
   if [ "${BEELINK_GATE_HEARTBEAT:-0}" = 1 ]; then
-    # A background job's stdin defaults to /dev/null, so pass the heartbeat
-    # through its own descriptor.
+    # A background job's stdin defaults to /dev/null, so pass the heartbeat through its own descriptor.
     exec {heartbeat_fd}<&0
     ( exec >/dev/null 2>&1; cat <&"$heartbeat_fd"; kill -USR1 $$ ) &
   fi

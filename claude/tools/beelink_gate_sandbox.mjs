@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // Sandbox placement for beelink-gate: when both Beelinks refuse or an auto gate has waited past
-// BEELINK_GATE_SANDBOX_AFTER, the same command runs as one Tangle Sandbox managed process job.
-// It prints the gate's output, appends a receipt to a Beelink's receipts.jsonl through
-// `beelink-gate --sandbox-receipt` (so `--receipt` and gh-drew read it unchanged) and exits with
-// the command's exit code. Exit 75 means no box was bought or none could start; the caller keeps
-// waiting for a Beelink.
+// BEELINK_GATE_SANDBOX_AFTER, the same command runs as one Tangle Sandbox managed process job. It prints the gate's
+// output, appends a receipt to a Beelink's receipts.jsonl through `beelink-gate --sandbox-receipt` (so `--receipt` and
+// gh-drew read it unchanged) and exits with the command's exit code. Exit 75 means no box was bought or none could
+// start; the caller keeps waiting for a Beelink.
 //
 //   beelink_gate_sandbox.mjs run <repo-url> <sha> <mode> <class> [branch] -- <command> [args...]
 //   beelink_gate_sandbox.mjs live    (prints live gate boxes, for --queue)
@@ -126,6 +125,9 @@ elif [ -f package.json ] && grep -q '"dependencies"\\|"devDependencies"' package
 fi || exit $?` : ''}
 step command
 ${command.map(quote).join(' ')}
+${/^[1-9][0-9]*$/.test(process.env.BEELINK_GATE_PR || '') ? `rc=$?; m="$HOME/.tmp/merge"; [ "$rc" != 0 ] || [ ! -f pnpm-lock.yaml ] || { step merge-lockfile  # as check_merge_lockfile
+  git fetch -q origin "+refs/pull/${process.env.BEELINK_GATE_PR}/merge:refs/beelink-gate/merge" && [ "$(git rev-parse refs/beelink-gate/merge^2)" = "$(git rev-parse HEAD)" ] && rm -rf "$m" && mkdir -p "$m" && git archive refs/beelink-gate/merge | tar -x -C "$m" || exit 75
+  (cd "$m" && pnpm install --frozen-lockfile --lockfile-only --ignore-scripts); rc=$?; rm -rf "$m"; }; exit "$rc"` : ''}
 `
 }
 
