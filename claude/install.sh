@@ -251,30 +251,13 @@ if [ -d "$SCRIPT_DIR/commands" ]; then
   done
 fi
 
-# Generic AgentProfile exports for cli-bridge/autopilot and any other
-# harness that can consume a transport-neutral profile object.
+# drew-default is Drew's claude-code AgentProfile for sandboxes; an invalid one fails the install.
 PROFILE_DIR="$HOME/.config/agent-profiles"
 mkdir -p "$PROFILE_DIR"
-ALL_SKILLS=$(find "$SCRIPT_DIR/skills" -maxdepth 1 -mindepth 1 -type d -exec test -f "{}/SKILL.md" \; -print0 | xargs -0 -n1 basename 2>/dev/null | paste -sd, -)
-python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" \
-  --source "$SCRIPT_DIR" \
-  --out "$PROFILE_DIR/drew-default.json" \
-  --name "drew-default" \
-  --description "Global Drew coding profile compiled from Claude dotfiles." \
-  --include-prompt \
-  --skills "$ALL_SKILLS" \
-  --permission Bash=allow \
-  --permission Read=allow \
-  --permission Edit=allow \
-  --permission Write=allow
-python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" \
-  --source "$SCRIPT_DIR" \
-  --out "$PROFILE_DIR/drew-conversation.json" \
-  --name "drew-conversation" \
-  --description "Conversation-safe subset compiled from Claude dotfiles." \
-  --include-prompt \
-  --skills "$(IFS=,; echo "${PI_SKILLS[*]}")"
-echo "  Agent profiles exported to $PROFILE_DIR"
+rm -f "$PROFILE_DIR/drew-conversation.json"
+python3 "$SCRIPT_DIR/tools/emit-agent-profile.py" --out "$PROFILE_DIR/drew-default.json.new"
+node "$SCRIPT_DIR/skills/voice-ledger/scripts/validate.mjs" --sandbox "$PROFILE_DIR/drew-default.json.new"
+mv "$PROFILE_DIR/drew-default.json.new" "$PROFILE_DIR/drew-default.json"
 
 # Return a Git common directory for a path inside a checkout.
 repository_common_dir() {
