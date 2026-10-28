@@ -43,11 +43,10 @@ function main() {
   const mergeHeads = (tryGit("rev-parse", "-q", "--verify", "MERGE_HEAD") || "").split("\n").filter(Boolean);
   const bases = [["HEAD", before], ...mergeHeads.map((h) => [h, after])];
   const old = new Map();
-  for (const [ref, paths] of bases) {
-    for (const p of paths.filter((p) => SOURCE.test(p) && !SKIP.test(p) && (ts || p.endsWith(".py")))) {
-      const text = tryGit("show", `${ref}:${p}`);
-      if (text !== null) for (const [k, v] of spans(ts, p, text)) old.set(k, Math.max(old.get(k) || 0, v));
-    }
+  for (const [ref, paths] of bases) for (const p of paths.filter((p) => SOURCE.test(p) && !SKIP.test(p) && (ts || p.endsWith(".py")))) {
+    const text = tryGit("show", `${ref}:${p}`);
+    // An unparseable baseline grants no size exemption; staged source must still parse below.
+    try { if (text !== null) for (const [k, v] of spans(ts, p, text)) old.set(k, Math.max(old.get(k) || 0, v)); } catch {}
   }
   const refused = [];
   for (const p of after) {

@@ -426,3 +426,23 @@ test("xrepo JSON retains every name, file pair and located window beyond its leg
   assert.deepEqual(JSON.parse(measured.stdout).scope.lists.dup_lines.files["src/gap.ts"],
     { normalized_lines: 32, dup_lines: 20 }, "the existing per-file coverage owner remains authoritative");
 });
+
+
+test("deleting malformed historical Python cannot block a valid change or exempt a new oversized function", () => {
+  const { dir, git } = repo({ "src/archived.py": "*** Begin Patch\n", "src/current.py": pythonFunction("small", 2) });
+  git("rm", "-q", "src/archived.py");
+  write(dir, { "src/current.py": pythonFunction("small", 3) });
+  git("add", "-A");
+  const check = () => runPythonOnly(dir, "node", [join(hooks, "fn-ratchet.cjs")]);
+  assert.equal(check().status, 0);
+  write(dir, { "src/current.py": pythonFunction("large", 301) });
+  git("add", "-A");
+  const oversized = check();
+  assert.equal(oversized.status, 1, oversized.stderr);
+  assert.match(oversized.stderr, /large is 301 lines \(new\)/);
+  write(dir, { "src/current.py": "*** Begin Patch\n" });
+  git("add", "-A");
+  const malformed = check();
+  assert.notEqual(malformed.status, 0);
+  assert.match(malformed.stderr, /python functions refused:/);
+});
