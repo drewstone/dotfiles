@@ -603,7 +603,7 @@ test("--cancel-job --queued-only cancels a queued gate and refuses one whose com
 test("a queued gate whose client goes away keeps its place, runs, and leaves its output in the request directory", async () => {
   const f = fixture();
   installFakeSsh(f);
-  const env = { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1" };
+  const env = { ...f.env, BEELINK_GATE_REPO_CHECKOUTS: "1", FLEET_LANE: "op-test:lane-record" };
   const held = join(f.root, "held"), release = join(f.root, "release"), ran = join(f.root, "ran");
   const holder = spawn(gate, ["--no-install", "beelink2", f.url, f.first, "--", "bash", "-c", `touch '${held}'; while [ ! -e '${release}' ]; do sleep 0.1; done`], { env });
   let client;
@@ -627,6 +627,7 @@ test("a queued gate whose client goes away keeps its place, runs, and leaves its
     assert.ok(existsSync(ran), "the queued gate's command ran");
     assert.match(readFileSync(join(request, "stdout.log"), "utf8"), /done-output/);
     assert.match(readFileSync(join(request, "stderr.log"), "utf8"), /receipt: .*exit=0/);
+    assert.equal(JSON.parse(readFileSync(join(request, "frontend.json"), "utf8")).lane, "op-test:lane-record", "the request record names the lane");
   } finally {
     writeFileSync(release, "\n");
     holder.kill("SIGKILL");

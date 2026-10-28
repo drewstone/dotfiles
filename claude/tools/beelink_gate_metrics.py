@@ -396,7 +396,9 @@ FRONTEND_PHASES = ("setup", "reserve_lookup", "reservation_setup", "placement_pr
 def _frontend_state(row):
     """One schema for local authority state and sanitized transported prefixes."""
     import re
-    fields = {"schema", "request_id", "root_invocation_id", "writer_id", "launcher_host", "clock_scope", "source_digest", "began_at", "updated_at", "start_ns", "last_ns", "end_ns", "phase_ns", "active_phase", "sequence", "tainted", "exit", "repo", "sha", "class", "placements", "attachment_only", "authority", "delegated_to"}
+    fields = {"schema", "request_id", "root_invocation_id", "writer_id", "launcher_host", "clock_scope", "source_digest", "began_at", "updated_at", "start_ns", "last_ns", "end_ns", "phase_ns", "active_phase", "sequence", "tainted", "exit", "repo", "sha", "class", "lane", "placements", "attachment_only", "authority", "delegated_to"}
+    if isinstance(row, dict):
+        row.setdefault("lane", None)  # a request recorded before the lane field
     if not isinstance(row, dict) or set(row) != fields or row.get("schema") != 1:
         raise ValueError("invalid frontend schema")
     for key in ("request_id", "root_invocation_id", "writer_id", "clock_scope"):
@@ -432,6 +434,8 @@ def _frontend_state(row):
         raise ValueError("invalid frontend repository")
     if row["sha"] is not None and not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(row["sha"])):
         raise ValueError("invalid frontend revision")
+    if row["lane"] is not None and not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", str(row["lane"])):
+        raise ValueError("invalid frontend lane")
     if row["class"] not in (None, "normal", "dev", "light") or not isinstance(row["placements"], list) or len(row["placements"]) > 64:
         raise ValueError("invalid frontend placements")
     seen = set()
@@ -485,7 +489,7 @@ def frontend_begin(root, source, retention):
            "clock_scope": uuid.uuid4().hex, "source_digest": source, "began_at": utc, "updated_at": utc,
            "start_ns": now, "last_ns": now, "end_ns": None, "phase_ns": dict.fromkeys(FRONTEND_PHASES, 0),
            "active_phase": "setup", "sequence": 0, "tainted": False, "exit": None,
-           "repo": None, "sha": None, "class": None, "placements": [], "attachment_only": False, "delegated_to": None,
+           "repo": None, "sha": None, "class": None, "lane": None, "placements": [], "attachment_only": False, "delegated_to": None,
            "authority": hashlib.sha256(token.encode()).hexdigest()}
     _frontend_state(row)
     _replace_observation_json(path, row)
@@ -540,7 +544,7 @@ def frontend_observe(*args):
                 raise ValueError("invalid frontend phase")
             row["active_phase"] = value
         elif action == "metadata":
-            row.update(repo=value, sha=gate, **{"class": detail})
+            row.update(repo=value, sha=gate, lane=status or None, **{"class": detail})  # status carries the fleet lane
         elif action == "placement":
             placement = next((p for p in row["placements"] if p["gate_id"] == gate), None)
             if placement is None:
