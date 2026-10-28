@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 # hostlab: a throwaway Ubuntu 24.04 VM for root-level experiments.
 #
-# Storage, mount, namespace, and freeze work never runs on the host root.
-# Two outages came from that: `unshare --mount` then `rmdir /proc` (5 days
-# down), and `fsfreeze -f` on a directory whose mount had
-# failed froze the root filesystem, 16 days down). The host wrappers in
-# /usr/local/sbin and the Claude hook refuse those verbs and point here.
-#
 # The VM has root over ssh, lvm2, dm-thin, xfs, btrfs, a 16G blank scratch disk
 # at /dev/vdb, the calling directory shared at /work, and the same softdog
 # watchdog policy as the host. Each run boots a fresh copy-on-write overlay of
@@ -20,7 +14,7 @@
 #   hostlab extend ID DURATION    move a kept VM's expiry to DURATION from now
 #   hostlab reap                  stop expired or orphaned VMs, archive their run dirs
 #   hostlab clean                 stop and delete every kept VM
-#
+#   hostlab clean --cache         retire idle base/download/key files; keep receipts
 # Options for run/shell: --keep (leave the VM running, print its ID),
 #   --ttl 2h (a kept VM's lifetime; 90s, 45m, 2h, 1d), --owner NAME,
 #   --mem 4G, --cpus 4, --scratch 16G, --work DIR (default: cwd),
@@ -30,14 +24,7 @@
 # Env: HOSTLAB_HOME (default ~/.cache/hostlab),
 #   HOSTLAB_ARCHIVE (default /mnt/traces/archive/hostlab), HOSTLAB_OWNER,
 #   HOSTLAB_SMALL_ARCHIVE (a directory or host:directory; see archive_run)
-#
-# Every VM records its owner, its caller and, when kept, an expiry. The
-# hostlab-reap timer (host/hostlab/install.sh) runs `hostlab reap` every
-# minute. It stops a kept VM past its expiry, a run whose caller exited, and a
-# run whose qemu died, then moves the run dir to the archive, which keeps 14
-# days. A boot refuses when the disk holding the runs has under 100 GB free.
-# Why: VMs whose callers were gone held 60 GB of RAM and 70 GB
-# of disk on drew-gtr-pro, and one run's copy of /nix filled 36 GB.
+# The reaper archives expired/orphaned runs; cache retirement refuses every run.
 set -euo pipefail
 
 HOSTLAB_SOURCE="$(readlink -f -- "$0")"
@@ -118,6 +105,13 @@ need() {
   fi
   mkdir -p "$CACHE" "$RUNS"
   [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N '' -C hostlab -f "$KEY"
+}
+
+cache_lock() {
+  mkdir -p "$CACHE"
+  [ ! -L "$CACHE/cache.lock" ] && { [ ! -e "$CACHE/cache.lock" ] || { [ -f "$CACHE/cache.lock" ] && [ -O "$CACHE/cache.lock" ] && [ "$(stat -c %h "$CACHE/cache.lock")" = 1 ]; }; } || die "unsafe cache.lock"
+  exec 8>"$CACHE/cache.lock"
+  flock -n "$1" 8 || die "cache is in use: $CACHE"
 }
 
 # -F /dev/null: the user's ssh config (a ProxyCommand or LocalCommand for
@@ -302,6 +296,7 @@ vm_stop() {
 }
 
 cmd_build() {
+  cache_lock -x
   need
   if [ ! -f "$CLOUD_IMG" ]; then
     echo "hostlab: downloading $CLOUD_URL"
@@ -469,28 +464,17 @@ stop_on_signal() {
 }
 
 cmd_run() {
+  local mode=$1; shift
   parse_opts "$@"
-  [ "${#REST[@]}" -gt 0 ] || die "run needs a command after --"
+  [ "$mode" = shell ] || [ "${#REST[@]}" -gt 0 ] || die "run needs a command after --"
+  cache_lock -s
   local dir port rc=0
   dir="$(vm_boot)"; port="$(cat "$dir/port")"
   stop_on_signal
-  ssh $(ssh_opts) -p "$port" root@127.0.0.1 "cd /work && ${REST[*]}" || rc=$?
+  if [ "$mode" = shell ]; then ssh -t $(ssh_opts) -p "$port" root@127.0.0.1 'cd /work && exec bash -l' || rc=$?
+  else ssh $(ssh_opts) -p "$port" root@127.0.0.1 "cd /work && ${REST[*]}" || rc=$?; fi
   if [ "$KEEP" = 1 ]; then
     echo "hostlab: kept $(basename "$dir") until $(date -d "@$(cat "$dir/expires")" +%FT%T%z) (hostlab ssh $(basename "$dir") -- CMD; hostlab extend $(basename "$dir") 2h)" >&2
-  else
-    vm_stop "$dir"; rm -rf "$dir"
-  fi
-  exit "$rc"
-}
-
-cmd_shell() {
-  parse_opts "$@"
-  local dir port rc=0
-  dir="$(vm_boot)"; port="$(cat "$dir/port")"
-  stop_on_signal
-  ssh -t $(ssh_opts) -p "$port" root@127.0.0.1 'cd /work && exec bash -l' || rc=$?
-  if [ "$KEEP" = 1 ]; then
-    echo "hostlab: kept $(basename "$dir")" >&2
   else
     vm_stop "$dir"; rm -rf "$dir"
   fi
@@ -506,7 +490,6 @@ cmd_ssh() {
 }
 
 cmd_status() {
-  need
   local d pid state exp left now
   now="$(date +%s)"
   for d in "$RUNS"/*/; do
@@ -522,6 +505,7 @@ cmd_status() {
 }
 
 cmd_clean() {
+  cache_lock -s
   need
   local d
   for d in "$RUNS"/*/; do
@@ -531,6 +515,30 @@ cmd_clean() {
   done
 }
 
+cmd_clean_cache() {
+  [ -d "$CACHE" ] && [ ! -L "$CACHE" ] && [ -O "$CACHE" ] && [ "$CACHE" = "$(realpath -m -- "$CACHE")" ] && (( (8#$(stat -c %a "$CACHE") & 022) == 0 )) || die "cache must be an owned, non-writable-by-others canonical directory"
+  cache_lock -x
+  local p rc entries bytes=0; local -a payload=()
+  for p in "$CACHE"/* "$CACHE"/.[!.]* "$CACHE"/..?*; do
+    [ -e "$p" ] || [ -L "$p" ] || continue
+    case "${p##*/}" in
+      base.qcow2|base.qcow2.built|noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img.part|id_ed25519|id_ed25519.pub)
+        [ ! -L "$p" ] && [ -f "$p" ] && [ -O "$p" ] && [ "$(stat -c %h "$p")" = 1 ] || die "unsafe cache payload: $p"
+        payload+=("$p"); bytes=$((bytes + $(stat -c %b "$p") * 512)) ;;
+      runs)
+        [ ! -L "$p" ] && [ -d "$p" ] && entries=$(find "$p" -mindepth 1 -maxdepth 1 -print -quit) && [ -z "$entries" ] || die "cache has runs or cannot be inspected; retire them first" ;;
+      diagnostics|reap.log|reap.lock|cache.lock) [ ! -L "$p" ] && [ -O "$p" ] || die "unsafe cache receipt: $p" ;;
+      *) die "unrecognized cache entry; retained: $p" ;;
+    esac
+  done
+  if [ "${#payload[@]}" -gt 0 ]; then
+    command -v fuser >/dev/null || die "cache retirement needs fuser"
+    rc=0; fuser -s "${payload[@]}" || rc=$?
+    [ "$rc" = 1 ] || die "cache payload is open or its use could not be checked"
+    rm -- "${payload[@]}"
+  fi
+  printf 'hostlab: retired cache payload files=%s allocated_bytes=%s; receipts retained\n' "${#payload[@]}" "$bytes"
+}
 cmd_extend() {
   local id="${1:-}" dur="${2:-}"
   [ -n "$id" ] && [ -n "$dur" ] || die "usage: hostlab extend ID DURATION"
@@ -542,14 +550,7 @@ cmd_extend() {
   echo "hostlab: $id expires at $(date -d "@$(cat "$dir/expires")" +%FT%T%z)"
 }
 
-# An archive keeps a run's logs and small artifacts (no VM disks, nothing over
-# 100 MB) in <dest>/<id>, and the run dir is deleted only once the archive holds
-# the same number of files. VM disks are throwaway: moving them was the problem
-# on both kinds of host. Beelink2, which has no archive drive,
-# held 22 expired runs (62 GiB of disks) and refused gates on its disk floor;
-# the same morning GTR's reaper spent 2.8 h moving one 22 GB run onto the USB
-# trace drive at 0.7 MB/s, holding it at 87-100% utilization and stalling every
-# other reader of /mnt/traces. <dest> is a directory, or host:directory over SSH.
+# Archive logs/artifacts, never VM disks; remove the run only after verification.
 archive_small() {
   local d="$1" reason="$2" dest="$3" id host_part dir_part want got list
   id="$(basename "$d")"
@@ -595,6 +596,7 @@ archive_run() {
 }
 
 cmd_reap() {
+  cache_lock -s
   mkdir -p "$CACHE" "$RUNS"
   exec 9> "$CACHE/reap.lock"
   flock -n 9 || { echo "hostlab reap: another reap holds $CACHE/reap.lock"; return 0; }
@@ -636,9 +638,7 @@ cmd_reap() {
   fi
 }
 
-# build, status, reap and clean take no arguments. Answer help and refuse anything
-# else before they act: `reap --help` reaped on GTR, and `clean --help` would stop
-# and delete every VM.
+# Validate arguments before any side effects, including --help.
 no_args() {
   local cmd=$1; shift
   case "${1:-}" in
@@ -650,13 +650,12 @@ no_args() {
 
 case "${1:-}" in
   build) shift; no_args build "$@"; cmd_build ;;
-  run) shift; cmd_run "$@" ;;
-  shell) shift; cmd_shell "$@" ;;
+  run|shell) mode=$1; shift; cmd_run "$mode" "$@" ;;
   ssh) shift; cmd_ssh "$@" ;;
   status) shift; no_args status "$@"; cmd_status ;;
   extend) shift; cmd_extend "$@" ;;
   reap) shift; no_args reap "$@"; cmd_reap ;;
-  clean) shift; no_args clean "$@"; cmd_clean ;;
+  clean) shift; if [ "$#" = 1 ] && [ "$1" = --cache ]; then cmd_clean_cache; else no_args clean "$@"; cmd_clean; fi ;;
   -h|--help|help|"") usage; exit 0 ;;
   *) die "unknown command $1 (hostlab --help)" ;;
 esac

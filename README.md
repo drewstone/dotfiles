@@ -66,6 +66,15 @@ On Beelinks, `./host/install.sh --gate-priority-only` also applies the memory po
   and `hostlab status` lists no remaining VMs, using the same `HOSTLAB_HOME` for both commands.
   Then `systemctl --user disable --now <timer-name-printed-by-installer>` stops only that
   directory's schedule. Disabling a timer does not retire its VMs; retain the default timer.
+  After retiring every run, `HOSTLAB_HOME=/absolute/private/path hostlab clean --cache`
+  removes only the recognized base image, cloud download, matched key pair and build marker.
+  It preserves diagnostics, reaper logs and locks. It refuses runs (including stopped ones),
+  a build directory, unknown entries, symlinks, multiply linked payloads and open payload files.
+  Builds, VM boots, cleanup and the reaper coordinate through `cache.lock`; a busy cache refuses.
+  Retire/archive runs first through the existing reaper, and keep its retained receipts.
+  `status` reads without creating keys or cache state; rebuilding creates a new matched base/key pair.
+  `python3 tests/hostlab-cache.integration.py` proves real QCOW2 retirement and refusal while
+  QEMU holds the image open, with native file locks, links and retained diagnostics.
 
 The same installer places the cli-bridge LLM slice and its CPU cap in `~/.config/systemd/user`.
 `CPUQuota=2400%` and `CPUWeight=50` hold every cli-bridge LLM scope, including discovery-lab's kissat campaign, to 24 of 32 cores.
