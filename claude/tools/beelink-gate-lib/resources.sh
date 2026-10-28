@@ -66,13 +66,13 @@ PY
   export BEELINK_GATE_SYSTEMD_MANAGER=system BEELINK_GATE_UNIT="beelink-gate-$gate_id.service"
 }
 
-# The tools every gate runs, on the PATH remote_gate sets plus nvm's Nodes: a rebuilt bare beelink1 distro
+# The tools every gate runs, on the PATH remote_gate sets (no nvm: a repo without .nvmrc installs with it): a rebuilt bare beelink1 distro
 # (Ubuntu-24.04-b1r, 10-28) had none (then no make/g++ for node-gyp, 21:18Z), and auto kept admitting gates there to fail with 127 or "pnpm: No such file".
 # Prints a refused probe line and succeeds when one is missing, so auto places on the other host.
 toolchain_refusal() {
-  local tool missing="" path="$HOME/bin:$HOME/.local/bin:$PATH" bin
-  for bin in "$HOME"/.nvm/versions/node/*/bin; do [ -x "$bin/node" ] && path="$path:$bin"; done
-  for tool in git node corepack shellcheck make g++; do PATH=$path command -v "$tool" >/dev/null || missing="$missing $tool"; done
+  local tool missing="" path="$HOME/bin:$HOME/.local/bin:$PATH"
+  for tool in git node npm corepack shellcheck make g++; do PATH=$path command -v "$tool" >/dev/null || missing="$missing $tool"; done
+  [ -w /var/run/docker.sock ] || missing="$missing docker.sock"  # gate user outside the docker group (beelink1 22:4xZ)
   [ -n "$missing" ] || return 1
   printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=host-toolchain capacity=null reason=host_toolchain_missing:%s\n' \
     "$1" "$(utc_in_minutes 15)" "$missing"

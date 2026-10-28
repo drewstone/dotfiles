@@ -346,8 +346,8 @@ read-only and optional: remote/unreadable/changed contexts remain unknown, and
 Beelinks, waiting gates first with the stage they wait in, then `QUEUE waiting=… running=…
 wait_p90_2h_s=…`.
 
-A host whose gate toolchain is missing (`git`, `node`, `corepack`, `shellcheck`, `make` or `g++` on the gate's PATH or under
-`~/.nvm/versions/node/*/bin`) answers every probe `state=refused reason=host_toolchain_missing: <tools>`, so
+A host whose gate toolchain is missing (`git`, `node`, `npm`, `corepack`, `shellcheck`, `make` or `g++` on the gate's own PATH; nvm's
+bins don't count, or no write access to `/var/run/docker.sock`) answers every probe `state=refused reason=host_toolchain_missing: <tools>`, so
 `auto` places on the other Beelink and a named host waits; a rebuilt bare distro no longer fails gates with 127.
 
 Host release priority is a hard admission guard. The existing host limits
