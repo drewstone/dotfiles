@@ -129,13 +129,10 @@ fi
 # Carry the floor through its app slice to Docker's service, too.
 docker_floor=deferred
 if systemctl is-active --quiet "user@${uid}.service"; then
-# Docker's systemd driver creates container scopes in the manager's user.slice,
-# separately from app.slice/docker.service. Defaults cover future scopes; apply
-# explicit floors to already-running scopes as well. The ancestor's 8G floor
-# is shared by daemon and containers, not multiplied for each container.
+# The ancestor's 8G floor is shared by daemon and container scopes. Defaults
+# protect future scopes; enforce the kernel floor on already-running scopes.
 userctl() { sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user "$@"; }
-# Install the default before listing scopes so a concurrent container cannot
-# start unprotected between the inventory read and the property write.
+# Install defaults before listing scopes so concurrent containers inherit them.
 for unit in user.slice app.slice docker.service; do
   props=(MemoryMin)
   [[ $unit != user.slice ]] || props+=(DefaultMemoryMin)
@@ -152,9 +149,12 @@ done
 scopes=$(userctl list-units --type=scope --no-legend --plain 'docker-*.scope')
 while read -r unit _; do
   [[ -n "$unit" ]] || continue
-  load=$(userctl show "$unit" -p LoadState --value)
-  [[ $load != not-found ]] || continue
-  actual=$(userctl show "$unit" -p MemoryMin --value)
+  # DefaultMemoryMin inheritance is reflected in the kernel, not raw MemoryMin.
+  path=$(userctl show "$unit" -p ControlGroup --value)
+  if [[ -z "$path" ]] || ! actual=$(cat "/sys/fs/cgroup$path/memory.min") || [[ ! $actual =~ ^[0-9]+$ ]]; then
+    [[ $(userctl show "$unit" -p LoadState --value) == not-found ]] && continue
+    echo "cannot read production Docker $unit memory.min" >&2; exit 69
+  fi
   [[ $actual != "$((8*GiB))" ]] || continue
   if [[ $mode == --check ]]; then
     [[ $(userctl show "$unit" -p LoadState --value) != not-found ]] || continue
