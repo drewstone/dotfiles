@@ -109,7 +109,7 @@ free_bytes() {
 check_floor() {
   local host="$1" reserve="${2:-0}" available path refusal status=0 here
   # Free space and reservations belong to this machine's lifecycle policy; the refusal names the gate's host.
-  here=$(canonical_beelink "$(hostname)" 2>/dev/null); [ -z "$here" ] || host=$here
+  here=$(canonical_beelink "${BEELINK_GATE_SELF:-$(hostname)}" 2>/dev/null); [ -z "$here" ] || host=$here
   path=$(limits_file) && [ -n "$path" ] || { admission_outcome=refused admission_reason=disk_policy_unknown; return 3; }
   available=$(free_bytes)
   last_floor_available=$available
