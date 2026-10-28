@@ -289,6 +289,21 @@ install_uv() {
     env UV_NO_MODIFY_PATH=1 sh "$WORK/uv-install.sh" >/dev/null 2>&1
 }
 
+# Ubuntu signs the bootstrap; Rustup's stable channel owns compiler selection.
+# Adopt existing Rustup homes without updating/removing installed toolchains.
+operator_rust_current() {
+  [ "$(rustup show profile 2>/dev/null)" = minimal ] &&
+    rustup default 2>/dev/null | grep '^stable-' >/dev/null &&
+    quiet rustup run stable rustc --version && quiet rustup run stable cargo --version
+}
+install_operator_rust() {
+  command -v rustup >/dev/null 2>&1 || apt_install rustup || return 1
+  if ! quiet rustup run stable rustc --version || ! quiet rustup run stable cargo --version; then
+    rustup toolchain install stable --profile minimal || return 1
+  fi
+  rustup set profile minimal && rustup default stable
+}
+
 # Gates for Rust repositories that document 'cargo nextest run' (blueprint, docktopus) need
 # nextest on every host; beelink-gate puts ~/.local/bin on PATH, where cargo finds subcommands.
 NEXTEST_VERSION=0.9.148
@@ -347,7 +362,7 @@ install_gate_cli() {
 }
 
 module_tools() {
-  section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv, cargo-nextest"
+  section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv, Rust stable, cargo-nextest"
   # shellcheck disable=SC2086 # the list splits on purpose
   want_pkgs $BASE_PACKAGES
   ensure "ssh accepts keys only ($SSHD_KEYS_ONLY, effective in sshd -G)" sshd_keys_only -- install_sshd_keys_only
@@ -364,6 +379,7 @@ module_tools() {
   ensure "GitHub CLI apt source" gh_source_ok -- add_gh_source
   ensure "gh from GitHub's apt source" gh_from_github -- install_gh
   ensure "uv in ~/.local/bin" test -x "$HOME/.local/bin/uv" -- install_uv
+  ensure "operator Rust stable with a minimal profile" operator_rust_current -- install_operator_rust
   ensure "cargo-nextest $NEXTEST_VERSION in ~/.local/bin" nextest_current -- install_nextest
   ensure "beelink-gate readable by runner accounts ($GATE_LIB)" gate_cli_current -- install_gate_cli
 }
