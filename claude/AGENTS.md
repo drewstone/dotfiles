@@ -66,3 +66,4 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 - Analysis, review, plan, proposal or run status: [the climb](../docs/processes/climb.md).
 - Stalled or repeating work: [session efficiency](skills/reflect/references/session-efficiency.md).
 - Agent apps: [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md).
+- Releasing or adopting a `@tangle-network/*` library: [release versioning](https://github.com/tangle-network/agent-runtime/blob/main/docs/release-versioning.md).
