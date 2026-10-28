@@ -192,6 +192,7 @@ fi
 [[ -z "\${FAKE_AVAIL_PREFIX:-}" ]] || export FAKE_AVAIL_FILE="$FAKE_AVAIL_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_HOST_PRESSURE="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_HOST_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_HOST_PRESSURE="$FAKE_HOST_PRESSURE_PREFIX-$host"
+[[ ! -f "\${FAKE_PATH_PREFIX:-}-$host" ]] || export PATH="$(cat "$FAKE_PATH_PREFIX-$host")"
 exec "\${rest[@]:2}"
 `);
   chmodSync(fakeSsh, 0o755);
@@ -1842,6 +1843,29 @@ test("--ship runs the repo's ship verify with host-sized workers and no gate ins
     const missing = run(gate, ["--ship", "beelink2", f.url, f.first], { env });
     assert.equal(missing.status, 2);
     assert.match(missing.stderr, /has no scripts\/ship.sh/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// A rebuilt bare beelink1 distro (10-28) had no node, pnpm or shellcheck, and auto kept sending gates there to fail with 127.
+test("a host without the gate toolchain is refused as host_toolchain_missing, and auto runs on the other", () => {
+  const f = fixture();
+  try {
+    installFakeSsh(f);
+    // beelink1's PATH holds every command this machine has except corepack.
+    const bare = join(f.root, "bare-bin");
+    mkdirSync(bare);
+    for (const dir of f.env.PATH.split(":")) {
+      for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+        const file = join(dir, name), info = statSync(file, { throwIfNoEntry: false });
+        if (name !== "corepack" && info?.isFile() && info.mode & 0o111 && !existsSync(join(bare, name))) symlinkSync(file, join(bare, name));
+      }
+    }
+    writeFileSync(join(f.root, "path-100.98.195.7"), bare);
+    const env = { ...f.env, FAKE_PATH_PREFIX: join(f.root, "path") };
+    const result = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /auto chose beelink2/);
+    assert.match(result.stderr, /beelink1: host=beelink1 state=refused .*reason=host_toolchain_missing: corepack/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

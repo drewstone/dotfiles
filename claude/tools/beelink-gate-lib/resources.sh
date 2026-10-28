@@ -66,6 +66,18 @@ PY
   export BEELINK_GATE_SYSTEMD_MANAGER=system BEELINK_GATE_UNIT="beelink-gate-$gate_id.service"
 }
 
+# The tools every gate runs, on the PATH remote_gate sets plus nvm's Nodes: a rebuilt bare beelink1 distro
+# (Ubuntu-24.04-b1r, 10-28) had none, and auto kept admitting gates there to fail with 127 or "pnpm: No such file".
+# Prints a refused probe line and succeeds when one is missing, so auto places on the other host.
+toolchain_refusal() {
+  local tool missing="" path="$HOME/bin:$HOME/.local/bin:$PATH" bin
+  for bin in "$HOME"/.nvm/versions/node/*/bin; do [ -x "$bin/node" ] && path="$path:$bin"; done
+  for tool in git node corepack shellcheck; do PATH=$path command -v "$tool" >/dev/null || missing="$missing $tool"; done
+  [ -n "$missing" ] || return 1
+  printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=host-toolchain capacity=null reason=host_toolchain_missing:%s\n' \
+    "$1" "$(utc_in_minutes 15)" "$missing"
+}
+
 host_limit() {  # <key: max_cpu_pressure|max_io_pressure> <default, empty for none>: the host limits file's value
   python3 - "$(limits_file)" "$1" "$2" <<'PY'
 import os, pathlib, re, stat, sys
