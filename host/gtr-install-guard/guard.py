@@ -288,7 +288,7 @@ def refusal(manager: str, argv: list[str], cwd: Path):
     return (f"gtr-install-guard: refused {manager} install in {root}, a checkout on GTR. Installs and gates run on "
             "a Beelink: push the commit, then from GTR run "
             "beelink-gate auto <repo-url> <full-sha> -- <command> "
-            "(the gate does the frozen install in its own cache on a Beelink, or in a Tangle sandbox when no Beelink admits it within 5 minutes). "
+            "(the gate does the frozen install in its own cache on a Beelink). "
             "Any other new clone, inside _wt or not, is a checkout too. "
             "Deploy-managed service checkouts (~/.config/fleet/checkouts, DISCO_LAB) are exempt.")
 
