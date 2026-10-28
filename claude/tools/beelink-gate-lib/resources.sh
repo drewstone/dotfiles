@@ -73,6 +73,7 @@ toolchain_refusal() {
   local tool missing="" path="$HOME/bin:$HOME/.local/bin:$PATH" bin
   for bin in "$HOME"/.nvm/versions/node/*/bin; do [ -x "$bin/node" ] && path="$path:$bin"; done
   for tool in git node corepack shellcheck make g++; do PATH=$path command -v "$tool" >/dev/null || missing="$missing $tool"; done
+  [ -w /var/run/docker.sock ] || missing="$missing docker.sock"  # gate user outside the docker group (beelink1 22:4xZ)
   [ -n "$missing" ] || return 1
   printf 'beelink-gate-probe host=%s state=refused cache=cold slots=0 load=- limit=- host_cpu=- next=%s recovered=0 admission=host-toolchain capacity=null reason=host_toolchain_missing:%s\n' \
     "$1" "$(utc_in_minutes 15)" "$missing"
