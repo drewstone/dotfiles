@@ -1874,15 +1874,16 @@ test("auto runs on the free beelink, preferring a warm cache", async () => {
     assert.equal(preferWarm.status, 0, preferWarm.stderr);
     assert.match(preferWarm.stderr, /auto chose beelink2/);
     const lockPath = join(`${prefix}-100.127.22.51`, ".locks", "local-owner-repo.lock");
-    const marker = join(f.root, "b2-held");
-    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; sleep 5`], { stdio: "ignore" });
+    const marker = join(f.root, "b2-held"), done = join(f.root, "b2-done");
+    // Hold the lock until the gate returns: a timed hold ran out while a loaded gate host was still probing.
+    const locker = spawn("flock", ["-x", lockPath, "bash", "-c", `touch '${marker}'; while [ ! -e '${done}' ]; do sleep 0.1; done`], { stdio: "ignore" });
     try {
       for (let i = 0; i < 2400 && !existsSync(marker); i++) await sleepMs(50);
       const busy = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env });
       assert.equal(busy.status, 0, busy.stderr);
       assert.match(busy.stderr, /auto chose beelink1/);
       assert.match(busy.stderr, /beelink2: host=beelink2 state=busy/);
-    } finally { locker.kill(); }
+    } finally { writeFileSync(done, ""); locker.kill(); }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
