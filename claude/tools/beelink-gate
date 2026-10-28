@@ -775,8 +775,8 @@ remote_probe() {
       "$beelink" "$(utc_in_minutes 5)" "$reason"
     return 0
   fi
-  local probe_heat=cold
-  ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
+  ! toolchain_refusal "$beelink" || return 0
+  local probe_heat=cold; ! any_copy_warm "$cache_root/$host/$owner/$repo" "${BEELINK_GATE_SPARSE_SPEC:-}" || probe_heat=warm
   reserve=$(last_install_reserve_bytes "$beelink" "$host/$owner/$repo" "$reserve_mode" "${BEELINK_GATE_SPARSE_SPEC:-}" \
     "${BEELINK_GATE_PEER_RESERVE:-}" "${BEELINK_GATE_PEER_WARM_RESERVE:-}" "$probe_heat" 2>/dev/null) \
     || { state=refused; reason="cannot read install reserve receipts"; next=$(utc_in_minutes 5); }
