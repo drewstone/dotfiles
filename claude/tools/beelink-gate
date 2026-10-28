@@ -2140,7 +2140,7 @@ export BEELINK_GATE_LANE
 unset BEELINK_GATE_RESERVATION_TOKEN
 launcher_name=$(hostname | tr -cd 'A-Za-z0-9._-' | cut -c1-64)
 frontend_key=$(parse_repo_url "$repo_url"; printf '%s/%s/%s' "$host" "$owner" "$repo")
-frontend_record metadata "$frontend_key" "$sha" "${gate_class:-$([ "$install_mode" = light ] && echo light || echo normal)}"
+frontend_record metadata "$frontend_key" "$sha" "${gate_class:-$([ "$install_mode" = light ] && echo light || echo normal)}" "$BEELINK_GATE_LANE"
 pre_placement_checks "$@"
 frontend_phase reserve_lookup
 # The gated commit's checkout shape, read before any beelink fetches it, so each
