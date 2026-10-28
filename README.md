@@ -236,7 +236,7 @@ These checks stop a mistake, not an agent that means to erase a disk: an agent w
 When it is done, it runs the `traces` module.
 
 Other repositories install their own services: cli-bridge, pr-reviewer, and the trace units.
-The provisioning does not install Docker, ROCm, Ollama, nvm, or Rust.
+The tools module installs operator Rust through Ubuntu-signed Rustup and its stable channel with a minimal profile. Existing toolchains and extra components stay installed. It does not install Docker, ROCm, Ollama, or nvm.
 
 `tests/provision.hostlab.sh` runs the whole provisioning twice in a hostlab VM on a KVM host.
 It also reboots the VM, formats a test disk, and freezes the root filesystem to prove the reset.
