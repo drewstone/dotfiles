@@ -338,7 +338,7 @@ finish_disk_observation() {
 
 # A PR's merge result must install: #14798 merged a lockfile pnpm could not read past a green gate (10-26 sweep #12).
 # GitHub's merge ref is extracted (no worktree) beside the checkout; a broken lockfile exits 65, which the red-input
-# cache skips (the merge ref is an input too); an unfetchable or stale ref is 75. gateScript does the same in a sandbox.
+# cache skips (the merge ref is an input too); an unfetchable or stale ref is 75.
 check_merge_lockfile() {
   [ -n "$gate_pr" ] && [ -f pnpm-lock.yaml ] || return 0
   local tree="$checkout/.git/beelink-gate-merge" ref=refs/beelink-gate/merge rc

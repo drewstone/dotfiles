@@ -258,23 +258,6 @@ test("a login-shell command's exit does not run a level-1 ~/.bash_logout that tu
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("a sandbox placement with a missing or revoked key refuses with 77 and names drew-gtr-pro", () => {
-  // 10-27: a Mac launcher kept a key revoked at a rotation; its sandbox gates failed quietly as retryable tempfails.
-  const runner = resolve("claude/tools/beelink_gate_sandbox.mjs");
-  const home = mkdtempSync(join(tmpdir(), "gate-key-"));
-  try {
-    const args = ["run", "https://github.com/drewstone/dotfiles.git", "0".repeat(40), "light", "light", "--", "true"];
-    const env = { ...process.env, HOME: home, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(process.env.HOME, ".cache") };
-    delete env.BEELINK_GATE_SANDBOX_KEY;
-    const missing = spawnSync("node", [runner, ...args], { encoding: "utf8", env, timeout: 60_000 });
-    assert.equal(missing.status, 77, missing.stderr);
-    assert.match(missing.stderr, /sandbox key missing: .*launch sandbox-fallback gates from drew-gtr-pro/);
-    const revoked = spawnSync("node", [runner, ...args], { encoding: "utf8", env: { ...env, BEELINK_GATE_SANDBOX_KEY: `sk-tan-${"x".repeat(43)}` }, timeout: 180_000 });
-    assert.equal(revoked.status, 77, revoked.stderr);
-    assert.match(revoked.stderr, /sandbox key sk-tan-xxxxx… \(BEELINK_GATE_SANDBOX_KEY\) is revoked or invalid: .*launch sandbox-fallback gates from drew-gtr-pro/);
-  } finally { rmSync(home, { recursive: true, force: true }); }
-});
-
 test("receipts identify the base, PR, lane, and observable reason for a repeated gate", () => {
   const f = fixture();
   try {
@@ -3340,9 +3323,8 @@ test("auto retries a dropped probe instead of calling a busy beelink unreachable
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-// An urgent gate keeps its host until the sandbox mark, then gives it back once so a CPU-pressure hold can
-// overflow to a sandbox (#14831 sat 7 min behind PSI on 2026-10-26); with sandboxes off it keeps its host.
-test("an --urgent auto gate's admission deadline is the sandbox mark, and none when sandboxes are off", () => {
+// An urgent gate keeps its host; a normal auto gate gives a host back after 60 s without admission.
+test("an --urgent auto gate keeps its host, and a normal one has a 60 s admission deadline", () => {
   const f = fixture();
   try {
     const env = loadedHosts(f, 0.5, 0.5);
@@ -3352,9 +3334,7 @@ test("an --urgent auto gate's admission deadline is the sandbox mark, and none w
       return readFileSync(join(f.root, "ssh-remote-command"), "utf8");
     };
     assert.match(sent({}, []), /BEELINK_GATE_ADMIT_WAIT=60 /);
-    assert.match(sent({}), /BEELINK_GATE_URGENT=1 .*BEELINK_GATE_ADMIT_WAIT=300 |BEELINK_GATE_ADMIT_WAIT=300 .*BEELINK_GATE_URGENT=1 /);
-    assert.match(sent({ BEELINK_GATE_SANDBOX_AFTER: "90s" }), /BEELINK_GATE_ADMIT_WAIT=90 /);
-    assert.doesNotMatch(sent({ BEELINK_GATE_SANDBOX: "0" }), /BEELINK_GATE_ADMIT_WAIT/);
+    assert.doesNotMatch(sent({}), /BEELINK_GATE_ADMIT_WAIT/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
