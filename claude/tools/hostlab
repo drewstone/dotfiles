@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hostlab: a throwaway Ubuntu 24.04 VM for root-level experiments.
-#
+# Storage, mount, namespace and freeze experiments run only inside the VM.
 # The VM has root over ssh, lvm2, dm-thin, xfs, btrfs, a 16G blank scratch disk
 # at /dev/vdb, the calling directory shared at /work, and the same softdog
 # watchdog policy as the host. Each run boots a fresh copy-on-write overlay of
