@@ -134,6 +134,12 @@ resolve_gate_node() {
 }
 
 prepare_gate_dependencies() {
+  # Nested installs use the same store and cannot wait for a purge prompt. pnpm 11 reads pnpm_config_*, not
+  # npm_config_*: a nested `pnpm licenses` read store/v10 and missed packages the install had put in store/v11
+  # (Braid #176 on a Beelink, #193 on GTR). Both gate paths prepare here, so both get the same store.
+  export npm_config_store_dir="${npm_config_store_dir:-$HOME/.local/share/pnpm/store}"
+  export pnpm_config_store_dir="${pnpm_config_store_dir:-$npm_config_store_dir}"
+  export npm_config_confirm_modules_purge=false pnpm_config_confirm_modules_purge=false
   # Install and run with the repo's Node (.nvmrc), as its CI does, so the install and the command load the same native
   # addon ABI. pnpm keys a native package's build on the Node that installs it: agent-app#1036 installed under the
   # beelink's default Node 22, its `bash -lc` command ran under nvm's default 24, and better-sqlite3 failed with "Module
