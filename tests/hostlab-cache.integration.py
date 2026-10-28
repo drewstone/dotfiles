@@ -105,5 +105,35 @@ def prove(root):
     print(json.dumps({'outcome': 'PASS', 'subject': str(SUBJECT), 'checks': checks, 'retirement': result.stdout.strip()}, indent=2))
 
 
+def prove_vm(home, work):
+    work.mkdir()
+    env = dict(os.environ, HOSTLAB_HOME=home)
+    command = 'touch /work/ready; for i in $(seq 60); do [ ! -f /work/release ] || exit 0; sleep 1; done; exit 1'
+    process = subprocess.Popen([str(SUBJECT), 'run', '--mem', '2G', '--cpus', '2', '--scratch', '1G', '--owner', 'schedule-storage-cache-retirement-proof', '--work', str(work), '--', command], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 180
+        while not (work / 'ready').exists():
+            if process.poll() is not None:
+                output, error = process.communicate()
+                raise AssertionError(('native VM failed before shared-file proof', output, error))
+            assert time.monotonic() < deadline, 'native VM readiness deadline'
+            time.sleep(0.2)
+        refusal = run([str(SUBJECT), 'clean', '--cache'], env=env)
+        assert refusal.returncode != 0 and 'cache is in use' in refusal.stderr, refusal
+        assert process.poll() is None and Path(home, 'base.qcow2').is_file()
+        (work / 'release').touch()
+        output, error = process.communicate(timeout=45)
+        assert process.returncode == 0, (output, error)
+        assert not list(Path(home, 'runs').iterdir()), 'native VM did not retire normally'
+        print(json.dumps({'outcome': 'PASS', 'native_vm': 'booted via maintained CLI; shared-file ready; concurrent cache retirement refused; guest completed and VM retired normally'}))
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.communicate(timeout=30)
+
+
 with tempfile.TemporaryDirectory(prefix='hostlab-cache-native-') as directory:
-    prove(Path(directory))
+    root = Path(directory)
+    prove(root)
+    if os.environ.get('HOSTLAB_CACHE_VM_HOME'):
+        prove_vm(os.environ['HOSTLAB_CACHE_VM_HOME'], root / 'work')
