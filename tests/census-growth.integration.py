@@ -46,6 +46,7 @@ def fixture(scratch, name, files, changed, areas):
         write(repo, path, text)
     run(repo, "git", "add", "-A")
     run(repo, "git", "commit", "-qm", "feat: base")
+    run(repo, "git", "push", "origin", "HEAD:refs/heads/main", contains="ai-agent-hooks: hook=pre-push")
     for path, text in changed.items():
         write(repo, path, text)
     run(repo, "git", "add", "-A")
