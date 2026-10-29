@@ -8,7 +8,7 @@ so a number means the same thing wherever it is read.
 | File | Owns |
 |---|---|
 | `patterns.json` | The classification: what is a logic file, a test, a source file, an exported declaration, dated history; the limits and hugging bands. An extensionless file is logic when its first line runs an interpreter (`shebang`). |
-| `classify.py` | `patterns.json` for Python. `loc-ratchet`, `dup-export-ratchet` and `doc-ref-ratchet` import it. |
+| `classify.py` | `patterns.json` for Python. `dup-export-ratchet` and `doc-ref-ratchet` import it; `loc-ratchet` reads it through `census`. |
 | `functions.cjs` | Function spans and class member counts from TypeScript and Python ASTs. `fn-ratchet.cjs` imports it. |
 | `python_functions.py` | Python AST parsing for both the census and staged function ratchet; a syntax error refuses the scan. |
 | `census` | `measure`, `floors`, `xrepo` and `files` (below). |
@@ -90,9 +90,12 @@ Use one private JSON record for one exact change:
 The record must list every positive area delta, including new areas. Areas are `apps|products|packages|services|tools/<name>`,
 other top-level directories, or `(root)` for root files. Git renames across areas count only their added or removed lines.
 For commits, set `git config --local census.growthApproval /absolute/private/approval.json` and use normal `git commit`.
-For Census, pass `--growth-approval` to `floors`. Remove the local config after the approved commit.
+For Census, pass `--growth-approval` to `floors`. Keep the local config through normal commit and push, then remove it.
 The same validator checks the exact origin, base, tree and area deltas. It fetches the cited comment with `gh-drew`,
-checks its author against the authenticated account, and verifies the quote and full body digest. Missing access,
+checks its author against the authenticated account, and verifies the quote and full body digest. The fetched
+comment must also contain a fenced `census-growth-approval` JSON block with exactly `repository`, `base`, `tree`
+and `areas` from the record. A comment may list several exact blocks for a bounded qualification. Rewriting a local
+record for new content cannot expand the scope in the source comment. Missing access,
 a changed source or any scope mismatch refuses. Record the requester's authorization faithfully; the tool verifies
 provenance and content binding, while the operator remains responsible for interpreting the requester's scope.
 

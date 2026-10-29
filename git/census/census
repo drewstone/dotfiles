@@ -109,6 +109,9 @@ def approved_growth(checkout, base, head, growth, approval=None):
             not source["quote"].strip() or source["quote"] not in comment["body"] or
             hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
         raise Refused("growth approval source author, quote or body digest does not match")
+    scopes = re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)
+    if json.dumps(scope, sort_keys=True) not in [json.dumps(json.loads(block), sort_keys=True) for block in scopes]:
+        raise Refused("growth approval fetched source does not approve this scope")
     print(f"census: approved production growth from {source['url']}", file=sys.stderr)
     return True
 
