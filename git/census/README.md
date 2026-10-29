@@ -89,6 +89,8 @@ Use one private JSON record for one exact change:
 
 The record must list every positive area delta, including new areas. Areas are `apps|products|packages|services|tools/<name>`,
 other top-level directories, or `(root)` for root files. Git renames across areas count only their added or removed lines.
+A merge commit is charged only for what it adds beyond both parents: its change from the first parent less
+the merged branch's own change since their merge-base, so merging develop into a branch never charges develop's growth.
 For commits, set `git config --local census.growthApproval /absolute/private/approval.json` and use normal `git commit`.
 For Census, pass `--growth-approval` to `floors`. Keep the local config through normal commit and push, then remove it.
 A merge into agent-container runs `loc-ratchet <merge-base>..<head>` inside `gh-drew` ([tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md)); there the approval is a comment on the PR, its quote the text above the block.

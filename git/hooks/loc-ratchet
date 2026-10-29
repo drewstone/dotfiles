@@ -11,8 +11,7 @@ census = SimpleNamespace(**run_path(os.path.join(os.path.dirname(os.path.realpat
 
 def main():
     if len(sys.argv) > 1:
-        base, head = sys.argv[1].split("..", 1)
-        merge = None
+        base, head, merge = *sys.argv[1].split("..", 1), None
     else:
         base = census.optional_ref(".", "HEAD") or census.git(".", "hash-object", "-t", "tree", os.devnull).decode().strip()
         head = census.git(".", "write-tree").decode().strip()
