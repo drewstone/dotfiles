@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Enforce file sizes and area production growth through the shared census.
-
-Usage: loc-ratchet [A..B]. Staged checks read census.growthApproval from local Git config.
-"""
-import importlib.machinery
-import importlib.util
+"""Enforce file sizes and area growth; optional A..B checks committed trees."""
+from runpy import run_path
+from types import SimpleNamespace
 import os
 import sys
 
 sys.dont_write_bytecode = True
-loader = importlib.machinery.SourceFileLoader("census", os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "census"))
-census = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
-loader.exec_module(census)
+census = SimpleNamespace(**run_path(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "census")))
 
 
 def main():
