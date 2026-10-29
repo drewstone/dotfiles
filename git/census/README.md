@@ -20,7 +20,7 @@ so a number means the same thing wherever it is read.
 ```bash
 census measure <checkout> <rev> [--scope prefix ...] # one repo's metrics at a revision, as JSON, with the lists behind them (functions over 150, hugging files and functions, classes over 40, stale paths, duplicate exports)
 census floors <checkout> <base> <head> --floor lines --floor copies --floor god --floor hug --floor confusion \
-  [--peer agent-runtime=/home/drew/code/agent-runtime:origin/main]
+  [--peer agent-runtime=/home/drew/code/agent-runtime:origin/main] [--growth-approval /absolute/private/approval.json]
 census xrepo name=checkout:rev ...        # exported names in 2+ repos and blocks copied across repos
 census files <checkout> <rev>            # path, lines, logic|exempt for every logic file
 ```
@@ -67,6 +67,37 @@ Every metric is better smaller. `floors` refuses a head that is worse than its b
 | `confusion` | `stale_doc_refs`: backticked paths in current docs that name nothing; `dup_exports`: names exported from 2+ files |
 
 A floor may also name one metric, such as a promoted shadow metric (`fns_over_150`, `mean_fn_lines`, `exported_names`).
+
+## Scoped human approval
+
+When the requester explicitly authorizes necessary production growth, keep its evidence outside public tool source.
+Use one private JSON record for one exact change:
+
+```json
+{
+  "repository": "<exact git remote get-url origin>",
+  "base": "<full base object ID>",
+  "tree": "<git write-tree, or the exact qualified head tree>",
+  "areas": {"<growing area>": 12},
+  "source": {
+    "url": "https://github.com/<owner>/<repo>/pull/<number>#issuecomment-<id>",
+    "sha256": "<SHA256 of the complete GitHub comment body encoded as UTF-8>",
+    "quote": "<exact explicit requester approval retained in that comment>"
+  }
+}
+```
+
+The record must list every positive area delta, including new areas. Areas are `apps|products|packages|services|tools/<name>`,
+other top-level directories, or `(root)` for root files. Git renames across areas count only their added or removed lines.
+For commits, set `git config --local census.growthApproval /absolute/private/approval.json` and use normal `git commit`.
+For Census, pass `--growth-approval` to `floors`. Remove the local config after the approved commit.
+The same validator checks the exact origin, base, tree and area deltas. It fetches the cited comment with `gh-drew`,
+checks its author against the authenticated account, and verifies the quote and full body digest. Missing access,
+a changed source or any scope mismatch refuses. Record the requester's authorization faithfully; the tool verifies
+provenance and content binding, while the operator remains responsible for interpreting the requester's scope.
+
+Approval admits only production-line growth. All measured values remain visible. File and function caps,
+duplication and every other floor remain enforced. Default checks without an approval keep refusing growth.
 
 ## Integrity
 

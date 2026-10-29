@@ -1,120 +1,43 @@
 #!/usr/bin/env python3
-"""Refuse a commit that makes a logic file a god object or grows an area's production code.
+"""Enforce file sizes and area production growth through the shared census.
 
-- A logic file may not end above LIMIT lines unless it already was and does not grow (958 were over it once).
-- An existing area (apps/x, products/x, packages/x, services/x, tools/x or a top-level directory) may not gain
-  production lines; a rename moves lines free. With only the file cap, files were split, not simplified (2026-10-29).
-
-Exempt: tests, type declarations, files marked linguist-generated or linguist-vendored, and files that open with
-"@generated" or "DO NOT EDIT". There is no escape variable; fixture repos set core.hooksPath=/dev/null.
-
-Usage: loc-ratchet            check the staged changes against HEAD
-       loc-ratchet A..B       check the commits in a range (CI or pre-push)
+Usage: loc-ratchet [A..B]. Staged checks read census.growthApproval from local Git config.
 """
-import collections
+import importlib.machinery
+import importlib.util
 import os
-import subprocess
 import sys
 
-sys.dont_write_bytecode = True  # the installed checkout stays clean
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census"))
-import classify  # noqa: E402  the census owns the classification, so this hook and the census count alike
-
-LIMIT = classify.FILE_LIMIT
-CONTAINERS = ("apps", "products", "packages", "services", "tools")
-
-
-def object_id(spec):
-    return git("rev-parse", "-q", "--verify", spec, check=False).stdout.decode().strip() or None
-
-
-def area_exists(ref, name):
-    return name == "(root)" or bool(git("ls-tree", "-d", "--name-only", ref, "--", name, check=False).stdout.strip())
-
-
-def git(*args, check=True):
-    out = subprocess.run(["git", *args], capture_output=True)
-    if check and out.returncode != 0:
-        sys.stderr.write(out.stderr.decode(errors="replace"))
-        sys.exit(2)
-    return out
-
-
-def exempt_by_attr(path):
-    out = git("check-attr", "linguist-generated", "linguist-vendored", "--", path, check=False)
-    return any(line.endswith((": set", ": true")) for line in out.stdout.decode().splitlines())
-
-
-def changes(old_ref, new_ref):
-    """(status, old_path, new_path) for added, copied, modified and renamed files."""
-    args = ["diff", "--name-status", "-z", "-M", "--diff-filter=ACDMR"]
-    args += ["--cached", old_ref] if new_ref is None else [old_ref, new_ref]
-    parts = git(*args).stdout.decode(errors="replace").split("\0")
-    i = 0
-    while i < len(parts) and parts[i]:
-        status = parts[i]
-        if status[0] in "RC":
-            yield status[0], parts[i + 1], parts[i + 2]
-            i += 3
-        else:
-            yield status[0], parts[i + 1], parts[i + 1]
-            i += 2
-
-
-def area(path):
-    dirs = path.split("/")[:-1]
-    return "/".join(dirs[:2]) if dirs[:1] and dirs[0] in CONTAINERS else "/".join(dirs[:1]) or "(root)"
-
-
-def counted(path, spec):
-    """Production lines in the blob at spec ("HEAD:path", ":path"), or None when absent or not production logic."""
-    out = git("cat-file", "-p", spec, check=False)
-    data = out.stdout if out.returncode == 0 else None
-    if data is None or not classify.logic(path, classify.head_of(data)) or exempt_by_attr(path):
-        return None
-    return None if classify.generated(data[:2000].decode(errors="replace")) else classify.line_count(data)
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("census", os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "census"))
+census = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+loader.exec_module(census)
 
 
 def main():
-    if len(sys.argv) > 1 and ".." in sys.argv[1]:
-        old_ref, new_ref = sys.argv[1].split("..", 1)
-        new_spec, merge_ref = (lambda p: f"{new_ref}:{p}"), None
+    if len(sys.argv) > 1:
+        base, head = sys.argv[1].split("..", 1)
+        merge = None
     else:
-        old_ref = "HEAD" if object_id("HEAD") else git("hash-object", "-t", "tree", os.devnull).stdout.decode().strip()
-        new_ref, new_spec, merge_ref = None, (lambda p: f":{p}"), object_id("MERGE_HEAD")
-
-    refused, growth = [], collections.Counter()
-    for status, old_path, path in changes(old_ref, new_ref):
-        # A normal merge inherits the incoming branch's committed blobs.
-        if merge_ref is not None and status != "D" and object_id(f"{merge_ref}:{path}") == object_id(new_spec(path)):
-            continue
-        old_n = None if status in "AC" else counted(old_path, f"{old_ref}:{old_path}")
-        new_n = None if status == "D" else counted(path, new_spec(path))
-        if status == "R" and area(old_path) != area(path):
-            growth[area(path)] += (new_n or 0) - (old_n or 0)  # a move counts only what it adds or removes
-        else:
-            growth[area(old_path)] -= old_n or 0
-            growth[area(path)] += new_n or 0
-        if new_n and new_n > LIMIT and (old_n is None or new_n > old_n):
-            refused.append((path, old_n, new_n))
-
-    grown = sorted((a, n) for a, n in growth.items() if n > 0 and area_exists(old_ref, a))
-    for name, n in grown:
-        sys.stderr.write(f"loc-ratchet: refusing commit: {name} gains {n} production lines. Delete or simplify at least\n"
-                         "  as many in the same area; moving code to its owner is free when git sees a rename.\n")
-    if not refused:
-        return 1 if grown else 0
-    sys.stderr.write(f"loc-ratchet: refusing commit: a logic file may not end above {LIMIT} lines unless it already was and does not grow.\n")
-    for path, old_n, new_n in refused:
-        was = "new file" if old_n is None else f"was {old_n}"
-        sys.stderr.write(f"  {path}: {new_n} lines ({was})\n")
-    sys.stderr.write(
-        "  Put new logic in a new module named for what it owns. To change a file over the limit,\n"
-        "  extract a responsibility from it first so its line count does not grow.\n"
-        "  Generated or vendored files: mark them linguist-generated or linguist-vendored in .gitattributes.\n"
-    )
-    return 1
+        base = census.optional_ref(".", "HEAD") or census.git(".", "hash-object", "-t", "tree", os.devnull).decode().strip()
+        head = census.git(".", "write-tree").decode().strip()
+        merge = census.optional_ref(".", "MERGE_HEAD")
+    growth, oversized = census.production_delta(".", base, head, merge)
+    grown = {a: n for a, n in growth.items() if n > 0 and
+             (a == "(root)" or census.git(".", "ls-tree", "-d", "--name-only", base, "--", a).strip())}
+    approved = census.approved_growth(".", base, head, growth) if grown else False
+    for name, n in ([] if approved else grown.items()):
+        print(f"loc-ratchet: refusing commit: {name} gains {n} production lines. Delete or simplify in the same area,\n"
+              "  or provide an exact sourced approval through census.growthApproval.", file=sys.stderr)
+    for path, old, new in oversized:
+        print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
+              f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)
+    return int(bool(oversized or (grown and not approved)))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as why:
+        print(f"loc-ratchet: REFUSED: {why}", file=sys.stderr)
+        sys.exit(2)
