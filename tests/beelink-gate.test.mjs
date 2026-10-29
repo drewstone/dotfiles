@@ -3946,6 +3946,9 @@ esac
 test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease and is stopped past 1.5x it, with the overrun in its receipt", () => {
   const f = fixture();
   try {
+    // Normal admission creates the lifecycle state before gtr_run starts.
+    const producerFence = join(f.env.HOME, ".cache/tangle/storage-lifecycle/pnpm-store.lock");
+    mkdirSync(dirname(producerFence), { recursive: true });
     const gtr = (lease, name, script = 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20') => {
       const dir = join(f.root, "pool", name), log = join(f.root, `${name}.log`);
       const args = [log, dir, f.url, f.first, "no-install"].map(encode);
@@ -3959,8 +3962,11 @@ test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease 
     // hostlab writes the gate's id into a run it boots under a gate (10-27: a 16 GB lease's VM disks reached 39.8 GB).
     const vm = gtr(1_000_000, "c".repeat(32), 'r="$HOSTLAB_HOME/runs/r1"; mkdir -p "$r" && echo "$BEELINK_GATE_LEASE_DIR" > "$r/gate" && head -c 3000000 /dev/zero > "$r/disk.qcow2"; sleep 20');
     assert.equal(vm.status, 124, vm.stderr);
-    const within = gtr(1_000_000_000, "b".repeat(32));
+    const within = gtr(1_000_000_000, "b".repeat(32),
+      'f="$HOME/.cache/tangle/storage-lifecycle/pnpm-store.lock"; if flock -n -x "$f" true; then exit 97; fi; flock -n -s "$f" true || exit 98; head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20');
     assert.equal(within.status, 0, within.stderr);
+    assert.equal(run("flock", ["-n", "-x", producerFence, "true"]).status, 0,
+      "the producer fence remained held after command and child cleanup");
     const rows = readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
     const [stopped, passed] = [`drew-gtr-pro-${"a".repeat(32)}`, `drew-gtr-pro-${"b".repeat(32)}`].map((id) => rows.find((row) => row.gate_id === id));
     assert.equal(stopped.exit, 124);
