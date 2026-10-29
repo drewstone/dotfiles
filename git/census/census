@@ -2,7 +2,7 @@
 """The census: every codebase instrument, owned beside the ratchets (git/census/README.md).
 
   census measure <checkout> <rev> [--scope prefix ...]   whole-repo metrics, with an optional scoped view
-  census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...]
+  census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...] [--growth-approval file]
   census xrepo name=checkout:rev [name=checkout:rev ...]
   census files <checkout> <rev>                         path, lines and class of every logic file, as TSV
 
@@ -45,6 +45,75 @@ def git(checkout, *args, data=None, env=None):
     if run.returncode != 0:
         raise Refused(f"git {args[0]} failed in {checkout}: {run.stderr.decode(errors='replace').strip()}")
     return run.stdout
+
+
+def optional_ref(checkout, ref):
+    run = subprocess.run(["git", "-C", checkout, "rev-parse", "-q", "--verify", ref], capture_output=True)
+    return run.stdout.decode().strip() if run.returncode == 0 else None
+
+
+def area(path):
+    dirs = path.split("/")[:-1]
+    return "/".join(dirs[:2] if dirs[:1] and dirs[0] in ("apps", "products", "packages", "services", "tools") else dirs[:1]) or "(root)"
+
+
+def production_delta(checkout, base, head, merge=None):
+    """Count changed production blobs once, with cross-area renames free and inherited merge blobs excluded."""
+    parts = iter(git(checkout, "diff", "--name-status", "-z", "-M", "--diff-filter=ACDMR", base, head).decode().split("\0")[:-1])
+    growth, oversized = collections.Counter(), []
+    for status in parts:
+        old_path = next(parts)
+        path = next(parts) if status[0] in "RC" else old_path
+        if merge and status[0] != "D" and optional_ref(checkout, f"{merge}:{path}") == optional_ref(checkout, f"{head}:{path}"):
+            continue
+        sizes = []
+        for ref, name, absent in ((base, old_path, status[0] in "AC"), (head, path, status[0] == "D")):
+            blobs = read_blobs(checkout, ref, [name]) if not absent and C.candidate(name) else {}
+            blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
+            sizes.append(production_sizes(checkout, ref, blobs).get(name))
+        old, new = sizes
+        if status[0] == "R" and area(old_path) != area(path):
+            growth[area(path)] += (new or 0) - (old or 0)
+        else:
+            growth[area(old_path)] -= old or 0
+            growth[area(path)] += new or 0
+        if new and new > C.FILE_LIMIT and (old is None or new > old):
+            oversized.append((path, old, new))
+    return dict(growth), oversized
+
+
+def approved_growth(checkout, base, head, growth, approval=None):
+    """Only a sourced approval for this exact origin, base, tree and positive area deltas admits growth."""
+    if approval is None:
+        run = subprocess.run(["git", "-C", checkout, "config", "--local", "--path", "--get", "census.growthApproval"], capture_output=True)
+        approval = run.stdout.decode().strip()
+    if not approval:
+        return False
+    record = json.load(open(approval))
+    source = record.pop("source")
+    scope = {"repository": git(checkout, "remote", "get-url", "origin").decode().strip(),
+             "base": git(checkout, "rev-parse", "--verify", base).decode().strip(), "tree": tree_of(checkout, head),
+             "areas": {a: n for a, n in growth.items() if n > 0}}
+    if json.dumps(record, sort_keys=True) != json.dumps(scope, sort_keys=True) or not scope["areas"]:
+        raise Refused("growth approval does not match origin, base, tree and growing areas")
+    match = re.fullmatch(r"https://github.com/([^/]+/[^/]+)/(?:issues|pull)/[1-9]\d*#issuecomment-([1-9]\d*)", source["url"])
+    if not match:
+        raise Refused("growth approval source must name a GitHub issue comment")
+    def github(endpoint):
+        run = subprocess.run(["gh-drew", "api", endpoint], capture_output=True, timeout=30)
+        if run.returncode:
+            raise Refused("growth approval source could not be verified through gh-drew")
+        return json.loads(run.stdout)
+    comment = github(f"repos/{match[1]}/issues/comments/{match[2]}")
+    if (comment["html_url"] != source["url"] or comment["user"]["login"] != github("user")["login"] or
+            not source["quote"].strip() or source["quote"] not in comment["body"] or
+            hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
+        raise Refused("growth approval source author, quote or body digest does not match")
+    scopes = re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)
+    if json.dumps(scope, sort_keys=True) not in [json.dumps(json.loads(block), sort_keys=True) for block in scopes]:
+        raise Refused("growth approval fetched source does not approve this scope")
+    print(f"census: approved production growth from {source['url']}", file=sys.stderr)
+    return True
 
 
 def tree_of(checkout, rev):
@@ -264,7 +333,7 @@ def peer(spec):
     return name, checkout, rev
 
 
-def floors(checkout, base, head, names, peers):
+def floors(checkout, base, head, names, peers, approval=None):
     wanted = [m for name in names for m in GROUPS.get(name, [name])]
     before, after = measure(checkout, base), measure(checkout, head)
     notes = []
@@ -280,6 +349,7 @@ def floors(checkout, base, head, names, peers):
             notes.append("xrepo_windows: not measured, no --peer named")
     if not wanted:
         raise Refused(f"no metric to compare for --floor {' '.join(names)}")
+    approved = approved_growth(checkout, base, after["tree"], production_delta(checkout, base, after["tree"])[0], approval) if approval else False
     rows, refused, unmeasured = [], [], []
     for metric in wanted:
         b, h = before["metrics"].get(metric), after["metrics"].get(metric)
@@ -287,8 +357,9 @@ def floors(checkout, base, head, names, peers):
             unmeasured.append(metric)
             rows.append(f"{metric:<16} unmeasured at {'base' if b is None else 'head'}  REFUSED: no instrument read it")
             continue
-        verdict = "ok" if h <= b else "REFUSED: may not rise"
-        if h > b:
+        allowed = metric == "prod_lines" and approved
+        verdict = "ok" if h <= b else "approved growth" if allowed else "REFUSED: may not rise"
+        if h > b and not allowed:
             refused.append(metric)
         rows.append(f"{metric:<16} {b:>9} -> {h:<9} {h - b:+}  {verdict}")
     print(f"census floors {' '.join(names)}: base {base} (tree {before['tree'][:12]}) -> head {head} (tree {after['tree'][:12]})")
@@ -358,7 +429,7 @@ def files(checkout, rev):
 
 def main(argv):
     command, args = (argv[0], argv[1:]) if argv else ("", [])
-    allowed = {"measure": ("--scope",), "floors": ("--floor", "--peer")}.get(command, ())
+    allowed = {"measure": ("--scope",), "floors": ("--floor", "--peer", "--growth-approval")}.get(command, ())
     options, plain = {name: [] for name in allowed}, []
     try:
         arguments = iter(args)
@@ -378,8 +449,10 @@ def main(argv):
         if command == "measure" and len(plain) == 2:
             print(json.dumps(measure(*plain, scopes=flag("--scope"))))
             return 0
+        if len(flag("--growth-approval")) > 1:
+            raise Refused("--growth-approval accepts exactly one record")
         if command == "floors" and len(plain) == 3 and flag("--floor"):
-            return floors(*plain, flag("--floor"), flag("--peer"))
+            return floors(*plain, flag("--floor"), flag("--peer"), next(iter(flag("--growth-approval")), None))
         if command == "xrepo" and plain:
             print(json.dumps(xrepo(plain)))
             return 0
