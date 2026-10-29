@@ -58,13 +58,15 @@ def area(path):
 
 
 def production_delta(checkout, base, head, merge=None, paths=None):
-    """Count changed production blobs once, with cross-area renames free. A merge is charged only for what it adds beyond
-    both parents: its change from `base` less `merge`'s own change since their fork, read only where a side differs."""
-    size = lambda ref, name: production_sizes(checkout, ref, read_blobs(checkout, ref, [name]) if name and C.candidate(name) else {}).get(name)
-    if merge:
+    """Production-line change per area and grown oversized files, cross-area renames free; a merge pays only its own additions."""
+    if merge:  # the lesser of its two three-way readings, on paths unlike both parents: a rename never charges the other side's edit
         fork = git(checkout, "merge-base", base, merge).decode().strip()
-        paths = {p for a, b in ((merge, head), (fork, base)) for p in git(checkout, "diff", "--name-only", "--no-renames", "-z", a, b).decode().split("\0")[:-1]}
-        theirs = production_delta(checkout, fork, merge, paths=paths)[0]
+        paths = set.intersection(*(set(git(checkout, "diff", "--name-only", "--no-renames", "-z", p, head).decode().split("\0")[:-1]) for p in (base, merge)))
+        (mine, big), (theirs, past) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
+        mine.subtract(production_delta(checkout, fork, merge, paths=paths)[0])
+        theirs.subtract(production_delta(checkout, fork, base, paths=paths)[0])
+        return {a: min(mine[a], theirs[a]) for a in mine.keys() | theirs.keys()}, [o for o in big if o[0] in {p for p, _, _ in past}]
+    size = lambda ref, name: production_sizes(checkout, ref, read_blobs(checkout, ref, [name]) if name and C.candidate(name) else {}).get(name)
     parts = iter(git(checkout, "diff", "--name-status", "-z", "-M", "--diff-filter=ACDMR", base, head).decode().split("\0")[:-1])
     growth, oversized = collections.Counter(), []
     for status in parts:
@@ -78,10 +80,9 @@ def production_delta(checkout, base, head, merge=None, paths=None):
         else:
             growth[area(old_path)] -= old or 0
             growth[area(path)] += new or 0
-        if new and new > max(C.FILE_LIMIT, old or 0) and not (merge and new <= (size(merge, optional_ref(checkout, f"{merge}:{path}") and path) or 0)):
+        if new and new > max(C.FILE_LIMIT, old or 0):
             oversized.append((path, old, new))
-    growth.subtract(theirs if merge else {})
-    return dict(growth), oversized
+    return growth, oversized
 
 
 def approved_growth(checkout, base, head, growth, approval=None):
@@ -421,8 +422,7 @@ def production_sizes(checkout, tree, blobs):
 def files(checkout, rev):
     tree = tree_of(checkout, rev)
     logic = [p for p in git(checkout, "ls-tree", "-r", "-z", "--full-tree", "--name-only", tree).decode().split("\0")[:-1] if C.candidate(p)]
-    blobs = read_blobs(checkout, tree, logic)
-    blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
+    blobs = {p: b for p, b in read_blobs(checkout, tree, logic).items() if C.logic(p, C.head_of(b))}
     sizes = production_sizes(checkout, tree, blobs)
     return "".join(f"{p}\t{C.line_count(b)}\t{'logic' if p in sizes else 'exempt'}\n" for p, b in blobs.items())
 

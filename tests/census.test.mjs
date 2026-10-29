@@ -84,19 +84,26 @@ test("each ratchet refuses its violation through the shared classification, and 
 test("a merge commit is charged only for what it adds beyond both parents", () => {
   const a = (n, top = "") => top + lines(n, (i) => `a${i} = ${i}`);
   const big = (n, top = "") => top + lines(n, (i) => `b${i} = ${i}`);
-  const { dir, git } = repo({ "src/a.py": a(40), "src/big.py": big(998) });
+  const moved = (top = "") => top + lines(20, (i) => `m${i} = ${i}`);
+  const { dir, git } = repo({ "src/a.py": a(40), "src/big.py": big(998), "src/moved.py": moved(), "src/gone.py": "x = 1\ny = 2\n" });
   const commit = (files, message) => {
     write(dir, files);
     git("add", "-A");
     git("-c", "user.email=f@x.invalid", "-c", "user.name=f", "commit", "-qm", message);
   };
   git("checkout", "-qb", "branch");
-  commit({ "src/a.py": a(30), "src/big.py": big(997) }, "branch only shrinks src");
+  mkdirSync(join(dir, "lib"));
+  git("mv", "src/moved.py", "lib/moved.py");
+  git("rm", "-q", "src/gone.py");
+  commit({ "src/a.py": a(30), "src/big.py": big(997) }, "branch shrinks src, moves moved.py to lib, deletes gone.py");
   git("checkout", "-q", "main");
   const grown = "g0 = 0\ng1 = 1\ng2 = 2\n";
-  commit({ "src/a.py": a(40, grown), "src/big.py": big(998, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\n"), "src/c.py": grown }, "develop grows src");
+  git("rm", "-q", "src/gone.py");
+  commit({ "src/a.py": a(40, grown), "src/big.py": big(998, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\n"), "src/c.py": grown,
+    "src/moved.py": moved(grown) }, "develop grows src and the file the branch moved, and deletes gone.py too");
   git("checkout", "-q", "branch");
-  // First parent is the branch: develop's +3, +7 (to 1,005 lines) and new c.py are its own growth, never the merge's.
+  // First parent is the branch. Develop's +3, +7 (to 1,005 lines), new c.py, its +3 carried into the moved file and
+  // the deletion both sides made are its own changes, never the merge's.
   git("merge", "-q", "--no-commit", "--no-ff", "main");
   const clean = run(dir, join(hooks, "loc-ratchet"), []);
   assert.equal(clean.status, 0, clean.stderr);
@@ -105,6 +112,7 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   const evil = run(dir, join(hooks, "loc-ratchet"), []);
   assert.equal(evil.status, 1, evil.stderr);
   assert.match(evil.stderr, /src gains 4 production lines/);
+  assert.doesNotMatch(evil.stderr, /lib gains/);
   assert.match(evil.stderr, /src\/big\.py: 1006 lines \(was 997\)/);
 });
 
