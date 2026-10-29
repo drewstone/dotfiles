@@ -13,7 +13,7 @@ Locate the active project through its remote and current instructions.
 For the discovery workspace, the maintained [problem-sourcing rubric](https://github.com/tangle-network/discovery/blob/master/meta/problem-sourcing/README.md) owns selection and promotion criteria.
 Find its configured store before updating the source registry or candidate list.
 
-When operating discovery-lab, read its [instructions](https://github.com/tangle-network/discovery-lab/blob/master/AGENTS.md) and [executable methods](https://github.com/tangle-network/discovery-lab/blob/master/README.md#executable-methods).
+When operating discovery-lab, read its [instructions](https://github.com/tangle-network/discovery-lab/blob/master/AGENTS.md).
 For literature sourcing, follow the maintained [method guide](https://github.com/tangle-network/discovery-lab/blob/master/experiments/literature-sourcing/README.md).
 Hand the sourced material to the system as sources, recorded as an observer contribution, and let the system source its own problems from it.
 Do not hand it the problem, the decomposition, or the research method it should run.

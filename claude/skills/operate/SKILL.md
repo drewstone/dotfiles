@@ -16,7 +16,7 @@ Honor standing authorization for later launches within the same task and resourc
 Reconcile an uncertain launch acknowledgment before issuing another launch.
 Assign one operator to each shared launch surface.
 
-A play's `topology:` (single, tree or peers:N) sets its starting team, and each root reshapes its own team, depth and child profiles.
+A play's `roots:` and `search:` set its starting team, and each root reshapes its own team, depth and child profiles.
 Write plays; never wrap them in a factorial grid or a campaign of arms you designed.
 When Drew asks for more experiments without naming what they should answer, ask him what he wants to learn before writing any.
 
@@ -42,7 +42,7 @@ For a customer deliverable (a report, model or plan), the first milestone is the
 An independent engagement partner on a current model raises that bar against named exemplars and drops every expectation that does not serve the goal; part of its additions stay held out.
 Score the release against the compiled bar, measured against the goal, never against hygiene alone (present, reproduces, calculates).
 Prove the evaluator set before the press: a hand-written target must outscore the incumbent and a degraded copy of it must score below ([eval-engineering](../eval-engineering/SKILL.md)).
-Start from the class's best template and save the finished list with its grades as the next version (Discovery Lab: `acceptance.design.engagement`, `disco engagement`).
+Start from the class's best template and save the finished list with its grades as the next version.
 
 ## While running
 
@@ -62,8 +62,8 @@ Start from the class's best template and save the finished list with its grades 
 7. Recover through the execution owner's maintained resume path.
    Reconcile completed work before replacing a process or starting a successor.
 
-When a play's check passes, the run is done: the keeper cancels it at the first pass it sees, and if it is still running, cancel it yourself (`disco cancel <runId> --reason solved`) unless Drew set a target beyond the check; never spend its remaining hours.
-On a stall alarm (the best release tag flat for two hours), diagnose before steering: read the later tags' failing checks and the agents' recent work against the goal, then name the blocker.
+When a play's check passes, the run is done: cancel it yourself (`disco cancel <runId> --reason solved`) unless Drew set a target beyond the check; nothing cancels it for you, and never spend its remaining hours.
+When the best release tag has been flat for two hours, diagnose before steering: read the later tags' failing checks and the agents' recent work against the goal, then name the blocker.
 Report the goal score and the best tag's checks against the bar.
 A lead tick measures from execution records, not lane STATUS, and reports each open problem with its owner and the time since its first alarm.
 
