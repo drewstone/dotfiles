@@ -75,6 +75,17 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
                     {"src/large.py": "".join(f"value_{i} = {i}\n" for i in range(1001))}, {"src": 1001})
     function = fixture(scratch, "hard-function", {"src/main.py": "value = 1\n"},
                        {"src/function.py": "def large():\n" + "".join(f"    value_{i} = {i}\n" for i in range(301))}, {"src": 302})
+    literal = 'description = '"@generated" or "DO NOT EDIT"'\n'
+    marker, _ = fixture(scratch, "marker-mentions", {"src/main.py": literal},
+                        {"src/main.py": literal + "second = 2\n"}, {"src": 1})
+    commit(marker, status=1, contains="src gains 1 production lines")
+    write(marker, "src/main.py", literal)
+    write(marker, "src/output.py", "# @generated DO NOT EDIT\n" + "".join(f"value_{i} = {i}\n" for i in range(1001)))
+    run(marker, "git", "add", "-A")
+    marker_base = run(marker, "git", "rev-parse", "HEAD")
+    commit(marker)
+    run(marker, str(CENSUS), "floors", ".", marker_base, "HEAD", "--floor", "lines", "--floor", "god")
+    print("PASS: quoted marker mentions remain production; actual comment headers remain generated")
     body = "".join(f"const item_{i} = {i};\n" for i in range(15))
     copies = fixture(scratch, "copies", {"src/first.ts": body}, {"src/second.ts": body}, {"src": 15})
 

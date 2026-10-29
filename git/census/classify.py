@@ -65,8 +65,8 @@ def history(path):
 
 
 def generated(head):
-    """A file that says it is generated in its first 2,000 bytes."""
-    return "@generated" in head or "DO NOT EDIT" in head
+    """A generated marker in a comment header, not a quoted mention in source or prose."""
+    return bool(re.search(r"(?m)^\s*(?://|#|/\*|\*|--|<!--).*?(?:@generated\b|DO NOT EDIT\b)", head))
 
 
 def line_count(data):

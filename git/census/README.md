@@ -108,6 +108,8 @@ A scan that reads no logic file, a blob that does not come back, a parse that mi
 `typescript` package exits 2 with `CENSUS REFUSED:` and the reason. A metric no instrument read is refused, never
 reported as 0. `typescript` is loaded from the measured repo, then `~/.local/share/dotfiles-node`, then `NODE_PATH`.
 
+Generated markers count only in comment headers. Quoted source or prose mentioning the marker remains production.
+
 Standard `.stories.js`, `.stories.jsx`, `.stories.mjs`, `.stories.cjs`, `.stories.ts`, `.stories.tsx`, `.stories.mts` and `.stories.cts` files are Storybook registry entries, outside the production and ratchet populations.
 Ordinary modules and routes remain counted even under a directory named `stories`.
 
