@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # tools: base packages, the OpenSSH server (key-only login, off the LAN), Google Chrome,
-# Tailscale, GitHub CLI, uv and cargo-nextest.
+# Tailscale, GitHub CLI, uv, cargo-nextest and dotenvx.
 
 # hostlab (the VM lane in AGENTS.md) needs the qemu packages and /dev/kvm.
 # iw reads the Wi-Fi driver's own state (iw dev <dev> link, iw dev <dev> get
@@ -316,6 +316,18 @@ install_nextest() {
     install -D -m 0755 "$WORK/cargo-nextest" "$HOME/.local/bin/cargo-nextest"
 }
 
+# gh-drew decrypts its GitHub token from ~/company/devops/secrets/agent-state.env with dotenvx;
+# without it every gh-drew call in a gate exits 2 (rebuilt beelink1, 2026-10-29).
+DOTENVX_VERSION=2.32.4
+DOTENVX_SHA256=887992850366473e9132385cac4eeb7516aa3e9526db2d92a3f27412f3440482
+dotenvx_current() { [ "$("$HOME/.local/bin/dotenvx" --version 2>/dev/null)" = "$DOTENVX_VERSION" ]; }
+install_dotenvx() {
+  local tgz="$WORK/dotenvx.tar.gz"
+  fetch "https://github.com/dotenvx/dotenvx/releases/download/v$DOTENVX_VERSION/dotenvx-$DOTENVX_VERSION-linux-x86_64.tar.gz" "$tgz" &&
+    sha256_ok "$tgz" "$DOTENVX_SHA256" && tar -xzf "$tgz" -C "$WORK" ./dotenvx &&
+    install -D -m 0755 "$WORK/dotenvx" "$HOME/.local/bin/dotenvx"
+}
+
 # Runner accounts cannot read this user's home, so the Nix profile publisher
 # reads the gate's disk floor (beelink-gate --disk-floor-bytes) from a
 # root-owned copy of the gate and of this host's limits file. The installed
@@ -362,7 +374,7 @@ install_gate_cli() {
 }
 
 module_tools() {
-  section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv, Rust stable, cargo-nextest"
+  section "tools: base packages, OpenSSH (keys only, off the LAN), Google Chrome, Tailscale, GitHub CLI, uv, Rust stable, cargo-nextest, dotenvx"
   # shellcheck disable=SC2086 # the list splits on purpose
   want_pkgs $BASE_PACKAGES
   ensure "ssh accepts keys only ($SSHD_KEYS_ONLY, effective in sshd -G)" sshd_keys_only -- install_sshd_keys_only
@@ -381,5 +393,6 @@ module_tools() {
   ensure "uv in ~/.local/bin" test -x "$HOME/.local/bin/uv" -- install_uv
   ensure "operator Rust stable with a minimal profile" operator_rust_current -- install_operator_rust
   ensure "cargo-nextest $NEXTEST_VERSION in ~/.local/bin" nextest_current -- install_nextest
+  ensure "dotenvx $DOTENVX_VERSION in ~/.local/bin" dotenvx_current -- install_dotenvx
   ensure "beelink-gate readable by runner accounts ($GATE_LIB)" gate_cli_current -- install_gate_cli
 }
