@@ -75,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
                     {"src/large.py": "".join(f"value_{i} = {i}\n" for i in range(1001))}, {"src": 1001})
     function = fixture(scratch, "hard-function", {"src/main.py": "value = 1\n"},
                        {"src/function.py": "def large():\n" + "".join(f"    value_{i} = {i}\n" for i in range(301))}, {"src": 302})
-    literal = 'description = '"@generated" or "DO NOT EDIT"'\n'
+    literal = 'description = "@generated or DO NOT EDIT"\n'
     quoted_comment = '# The markers "@generated" and "DO NOT EDIT" are quoted.\nvalue = 1\n'
     marker, _ = fixture(scratch, "marker-mentions", {"src/main.py": literal, "src/comment.py": quoted_comment},
                         {"src/main.py": literal + "second = 2\n", "src/comment.py": quoted_comment + "third = 3\n"}, {"src": 2})
