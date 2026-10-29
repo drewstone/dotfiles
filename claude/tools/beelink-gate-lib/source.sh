@@ -144,7 +144,7 @@ on_beelink() {
   local target=$1; shift
   local -a transport_prefix=() envs=("BEELINK_GATE_LAUNCHER=$launcher_name")
   case "${1:-}" in
-    --reserve-match|--job-cancel|--disk-floor-bytes) transport_prefix=(bounded_transport "$target $1") ;;
+    --reserve-match|--job-cancel|--disk-floor-bytes|--receipts|--queue-jobs) transport_prefix=(bounded_transport "$target $1") ;;
   esac
   [ "${BEELINK_GATE_FLOOR_LOCAL:-0}" != 1 ] || envs+=("BEELINK_GATE_FLOOR_LOCAL=1")
   [ -z "${BEELINK_GATE_MAX_HOLD:-}" ] || envs+=("BEELINK_GATE_MAX_HOLD=$BEELINK_GATE_MAX_HOLD")
