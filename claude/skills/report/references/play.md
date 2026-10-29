@@ -6,7 +6,7 @@ A play report does not run the play, and it does not audit a single director's r
 
 ## Start from the readout
 
-Every settled run already has a readout: the run process starts `disco readout <runId>` after every settle, and the fleet-rollup sweep starts any that is missing.
+Every settled run already has a readout: run `disco readout <runId>` by hand after a settle; nothing starts it on a schedule.
 When none exists, run `disco readout <runId>` on the coordinator host first.
 Build the report on that output rather than re-deriving it, and keep its order:
 

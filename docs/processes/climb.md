@@ -204,11 +204,11 @@ The daily meta-analyst (`trace-mine`) read 3 of 32,093 sessions and asked no que
 
 | Organ | Job | Owner |
 |---|---|---|
-| **Instruments** | Deterministic numbers every run: scorecard (failure classes, lifelines, tokens, ruler saturation) and goal rulers | Discovery Lab `disco scorecard`, `disco ruler` |
+| **Instruments** | Deterministic numbers every run: scorecard (failure classes, lifelines, tokens, ruler saturation) and goal rulers | Discovery Lab `disco scorecard` |
 | **Analysts** | Read traces selected by anomaly and importance, ask new topical questions each time, answer with quotes, and score each question's yield (did its answer lead to a move that passed?) | Lab `disco trace ask` (runs); tangle-tools `trace-mine` (operator and fleet sessions) |
 | **Ground truth** | A calibration set per layer: the requester's verdicts and world-class exemplars for products and rulers; the person's corrections for the operator and its tools; held-out replays for profiles | Ledger rows, the correction dataset, exemplar teardowns |
 | **Optimizers** | Search candidate versions against the ground truth, with train, selection and final splits and a direct-edit baseline | agent-eval |
-| **The loop** | Run nightly: instruments, then analysts, then proposals with predictions, then offline evals, then draft PRs with evidence; promote in the morning through a held-out gate; write the ledger and the page | Keeper and trace-mine timers; the operator promotes |
+| **The loop** | Run nightly: instruments, then analysts, then proposals with predictions, then offline evals, then draft PRs with evidence; promote in the morning through a held-out gate; write the ledger and the page | Run by hand (no timers); the operator promotes |
 
 **Never stop climbing.**
 - **Plateau breaker:** a hill flat for three measurements changes approach, not effort. Run `hypothesize`, and the search ledger's landscape lens drafts a new direction.

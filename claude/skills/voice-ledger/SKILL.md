@@ -103,7 +103,7 @@ Report a finding as a finding only if it survives all three lenses. The rest are
 2. Run `build_page.py $OUT`. On the first run it writes a `page-text.json` skeleton.
 3. Fill every TODO in it from this run's outputs. Give each number its window and denominator, and set it beside the previous run's value.
 4. Rerun build_page.py, then run `$N $K/scripts/validate.mjs --scan $OUT/page/voice-ledger.html`.
-5. Load `artifact-design` and publish the page as a private Artifact.
+5. Write the page under `~/reviews/` and open it.
 
 Done when the scan prints CLEAN and the publish returns a URL.
 
