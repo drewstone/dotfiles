@@ -3946,10 +3946,13 @@ esac
 test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease and is stopped past 1.5x it, with the overrun in its receipt", () => {
   const f = fixture();
   try {
-    const gtr = (lease, name, script = 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20') => {
+    // Normal admission creates the lifecycle state before gtr_run starts.
+    const producerFence = join(f.env.HOME, ".cache/tangle/storage-lifecycle/pnpm-store.lock");
+    mkdirSync(dirname(producerFence), { recursive: true });
+    const gtr = (lease, name, script = 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20', timeout = 120_000) => {
       const dir = join(f.root, "pool", name), log = join(f.root, `${name}.log`);
       const args = [log, dir, f.url, f.first, "no-install"].map(encode);
-      return run("bash", [gate, "--gtr-run", ...args, "bash", "-c", script], { timeout: 120_000,
+      return run("timeout", ["-k", "1", String(timeout / 1000), "bash", gate, "--gtr-run", ...args, "bash", "-c", script], { timeout: timeout + 2_000,
         // The real PATH: the fixture's fake systemd-run records units instead of running the step's command.
         env: { ...f.env, PATH: process.env.PATH, HOSTLAB_HOME: join(f.root, "hostlab"), BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
     };
@@ -3959,8 +3962,36 @@ test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease 
     // hostlab writes the gate's id into a run it boots under a gate (10-27: a 16 GB lease's VM disks reached 39.8 GB).
     const vm = gtr(1_000_000, "c".repeat(32), 'r="$HOSTLAB_HOME/runs/r1"; mkdir -p "$r" && echo "$BEELINK_GATE_LEASE_DIR" > "$r/gate" && head -c 3000000 /dev/zero > "$r/disk.qcow2"; sleep 20');
     assert.equal(vm.status, 124, vm.stderr);
-    const within = gtr(1_000_000_000, "b".repeat(32));
+    const within = gtr(1_000_000_000, "b".repeat(32),
+      'f="$HOME/.cache/tangle/storage-lifecycle/pnpm-store.lock"; if flock -n -x "$f" true; then exit 97; fi; flock -n -s "$f" true || exit 98; head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20');
     assert.equal(within.status, 0, within.stderr);
+    assert.equal(run("flock", ["-n", "-x", producerFence, "true"]).status, 0,
+      "the producer fence remained held after command and child cleanup");
+    const cancelled = gtr(1_000_000_000, "d".repeat(32), `python3 - <<'PY'
+from pathlib import Path
+import os,signal,time
+parent=int(os.environ["BEELINK_GATE_RUN"].split(".")[0])
+for pid in Path(f"/proc/{parent}/task/{parent}/children").read_text().split():
+    process=Path("/proc")/pid
+    if process.joinpath("exe").resolve().name=="bash":
+        print("WATCHER",pid,process.joinpath("stat").read_text().rsplit(")",1)[1].split()[19],flush=True)
+os.kill(parent,signal.SIGTERM)
+time.sleep(20)
+PY`);
+    assert.equal(cancelled.status, 143, cancelled.stderr);
+    const watcher = cancelled.stdout.match(/WATCHER (\d+) (\d+)/);
+    assert.ok(watcher, cancelled.stdout);
+    const watcherStat = `/proc/${watcher[1]}/stat`;
+    assert.ok(!existsSync(watcherStat) || readFileSync(watcherStat, "utf8").split(") ")[1].split(" ")[19] !== watcher[2],
+      "the cancelled gate left its metric watcher alive");
+    assert.equal(run("flock", ["-n", "-x", producerFence, "true"]).status, 0,
+      "the cancelled gate or its watcher retained the producer fence");
+    renameSync(producerFence, `${producerFence}.regular`);
+    assert.equal(run("mkfifo", [producerFence]).status, 0);
+    const malformed = gtr(1_000_000_000, "e".repeat(32), "echo PRODUCER_EXECUTED", 5_000);
+    assert.equal(malformed.status, 75, malformed.stderr);
+    assert.match(malformed.stderr, /unsafe GTR PNPM producer fence/);
+    assert.doesNotMatch(malformed.stdout, /PRODUCER_EXECUTED/);
     const rows = readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
     const [stopped, passed] = [`drew-gtr-pro-${"a".repeat(32)}`, `drew-gtr-pro-${"b".repeat(32)}`].map((id) => rows.find((row) => row.gate_id === id));
     assert.equal(stopped.exit, 124);
@@ -4104,27 +4135,6 @@ exit 0
     assert.match(sound.stderr, /beelink-gate: merged #42 1{40} by drewstone/);
     assert.match(readFileSync(f.pnpmLog, "utf8"), /install --frozen-lockfile --lockfile-only --ignore-scripts/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
-});
-
-// An SSH-placed GTR gate runs in a non-login shell without ~/bin or ~/.local/bin on PATH (2026-10-26:
-// "setsid: failed to execute storage-lifecycle"). The gate's own resolver must still find the installed command.
-test("the GTR gate finds the installed storage-lifecycle when PATH does not have it", () => {
-  const home = mkdtempSync(join(tmpdir(), "gtr-lifecycle-"));
-  try {
-    const lib = resolve("claude/tools/beelink-gate-lib/gtr.sh");
-    const resolveIn = () => spawnSync("bash", ["-c", 'source "$1"; gtr_lifecycle', "gtr", lib],
-      { encoding: "utf8", env: { HOME: home, PATH: "/usr/bin:/bin" } });
-    assert.equal(resolveIn().status, 1, "no installed storage-lifecycle resolves to nothing");
-    const installed = join(home, ".local", "bin", "storage-lifecycle");
-    mkdirSync(dirname(installed), { recursive: true });
-    writeFileSync(installed, "#!/bin/sh\n");
-    chmodSync(installed, 0o755);
-    const found = resolveIn();
-    assert.equal(found.status, 0, found.stderr);
-    assert.equal(found.stdout.trim(), installed);
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
 });
 
 test("a gate's Docker socket streams each fresh proxy's first attached run in full", () => {

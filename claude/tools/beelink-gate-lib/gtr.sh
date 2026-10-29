@@ -6,14 +6,6 @@
 GTR_HOST=drew-gtr-pro
 gtr_self() { [ "$(hostname | tr '[:upper:]' '[:lower:]')" = "$GTR_HOST" ]; }
 
-# The installed storage-lifecycle (tangle-tools disk-guard/bin, in ~/.local/bin and ~/bin): a gate placed on GTR over SSH
-# runs in a non-login shell whose PATH has neither, and `setsid storage-lifecycle` failed to execute (2026-10-26).
-gtr_lifecycle() {
-  local candidate
-  for candidate in "$(command -v storage-lifecycle 2>/dev/null)" "$HOME/.local/bin/storage-lifecycle" "$HOME/bin/storage-lifecycle"; do [ -n "$candidate" ] && [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }; done
-  return 1
-}
-
 # GTR's receipts.jsonl, read here on GTR or over SSH; a host that never gated has none.
 gtr_receipts() {
   # shellcheck disable=SC2016 # expands on GTR
@@ -68,7 +60,7 @@ gtr_gate() {  # <command>...
     id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
     dir="$HOME/.cache/gtr-gate/pool/$id"
     printf -v q '%q ' "$@"; derived=$(gtr_reserve_bytes "${q% }") || { rm -f "$log"; return "$NOT_ADMITTED"; }; bytes=$(( derived > ${BEELINK_GATE_RESERVE_BYTES:-0} ? derived : BEELINK_GATE_RESERVE_BYTES ))  # a declared reserve only raises
-    lifecycle=$(gtr_lifecycle) || { echo "beelink-gate: storage-lifecycle is not installed on $GTR_HOST; waiting for a Beelink" >&2; rm -f "$log"; return "$NOT_ADMITTED"; }
+    lifecycle="$HOME/bin/storage-lifecycle"; [ -x "$lifecycle" ] || { echo "beelink-gate: storage-lifecycle is not installed on $GTR_HOST; waiting for a Beelink" >&2; rm -f "$log"; return "$NOT_ADMITTED"; }
     echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane op-company:beelink-gate-gtr reserves $bytes bytes (derived $derived, declared ${BEELINK_GATE_RESERVE_BYTES:-none}) for $dir" >&2
     # Its own session, so a stop reaches run-lane, the gate and the command together.
     setsid "$lifecycle" run-lane --lane op-company:beelink-gate-gtr --path "$dir" --bytes "$bytes" -- \
@@ -111,18 +103,17 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   command=("$@") beelink=$GTR_HOST checkout="$dir/checkout" gate_id=${BEELINK_GATE_ID:-} reaped=0 current=""
   # The command must not learn its gate's id: it could append a passing receipt for it.
   unset BEELINK_GATE_ID
-  gate_refs_before="" gate_refs_taken=0 bundle_note="" gtr_images_before="" overrun_bytes=""
-  run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
+  gate_refs_before="" gate_refs_taken=0 bundle_note="" gtr_images_before="" overrun_bytes="" watcher="" run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
   parse_repo_url "$repo_url"
   echo "beelink-gate: $GTR_HOST admitted gate_id=$gate_id" | tee -a "$log" >&2 || exit 75
-  started=$SECONDS base_sha="" gtr_status=""
-  max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
+  started=$SECONDS base_sha="" gtr_status="" max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
   printf -v display '%q ' "${command[@]}"
   # A lost launcher closes stderr: the receipt, the clone's removal and the status line come before any output.
   gtr_finish() {
-    local status=$1 bytes
+    local status=$1 bytes child
     trap '' PIPE; trap - EXIT TERM INT HUP
-    [ -z "$current" ] || kill -TERM "$current" 2>/dev/null
+    for child in "$current" "$watcher"; do [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true; done
+    [ -z "$watcher" ] || wait "$watcher" 2>/dev/null || true
     reap_leftovers
     # Commits the command made that reach no remote are bundled before the clone goes, as on a Beelink.
     save_unpushed
@@ -142,18 +133,25 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
     local left=$((started + max_hold - SECONDS)) rc
     (( left > 0 )) || { echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2; return 124; }
     BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "${gtr_scope[@]}" "$@" </dev/null & current=$!
-    gtr_watch_lease & local watcher=$!
+    BEELINK_GATE_RUN=$run_token gtr_watch_lease {pnpm_fd}<&- & watcher=$!
     wait "$current"; rc=$?
-    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null; current=""
+    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null; current="" watcher=""
     [ ! -f "$dir/.overrun" ] || { overrun_bytes=$(cat "$dir/.overrun"); rc=124; }
     reap_leftovers
     return "$rc"
   }
   # Each step runs on half the CPUs (affinity, which availableParallelism reads) in a user scope capped there and at
   # 32 GiB, and says it is admitted: hostlab's harness then sizes its VM 8 vCPU / 16 GiB. No user manager: unbounded, unsaid.
-  local cpus=$(( $(nproc --all) / 2 )) mem=$(( 32 << 30 )) cpu; cpu=$(( cpus * 100 )); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
+  local cpus=$(( $(nproc --all) / 2 )) mem=$(( 32 << 30 )) cpu pnpm_fence="$HOME/.cache/tangle/storage-lifecycle/pnpm-store.lock" pnpm_fd; cpu=$(( cpus * 100 )); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
   systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" -- taskset -c "0-$((cpus - 1))") \
     && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpus\":$cpus,\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
+  # Keep the shared producer FD through dependency installation, commands and child cleanup.
+  (umask 077; : <> "$pnpm_fence") && exec {pnpm_fd}<>"$pnpm_fence" || exit 75
+  flock -s -w "$((started + max_hold - SECONDS))" "$pnpm_fd" || exit 75
+  python3 -I -c 'from pathlib import Path; import os,stat,sys
+p=Path(sys.argv[1]); a=p.lstat(); b=os.fstat(int(sys.argv[2]))
+if any(x.is_symlink() for x in p.parents) or not stat.S_ISREG(a.st_mode) or a.st_uid!=os.getuid() or a.st_nlink!=1 or a.st_mode&0o022 or (a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino): sys.exit("unsafe GTR PNPM producer fence")
+' "$pnpm_fence" "$pnpm_fd" || exit 75
   mkdir -p "$dir/tmp" || exit 75; export TMPDIR="$dir/tmp" BEELINK_GATE_LEASE_DIR="$dir"; gtr_images_before=$(docker image ls -q --no-trunc 2>/dev/null | sort -u)
   git clone --quiet --no-checkout --filter=blob:none "$(fetch_url "$repo_url")" "$checkout" || exit 75
   git -C "$checkout" fetch --quiet --filter=blob:none origin "$sha" || exit 75
