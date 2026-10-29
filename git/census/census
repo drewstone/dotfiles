@@ -57,28 +57,30 @@ def area(path):
     return "/".join(dirs[:2] if dirs[:1] and dirs[0] in ("apps", "products", "packages", "services", "tools") else dirs[:1]) or "(root)"
 
 
-def production_delta(checkout, base, head, merge=None):
-    """Count changed production blobs once, with cross-area renames free and inherited merge blobs excluded."""
+def production_delta(checkout, base, head, merge=None, paths=None):
+    """Count changed production blobs once, with cross-area renames free. A merge is charged only for what it adds beyond
+    both parents: its change from `base` less `merge`'s own change since their fork, read only where a side differs."""
+    size = lambda ref, name: production_sizes(checkout, ref, read_blobs(checkout, ref, [name]) if name and C.candidate(name) else {}).get(name)
+    if merge:
+        fork = git(checkout, "merge-base", base, merge).decode().strip()
+        paths = {p for a, b in ((merge, head), (fork, base)) for p in git(checkout, "diff", "--name-only", "--no-renames", "-z", a, b).decode().split("\0")[:-1]}
+        theirs = production_delta(checkout, fork, merge, paths=paths)[0]
     parts = iter(git(checkout, "diff", "--name-status", "-z", "-M", "--diff-filter=ACDMR", base, head).decode().split("\0")[:-1])
     growth, oversized = collections.Counter(), []
     for status in parts:
         old_path = next(parts)
         path = next(parts) if status[0] in "RC" else old_path
-        if merge and status[0] != "D" and optional_ref(checkout, f"{merge}:{path}") == optional_ref(checkout, f"{head}:{path}"):
+        if paths is not None and not {old_path, path} & paths:
             continue
-        sizes = []
-        for ref, name, absent in ((base, old_path, status[0] in "AC"), (head, path, status[0] == "D")):
-            blobs = read_blobs(checkout, ref, [name]) if not absent and C.candidate(name) else {}
-            blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
-            sizes.append(production_sizes(checkout, ref, blobs).get(name))
-        old, new = sizes
+        old, new = size(base, status[0] not in "AC" and old_path), size(head, status[0] != "D" and path)
         if status[0] == "R" and area(old_path) != area(path):
             growth[area(path)] += (new or 0) - (old or 0)
         else:
             growth[area(old_path)] -= old or 0
             growth[area(path)] += new or 0
-        if new and new > C.FILE_LIMIT and (old is None or new > old):
+        if new and new > max(C.FILE_LIMIT, old or 0) and not (merge and new <= (size(merge, optional_ref(checkout, f"{merge}:{path}") and path) or 0)):
             oversized.append((path, old, new))
+    growth.subtract(theirs if merge else {})
     return dict(growth), oversized
 
 
@@ -201,16 +203,15 @@ def measurement_view(result, rev, scopes):
     view = {**result, "rev": rev}
     if not scopes:
         return view
-    paths = scopes
-    belongs = lambda p: any(root == "." or p == root or p.startswith(root + "/") for root in paths)
+    belongs = lambda p: any(root == "." or p == root or p.startswith(root + "/") for root in scopes)
     sizes, copies = result["lists"]["prod_lines"], result["lists"]["dup_lines"]
-    for root in paths:
+    for root in scopes:
         if not any(root == "." or p == root or p.startswith(root + "/") for p in sizes.keys() | copies["files"].keys()):
             raise Refused(f"--scope {root}: matched no measured logic or source file")
     selected = {p: counts for p, counts in copies["files"].items() if belongs(p)}
     dup = sum(f["dup_lines"] for f in selected.values())
     normalized = sum(f["normalized_lines"] for f in selected.values())
-    view["scope"] = {"paths": paths, "files_read": {"logic": sum(belongs(p) for p in sizes), "source": len(selected)},
+    view["scope"] = {"paths": scopes, "files_read": {"logic": sum(belongs(p) for p in sizes), "source": len(selected)},
                      "metrics": {"prod_lines": sum(n for p, n in sizes.items() if belongs(p)), "dup_lines": dup,
                                  "dup_pct": round(100 * dup / max(normalized, 1), 2)},
                      "lists": {"dup_lines": {"files": selected, "windows": {h: occ for h, occ in copies["windows"].items()
@@ -257,9 +258,8 @@ def remember(file, value):
     """Cache a measurement by instrument revision and tree; older instrument revisions and month-old trees go."""
     root, version = os.path.dirname(os.path.dirname(file)), os.path.basename(os.path.dirname(file))
     os.makedirs(os.path.dirname(file), exist_ok=True)
-    for old in os.listdir(root):
-        if old != version:
-            shutil.rmtree(os.path.join(root, old), ignore_errors=True)
+    for old in set(os.listdir(root)) - {version}:
+        shutil.rmtree(os.path.join(root, old), ignore_errors=True)
     for old in os.listdir(os.path.dirname(file)):
         path = os.path.join(os.path.dirname(file), old)
         try:
@@ -287,7 +287,6 @@ def measure(checkout, rev, scopes=()):
     function_paths = [p for p in paths if C.function_source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
     blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
-    logic = [p for p in logic if C.logic(p, C.head_of(blobs[p]))]
     sizes = production_sizes(checkout, tree, {p: blobs[p] for p in logic})
     if not sizes:
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
@@ -329,8 +328,7 @@ def window_set(checkout, rev):
 
 def peer(spec):
     name, rest = spec.split("=", 1)
-    checkout, rev = rest.rsplit(":", 1)
-    return name, checkout, rev
+    return name, *rest.rsplit(":", 1)
 
 
 def floors(checkout, base, head, names, peers, approval=None):
@@ -414,6 +412,8 @@ def xrepo(specs):
 
 
 def production_sizes(checkout, tree, blobs):
+    """Lines of the logic files among `blobs`, less linguist-generated, vendored and generated-header files."""
+    blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
     exempt = attr_exempt(checkout, tree, list(blobs)) | {p for p, b in blobs.items() if C.generated(b[:2000].decode(errors="replace"))}
     return {p: C.line_count(b) for p, b in blobs.items() if p not in exempt}
 

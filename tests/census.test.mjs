@@ -81,6 +81,33 @@ test("each ratchet refuses its violation through the shared classification, and 
   assert.equal(run(dir, join(hooks, "ratchets"), []).status, 0);
 });
 
+test("a merge commit is charged only for what it adds beyond both parents", () => {
+  const a = (n, top = "") => top + lines(n, (i) => `a${i} = ${i}`);
+  const big = (n, top = "") => top + lines(n, (i) => `b${i} = ${i}`);
+  const { dir, git } = repo({ "src/a.py": a(40), "src/big.py": big(998) });
+  const commit = (files, message) => {
+    write(dir, files);
+    git("add", "-A");
+    git("-c", "user.email=f@x.invalid", "-c", "user.name=f", "commit", "-qm", message);
+  };
+  git("checkout", "-qb", "branch");
+  commit({ "src/a.py": a(30), "src/big.py": big(997) }, "branch only shrinks src");
+  git("checkout", "-q", "main");
+  const grown = "g0 = 0\ng1 = 1\ng2 = 2\n";
+  commit({ "src/a.py": a(40, grown), "src/big.py": big(998, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\n"), "src/c.py": grown }, "develop grows src");
+  git("checkout", "-q", "branch");
+  // First parent is the branch: develop's +3, +7 (to 1,005 lines) and new c.py are its own growth, never the merge's.
+  git("merge", "-q", "--no-commit", "--no-ff", "main");
+  const clean = run(dir, join(hooks, "loc-ratchet"), []);
+  assert.equal(clean.status, 0, clean.stderr);
+  write(dir, { "src/a.py": a(30, grown + "own0 = 0\nown1 = 1\n"), "src/big.py": big(997, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\nown0 = 0\nown1 = 1\n") });
+  git("add", "-A");
+  const evil = run(dir, join(hooks, "loc-ratchet"), []);
+  assert.equal(evil.status, 1, evil.stderr);
+  assert.match(evil.stderr, /src gains 4 production lines/);
+  assert.match(evil.stderr, /src\/big\.py: 1006 lines \(was 997\)/);
+});
+
 test("census floors measure a sparse worktree against its base and refuse a rise in production lines and copies", () => {
   const body = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
   const { dir, git } = repo({ "a/x.ts": `export function x(values: number[]) {\n  let total = 0\n${body}  return total\n}\n`, "b/z.ts": "export const z = 1\n" });
