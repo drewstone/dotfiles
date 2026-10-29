@@ -6,13 +6,8 @@
 GTR_HOST=drew-gtr-pro
 gtr_self() { [ "$(hostname | tr '[:upper:]' '[:lower:]')" = "$GTR_HOST" ]; }
 
-# The installed storage-lifecycle (tangle-tools disk-guard/bin, in ~/.local/bin and ~/bin): a gate placed on GTR over SSH
-# runs in a non-login shell whose PATH has neither, and `setsid storage-lifecycle` failed to execute (2026-10-26).
-gtr_lifecycle() {
-  local candidate
-  for candidate in "$(command -v storage-lifecycle 2>/dev/null)" "$HOME/.local/bin/storage-lifecycle" "$HOME/bin/storage-lifecycle"; do [ -n "$candidate" ] && [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }; done
-  return 1
-}
+# The lifecycle installer owns ~/bin/storage-lifecycle, including non-login SSH.
+gtr_lifecycle() { [ -x "$HOME/bin/storage-lifecycle" ] && printf '%s\n' "$HOME/bin/storage-lifecycle"; }
 
 # GTR's receipts.jsonl, read here on GTR or over SSH; a host that never gated has none.
 gtr_receipts() {
@@ -111,12 +106,10 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   command=("$@") beelink=$GTR_HOST checkout="$dir/checkout" gate_id=${BEELINK_GATE_ID:-} reaped=0 current=""
   # The command must not learn its gate's id: it could append a passing receipt for it.
   unset BEELINK_GATE_ID
-  gate_refs_before="" gate_refs_taken=0 bundle_note="" gtr_images_before="" overrun_bytes=""
-  run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
+  gate_refs_before="" gate_refs_taken=0 bundle_note="" gtr_images_before="" overrun_bytes="" run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
   parse_repo_url "$repo_url"
   echo "beelink-gate: $GTR_HOST admitted gate_id=$gate_id" | tee -a "$log" >&2 || exit 75
-  started=$SECONDS base_sha="" gtr_status=""
-  max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
+  started=$SECONDS base_sha="" gtr_status="" max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
   printf -v display '%q ' "${command[@]}"
   # A lost launcher closes stderr: the receipt, the clone's removal and the status line come before any output.
   gtr_finish() {
@@ -151,9 +144,16 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   }
   # Each step runs on half the CPUs (affinity, which availableParallelism reads) in a user scope capped there and at
   # 32 GiB, and says it is admitted: hostlab's harness then sizes its VM 8 vCPU / 16 GiB. No user manager: unbounded, unsaid.
-  local cpus=$(( $(nproc --all) / 2 )) mem=$(( 32 << 30 )) cpu; cpu=$(( cpus * 100 )); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
+  local cpus=$(( $(nproc --all) / 2 )) mem=$(( 32 << 30 )) cpu pnpm_fence="$HOME/.cache/tangle/storage-lifecycle/pnpm-store.lock" pnpm_fd; cpu=$(( cpus * 100 )); export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; gtr_scope=()
   systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" -- taskset -c "0-$((cpus - 1))") \
     && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpus\":$cpus,\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
+  # Keep the shared producer FD through dependency installation, commands and child cleanup.
+  (umask 077; : >> "$pnpm_fence") && exec {pnpm_fd}<>"$pnpm_fence" || exit 75
+  flock -s -w "$((started + max_hold - SECONDS))" "$pnpm_fd" || exit 75
+  python3 -I -c 'from pathlib import Path; import os,stat,sys
+p=Path(sys.argv[1]); a=p.lstat(); b=os.fstat(int(sys.argv[2]))
+if any(x.is_symlink() for x in p.parents) or not stat.S_ISREG(a.st_mode) or a.st_uid!=os.getuid() or a.st_nlink!=1 or a.st_mode&0o022 or (a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino): sys.exit("unsafe GTR PNPM producer fence")
+' "$pnpm_fence" "$pnpm_fd" || exit 75
   mkdir -p "$dir/tmp" || exit 75; export TMPDIR="$dir/tmp" BEELINK_GATE_LEASE_DIR="$dir"; gtr_images_before=$(docker image ls -q --no-trunc 2>/dev/null | sort -u)
   git clone --quiet --no-checkout --filter=blob:none "$(fetch_url "$repo_url")" "$checkout" || exit 75
   git -C "$checkout" fetch --quiet --filter=blob:none origin "$sha" || exit 75
