@@ -146,7 +146,7 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   systemd-run --user --scope --quiet true 2>/dev/null && gtr_scope=(systemd-run --user --scope --quiet -p "CPUQuota=$cpu%" -p "MemoryMax=$mem" -- taskset -c "0-$((cpus - 1))") \
     && export BEELINK_GATE_ADMITTED=1 BEELINK_GATE_ADMISSION_SAMPLE="{\"mode\":\"gtr_storage_lease\",\"cpus\":$cpus,\"cpu_quota_pct\":$cpu,\"memory_max_bytes\":$mem}"
   # Keep the shared producer FD through dependency installation, commands and child cleanup.
-  (umask 077; : >> "$pnpm_fence") && exec {pnpm_fd}<>"$pnpm_fence" || exit 75
+  (umask 077; : <> "$pnpm_fence") && exec {pnpm_fd}<>"$pnpm_fence" || exit 75
   flock -s -w "$((started + max_hold - SECONDS))" "$pnpm_fd" || exit 75
   python3 -I -c 'from pathlib import Path; import os,stat,sys
 p=Path(sys.argv[1]); a=p.lstat(); b=os.fstat(int(sys.argv[2]))

@@ -3949,10 +3949,10 @@ test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease 
     // Normal admission creates the lifecycle state before gtr_run starts.
     const producerFence = join(f.env.HOME, ".cache/tangle/storage-lifecycle/pnpm-store.lock");
     mkdirSync(dirname(producerFence), { recursive: true });
-    const gtr = (lease, name, script = 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20') => {
+    const gtr = (lease, name, script = 'head -c 3000000 /dev/zero > "$TMPDIR/blob"; sleep 20', timeout = 120_000) => {
       const dir = join(f.root, "pool", name), log = join(f.root, `${name}.log`);
       const args = [log, dir, f.url, f.first, "no-install"].map(encode);
-      return run("bash", [gate, "--gtr-run", ...args, "bash", "-c", script], { timeout: 120_000,
+      return run("timeout", ["-k", "1", String(timeout / 1000), "bash", gate, "--gtr-run", ...args, "bash", "-c", script], { timeout: timeout + 2_000,
         // The real PATH: the fixture's fake systemd-run records units instead of running the step's command.
         env: { ...f.env, PATH: process.env.PATH, HOSTLAB_HOME: join(f.root, "hostlab"), BEELINK_GATE_ID: `drew-gtr-pro-${name}`, BEELINK_GATE_LEASE_BYTES: String(lease), BEELINK_GATE_LEASE_POLL_SECONDS: "1" } });
     };
@@ -3986,6 +3986,12 @@ PY`);
       "the cancelled gate left its metric watcher alive");
     assert.equal(run("flock", ["-n", "-x", producerFence, "true"]).status, 0,
       "the cancelled gate or its watcher retained the producer fence");
+    renameSync(producerFence, `${producerFence}.regular`);
+    assert.equal(run("mkfifo", [producerFence]).status, 0);
+    const malformed = gtr(1_000_000_000, "e".repeat(32), "echo PRODUCER_EXECUTED", 5_000);
+    assert.equal(malformed.status, 75, malformed.stderr);
+    assert.match(malformed.stderr, /unsafe GTR PNPM producer fence/);
+    assert.doesNotMatch(malformed.stdout, /PRODUCER_EXECUTED/);
     const rows = readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
     const [stopped, passed] = [`drew-gtr-pro-${"a".repeat(32)}`, `drew-gtr-pro-${"b".repeat(32)}`].map((id) => rows.find((row) => row.gate_id === id));
     assert.equal(stopped.exit, 124);
