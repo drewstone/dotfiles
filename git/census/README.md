@@ -91,6 +91,7 @@ The record must list every positive area delta, including new areas. Areas are `
 other top-level directories, or `(root)` for root files. Git renames across areas count only their added or removed lines.
 For commits, set `git config --local census.growthApproval /absolute/private/approval.json` and use normal `git commit`.
 For Census, pass `--growth-approval` to `floors`. Keep the local config through normal commit and push, then remove it.
+A merge into agent-container runs `loc-ratchet <merge-base>..<head>` inside `gh-drew` ([tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md)); there the approval is a comment on the PR, its quote the text above the block.
 The same validator checks the exact origin, base, tree and area deltas. It fetches the cited comment with `gh-drew`,
 checks its author against the authenticated account, and verifies the quote and full body digest. The fetched
 comment must also contain a fenced `census-growth-approval` JSON block with exactly `repository`, `base`, `tree`

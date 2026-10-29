@@ -148,10 +148,6 @@ recorded a result), `failed` (journal recorded a failure), `USAGE-LIMIT`
 a guess), or `DIED-LIKELY?` (no concluding journal event and no activity
 for 10+ minutes — a hypothesis; could be a crash or an interrupt instead).
 
-## pr-gate
-
-`pr-gate` is a tangle-tools command: see [tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md).
-
 ## merge-on-green
 
 `merge-on-green` is a tangle-tools command: see [tangle-tools github/README.md](https://github.com/tangle-network/tangle-tools/blob/main/github/README.md).
