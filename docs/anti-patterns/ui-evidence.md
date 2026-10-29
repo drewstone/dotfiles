@@ -47,4 +47,6 @@ A failed step stays in the video; the recording is evidence, not a highlight ree
 Watch it before reporting, and link it where the reader will see it.
 
 Use [screenshots](https://playwright.dev/docs/screenshots) and [videos](https://playwright.dev/docs/videos) through maintained browser tools.
+On the Mac, launch the browser through Playwright, whose headless runs use its own `chrome-headless-shell`, and stop it before you finish.
+Never start `/Applications/Google Chrome.app` with `--headless`: macOS hands `open <page>` to the oldest running Chrome, so one leftover headless copy swallowed every page Drew opened for two days (2026-10-29).
 The tool does not determine whether the evidence is useful; inspect the result.
