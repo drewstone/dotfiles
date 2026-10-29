@@ -6,9 +6,6 @@
 GTR_HOST=drew-gtr-pro
 gtr_self() { [ "$(hostname | tr '[:upper:]' '[:lower:]')" = "$GTR_HOST" ]; }
 
-# The lifecycle installer owns ~/bin/storage-lifecycle, including non-login SSH.
-gtr_lifecycle() { [ -x "$HOME/bin/storage-lifecycle" ] && printf '%s\n' "$HOME/bin/storage-lifecycle"; }
-
 # GTR's receipts.jsonl, read here on GTR or over SSH; a host that never gated has none.
 gtr_receipts() {
   # shellcheck disable=SC2016 # expands on GTR
@@ -63,7 +60,7 @@ gtr_gate() {  # <command>...
     id="$GTR_HOST-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
     dir="$HOME/.cache/gtr-gate/pool/$id"
     printf -v q '%q ' "$@"; derived=$(gtr_reserve_bytes "${q% }") || { rm -f "$log"; return "$NOT_ADMITTED"; }; bytes=$(( derived > ${BEELINK_GATE_RESERVE_BYTES:-0} ? derived : BEELINK_GATE_RESERVE_BYTES ))  # a declared reserve only raises
-    lifecycle=$(gtr_lifecycle) || { echo "beelink-gate: storage-lifecycle is not installed on $GTR_HOST; waiting for a Beelink" >&2; rm -f "$log"; return "$NOT_ADMITTED"; }
+    lifecycle="$HOME/bin/storage-lifecycle"; [ -x "$lifecycle" ] || { echo "beelink-gate: storage-lifecycle is not installed on $GTR_HOST; waiting for a Beelink" >&2; rm -f "$log"; return "$NOT_ADMITTED"; }
     echo "beelink-gate: gate_id=$id; storage-lifecycle run-lane --lane op-company:beelink-gate-gtr reserves $bytes bytes (derived $derived, declared ${BEELINK_GATE_RESERVE_BYTES:-none}) for $dir" >&2
     # Its own session, so a stop reaches run-lane, the gate and the command together.
     setsid "$lifecycle" run-lane --lane op-company:beelink-gate-gtr --path "$dir" --bytes "$bytes" -- \
@@ -106,16 +103,17 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
   command=("$@") beelink=$GTR_HOST checkout="$dir/checkout" gate_id=${BEELINK_GATE_ID:-} reaped=0 current=""
   # The command must not learn its gate's id: it could append a passing receipt for it.
   unset BEELINK_GATE_ID
-  gate_refs_before="" gate_refs_taken=0 bundle_note="" gtr_images_before="" overrun_bytes="" run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
+  gate_refs_before="" gate_refs_taken=0 bundle_note="" gtr_images_before="" overrun_bytes="" watcher="" run_token="$$.${EPOCHSECONDS:-$(date +%s)}.$RANDOM$RANDOM"
   parse_repo_url "$repo_url"
   echo "beelink-gate: $GTR_HOST admitted gate_id=$gate_id" | tee -a "$log" >&2 || exit 75
   started=$SECONDS base_sha="" gtr_status="" max_hold=$(seconds_of "${BEELINK_GATE_MAX_HOLD:-45m}") || die "invalid BEELINK_GATE_MAX_HOLD"
   printf -v display '%q ' "${command[@]}"
   # A lost launcher closes stderr: the receipt, the clone's removal and the status line come before any output.
   gtr_finish() {
-    local status=$1 bytes
+    local status=$1 bytes child
     trap '' PIPE; trap - EXIT TERM INT HUP
-    [ -z "$current" ] || kill -TERM "$current" 2>/dev/null
+    for child in "$current" "$watcher"; do [ -z "$child" ] || kill -TERM "$child" 2>/dev/null || true; done
+    [ -z "$watcher" ] || wait "$watcher" 2>/dev/null || true
     reap_leftovers
     # Commits the command made that reach no remote are bundled before the clone goes, as on a Beelink.
     save_unpushed
@@ -135,9 +133,9 @@ gtr_run() {  # <log> <dir> <repo-url> <sha> <mode> <command>...
     local left=$((started + max_hold - SECONDS)) rc
     (( left > 0 )) || { echo "beelink-gate: hold limit of ${max_hold}s reached; stopped $1" >&2; return 124; }
     BEELINK_GATE_RUN=$run_token timeout -k 30 "$left" "${gtr_scope[@]}" "$@" </dev/null & current=$!
-    gtr_watch_lease & local watcher=$!
+    BEELINK_GATE_RUN=$run_token gtr_watch_lease {pnpm_fd}<&- & watcher=$!
     wait "$current"; rc=$?
-    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null; current=""
+    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null; current="" watcher=""
     [ ! -f "$dir/.overrun" ] || { overrun_bytes=$(cat "$dir/.overrun"); rc=124; }
     reap_leftovers
     return "$rc"

@@ -3967,6 +3967,25 @@ test("a GTR gate counts its TMPDIR and its tagged hostlab runs toward its lease 
     assert.equal(within.status, 0, within.stderr);
     assert.equal(run("flock", ["-n", "-x", producerFence, "true"]).status, 0,
       "the producer fence remained held after command and child cleanup");
+    const cancelled = gtr(1_000_000_000, "d".repeat(32), `python3 - <<'PY'
+from pathlib import Path
+import os,signal,time
+parent=int(os.environ["BEELINK_GATE_RUN"].split(".")[0])
+for pid in Path(f"/proc/{parent}/task/{parent}/children").read_text().split():
+    process=Path("/proc")/pid
+    if process.joinpath("exe").resolve().name=="bash":
+        print("WATCHER",pid,process.joinpath("stat").read_text().rsplit(")",1)[1].split()[19],flush=True)
+os.kill(parent,signal.SIGTERM)
+time.sleep(20)
+PY`);
+    assert.equal(cancelled.status, 143, cancelled.stderr);
+    const watcher = cancelled.stdout.match(/WATCHER (\d+) (\d+)/);
+    assert.ok(watcher, cancelled.stdout);
+    const watcherStat = `/proc/${watcher[1]}/stat`;
+    assert.ok(!existsSync(watcherStat) || readFileSync(watcherStat, "utf8").split(") ")[1].split(" ")[19] !== watcher[2],
+      "the cancelled gate left its metric watcher alive");
+    assert.equal(run("flock", ["-n", "-x", producerFence, "true"]).status, 0,
+      "the cancelled gate or its watcher retained the producer fence");
     const rows = readFileSync(join(f.root, "state", "receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
     const [stopped, passed] = [`drew-gtr-pro-${"a".repeat(32)}`, `drew-gtr-pro-${"b".repeat(32)}`].map((id) => rows.find((row) => row.gate_id === id));
     assert.equal(stopped.exit, 124);
