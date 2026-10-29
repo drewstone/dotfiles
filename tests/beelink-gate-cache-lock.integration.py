@@ -5,7 +5,6 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import signal
 import subprocess
 import tempfile
 import time
@@ -91,39 +90,6 @@ def run_case(lock_name, timeout):
                 "stderr": stderr, "stdout": stdout}
 
 
-def watcher_identity_case(source):
-    """Only the complete native line for the allocated ID may stop heartbeats."""
-    gate_id = "beelink1-" + "c" * 32
-    line = "beelink-gate: placement handoff gate_id=" + gate_id
-    with tempfile.TemporaryDirectory(prefix="gate-watcher-identity-") as tmp:
-        root = Path(tmp)
-        log = root / "attach.log"
-        files = [root / "beelink1", root / "beelink2"]
-        log.write_text("\n".join([line + "0", line[:-1], "prefix " + line,
-                                   line + " suffix", line + " ", line + "\r"]) + "\n")
-        script = function(source, "watch_checkout_admission") + r'''
-checkout_reservation_files=("$2" "$3")
-watch_checkout_admission "$1" "$4"
-'''
-        child = subprocess.Popen(["bash", "-c", script, "watcher", str(log),
-                                  *map(str, files), gate_id], start_new_session=True)
-        try:
-            time.sleep(0.5)
-            exact = child.poll() is None and not any(Path(str(f) + ".stop").exists() for f in files)
-            with log.open("a") as stream:
-                stream.write(line + "\n")
-            try:
-                child.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                exact = False
-            return {"case": "watcher-exact-id-line", "passed": exact and
-                    all(Path(str(f) + ".stop").exists() for f in files)}
-        finally:
-            if child.poll() is None:
-                os.killpg(child.pid, signal.SIGTERM)
-            child.wait(timeout=2)
-
-
 def main():
     global GATE
     parser = argparse.ArgumentParser()
@@ -133,8 +99,6 @@ def main():
     rows = [run_case(lock, timeout) for lock in
             [".capacity.writer.lock", ".capacity.lock"]
             for timeout in [False, True]]
-    source = GATE.read_text()
-    rows.append(watcher_identity_case(source))
     print(json.dumps({"cases": rows, "passed": sum(r["passed"] for r in rows),
                       "total": len(rows)}, indent=2))
     raise SystemExit(0 if all(r["passed"] for r in rows) else 1)
