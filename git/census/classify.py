@@ -66,7 +66,7 @@ def history(path):
 
 def generated(head):
     """A generated marker in a comment header, not a quoted mention in source or prose."""
-    return bool(re.search(r"(?m)^\s*(?://|#|/\*|\*|--|<!--).*?(?:@generated\b|DO NOT EDIT\b)", head))
+    return bool(re.search(r'''(?m)^\s*(?://|#|/\*|\*|--|<!--).*?(?<!["'])(?:@generated\b|DO NOT EDIT\b)''', head))
 
 
 def line_count(data):
