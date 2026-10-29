@@ -78,7 +78,8 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     write(repo, "src/extra.py", "third = 3\n")
     run(repo, "git", "add", "-A")
     commit(repo, status=1, contains="growth approval does not match")
-    run(repo, "git", "rm", "-q", "src/extra.py")
+    run(repo, "git", "rm", "-q", "--cached", "src/extra.py")
+    (repo / "src/extra.py").unlink()
     commit(repo)
     base = record["base"]
     run(repo, str(HOOKS / "loc-ratchet"), f"{base}..HEAD")

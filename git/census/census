@@ -2,7 +2,7 @@
 """The census: every codebase instrument, owned beside the ratchets (git/census/README.md).
 
   census measure <checkout> <rev> [--scope prefix ...]   whole-repo metrics, with an optional scoped view
-  census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...]
+  census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...] [--growth-approval file]
   census xrepo name=checkout:rev [name=checkout:rev ...]
   census files <checkout> <rev>                         path, lines and class of every logic file, as TSV
 
