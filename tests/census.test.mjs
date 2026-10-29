@@ -73,6 +73,11 @@ test("each ratchet refuses its violation through the shared classification, and 
   git("reset", "-q", "--hard");
   write(dir, { "src/c.ts": "export const ok = 3\n" });
   git("add", "-A");
+  const grown = run(dir, join(hooks, "ratchets"), []);
+  assert.equal(grown.status, 1);
+  assert.match(grown.stderr, /src gains 1 production lines/);
+  write(dir, { "src/a.ts": "" });
+  git("add", "-A");
   assert.equal(run(dir, join(hooks, "ratchets"), []).status, 0);
 });
 
