@@ -51,6 +51,7 @@ admit_release_priority() {
 # Check again after waiting for the repo lock, before any checkout is touched.
 # A gate admitted before the window keeps running, including its install.
 check_update_window() {
+  [ "$2" != none ] || return 0
   python3 - "$@" <<'PY'
 from datetime import datetime, time, timedelta, timezone
 import os
