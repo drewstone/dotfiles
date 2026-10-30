@@ -39,7 +39,7 @@ def installed_hook(response, path, guard):
     if not matches:
         matches = [hook for hook in hooks if hook.get('sourcePath') == str(path.resolve())]
     if len(matches) != 1:
-        raise RuntimeError(f'expected one installed scan guard in {path}; found {len(matches)}')
+        raise RuntimeError(f'expected one installed guard {guard} in {path}; found {len(matches)}')
     return matches[0]
 
 
@@ -113,7 +113,7 @@ def install(home, guard):
         stream.write(f'\n[hooks.state.{json.dumps(key)}]\ntrusted_hash = {json.dumps(current_hash)}\n')
         stream.flush()
         os.fsync(stream.fileno())
-    print(f'  CODEX {path}: scan guard trusted')
+        print(f'  CODEX {path}: {Path(guard).name} trusted')
 
 
 if __name__ == '__main__':

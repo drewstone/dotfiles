@@ -186,12 +186,12 @@ for legacy_traces in "$HOME/bin/traces" "$HOME/.local/bin/traces"; do
   fi
 done
 
-# Codex runs the shared search guard as a PreToolUse hook. Trust its exact
-# definition in every existing account home; Codex hashes each source path
-# separately. The helper gets the hash from Codex itself and rejects changes.
+# Codex trusts each PreToolUse guard by the hash it reports. A changed file stays untrusted until the next review.
 for codex_home in "$CODEX_DIR" "$HOME"/.config/agent-accounts/codex/*; do
   [ -d "$codex_home" ] || continue
-  python3 "$SCRIPT_DIR/hooks/codex-trust-managed.py" "$codex_home" "$CLAUDE_DIR/hooks/scan-guard.sh"
+  for guard in scan-guard.sh host-stop-guard; do
+    python3 "$SCRIPT_DIR/hooks/codex-trust-managed.py" "$codex_home" "$CLAUDE_DIR/hooks/$guard"
+  done
 done
 
 # The sweep crons redirect into $HOME/attic/sweep.log. A missing directory makes

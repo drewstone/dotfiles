@@ -144,7 +144,7 @@ exec "$command" "$@"
   // Host CPU PSI admits every class; an unreadable one holds admission, so fixture hosts are idle unless a test loads them.
   const hostPressure = join(root, "host-pressure");
   writeFileSync(hostPressure, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
-  const env = { ...inherited, FAKE_WU_DAY: String(windowDay), FAKE_WU_HOUR: String(windowHour), BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_HOST_PRESSURE: hostPressure, BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), BEELINK_GATE_DISK_POLICY: join(diskPolicy, "disk_policy.py"), BEELINK_GATE_RESOURCE_POLICY: join(host, "resource-policy.json"), BEELINK_GATE_CGROUP_ROOT: join(host, "cgroup"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...inherited, FAKE_WU_DAY: String(windowDay), FAKE_WU_HOUR: String(windowHour), BEELINK_GATE_LOADAVG: loadavg, BEELINK_GATE_HOST_PRESSURE: hostPressure, BEELINK_GATE_HOST_IO_PRESSURE: hostPressure, BEELINK_GATE_LIMITS_FILE: join(root, "no-limits"), BEELINK_GATE_DISK_POLICY: join(diskPolicy, "disk_policy.py"), BEELINK_GATE_RESOURCE_POLICY: join(host, "resource-policy.json"), BEELINK_GATE_CGROUP_ROOT: join(host, "cgroup"), HOME: home, XDG_CACHE_HOME: join(home, ".cache"), TZ: "Etc/UTC", BEELINK_GATE_CACHE_ROOT: cache, BEELINK_GATE_SELF: "none", BEELINK_GATE_STATE_DIR: join(root, "state"), NPM_LOG: npmLog, PNPM_LOG: pnpmLog, PATH: `${bin}:${process.env.PATH}` };
   const url = `file://${bare}`;
   const call = (sha, args, options = {}) => run("bash", [gate, "--remote", ...[options.host ?? "beelink2", url, sha, options.noInstall ? "no-install" : "install", options.windowDay ?? windowDay, options.windowHour ?? windowHour, ...args].map(encode)], { env: { ...env, ...options.env } });
   return { root, home, cache, npmLog, pnpmLog, source, bare, env, url, windowDay, windowHour, first, second, call, git };
@@ -192,6 +192,7 @@ fi
 [[ -z "\${FAKE_AVAIL_PREFIX:-}" ]] || export FAKE_AVAIL_FILE="$FAKE_AVAIL_PREFIX-$host"
 [[ -z "\${FAKE_LOAD_PREFIX:-}" ]] || export BEELINK_GATE_HOST_PRESSURE="$FAKE_LOAD_PREFIX-$host"
 [[ -z "\${FAKE_HOST_PRESSURE_PREFIX:-}" ]] || export BEELINK_GATE_HOST_PRESSURE="$FAKE_HOST_PRESSURE_PREFIX-$host"
+[[ -z "\${FAKE_IO_PREFIX:-}" ]] || export BEELINK_GATE_HOST_IO_PRESSURE="$FAKE_IO_PREFIX-$host"
 [[ ! -f "\${FAKE_PATH_PREFIX:-}-$host" ]] || export PATH="$(cat "$FAKE_PATH_PREFIX-$host")"
 exec "\${rest[@]:2}"
 `);
@@ -2708,6 +2709,20 @@ test("a gate waiting for load holds no checkout, so the repo lock stays free unt
 
 const pressureLine = (avg10) => `some avg10=${avg10.toFixed(2)} avg60=1.00 avg300=1.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n`;
 
+test("auto placement picks the lower-IO host when CPU pressure would prefer the disk-bound one", () => {
+  const f = fixture();
+  try {
+    const env = loadedHosts(f, 0.5, 4);
+    const ioPrefix = join(f.root, "io");
+    writeFileSync(`${ioPrefix}-100.98.195.7`, pressureLine(18));
+    writeFileSync(`${ioPrefix}-100.127.22.51`, pressureLine(2));
+    const chosen = run(gate, ["--no-install", "auto", f.url, f.first, "--", "true"], { env: { ...env, FAKE_IO_PREFIX: ioPrefix } });
+    assert.equal(chosen.status, 0, chosen.stderr);
+    assert.match(chosen.stderr, /auto chose beelink2/);
+    assert.match(chosen.stderr, /receipt: .*host=beelink2/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
 test("auto places by host CPU pressure: the host under its limit wins", () => {
   const f = fixture();
   try {
@@ -2868,7 +2883,7 @@ test("the starvation backstop also runs a gate past a full slot pool", async () 
 });
 
 // desktop-18ir33v's sdd stalled 7.6% of 5 min at 453 GB/h of gate writes while CPU pressure admitted more (10-27).
-test("host IO pressure over the limits file's max_io_pressure holds admission until it drops; no limit, no IO hold", async () => {
+test("host IO pressure over max_io_pressure holds admission, and a missing key uses the default of 20", async () => {
   const f = fixture();
   try {
     const io = join(f.root, "io-pressure"), limits = join(f.root, "limits");
@@ -2884,12 +2899,18 @@ test("host IO pressure over the limits file's max_io_pressure holds admission un
     writeFileSync(io, pressureLine(5));
     assert.equal(await done, 0, stderr);
     assert.match(stderr, /admission \{[^\n]*"held":false,"reason":"host_psi"[^\n]*"host_io_some_avg10":5\.0,"io_limit":30/);
-    // Without a max_io_pressure line the same IO pressure holds nothing.
-    writeFileSync(io, pressureLine(90));
+    // No max_io_pressure key: the code default of 20 holds 21 and admits 19.
+    writeFileSync(io, pressureLine(21));
     writeFileSync(limits, "max_cpu_pressure=50\n");
-    const free = f.call(f.first, ["true"], { noInstall: true, env: { BEELINK_GATE_HOST_IO_PRESSURE: io, BEELINK_GATE_LIMITS_FILE: limits } });
-    assert.equal(free.status, 0, free.stderr);
-    assert.match(free.stderr, /"host_io_some_avg10":90\.0,"io_limit":null/);
+    const childDefault = spawn("bash", [gate, "--remote", ...args], { env: { ...f.env, BEELINK_GATE_HOST_IO_PRESSURE: io, BEELINK_GATE_LIMITS_FILE: limits, BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    let defaultErr = "";
+    childDefault.stderr.on("data", (chunk) => { defaultErr += chunk; });
+    const defaultDone = new Promise((resolveDone) => childDefault.on("close", resolveDone));
+    for (let i = 0; i < 2400 && !/"held":true,"reason":"host_io_psi"/.test(defaultErr); i++) await sleepMs(50);
+    assert.match(defaultErr, /holds admission: \{[^\n]*"held":true,"reason":"host_io_psi"[^\n]*"host_io_some_avg10":21\.0,"io_limit":20/);
+    writeFileSync(io, pressureLine(19));
+    assert.equal(await defaultDone, 0, defaultErr);
+    assert.match(defaultErr, /admission \{[^\n]*"held":false,"reason":"host_psi"[^\n]*"host_io_some_avg10":19\.0,"io_limit":20/);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
