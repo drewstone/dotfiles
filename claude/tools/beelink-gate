@@ -1657,15 +1657,15 @@ choose_beelink() {
       [ -n "$line" ] || { seen[$target]="unreachable"; continue; }
       seen[$target]=${line#beelink-gate-probe }
       state=$(sed -n 's/.* state=\([a-z]*\).*/\1/p' <<<"$line"); cache=$(sed -n 's/.* cache=\([a-z]*\).*/\1/p' <<<"$line")
-      load=$(sed -n 's/.* load=\([0-9.]*\).*/\1/p' <<<"$line")
+      # Rank by the worse of CPU and host IO some avg10. CPU near 0 on a disk-bound host used to look idle (#10066).
+      load=$(python3 -c 'import json,re,sys;s=sys.argv[1];g=lambda k:(m.group(1) if (m:=re.search(r"(?:^| )"+k+r"=(\S+)",s)) else "");c=float(g("load") or 0);d=g("capacity");io=float(json.loads(d).get("host_io_some_avg10") or 0) if d[:1]=="{" else 0;print(max(c,io))' "$line" 2>/dev/null || echo 0)
       slots=$(sed -n 's/.* slots=\([0-9]*\).*/\1/p' <<<"$line")
       if [ "$state" = busy ] && ! overloaded "$line"; then light_busy=$target; fi
       # A free repo lock with no free host slot still queues, behind any gate.
       case "$state:$cache:$([ "${slots:-1}" -gt 0 ] && echo slot || echo full)" in
         free:warm:slot) rank=0 ;; free:cold:slot) rank=1 ;; free:*:full) rank=2 ;; *) continue ;;
       esac
-      # Any host that can admit beats an overloaded one. If both would wait, a warm cache cannot admit sooner than a
-      # cold cache: prefer the host closer to its pressure limit while keeping a free slot ahead of a full pool.
+      # A host that can admit beats an overloaded one. Equal rank: lower CPU/IO pressure wins; a free slot beats a full pool.
       if overloaded "$line"; then
         case "$rank" in 0|1) rank=3 ;; *) rank=5 ;; esac
       fi

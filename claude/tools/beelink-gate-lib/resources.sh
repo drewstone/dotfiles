@@ -127,13 +127,12 @@ except (OSError, ValueError, KeyError, StopIteration):
     sys.exit(1)
 PY
 }
-# The class slice's memory pressure holds admission too (11 normal gates in its 24 GiB memory.max swapped 17 GB while
-# CPU pressure admitted more, beelink1 10-26), and so does host IO pressure over the limits file's max_io_pressure (none
-# by default; desktop-18ir33v's sdd stalled 7.6% of 5 min at 453 GB/h of gate writes, 10-27 02:31Z).
+# Class memory some avg10 over 10 holds admission (11 gates swapped 17 GB while CPU admitted them, beelink1 10-26).
+# Host IO some avg10 over max_io_pressure holds too. The code default is 20; the host limits file overrides it.
 host_psi_admission() {
   local pressure="" known=1 limit memory io host_io io_limit
   pressure=$(host_pressure_now) || known=0
-  limit=$(max_cpu_pressure) || return 75; io_limit=$(host_limit max_io_pressure "") || die 'invalid host max_io_pressure policy'
+  limit=$(max_cpu_pressure) || return 75; io_limit=$(host_limit max_io_pressure 20) || die 'invalid host max_io_pressure policy'
   memory=$(host_pressure_now "$(gate_cgroup)/memory.pressure" 2>/dev/null) || memory=0; io=$(host_pressure_now "$(gate_cgroup)/io.pressure" 2>/dev/null) || io=null
   host_io=$(host_pressure_now "${BEELINK_GATE_HOST_IO_PRESSURE:-/proc/pressure/io}" 2>/dev/null) || host_io=null
   python3 - "$pressure" "$limit" "$known" "$memory" "$io" "$host_io" "${io_limit:-null}" <<'PY'

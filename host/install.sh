@@ -333,7 +333,7 @@ is_beelink && install_beelink_gate_priority
 
 echo "== wrappers"
 want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh
-for w in fsfreeze unshare mount umount dmsetup lvm-guard device-write-guard; do
+for w in fsfreeze unshare mount umount dmsetup lvm-guard device-write-guard bash; do
   want_file 0755 "$SCRIPT_DIR/sbin/$w" "/usr/local/sbin/$w"
 done
 for v in $LVM_VERBS; do want_link lvm-guard "/usr/local/sbin/$v"; done
