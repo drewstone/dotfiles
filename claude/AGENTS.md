@@ -48,6 +48,7 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 |---|---|
 | GitHub as Drew or Tangle (rule: never another identity) | `gh-drew` (login `drewstone`) |
 | Local gate before merge (rules 8-9) | `beelink-gate --merge <pr> auto <repo-url> <sha> -- <typecheck and touched integration tests>`; a gate no Beelink admits waits for one; `drew-gtr-pro` gates only when named; agent-container pushes and `merge-on-green` merges |
+| Production reads and Platform business | `tangle-ops` (`--help` owns commands and flags) |
 | Production benchmark | `pnpm --dir products/sandbox/evals exec tsx run.ts --preset full --cells eu1,us1 --target production` from `drew-gtr-pro` in an admitted clone of agent-container, keys loaded by its `products/sandbox/evals/scripts/bench-gtr-shims/environment.sh`; never GitHub Actions |
 | What did earlier agents already find? | `qmd search -c reviews '<terms>'`: every page under `~/reviews` on the Mac and drew-gtr-pro, refreshed hourly by `reviews-index`; read and link it before a new analysis |
 | Is X built? (rule 5) | `have <terms>`, plus `git grep` on `origin/<default>`; search a checkout with the `fff` tools first when listed, and `rg` for multiline or case-sensitive regexes |
