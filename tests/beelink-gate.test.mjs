@@ -159,6 +159,7 @@ while [[ "\${args[$i]}" == -o ]]; do i=$((i + 2)); done
 host=\${args[$i]}; rest=("\${args[@]:$((i + 1))}")
 if [[ "\${rest[0]}" == reg ]]; then
   [[ "\${FAKE_REG_FAIL:-0}" == 0 ]] || exit 1
+  [[ "\${FAKE_REG_NATIVE:-0}" == 0 ]] || exit 127
   printf '    ScheduledInstallDay    REG_DWORD    0x%x\\r\\n' "$FAKE_WU_DAY"
   printf '    ScheduledInstallTime   REG_DWORD    0x%x\\r\\n' "$FAKE_WU_HOUR"
   exit 0
@@ -811,6 +812,9 @@ test("Windows policy is required and a blocked start reports the next allowed ti
     assert.match(unreadable.stderr, /cannot read Windows Update schedule.*refusing to start/);
     assert.match(unreadable.stderr, /TEMPFAIL next_allowed=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ cannot read the Windows Update schedule of beelink2/);
     assert.equal(existsSync(f.cache), false);
+    // Native Linux answers 127 for reg and has no window, even with a Windows policy still cached for this host.
+    const native = run(gate, ["--no-install", "beelink2", f.url, f.first, "--", "true"], { env: { ...env, FAKE_REG_NATIVE: "1" } });
+    assert.equal(native.status, 0, native.stderr);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

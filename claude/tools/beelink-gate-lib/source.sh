@@ -277,13 +277,13 @@ probe_transport() {  # <host> <phase> <actual command and arguments...>
 # The policy rarely changes, so the last good read is kept per host. WSL interop (reg.exe) fails under load, and SSH can
 # time out; a read up to seven days old still keeps gates out of the update window.
 read_policy() {
-  local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache
+  local target=$1 key='HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' policy="" cache rc=0
   cache="$STATE_DIR/policy-$target"
-  if [ "$target" = "$SELF" ]; then
-    policy=$(probe_transport "$target" windows_policy_local timeout 20 "$REG_EXE" query "$key") || policy=""
-  fi
+  [ "$target" != "$SELF" ] || policy=$(probe_transport "$target" windows_policy_local timeout 20 "$REG_EXE" query "$key") || policy=""
   if ! grep -q ScheduledInstallDay <<<"$policy"; then
-    policy=$(probe_transport "$target" windows_policy_ssh bounded_transport "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key") || policy=""
+    policy=$(probe_transport "$target" windows_policy_ssh bounded_transport "$target Windows Update policy" ssh "${SSH_OPTIONS[@]}" "${BEELINK_IPS[$target]}" reg query "$key") || rc=$?
+    # A shell with no reg answers 127: native Linux, which has no update window. Any other failure is a failed read of Windows.
+    [ "$rc" != 127 ] || { echo native; return 0; }
   fi
   if grep -q ScheduledInstallDay <<<"$policy"; then
     mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$policy" > "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" 2>/dev/null
@@ -302,15 +302,14 @@ read_policy() {
 update_window_of() {
   local target=$1 policy day_hex hour_hex
   policy=$(read_policy "$target") || { echo "beelink-gate: cannot read Windows Update schedule from $target; refusing to start" >&2; return 2; }
+  [ "$policy" != native ] || { window_day=none window_hour=none; return 0; }
   policy=$(printf '%s' "$policy" | tr -d '\r')
   day_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallDay" && $2 == "REG_DWORD" {print $3}')
   hour_hex=$(printf '%s\n' "$policy" | awk '$1 == "ScheduledInstallTime" && $2 == "REG_DWORD" {print $3}')
-  [[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] \
-    || { echo "beelink-gate: invalid Windows Update schedule from $target; refusing to start" >&2; return 2; }
+  [[ "$day_hex" =~ ^0x[0-9a-fA-F]{1,8}$ && "$hour_hex" =~ ^0x[0-9a-fA-F]{1,8}$ ]] || { echo "beelink-gate: invalid Windows Update schedule from $target; refusing to start" >&2; return 2; }
   window_day=$((16#${day_hex#0x}))
   window_hour=$((16#${hour_hex#0x}))
-  (( window_day <= 7 && window_hour <= 23 )) \
-    || { echo "beelink-gate: invalid Windows Update day/hour from $target; refusing to start" >&2; return 2; }
+  (( window_day <= 7 && window_hour <= 23 )) || { echo "beelink-gate: invalid Windows Update day/hour from $target; refusing to start" >&2; return 2; }
 }
 
 encode() { printf '%s' "$1" | base64 | tr -d '\n'; }
