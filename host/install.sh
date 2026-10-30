@@ -224,7 +224,7 @@ install_beelink_worktree_cap() {
 # Beelinks: release/deploy work outranks every merge gate. Apply priority live
 # without moving processes or restarting any Actions runner.
 install_beelink_gate_priority() {
-  local before=$CHANGED ci_weight=25
+  local before=$CHANGED ci_weight=25 unit group weight
   CHANGED=0
   # CI and Nix retain their existing validated host override. Gate priority is
   # independently owned by the resource policy below; this does not raise it.
@@ -257,19 +257,18 @@ install_beelink_gate_priority() {
   want_file 0644 "$TMP/beelinkgate-dev.slice" /etc/systemd/system/beelinkgate-dev.slice
   want_file 0755 "$SCRIPT_DIR/cgroup/beelink-memory-policy" /usr/local/libexec/beelink-memory-policy
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-cgroup.service" /etc/systemd/system/beelink-gate-cgroup.service
-  if [ "$CHECK" = 1 ]; then
-    [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "ci.slice cpu.weight is not $ci_weight"
-    [ "$(cat /sys/fs/cgroup/system.slice/nix-daemon.service/cpu.weight 2>/dev/null)" = "$ci_weight" ] || drift "nix-daemon.service cpu.weight is not $ci_weight"
-  else
-    [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
-    if [ "$(cat /sys/fs/cgroup/ci.slice/cpu.weight 2>/dev/null)" != "$ci_weight" ]; then
-      $SUDO systemctl set-property --runtime ci.slice CPUWeight="$ci_weight"
-      note changed "ci.slice CPUWeight=$ci_weight"
-    fi
-    if [ "$(cat /sys/fs/cgroup/system.slice/nix-daemon.service/cpu.weight 2>/dev/null)" != "$ci_weight" ]; then
-      $SUDO systemctl set-property --runtime nix-daemon.service CPUWeight="$ci_weight"
-      note changed "nix-daemon.service CPUWeight=$ci_weight"
-    fi
+  [ "$CHECK" = 1 ] || [ "$CHANGED" = 0 ] || $SUDO systemctl daemon-reload
+  for unit in ci.slice nix-daemon.service; do
+    group=$(systemctl show "$unit" -p ControlGroup --value)
+    weight=$(systemctl show "$unit" -p CPUWeight --value)
+    if [ -n "$group" ]; then weight=$(cat "/sys/fs/cgroup$group/cpu.weight" 2>/dev/null) || weight=
+    elif [ "$(systemctl show "$unit" -p ActiveState --value)" != inactive ] || [ "$(systemctl show "$unit" -p LoadState --value)" != loaded ]; then weight=; fi
+    [ "$weight" = "$ci_weight" ] && continue
+    [ "$CHECK" = 0 ] || { drift "$unit cpu.weight is not $ci_weight"; continue; }
+    $SUDO systemctl set-property --runtime "$unit" CPUWeight="$ci_weight"
+    note changed "$unit CPUWeight=$ci_weight"
+  done
+  if [ "$CHECK" = 0 ]; then
     if [ "$CHANGED" = 1 ] || ! systemctl is-active --quiet beelink-gate-cgroup.service; then
       $SUDO systemctl enable --quiet beelink-gate-cgroup.service
       $SUDO systemctl restart beelink-gate-cgroup.service
