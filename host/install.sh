@@ -243,18 +243,8 @@ install_beelink_gate_priority() {
   want_file 0644 "$TMP/nix-daemon-priority.conf" /etc/systemd/system/nix-daemon.service.d/50-gate-priority.conf
   want_file 0755 "$SCRIPT_DIR/cgroup/nix-profile-requalify" /usr/local/libexec/nix-profile-requalify
   want_file 0644 "$SCRIPT_DIR/cgroup/60-nix-profile-requalify.conf" /etc/systemd/system/nix-daemon.service.d/60-nix-profile-requalify.conf
-  local gate_cpu gate_io normal_memory dev_memory normal_percent normal_quota
-  read -r gate_cpu gate_io normal_memory dev_memory normal_percent < <(python3 - "$SCRIPT_DIR/cgroup/beelink-gate-policy.json" <<'PYTHON'
-import json, sys
-row = json.load(open(sys.argv[1]))
-keys = ('cpu_weight', 'io_weight', 'normal_memory_bytes', 'dev_memory_bytes', 'normal_cpu_percent_per_host_cpu')
-if set(row) != set(keys) or any(type(row[key]) is not int or row[key] <= 0 for key in keys):
-    raise SystemExit('invalid gate resource policy')
-if row['cpu_weight'] > 10000 or row['io_weight'] > 10000 or row['normal_cpu_percent_per_host_cpu'] > 100:
-    raise SystemExit('invalid gate resource policy range')
-print(*(row[key] for key in keys))
-PYTHON
-  )
+  local gate_cpu gate_io normal_memory dev_memory normal_percent normal_period normal_quota
+  read -r gate_cpu gate_io normal_memory dev_memory normal_percent normal_period < <("$SCRIPT_DIR/cgroup/beelink-memory-policy" --read-policy "$SCRIPT_DIR/cgroup/beelink-gate-policy.json")
   [[ "$gate_cpu" =~ ^[0-9]+$ && "$normal_percent" =~ ^[0-9]+$ ]] || exit 1
   normal_quota=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent ))
   want_file 0644 "$SCRIPT_DIR/cgroup/beelink-gate-policy.json" /etc/beelink-gate/resource-policy.json
@@ -262,7 +252,7 @@ PYTHON
   want_file 0644 "$TMP/beelinkgate.slice" /etc/systemd/system/beelinkgate.slice
   {
     cat "$TMP/beelinkgate.slice"
-    printf 'MemoryMax=%s\nCPUQuota=%s%%\n' "$normal_memory" "$normal_quota"
+    printf 'MemoryMax=%s\nCPUQuota=%s%%\nCPUQuotaPeriodSec=%sus\n' "$normal_memory" "$normal_quota" "$normal_period"
   } > "$TMP/beelinkgate-normal.slice"
   want_file 0644 "$TMP/beelinkgate-normal.slice" /etc/systemd/system/beelinkgate-normal.slice
   { cat "$TMP/beelinkgate.slice"; printf 'MemoryMax=%s\n' "$dev_memory"; } > "$TMP/beelinkgate-dev.slice"

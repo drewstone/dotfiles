@@ -1,8 +1,29 @@
 #!/usr/bin/env bash
-# Resource owner for the Beelink gate installer. Apply live without restarting
-# Actions runners; systemctl properties persist in systemd's control drop-ins.
+# Resource owner: --apply/--check use installed policy; --read-policy [file]
+# prints validated values. Apply never restarts Actions runners.
 set -euo pipefail
 mode=${1:---apply}
+if [[ "$mode" == --read-policy ]]; then
+python3 - "${@:2}" <<'PYTHON'
+import json, os, stat
+import sys
+if len(sys.argv) > 2: sys.exit(64)
+path = sys.argv[1] if len(sys.argv) == 2 else '/etc/beelink-gate/resource-policy.json'
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(fd) as stream:
+    info = os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or (len(sys.argv) == 1 and info.st_uid != 0) or info.st_mode & 0o022 or info.st_size > 4096:
+        raise SystemExit('unsafe gate resource policy')
+    row = json.load(stream)
+keys = ('cpu_weight', 'io_weight', 'normal_memory_bytes', 'dev_memory_bytes', 'normal_cpu_percent_per_host_cpu', 'normal_cpu_period_us')
+if set(row) != set(keys) or any(type(row[key]) is not int or row[key] <= 0 for key in keys):
+    raise SystemExit('invalid gate resource policy')
+if row['cpu_weight'] > 10000 or row['io_weight'] > 10000 or row['normal_cpu_percent_per_host_cpu'] > 100 or not 1000 <= row['normal_cpu_period_us'] <= 1000000:
+    raise SystemExit('invalid gate resource policy range')
+print(*(row[key] for key in keys))
+PYTHON
+exit
+fi
 [[ "$mode" == --apply || "$mode" == --check ]] || exit 64
 [[ $(id -u) == 0 ]] || { echo 'run as root' >&2; exit 77; }
 case $(hostname) in DESKTOP-18IR33V|beelink1) index=1;; DESKTOP-10CQNP0|beelink2) index=2;; *)
@@ -10,27 +31,10 @@ case $(hostname) in DESKTOP-18IR33V|beelink1) index=1;; DESKTOP-10CQNP0|beelink2
   if systemctl cat actions.runner.tangle-network.deploy-beelink1-adc-01.service >/dev/null 2>&1; then index=1
   elif systemctl cat actions.runner.tangle-network.deploy-beelink2-adc-01.service >/dev/null 2>&1; then index=2
   else echo 'no ADC deploy runner on this host' >&2; exit 69; fi;; esac
-# Values live once in the installed role-owned policy. Priority is safe to
-# apply before memory-cap validation; a memory refusal never restores high gates.
-read -r gate_cpu gate_io normal_memory dev_memory normal_percent < <(python3 - <<'PYTHON'
-import json, os, stat
-path = '/etc/beelink-gate/resource-policy.json'
-fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-with os.fdopen(fd) as stream:
-    info = os.fstat(stream.fileno())
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 4096:
-        raise SystemExit('unsafe gate resource policy')
-    row = json.load(stream)
-keys = ('cpu_weight', 'io_weight', 'normal_memory_bytes', 'dev_memory_bytes', 'normal_cpu_percent_per_host_cpu')
-if set(row) != set(keys) or any(type(row[key]) is not int or row[key] <= 0 for key in keys):
-    raise SystemExit('invalid gate resource policy')
-if row['cpu_weight'] > 10000 or row['io_weight'] > 10000 or row['normal_cpu_percent_per_host_cpu'] > 100:
-    raise SystemExit('invalid gate resource policy range')
-print(*(row[key] for key in keys))
-PYTHON
-)
+# The installer reads its checkout explicitly; live apply/check always use the root-owned installed policy.
+read -r gate_cpu gate_io normal_memory dev_memory normal_percent normal_period < <("$0" --read-policy)
 [[ "$gate_cpu" =~ ^[0-9]+$ && "$normal_memory" =~ ^[0-9]+$ ]] || exit 69
-normal_cpu=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent * 1000 ))
+normal_cpu=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent * normal_period / 100 ))
 priority_drift=0
 # Lower both CPU groups first, even if this kernel lacks the IO controller.
 for file in cpu.weight io.weight; do
@@ -54,9 +58,9 @@ for file in cpu.weight io.weight; do
     fi
   done
 done
-if [[ $(cat /sys/fs/cgroup/beelink-gate/cpu.max) != "$normal_cpu 100000" ]]; then
+if [[ $(cat /sys/fs/cgroup/beelink-gate/cpu.max) != "$normal_cpu $normal_period" ]]; then
   if [[ "$mode" == --check ]]; then echo 'DRIFT legacy normal CPU ceiling'; priority_drift=1
-  else echo "$normal_cpu 100000" > /sys/fs/cgroup/beelink-gate/cpu.max; fi
+  else echo "$normal_cpu $normal_period" > /sys/fs/cgroup/beelink-gate/cpu.max; fi
 fi
 GiB=1073741824
 uid=$(id -u ghrunner-adcprod)
@@ -112,9 +116,9 @@ done < <(properties)
 normal_path=$(systemctl show beelinkgate-normal.slice -p ControlGroup --value)
 if [[ -n "$normal_path" ]]; then
   read -r quota period < "/sys/fs/cgroup$normal_path/cpu.max"
-  if [[ ! "$quota" =~ ^[0-9]+$ ]] || (( quota * 100000 != normal_cpu * period )); then
+  if [[ ! "$quota" =~ ^[0-9]+$ ]] || (( quota * normal_period != normal_cpu * period || period != normal_period )); then
     if [[ "$mode" == --check ]]; then echo 'DRIFT managed normal CPU ceiling'; drift=1
-    else systemctl set-property beelinkgate-normal.slice "CPUQuota=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent ))%"; fi
+    else systemctl set-property beelinkgate-normal.slice "CPUQuota=$(( $(getconf _NPROCESSORS_ONLN) * normal_percent ))%" "CPUQuotaPeriodSec=${normal_period}us"; fi
   fi
 fi
 dev_path=$(systemctl show beelinkgate-dev.slice -p ControlGroup --value)
