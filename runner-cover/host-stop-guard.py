@@ -133,7 +133,7 @@ def missing_cover(rows, this):
     missing = []
     for label in LABELS:
         present = [row for row in rows if int(row.get("group") or 0) in GROUPS and label in (row.get("labels") or [])]
-        if present and not any(row.get("status") == "online" and runner_host(row.get("name")) != this for row in present):
+        if not any(row.get("status") == "online" and runner_host(row.get("name")) != this for row in present):
             missing.append(label)
     return missing
 def parse_rows(text):
@@ -196,9 +196,12 @@ def fetch_runners():
         raise RuntimeError("not root")
     token = read_token()
     return http_runners(token) if token else admin_runners()
+def stops_only_in_drain(body):
+    rest = re.sub(r"(?ms)^\s*drain\).*?(?=^\s*(?:undrain|status|check|\*)\)|^\s*esac\b)", "", body or "")
+    return "runner-drain.sh" in (body or "") and re.search(r"(?m)^\s*drain\)", body or "") is not None and re.search(r"(?i)\bsystemctl\s+stop\b", rest) is None
 def host_stop(command, payload, parent):
     cmd, body = command or "", payload or ""
-    if argv_verb(cmd) in SAFE and "runner-drain.sh" in body:
+    if argv_verb(cmd) in SAFE and stops_only_in_drain(body):
         return 0, False
     hit = re.search(r"(?i)(?:^|[\s/'\"])wsl-drill\.ps1\b", cmd) or (re.search(r"(?i)(?:^|[\s/'\"])runner-drain\.sh\b", cmd) and re.search(r"(?i)(^|\s)drain(\s|$)", cmd)) or (re.search(r"(?i)\bsystemctl\s+stop\b", body) and "actions.runner" in body)
     if not hit:
@@ -259,9 +262,6 @@ def bash_wrap():
         elif len(arg) > 2 and arg.startswith("-c"):
             script, mode = arg[2:], "c"
     if not mode:
-        os.execv(real, [real, *args])
-    verb = argv_verb(" ".join(sys.argv))
-    if mode == "s" and verb in SAFE:
         os.execv(real, [real, *args])
     eof, raw, payload = True, b"", script
     if mode != "c":

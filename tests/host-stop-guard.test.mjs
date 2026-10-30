@@ -102,7 +102,7 @@ test("settings route Bash through the guard and Codex install trusts it", () => 
 
 const SHAPE1 = "ssh -o BatchMode=yes -o ControlPath=none -o ConnectTimeout=10 beelink2-wsl sudo -n bash -s drain 3300";
 const SHAPE2 = "WPS_FILES='wsl-lib.ps1 runner-drain.sh' WPS_TIMEOUT=7500 /home/drew/bin/unattended --name bd-wsl-worker-proof --watch -- ./run-ps1.sh beelink2 wsl-drill.ps1 -HostIndex 2 -Drill -RefusalOnly -WaitMinutes 120";
-const PAYLOAD = "#!/bin/bash\n# runner-drain.sh drain\n# systemctl stop actions.runner.example.service\n";
+const PAYLOAD = "#!/bin/bash\n# runner-drain.sh drain [SECONDS] | undrain | status\ncase \"${1:-}\" in\n  drain)\n    systemctl stop actions.runner.example.service ;;\n  undrain)\n    echo undrained ;;\n  status)\n    echo status-ok ;;\nesac\n";
 const entry = resolve("runner-cover/host-stop-guard.py");
 const COVER = JSON.stringify([
   { name: "deploy-beelink2-adc-01", status: "online", labels: ["ci-deploy"], group: 12 },
@@ -140,16 +140,25 @@ test("host entry allows status and refuses a drain that would drop the last prod
   const cutover = host(SHAPE1, PAYLOAD, { HOST_STOP_RUNNERS_JSON: COVER, HOST_STOP_HOST: "beelink1", HOST_STOP_DRY_RUN: "1", HOST_STOP_PARENT: "powershell.exe -File C:\\ProgramData\\tangle-wall\\wsl\\wsl-window.ps1 -HostIndex 2" });
   assert.equal(cutover.status, 0, cutover.stderr);
   assert.equal(cutover.stdout, "allowed\n");
+  const noRelease = JSON.stringify([{ name: "deploy-beelink2-adc-01", status: "online", labels: ["ci-deploy"], group: 12 }]);
+  const gap = host(SHAPE1, PAYLOAD, { HOST_STOP_RUNNERS_JSON: noRelease, HOST_STOP_HOST: "beelink1" });
+  assert.equal(gap.status, 125, gap.stderr);
+  assert.match(gap.stderr, /ci-release/);
 });
 
 test("sudo bash wrapper allows a status verb, refuses an uncovered drain, and dry-runs an allowed one", () => {
   const dir = mkdtempSync(join(tmpdir(), "host-stop-bash-"));
   const bash = join(dir, "bash");
   symlinkSync(entry, bash);
-  const statusBody = "echo status-ok\n# runner-drain.sh systemctl stop actions.runner.example.service\n";
-  const status = spawnSync(bash, ["-s", "status"], { input: statusBody, encoding: "utf8" });
+  const status = spawnSync(bash, ["-s", "status"], { input: PAYLOAD, encoding: "utf8" });
   assert.equal(status.status, 0, status.stderr);
   assert.equal(status.stdout, "status-ok\n");
+  const bypass = spawnSync(bash, ["-s", "status"], {
+    input: "echo should-not-run\n# runner-drain.sh\nsystemctl stop actions.runner.example.service\n",
+    encoding: "utf8",
+  });
+  assert.equal(bypass.status, 125, bypass.stderr);
+  assert.equal(bypass.stdout, "");
   const denied = spawnSync(bash, ["-s", "drain"], {
     input: PAYLOAD,
     encoding: "utf8",
