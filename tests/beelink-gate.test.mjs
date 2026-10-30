@@ -63,11 +63,12 @@ function fixture() {
   const home = join(root, "home");
   mkdirSync(owner); mkdirSync(source); mkdirSync(bin); mkdirSync(home);
   const git = (args, cwd = source) => {
-    const result = run("git", args, { cwd });
+    const result = run("git", args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: "gate-test", GIT_AUTHOR_EMAIL: "gate-test@example.com", GIT_COMMITTER_NAME: "gate-test", GIT_COMMITTER_EMAIL: "gate-test@example.com" } });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
   git(["init", "-q"]);
+  git(["config", "core.hooksPath", "/dev/null"]);
   writeFileSync(join(source, "package.json"), '{"name":"gate-test","version":"1.0.0"}\n');
   writeFileSync(join(source, "package-lock.json"), '{"name":"gate-test","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"gate-test","version":"1.0.0"}}}\n');
   writeFileSync(join(source, "value.txt"), "first\n");
