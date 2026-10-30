@@ -578,7 +578,7 @@ test("env-dump allows names, counts, fingerprints, non-secret names and env used
 test("env-dump allows env that is not the command, redacted values and non-secret variable names", () => {
   for (const command of [
     "ls ~/.config/disco/env | grep -i SANDBOX", "cut -d= -f1 ~/.config/disco/env", "[ -f $d/env ] && echo exists",
-    "printf '%s\\n' '#!/usr/bin/env bash' 'echo hi' > /tmp/x.sh", "tangle-admin env 2>&1 | cut -d= -f1",
+    "printf '%s\\n' '#!/usr/bin/env bash' 'echo hi' > /tmp/x.sh", "tangle-ops env 2>&1 | cut -d= -f1",
     "cat > ~/.config/disco/env/.DISCO_SANDBOX_KEY_PLAYS.new", "env | grep -i FLEET | sed 's/=.*/=<set>/'",
     "printenv | grep -E '^TANGLE' | sed -E 's/=.*/=<redacted>/'", "printf '%s\\n' \"$CLAUDE_CODE_SESSION_ID\"",
     "echo \"keeper $SANDBOX_KEY_FILE\"", "echo \"key name: $KEYNAME\"",

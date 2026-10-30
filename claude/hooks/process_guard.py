@@ -532,8 +532,8 @@ def secret_load(argv):
         return f"{prog} {next(a for a in pos if secret_path(a))}"
     if prog in ("gh", "gh-drew") and pos[:2] == ["auth", "token"]:
         return f"{prog} auth token"
-    if prog == "tangle-admin" and pos[:1] and pos[0] in ("key-for", "create-key") and "--key-file" not in args:
-        return f"tangle-admin {pos[0]}"
+    if prog == "tangle-ops" and pos[:1] and pos[0] in ("key-for", "create-key") and "--key-file" not in args:
+        return f"tangle-ops {pos[0]}"
     if prog == "security" and pos[:1] and pos[0].startswith("find-") and "-w" in args:
         return f"security {pos[0]} -w"
     if prog in ("op", "pass", "vault") and pos[:1] and pos[0] in ("read", "show", "kv", "item"):

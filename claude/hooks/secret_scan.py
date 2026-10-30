@@ -12,7 +12,7 @@ loading a secret).
 It tells the agent the value is exposed and how to rotate that kind of key, shows Drew
 a one-line warning, and appends the event to ~/.claude/logs/secret-exposures.jsonl.
 Neither the warning nor the ledger contains the value: only its kind, length and
-SHA-256 (the Platform stores the same hash, so `tangle-admin key-lineage sha256:<hash>`
+SHA-256 (the Platform stores the same hash, so `tangle-ops key-lineage sha256:<hash>`
 finds an `sk-tan-` key without anyone seeing it).
 
 Placeholders and fixtures (`gak_fixture0000...`, `sk-tan-test`, values containing
@@ -37,8 +37,8 @@ STORE = (f"Store the replacement straight into its vault slot so the value never
 # kind, prefix, body pattern, rotation instruction
 SHAPES = [
     ("Tangle Platform key (sk-tan-)", "sk-tan-", r"[A-Za-z0-9_-]{32,}",
-     "Find it with `tangle-admin key-lineage sha256:{sha256}`, revoke it with `tangle-admin revoke-key <key_id> --yes`, "
-     "and mint the replacement with `tangle-admin key-for <product>` (or `tangle-admin create-key`). " + STORE),
+     "Find it with `tangle-ops key-lineage sha256:{sha256}`, revoke it with `tangle-ops revoke-key <key_id> --yes`, "
+     "and mint the replacement with `tangle-ops key-for <product>` (or `tangle-ops create-key`). " + STORE),
     ("GTM operator key (gak_)", "gak_", r"[A-Za-z0-9_-]{24,}",
      "Revoke it on https://gtm.tangle.tools/app/api-access (account menu, API access) and create a replacement with the same "
      f"scopes. The page shows the new key once: paste it into GTM_OPERATOR_API_KEY in {DEVOPS}/agent-state.env with dotenvx."),

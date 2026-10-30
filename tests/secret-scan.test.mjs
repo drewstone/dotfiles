@@ -76,7 +76,7 @@ test("the real exposure shapes warn: account files, clone errors, env dumps, com
   assert.match(fromCommand.reason, /in the tool command/);
   const read = scan({ type: "text", file: { filePath: "/x/.env", content: `SANDBOX_API_KEY=${tan}\n` } }, { tool: "Read" }).out;
   assert.match(read.reason, /Tangle Platform key/);
-  assert.match(read.reason, /tangle-admin key-lineage sha256:[0-9a-f]{64}/);
+  assert.match(read.reason, /tangle-ops key-lineage sha256:[0-9a-f]{64}/);
 });
 
 test("placeholders, fixtures, display prefixes and ordinary output pass", () => {

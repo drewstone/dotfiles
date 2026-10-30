@@ -13,6 +13,12 @@ Use the narrow command for a known symptom; use `tangle-ops status` when the fai
 For a long release or repeated status checking, read [work duration](references/work-duration.md) and its cached history command once.
 If the tool is unavailable, use the owning repository's runbook and current probes.
 
+Production reads use `tangle-ops hosts`, `holds`, `ghosts`, and `release`;
+`create-probe` creates a test resource and confirms deletion. Business reads
+use `list-keys`, `balance`, `credit-history`, `revenue`, and `customer`.
+Read `tangle-ops --help` for current groups and flags; mint keys with `key-for`
+or `create-key` into a new private `--key-file`.
+
 ## Diagnose the actual failure
 
 | Symptom | Evidence needed |
