@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """PreToolUse and the host bash entry: a drain or WSL stop on a serving fleet host is refused."""
-import hmac, json, os, re, sys, tempfile
+import hmac, json, os, re, shlex, sys, tempfile
 REASON = "This stops a serving fleet host while work is still running. Drain first: runner-drain.sh drain (drewstone/tangle-devops servers/beelink-wall/runner-drain.sh), then stop the host. The only wsl stop allowed here is a -Drill terminate of a scratch distro whose name ends in -drill."
 FLEET = re.compile(r"(?i)^(?:beelink[12](?:-wsl)?|beelink\d+-wsl|drew-gtr-pro|desktop-18ir33v|100\.98\.195\.7|100\.127\.22\.51)$")
-SCRATCH = re.compile(r"(?i)\bwsl(?:\.exe)?\s+(?:--terminate|-t)\s+\S*-drill\b")
+SCRATCH = re.compile(r"(?i)\bwsl(?:\.exe)?\s+(?:--terminate|-t)\s+\S*-drill(?:\s|$)")
 HEREDOC = re.compile(r"(?s)(\b(?:cat|tee)\b[^\n]*<<-?\s*['\"]?([A-Za-z_]\w*)['\"]?[^\n]*\n).*?\n\2(?=\n|$)")
 SHELLS = {"bash", "sh", "zsh", "dash", "ash", "pwsh", "powershell", "cmd"}
 SSH_VAL = {"-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w"}
@@ -198,7 +198,7 @@ def main():
     if (payload.get("tool_name") or "Bash") not in {"Bash", "bash", "shell", "Shell", "exec"}:
         return
     raw = ((payload.get("tool_input") or payload.get("input") or {}).get("command")) or ""
-    cmd = " ".join(raw) if isinstance(raw, list) else raw
+    cmd = shlex.join(raw) if isinstance(raw, list) else raw
     if cmd and walk(cmd, fleet(os.uname().nodename.split(".")[0])):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": REASON}}))
 if __name__ == "__main__":

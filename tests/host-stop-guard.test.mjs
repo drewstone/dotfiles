@@ -58,6 +58,20 @@ test("denies fleet-host stops and allows the scratch-distro drill", () => {
   ]) assert.equal(decide(command), null, command);
 });
 
+test("argv script boundaries and a -drill suffix that does not end the name", () => {
+  const argv = spawnSync("python3", [hook], {
+    input: JSON.stringify({ tool_name: "Bash", tool_input: { command: ["bash", "-lc", "ssh beelink2 wsl --shutdown"] } }),
+    encoding: "utf8",
+  });
+  assert.equal(argv.status, 0, argv.stderr);
+  const decision = JSON.parse(argv.stdout).hookSpecificOutput;
+  assert.equal(decision.permissionDecision, "deny");
+  for (const command of [
+    "ssh beelink2 'wsl --terminate Ubuntu-drill-production'",
+    "ssh beelink2 'wsl --terminate Ubuntu-drill.backup'",
+  ]) denied(command);
+});
+
 test("denies a local stop when this machine is a serving fleet host", () => {
   const local = /^(?:beelink[12]|beelink\d+-wsl|drew-gtr-pro|desktop-18ir33v)$/i.test(hostname().split(".")[0]);
   const decision = decide("sudo reboot");
