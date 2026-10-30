@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 const hook = resolve("claude/hooks/host-stop-guard");
@@ -171,4 +171,28 @@ test("sudo bash wrapper allows a status verb, refuses an uncovered drain, and dr
   assert.equal(readlinkSync(resolve("host/sbin/bash")), "../../runner-cover/host-stop-guard.py");
   assert.match(readFileSync(resolve("host/sudoers.d/zz-agent-blast-guard"), "utf8"), /HOST_STOP_BASH/);
   assert.match(readFileSync(resolve("host/sudoers.d/zz-agent-blast-guard"), "utf8"), /HOST_STOP_DRY_RUN/);
+});
+
+test("a held stdin runs instead of waiting for the stream to close", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "host-stop-open-"));
+  const bash = join(dir, "bash");
+  symlinkSync(entry, bash);
+  const child = spawn(bash, ["-s", "--", "kept"], { stdio: ["pipe", "pipe", "pipe"] });
+  child.stdin.write("echo gate-ok\n");
+  const out = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("held stdin hung"));
+    }, 3000);
+    child.stdout.on("data", (buf) => {
+      clearTimeout(timer);
+      resolve(buf.toString());
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+  child.kill("SIGKILL");
+  assert.equal(out, "gate-ok\n");
 });
