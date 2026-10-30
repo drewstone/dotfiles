@@ -12,8 +12,9 @@ sudo -n -H -u ghrunner-adcprod env XDG_RUNTIME_DIR="/run/user/$uid" \
   systemd-run --user --quiet --scope --slice=user.slice bash -c \
   'group=$(cut -d: -f3 /proc/self/cgroup); test "$(cat /sys/fs/cgroup$group/memory.min)" = 8589934592'
 # This integration command itself must use the maintained gate admission path.
-grep -q '^0::/beelink-gate$' /proc/self/cgroup
-[[ $(cat /sys/fs/cgroup/beelink-gate/memory.max) == 25769803776 ]]
+group=$(cut -d: -f3 /proc/self/cgroup)
+[[ $group =~ ^/beelinkgate[.]slice/beelinkgate-normal[.]slice/beelink-gate-beelink[12]-[0-9a-f]{32}[.]service$ && $(systemctl show "${group##*/}" -p ControlGroup --value) == "$group" ]]
+[[ $(cat "/sys/fs/cgroup${group%/*}/memory.max") == 25769803776 ]]
 # The synthetic allocator gets a scaled service-local limit; never exhaust the
 # real 24G aggregate shared with other lanes' active gates.
 

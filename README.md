@@ -31,7 +31,7 @@ See the [current Codex discovery rules](https://developers.openai.com/codex/guid
 
 `host/` keeps a Linux box alive under agents that hold passwordless sudo.
 Install with `./host/install.sh` (sudo).
-Run `./host/install.sh --check` to report drift without a change.
+Run `./host/install.sh --check` to report drift without a change; add an existing scope such as `--gate-priority-only` to inspect only that role.
 
 On Beelinks, `./host/install.sh --gate-priority-only` also applies the resource policy owned by [host/cgroup/beelink-memory-policy](host/cgroup/beelink-memory-policy), without restarting Actions runners. Gate values, including the normal CPU quota period, come from [host/cgroup/beelink-gate-policy.json](host/cgroup/beelink-gate-policy.json); `--read-policy [file]` validates them for installation. It keeps new gate units in a low-weight top-level system slice and lowers legacy raw groups while they drain. It caps both gate classes and release runner services, reserves deploy-service and rootless-Docker memory along their ancestors, and refuses a cap below current use. The shared deploy/release ancestor retains its previous deploy allowance plus the capped release allowance. A second apply is idempotent; `--check` reads effective properties, including the exact normal CPU quota period. [The dated incident and both-host proof](host/evidence/20261021-deploy-memory.md) retain the causal evidence and verification limits. [The real kernel integration proof](tests/beelink-deploy-memory.integration.sh) runs a bounded disposable gate allocator beside a deploy canary, requires the gate to OOM and the canary to survive, and checks no deploy ancestor OOM increase. This proves limit containment, not immunity from arbitrary host-wide exhaustion.
 

@@ -31,7 +31,7 @@
 #                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
 #                                          systemd-resolved's stub)
 #
-# Usage: host/install.sh [--check|--git-guard-only|--gate-priority-only|--docker-only]
+# Usage: host/install.sh [--check] [--git-guard-only|--gate-priority-only|--docker-only]
 #   --check           report drift and change nothing; exit 1 when anything differs.
 #   --git-guard-only  install only the Git PATH guard (GTR), or its worktree cap (Beelinks).
 #   --gate-priority-only  Beelinks: install gate CPU and deploy memory isolation.
@@ -43,18 +43,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ "$(uname -s)" = Linux ] || { echo "host/install.sh is Linux-only"; exit 0; }
 CHECK=0
-GIT_GUARD_ONLY=0
-GATE_PRIORITY_ONLY=0
-DOCKER_ONLY=0
-case "${1:-}" in
-  --check) CHECK=1 ;;
-  --git-guard-only) GIT_GUARD_ONLY=1 ;;
-  --gate-priority-only) GATE_PRIORITY_ONLY=1 ;;
-  --docker-only) DOCKER_ONLY=1 ;;
-  '') ;;
-  *) echo "usage: host/install.sh [--check|--git-guard-only|--gate-priority-only|--docker-only]" >&2; exit 2 ;;
-esac
-[ "$#" -le 1 ] || { echo "choose one host installer mode" >&2; exit 2; }
+INSTALL_SCOPE=
+for option in "$@"; do
+  case "$option" in
+    --check) CHECK=1 ;;
+    --git-guard-only|--gate-priority-only|--docker-only)
+      [ -z "$INSTALL_SCOPE" ] || { echo "choose one host installer scope" >&2; exit 2; }
+      INSTALL_SCOPE=$option ;;
+    *) echo "usage: host/install.sh [--check] [--git-guard-only|--gate-priority-only|--docker-only]" >&2; exit 2 ;;
+  esac
+done
 SUDO=sudo
 [ "$(id -u)" = 0 ] && SUDO=
 # --check never prompts. Without cached sudo, a root-only file reads as drift.
@@ -89,7 +87,7 @@ install_docker_config() {
   local lifecycle owner owner_home owner_uid candidate="$TMP/daemon.json" staged backup
   local -a emitter
   if ! command -v dockerd >/dev/null 2>&1; then
-    if [ "$DOCKER_ONLY" = 1 ]; then echo "dockerd is required" >&2; return 1; fi
+    if [ "$INSTALL_SCOPE" = --docker-only ]; then echo "dockerd is required" >&2; return 1; fi
     return 0
   fi
   # Match the existing user-unit owner convention, including sudo/root callers.
@@ -159,16 +157,16 @@ PY
   CHANGED=1
   DOCKER_CONFIG_CHANGED=1
   note changed "/etc/docker/daemon.json validated and staged"
-  if [ "$DOCKER_ONLY" = 1 ]; then
+  if [ "$INSTALL_SCOPE" = --docker-only ]; then
     note pending "Docker GC activation needs a controlled restart; no Docker reload or restart performed"
   else
     note pending "Docker GC and cgroup-parent require a controlled restart after the live-restore reload"
   fi
 }
 
-if [ "$DOCKER_ONLY" = 1 ]; then
+if [ "$INSTALL_SCOPE" = --docker-only ]; then
   install_docker_config
-  exit 0
+  exit "$DRIFT"
 fi
 
 # want_link TARGET LINK: LINK is a symlink to TARGET.
@@ -291,20 +289,20 @@ install_gtr_lane_send() {
   want_file 0644 "$SCRIPT_DIR/ssh/20-fleet-lane-send.conf" /etc/ssh/ssh_config.d/20-fleet-lane-send.conf
 }
 
-if [ "$GATE_PRIORITY_ONLY" = 1 ]; then
+if [ "$INSTALL_SCOPE" = --gate-priority-only ]; then
   is_beelink || { echo "the gate CPU priority runs on the Beelinks only" >&2; exit 2; }
   install_beelink_gate_priority
-  exit 0
+  exit "$DRIFT"
 fi
-if [ "$GIT_GUARD_ONLY" = 1 ]; then
+if [ "$INSTALL_SCOPE" = --git-guard-only ]; then
   if is_beelink; then
     install_beelink_worktree_cap
-    exit 0
+    exit "$DRIFT"
   fi
   [ "$(hostname -s)" = drew-GTR-Pro ] || { echo "the Git guard runs on GTR and the Beelinks only" >&2; exit 2; }
   install_system_git_guard
   install_gtr_lane_send
-  exit 0
+  exit "$DRIFT"
 fi
 
 # softdog_holders: PIDs that hold the softdog open, space-separated.
