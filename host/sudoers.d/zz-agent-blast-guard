@@ -1,7 +1,7 @@
 # Wrappers in /usr/local/sbin are first in secure_path. Absolute paths to the
 # real binaries are closed, including bash -s and bash -c, so a drain on stdin
 # cannot skip the host-stop wrapper. Last match wins.
-Defaults env_keep += "HOST_BLAST_GUARD HOST_STOP_TOKEN"
+Defaults env_keep += "HOST_BLAST_GUARD HOST_STOP_DRY_RUN"
 Cmnd_Alias HOST_BLAST_REAL = /usr/sbin/fsfreeze, /sbin/fsfreeze, \
   /usr/bin/unshare, /bin/unshare, \
   /usr/sbin/dmsetup, /sbin/dmsetup, \

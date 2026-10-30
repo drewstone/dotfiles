@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -102,54 +102,73 @@ test("settings route Bash through the guard and Codex install trusts it", () => 
 
 const SHAPE1 = "ssh -o BatchMode=yes -o ControlPath=none -o ConnectTimeout=10 beelink2-wsl sudo -n bash -s drain 3300";
 const SHAPE2 = "WPS_FILES='wsl-lib.ps1 runner-drain.sh' WPS_TIMEOUT=7500 /home/drew/bin/unattended --name bd-wsl-worker-proof --watch -- ./run-ps1.sh beelink2 wsl-drill.ps1 -HostIndex 2 -Drill -RefusalOnly -WaitMinutes 120";
-const PAYLOAD = "#!/bin/bash\nfor u in $(systemctl list-units 'actions.runner.*.service' --no-legend); do\n  systemctl stop \"$u\"\ndone\n";
-const entry = resolve("host-stop/host-stop-guard.py");
+const PAYLOAD = "#!/bin/bash\n# runner-drain.sh drain\n# systemctl stop actions.runner.example.service\n";
+const entry = resolve("runner-cover/host-stop-guard.py");
+const COVER = JSON.stringify([
+  { name: "deploy-beelink2-adc-01", status: "online", labels: ["ci-deploy"], group: 12 },
+  { name: "release-beelink2-adc-02", status: "online", labels: ["ci-release"], group: 12 },
+  { name: "deploy-beelink1-adc-01", status: "online", labels: ["ci-deploy"], group: 5 },
+  { name: "release-beelink1-adc-02", status: "online", labels: ["ci-release"], group: 5 },
+]);
 
 function host(command, stdin, env = {}) {
   const out = spawnSync("python3", [entry, "--host"], {
     input: stdin,
     encoding: "utf8",
-    env: { ...process.env, HOST_STOP_COMMAND: command, ...env },
+    env: { ...process.env, HOST_STOP_COMMAND: command, HOST_STOP_RUNNERS_JSON: "", HOST_STOP_HOST: "", HOST_STOP_DRY_RUN: "", ...env },
   });
   return out;
 }
 
-test("host entry denies the wrapper shapes and ignores the word drain without the payload", () => {
-  const drained = host(SHAPE1, PAYLOAD);
+test("host entry allows status and refuses a drain that would drop the last production host", () => {
+  const status = host("bash -s status", PAYLOAD);
+  assert.equal(status.status, 0, status.stderr);
+  const undrain = host("bash -s undrain", PAYLOAD);
+  assert.equal(undrain.status, 0, undrain.stderr);
+  const drained = host(SHAPE1, PAYLOAD, { HOST_STOP_RUNNERS_JSON: COVER, HOST_STOP_HOST: "beelink2" });
   assert.equal(drained.status, 125, drained.stderr);
-  assert.match(drained.stderr, /runner-drain\.sh drain/);
-  assert.match(drained.stderr, /drewstone\/tangle-devops/);
-  assert.match(drained.stderr, /wsl-window\.ps1/);
+  assert.match(drained.stderr, /ci-deploy/);
+  assert.match(drained.stderr, /ci-release/);
+  assert.match(drained.stderr, /12, 13 and 14/);
   const hidden = host("ssh -o BatchMode=yes -o ControlPath=none -o ConnectTimeout=10 beelink2-wsl sudo -n bash -s work 3300", PAYLOAD);
   assert.equal(hidden.status, 125, hidden.stderr);
+  assert.match(hidden.stderr, /GitHub runner status unreachable/);
   const argvOnly = host(SHAPE1, "echo ok\n");
   assert.equal(argvOnly.status, 0, argvOnly.stderr);
-  const drill = host(SHAPE2, "");
+  const drill = host(SHAPE2, "", { HOST_STOP_RUNNERS_JSON: COVER, HOST_STOP_HOST: "beelink2" });
   assert.equal(drill.status, 125, drill.stderr);
-  const tokenDir = mkdtempSync(join(tmpdir(), "host-stop-token-"));
-  const tokenFile = join(tokenDir, "token");
-  writeFileSync(tokenFile, "drew-held-token-value");
-  const allowed = host(SHAPE2, "", {
-    HOST_STOP_TOKEN: "drew-held-token-value",
-    HOST_STOP_TOKEN_FILE: tokenFile,
-    SSH_CONNECTION: "",
-    SSH_CLIENT: "",
-  });
-  assert.equal(allowed.status, 0, allowed.stderr);
-  const cutover = host(SHAPE1, PAYLOAD, { HOST_STOP_PARENT: "powershell.exe -File C:\\ProgramData\\tangle-wall\\wsl\\wsl-window.ps1 -HostIndex 2" });
+  const cutover = host(SHAPE1, PAYLOAD, { HOST_STOP_RUNNERS_JSON: COVER, HOST_STOP_HOST: "beelink1", HOST_STOP_DRY_RUN: "1", HOST_STOP_PARENT: "powershell.exe -File C:\\ProgramData\\tangle-wall\\wsl\\wsl-window.ps1 -HostIndex 2" });
   assert.equal(cutover.status, 0, cutover.stderr);
+  assert.equal(cutover.stdout, "allowed\n");
 });
 
-test("sudo bash wrapper denies a runner stop on stdin and runs a harmless script", () => {
+test("sudo bash wrapper allows a status verb, refuses an uncovered drain, and dry-runs an allowed one", () => {
   const dir = mkdtempSync(join(tmpdir(), "host-stop-bash-"));
   const bash = join(dir, "bash");
   symlinkSync(entry, bash);
-  const denied = spawnSync(bash, ["-s", "work"], { input: PAYLOAD, encoding: "utf8" });
+  const statusBody = "echo status-ok\n# runner-drain.sh systemctl stop actions.runner.example.service\n";
+  const status = spawnSync(bash, ["-s", "status"], { input: statusBody, encoding: "utf8" });
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(status.stdout, "status-ok\n");
+  const denied = spawnSync(bash, ["-s", "drain"], {
+    input: PAYLOAD,
+    encoding: "utf8",
+    env: { ...process.env, HOST_STOP_RUNNERS_JSON: COVER, HOST_STOP_HOST: "beelink2" },
+  });
   assert.equal(denied.status, 125, denied.stderr);
-  assert.match(denied.stderr, /runner-drain\.sh drain/);
+  assert.match(denied.stderr, /ci-deploy/);
+  assert.equal(denied.stdout, "");
+  const allowed = spawnSync(bash, ["-s", "drain"], {
+    input: "echo drained\n# runner-drain.sh systemctl stop actions.runner.example.service\n",
+    encoding: "utf8",
+    env: { ...process.env, HOST_STOP_RUNNERS_JSON: COVER, HOST_STOP_HOST: "beelink1", HOST_STOP_DRY_RUN: "1" },
+  });
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.equal(allowed.stdout, "allowed\n");
   const ok = spawnSync(bash, ["-s"], { input: "echo ok\n", encoding: "utf8" });
   assert.equal(ok.status, 0, ok.stderr);
   assert.equal(ok.stdout, "ok\n");
-  assert.equal(readlinkSync(resolve("host/sbin/bash")), "../../host-stop/host-stop-guard.py");
+  assert.equal(readlinkSync(resolve("host/sbin/bash")), "../../runner-cover/host-stop-guard.py");
   assert.match(readFileSync(resolve("host/sudoers.d/zz-agent-blast-guard"), "utf8"), /HOST_STOP_BASH/);
+  assert.match(readFileSync(resolve("host/sudoers.d/zz-agent-blast-guard"), "utf8"), /HOST_STOP_DRY_RUN/);
 });
