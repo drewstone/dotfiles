@@ -743,7 +743,7 @@ def evaluate(wt, main_path, common_dir, args, fetched):
         raise Skip('nested git repository at %s' % nested)
     if newest > now - hours * 3600:
         raise Skip('modified %s ago' % ago(newest))
-    if not why and newest <= now - args.abandon_hours * 3600:
+    if newest <= now - args.abandon_hours * 3600:  # finished or not: an abandoned merge never ends by itself
         return rpath, branch, hours, 'abandoned: idle %s; wt-remove salvages its work' % ago(newest)
     check_in_progress(gitdir)
     if not why:
