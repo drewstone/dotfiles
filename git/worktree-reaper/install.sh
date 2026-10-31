@@ -2,7 +2,7 @@
 # Install the worktree reaper. Idempotent. No sudo.
 #
 #   Linux: ~/.local/bin/wt-reaper + systemd user wt-reaper.{service,timer} (hourly)
-#   macOS: ~/.local/bin/wt-reaper + ~/Library/LaunchAgents/com.drew.wt-reaper.plist (04:15 daily)
+#   macOS: ~/.local/bin/wt-reaper + ~/Library/LaunchAgents/com.drew.wt-reaper.plist (hourly)
 #
 # Linux runs hourly: the beelinks gain worktrees by the hour, and a nightly pass let beelink2
 # fall below its gate floor between runs (2026-10-10).
@@ -46,7 +46,7 @@ sys.exit(0 if args == ["/usr/bin/python3", sys.argv[2], "run", "--apply"] else 1
   printf '%s\n' "$loaded" | grep -Fxq $'\tprogram = /usr/bin/python3' || return 1
   printf '%s\n' "$loaded" | grep -Fxq $'\t\t'"$owner"
 }
-if [ "$(uname -s)" = Darwin ] && mac_lifecycle_owns_worktrees; then
+if [ "$(uname -s)" = Darwin ] && mac_lifecycle_owns_worktrees && lifecycle_owns_worktrees; then
   # The storage-lifecycle installer owns retiring the legacy LaunchAgent.
   echo "wt-reaper: skipped; the loaded tangle-tools storage-lifecycle owns Mac cleanup"
   exit 0

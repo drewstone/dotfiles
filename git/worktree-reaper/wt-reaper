@@ -27,27 +27,17 @@ Clean and pushed: no tracked change or untracked file (ignored build output such
 as node_modules/ is allowed, an ignored .env is not) and, after `git fetch --all
 --prune`, HEAD on a remote-tracking ref. Only wt-remove's receipt confirms it.
 
-Derived files (--no-derived turns these off). Each pass deletes only what is
-rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
-  - node_modules: in a linked worktree that was not removed, whose HEAD is in
-    the remote default branch or whose pull request at that HEAD is merged or
-    closed, untouched for --dependency-idle-hours (default 6), passing the same
-    locked, in-progress, mount, nested-repository and process checks. Only
-    node_modules directories that git ignores are deleted; changes, untracked
-    files and every other path stay.
-  - Journey raw recordings: under --journey-state/raw/<journey>-<start>/<label>,
-    the .webm files and trace.raw.zip, once journeys/out/<journey>/timings.json
-    in a --journey-out directory names that start and out/<journey>/video holds
-    <label>-*.mp4 and, for a raw trace, the scrubbed <label>-trace.zip.
-  - beelink-gate checkouts beyond the configured count: <repo>@N under
-    --gate-cache with N >= --gate-checkouts, removed only while this process
-    holds that checkout's gate lock.
-  - pnpm store files no project links (Linux): `pnpm store prune` per store
-    version, at most once every 20 hours, only in a quiet window while it
-    holds every beelink-gate slot; see DerivedPass.pnpm_store.
-Reflog expiry rewrites do not count as new work; recorded event times do.
-
-Python 3.9 compatible: macOS runs it with /usr/bin/python3.
+Derived files (--no-derived turns these off) go only when rebuilt from tracked
+inputs or kept in another form; any doubt keeps them:
+  - ignored node_modules of a finished worktree that was not removed, untouched
+    --dependency-idle-hours (6), passing the same lock, mount and process checks;
+  - journey .webm and trace.raw.zip once out/<journey>/video holds the mp4 and,
+    for a trace, the scrubbed <label>-trace.zip that timings.json names;
+  - beelink-gate checkouts <repo>@N with N >= --gate-checkouts, under that lock;
+  - unlinked pnpm store files (Linux), at most every 20 h in a quiet window
+    while holding every beelink-gate slot; see DerivedPass.pnpm_store.
+Reflog expiry rewrites are not new work; recorded event times are. Python 3.9
+compatible: macOS runs it with /usr/bin/python3.
 """
 
 import argparse
@@ -705,7 +695,7 @@ def evaluate(wt, main_path, common_dir, args, fetched):
     rpath = real(path)
     if wt.get('bare'):
         raise Skip('bare repository entry')
-    if 'locked' in wt:
+    if 'locked' in wt and not dead_holder(wt['locked']):
         raise Skip('locked' + (': ' + wt['locked'] if isinstance(wt['locked'], str) else ''))
     if 'prunable' in wt:
         raise Skip('prunable (directory missing); left for git worktree prune')
@@ -752,6 +742,18 @@ def evaluate(wt, main_path, common_dir, args, fetched):
             raise Skip('fetch failed for this repository')
         check_pushed(rpath)
     return rpath, branch, hours, why or 'idle, clean and pushed'
+
+
+def dead_holder(reason):
+    """Claude Code locks its agent worktrees as 'claude agent <id> (pid N[ start T])'; the lock dies with that process."""
+    m = re.match(r'claude agent \S+ \(pid (\d+)(?: start (\d+))?\)$', reason if isinstance(reason, str) else '')
+    try:
+        os.kill(int(m.group(1)), 0) if m else None  # then a live pid with another start time is a reused number
+        return bool(m and m.group(2)) and open('/proc/%s/stat' % m.group(1)).read().rpartition(')')[2].split()[19] != m.group(2)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
 
 
 def check_kept(rpath, args):
@@ -840,6 +842,7 @@ def run(args):
             log.write(decision='skip', path=rpath, reason='recheck: %s' % exc)
             continue
         try:
+            git(['worktree', 'unlock', rpath], rpath, check=False)  # only a dead holder's lock reaches here
             owner = shutil.which('wt-remove') or os.path.expanduser('~/.local/bin/wt-remove')
             result = subprocess.run([owner, rpath], cwd='/', capture_output=True, text=True,
                                     env=dict(os.environ, IDLE_HOURS=repr(hours)))
@@ -872,8 +875,7 @@ def run(args):
 
 
 # ---------------------------------------------------------------- derived files
-# 2026-10-11: both beelinks hit their worktree floor while merged, idle worktrees held node_modules and
-# journey runs kept raw recordings whose mp4 and scrubbed outputs already existed.
+# 2026-10-11: both beelinks hit their worktree floor while idle merged trees held node_modules.
 
 DEPENDENCY_DIRS = ('node_modules',)
 
@@ -1335,10 +1337,8 @@ def recheck(rpath, main_path, common_dir, args, log):
         raise Skip('no longer registered')
     # Refetch so a remote branch deleted since the first pass is seen.
     git(['--git-dir', common_dir, 'fetch', '--all', '--prune', '--quiet'], '/', timeout=300)
-    # Check-then-remove cannot be atomic, so interleave the checks: a writer
-    # that exits during a scan is caught by the following evaluate, and a
-    # process that arrives during an evaluate is caught by the following scan.
-    # The scan runs last so the remaining window is the gap until the remove.
+    # Check-then-remove is not atomic: interleave evaluate and scan, scan last, so a writer or process
+    # arriving during either is caught by the next and the window left is the gap until the remove.
     for _ in range(2):
         evaluate(entry[0], main_path, common_dir, args, True)
         held = scan_processes(not args.no_sudo, log)
