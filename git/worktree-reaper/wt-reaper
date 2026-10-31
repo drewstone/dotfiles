@@ -1,35 +1,31 @@
 #!/usr/bin/env python3
-"""Remove idle, clean, fully pushed git worktrees. Fail closed.
+"""Remove finished, abandoned, or idle clean pushed git worktrees. Fail closed.
 
-A worktree is removed only when every check below passes. Any error, any
-unreadable state, or any doubt skips it, and every decision is logged.
-
-  - It is a linked worktree, never a main checkout or a bare repository.
-    Scope: every linked worktree registered with a repository found under
-    the roots (default ~/code, ~/company and ~/webb), wherever the worktree
-    lives; a lane worktree in ~/webb/_wt and one in /tmp are both in scope.
-  - It is not locked, and has no merge, rebase, bisect, cherry-pick or revert
-    in progress.
+wt-remove, which salvages changes, unpushed commits and untracked files first,
+gets a tree that is finished (pull request at HEAD merged or closed, or HEAD in
+the remote default branch and clean) and idle --finished-idle-hours; abandoned,
+idle --abandon-hours whatever it holds; or idle --idle-hours, clean and pushed.
+2026-10-31: drew-gtr-pro held 607 trees and this reaper removed none of them.
+Any doubt skips the tree and every decision is logged. Every removal also needs:
+  - A linked worktree registered with a repository under the roots (default
+    ~/code, ~/company and ~/webb), wherever it lives; never a main checkout.
+  - It is not locked. Unless abandoned, it has no merge, rebase, bisect,
+    cherry-pick or revert in progress.
   - Nothing in it (files, directories, its index, HEAD and reflogs) changed
-    within --idle-hours. Both mtime and ctime count, except the ctime of a
+    within its idle window. Both mtime and ctime count, except the ctime of a
     hardlinked file: pnpm links every node_modules file to its shared store,
     so another checkout's install moves the ctime of files here without
     touching this tree. Until 2026-10-10 that kept every pnpm worktree
     "modified 0.1h ago" and the reaper removed none of beelink2's 343.
-  - `git status` shows no tracked change and no untracked file. Ignored
-    entries are allowed only when they look like build or dependency output
-    (node_modules/, dist/, target/, ...); an ignored .env or notes file skips.
   - It contains no nested git repository or worktree.
-  - After `git fetch --all --prune`, every commit reachable from its HEAD is
-    reachable from a remote-tracking ref.
   - No process has its cwd, root, an open file or a mapped file inside it
     (/proc on Linux, lsof on macOS). The scan must see every live process,
     so it uses `sudo -n`; if any live process stays unreadable, nothing is
     removed that run.
 
-Removal delegates to the installed `wt-remove`, which owns retention and archive
-readback. Only its receipt for the exact, absent checkout confirms removal.
-Local branches and other worktree registrations remain intact.
+Clean and pushed: no tracked change or untracked file (ignored build output such
+as node_modules/ is allowed, an ignored .env is not) and, after `git fetch --all
+--prune`, HEAD on a remote-tracking ref. Only wt-remove's receipt confirms it.
 
 Derived files (--no-derived turns these off). Each pass deletes only what is
 rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
@@ -49,8 +45,6 @@ rebuilt from tracked inputs or kept in another form, and any doubt keeps it:
   - pnpm store files no project links (Linux): `pnpm store prune` per store
     version, at most once every 20 hours, only in a quiet window while it
     holds every beelink-gate slot; see DerivedPass.pnpm_store.
-
-Removal uses the installed wt-remove retention owner; local refs remain intact.
 Reflog expiry rewrites do not count as new work; recorded event times do.
 
 Python 3.9 compatible: macOS runs it with /usr/bin/python3.
@@ -705,7 +699,8 @@ def default_branch(common_dir):
         return None
 
 
-def evaluate(wt, main_path, common_dir, args, cutoff, fetched):
+def evaluate(wt, main_path, common_dir, args, fetched):
+    """Return (path, branch, idle hours wt-remove allows, why), or raise Skip."""
     path = wt['worktree']
     rpath = real(path)
     if wt.get('bare'):
@@ -730,22 +725,33 @@ def evaluate(wt, main_path, common_dir, args, cutoff, fetched):
     wt_common = real(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], rpath).strip())
     if wt_common != common_dir or gitdir == common_dir:
         raise Skip('git dir does not belong to %s' % common_dir)
-    check_in_progress(gitdir)
     check_no_mounts(rpath)
     branch = wt.get('branch') if isinstance(wt.get('branch'), str) else None
+    hours, now = min(args.finished_idle_hours, args.idle_hours), time.time()
     newest = newest_git_activity(gitdir, common_dir, branch)
-    if newest > cutoff:
+    why = merged_reason(rpath, common_dir, branch) if fetched and newest <= now - hours * 3600 else None
+    if why and why.startswith('HEAD'):  # a branch with no commits of its own is finished only when clean
+        try:
+            check_clean(rpath)
+        except Skip:
+            why = None
+    hours = hours if why else args.idle_hours
+    if newest > now - hours * 3600:
         raise Skip('git activity %s ago' % ago(newest))
-    newest, nested = walk_tree(rpath, cutoff)
+    newest, nested = walk_tree(rpath, now - hours * 3600)
     if nested:
         raise Skip('nested git repository at %s' % nested)
-    if newest > cutoff:
+    if newest > now - hours * 3600:
         raise Skip('modified %s ago' % ago(newest))
-    check_clean(rpath)
-    if not fetched:
-        raise Skip('fetch failed for this repository')
-    check_pushed(rpath)
-    return rpath, branch
+    if not why and newest <= now - args.abandon_hours * 3600:
+        return rpath, branch, hours, 'abandoned: idle %s; wt-remove salvages its work' % ago(newest)
+    check_in_progress(gitdir)
+    if not why:
+        check_clean(rpath)
+        if not fetched:
+            raise Skip('fetch failed for this repository')
+        check_pushed(rpath)
+    return rpath, branch, hours, why or 'idle, clean and pushed'
 
 
 def check_kept(rpath, args):
@@ -765,7 +771,6 @@ def ago(ts):
 def run(args):
     log = Log(None if args.no_log_file else args.log_file)
     mode = 'dry-run' if args.dry_run else 'live'
-    cutoff = time.time() - args.idle_hours * 3600
     counts = {'scanned': 0, 'removed': 0, 'would_remove': 0, 'skipped': 0,
               'errors': 0, 'branches_deleted': 0}
     log.write(event='start', mode=mode, host=socket.gethostname(), roots=','.join(args.root),
@@ -793,8 +798,7 @@ def run(args):
             seen.append((wt, main_path, common_dir))
             path = wt.get('worktree', '?')
             try:
-                rpath, branch = evaluate(wt, main_path, common_dir, args, cutoff, fetched)
-                candidates.append((rpath, branch, main_path, common_dir))
+                candidates.append(evaluate(wt, main_path, common_dir, args, fetched) + (main_path, common_dir))
             except Skip as exc:
                 counts['skipped'] += 1
                 log.write(decision='skip', path=path, reason=str(exc))
@@ -810,14 +814,14 @@ def run(args):
             if IS_MAC:  # lsof may report a path through a symlink such as /tmp -> /private/tmp
                 held = {real(p) for p in held} | held
         except Exception as exc:
-            for rpath, _, _, _ in candidates:
+            for rpath, *_ in candidates:
                 counts['skipped'] += 1
                 log.write(decision='skip', path=rpath, reason='process scan: %s' % exc)
             candidates = []
             counts['errors'] += 1
 
     removed = set()
-    for rpath, branch, main_path, common_dir in candidates:
+    for rpath, branch, hours, why, main_path, common_dir in candidates:
         users = sorted(p for p in held if inside(p, rpath))
         if users:
             counts['skipped'] += 1
@@ -825,7 +829,7 @@ def run(args):
             continue
         if args.dry_run:
             counts['would_remove'] += 1
-            log.write(decision='would-remove', path=rpath, branch=branch or '(detached)')
+            log.write(decision='would-remove', path=rpath, branch=branch or '(detached)', reason=why)
             continue
         # The first pass can be minutes old. Repeat every check, with a fresh
         # process scan, immediately before the destructive step.
@@ -837,7 +841,8 @@ def run(args):
             continue
         try:
             owner = shutil.which('wt-remove') or os.path.expanduser('~/.local/bin/wt-remove')
-            result = subprocess.run([owner, rpath], cwd='/', capture_output=True, text=True)
+            result = subprocess.run([owner, rpath], cwd='/', capture_output=True, text=True,
+                                    env=dict(os.environ, IDLE_HOURS=repr(hours)))
             if result.returncode:
                 raise Skip('wt-remove refused (exit %s); source retained' % result.returncode)
             receipt = json.loads(result.stdout.strip().splitlines()[-1])
@@ -852,7 +857,7 @@ def run(args):
             continue
         counts['removed'] += 1
         removed.add(rpath)
-        log.write(decision='remove', path=rpath, branch=branch or '(detached)', receipt=json.dumps(receipt))
+        log.write(decision='remove', path=rpath, branch=branch or '(detached)', reason=why, receipt=json.dumps(receipt))
 
     if not args.no_derived:
         derived = DerivedPass(args, log)
@@ -867,9 +872,8 @@ def run(args):
 
 
 # ---------------------------------------------------------------- derived files
-# On 2026-10-11 both beelinks fell to their 200 GiB worktree floor and beelink2 toward its 162 GiB gate
-# floor, while merged, idle worktrees still held their node_modules and journey runs kept raw recordings
-# whose mp4 and scrubbed outputs already existed.
+# 2026-10-11: both beelinks hit their worktree floor while merged, idle worktrees held node_modules and
+# journey runs kept raw recordings whose mp4 and scrubbed outputs already existed.
 
 DEPENDENCY_DIRS = ('node_modules',)
 
@@ -974,11 +978,9 @@ def free_bytes(path):
     return st.f_bavail * st.f_frsize
 
 
-# A gate takes the first free slot-<i>.lock (or light-slot-<i>.lock) below its
-# configured count, creating the file as it goes, and a launcher may set that
-# count. Holding every existing file is not enough: a gate could create the next
-# one. The prune holds at least this many of each pool, and one past any index
-# already on disk, so a gate configured for up to this many slots cannot start.
+# A gate takes the first free slot-<i>.lock (or light-slot-<i>.lock) below its configured count, creating
+# it as it goes, so holding every existing file is not enough. The prune holds at least this many of each
+# pool and one past any index on disk, so a gate configured for up to this many slots cannot start.
 GATE_SLOTS_HELD = 16
 
 
@@ -1338,7 +1340,7 @@ def recheck(rpath, main_path, common_dir, args, log):
     # process that arrives during an evaluate is caught by the following scan.
     # The scan runs last so the remaining window is the gap until the remove.
     for _ in range(2):
-        evaluate(entry[0], main_path, common_dir, args, time.time() - args.idle_hours * 3600, True)
+        evaluate(entry[0], main_path, common_dir, args, True)
         held = scan_processes(not args.no_sudo, log)
         if IS_MAC:
             held = {real(p) for p in held} | held
@@ -1355,6 +1357,8 @@ def main(argv=None):
     # 12 h matches wt-remove's activity guard; at 24 h lane worktree churn on the beelinks
     # (about 90 new trees in 6 h on 2026-10-11) outran the hourly reap and filled the disk.
     parser.add_argument('--idle-hours', type=float, default=12.0)
+    parser.add_argument('--finished-idle-hours', type=float, default=1.0)
+    parser.add_argument('--abandon-hours', type=float, default=72.0)
     parser.add_argument('--log-file', default=os.path.expanduser('~/.local/state/wt-reaper/wt-reaper.log'))
     parser.add_argument('--no-log-file', action='store_true')
     parser.add_argument('--no-sudo', action='store_true', help='never use sudo -n for the process scan')
@@ -1387,21 +1391,16 @@ def main(argv=None):
         parser.error('run as the owning user, not root')
     if args.root is None:
         args.root = [os.path.expanduser(r) for r in ('~/code', '~/company', '~/webb')]
-    if not math.isfinite(args.idle_hours) or args.idle_hours <= 0:
-        parser.error('--idle-hours must be a finite positive number')
-    if not math.isfinite(args.dependency_idle_hours) or args.dependency_idle_hours <= 0:
-        parser.error('--dependency-idle-hours must be a finite positive number')
+    for name in ('idle_hours', 'finished_idle_hours', 'abandon_hours', 'dependency_idle_hours'):
+        if not math.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
+            parser.error('--%s must be a finite positive number' % name.replace('_', '-'))
     if args.gate_checkouts < 1:
         parser.error('--gate-checkouts must be at least 1')
     if args.journey_out is None:
         args.journey_out = ['~/code/_wt/*/journeys/out']
     if args.keep is None:
-        # Discovery's pinned deploy checkouts are pruned by its keeper (discovery-lab runner/keeper.mjs
-        # prunePinnedCheckouts). On 2026-10-18 the reaper spent over 2 h in D state reading one 47k-file deploy
-        # on the archive drive, hit its timeout and restarted, while Discovery's per-run cost rose from 0.5 s to 5.7 s.
-        # The next pass stalled the same way in a hostlab worktree there (/mnt/traces/hostlab-adc-b5/work/adc, one
-        # directory block per 10 s at 300 ms r_await): a tree on that drive frees nothing on the disk this reaper
-        # guards, and tangle-tools storage_lifecycle owns the drive, so no pass reads any of it.
+        # Discovery's keeper prunes its deploy checkouts. 2026-10-18: reading trees on the archive drive left
+        # the reaper 2 h in D state; storage_lifecycle owns that drive and it frees nothing here, so no pass reads it.
         args.keep = ['~/code/_runs', '/mnt/traces', '~/.local/share/discovery-lab-deploys']
     return run(args)
 

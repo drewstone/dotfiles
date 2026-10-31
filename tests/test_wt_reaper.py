@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -322,13 +323,6 @@ class ReaperTest(unittest.TestCase):
         worktrees = git(['worktree', 'list', '--porcelain'], self.f.repo)
         self.assertNotIn(self.paths['merged'], worktrees)
 
-    def test_deletes_only_merged_branches(self):
-        branches = git(['branch', '--format=%(refname:short)'], self.f.repo).split()
-        self.assertNotIn('merged', branches)
-        self.assertIn('pushed_unmerged', branches)
-        events = [r for r in self.rows if r.get('event') == 'branch-kept' and r.get('branch') == 'pushed_unmerged']
-        self.assertTrue(events and 'not merged' in events[0]['reason'])
-
     def test_never_touches_the_main_checkout(self):
         self.assertNotIn(self.f.repo, self.by_path)
         self.assertTrue(os.path.isdir(os.path.join(self.f.repo, '.git')))
@@ -461,7 +455,7 @@ class ScanLastTest(unittest.TestCase):
         time.sleep(IDLE_HOURS * 3600 + 1.0)
         mod = load_reaper()
         order = []
-        real_scan, real_eval, real_git = mod.scan_processes, mod.evaluate, mod.git
+        real_scan, real_eval, real_run = mod.scan_processes, mod.evaluate, subprocess.run
 
         def scan(*a, **k):
             order.append('scan')
@@ -471,12 +465,12 @@ class ScanLastTest(unittest.TestCase):
             order.append('evaluate')
             return real_eval(*a, **k)
 
-        def git(argv, *a, **k):
-            if 'remove' in argv:
+        def run(argv, *a, **k):  # removal is the wt-remove call
+            if argv and str(argv[0]).endswith('wt-remove'):
                 order.append('remove')
-            return real_git(argv, *a, **k)
+            return real_run(argv, *a, **k)
 
-        mod.scan_processes, mod.evaluate, mod.git = scan, ev, git
+        mod.scan_processes, mod.evaluate, mod.subprocess = scan, ev, types.SimpleNamespace(**{**vars(subprocess), 'run': run})
         old_env = dict(os.environ)
         os.environ.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old_env)))
