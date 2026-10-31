@@ -62,7 +62,7 @@ Start from the class's best template and save the finished list with its grades 
 7. Recover through the execution owner's maintained resume path.
    Reconcile completed work before replacing a process or starting a successor.
 
-When a play's check passes, the run is done: cancel it yourself (`disco cancel <runId> --reason solved`) unless Drew set a target beyond the check; nothing cancels it for you, and never spend its remaining hours.
+When a play's check passes, its reader page is still owed: the Lab tells the root to finish it. Cancel the run yourself (`disco cancel <runId> --actor <lane> --reason solved`) once that page passes a cold reader on its first screen, or at its deadline, unless Drew set a target beyond the check; nothing cancels it for you ([RUNBOOK](https://github.com/tangle-network/discovery-lab/blob/master/RUNBOOK.md#cancel)).
 When the best release tag has been flat for two hours, diagnose before steering: read the later tags' failing checks and the agents' recent work against the goal, then name the blocker.
 Report the goal score and the best tag's checks against the bar.
 A lead tick measures from execution records, not lane STATUS, and reports each open problem with its owner and the time since its first alarm.
