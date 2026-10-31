@@ -16,13 +16,8 @@
     <key>HOME</key>
     <string>@HOME@</string>
   </dict>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>4</integer>
-    <key>Minute</key>
-    <integer>15</integer>
-  </dict>
+  <key>StartInterval</key>
+  <integer>3600</integer>
   <key>LowPriorityIO</key>
   <true/>
   <key>Nice</key>
