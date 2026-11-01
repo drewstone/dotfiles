@@ -127,9 +127,9 @@ def psi(path):  # some avg10, or None when unreadable
 limit, io_limit, fsync_limit, rounds = float(sys.argv[1]), json.loads(sys.argv[2]), 100, []
 pressure, memory, io, host_io = psi(sys.argv[3]), psi(sys.argv[4] + '/memory.pressure') or 0.0, psi(sys.argv[4] + '/io.pressure'), psi(sys.argv[5])
 known, io_held = pressure is not None, io_limit is not None and host_io is not None and host_io > io_limit
-try:  # an unwritable cache root measures nothing, as an unreadable PSI file does
-    os.makedirs(sys.argv[6], exist_ok=True)
-    with tempfile.NamedTemporaryFile(buffering=0, dir=sys.argv[6], prefix='.fsync-probe-') as probe:
+try:  # the cache root's disk, through its parent before the first gate makes it; unwritable measures nothing, like unreadable PSI
+    disk = sys.argv[6] if os.path.isdir(sys.argv[6]) else os.path.dirname(sys.argv[6])
+    with tempfile.NamedTemporaryFile(buffering=0, dir=disk, prefix='.fsync-probe-') as probe:
         while len(rounds) < 3 and sum(ms > fsync_limit for ms in rounds) < 2:
             start = time.monotonic(); probe.write(bytes(4096)); os.fsync(probe.fileno()); rounds.append((time.monotonic() - start) * 1000)
 except OSError:

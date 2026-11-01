@@ -824,7 +824,7 @@ test("Windows policy is required and a blocked start reports the next allowed ti
 test("no gate, urgent included, is admitted while host-wide CPU pressure is over its ceiling", () => {
   const f = fixture();
   try {
-    const host = join(f.root, "host-pressure");
+    const host = join(f.root, "cpu-pressure");
     const hostLine = (avg10) => `some avg10=${avg10.toFixed(2)} avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n`;
     writeFileSync(host, hostLine(90));
     const wait = { BEELINK_GATE_HOST_PRESSURE: host, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" };
@@ -1615,7 +1615,7 @@ function idleCheckout(f, owner, name, files, usedSeconds) {
     writeFileSync(join(dir, path), body);
   }
   f.git(["-C", dir, "add", "."], f.root);
-  f.git(["-C", dir, "commit", "-qm", "seed"], f.root);
+  f.git(["-C", dir, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "seed"], f.root);
   const marker = join(dir, ".git", "beelink-gate-used");
   writeFileSync(marker, "");
   utimesSync(marker, usedSeconds, usedSeconds);
