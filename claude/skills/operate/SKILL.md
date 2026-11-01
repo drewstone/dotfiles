@@ -48,7 +48,8 @@ Start from the class's best template and save the finished list with its grades 
 
 1. Inspect authoritative execution state before acting.
    Silence and an old transcript do not establish that a run died.
-2. Observe through maintained journals, events, and liveness queries.
+2. Observe through maintained journals, events, and liveness queries; ask what the agents did, thought and why with `traces` on the run's OTLP spans.
+   A run whose spans `traces` cannot read is a producer defect to fix, not a reason to read sessions by hand.
    Include observation cost when comparing resource use.
 3. Intervene through the installed stack's supported message or steering API, each steer opening with the goal line (`disco steer` adds it).
    Before sending a steer, write the change you expect in the next scored version, and score it when that version lands.
