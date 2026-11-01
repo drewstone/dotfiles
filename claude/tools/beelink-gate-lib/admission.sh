@@ -247,7 +247,7 @@ acquire_checkout_admission() {
   # and markers with it; finish replaces this trap once the checkout is held.
   # Wait for load before taking a checkout: a gate only waiting for load must not hold it (one ADC gate held it for
   # 1766 s of load wait plus 1119 s of run, and the next ADC gate queued behind all of it).
-  wait_for_load "$beelink" || refuse_or_replace host_psi "$beelink $(metric_name) stayed over its limit"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "$beelink admission held: ${admission_reason:-unknown}"
   # From here the gate competes for a checkout: keep its ticket (and urgent marker) fresh wherever a pass
   # blocks, capacity-writer waits and release lookups included. Only fresh entries hold a free checkout.
   local fresh=("$ticket"); (( ! urgent )) || fresh+=("$urgent_marker.$$")
@@ -349,7 +349,7 @@ acquire_checkout_admission() {
     acquire_slot "$cache_root/.locks" "$max_concurrent"
   fi
   unset BEELINK_GATE_LIGHT_SLOTS BEELINK_GATE_DEV_SLOTS
-  wait_for_load "$beelink" || refuse_or_replace host_psi "$beelink $(metric_name) stayed over its limit"
+  wait_for_load "$beelink" || refuse_or_replace host_psi "$beelink admission held: ${admission_reason:-unknown}"
   unset BEELINK_GATE_LOAD_WAIT
   waited=$((SECONDS - waiting_since + placed_wait))
   admission_admitted

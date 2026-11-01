@@ -824,7 +824,7 @@ test("Windows policy is required and a blocked start reports the next allowed ti
 test("no gate, urgent included, is admitted while host-wide CPU pressure is over its ceiling", () => {
   const f = fixture();
   try {
-    const host = join(f.root, "host-pressure");
+    const host = join(f.root, "cpu-pressure");
     const hostLine = (avg10) => `some avg10=${avg10.toFixed(2)} avg60=0.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n`;
     writeFileSync(host, hostLine(90));
     const wait = { BEELINK_GATE_HOST_PRESSURE: host, BEELINK_GATE_LOAD_WAIT: "2s", BEELINK_GATE_LOAD_POLL_SECONDS: "1" };
@@ -1615,7 +1615,7 @@ function idleCheckout(f, owner, name, files, usedSeconds) {
     writeFileSync(join(dir, path), body);
   }
   f.git(["-C", dir, "add", "."], f.root);
-  f.git(["-C", dir, "commit", "-qm", "seed"], f.root);
+  f.git(["-C", dir, "-c", "core.hooksPath=/dev/null", "commit", "-qm", "seed"], f.root);
   const marker = join(dir, ".git", "beelink-gate-used");
   writeFileSync(marker, "");
   utimesSync(marker, usedSeconds, usedSeconds);
@@ -2916,6 +2916,31 @@ test("host IO pressure over max_io_pressure holds admission, and a missing key u
     writeFileSync(io, pressureLine(19));
     assert.equal(await defaultDone, 0, defaultErr);
     assert.match(defaultErr, /admission \{[^\n]*"held":false,"reason":"host_psi"[^\n]*"host_io_some_avg10":19\.0,"io_limit":20/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+// After its VM restart beelink2's disk took 0.7-3.5 s per fsync while host IO PSI read 8-15, so PSI admitted it and every
+// disk-heavy gate there failed (11-01). strace delays the gate's real fsync calls by 300 ms until it is killed: the disk recovers.
+test("a host whose cache-root fsync is slow is held as host_fsync_latency and admitted once it recovers", async () => {
+  const f = fixture();
+  try {
+    const args = ["beelink2", f.url, f.first, "no-install", f.windowDay, f.windowHour, "true"].map(encode);
+    const slow = spawn("strace", ["-f", "-qq", "-o", "/dev/null", "-e", "trace=fsync", "-e", "inject=fsync:delay_exit=300000", "bash", gate, "--remote", ...args],
+      { env: { ...f.env, ...inUnit(f.root), BEELINK_GATE_LOAD_POLL_SECONDS: "1" } });
+    let stderr = "", closed = false;
+    slow.stderr.on("data", (chunk) => { stderr += chunk; });
+    const done = new Promise((resolveDone) => slow.on("close", () => resolveDone(closed = true)));
+    for (let i = 0; i < 2400 && !closed && !/"reason":"host_fsync_latency"/.test(stderr); i++) await sleepMs(50);
+    const held = JSON.parse(stderr.match(/holds admission: (\{[^\n]*\})/)?.[1] ?? "null");
+    assert.equal(held?.reason, "host_fsync_latency", stderr);
+    assert.ok(held.held && held.fsync_ms >= 300 && held.fsync_limit_ms === 100, JSON.stringify(held));
+    slow.kill("SIGKILL");
+    await done;
+    const admitted = JSON.parse(stderr.match(/beelink-gate: admission (\{[^\n]*\})/)?.[1] ?? "null");
+    assert.ok(admitted && !admitted.held && admitted.reason === "host_psi" && admitted.fsync_ms < 100, stderr);
+    assert.match(stderr, /receipt: .*exit=0 /);
+    const recorded = receipts(f).at(-1).admission;
+    assert.ok(!recorded.held && recorded.fsync_ms < 100 && recorded.fsync_limit_ms === 100, JSON.stringify(recorded));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
