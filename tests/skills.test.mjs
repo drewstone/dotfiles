@@ -25,15 +25,17 @@ function installerEnv(home) {
   writeFileSync(codex, `#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
+path = Path(os.environ['CODEX_HOME']) / 'hooks.json'
 for line in sys.stdin:
     if json.loads(line).get('id') != 2:
         continue
-    path = str(Path(os.environ['CODEX_HOME']) / 'hooks.json')
-    guard = str(Path(os.environ['HOME']) / '.claude/hooks/scan-guard.sh')
-    print(json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'data': [{'hooks': [{
-        'sourcePath': path, 'eventName': 'preToolUse', 'handlerType': 'command',
-        'command': guard, 'timeoutSec': 10, 'key': 'fixture-guard',
-        'currentHash': 'sha256:fixture'}]}]}}), flush=True)
+    # Like Codex, hooks/list reports every PreToolUse command the home's hooks.json registers.
+    groups = json.loads(path.read_text())['hooks']['PreToolUse'] if path.exists() else []
+    hooks = [{'sourcePath': str(path), 'eventName': 'preToolUse', 'handlerType': 'command',
+              'command': hook['command'], 'timeoutSec': hook.get('timeout'),
+              'key': hook['command'], 'currentHash': 'sha256:fixture'}
+             for group in groups for hook in group['hooks']]
+    print(json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'data': [{'hooks': hooks}]}}), flush=True)
 `)
   chmodSync(codex, 0o755)
   return {
