@@ -822,11 +822,10 @@ remote_probe() {
     flock -n -s "$fd" && free_slots=$((free_slots + 1))
     exec {fd}<&-
   done
-  local probe_load probe_limit host_cpu capacity mode=host-psi held
+  local probe_load probe_limit host_cpu capacity mode=host-psi held why
   capacity=$(host_psi_admission) || return 75
-  read -r probe_load probe_limit held < <(python3 -c 'import json,sys; x=json.loads(sys.argv[1]); print(x["some_avg10"] if x["some_avg10"] is not None else 100, x["limit"], int(x["held"]))' "$capacity")
-  host_cpu=$(host_pressure_now || echo unknown)
-  if [ "$held" = 1 ]; then state=busy; reason="host PSI some avg10 admission held"; fi
+  read -r probe_load probe_limit held host_cpu why < <(python3 -c 'import json,sys; x=json.loads(sys.argv[1]); p=x["some_avg10"]; print(100 if p is None else p, x["limit"], int(x["held"]), "unknown" if p is None else p, x["reason"])' "$capacity")
+  if [ "$held" = 1 ]; then state=busy; reason="host admission held: $why"; fi
   printf 'beelink-gate-probe host=%s state=%s cache=%s slots=%s load=%s limit=%s host_cpu=%s next=%s recovered=%s admission=%s capacity=%s reason=%s\n' \
     "$beelink" "$state" "$cache" "$free_slots" "$probe_load" "$probe_limit" "${host_cpu:--}" "${next:--}" "$recovered" "$mode" "$capacity" "$(printf '%s' "$reason" | tr '\n' ' ' | cut -c1-240)"
 

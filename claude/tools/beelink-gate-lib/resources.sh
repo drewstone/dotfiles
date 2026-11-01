@@ -4,27 +4,21 @@
 # Resource admission and worker forecasts. Only host PSI admits CPU work;
 # quotas describe maximum capacity and never override release priority.
 limits_file() { echo "${BEELINK_GATE_LIMITS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/beelink-gate/limits}"; }
-pressure_file() { echo "${BEELINK_GATE_HOST_PRESSURE:-/proc/pressure/cpu}"; }
-loadavg_now() { cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}"; }
-metric_name() { echo 'host CPU pressure (some avg10)'; }
 gate_slice() {
   if [ "${dev:-${BEELINK_GATE_CLASS:-}}" = 1 ] || [ "${BEELINK_GATE_CLASS:-}" = dev ]; then echo beelinkgate-dev.slice
   else echo beelinkgate-normal.slice; fi
 }
 # Kernel and root-owned host paths. A fixture host names its own tree; every real host reads these defaults.
-cgroup_root() { echo "${BEELINK_GATE_CGROUP_ROOT:-/sys/fs/cgroup}"; }
-self_cgroup_file() { echo "${BEELINK_GATE_SELF_CGROUP:-/proc/self/cgroup}"; }
-gate_cgroup() { echo "$(cgroup_root)/beelinkgate.slice/$(gate_slice)"; }
-
+gate_cgroup() { echo "${BEELINK_GATE_CGROUP_ROOT:-/sys/fs/cgroup}/beelinkgate.slice/$(gate_slice)"; }
 
 verify_gate_unit() {
   local expected actual
   expected="/beelinkgate.slice/$(gate_slice)/beelink-gate-${gate_id:-}.service"
   [[ "${gate_id:-}" =~ ^beelink[12]-[0-9a-f]{32}$ ]] || return 75
   [ "$(id -u)" != 0 ] || return 75
-  actual=$(sed -n 's/^0:://p' "$(self_cgroup_file)") || return 75
+  actual=$(sed -n 's/^0:://p' "${BEELINK_GATE_SELF_CGROUP:-/proc/self/cgroup}") || return 75
   [ "$actual" = "$expected" ] || { echo 'beelink-gate: refused work outside its managed system unit' >&2; return 75; }
-  python3 - "$(gate_slice)" <<'PY'
+  python3 - "$(gate_slice)" <<'PY' || return 75
 import json, os, pathlib, stat, subprocess, sys
 named = os.environ.get('BEELINK_GATE_RESOURCE_POLICY')
 owners = (0, os.getuid()) if named else (0,)
@@ -61,7 +55,6 @@ try:
 except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
     sys.exit(75)
 PY
-  [ "$?" = 0 ] || return 75
   gate_cgroup_joined=$actual
   export BEELINK_GATE_SYSTEMD_MANAGER=system BEELINK_GATE_UNIT="beelink-gate-$gate_id.service"
 }
@@ -114,36 +107,39 @@ max_cpu_pressure() {
   fi
   echo "$maximum"
 }
-host_pressure_now() {  # [pressure file]: some avg10 of the host's CPU, or of the named file
-  python3 - "${1:-$(pressure_file)}" <<'PY'
-import math, pathlib, re, sys
-try:
-    line = next(line for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line.startswith('some '))
-    value = float(dict(field.split('=') for field in line.split()[1:])['avg10'])
-    if not math.isfinite(value) or not 0 <= value <= 100:
-        raise ValueError()
-    print(value)
-except (OSError, ValueError, KeyError, StopIteration):
-    sys.exit(1)
-PY
-}
 # Class memory some avg10 over 10 holds admission (11 gates swapped 17 GB while CPU admitted them, beelink1 10-26).
 # Host IO some avg10 over max_io_pressure holds too. The code default is 20; the host limits file overrides it.
+# So does a median 4 KiB fsync in the cache root over 100 ms: beelink2's WSL disk took 0.7-3.5 s at IO PSI 8-15 after its
+# VM restart and failed every disk-heavy gate, beelink1's 1.4 ms (11-01). Two slow rounds of three decide it.
 host_psi_admission() {
-  local pressure="" known=1 limit memory io host_io io_limit
-  pressure=$(host_pressure_now) || known=0
+  local limit io_limit
   limit=$(max_cpu_pressure) || return 75; io_limit=$(host_limit max_io_pressure 20) || die 'invalid host max_io_pressure policy'
-  memory=$(host_pressure_now "$(gate_cgroup)/memory.pressure" 2>/dev/null) || memory=0; io=$(host_pressure_now "$(gate_cgroup)/io.pressure" 2>/dev/null) || io=null
-  host_io=$(host_pressure_now "${BEELINK_GATE_HOST_IO_PRESSURE:-/proc/pressure/io}" 2>/dev/null) || host_io=null
-  python3 - "$pressure" "$limit" "$known" "$memory" "$io" "$host_io" "${io_limit:-null}" <<'PY'
-import json, sys, time
-known, memory, io, host_io, io_limit = sys.argv[3] == '1', float(sys.argv[4]), json.loads(sys.argv[5]), json.loads(sys.argv[6]), json.loads(sys.argv[7])
-pressure, limit = float(sys.argv[1]) if known else None, float(sys.argv[2])
-io_held = io_limit is not None and host_io is not None and host_io > io_limit
+  python3 - "$limit" "${io_limit:-null}" "${BEELINK_GATE_HOST_PRESSURE:-/proc/pressure/cpu}" "$(gate_cgroup)" "${BEELINK_GATE_HOST_IO_PRESSURE:-/proc/pressure/io}" \
+    "${cache_root:-${BEELINK_GATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/beelink-gate}}" <<'PY'
+import json, math, os, statistics, sys, tempfile, time
+def psi(path):  # some avg10, or None when unreadable
+    try:
+        with open(path) as stream:
+            value = float(dict(field.split('=') for field in next(line for line in stream if line.startswith('some ')).split()[1:])['avg10'])
+        return value if math.isfinite(value) and 0 <= value <= 100 else None
+    except (OSError, ValueError, KeyError, StopIteration):
+        return None
+limit, io_limit, fsync_limit, rounds = float(sys.argv[1]), json.loads(sys.argv[2]), 100, []
+pressure, memory, io, host_io = psi(sys.argv[3]), psi(sys.argv[4] + '/memory.pressure') or 0.0, psi(sys.argv[4] + '/io.pressure'), psi(sys.argv[5])
+known, io_held = pressure is not None, io_limit is not None and host_io is not None and host_io > io_limit
+try:  # an unwritable cache root measures nothing, as an unreadable PSI file does
+    os.makedirs(sys.argv[6], exist_ok=True)
+    with tempfile.NamedTemporaryFile(buffering=0, dir=sys.argv[6], prefix='.fsync-probe-') as probe:
+        while len(rounds) < 3 and sum(ms > fsync_limit for ms in rounds) < 2:
+            start = time.monotonic(); probe.write(bytes(4096)); os.fsync(probe.fileno()); rounds.append((time.monotonic() - start) * 1000)
+except OSError:
+    rounds = []
+fsync_ms = round(statistics.median(rounds), 1) if rounds else None; fsync_held = (fsync_ms or 0) > fsync_limit
 print(json.dumps({'mode':'host_psi', 'metric':'some_avg10', 'observed_at':time.time(), 'some_avg10':pressure, 'limit':limit,
-                  'held':not known or pressure > limit or memory > 10 or io_held, 'reason':'host_psi_unavailable' if not known else
-                  'class_memory_psi' if memory > 10 else 'host_io_psi' if io_held else 'host_psi', 'class_memory_some_avg10':memory,
-                  'class_io_some_avg10':io, 'host_io_some_avg10':host_io, 'io_limit':io_limit}, separators=(',', ':')))
+                  'held':not known or pressure > limit or memory > 10 or io_held or fsync_held, 'reason':'host_psi_unavailable' if not known else
+                  'class_memory_psi' if memory > 10 else 'host_io_psi' if io_held else 'host_fsync_latency' if fsync_held else 'host_psi',
+                  'class_memory_some_avg10':memory, 'class_io_some_avg10':io, 'host_io_some_avg10':host_io, 'io_limit':io_limit,
+                  'fsync_ms':fsync_ms, 'fsync_limit_ms':fsync_limit}, separators=(',', ':')))
 PY
 }
 wait_for_load() {
@@ -180,7 +176,7 @@ wait_for_load() {
     (( pause > 0 )) && { sleep "$pause" & wait $!; }
   done
   admission_stage checks
-  start_load=$(loadavg_now) start_host_pressure=$(host_pressure_now) start_pressure=$start_host_pressure
+  start_load=$(cut -d' ' -f1 "${BEELINK_GATE_LOADAVG:-/proc/loadavg}") start_host_pressure=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["some_avg10"])' "$sample") start_pressure=$start_host_pressure
   export BEELINK_GATE_ADMISSION_SAMPLE="$sample" BEELINK_GATE_ADMITTED=1
   echo "beelink-gate: admission $sample" >&2
 }
