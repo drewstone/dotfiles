@@ -216,8 +216,13 @@ it. Normal, light, dev, urgent and starved gates share this hard guard. Missing
 or malformed PSI/limits evidence refuses admission; load average is context
 only. Quotas, cpuset, affinity and active slots inform the default worker
 forecast, never permission to bypass host PSI. Explicit worker overrides retain
-their existing semantics. The guard is rechecked before fetch; an admitted
-install or command finishes normally.
+their existing semantics. Host IO PSI over `max_io_pressure` holds admission the
+same way, and so does a slow disk under the gate cache: the sample times up to
+three 4 KiB write+fsync rounds there and holds a median over the limit in
+`beelink-gate-lib/resources.sh` as `host_fsync_latency`, recording `fsync_ms`
+and `fsync_limit_ms`. A degraded WSL disk can stall every fsync while IO PSI
+stays low. The guard is rechecked before fetch; an admitted install or command
+finishes normally.
 
 The host policy also lowers retained raw gate groups so already-running old
 sources yield without moving or killing them. A new managed class cannot begin
