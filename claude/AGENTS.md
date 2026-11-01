@@ -51,6 +51,7 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 | Production reads and Platform business | `tangle-ops` (`--help` owns commands and flags) |
 | Production benchmark | `bench-gtr-full --preset full eu1 us1` on `drew-gtr-pro` with `BENCH_GTR_TREE` set to a built agent-container tree; its `tests/harness/scripts/bench-gtr-shims/README.md` owns setup; never GitHub Actions |
 | What did earlier agents already find? | `qmd search -c reviews '<terms>'`: every page under `~/reviews` on the Mac and drew-gtr-pro, refreshed hourly by `reviews-index`; read and link it before a new analysis |
+| What did a run's agents do and think, how did they behave, and why? (rule 4) | `traces facts\|analyze\|ask <run or session>` on the run's OTLP spans (`agent-trace-contract`), never hand reading; when it cannot answer, the producer missed the unified source (fix the producer) or traces has a generic defect (fix traces); never a per-product adapter |
 | Is X built? (rule 5) | `have <terms>`, plus `git grep` on `origin/<default>`; search a checkout with the `fff` tools first when listed, and `rg` for multiline or case-sensitive regexes |
 | Start, steer, stop agents (rule 3) | `fleet start`, `fleet send`, `fleet stop`; `acct status` for seat room |
 | Research (rule 4) | Discovery: `disco run` |
