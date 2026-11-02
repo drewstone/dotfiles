@@ -45,7 +45,7 @@ ARCHIVE="${HOSTLAB_ARCHIVE:-/mnt/traces/archive/hostlab}"
 # path is a plain directory on the root disk, and archiving there would move
 # VM disks onto root.
 ARCHIVE_MOUNT="${HOSTLAB_ARCHIVE_MOUNT:-/mnt/traces}"
-MIN_FREE_GB=100
+MIN_FREE_GB=100 MIN_FREE_MEM_GB=8  # memory the host keeps for its lanes after the VM takes --mem
 ARCHIVE_KEEP_DAYS=14
 TTL=2h
 OWNER="${HOSTLAB_OWNER:-}"
@@ -82,10 +82,10 @@ caller_alive() {
 
 check_free() {
   mkdir -p "$RUNS"
-  local avail need=$(( MIN_FREE_GB + $(numfmt --from=iec "$SCRATCH") / 1073741824 ))  # the scratch grows to its full size inside the VM
-  avail="$(df -P -BG "$RUNS" | awk 'NR == 2 { sub(/G$/, "", $4); print $4 }')"
-  [ "${avail:-0}" -ge "$need" ] ||
-    die "only ${avail:-0}G free on the disk holding $RUNS; a VM with --scratch $SCRATCH needs ${need}G (hostlab status; hostlab reap)"
+  local avail="$(awk '/^MemAvailable:/ { print int($2 / 1048576) }' /proc/meminfo)" need=$(( MIN_FREE_MEM_GB + $(numfmt --from=iec "$MEM") / 1073741824 ))
+  [ "${avail:-0}" -ge "$need" ] || die "only ${avail:-0}G of memory available; a VM with --mem $MEM needs ${need}G (hostlab status; hostlab reap)"
+  avail="$(df -P -BG "$RUNS" | awk 'NR == 2 { sub(/G$/, "", $4); print $4 }')" need=$(( MIN_FREE_GB + $(numfmt --from=iec "$SCRATCH") / 1073741824 ))  # the scratch grows to its full size inside the VM
+  [ "${avail:-0}" -ge "$need" ] || die "only ${avail:-0}G free on the disk holding $RUNS; a VM with --scratch $SCRATCH needs ${need}G (hostlab status; hostlab reap)"
 }
 
 reap_log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$CACHE/reap.log"; }
