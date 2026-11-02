@@ -2,7 +2,7 @@
 
 This file owns writing methods and rejected examples for marketing, UI, pages, launches and public-facing writing.
 
-For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+For Tangle work, read the [copy bible](https://github.com/tangle-network/brand/blob/main/docs/copy-bible.md) for voice, headline patterns, example-comment rules and the running list of copy Drew rejected, and the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure. When Drew rejects a line, add it to the bible's running list the same day.
 
 ## Banned Defaults
 

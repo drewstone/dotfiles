@@ -67,5 +67,6 @@ The tool's `--help` owns its usage; this table only says when to reach for it.
 - Repository changes, delegation, host work: [work process](../docs/processes/agent-work.md).
 - Analysis, review, plan, proposal or run status: [the climb](../docs/processes/climb.md).
 - Stalled or repeating work: [session efficiency](skills/reflect/references/session-efficiency.md).
+- Public copy (site, docs, launches, example comments): the brand [copy bible](https://github.com/tangle-network/brand/blob/main/docs/copy-bible.md) first, then [copywriting anti-patterns](../docs/anti-patterns/copywriting.md).
 - Agent apps: [agent app lessons](https://github.com/tangle-network/agent-app/blob/main/docs/agent-app-lessons.md).
 - Releasing or adopting a `@tangle-network/*` library: [release versioning](https://github.com/tangle-network/agent-runtime/blob/main/docs/release-versioning.md).
