@@ -212,10 +212,17 @@ class HostlabReapTest(unittest.TestCase):
             r = subprocess.run([HOSTLAB, 'run', '--', 'true'], env=dict(os.environ, HOSTLAB_HOME=home),
                                capture_output=True, text=True, timeout=30)
             self.assertNotEqual(r.returncode, 0)
-            self.assertIn('a VM needs 100G', r.stderr)
+            self.assertIn('a VM with --scratch 16G needs 116G', r.stderr)
             self.assertEqual(os.listdir(os.path.join(home, 'runs')), [])
         finally:
             shutil.rmtree(home, ignore_errors=True)
+
+    def test_boot_counts_the_scratch_above_the_floor(self):
+        # 2026-11-02: a VM with a 96G scratch booted at 116G free on drew-gtr-pro and drove the root to 72G within an hour.
+        r = self.hostlab('run', '--scratch', '100000G', '--', 'true')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('a VM with --scratch 100000G needs 100100G', r.stderr)
+        self.assertEqual(os.listdir(self.runs), [])
 
     def test_boot_under_a_gate_takes_the_vm_reservation_or_refuses(self):
         # 10-27: a GTR gate leased 16 GB and its suite booted 125 GiB of virtual disks outside the lease. Disks over the
