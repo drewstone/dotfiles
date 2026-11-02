@@ -39,6 +39,7 @@ For a ship, narrow, rebuild, or kill decision on a product bet, read [product be
 
 Translate the question into the decision the user needs, then inspect the relevant records:
 
+- For fleet lanes, start from `fleet report --lane-outcomes` on the fleet host: each live lane's state, STATUS Next and Blocked, owner hill movement, and its newest session's trace facts and waste.
 - For activity, inspect authoritative liveness, invocations, terminal records, and the latest meaningful action.
 - For progress, inspect retained artifacts, checks, changed decisions, and unresolved claims.
 - For topology, inspect actual parent edges, executed children, and artifact consumption.
