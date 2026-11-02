@@ -82,10 +82,10 @@ caller_alive() {
 
 check_free() {
   mkdir -p "$RUNS"
-  local avail
+  local avail need=$(( MIN_FREE_GB + $(numfmt --from=iec "$SCRATCH") / 1073741824 ))  # the scratch grows to its full size inside the VM
   avail="$(df -P -BG "$RUNS" | awk 'NR == 2 { sub(/G$/, "", $4); print $4 }')"
-  [ "${avail:-0}" -ge "$MIN_FREE_GB" ] ||
-    die "only ${avail:-0}G free on the disk holding $RUNS; a VM needs ${MIN_FREE_GB}G (hostlab status; hostlab reap)"
+  [ "${avail:-0}" -ge "$need" ] ||
+    die "only ${avail:-0}G free on the disk holding $RUNS; a VM with --scratch $SCRATCH needs ${need}G (hostlab status; hostlab reap)"
 }
 
 reap_log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$CACHE/reap.log"; }
