@@ -271,7 +271,7 @@ gate_docker_socket() {
   ( for fd in ${lock_fd:-} ${slot_fd:-} ${capacity_fd:-} ${writer_fd:-} ${gate_turbo_fd:-} ${heartbeat_fd:-}; do exec {fd}>&-; done
     exec python3 - "$sock" "beelinkgate-docker-g${gate_id#*-}.slice" <<'PY'
 import asyncio, json, os, re, signal, sys
-listen, parent, live = sys.argv[1], sys.argv[2].encode(), set()  # asyncio keeps tasks weakly: GC ended 15/16 first attaches (10-27)
+listen, parent, live, gate = sys.argv[1], sys.argv[2].encode(), set(), os.getppid()  # asyncio keeps tasks weakly: GC ended 15/16 first attaches (10-27)
 signal.signal(signal.SIGTERM, lambda *_: (os.unlink(listen), os._exit(0)))  # the unit's stop removes the socket
 
 async def pipe(reader, writer):
@@ -311,12 +311,12 @@ async def serve(client_r, client_w):
             writer and writer.close()
 
 async def main():
-    server = await asyncio.start_unix_server(serve, path=listen + '.new', limit=1 << 20)
+    await asyncio.start_unix_server(serve, path=listen + '.new', limit=1 << 20)
     os.chmod(listen + '.new', 0o600)
     os.rename(listen + '.new', listen)  # appears only once it accepts
-    await server.serve_forever()
+    while os.getppid() == gate: await asyncio.sleep(2)  # a gate ending any way reparents its proxy: 473 outlived theirs on GTR (10-28)
 
-asyncio.run(main())
+asyncio.run(main()); os.unlink(listen)
 PY
   ) </dev/null >/dev/null 2>&1 &
   local i; for i in $(seq 50); do [ -S "$sock" ] && break; sleep 0.1; done
