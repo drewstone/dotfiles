@@ -224,6 +224,13 @@ class HostlabReapTest(unittest.TestCase):
         self.assertIn('a VM with --scratch 100000G needs 100100G', r.stderr)
         self.assertEqual(os.listdir(self.runs), [])
 
+    def test_boot_refuses_a_vm_larger_than_available_memory(self):
+        # 2026-11-02: a kept 20G VM booted on drew-gtr-pro with 9G available; memory pressure reached 94% full and the OOM killer took services.
+        r = self.hostlab('run', '--mem', '100000G', '--', 'true')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('a VM with --mem 100000G needs 100008G', r.stderr)
+        self.assertEqual(os.listdir(self.runs), [])
+
     def test_boot_under_a_gate_takes_the_vm_reservation_or_refuses(self):
         # 10-27: a GTR gate leased 16 GB and its suite booted 125 GiB of virtual disks outside the lease. Disks over the
         # gate's lease now need the op-company:beelink-gate-gtr-hostlab reservation, which keeps its floor free.
