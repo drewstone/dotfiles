@@ -287,7 +287,7 @@ def build(opts, at):
             "reverts": None if day_reverts is None else len(day_reverts),
             "revertPRs": None if day_reverts is None else [f"{r['repository']['nameWithOwner']}#{r['number']}" for r in day_reverts],
             "incidentsOpened": len(opened), "ttdHoursP50": L.percentile(ttd, 0.5), "ttrHoursP50": L.percentile(ttr, 0.5),
-            "incidentsOpenAtEnd": open_at_end,
+            "incidentsOpenAtEnd": open_at_end, "ttdHoursRange": ttd and [min(ttd), max(ttd)], "ttrHoursRange": ttr and [min(ttr), max(ttr)],
             "queueOpenAtEnd": len(waiting), "queueOldestHours": max(waiting) if waiting else None,
             "queueResolved": len(waits), "queueWaitHoursP50": L.percentile(waits, 0.5),
         })
@@ -344,9 +344,9 @@ HILLS = {
     "operator:reverts": lambda d: (d["reverts"], d["reverts"], "PRs", "revert and rollback PRs", "event",
                                    "every revert or rollback PR by the operator merged during the local day"),
     "operator:time-to-detect": lambda d: (d["ttdHoursP50"], d["incidentsOpened"], "h", "time to detect p50", "start",
-                                          "every incident whose start falls in the local day"),
+                                          "every incident whose start falls in the local day", d["ttdHoursRange"]),
     "operator:time-to-recover": lambda d: (d["ttrHoursP50"], d["incidentsOpened"], "h", "time to recover p50", "start",
-                                           "every incident whose start falls in the local day"),
+                                           "every incident whose start falls in the local day", d["ttrHoursRange"]),
     "operator:decision-queue": lambda d: (d["queueOpenAtEnd"], d["queueOpenAtEnd"], "decisions",
                                           "decisions waiting on the operator", "all",
                                           "every decision still open at the end of the local day"),
@@ -362,13 +362,13 @@ def climb_rows(report) -> list[dict]:
         start = dt.datetime.fromisoformat(d["day"]).astimezone()
         end = min(start + dt.timedelta(days=1), generated) if generated else start + dt.timedelta(days=1)
         for hill, measure in HILLS.items():
-            value, n, unit, metric, select_by, selection = measure(d)
+            value, n, unit, metric, select_by, selection, *ci = measure(d)
             if value is None:
                 continue
             baseline = {"value": value, "unit": unit, "measurement": {
                 "metric": metric, "unit": unit, "selection": selection, "selectBy": select_by, "n": n or 0,
                 "basis": "measured", "window": {"from": L.iso(start), "to": L.iso(end)},
-                "instrument": "lead-scorecard --climb",
+                "instrument": "lead-scorecard --climb", **({"ci": ci[0], "ciMethod": "day min-max, P(covers median) = 1-2^(1-n)"} if ci else {}),
                 "calibration": {"verdict": "UNCALIBRATED",
                                 "next": "recount one day by hand from the guard logs, _lead records and GitHub"}}}
             if hill == "operator:decision-queue":
