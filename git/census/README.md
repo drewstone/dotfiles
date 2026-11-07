@@ -36,10 +36,11 @@ Repo-pair counts sum file-pair/window combinations. Preview scores add window si
 Every metric is better smaller. Floor groups are declared in `GROUPS` in [census](census); individual metric names also work.
 `copies` needs peers for cross-repository windows; without peers, that part is explicitly unmeasured unless requested individually, which refuses.
 
-## Scoped human approval
+## Scoped judged approval
 
 Normal commits may offset production growth with real text deletions anywhere except lockfiles; merges keep the per-area charge.
-Otherwise keep explicit requester authorization in a private JSON record containing `repository` (exact origin URL), `base` (full object ID),
+Otherwise a new capability may grow: a reviewer other than its author checks that it is new, reuses nothing that exists and is proportionate, then posts the approval comment.
+The author keeps it in a private JSON record containing `repository` (exact origin URL), `base` (full object ID),
 `tree` (exact head tree), `areas` (every positive production delta), and `source` with `url`, `sha256` and the exact authorization `quote`.
 The source URL names a GitHub issue/PR comment. Its complete body digest and quote must match; `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) verifies its author against the authenticated user.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
@@ -48,7 +49,7 @@ Areas are `apps|products|packages|services|tools/<name>`, other top-level dirs, 
 A merge is charged only for its additions beyond both parents, excluding the merged branch's changes since their merge-base.
 Set local `census.growthApproval` to the private record for normal commit/push, or pass `--growth-approval` to `floors`; remove local config afterwards.
 [The normal-hook qualification](../../tests/census-growth.integration.py) exercises the record format and source binding.
-Missing access, changed source or mismatched scope refuses; operators still interpret the requester's authorization. Approval permits only production growth, keeping all metrics visible and every other cap/floor enforced.
+Missing access, changed source or mismatched scope refuses. Approval permits only production growth, keeping all metrics visible and every other cap/floor enforced.
 
 ## Integrity
 
