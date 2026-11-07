@@ -1095,59 +1095,34 @@ function normalizeChecks(hookConfig) {
   });
 }
 
+// Built-in checks, required, each named by its builtin.
+const builtins = (...ids) => ids.map((id) => ({ id, builtin: id, required: true }));
+
+function hooksConfig(preCommit, prePush) {
+  const hooks = { "pre-commit": { checks: builtins(...preCommit) }, "pre-push": { checks: [CROSS_NAME_GUARD, ...prePush] } };
+  return { artifactsDir: ".git/ai-agent-hooks/runs", hooks };
+}
+
 function defaultConfig() {
-  return {
-    artifactsDir: ".git/ai-agent-hooks/runs",
-    hooks: {
-      "pre-commit": {
-        checks: [
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-        ],
-      },
-      "pre-push": {
-        checks: [
-          CROSS_NAME_GUARD,
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-          {
-            id: "codex-review",
-            group: "sequential",
-            required: true,
-            timeoutSec: 900,
-            audit: {
-              runner: "codex-review",
-              failOnSeverities: ["high", "critical"],
-              prompt: DEFAULT_AUDIT_PROMPT,
-            },
-          },
-        ],
+  return hooksConfig(["merge-conflict-markers", "mergeable-with-base", "suspicious-secrets"], [
+    ...builtins("merge-conflict-markers", "suspicious-secrets"),
+    {
+      id: "codex-review",
+      group: "sequential",
+      required: true,
+      timeoutSec: 900,
+      audit: {
+        runner: "codex-review",
+        failOnSeverities: ["high", "critical"],
+        prompt: DEFAULT_AUDIT_PROMPT,
       },
     },
-  };
+  ]);
 }
 
 function globalBaselineConfig() {
-  return {
-    artifactsDir: ".git/ai-agent-hooks/runs",
-    hooks: {
-      "pre-commit": {
-        checks: [
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-        ],
-      },
-      "pre-push": {
-        checks: [
-          CROSS_NAME_GUARD,
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-        ],
-      },
-    },
-  };
+  return hooksConfig(["merge-conflict-markers", "suspicious-secrets"],
+    builtins("merge-conflict-markers", "mergeable-with-base", "suspicious-secrets"));
 }
 
 async function loadConfig(repoRoot) {
@@ -1262,107 +1237,18 @@ async function runHookCommand(rawArgs) {
   const results = [];
 
   for (const check of sequentialChecks) {
-    const logPath = join(runDir, `${slug(check.id)}.log`);
-    const started = Date.now();
-
-    let outcome;
-    if (check.kind === "builtin") {
-      outcome = runBuiltin(check.builtin, { ...context, check });
-      writeFileSync(logPath, outcome.output || "", "utf8");
-      outcome.elapsedMs = Date.now() - started;
-      if (!outcome.ok && outcome.output) console.error(outcome.output);
-    } else if (check.kind === "audit") {
-      outcome = await runAudit(check, context, logPath, runDir);
-    } else {
-      outcome = await runShell(check.run, repoRoot, check.timeoutSec, logPath);
-    }
-
-    const result = {
-      id: check.id,
-      required: check.required,
-      ok: outcome.ok,
-      status: outcome.status,
-      elapsedMs: outcome.elapsedMs,
-      logPath,
-      skipped: outcome.skipped === true,
-      reviewResult: outcome.reviewResult || null,
-      gate: outcome.gate || null,
-      modelOutputPath: outcome.modelOutputPath || null,
-      runnerMetaPath: outcome.runnerMetaPath || null,
-    };
-
+    const result = await runCheck(check, context, runDir);
     results.push(result);
-    console.log(
-      `- ${
-        result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
-      } ${check.id}`,
-    );
-
+    console.log(`- ${verdict(result)} ${check.id}`);
     if (!result.ok && result.required) {
       writeSummary(runDir, hookName, results);
       process.exit(1);
     }
   }
 
-  if (ensembleChecks.length > 0) {
-    const ensembleResults = await Promise.all(
-      ensembleChecks.map(async (check) => {
-        const logPath = join(runDir, `${slug(check.id)}.log`);
-        const started = Date.now();
-
-        if (check.kind === "builtin") {
-          const outcome = runBuiltin(check.builtin, { ...context, check });
-          writeFileSync(logPath, outcome.output || "", "utf8");
-          return {
-            id: check.id,
-            required: check.required,
-            ok: outcome.ok,
-            status: outcome.status,
-            elapsedMs: Date.now() - started,
-            logPath,
-            skipped: false,
-          };
-        }
-
-        if (check.kind === "audit") {
-          const outcome = await runAudit(check, context, logPath, runDir);
-          return {
-            id: check.id,
-            required: check.required,
-            ok: outcome.ok,
-            status: outcome.status,
-            elapsedMs: outcome.elapsedMs,
-            logPath,
-            skipped: outcome.skipped === true,
-            reviewResult: outcome.reviewResult || null,
-            gate: outcome.gate || null,
-            modelOutputPath: outcome.modelOutputPath || null,
-            runnerMetaPath: outcome.runnerMetaPath || null,
-          };
-        }
-
-        const outcome = await runShell(check.run, repoRoot, check.timeoutSec, logPath);
-        return {
-          id: check.id,
-          required: check.required,
-          ok: outcome.ok,
-          status: outcome.status,
-          elapsedMs: outcome.elapsedMs,
-          logPath,
-          skipped: false,
-        };
-      }),
-    );
-
-    results.push(...ensembleResults);
-    for (const result of ensembleResults) {
-      console.log(
-        `- ${
-          result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
-        } ${result.id}`,
-      );
-    }
-  }
+  const ensembleResults = await Promise.all(ensembleChecks.map((check) => runCheck(check, context, runDir)));
+  results.push(...ensembleResults);
+  for (const result of ensembleResults) console.log(`- ${verdict(result)} ${result.id}`);
 
   writeSummary(runDir, hookName, results);
   if (results.some((result) => !result.ok && result.required)) {
@@ -1370,6 +1256,38 @@ async function runHookCommand(rawArgs) {
   }
 
   process.exit(0);
+}
+
+const verdict = (result) => (result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn");
+
+// One check, sequential or ensemble alike: its outcome, log and summary row.
+async function runCheck(check, context, runDir) {
+  const logPath = join(runDir, `${slug(check.id)}.log`);
+  const started = Date.now();
+  let outcome;
+  if (check.kind === "builtin") {
+    outcome = runBuiltin(check.builtin, { ...context, check });
+    writeFileSync(logPath, outcome.output || "", "utf8");
+    outcome.elapsedMs = Date.now() - started;
+    if (!outcome.ok && outcome.output) console.error(outcome.output);
+  } else if (check.kind === "audit") {
+    outcome = await runAudit(check, context, logPath, runDir);
+  } else {
+    outcome = await runShell(check.run, context.repoRoot, check.timeoutSec, logPath);
+  }
+  return {
+    id: check.id,
+    required: check.required,
+    ok: outcome.ok,
+    status: outcome.status,
+    elapsedMs: outcome.elapsedMs,
+    logPath,
+    skipped: outcome.skipped === true,
+    reviewResult: outcome.reviewResult || null,
+    gate: outcome.gate || null,
+    modelOutputPath: outcome.modelOutputPath || null,
+    runnerMetaPath: outcome.runnerMetaPath || null,
+  };
 }
 
 async function doctorCommand(rawArgs) {
