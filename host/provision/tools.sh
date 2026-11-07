@@ -131,14 +131,14 @@ install_uv() {
 operator_rust_current() {
   [ "$(rustup show profile 2>/dev/null)" = minimal ] &&
     rustup default 2>/dev/null | grep '^stable-' >/dev/null &&
-    quiet rustup run stable rustc --version && quiet rustup run stable cargo --version
+    quiet rustup run stable rustc --version && quiet rustup run stable cargo --version && quiet rustup run stable cargo fmt --version
 }
 install_operator_rust() {
   command -v rustup >/dev/null 2>&1 || apt_install rustup || return 1
   if ! quiet rustup run stable rustc --version || ! quiet rustup run stable cargo --version; then
     rustup toolchain install stable --profile minimal || return 1
   fi
-  rustup set profile minimal && rustup default stable
+  rustup set profile minimal && rustup default stable && rustup component add --toolchain stable rustfmt # gates run cargo fmt
 }
 
 module_tools() {
@@ -155,5 +155,5 @@ module_tools() {
   ensure "GitHub CLI apt source" gh_source_ok -- add_gh_source
   ensure "gh from GitHub's apt source" gh_from_github -- install_gh
   ensure "uv in ~/.local/bin" test -x "$HOME/.local/bin/uv" -- install_uv
-  ensure "operator Rust stable with a minimal profile" operator_rust_current -- install_operator_rust
+  ensure "operator Rust stable with a minimal profile and rustfmt" operator_rust_current -- install_operator_rust
 }
