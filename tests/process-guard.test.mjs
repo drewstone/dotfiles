@@ -135,6 +135,8 @@ test("raw-gh: plain gh, the wrapper and unauthenticated GitHub reads pass", () =
     "command gh pr merge 1 -R o/r --squash", "/usr/bin/gh --version", "/opt/homebrew/bin/gh help", "~/bin/gh pr view 1",
     "PATH=$HOME/bin:/usr/bin gh pr view 1", "readlink -f /usr/bin/gh", "which -a gh", "sha256sum /usr/bin/gh", "setsid gh pr view 1",
     "gh pr create --body 'the real gh is /usr/bin/gh'", "git clone https://github.com/example/gh", "cd ~/bin && ./gh pr view 1",
+    // A gh path is a word only commands that run their arguments execute; messages, mkdir, chmod and dpkg merely name it.
+    "notify --send 'merged with /usr/bin/gh pr merge 1'", "D=/tmp/x; mkdir -p $D/gh", "chmod +x /tmp/x/gh", "dpkg -S /usr/bin/gh",
   ], "allow");
 });
 
