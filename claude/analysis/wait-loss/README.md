@@ -7,7 +7,7 @@ Run in order from this directory:
 ```bash
 python3 scan_waits.py > corpus.jsonl   # per-session wait + cap counts
 python3 loss.py > loss.out             # per-cap information loss, writes loss_rows.json
-python3 echo_test.py                   # silent vs printing loop bodies
+python3 score_echo.py                  # silent vs printing loop bodies
 python3 score_guard.py                 # scores hooks/poll-guard.sh on the real corpus
 ```
 
