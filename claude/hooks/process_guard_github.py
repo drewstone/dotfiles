@@ -13,7 +13,8 @@ SHIMS = {_SHIM, os.path.realpath(_SHIM)} if _SHIM and open(_SHIM, "rb").read(2) 
 GH_PATH = re.compile(r"(?<![\w.:/~$-])(?:~|\.{1,2})?(?:/+[\w.@+-]+)*/+gh(?![\w.-])")
 WHICH_ALL = re.compile(r"\bwhich\s+(?:-\w+\s+)*-\w*a\w*\s[^)]*\bgh\b")
 DODGE = re.compile(r"(?:^| )(?:command -p|env (?:\S+ )*(?:-i|--ignore-environment|-|-u PATH))(?= )")
-PROBES = {"ls", "stat", "file", "readlink", "realpath", "sha256sum", "which", "type", "cd", "grep", "echo", "printf", "git", "-v"}
+RUNNERS = {"perl", "ruby", "python", "python3", "node", "bun", "deno", "php", "watch", "script", "find", "parallel", "flock", "unbuffer",
+           "ionice", "chroot", "su", "runuser", "systemd-run", "tmux", "screen"}  # run a command named in their arguments
 CLIENTS = {"curl", "wget", "http", "https", "xh", "python", "python3", "node", "bun", "deno"}
 AUTH = re.compile(r"authorization|\w*(?:gh|github)_?\w*token\b|auth token|(?:^| )(?:-u|--user)(?: |=)", re.I)
 WRITE = re.compile(r"(?:^|[\s'\"=:])(?:PUT|POST|PATCH|DELETE)\b|(?:^| )(?:-d|-F|-T|--data\S*|--json|--form|--post-\w+|--upload-file)\b"
@@ -47,8 +48,7 @@ def rule_raw_gh(cmd):
         dirs = expand(path, {**env, "PATH": os.environ.get("PATH", "")}).split(":")
         found = next((p for p in (normal(os.path.join(d or ".", "gh"), cmd.cwd) for d in dirs) if os.path.isfile(p)), None)
         what = None if found in SHIMS else f"`{head.strip()}`, which runs {found or 'no shim'} instead of the shim"
-    text_only = cmd.prog in PROBES or ("/" not in words[0] and GH.match(words[0]))
-    for k, word in enumerate([] if text_only or what else words):
+    for k, word in enumerate([] if what else words if cmd.prog in RUNNERS else words[:1]):
         for m in GH_PATH.finditer(word):
             if normal(m.group(0), cmd.cwd) not in SHIMS and not (k == 0 and words[1:] in (["--version"], ["version"], ["help"])):
                 what = what or f"the real gh at {m.group(0)}"
