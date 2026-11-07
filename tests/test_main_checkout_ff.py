@@ -151,6 +151,7 @@ class MainCheckoutFfTest(unittest.TestCase):
         repo = self.clone("other-lane")
         before = git(repo, "rev-parse", "HEAD")
         self.advance_origin()
+        self.env["MAIN_CHECKOUT_FF_EXCLUDE"] = "docs other-lane"
         self.run_ff()
         self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
 
