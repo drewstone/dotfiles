@@ -1,31 +1,55 @@
 """Process-guard rule raw-gh: GitHub reached around the operator's gh wrapper (process_guard.py's docstring)."""
 import os
 import re
+import shutil
 
 from secret_scan import guard_config
 
 SHIM_VARS = guard_config("process_guard", {}).get("raw_gh")  # variables that make the gh shim pass through; absent: rule off
 WRAPPER = guard_config("merge_check", {}).get("gh") or "gh"
-REAL_GH = re.compile(r"^(?:/usr(?:/local)?|/opt/homebrew|/home/linuxbrew/\.linuxbrew|/snap)?/bin/gh$|/Cellar/gh/[^/]+/bin/gh$")
+_SHIM = shutil.which("gh")  # the first gh on the hook's PATH is the operator's shim when it is a script, not a gh binary
+SHIMS = {_SHIM, os.path.realpath(_SHIM)} if _SHIM and open(_SHIM, "rb").read(2) == b"#!" else set()
+GH_PATH = re.compile(r"(?<![\w.:/~$-])(?:~|\.{1,2})?(?:/+[\w.@+-]+)*/+gh(?![\w.-])")
+WHICH_ALL = re.compile(r"\bwhich\s+(?:-\w+\s+)*-\w*a\w*\s[^)]*\bgh\b")
+DODGE = re.compile(r"(?:^| )(?:command -p|env (?:\S+ )*(?:-i|--ignore-environment|-|-u PATH))(?= )")
+PROBES = {"ls", "stat", "file", "readlink", "realpath", "sha256sum", "which", "type", "cd", "grep", "echo", "printf", "git", "-v"}
 CLIENTS = {"curl", "wget", "http", "https", "xh", "python", "python3", "node", "bun", "deno"}
 AUTH = re.compile(r"authorization|\w*(?:gh|github)_?\w*token\b|auth token|(?:^| )(?:-u|--user)(?: |=)", re.I)
 WRITE = re.compile(r"(?:^|[\s'\"=:])(?:PUT|POST|PATCH|DELETE)\b|(?:^| )(?:-d|-F|-T|--data\S*|--json|--form|--post-\w+|--upload-file)\b"
                    r"|/merges?\b|git/refs|graphql")
-VAR = re.compile(r"\$\{?([A-Za-z_]\w*)\}?")
+EXPAND = re.compile(r"\$\{(\w+)(?::?[-=]([^}]*))?\}|\$(\w+)")
+
+
+def expand(text, env):
+    """Variables replaced by their known values (`${V:-default}` by the default when V is unknown)."""
+    return EXPAND.sub(lambda m: env.get(m.group(1) or m.group(3)) or (m.group(0) if m.group(2) is None else m.group(2)), text)
+
+
+def normal(path, cwd):
+    """An absolute path with ~, cwd, //, .. and /proc/self/root resolved; a remote relative path stays as written."""
+    path = os.path.expanduser(os.path.join(cwd or "", os.path.expanduser(path)))
+    return path if path[:1] != "/" else re.sub(r"^/proc/(?:self|\d+)/root(?=/)", "", os.path.normpath(re.sub(r"/+", "/", path)))
 
 
 def rule_raw_gh(cmd):
     if SHIM_VARS is None:
         return None
-    path = VAR.sub(lambda m: cmd.env.get(m.group(1), m.group(0)), cmd.argv[0])
-    prefix = " ".join(cmd.prefix)
+    env, head = {"HOME": os.path.expanduser("~"), **cmd.env}, " ".join(cmd.prefix + cmd.argv[:1]) + " "
+    words = [expand(w, env) for w in cmd.argv]
     what = next((f"{v}= set for this command" for v in SHIM_VARS if v in cmd.env), None)
-    if not what and os.path.basename(path) == "gh":
-        dodged = re.search(r"(?:^| )(?:command|env (?:\S+ )*(?:-i|--ignore-environment|-|-u PATH))(?= )", prefix + " ") or \
-            not re.search(r"\$\{?PATH\b", cmd.env.get("PATH", "$PATH"))
-        what = f"the real gh at {path}" if REAL_GH.search(path) else (f"`{prefix} gh`, which skips the shim" if dodged else None)
-    text = " ".join(cmd.argv[1:])
-    if not what and cmd.prog in CLIENTS and "api.github.com" in text and (AUTH.search(text) or WRITE.search(text)):
+    path = cmd.env.get("PATH", os.defpath if DODGE.search(head) else None) if words[0] == "gh" else None
+    if not what and path is not None:
+        dirs = expand(path, {**env, "PATH": os.environ.get("PATH", "")}).split(":")
+        found = next((p for p in (normal(os.path.join(d or ".", "gh"), cmd.cwd) for d in dirs) if os.path.isfile(p)), None)
+        what = None if found in SHIMS else f"`{head.strip()}`, which runs {found or 'no shim'} instead of the shim"
+    text_only = cmd.prog in PROBES or ("/" not in words[0] and re.match(r"gh(?:-[\w.-]+)?$", words[0]))
+    for k, word in enumerate([] if text_only or what else words):
+        for m in GH_PATH.finditer(word):
+            if normal(m.group(0), cmd.cwd) not in SHIMS and not (k == 0 and words[1:] in (["--version"], ["version"], ["help"])):
+                what = what or f"the real gh at {m.group(0)}"
+        what = what or ("`which -a gh`, which finds the real gh" if "$(" in word and WHICH_ALL.search(word) else None)
+    text = " ".join(words[1:])
+    if not what and cmd.prog in CLIENTS and re.search(r"api\.github\.com", text, re.I) and (AUTH.search(text) or WRITE.search(text)):
         what = f"{cmd.prog} to api.github.com with a token or a write"
     if not what:
         return None

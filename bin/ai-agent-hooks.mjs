@@ -348,7 +348,7 @@ function readPrePushRefUpdates() {
 
 /**
  * The release line every pushed ref updates, when they all update one: `release/<line>` is a
- * backport line that consumers pinned to an older version resolve (agent-runtime's publish workflow
+ * backport line that consumers pinned to an older version resolve (a package's publish workflow
  * releases a tag at the tip of `release/<major>.<minor>.x`). It diverges from the default branch on
  * purpose, so its base is the line itself.
  */
@@ -1095,59 +1095,34 @@ function normalizeChecks(hookConfig) {
   });
 }
 
+// Built-in checks, required, each named by its builtin.
+const builtins = (...ids) => ids.map((id) => ({ id, builtin: id, required: true }));
+
+function hooksConfig(preCommit, prePush) {
+  const hooks = { "pre-commit": { checks: builtins(...preCommit) }, "pre-push": { checks: [CROSS_NAME_GUARD, ...prePush] } };
+  return { artifactsDir: ".git/ai-agent-hooks/runs", hooks };
+}
+
 function defaultConfig() {
-  return {
-    artifactsDir: ".git/ai-agent-hooks/runs",
-    hooks: {
-      "pre-commit": {
-        checks: [
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-        ],
-      },
-      "pre-push": {
-        checks: [
-          CROSS_NAME_GUARD,
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-          {
-            id: "codex-review",
-            group: "sequential",
-            required: true,
-            timeoutSec: 900,
-            audit: {
-              runner: "codex-review",
-              failOnSeverities: ["high", "critical"],
-              prompt: DEFAULT_AUDIT_PROMPT,
-            },
-          },
-        ],
+  return hooksConfig(["merge-conflict-markers", "mergeable-with-base", "suspicious-secrets"], [
+    ...builtins("merge-conflict-markers", "suspicious-secrets"),
+    {
+      id: "codex-review",
+      group: "sequential",
+      required: true,
+      timeoutSec: 900,
+      audit: {
+        runner: "codex-review",
+        failOnSeverities: ["high", "critical"],
+        prompt: DEFAULT_AUDIT_PROMPT,
       },
     },
-  };
+  ]);
 }
 
 function globalBaselineConfig() {
-  return {
-    artifactsDir: ".git/ai-agent-hooks/runs",
-    hooks: {
-      "pre-commit": {
-        checks: [
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-        ],
-      },
-      "pre-push": {
-        checks: [
-          CROSS_NAME_GUARD,
-          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
-          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
-          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
-        ],
-      },
-    },
-  };
+  return hooksConfig(["merge-conflict-markers", "suspicious-secrets"],
+    builtins("merge-conflict-markers", "mergeable-with-base", "suspicious-secrets"));
 }
 
 async function loadConfig(repoRoot) {
@@ -1292,11 +1267,7 @@ async function runHookCommand(rawArgs) {
     };
 
     results.push(result);
-    console.log(
-      `- ${
-        result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
-      } ${check.id}`,
-    );
+    console.log(`- ${verdict(result)} ${check.id}`);
 
     if (!result.ok && result.required) {
       writeSummary(runDir, hookName, results);
@@ -1355,13 +1326,7 @@ async function runHookCommand(rawArgs) {
     );
 
     results.push(...ensembleResults);
-    for (const result of ensembleResults) {
-      console.log(
-        `- ${
-          result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
-        } ${result.id}`,
-      );
-    }
+    for (const result of ensembleResults) console.log(`- ${verdict(result)} ${result.id}`);
   }
 
   writeSummary(runDir, hookName, results);
@@ -1371,6 +1336,8 @@ async function runHookCommand(rawArgs) {
 
   process.exit(0);
 }
+
+const verdict = (result) => (result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn");
 
 async function doctorCommand(rawArgs) {
   const { flags } = parseArgs(rawArgs);
