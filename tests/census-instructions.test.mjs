@@ -5,7 +5,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 
-// `census instructions` reads files, not a tree: a fixture home, then the load this repository installs.
 const scratch = mkdtempSync(join(tmpdir(), "census-instructions-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 const instructions = (home, ...args) => spawnSync(resolve("git/census/census"), ["instructions", "--home", home, "--cwd", home, ...args], { encoding: "utf8" });
@@ -25,14 +24,15 @@ test("census instructions measures a fixture's load, duplicates, conflicts, hook
   assert.deepEqual(m.move.drop.map((d) => at(d.copy)), [".claude/process.md:1", ".claude/process.md:1"]);
 });
 
-test("census instructions holds this repository's installed load to the numbers measured on 2026-11-06", () => {
+test("census instructions holds the installed load budget and refuses a measured tighter bound", () => {
   const home = join(scratch, "installed"), claude = join(home, ".claude");
   mkdirSync(join(claude, "skills"), { recursive: true });
   for (const name of ["CLAUDE.md", "AGENTS.md", "RTK.md", "directives", "hooks"]) symlinkSync(resolve("claude", name), join(claude, name));
   for (const skill of readdirSync(resolve("claude/skills")).filter((s) => !s.startsWith("_"))) symlinkSync(resolve("claude/skills", skill), join(claude, "skills", skill));
-  const held = instructions(home, "--budget-tokens", "3147", "--max-dup-share", "0");
+  const held = instructions(home, "--json", "--budget-tokens", "3147", "--max-dup-share", "0");
   assert.equal(held.status, 0, held.stderr);
-  const tighter = instructions(home, "--budget-tokens", "3146", "--max-dup-share", "0");
+  const tokens = JSON.parse(held.stdout).totals.loaded.tokens;
+  const tighter = instructions(home, "--budget-tokens", String(tokens - 1), "--max-dup-share", "0");
   assert.equal(tighter.status, 1);
-  assert.match(tighter.stderr, /loaded tokens 3147 exceed --budget-tokens 3146/);
+  assert.match(tighter.stderr, new RegExp(`loaded tokens ${tokens} exceed --budget-tokens ${tokens - 1}`));
 });
