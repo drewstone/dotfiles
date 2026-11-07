@@ -1,0 +1,3 @@
+[Manager]
+# Preserve the measured pre-install score for normal user services.
+DefaultOOMScoreAdjust=@DEFAULT_OOM_SCORE@

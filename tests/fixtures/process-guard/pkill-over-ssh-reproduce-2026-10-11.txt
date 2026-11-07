@@ -1,0 +1,12 @@
+cd /tmp/scratchpad/pk/model && python3 - <<'EOF'
+s=open('reproduce.py').read()
+old='''    H("api_model_id",P.API_MODEL)''' 
+assert s.count("H('api_model_id',P.API_MODEL)")==1
+old="    H('api_model_id',P.API_MODEL)"
+new='''    # every register input (base, low, high) and the ladder's own assumptions, so pages tag the inputs they quote
+    H('api_model_id',P.API_MODEL)'''
+s=s.replace(old,new)
+open('reproduce.py','w').write(s)
+print('ok')
+EOF
+ssh host-a 'pkill -f "python3 reproduce.py" ; sleep 1; pgrep -fa "reproduce.py" | head -3' ; rsync -a ./ host-a:.local/state/agent-work/lab/final/final/run/ --exclude output.txt --exclude output.stderr.txt --exclude README.md --exclude checks && ssh host-a 'cd ~/.local/state/agent-work/lab/final/final/run && rm -f reproduce.status && (nohup ./run.sh >/dev/null 2>&1 &) ; echo started'

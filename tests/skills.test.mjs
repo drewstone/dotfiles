@@ -1,0 +1,473 @@
+import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import test from 'node:test'
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const skillsCommand = join(repoRoot, 'claude', 'tools', 'skills')
+
+function withHome(run) {
+  const home = mkdtempSync(join(tmpdir(), 'skills-test-'))
+  try {
+    run(home)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
+function installerEnv(home) {
+  const bin = join(home, 'bin')
+  mkdirSync(bin)
+  const codex = join(bin, 'codex')
+  writeFileSync(codex, `#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+path = Path(os.environ['CODEX_HOME']) / 'hooks.json'
+for line in sys.stdin:
+    if json.loads(line).get('id') != 2:
+        continue
+    # Like Codex, hooks/list reports every PreToolUse command the home's hooks.json registers.
+    groups = json.loads(path.read_text())['hooks']['PreToolUse'] if path.exists() else []
+    hooks = [{'sourcePath': str(path), 'eventName': 'preToolUse', 'handlerType': 'command',
+              'command': hook['command'], 'timeoutSec': hook.get('timeout'),
+              'key': hook['command'], 'currentHash': 'sha256:fixture'}
+             for group in groups for hook in group['hooks']]
+    print(json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'data': [{'hooks': hooks}]}}), flush=True)
+`)
+  chmodSync(codex, 0o755)
+  return {
+    ...process.env,
+    HOME: home,
+    PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
+    AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
+  }
+}
+
+function writeSkill(root, name, description) {
+  const directory = join(root, name)
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(
+    join(directory, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`,
+  )
+  return directory
+}
+
+function runSkills(home, args = []) {
+  return spawnSync(skillsCommand, args, {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  })
+}
+
+function missingLocalReferences(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return missingLocalReferences(path)
+    if (!entry.isFile() || !entry.name.endsWith('.md')) return []
+    let fence = null
+    const prose = readFileSync(path, 'utf8').split('\n').filter((line) => {
+      const marker = line.match(/^\s*(`{3,}|~{3,})(.*)$/)
+      if (marker) {
+        if (!fence) fence = marker[1]
+        else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null
+        return false
+      }
+      return !fence
+    }).join('\n')
+    return [...prose.matchAll(/\[[^\]\n]*\]\(([^)\n]+)\)/g)].flatMap((match) => {
+      const target = match[1].split(/\s+"/)[0].replace(/^<|>$/g, '').split('#')[0]
+      if (!target || /^(?:[a-z][a-z\d+.-]*:|\/|~)/i.test(target)) return []
+      return existsSync(resolve(dirname(path), decodeURIComponent(target)))
+        ? []
+        : [`${path}: ${target}`]
+    })
+  })
+}
+
+test('local reference checks detect a missing procedure without treating examples as live links', () => {
+  withHome((home) => {
+    const skill = writeSkill(home, 'linked', 'Linked procedure')
+    writeFileSync(join(skill, 'SKILL.md'), [
+      '[Procedure](references/procedure.md#usage)',
+      '[Current source](https://example.com/docs)',
+      '```markdown',
+      '[Example](not-a-live-reference.md)',
+      '```',
+    ].join('\n'))
+    assert.deepEqual(missingLocalReferences(skill), [`${join(skill, 'SKILL.md')}: references/procedure.md`])
+    mkdirSync(join(skill, 'references'))
+    writeFileSync(join(skill, 'references', 'procedure.md'), '# Usage\n')
+    assert.deepEqual(missingLocalReferences(skill), [])
+  })
+})
+
+test('skill procedures and supporting documents keep their local links reachable', () => {
+  assert.deepEqual(missingLocalReferences(join(repoRoot, 'claude', 'skills')), [])
+})
+
+test('discovers system skills and deduplicates the same source across roots', () => {
+  withHome((home) => {
+    const source = writeSkill(join(home, 'source'), 'shared', 'Shared source')
+    const claudeRoot = join(home, '.claude', 'skills')
+    const codexRoot = join(home, '.codex', 'skills')
+    mkdirSync(claudeRoot, { recursive: true })
+    mkdirSync(codexRoot, { recursive: true })
+    symlinkSync(source, join(claudeRoot, 'shared'))
+    symlinkSync(source, join(codexRoot, 'shared'))
+    writeSkill(join(codexRoot, '.system'), 'system-one', 'System source')
+
+    const output = execFileSync(skillsCommand, {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home },
+    })
+
+    assert.match(output, /shared\s+Shared source/)
+    assert.match(output, /system-one\s+System source/)
+    assert.match(output, /2 skill\(s\)/)
+  })
+})
+
+test('reports the documented unknown-context catalog fallback', () => {
+  withHome((home) => {
+    const root = join(home, '.claude', 'skills')
+    for (let index = 0; index < 20; index += 1) {
+      writeSkill(root, `compact-${index}`, 'Short description')
+    }
+
+    const compact = runSkills(home, ['--check'])
+    assert.equal(compact.status, 0, compact.stderr)
+    assert.match(compact.stdout, /OK: 20 skills/)
+  })
+
+  withHome((home) => {
+    const root = join(home, '.claude', 'skills')
+    for (let index = 0; index < 10; index += 1) {
+      writeSkill(root, `oversized-${index}`, 'x'.repeat(1_000))
+    }
+
+    const oversized = runSkills(home, ['--check'])
+    assert.equal(oversized.status, 0, oversized.stderr)
+    assert.match(oversized.stderr, /8,000-character unknown-context fallback/)
+    assert.match(oversized.stderr, /Codex may shorten descriptions/)
+  })
+
+  withHome((home) => {
+    const root = join(home, '.claude', 'skills')
+    for (let index = 0; index < 200; index += 1) {
+      writeSkill(root, `minimum-metadata-${index}`, '')
+    }
+
+    const omitted = runSkills(home, ['--check'])
+    assert.equal(omitted.status, 0, omitted.stderr)
+    assert.match(omitted.stderr, /8,000-character unknown-context fallback/)
+    assert.match(omitted.stderr, /some skills may be omitted/)
+  })
+})
+
+test('deduplicates byte-identical skill folders installed for different harnesses', () => {
+  withHome((home) => {
+    writeSkill(join(home, '.claude', 'skills'), 'shared-copy', 'Same skill')
+    writeSkill(join(home, '.agents', 'skills'), 'shared-copy', 'Same skill')
+
+    const result = runSkills(home, ['--check'])
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /OK: 1 skills/)
+  })
+})
+
+test('rejects distinct installed skills with the same name', () => {
+  withHome((home) => {
+    writeSkill(join(home, '.claude', 'skills'), 'duplicate', 'First implementation')
+    writeSkill(join(home, '.agents', 'skills'), 'duplicate', 'Second implementation')
+
+    const result = runSkills(home, ['--check'])
+    assert.equal(result.status, 2)
+    assert.match(result.stderr, /duplicate skill name 'duplicate'/)
+  })
+})
+
+test('flags a skill directory whose symlink target is gone', () => {
+  withHome((home) => {
+    const root = join(home, '.claude', 'skills')
+    writeSkill(root, 'real', 'A real skill')
+    symlinkSync(join(home, 'nowhere'), join(root, 'orphan'))
+
+    const result = runSkills(home, ['--check'])
+    assert.equal(result.status, 2)
+    assert.match(result.stderr, /dangling skill link 'orphan'/)
+  })
+})
+
+// The source repo is what drifts. skill_paths() silently drops a broken symlink
+// and install.sh silently declines to install it, so nothing else notices when a
+// skill stops resolving.
+test('every skill directory in the repo resolves', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const broken = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isSymbolicLink() && !existsSync(join(skillsDir, e.name)))
+    .map((e) => `${e.name} -> ${readlinkSync(join(skillsDir, e.name))}`)
+  assert.deepEqual(broken, [], `dangling skill symlinks: ${broken.join(', ')}`)
+})
+
+test('every conversation profile skill exists in the source catalog', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const installer = readFileSync(join(repoRoot, 'claude', 'install.sh'), 'utf8')
+  const match = installer.match(/^PI_SKILLS=\(([^)]*)\)$/m)
+  assert.ok(match, 'install.sh must declare PI_SKILLS')
+  const missing = match[1]
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((name) => !existsSync(join(skillsDir, name, 'SKILL.md')))
+  assert.deepEqual(missing, [], `PI_SKILLS cites missing skills: ${missing.join(', ')}`)
+})
+
+// Runtime skills come from a published version in a store. Offline, the installer keeps the version it already has;
+// a store link whose skill is no longer linked (the skip list) is retired, and a link elsewhere is left alone.
+test('installer links Runtime skills from the store and retires skipped ones', () => {
+  withHome((home) => {
+    const store = join(home, '.local', 'share', 'runtime-skills')
+    const release = join(store, '0.999.0')
+    for (const name of ['profile-authoring', 'supervise']) writeSkill(join(release, 'skills'), name, 'Runtime')
+    writeFileSync(join(release, 'manifest.json'), JSON.stringify({
+      version: '0.999.0', integrity: 'sha512-test', skills: { 'profile-authoring': {}, supervise: {} },
+    }))
+    symlinkSync('0.999.0', join(store, 'current'))
+    const elsewhere = writeSkill(join(home, 'elsewhere'), 'local-runtime', 'Not from the store')
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      mkdirSync(root, { recursive: true })
+      symlinkSync(`${join(store, 'current', 'skills', 'supervise')}/`, join(root, 'supervise'))
+      symlinkSync(elsewhere, join(root, 'local-runtime'))
+    }
+
+    const result = spawnSync('bash', [join(repoRoot, 'claude', 'install.sh')], { encoding: 'utf8', env: installerEnv(home) })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /Runtime skills: version 0\.999\.0/)
+    assert.match(result.stderr, /keeping installed \S+@0\.999\.0/)
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      assert.equal(readlinkSync(join(root, 'profile-authoring')), `${join(store, 'current', 'skills', 'profile-authoring')}/`)
+      assert.throws(() => readlinkSync(join(root, 'supervise')), { code: 'ENOENT' })
+      assert.equal(readlinkSync(join(root, 'local-runtime')), elsewhere)
+    }
+  })
+})
+
+test('an installer with no store and no registry leaves Runtime links alone', () => {
+  withHome((home) => {
+    const oldSupervise = writeSkill(join(home, 'old-runtime', 'skills'), 'supervise', 'Old supervise')
+    const root = join(home, '.claude', 'skills')
+    mkdirSync(root, { recursive: true })
+    symlinkSync(oldSupervise, join(root, 'supervise'))
+
+    const result = spawnSync('bash', [join(repoRoot, 'claude', 'install.sh')], { encoding: 'utf8', env: installerEnv(home) })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /WARN Runtime skills not installed/)
+    assert.equal(readlinkSync(join(root, 'supervise')), oldSupervise)
+  })
+})
+
+test('installer skips and prunes directories without SKILL.md', () => {
+  withHome((home) => {
+    const installer = join(repoRoot, 'claude', 'install.sh')
+    const invalidSource = join(home, 'invalid-source')
+    writeSkill(join(home, 'external'), 'valid-source', 'External skill')
+    mkdirSync(invalidSource)
+    const origin = spawnSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    })
+    // An archive has no origin, so the installer cannot identify a separate
+    // checkout as managed. Keep the invalid-link assertions in that case.
+    let retired
+    if (origin.status === 0) {
+      const oldCheckout = join(home, 'old-dotfiles')
+      retired = writeSkill(join(oldCheckout, 'claude', 'skills'), 'retired', 'Retired skill')
+      execFileSync('git', ['init', '--quiet'], { cwd: oldCheckout })
+      execFileSync('git', ['remote', 'add', 'origin', origin.stdout.trim()], { cwd: oldCheckout })
+    }
+
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      mkdirSync(root, { recursive: true })
+      symlinkSync(invalidSource, join(root, 'invalid-source'))
+      symlinkSync('../../external/valid-source', join(root, 'valid-source'))
+      if (retired) symlinkSync(retired, join(root, 'retired'))
+    }
+
+    const result = spawnSync('bash', [installer], {
+      encoding: 'utf8',
+      env: installerEnv(home),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /invalid skill symlink/)
+    if (retired) assert.match(result.stdout, /retired managed skill/)
+    // An underscore directory such as _probes holds material for authors, not a skill: no link and no warning.
+    assert.doesNotMatch(result.stdout, /skill '_[^']*' skipped/)
+
+    for (const harness of ['.claude', '.codex']) {
+      const root = join(home, harness, 'skills')
+      assert.throws(() => readlinkSync(join(root, 'invalid-source')), { code: 'ENOENT' })
+      if (retired) assert.throws(() => readlinkSync(join(root, 'retired')), { code: 'ENOENT' })
+      assert.equal(readlinkSync(join(root, 'valid-source')), '../../external/valid-source')
+    }
+  })
+})
+
+// The harness loads a skill's own SKILL.md and nothing else, so the logging rule
+// has to live there. Stated only in _common.md it was invisible to the model and
+// zero skills wrote a line for months, leaving /reflect nothing to grade.
+test('every live skill tells the model to log its run', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const missing = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+    .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
+    .filter((e) => !readFileSync(join(skillsDir, e.name, 'SKILL.md'), 'utf8').includes('## Log the run'))
+    .map((e) => e.name)
+  assert.deepEqual(missing, [], `skills with no '## Log the run' section: ${missing.join(', ')}`)
+})
+
+// Free-text verdict placeholders produced 110 distinct labels in 421 runs, which nothing could rank.
+// The helper accepts five values; every skill's logging line offers only those.
+test('every skill logs one of the five run verdicts', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const allowed = new Set(['PASS', 'FAIL', 'PARTIAL', 'BLOCKED', 'ABANDONED'])
+  const offenders = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+    .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
+    .flatMap((e) => {
+      const source = readFileSync(join(skillsDir, e.name, 'SKILL.md'), 'utf8')
+      const start = source.indexOf('\n## Log the run\n')
+      if (start === -1) return []
+      const end = source.indexOf('\n## ', start + 1)
+      const section = source.slice(start, end === -1 ? undefined : end)
+      return [...section.matchAll(/^skill-run-log \S+.*?--verdict <([^>]+)>/gm)]
+        .filter((m) => m[1].split('|').some((value) => !allowed.has(value)))
+        .map((m) => `${e.name}: <${m[1]}>`)
+    })
+  assert.deepEqual(offenders, [], `verdict placeholders outside PASS|FAIL|PARTIAL|BLOCKED|ABANDONED: ${offenders.join(', ')}`)
+})
+
+test('skill chaining uses one final footer after the completed-work log', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const misplaced = readdirSync(skillsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(skillsDir, entry.name, 'SKILL.md'))
+    .filter(existsSync)
+    .filter((path) => {
+      const source = readFileSync(path, 'utf8')
+      const footers = [...source.matchAll(/\n## Then consider\n/g)]
+      if (footers.length === 0) return false
+      if (footers.length > 1) return true
+      const thenIndex = footers[0].index
+      const logIndex = source.indexOf('\n## Log the run\n')
+      if (logIndex !== -1 && thenIndex < logIndex) return true
+      const laterHeading = source.slice(thenIndex + 1).match(/\n## (?!Then consider\b)/)
+      return laterHeading !== null
+    })
+    .map((path) => path.slice(skillsDir.length + 1))
+
+  assert.deepEqual(
+    misplaced,
+    [],
+    `'## Then consider' must be the final section: ${misplaced.join(', ')}`,
+  )
+})
+
+test('no skill keeps the obsolete Dispatch section', () => {
+  const skillsDir = join(repoRoot, 'claude', 'skills')
+  const markdownFiles = (directory) =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) return markdownFiles(path)
+      return entry.isFile() && entry.name.endsWith('.md') ? [path] : []
+    })
+  const obsolete = markdownFiles(skillsDir)
+    .filter((path) => readFileSync(path, 'utf8').includes('\n## Dispatch\n'))
+    .map((path) => path.slice(skillsDir.length + 1))
+
+  assert.deepEqual(obsolete, [], `replace Dispatch with the final Then consider footer: ${obsolete.join(', ')}`)
+})
+
+// The operator scenarios are the behavioral test for operator guidance; reflect makes passing them the merge condition.
+// Each row names the rule that directs its expected action. Deleting or rewording that rule fails here, which is the
+// moment to rerun the scenarios and point the row at the rule that now owns the action.
+test('operator scenarios keep every question, expected action and owning rule', () => {
+  const owners = {
+    'AGENTS.md': 'claude/AGENTS.md',
+    report: 'claude/skills/report/SKILL.md',
+    reflect: 'claude/skills/reflect/SKILL.md',
+    evolve: 'claude/skills/evolve/SKILL.md',
+    hypothesize: 'claude/skills/hypothesize/SKILL.md',
+    climb: 'docs/processes/climb.md',
+    'docs/processes/agent-work.md': 'docs/processes/agent-work.md',
+  }
+  const ownerPattern = Object.keys(owners).map((owner) => owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const source = readFileSync(join(repoRoot, 'claude', 'skills', '_probes', 'operator-scenarios.md'), 'utf8')
+  const rows = source.split('\n')
+    .filter((line) => /^\| S\d+ \|/.test(line))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+  assert.ok(rows.length >= 12, `expected at least 12 scenarios, found ${rows.length}`)
+  assert.deepEqual(rows.map(([id]) => id), rows.map((_, index) => `S${index + 1}`))
+  const incomplete = rows.filter((cells) => cells.length !== 5 || cells.some((cell) => !cell)).map(([id]) => id)
+  assert.deepEqual(incomplete, [], `scenarios missing a question, action, owning rule or guard: ${incomplete.join(', ')}`)
+
+  const missing = rows.flatMap(([id, , , rule]) => {
+    const quoted = [...rule.matchAll(new RegExp(`\\b(${ownerPattern})\\b[^:"]*: "([^"]+)"`, 'g'))]
+    if (quoted.length === 0) return [`${id}: names no quoted rule`]
+    return quoted
+      .map(([, owner, text]) => [owner, text.replace(/…$/, '')])
+      .filter(([owner, text]) => !readFileSync(join(repoRoot, owners[owner]), 'utf8').includes(text))
+      .map(([owner, text]) => `${id}: "${text}" is no longer in ${owners[owner]}`)
+  })
+  assert.deepEqual(missing, [], `rerun the operator scenarios, then point each row at its current rule:\n${missing.join('\n')}`)
+})
+
+// The private layer (a repository shaped like this one at DOTFILES_PRIVATE) is optional. Present, the installer links its
+// skills (one of a public name replaces it), hooks, tools, instructions, guard config and directive variants, and merges
+// its settings overlay, whose hooks add to ours; once the checkout is gone, the next install leaves exactly the links and
+// settings of an install that never had it.
+test('installer attaches the optional private layer and detaches it without a trace', () => {
+  withHome((home) => {
+    const env = installerEnv(home)
+    const install = () => {
+      const result = spawnSync('bash', [join(repoRoot, 'claude', 'install.sh')], { encoding: 'utf8', env })
+      assert.equal(result.status, 0, result.stderr)
+      return result.stdout
+    }
+    const links = () => execFileSync('find', [home, '-type', 'l'], { encoding: 'utf8' }).trim().split('\n').sort().map((l) => `${l} -> ${readlinkSync(l)}`)
+    const settings = () => JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'))
+    const at = (...path) => readlinkSync(join(home, ...path))
+    mkdirSync(join(home, '.pi', 'agent'), { recursive: true })
+    install()
+    const [without, plain] = [links(), settings()]
+
+    const root = join(home, '.local', 'share', 'dotfiles-private'), layer = join(root, 'claude')
+    const [privateOnly, reflect] = ['private-only', 'reflect'].map((name) => writeSkill(join(layer, 'skills'), name, 'Private'))
+    const guard = { matcher: 'Bash', hooks: [{ type: 'command', command: '$HOME/.claude/hooks/private-guard' }] }
+    const files = { 'tools/private-tool': '#!/bin/sh\n', 'hooks/private-guard': '#!/bin/sh\n', 'directives/variants/private-variant.md': 'PRIVATE\n',
+      'directives/active': 'private-variant\n', 'AGENTS.md': '# Private rules\n', 'guard-config.json': '{}\n',
+      'settings.json': JSON.stringify({ privateLayer: true, hooks: { PreToolUse: [guard] } }) }
+    for (const [name, body] of Object.entries(files)) {
+      mkdirSync(dirname(join(layer, name)), { recursive: true })
+      writeFileSync(join(layer, name), body, { mode: 0o755 })
+    }
+    assert.match(install(), /PRIVATE skill 'reflect' replaces the public one/)
+    for (const harness of ['.claude', '.codex']) assert.deepEqual([at(harness, 'skills', 'private-only'), at(harness, 'skills', 'reflect')], [`${privateOnly}/`, `${reflect}/`])
+    assert.equal(at('.pi', 'agent', 'skills', 'reflect'), reflect)
+    assert.equal(at('bin', 'private-tool'), join(layer, 'tools', 'private-tool'))
+    assert.equal(at('.claude', 'AGENTS.private.md'), join(layer, 'AGENTS.md'))
+    for (const name of ['hooks/private-guard', 'guard-config.json', 'directives/active', 'directives/variants/private-variant.md']) assert.equal(at('.claude', name), join(layer, name))
+    assert.equal(at('.claude', 'directives', 'variants', 'evidence-lead-v1.md'), join(repoRoot, 'claude', 'directives', 'variants', 'evidence-lead-v1.md'))
+    assert.deepEqual(settings(), { ...plain, privateLayer: true, hooks: { ...plain.hooks, PreToolUse: [...plain.hooks.PreToolUse, guard] } })
+
+    rmSync(root, { recursive: true })
+    install()
+    assert.deepEqual([links(), settings()], [without, plain])
+  })
+})

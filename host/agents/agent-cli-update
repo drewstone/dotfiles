@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Keep Claude Code, Codex and the private layer's npm CLIs current (agent-cli-update.timer, daily); a running session keeps its binary until it restarts.
+set -uo pipefail
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+status=0
+latest() { curl -fsS --max-time 30 "https://registry.npmjs.org/$1/latest" | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])'; }
+
+if [ -x "$HOME/.local/bin/claude" ]; then
+  before="$(claude --version 2>/dev/null | awk '{print $1}')"
+  claude update || status=1
+  printf 'claude %s -> %s\n' "${before:-unknown}" "$(claude --version 2>/dev/null | awk '{print $1}')"
+fi
+
+if [ -x "$HOME/.local/bin/codex" ]; then
+  have="$(codex --version 2>/dev/null | awk '{print $NF}')"
+  want="$(latest @openai/codex)" || want=''
+  if [ -z "$want" ]; then
+    echo 'codex: the latest release is unknown; npm did not answer' >&2
+    status=1
+  elif [ "$have" != "$want" ]; then
+    curl -fsSL --max-time 120 https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh || status=1
+    printf 'codex %s -> %s\n' "${have:-unknown}" "$(codex --version 2>/dev/null | awk '{print $NF}')"
+  else
+    printf 'codex %s is current\n' "$have"
+  fi
+fi
+
+f="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/agent-cli-update.env"; [ -f "$f" ] && . "$f"
+for pkg in ${AGENT_CLI_NPM_PACKAGES:-}; do  # space-separated npm packages, each updated only where installed under ~/.local
+  pj="$HOME/.local/lib/node_modules/$pkg/package.json"; [ -f "$pj" ] || continue
+  have="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$pj")"; want="$(latest "$pkg")" || want=''
+  if [ -n "$want" ] && [ "$have" != "$want" ]; then
+    npm i -g --prefix "$HOME/.local" "$pkg@$want" >/dev/null && printf '%s %s -> %s\n' "$pkg" "${have:-unknown}" "$want" || status=1
+  else printf '%s %s, latest %s\n' "$pkg" "${have:-unknown}" "${want:-unknown}"; fi
+done
+exit "$status"

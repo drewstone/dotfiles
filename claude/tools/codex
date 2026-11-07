@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+self="$(readlink -f "$0" 2>/dev/null || printf '%s\n' "$0")"
+# HOME may be redirected — a bridge fs-jail exports the run's agent-home as HOME — but the
+# toolchain lives under the account's home. Resolve nvm from the passwd entry, HOME as the fallback.
+# `getent` exists on Linux only; macOS answers through Directory Services. Under
+# `set -euo pipefail` a missing command inside the substitution would end the
+# script silently, so each lookup is guarded and an unknown home stays empty.
+acct_home=""
+if command -v getent >/dev/null 2>&1; then
+  acct_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+elif command -v dscl >/dev/null 2>&1; then
+  acct_home="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)"
+fi
+nvm_dir="${NVM_DIR:-${acct_home:-$HOME}/.nvm}"
+
+# Inside an fs-jail (cli-bridge WORKER_FS_JAIL=1) $HOME is rebased to the run's
+# .agent-home, so $HOME/.nvm does not exist even though the jail binds the real
+# nvm prefix read-only. The script's own resolved path still names the real
+# home (<home>/code/dotfiles/claude/tools/codex); fall back to it.
+if [ ! -d "$nvm_dir" ]; then
+  real_home="${self%/code/dotfiles/*}"
+  [ -d "$real_home/.nvm" ] && nvm_dir="$real_home/.nvm"
+fi
+# shellcheck source=/dev/null # the private layer, under the account's home like nvm
+cfg="${DOTFILES_PRIVATE:-${acct_home:-$HOME}/.local/share/dotfiles-private}/claude/config/codex.env"; [ -r "$cfg" ] && . "$cfg"
+
+if [ "${CODEX_OTEL_LOG_USER_PROMPTS:-}" != "1" ]; then
+  OTEL_LOG_USER_PROMPTS=0
+  export OTEL_LOG_USER_PROMPTS
+fi
+
+if [ "${CODEX_OTEL:-}" = "1" ] && [ -r "${CODEX_OTEL_ENV:-}" ]; then
+  # shellcheck source=/dev/null
+  . "$CODEX_OTEL_ENV"
+  if [ "${CODEX_OTEL_LOG_USER_PROMPTS:-}" != "1" ]; then
+    OTEL_LOG_USER_PROMPTS=0
+  fi
+  export OTEL_LOG_USER_PROMPTS
+fi
+
+# Older callers use `codex run`; current Codex uses `exec`.
+if [ "${1:-}" = "run" ]; then
+  shift
+  set -- exec "$@"
+fi
+
+# A continuation belongs to the current Codex home. Switching accounts changes
+# both its saved-session lookup and --last, so allocate only fresh subscription
+# work. App-server protocol generators and local providers need no subscription.
+allocate=false
+command_name=""
+operation=""
+skip_value=false
+literal=false
+for argument in "$@"; do
+  if "$skip_value"; then skip_value=false; continue; fi
+  if "$literal"; then continue; fi
+  case "$argument" in
+    --) literal=true ;;
+    --help|-h|--version|-V|--oss|--local-provider|--local-provider=*)
+      allocate=false
+      break ;;
+    -c|--config|-m|--model|-p|--profile|-C|--cd|-s|--sandbox|-a|--ask-for-approval|--enable|--disable|-i|--image|--add-dir|-o|--output-last-message|--output-schema|--thread-source|--cyber-access-program|--listen|--code-mode-host|--ws-auth|--ws-token-file|--ws-token-sha256|--ws-shared-secret-file|--ws-issuer|--ws-audience|--ws-max-clock-skew-seconds)
+      skip_value=true ;;
+    -*) ;;
+    *)
+      if [ -z "$command_name" ]; then
+        command_name="$argument"
+        case "$command_name" in exec|e|app-server) allocate=true ;; esac
+      elif [ -z "$operation" ]; then
+        operation="$argument"
+      fi ;;
+  esac
+done
+case "$command_name:$operation" in
+  exec:resume|exec:fork|e:resume|e:fork|app-server:?*)
+    allocate=false ;;
+esac
+
+run_codex() {
+  local candidate="$1"
+  shift
+
+  [ -x "$candidate" ] || return 1
+
+  local resolved
+  resolved="$(readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate")"
+  [ "$resolved" != "$self" ] || return 1
+
+  local node_bin
+  node_bin="$(command -v node || true)"
+  if [ -z "$node_bin" ] && [ -n "$default_alias_version" ] && [ -x "$nvm_dir/versions/node/v${default_alias_version#v}/bin/node" ]; then
+    node_bin="$nvm_dir/versions/node/v${default_alias_version#v}/bin/node"
+  fi
+
+  if [ "${CODEX_ROUTER_CHILD:-}" = 1 ]; then
+    printf '%s\n' "${CODEX_HOME:-}" >&3
+    unset CODEX_ROUTER_CHILD
+  elif [ -z "${CODEX_HOME:-}" ]; then
+    case "$command_name:$operation" in
+      exec:resume|exec:fork|e:resume|e:fork)
+        origin_home="$(python3 "$(dirname "$self")/codex-routing/session-home.py" "$@")"
+        if [ -n "$origin_home" ]; then export CODEX_HOME="$origin_home"; fi ;;
+    esac
+  fi
+
+  # CODEX_ROUTER names the account router, which marks recursive calls; when it is set and missing,
+  # exec fails closed. Explicit CODEX_HOME values pin the origin, including probes and resumed conversations.
+  if "$allocate" && [ -n "${CODEX_ROUTER:-}" ] && [ "${ACCT_ROUTED:-}" != codex ] && [ -z "${CODEX_HOME:-}" ]; then
+    local parent_command
+    parent_command="$(ps -p "$PPID" -o args= 2>/dev/null || true)"
+    # Companion launches exactly `codex app-server`; other servers retain native routing.
+    if [ "$#" = 1 ] && [ "$1" = app-server ] && [[ "$parent_command" == *"/scripts/app-server-broker.mjs serve "* ]]; then
+      if [ -z "$node_bin" ]; then
+        printf 'Codex task routing requires Node.js in PATH or the managed nvm default.\n' >&2
+        exit 127
+      fi
+      CODEX_ROUTER="$CODEX_ROUTER" PATH="$(dirname "$node_bin"):$(dirname "$candidate"):$PATH" exec "$node_bin" "$(dirname "$self")/codex-routing/app-server.mjs" "$self" "$candidate" "$@"
+    fi
+    PATH="$(dirname "$candidate"):$PATH" exec "$CODEX_ROUTER" run --subscription-only -- "$candidate" "$@"
+  fi
+
+  PATH="$(dirname "$candidate"):$PATH" exec "$candidate" "$@"
+}
+
+# Fast path: exec a codex we can name without loading nvm (sourcing nvm.sh, running
+# `nvm use --silent default` and then `npm prefix -g`, which starts a second Node). Every health
+# probe and every spawned turn pays that load, so a bridge whose CODEX_BIN is
+# this wrapper reads as unavailable and its runs settle driver-failed. Order: an explicit
+# override, Homebrew, the standalone install (link, then the package path a bridge fs-jail binds without
+# the link), then the nvm version the default alias names. The native
+# build wins because it answers --version in 0.32 s against 1.0 s for the npm package under nvm,
+# which is a Node script and pays Node startup; both are the same codex-cli and were 0.154.0 when
+# this order was chosen. Set CODEX_REAL_BIN to pin one if they ever drift.
+default_alias_version=""
+if [ -r "$nvm_dir/alias/default" ]; then
+  default_alias_version="$(cat "$nvm_dir/alias/default" 2>/dev/null || true)"
+fi
+for candidate in \
+  ${CODEX_REAL_BIN:-} \
+  /opt/homebrew/bin/codex \
+  "${acct_home:-$HOME}/.local/bin/codex" \
+  "${acct_home:-$HOME}/.codex/packages/standalone/current/bin/codex" \
+  ${default_alias_version:+"$nvm_dir/versions/node/v${default_alias_version#v}/bin/codex"}
+do
+  [ -n "$candidate" ] || continue
+  run_codex "$candidate" "$@" || true
+done
+
+if [ -s "$nvm_dir/nvm.sh" ]; then
+  # nvm is installed outside this repository.
+  # shellcheck source=/dev/null
+  . "$nvm_dir/nvm.sh"
+
+  if nvm use --silent default >/dev/null 2>&1; then
+    prefix="$(npm prefix -g 2>/dev/null || true)"
+    if [ -n "$prefix" ]; then
+      run_codex "$prefix/bin/codex" "$@" || true
+    fi
+  fi
+fi
+
+for candidate in "$nvm_dir"/versions/node/*/bin/codex; do
+  run_codex "$candidate" "$@" || true
+done
+
+printf 'codex not found under %s/versions/node/*/bin/codex\n' "$nvm_dir" >&2
+exit 127

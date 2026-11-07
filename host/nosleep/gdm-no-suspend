@@ -1,0 +1,6 @@
+# Installed by ~/dotfiles/host/provision.sh (nosleep module).
+# The login screen never suspends the box. /etc/dconf/profile/gdm makes the
+# greeter read this database; Ubuntu's default gdm profile does not.
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'

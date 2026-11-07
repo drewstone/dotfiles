@@ -1,0 +1,10 @@
+[Unit]
+Description=Refuse kill(-1) from non-root users and log the caller (dotfiles host/kill-guard)
+
+[Service]
+ExecStart=/usr/bin/bpftrace --unsafe /usr/local/lib/kill-broadcast-guard.bt
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

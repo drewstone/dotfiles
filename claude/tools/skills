@@ -1,0 +1,252 @@
+#!/usr/bin/env -S python3 -S
+"""List all installed skills (name + one-line description) for discovery.
+
+Skills chain forward via each SKILL.md's `## Then consider` footer; this command
+is the *discovery* complement — when a skill's footer can't know every relevant
+peer, run `skills` (optionally `skills <substr>`) to see the full menu.
+"""
+import os
+import re
+import sys
+from hashlib import sha256
+
+ROOTS = [
+    os.path.expanduser("~/.claude/skills"),
+    os.path.expanduser("~/.codex/skills"),
+    os.path.expanduser("~/.agents/skills"),
+]
+MAX_DESCRIPTION_CHARS = 160
+# https://learn.chatgpt.com/docs/build-skills
+# Codex uses at most 2% of a known model context for the initial skill list.
+# It uses this character fallback only when the context window is unknown.
+UNKNOWN_CONTEXT_CATALOG_CHARS = 8_000
+
+
+def frontmatter(path):
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return None, None
+    m = re.match(r"^---\n(.*?)\n---", text, re.S)
+    if not m:
+        return None, None
+    fm = m.group(1)
+    name = None
+    desc = None
+    lines = fm.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("name:"):
+            name = line[5:].strip().strip("\"'")
+        elif line.startswith("description:"):
+            val = line[12:].strip()
+            if val in (">-", ">", "|", "|-"):  # folded/block scalar → take continuation
+                cont = []
+                for nxt in lines[i + 1 :]:
+                    if nxt and not nxt[0].isspace():
+                        break
+                    cont.append(nxt.strip())
+                desc = " ".join(c for c in cont if c)
+            else:
+                desc = val.strip("\"'")
+    return name, desc
+
+
+def skill_paths(root):
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.is_dir(follow_symlinks=True):
+            continue
+        skill = os.path.join(entry.path, "SKILL.md")
+        if os.path.isfile(skill):
+            yield skill
+            continue
+        if entry.name != ".system":
+            continue
+        try:
+            system_entries = sorted(os.scandir(entry.path), key=lambda item: item.name)
+        except OSError:
+            continue
+        for system_entry in system_entries:
+            skill = os.path.join(system_entry.path, "SKILL.md")
+            if system_entry.is_dir(follow_symlinks=True) and os.path.isfile(skill):
+                yield skill
+
+
+def dangling_links(root):
+    """Symlinked skill dirs whose target is gone.
+
+    skill_paths() filters these out via is_dir(follow_symlinks=True), so a
+    broken link is invisible to every other code path — it just silently stops
+    being a skill. That is how build-with-agent-runtime sat in the repo pointing
+    at a Linux path (/home/drew/...) on a macOS machine without anything saying
+    so.
+    """
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return
+    for entry in entries:
+        if entry.is_symlink() and not os.path.exists(entry.path):
+            yield entry.name, entry.path, os.readlink(entry.path)
+
+
+def footer_targets(path):
+    """Skill names a SKILL.md's `## Then consider` footer points at."""
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        return set()
+    m = re.search(r"^## Then consider\s*$(.*)", text, re.S | re.M)
+    if not m:
+        return set()
+    return set(re.findall(r"`/([a-z][a-z0-9-]*)`", m.group(1)))
+
+
+def rendered_line(name, desc, path):
+    if desc:
+        return f"- {name}: {desc} (file: {path})\n"
+    return f"- {name}: (file: {path})\n"
+
+
+def skill_digest(skill_path):
+    """Digest a complete skill folder so byte-identical multi-harness installs count once."""
+    root = os.path.dirname(skill_path)
+    digest = sha256()
+    for directory, directories, files in os.walk(root):
+        directories.sort()
+        files.sort()
+        for name in files:
+            path = os.path.join(directory, name)
+            relative = os.path.relpath(path, root).encode("utf-8")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            if os.path.islink(path):
+                value = os.readlink(path).encode("utf-8")
+                digest.update(b"L")
+                digest.update(value)
+                continue
+            digest.update(b"F")
+            try:
+                with open(path, "rb") as source:
+                    for chunk in iter(lambda: source.read(64 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"UNREADABLE")
+    return digest.digest()
+
+
+def main():
+    args = sys.argv[1:]
+    check = "--check" in args
+    filters = [arg for arg in args if arg != "--check"]
+    if len(filters) > 1:
+        print("usage: skills [--check] [substring]", file=sys.stderr)
+        raise SystemExit(2)
+    needle = filters[0].lower() if filters else None
+    seen = {}
+    logical_sources = set()
+    for root in ROOTS:
+        if not os.path.isdir(root):
+            continue
+        for sk in skill_paths(root):
+            canonical = os.path.realpath(sk)
+            if canonical in seen:
+                continue
+            name, desc = frontmatter(sk)
+            fallback_name = os.path.basename(os.path.dirname(sk))
+            logical_name = name or fallback_name
+            logical_source = (logical_name, skill_digest(canonical))
+            if logical_source in logical_sources:
+                continue
+            logical_sources.add(logical_source)
+            seen[canonical] = (logical_name, desc or "", canonical)
+    rows = sorted(seen.values(), key=lambda row: (row[0], row[2]))
+    if needle:
+        rows = [r for r in rows if needle in r[0].lower() or needle in r[1].lower()]
+    if not rows:
+        print("no skills found" + (f" matching {needle!r}" if needle else ""))
+        return
+    if check:
+        paths_by_name = {}
+        for name, _, path in rows:
+            paths_by_name.setdefault(name, []).append(path)
+        duplicates = {
+            name: paths
+            for name, paths in paths_by_name.items()
+            if len(paths) > 1
+        }
+        oversized = [
+            (name, len(desc), path)
+            for name, desc, path in rows
+            if len(desc) > MAX_DESCRIPTION_CHARS
+        ]
+        description_chars = sum(len(desc) for _, desc, _ in rows)
+        minimum_chars = sum(len(rendered_line(name, "", path)) for name, _, path in rows)
+        full_chars = sum(len(rendered_line(name, desc, path)) for name, desc, path in rows)
+        for name, chars, path in oversized:
+            print(
+                f"WARN {name}: {chars} description chars > {MAX_DESCRIPTION_CHARS} ({path})",
+                file=sys.stderr,
+            )
+        catalog_failed = False
+        if not needle:
+            installed = {name for name, _, _ in rows}
+            for root in ROOTS:
+                for link_name, link_path, target in dangling_links(root):
+                    print(
+                        f"FAIL dangling skill link {link_name!r}: "
+                        f"{link_path} -> {target} (target missing)",
+                        file=sys.stderr,
+                    )
+                    catalog_failed = True
+            # A footer naming an absent skill is a dead end for the model, but
+            # it can also just mean the peer ships in a plugin this machine
+            # hasn't installed — warn rather than fail.
+            for name, _, path in rows:
+                for target in sorted(footer_targets(path) - installed):
+                    print(
+                        f"WARN {name}: 'Then consider' points at /{target}, "
+                        "which is not installed",
+                        file=sys.stderr,
+                    )
+            for name, paths in sorted(duplicates.items()):
+                print(
+                    f"FAIL duplicate skill name {name!r}: " + " | ".join(paths),
+                    file=sys.stderr,
+                )
+            catalog_failed = catalog_failed or bool(duplicates)
+        if not needle and full_chars > UNKNOWN_CONTEXT_CATALOG_CHARS:
+            if minimum_chars > UNKNOWN_CONTEXT_CATALOG_CHARS:
+                detail = (
+                    f"names and paths use {minimum_chars} characters, so some skills "
+                    "may be omitted"
+                )
+            else:
+                detail = (
+                    f"full metadata uses {full_chars} characters, so Codex may shorten "
+                    "descriptions"
+                )
+            print(
+                f"WARN catalog exceeds Codex's {UNKNOWN_CONTEXT_CATALOG_CHARS:,}-character "
+                f"unknown-context fallback: {detail}",
+                file=sys.stderr,
+            )
+        if catalog_failed:
+            raise SystemExit(2)
+        print(
+            f"OK: {len(rows)} skills, {description_chars} description chars, "
+            f"{full_chars} rendered metadata chars"
+        )
+        return
+    width = max(len(name) for name, _, _ in rows)
+    for name, desc, _ in rows:
+        one = (desc.split(". ")[0])[:96]
+        print(f"  {name.ljust(width)}  {one}")
+    print(f"\n{len(rows)} skill(s)" + (f" matching {needle!r}" if needle else ""))
+
+
+if __name__ == "__main__":
+    main()

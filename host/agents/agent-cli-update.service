@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Claude Code and Codex to their latest releases
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@DOTFILES@/host/agents/agent-cli-update
+TimeoutStartSec=15min

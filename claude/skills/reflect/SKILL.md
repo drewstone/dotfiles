@@ -1,0 +1,61 @@
+---
+name: reflect
+description: Review completed work against its evidence, identify repeated causes and useful practices, and retain justified corrections.
+---
+
+# Reflect
+
+Use this to learn from work already performed in a session, project, or portfolio.
+Judge outcomes against the user's objective; invocation counts and self-grades do not establish effectiveness.
+
+## Inspect the work
+
+1. Define the scope and period.
+   Reconcile open actions with current state.
+2. Inspect the evidence needed to explain outcomes; use [session efficiency](references/session-efficiency.md) for stalled or repetitive coding sessions.
+   Record important sources you could not inspect and why.
+3. What changed for the user, and what remains unproved? Separate facts from interpretation.
+4. Which recurring cause survived a prior correction, and what evidence explains why?
+5. Identify practices supported by outcomes and failures worth correcting.
+
+Read [portfolio analysis](references/portfolio.md) for work across projects or sessions with different conditions.
+Read [skill evidence](references/skill-evidence.md) before attributing outcomes or user overrides to a skill.
+
+## Choose what should change
+
+Rank findings by consequence, recurrence or exposure, scope, and confidence in the cause.
+Include measured costs or projected savings only when evidence supports them; include units and label estimates and assumptions.
+Search the owning guidance, skills, and memory before recording a durable correction.
+Extend an existing owner, and delete unnecessary requirements before adding procedures.
+Create a new rule or skill only when evidence supports its distinct job.
+Fix a mistake that has recurred at the highest level that works: architecture (one owner, one supported path, the wrong import fails), then types, then a lint or check whose error names the fix, then a test, and written rules last, for judgment calls; prove a new check fails on a real past instance.
+Derived from cursor/plugins correct (MIT).
+Leave sound work unchanged.
+
+Carry authorized corrections through verification; for analysis-only work, report the correction and evidence.
+A change to operator guidance (AGENTS.md, CLAUDE.md, a skill, `docs/processes/`, or project memory) must pass [the operator scenarios](../_probes/operator-scenarios.md) before it merges: every scenario that passed before the change still passes, and the pull request states both scores.
+
+After a run, `traces analyze <session>` on your own session surfaces the pattern you cannot see from inside it; name the one systemic fix.
+
+## Preserve the findings
+
+Retained learning goes to the auto-memory directory or a climb-ledger row, not a reflections file.
+Record scope, sources, outcomes, repeated causes, changes, verification, and unresolved decisions.
+Use counts and denominators for frequency claims; retain unknowns and sampling limits.
+
+## Climb
+
+A reflection measures the operator and its tools ([the climb](../../../docs/processes/climb.md)).
+- Score every prediction made in the period: give PASS, FAIL or PENDING, plus calibration.
+- Record each correction from the person served as a ledger row with its theme. Count recurrences after a change; a recurring theme escalates to a check or architecture.
+- Measure the period with [`scripts/self-audit`](scripts/self-audit) over its session files, and keep its counts in the reflection: guardrail matches, rework (repeated commands, rollbacks, revert commits with `--repo`) and stall minutes. A match is a lead: read it in the transcript before calling it a violation. [The self-audit reference](references/self-audit.md) says where the files and incident times live.
+- For each incident, state the time to detect and to recover from journal or alert times.
+- Show every count with a time axis or three or more values as a chart, per the [report evidence rule](../report/SKILL.md#state-what-the-evidence-supports).
+- Keep two one-line outcomes from [the level-up passes](../../../docs/processes/climb.md#how-to-think-the-level-up-passes): the red team (how this conclusion is wrong, and the evidence that would change it) and bigger (the ten-times version, and what it would take).
+- Name the operator-tool versions in force (directive, skills, hooks) and their measured effect, or that none was measured.
+
+## Log the run
+
+```bash
+skill-run-log /reflect --target "<scope and period>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<skill-or-stop>
+```

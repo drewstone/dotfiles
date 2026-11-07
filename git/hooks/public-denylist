@@ -1,0 +1,52 @@
+# One extended regex per line; a public tracked file must match none. Case-insensitive.
+# Exceptions are written into the patterns: drewstone only in the repo's own address github.com/drewstone/dotfiles; example.invalid fixtures.
+# hosts, networks, accounts
+\bbeelink[0-9a-z-]*\b
+\b(d[r]ew-)?g[t]r(-pro)?\b
+\bdrew-mac\b
+\bcompany-0[0-9]\b
+\bop-(company|devplatform)\b
+\bghrunner[a-z0-9-]*\b
+\badcprod\b
+\bhostlab\b
+\btailnet\b
+\btailscale\b
+\.ts\.net\b
+\b100\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b
+\b(?!127\.0\.0\.1|0\.0\.0\.0|255\.255\.|10\.0\.0\.|192\.168\.|1\.1\.1\.1|1\.0\.0\.1|8\.8\.8\.8|8\.8\.4\.4)[0-9]{1,3}(\.[0-9]{1,3}){3}\b
+(?<!\\)\b(?!git@)[A-Za-z0-9._%+-]+@(?![A-Za-z0-9.-]*\.(invalid|test|example|localhost)\b)(?!example\.(com|org|net)\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}
+# company, products, private repos and tools
+\btangle\b
+\btangle-network\b
+\bwebb\b
+\bph0ny\b
+\bgtm(-ask)?\b
+\bagent-ask\b
+\bbeelink-gate\b
+\bhost-stop-guard\b
+\btangle-ops\b
+\bops-board\b
+\bchatgpt-fleet\b
+\btrace-mine\b
+\bgh-d[r]ew\b
+\bDREW_GH_TOKEN\b
+\bTANGLETOOLS_GH_TOKEN\b
+\bskills-internal\b
+\bagent-container\b
+\bblueprint-agent\b
+\bagent-runtime\b
+\bdiscovery[ -](runs?|plays?|fleet)\b
+\bdiscovery-(lab|observer)\b
+\bdisco run\b
+\bhetzner\b
+\bovh\b
+\bvanta\b
+\bsoc ?2\b
+\bhipaa\b
+\beu1\b
+\bus1\b
+gist\.github\.com
+\bDrew\b
+\bdrewstone329\b
+\bghp_[A-Za-z0-9]{10,}
+\bgithub_pat_[A-Za-z0-9_]{10,}

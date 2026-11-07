@@ -1,0 +1,116 @@
+---
+name: report
+description: Research a question from primary sources, including sourcing open research problems, or answer analytical, product bet, status, fleet, or play questions from checked evidence with uncertainty and a decision.
+---
+
+# Report
+
+Answer the user's decision with checked data.
+Scale the report to the question: a status fact may need a sentence and its check; a comparative study needs its full evidence.
+Do not impose a section template on every answer.
+
+## Get the evidence
+
+Query the actual artifacts before writing the conclusion.
+Record the source, relevant dates, inspected scope, command or query, and observation units.
+Preserve run identities and actual execution configuration when they affect the result.
+Separate unavailable data from inspected data that contains no event.
+
+Recompute totals and reconcile parts with the whole.
+Include every measured dimension in scope, denominators, zeros, nulls, missing fields, and exclusion reasons.
+For collections, report distributions or category counts that expose variation rather than only an average.
+Use sample sizes and uncertainty when the conclusion depends on sampling.
+
+Read [multi-run analysis](references/multi-run-analysis.md) when comparing groups, aggregating run records, or decomposing time and cost.
+
+## Research a question
+
+Derived from mattpocock/skills research (MIT).
+
+Answer from primary sources: official documentation, source code, specifications, and first-party APIs.
+Trace each claim to the source that owns it and cite it.
+When the user wants a durable note, write one Markdown file where the repository keeps such notes and say where.
+Delegate the reading to a background worker only when delegation is available and the user can keep working.
+Research that a product exists to do belongs to that product ([AGENTS.md](../../AGENTS.md)), not to this section.
+
+For a ship, narrow, rebuild, or kill decision on a product bet, read [product bet review](references/product-bet.md) before weighing the evidence.
+
+Open research problems: separate what the source states from gaps you infer, and record for each candidate the decision its solution would change and any check that could reject it.
+Check prior art and existing project lines first, and apply the owning rubric.
+
+## Questions about active research and fleets
+
+Translate the question into the decision the user needs, then inspect the relevant records:
+
+- For activity, inspect authoritative liveness, invocations, terminal records, and the latest meaningful action.
+- For progress, inspect retained artifacts, checks, changed decisions, and unresolved claims.
+- For topology, inspect actual parent edges, executed children, and artifact consumption.
+- For resources, inspect measured usage, elapsed time, concurrency, capacity, and explicit unknowns.
+- For capability, distinguish current source, installed packages, and observed behavior on the active route.
+
+A registration establishes intent, a process establishes activity, a useful artifact establishes output, and an independent check establishes only the claim it tested.
+Keep those statements separate, and distinguish agent-authored claims, observed events, independent findings, and analyst interpretations where the difference matters.
+Repeated tool calls or tokens alone do not establish progress, and an unknown outside assessment does not establish its absence.
+Preserve the original acceptance criteria and report stricter interpretations separately.
+
+Lead with what is happening, what useful work exists, and what remains uncertain.
+Say plainly when the fleet is idle, and name the actual stop cause and the corrective action already underway.
+Recommend the smallest action that can resolve the important uncertainty or advance useful work, and continue actions the active task already authorizes.
+Respect current ownership, resource limits, and uncertain admissions before launching replacements.
+
+Read [the fleet review register](references/fleet-review.md) for recurring fleet reviews or a broad research audit.
+Read [topology and resources](references/topology-and-resources.md) for collaboration, recursion, efficiency, model, or account questions.
+Read [trace workflows](references/trace-workflows.md) when the answer depends on what agents did, why they changed course, or how work moved between them.
+
+## Report a play
+
+For a play, one press of start with several agents working one problem, start from its readout and keep its order.
+Read [play reports](references/play.md) for the readout order and the rules that separate the system's own behavior from what the harness and the operator did to it.
+
+## State what the evidence supports
+
+Lead with the answer or correction to the premise and the decision-relevant measurement when one exists.
+For a status or review, open with the scoreboard: the outcome metrics the goal names, each against its target.
+Every number carries its source, its denominator and the date it was read; a rate without its count is unfinished.
+Disclose material resource, sampling, execution, or termination differences before declaring a comparative winner.
+Distinguish observed results from causal interpretation and projected benefits.
+A correlation alone does not establish a mechanism, and an unavailable number is not permission to invent one.
+
+Use tables for comparable rows and dimensions.
+A claim resting on three or more data points or a time axis ships with a chart built from the data.
+Give parts their whole, so a hidden or double-counted part shows before the reader finds it.
+For an answer with more than one dimension, build it with the [brief kit](references/brief-kit.md) and write it as a local page under `~/reviews/`.
+Use the project's existing rendering path when it has one.
+Keep all measured fields available in the report or its complete linked results, rather than presenting only favorable columns.
+Explain necessary technical terms through their effect on the decision, and keep internal identifiers in evidence links unless the identity itself answers the question.
+
+Connect findings to the decision: retain the current system, make the supported change, or run the check needed to resolve uncertainty.
+When a bad result needs diagnosis, perform the available check within scope before returning it as unexplained news.
+Mention material risks or unanswered questions that could change the decision.
+Do not add hypothetical warnings or a forced action list to an already answered status question.
+
+## Climb
+
+A report is a version on the communication hill: run [the climb](../../../docs/processes/climb.md)'s level-up passes before anything reaches the reader, and give analysis, status and proposals its [full form](../../../docs/processes/climb.md#how-to-communicate).
+A status, analysis or plan for the owner meets the [operator review standard](references/operator-review.md): its twelve features and its terminal form.
+
+## Log the run
+
+For a substantial deliverable (a brief, report, analysis or multi-dimension status), score it with the independent judge before logging; a one-fact answer skips the judge.
+
+```bash
+~/.claude/skills/report/scripts/brief-judge <deliverable.html|.md|.txt> --context "<what the reader asked>"
+skill-run-log /report --target "<question and evidence scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --score <total> --next /<next-skill-or-stop>
+```
+
+`brief-judge` scores the ten rubric dimensions of [judging a deliverable](../../../docs/processes/climb.md#judging-a-deliverable), prints the total out of 30 and the three weakest dimensions with fixes, and appends an operator row to the project's [ledger](../../../docs/processes/climb.md#the-ledger).
+Fix the weakest dimensions before the reader sees the deliverable when the fix is cheap, and judge again.
+
+## Then consider
+
+| Condition | Next skill | What to pass |
+|---|---|---|
+| A result remains null, surprising, or suspect, or failures need causal grouping | `/diagnose` | The raw rows, computation, and candidate causes |
+| A measured gap has an authorized improvement to test | `/evolve` | The baseline, mechanism, and required outcome |
+| A tested product mechanism cannot meet the required outcome | `/hypothesize` | The failed mechanism, substitute, and evidence about the constraint |
+| A required conclusion lacks observation of the actual path | `/ground-truth` | The missing segment and execution boundary |

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# dmsetup wrapper. Read-only verbs pass. A mutating verb passes only when every
+# device it names, and every /dev path in its table, is off the root disk.
+# remove_all always refuses: it would drop docker and every other dm device.
+set -uo pipefail
+. /usr/local/lib/host-blast-guard.sh
+real="$(hbg_real dmsetup)" || exit 127
+hbg_off && exec "$real" "$@"
+verb=""
+rest=()
+for a in "$@"; do
+  if [ -z "$verb" ]; then
+    case "$a" in -*) ;; *) verb="$a"; continue ;; esac
+  else
+    rest+=("$a")
+  fi
+done
+case "$verb" in
+  ""|ls|info|table|status|deps|targets|version|help|splitname|stats|wait|udevcookies|udevcomplete|udevcomplete_all|udevcreatecookie|udevreleasecookie|udevflags|mangle)
+    exec "$real" "$@" ;;
+  remove_all)
+    hbg_refuse dmsetup "remove_all drops every device-mapper device on the host" ;;
+esac
+check_token() {
+  local t="$1"
+  case "$t" in
+    /dev/*) hbg_on_root_disk "$t" && hbg_refuse dmsetup "$t is on the root disk" ;;
+    [0-9]*:[0-9]*) [ -e "/dev/block/$t" ] && hbg_on_root_disk "/dev/block/$t" && hbg_refuse dmsetup "$t is on the root disk" ;;
+    -*) ;;
+    *) if [ -e "/dev/mapper/$t" ]; then hbg_on_root_disk "/dev/mapper/$t" && hbg_refuse dmsetup "$t is on the root disk"; fi ;;
+  esac
+  return 0
+}
+for a in "${rest[@]}"; do
+  for t in $a; do check_token "$t"; done
+done
+exec "$real" "$@"

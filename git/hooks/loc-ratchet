@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Enforce file sizes and area growth; optional A..B checks committed trees."""
+from runpy import run_path
+from types import SimpleNamespace
+import os
+import re
+import sys
+
+sys.dont_write_bytecode = True
+census = SimpleNamespace(**run_path(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "census")))
+LOCKFILE = re.compile(r"(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|uv\.lock|poetry\.lock|go\.sum)$")
+
+
+def net_lines(base, head):
+    """Lines the change adds less lines it deletes in every text file but lockfiles: tests, docs and comments count."""
+    links = [{p for p, kind in census.tree_entries(".", ref).items() if kind == "commit"} for ref in (base, head)]
+    rows = census.git(".", "diff", "--numstat", "-z", "--no-renames", base, head).decode().split("\0")
+    return sum(int(a) - int(d) + (path in links[0]) - (path in links[1])
+               for a, d, path in (r.split("\t", 2) for r in rows if r.count("\t") >= 2)
+               if a.isdigit() and not LOCKFILE.search(path))
+
+
+def main():
+    if len(sys.argv) > 1:
+        base, head, merge = *sys.argv[1].split("..", 1), None
+    else:
+        base = census.optional_ref(".", "HEAD") or census.git(".", "hash-object", "-t", "tree", os.devnull).decode().strip()
+        head = census.git(".", "write-tree").decode().strip()
+        merge = census.optional_ref(".", "MERGE_HEAD")
+    growth, oversized = census.production_delta(".", base, head, merge)
+    grown = {a: n for a, n in growth.items() if n > 0 and
+             (a == "(root)" or census.git(".", "ls-tree", "-d", "--name-only", base, "--", a).strip())}
+    # A merge keeps its per-area charge.
+    net = None if merge or not grown else net_lines(base, head)
+    approved = bool(grown) and (net is not None and net <= 0 or census.approved_growth(".", base, head, growth))
+    for name, n in ([] if approved else grown.items()):
+        print(f"loc-ratchet: refusing commit: {name} gains {n} production lines{'' if net is None else f' and the change adds {net} net lines'}.\n"
+              "  Delete low-value tests and dead code first; growth beyond that needs a scoped approval (git/census/README.md).", file=sys.stderr)
+    for path, old, new in oversized:
+        print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
+              f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)
+    return int(bool(oversized or (grown and not approved)))
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as why:
+        print(f"loc-ratchet: REFUSED: {why}", file=sys.stderr)
+        sys.exit(2)

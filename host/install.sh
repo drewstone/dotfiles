@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# Install the host guards on this Linux box. Needs sudo. Idempotent: a second
+# run changes no file and restarts nothing.
+#
+#   /usr/local/lib/host-blast-guard.sh     shared checks
+#   /usr/local/sbin/<verb>                 root wrappers; secure_path puts them first
+#   /etc/sudoers.d/zz-agent-blast-guard    closes the absolute-path route
+#   /etc/watchdog.conf, /etc/watchdog.d/root-write, /etc/default/watchdog,
+#   /etc/modprobe.d, udev rule, system.conf.d, watchdog.service drop-in
+#                                          a frozen root resets the box in ~4 min (measured)
+#   /etc/systemd/system/user.slice.d/50-agent-cap.conf
+#   /etc/systemd/system/user@.service.d/60-io-delegate.conf
+#                                          every agent process capped together (host/cgroup)
+#   /etc/sysctl.d/60-host-guard-writeback.conf
+#                                          dirty data bounded, so the watchdog sync stays short
+#   /etc/sysctl.d/61-host-guard-vfs-cache.conf
+#                                          inodes and dentries kept in preference to file pages
+#   /etc/sysctl.d/62-host-guard-inotify.conf
+#                                          inotify watch limit sized for one file index per session
+#   /etc/modprobe.d/host-usb-storage-quirks.conf
+#   /usr/local/lib/kill-broadcast-guard.bt, kill-broadcast-guard.service
+#                                          refuse a non-root kill(-1) and log its caller (host/kill-guard)
+#                                          archive USB bridge off UAS (host/storage)
+#   /etc/docker/daemon.json               containers join the capped user.slice; live-restore
+#   $DOTFILES_PRIVATE/host/install.sh     the optional private layer's host steps, run with these helpers
+#   /etc/systemd/resolved.conf.d/60-upstream-tls.conf
+#                                          upstream DNS over TLS, so a lost Wi-Fi packet costs ~200 ms
+#                                          instead of a 5 s UDP timeout (hosts whose resolv.conf is
+#                                          systemd-resolved's stub)
+#
+# Usage: host/install.sh [--check] [--docker-only|--<scope>-only]
+#   --check           report drift and change nothing; exit 1 when anything differs.
+#   --docker-only     validate and stage only daemon.json; never reload or restart Docker.
+#   --<scope>-only    run only that scope of the private layer's host/install.sh.
+#
+# Why: see host/lib/host-blast-guard.sh. Re-run after editing anything here.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ "$(uname -s)" = Linux ] || { echo "host/install.sh is Linux-only"; exit 0; }
+CHECK=0
+INSTALL_SCOPE=
+for option in "$@"; do
+  case "$option" in
+    --check) CHECK=1 ;;
+    --*-only)
+      [ -z "$INSTALL_SCOPE" ] || { echo "choose one host installer scope" >&2; exit 2; }
+      INSTALL_SCOPE=$option ;;
+    *) echo "usage: host/install.sh [--check] [--docker-only|--<scope>-only]" >&2; exit 2 ;;
+  esac
+done
+SUDO=sudo
+[ "$(id -u)" = 0 ] && SUDO=
+# --check never prompts. Without cached sudo, a root-only file reads as drift.
+if [ "$CHECK" = 1 ] && [ -n "$SUDO" ]; then SUDO="sudo -n"; fi
+DRIFT=0
+CHANGED=0
+DOCKER_CONFIG_CHANGED=0
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+LVM_VERBS="pvcreate vgcreate lvcreate lvremove vgremove pvremove lvchange vgchange lvconvert lvresize lvextend lvreduce vgextend vgreduce pvresize vgrename lvrename pvmove lvm"
+DEVICE_VERBS="mkfs mkfs.ext2 mkfs.ext3 mkfs.ext4 mkfs.xfs mkfs.btrfs mkfs.vfat mkfs.fat mke2fs mkswap wipefs blkdiscard sgdisk sfdisk fdisk parted dd"
+SOFTDOG=/dev/watchdog-softdog
+
+note() { printf '  %-8s %s\n' "$1" "$2"; }
+drift() { DRIFT=1; note drift "$1"; }
+
+# want_file MODE SRC DST: DST is a root-owned copy of SRC with MODE.
+want_file() {
+  local mode="$1" src="$2" dst="$3"
+  if $SUDO cmp -s "$src" "$dst" 2>/dev/null &&
+    [ "$($SUDO stat -c '%a %U' "$dst" 2>/dev/null)" = "${mode#0} root" ]; then
+    return 0
+  fi
+  if [ "$CHECK" = 1 ]; then drift "$dst"; return 0; fi
+  $SUDO install -D -m "$mode" -o root -g root "$src" "$dst"
+  note changed "$dst"
+  CHANGED=1
+}
+
+install_docker_config() {
+  local lifecycle owner owner_home owner_uid candidate="$TMP/daemon.json" staged backup
+  local -a emitter
+  if ! command -v dockerd >/dev/null 2>&1; then
+    if [ "$INSTALL_SCOPE" = --docker-only ]; then echo "dockerd is required" >&2; return 1; fi
+    return 0
+  fi
+  # Match the existing user-unit owner convention, including sudo/root callers.
+  # sudo -H selects that account's HOME; never read root's copy of its policy.
+  if [ "$(id -u)" = 0 ]; then
+    owner="${SUDO_USER:-$(stat -c %U "$SCRIPT_DIR")}"
+    if ! owner_uid=$(id -u "$owner") || [ "$owner_uid" = 0 ]; then
+      echo "cannot identify a non-root lifecycle owner from sudo or checkout ownership" >&2
+      return 1
+    fi
+    owner_home=$(getent passwd "$owner" | cut -d: -f6)
+    if [[ "$owner_home" != /* ]]; then echo "lifecycle owner has no absolute home" >&2; return 1; fi
+    lifecycle="$owner_home/bin/storage-lifecycle"
+    emitter=(sudo -n -H -u "$owner" -- "$lifecycle" --config "$owner_home/.config/storage-lifecycle/config.json")
+  else
+    lifecycle=$(command -v storage-lifecycle || true)
+    emitter=("$lifecycle")
+  fi
+  # An older/missing emitter must never silently replace a previously capped config.
+  if [ -z "$lifecycle" ] || ! "${emitter[@]}" configure-docker --print-daemon-gc >"$TMP/docker-gc.json"; then
+    echo "deploy storage-lifecycle with --print-daemon-gc before this installer; Docker config unchanged" >&2
+    if [ "$CHECK" = 1 ]; then drift "cannot read lifecycle Docker GC policy"; return 0; fi
+    return 1
+  fi
+  # Canonical daemon.json owns every other field; lifecycle alone owns builder.gc.
+  python3 - "$SCRIPT_DIR/docker/daemon.json" "$TMP/docker-gc.json" "$candidate" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+base, gc = (json.loads(Path(path).read_text()) for path in sys.argv[1:3])
+if (not isinstance(base, dict) or not isinstance(gc, dict)
+        or set(gc) != {'enabled', 'defaultReservedSpace', 'defaultMaxUsedSpace'}
+        or gc['enabled'] is not True
+        or not isinstance(gc['defaultMaxUsedSpace'], str)
+        or not re.fullmatch(r'[1-9][0-9]*B', gc['defaultMaxUsedSpace'])
+        or gc['defaultReservedSpace'] != gc['defaultMaxUsedSpace']):
+    raise SystemExit('invalid lifecycle Docker GC fragment; Docker config unchanged')
+builder = base.setdefault('builder', {})
+if not isinstance(builder, dict):
+    raise SystemExit('invalid canonical Docker builder config')
+builder['gc'] = gc
+Path(sys.argv[3]).write_text(json.dumps(base, indent=2, sort_keys=True) + '\n')
+PY
+  # Validate the complete candidate BEFORE any replacement, including on --check.
+  $SUDO dockerd --validate --config-file "$candidate" >/dev/null
+  if $SUDO cmp -s "$candidate" /etc/docker/daemon.json 2>/dev/null &&
+    [ "$($SUDO stat -c '%a %U' /etc/docker/daemon.json 2>/dev/null)" = '644 root' ]; then
+    note pending "Docker GC config staged; verify serving policy with docker buildx inspect before claiming activation"
+    return 0
+  fi
+  if [ "$CHECK" = 1 ]; then drift "/etc/docker/daemon.json"; return 0; fi
+  [ ! -L /etc/docker/daemon.json ] || { echo "refusing symlink /etc/docker/daemon.json" >&2; return 1; }
+  $SUDO install -d -m 0755 -o root -g root /etc/docker
+  if $SUDO test -e /etc/docker/daemon.json; then
+    backup=$($SUDO mktemp /etc/docker/daemon.json.pre-host-guard.XXXXXX)
+    $SUDO cp -p /etc/docker/daemon.json "$backup"
+    note backup "$backup (rollback: restore this file through the host owner before a controlled restart)"
+  fi
+  staged=$($SUDO mktemp /etc/docker/.daemon.json.host-guard.XXXXXX)
+  if ! $SUDO install -m 0644 -o root -g root "$candidate" "$staged" ||
+     ! $SUDO mv -T "$staged" /etc/docker/daemon.json; then
+    $SUDO rm -f "$staged"
+    return 1
+  fi
+  CHANGED=1
+  DOCKER_CONFIG_CHANGED=1
+  note changed "/etc/docker/daemon.json validated and staged"
+  if [ "$INSTALL_SCOPE" = --docker-only ]; then
+    note pending "Docker GC activation needs a controlled restart; no Docker reload or restart performed"
+  else
+    note pending "Docker GC and cgroup-parent require a controlled restart after the live-restore reload"
+  fi
+}
+
+if [ "$INSTALL_SCOPE" = --docker-only ]; then
+  install_docker_config
+  exit "$DRIFT"
+fi
+
+# want_link TARGET LINK: LINK is a symlink to TARGET.
+want_link() {
+  [ "$(readlink "$2" 2>/dev/null)" = "$1" ] && return 0
+  if [ "$CHECK" = 1 ]; then drift "$2 -> $1"; return 0; fi
+  # Like want_file's install -D: a link's directory may not exist before the first install.
+  $SUDO install -d -m 0755 -o root -g root "$(dirname "$2")"
+  $SUDO ln -sfn "$1" "$2"
+  note changed "$2 -> $1"
+  CHANGED=1
+}
+
+# The private layer's host/install.sh runs as a child with these helpers and flags; its drift or failure is ours.
+PRIVATE_HOST="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/host/install.sh"
+export CHECK SUDO TMP INSTALL_SCOPE DOTFILES_HOST_DIR="$SCRIPT_DIR"
+export -f note drift want_file want_link
+run_private_host() {
+  [ -x "$PRIVATE_HOST" ] || return 0
+  "$PRIVATE_HOST" "$@" && return 0
+  if [ "$CHECK" = 1 ]; then DRIFT=1; else echo "private host install failed: $PRIVATE_HOST" >&2; exit 1; fi
+}
+if [ -n "$INSTALL_SCOPE" ]; then   # --docker-only exited above; every other scope is the layer's
+  [ -x "$PRIVATE_HOST" ] || { echo "$INSTALL_SCOPE needs the private layer's $PRIVATE_HOST" >&2; exit 2; }
+  run_private_host "$@"
+  exit "$DRIFT"
+fi
+
+# softdog_holders: PIDs that hold the softdog open, space-separated.
+softdog_holders() {
+  [ -e "$SOFTDOG" ] || return 0
+  $SUDO fuser "$(readlink -f "$SOFTDOG")" 2>/dev/null | tr -s ' ' ' ' | sed 's/^ //; s/ $//' || true
+}
+
+# daemon_holds_softdog: exactly one process holds the softdog, and it is the
+# watchdog daemon. PID 1 must not hold it.
+daemon_holds_softdog() {
+  local h
+  h="$(softdog_holders)"
+  case "$h" in '' | *' '*) return 1 ;; esac
+  [ "$h" != 1 ] && [ "$(ps -o comm= -p "$h" 2>/dev/null)" = watchdog ]
+}
+
+echo "== wrappers"
+want_file 0755 "$SCRIPT_DIR/lib/host-blast-guard.sh" /usr/local/lib/host-blast-guard.sh
+for w in fsfreeze unshare mount umount dmsetup lvm-guard device-write-guard; do
+  want_file 0755 "$SCRIPT_DIR/sbin/$w" "/usr/local/sbin/$w"
+done
+for v in $LVM_VERBS; do want_link lvm-guard "/usr/local/sbin/$v"; done
+for v in $DEVICE_VERBS; do want_link device-write-guard "/usr/local/sbin/$v"; done
+
+echo "== sudoers"
+cp "$SCRIPT_DIR/sudoers.d/zz-agent-blast-guard" "$TMP/sudoers"
+if [ "$CHECK" = 0 ]; then $SUDO visudo -cf "$TMP/sudoers" >/dev/null; fi
+want_file 0440 "$TMP/sudoers" /etc/sudoers.d/zz-agent-blast-guard
+if [ "$CHECK" = 0 ]; then $SUDO visudo -c >/dev/null; fi
+# After our sudoers: the layer's own sudoers.d file may reuse its aliases.
+run_private_host "$@"
+
+echo "== watchdog"
+if ! dpkg-query -W -f='${Status}' watchdog 2>/dev/null | grep 'ok installed' >/dev/null; then
+  if [ "$CHECK" = 1 ]; then
+    drift "package watchdog is not installed"
+  else
+    $SUDO env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 \
+      apt-get install -y -q -o DPkg::Lock::Timeout=900 watchdog >/dev/null
+    note changed "installed package watchdog"
+    CHANGED=1
+  fi
+fi
+# Ubuntu's kernel packages blacklist every watchdog driver, and
+# systemd-modules-load honours the blacklist, so this file never loaded softdog.
+# The watchdog unit loads it by name (watchdog_module below), which the
+# blacklist does not stop.
+if [ -e /etc/modules-load.d/host-guard-watchdog.conf ]; then
+  if [ "$CHECK" = 1 ]; then
+    drift "/etc/modules-load.d/host-guard-watchdog.conf is obsolete (softdog is blacklisted there)"
+  else
+    $SUDO rm -f /etc/modules-load.d/host-guard-watchdog.conf
+    note changed "removed /etc/modules-load.d/host-guard-watchdog.conf"
+    CHANGED=1
+  fi
+fi
+printf 'options softdog soft_margin=60\n' >"$TMP/softdog.conf"
+want_file 0644 "$TMP/softdog.conf" /etc/modprobe.d/host-guard-softdog.conf
+want_file 0644 "$SCRIPT_DIR/watchdog/60-host-guard-watchdog.rules" /etc/udev/rules.d/60-host-guard-watchdog.rules
+want_file 0644 "$SCRIPT_DIR/watchdog/system.conf.d.conf" /etc/systemd/system.conf.d/90-host-guard-watchdog.conf
+want_file 0755 "$SCRIPT_DIR/watchdog/root-write" /etc/watchdog.d/root-write
+want_file 0644 "$SCRIPT_DIR/watchdog/watchdog.conf" /etc/watchdog.conf
+want_file 0644 "$SCRIPT_DIR/watchdog/watchdog.service.d.conf" /etc/systemd/system/watchdog.service.d/host-guard.conf
+if ! grep -qx 'run_watchdog=1' /etc/default/watchdog 2>/dev/null ||
+  ! grep -qx 'watchdog_module="softdog"' /etc/default/watchdog 2>/dev/null; then
+  if [ "$CHECK" = 1 ]; then
+    drift "/etc/default/watchdog does not run the daemon with softdog"
+  else
+    if [ -f /etc/default/watchdog ]; then
+      $SUDO sed -i -e 's/^run_watchdog=.*/run_watchdog=1/' -e 's/^watchdog_module=.*/watchdog_module="softdog"/' /etc/default/watchdog
+    else
+      printf 'run_watchdog=1\nrun_wd_keepalive=1\nwatchdog_module="softdog"\nwatchdog_options=""\n' | $SUDO tee /etc/default/watchdog >/dev/null
+    fi
+    note changed /etc/default/watchdog
+    CHANGED=1
+  fi
+fi
+
+if [ "$CHECK" = 1 ]; then
+  systemctl is-enabled --quiet watchdog 2>/dev/null || drift "watchdog.service is not enabled"
+  if [ ! -e "$SOFTDOG" ]; then
+    drift "$SOFTDOG does not exist"
+  elif ! daemon_holds_softdog; then
+    drift "$SOFTDOG is held by pid '$(softdog_holders)', not the watchdog daemon"
+  fi
+else
+  $SUDO /etc/watchdog.d/root-write test
+  if [ "$CHANGED" = 1 ]; then
+    $SUDO systemctl daemon-reload
+    $SUDO udevadm control --reload
+  fi
+  $SUDO modprobe softdog
+  if [ ! -e "$SOFTDOG" ]; then
+    $SUDO udevadm trigger --action=add --subsystem-match=watchdog
+    $SUDO udevadm settle --timeout=30
+  fi
+  [ -e "$SOFTDOG" ] || { echo "  FAIL: $SOFTDOG did not appear"; exit 1; }
+  if systemctl is-enabled --quiet watchdog 2>/dev/null; then :; else
+    $SUDO systemctl enable watchdog >/dev/null 2>&1
+    note changed "enabled watchdog.service"
+  fi
+  if [ "$(softdog_holders)" = 1 ]; then
+    # PID 1 reads WatchdogDevice only when it starts. Re-executing it applies
+    # the pin to the hardware timer; it disarms the softdog before it lets go.
+    $SUDO systemctl daemon-reexec
+    note changed "re-executed PID 1 so it releases the softdog"
+  fi
+  if [ "$CHANGED" = 1 ] || ! daemon_holds_softdog; then
+    $SUDO systemctl restart watchdog
+    note changed "restarted watchdog.service"
+  fi
+  for _ in 1 2 3 4 5 6 7 8 9 10; do daemon_holds_softdog && break; sleep 1; done
+fi
+
+echo "== agent cap and writeback"
+# Separate from the watchdog block: a change here reloads systemd and sysctl
+# but never restarts the watchdog.
+cap_before=$CHANGED; CHANGED=0
+want_file 0644 "$SCRIPT_DIR/cgroup/50-agent-cap.conf" /etc/systemd/system/user.slice.d/50-agent-cap.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/60-user-io-delegate.conf" /etc/systemd/system/user@.service.d/60-io-delegate.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/60-writeback.conf" /etc/sysctl.d/60-host-guard-writeback.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/61-vfs-cache.conf" /etc/sysctl.d/61-host-guard-vfs-cache.conf
+want_file 0644 "$SCRIPT_DIR/cgroup/62-inotify.conf" /etc/sysctl.d/62-host-guard-inotify.conf
+# Containers that agents and CI start join user.slice, under the same cap.
+# Full mode retains the existing validated live-restore reload below. GC and
+# cgroup-parent still require a controlled restart. --docker-only stages only.
+install_docker_config
+if [ "$CHECK" = 1 ]; then
+  [ "$(systemctl show user.slice -p MemoryMax --value)" = 115964116992 ] || drift "user.slice MemoryMax is not 108G"
+  [ "$(sysctl -n vm.dirty_bytes)" = 1073741824 ] || drift "vm.dirty_bytes is not 1 GiB"
+  [ "$(sysctl -n vm.vfs_cache_pressure)" = 50 ] || drift "vm.vfs_cache_pressure is not 50"
+  [ "$(sysctl -n fs.inotify.max_user_watches)" = 524288 ] || drift "fs.inotify.max_user_watches is not 524288"
+  if command -v docker >/dev/null 2>&1 && [ "$(docker info --format "{{.LiveRestoreEnabled}}" 2>/dev/null)" != true ]; then
+    drift "dockerd runs without live-restore"
+  fi
+elif [ "$CHANGED" = 1 ]; then
+  $SUDO systemctl daemon-reload
+  $SUDO sysctl -q -p /etc/sysctl.d/60-host-guard-writeback.conf
+  $SUDO sysctl -q -p /etc/sysctl.d/61-host-guard-vfs-cache.conf
+  $SUDO sysctl -q -p /etc/sysctl.d/62-host-guard-inotify.conf
+  note changed "user.slice: $(systemctl show user.slice -p MemoryMax -p MemorySwapMax -p CPUWeight | tr "\n" " ")"
+  if [ "$DOCKER_CONFIG_CHANGED" = 1 ]; then
+    $SUDO systemctl reload docker
+    note changed "dockerd reloaded for live-restore; GC and cgroup-parent still require a controlled restart"
+  fi
+fi
+[ "$CHANGED" = 1 ] || CHANGED=$cap_before
+
+echo "== USB storage quirks"
+# Read when usb-storage next loads; the running disk keeps its driver until then.
+want_file 0644 "$SCRIPT_DIR/storage/usb-storage-quirks.conf" /etc/modprobe.d/host-usb-storage-quirks.conf
+
+echo "== kill(-1) guard"
+# A non-root kill(-1) reaches every process of that uid, including systemd --user, which starts exit.target
+# on SIGTERM. The guard refuses it and logs the caller.
+if command -v bpftrace >/dev/null && grep -qx 'CONFIG_BPF_KPROBE_OVERRIDE=y' "/boot/config-$(uname -r)" 2>/dev/null; then
+  guard_before=$CHANGED
+  want_file 0644 "$SCRIPT_DIR/kill-guard/kill-broadcast-guard.bt" /usr/local/lib/kill-broadcast-guard.bt
+  want_file 0644 "$SCRIPT_DIR/kill-guard/kill-broadcast-guard.service" /etc/systemd/system/kill-broadcast-guard.service
+  if [ "$CHECK" = 1 ]; then systemctl is-active -q kill-broadcast-guard || drift "kill-broadcast-guard is not active"
+  elif [ "$CHANGED" != "$guard_before" ] || ! systemctl is-active -q kill-broadcast-guard; then
+    $SUDO systemctl daemon-reload && $SUDO systemctl enable -q kill-broadcast-guard && $SUDO systemctl restart kill-broadcast-guard
+    note changed "kill-broadcast-guard (re)started"
+  fi
+else
+  note skipped "no bpftrace or no kprobe override in this kernel"
+fi
+
+echo "== DNS"
+# Only where systemd-resolved serves resolv.conf: WSL hosts write their own resolv.conf.
+if systemctl is-active -q systemd-resolved 2>/dev/null &&
+  [ "$(readlink -f /etc/resolv.conf)" = /run/systemd/resolve/stub-resolv.conf ]; then
+  dns_before=$CHANGED
+  want_file 0644 "$SCRIPT_DIR/dns/60-upstream-tls.conf" /etc/systemd/resolved.conf.d/60-upstream-tls.conf
+  if [ "$CHECK" = 0 ] && [ "$CHANGED" != "$dns_before" ]; then
+    # resolved cannot reload; NetworkManager pushes its per-link servers again after a restart.
+    $SUDO systemctl restart systemd-resolved
+    note changed "restarted systemd-resolved"
+  fi
+else
+  note skipped "resolv.conf is not systemd-resolved's stub"
+fi
+
+echo "== verify"
+# Root itself is not bound by sudoers, so this check needs a non-root caller.
+if [ -n "$SUDO" ] && sudo -n /usr/sbin/fsfreeze --help >/dev/null 2>&1; then
+  echo "  FAIL: sudo /usr/sbin/fsfreeze still allowed"
+  exit 1
+fi
+if [ "$CHECK" = 1 ]; then
+  [ "$DRIFT" = 0 ] || { echo "host guards: drift found"; exit 1; }
+  echo "host guards: no drift"
+  exit 0
+fi
+printf '  sudo fsfreeze -> %s\n' "$($SUDO sh -c 'command -v fsfreeze')"
+holder="$(softdog_holders)"
+dev="$(readlink -f "$SOFTDOG")"
+printf '  %s (%s) held by pid %s (%s)\n' "$SOFTDOG" "$dev" "${holder:-none}" "$(ps -o comm= -p "${holder:-0}" 2>/dev/null)"
+daemon_holds_softdog || { echo "  FAIL: the watchdog daemon does not hold $SOFTDOG"; exit 1; }
+printf '  timeout=%ss state=%s\n' "$(cat "/sys/class/watchdog/$(basename "$dev")/timeout")" "$(cat "/sys/class/watchdog/$(basename "$dev")/state")"
+echo "host guards installed"

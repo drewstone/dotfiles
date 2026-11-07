@@ -1,0 +1,9 @@
+// Refuse kill(-1) from any non-root user and log who asked: a user's kill(-1, SIGTERM) reaches systemd --user,
+// which starts exit.target on SIGTERM. Root keeps kill(-1) for shutdown; a user never needs it.
+kprobe:__x64_sys_kill
+/ uid != 0 && (int32)((struct pt_regs *)arg0)->di == -1 /
+{
+  printf("kill-broadcast-guard: refused kill(-1, %d) uid=%d pid=%d comm=%s ppid=%d pcomm=%s\n",
+         (int32)((struct pt_regs *)arg0)->si, uid, pid, comm, curtask->real_parent->tgid, curtask->real_parent->comm);
+  override(-1);  // -EPERM
+}

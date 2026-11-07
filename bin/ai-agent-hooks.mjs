@@ -1,0 +1,1438 @@
+#!/usr/bin/env node
+
+import { spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { bySource, changedFiles } from "./ai-agent-hooks-changed-files.mjs";
+
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const PACKAGE_ROOT = resolve(dirname(SCRIPT_PATH), "..");
+const HOOK_TEMPLATES_DIR = join(PACKAGE_ROOT, "hooks");
+const CONFIG_TEMPLATE_PATH = join(PACKAGE_ROOT, "templates", "ai-agent-hooks.mjs");
+
+const BUILTIN_IDS = new Set([
+  "merge-conflict-markers",
+  "suspicious-secrets",
+  "mergeable-with-base",
+  "no-cross-name-default-push",
+]);
+const CROSS_NAME_GUARD = { id: "no-cross-name-default-push", builtin: "no-cross-name-default-push", required: true };
+const DEFAULT_BRANCH_NAMES = new Set(["develop", "main", "master"]);
+const FINDING_SEVERITIES = ["low", "medium", "high", "critical"];
+const DEFAULT_FAIL_ON_SEVERITIES = ["high", "critical"];
+const DEFAULT_AUDIT_PROMPT =
+  "Review this change before it is pushed. Focus on correctness, regressions, security issues, missing tests, and production-readiness gaps. Return concise findings only. If there are no findings, say 'No findings'.";
+const DEFAULT_PROMPT_DIFF_MAX_CHARS = 200_000;
+
+function parseArgs(args) {
+  const flags = new Map();
+  const positionals = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token.startsWith("--")) {
+      positionals.push(token);
+      continue;
+    }
+
+    const key = token.slice(2);
+    const maybeValue = args[index + 1];
+    if (!maybeValue || maybeValue.startsWith("--")) {
+      flags.set(key, true);
+      continue;
+    }
+
+    flags.set(key, maybeValue);
+    index += 1;
+  }
+
+  return { flags, positionals };
+}
+
+function runGit(cwd, args, allowFailure = false) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (!allowFailure && result.status !== 0) {
+    throw new Error(result.stderr?.trim() || `git ${args.join(" ")} failed`);
+  }
+  return {
+    ok: result.status === 0,
+    status: result.status,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+  };
+}
+
+function resolveRepoRoot(inputPath) {
+  const cwd = inputPath ? resolve(inputPath) : process.cwd();
+  const probe = runGit(cwd, ["rev-parse", "--show-toplevel"], true);
+  if (probe.ok) return probe.stdout.trim();
+  // A bare repository (a bot's merge mirror) has no working tree: its git dir is the root,
+  // and content checks read the pushed commit instead of files on disk.
+  if (isBareRepo(cwd)) return runGit(cwd, ["rev-parse", "--absolute-git-dir"], true).stdout.trim();
+  throw new Error(`Not a git repository: ${cwd}`);
+}
+
+function isBareRepo(dir) {
+  const bare = runGit(dir, ["rev-parse", "--is-bare-repository"], true);
+  return bare.ok && bare.stdout.trim() === "true";
+}
+
+// In a bare repository git names exactly what is pushed on stdin; HEAD has nothing to do with it.
+function barePushContext(update) {
+  const created = /^0+$/.test(update.remoteSha);
+  return {
+    range: created ? `${update.localSha}~1...${update.localSha}` : `${update.remoteSha}...${update.localSha}`,
+    baseRef: created ? `${update.localSha}~1` : update.remoteSha,
+    upstream: "",
+  };
+}
+
+function formatHooksPathForGit(repoRoot, hooksDir) {
+  if (hooksDir.startsWith(`${repoRoot}/`)) {
+    return relative(repoRoot, hooksDir) || ".";
+  }
+  return hooksDir;
+}
+
+function copyHook({ source, destination, force }) {
+  if (existsSync(destination) && !force) {
+    throw new Error(`Hook already exists: ${destination} (pass --force to overwrite)`);
+  }
+
+  const template = readFileSync(source, "utf8").replaceAll("__AI_AGENT_HOOKS_BIN__", SCRIPT_PATH);
+  writeFileSync(destination, template, "utf8");
+  chmodSync(destination, 0o755);
+}
+
+function installConfigTemplate(repoRoot, force) {
+  const configPath = join(repoRoot, ".ai-agent-hooks.mjs");
+  if (existsSync(configPath) && !force) {
+    return { created: false, path: configPath };
+  }
+
+  copyFileSync(CONFIG_TEMPLATE_PATH, configPath);
+  return { created: true, path: configPath };
+}
+
+async function installCommand(rawArgs) {
+  const { flags } = parseArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(flags.get("repo"));
+  const force = Boolean(flags.get("force"));
+
+  const currentHooksPath = runGit(repoRoot, ["config", "--get", "core.hooksPath"], true).stdout.trim();
+  const requestedHooksPath = flags.get("hooks-dir");
+  const hooksPath =
+    typeof requestedHooksPath === "string"
+      ? requestedHooksPath
+      : currentHooksPath || ".githooks";
+
+  const absoluteHooksDir = isAbsolute(hooksPath) ? hooksPath : resolve(repoRoot, hooksPath);
+  mkdirSync(absoluteHooksDir, { recursive: true });
+
+  for (const fileName of readdirSync(HOOK_TEMPLATES_DIR).sort()) {
+    const source = join(HOOK_TEMPLATES_DIR, fileName);
+    const destination = join(absoluteHooksDir, fileName);
+    copyHook({ source, destination, force });
+  }
+
+  const gitHooksPath = formatHooksPathForGit(repoRoot, absoluteHooksDir);
+  if (gitHooksPath !== currentHooksPath) {
+    runGit(repoRoot, ["config", "core.hooksPath", gitHooksPath]);
+  }
+
+  if (flags.get("init-config")) {
+    const result = installConfigTemplate(repoRoot, force);
+    console.log(result.created ? `Created ${result.path}` : `Config exists: ${result.path}`);
+  }
+
+  console.log(`Installed hooks in ${absoluteHooksDir}`);
+  console.log(`Set core.hooksPath=${gitHooksPath}`);
+}
+
+function initConfigCommand(rawArgs) {
+  const { flags } = parseArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(flags.get("repo"));
+  const force = Boolean(flags.get("force"));
+  const result = installConfigTemplate(repoRoot, force);
+  console.log(result.created ? `Created ${result.path}` : `Config exists: ${result.path}`);
+}
+
+function resolvePushDiffContext(repoRoot) {
+  const upstream = runGit(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], true);
+  if (upstream.ok) {
+    return {
+      range: `${upstream.stdout.trim()}...HEAD`,
+      baseRef: upstream.stdout.trim(),
+      upstream: upstream.stdout.trim(),
+    };
+  }
+
+  const previous = runGit(repoRoot, ["rev-parse", "--verify", "HEAD~1"], true);
+  if (previous.ok) {
+    return {
+      range: "HEAD~1...HEAD",
+      baseRef: "HEAD~1",
+      upstream: "",
+    };
+  }
+
+  return {
+    range: "",
+    baseRef: "",
+    upstream: "",
+  };
+}
+
+
+function diffText(repoRoot, hookName, pushContext = resolvePushDiffContext(repoRoot)) {
+  if (hookName === "pre-commit") {
+    return runGit(
+      repoRoot,
+      ["diff", "--cached", "--binary", "--no-ext-diff", "--unified=3"],
+      true,
+    ).stdout;
+  }
+
+  if (!pushContext.range) {
+    return "";
+  }
+
+  return runGit(
+    repoRoot,
+    ["diff", "--binary", "--no-ext-diff", "--unified=3", pushContext.range],
+    true,
+  ).stdout;
+}
+
+function currentBranch(repoRoot) {
+  return runGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"], true).stdout.trim();
+}
+
+function commandExists(command) {
+  return spawnSync("bash", ["-lc", `command -v ${command}`], { encoding: "utf8" }).status === 0;
+}
+
+function checkMergeConflictMarkers(repoRoot, files, contentRev = "") {
+  if (files.length === 0) {
+    return { ok: true, status: 0, output: "No changed files to inspect." };
+  }
+
+  const result = spawnSync(
+    "git",
+    ["grep", "-nE", "^(<<<<<<<( .*)?|\\|\\|\\|\\|\\|\\|\\|( .*)?|=======|>>>>>>>( .*)?)$", ...(contentRev ? [contentRev] : []), "--", ...files],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+
+  if (result.status === 0) {
+    return {
+      ok: false,
+      status: 1,
+      output: `Merge conflict markers found:\n${result.stdout}`,
+    };
+  }
+
+  if (result.status === 1) {
+    return { ok: true, status: 0, output: "No conflict markers found." };
+  }
+
+  return {
+    ok: false,
+    status: result.status || 1,
+    output: result.stderr || "git grep failed while scanning conflict markers",
+  };
+}
+
+function checkSuspiciousSecrets(repoRoot, files, contentRev = "") {
+  if (files.length === 0) {
+    return { ok: true, status: 0, output: "No changed files to inspect." };
+  }
+
+  const patterns = [
+    { id: "openai", regex: /\bsk-[A-Za-z0-9]{20,}\b/g },
+    { id: "aws-access-key", regex: /\bAKIA[0-9A-Z]{16}\b/g },
+    { id: "github-token", regex: /\bghp_[A-Za-z0-9]{36}\b/g },
+    { id: "private-key", regex: /-----BEGIN (RSA|EC|OPENSSH|DSA) PRIVATE KEY-----/g },
+    { id: "slack-token", regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+  ];
+  const allowHints = ["example", "dummy", "placeholder", "redacted", "sample"];
+  const findings = [];
+
+  for (const relativePath of files) {
+    let file;
+    if (contentRev) {
+      const shown = runGit(repoRoot, ["show", `${contentRev}:${relativePath}`], true);
+      if (!shown.ok) continue;
+      file = shown.stdout;
+    } else {
+      const absPath = join(repoRoot, relativePath);
+      if (!existsSync(absPath)) {
+        continue;
+      }
+      try {
+        file = readFileSync(absPath, "utf8");
+      } catch {
+        continue;
+      }
+    }
+
+    const lines = file.split("\n");
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const line = lines[lineIndex];
+      const lowered = line.toLowerCase();
+      if (allowHints.some((hint) => lowered.includes(hint))) {
+        continue;
+      }
+
+      for (const pattern of patterns) {
+        if (pattern.regex.test(line)) {
+          findings.push(`${relativePath}:${lineIndex + 1} (${pattern.id})`);
+        }
+        pattern.regex.lastIndex = 0;
+      }
+    }
+  }
+
+  if (findings.length > 0) {
+    return {
+      ok: false,
+      status: 1,
+      output: `Suspicious secrets found:\n${findings.join("\n")}`,
+    };
+  }
+
+  return { ok: true, status: 0, output: "No suspicious secrets found." };
+}
+
+function resolveDefaultBaseRef(repoRoot, remote) {
+  // Use the remote's actual default branch (origin/HEAD) so repos whose base is
+  // develop/master — not main — are checked against the right integration branch.
+  const sym = runGit(repoRoot, ["symbolic-ref", "--quiet", `refs/remotes/${remote}/HEAD`], true);
+  if (sym.ok) {
+    const ref = (sym.stdout || "").trim().replace(/^refs\/remotes\//, "");
+    if (ref) return ref;
+  }
+  return `${remote}/main`;
+}
+
+const zeroOid = /^0+$/;
+
+/** Pre-push hands us, on stdin, one line per ref being pushed:
+ *  `<local ref> <local sha> <remote ref> <remote sha>`. Returns [] when stdin is a
+ *  TTY (a manual run) or unavailable, so callers fall back to the default behaviour. */
+function readPrePushRefUpdates() {
+  if (process.stdin.isTTY) return [];
+  let text = "";
+  try {
+    text = readFileSync(0, "utf8");
+  } catch {
+    return [];
+  }
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [localRef, localSha, remoteRef, remoteSha] = line.split(/\s+/);
+      return { localRef, localSha, remoteRef, remoteSha };
+    });
+}
+
+/**
+ * The release line every pushed ref updates, when they all update one: `release/<line>` is a
+ * backport line that consumers pinned to an older version resolve (agent-runtime's publish workflow
+ * releases a tag at the tip of `release/<major>.<minor>.x`). It diverges from the default branch on
+ * purpose, so its base is the line itself.
+ */
+function pushedReleaseLine(refUpdates) {
+  const lines = new Set(
+    refUpdates.map((u) => /^refs\/heads\/(release\/.+)$/.exec((u && u.remoteRef) || "")?.[1]),
+  );
+  if (refUpdates.length === 0 || lines.size !== 1) return undefined;
+  const [line] = lines;
+  return line;
+}
+
+/**
+ * A default branch is updated only from the local branch of the same name. A worktree whose
+ * branch tracks origin/develop under push.default=upstream turns a plain `git push` into an
+ * update of develop from a feature branch; three such pushes landed on agent-dev-container's
+ * develop with no pull request. A receipted merge lands through the GitHub API,
+ * not git push, so this never sees it.
+ */
+function checkNoCrossNameDefaultPush(repoRoot, refUpdates = [], remoteUrl = "") {
+  if (process.env.GITHUB_ACTIONS) {
+    return { ok: true, status: 0, output: "Inside GitHub Actions — workflows own their pushes." };
+  }
+  if (isLocalFilesystemRemote(remoteUrl)) {
+    return {
+      ok: true,
+      status: 0,
+      output: `Local filesystem remote (${remoteUrl}) — not a shared default branch.`,
+    };
+  }
+  const refused = [];
+  for (const u of refUpdates) {
+    const name = /^refs\/heads\/(.+)$/.exec((u && u.remoteRef) || "")?.[1];
+    if (!name || !DEFAULT_BRANCH_NAMES.has(name)) continue;
+    let localRef = u.localRef || "";
+    if (localRef === "HEAD") {
+      const symbolic = runGit(repoRoot, ["symbolic-ref", "-q", "HEAD"], true);
+      localRef = symbolic.ok ? symbolic.stdout.trim() : "HEAD (detached)";
+    }
+    if (zeroOid.test(u.localSha || "")) {
+      refused.push(`deleting ${u.remoteRef}`);
+    } else if (localRef !== `refs/heads/${name}`) {
+      refused.push(`${localRef || u.localSha} -> ${u.remoteRef}`);
+    }
+  }
+  if (refused.length === 0) {
+    return { ok: true, status: 0, output: "No default branch is updated from another ref." };
+  }
+  if (process.env.GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH === "1") {
+    const line = `no-cross-name-default-push: allowed by GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH=1: ${refused.join("; ")}`;
+    console.error(line);
+    return { ok: true, status: 0, output: line };
+  }
+  return {
+    ok: false,
+    status: 1,
+    output:
+      `Refused: a default branch is updated from a different ref: ${refused.join("; ")}.\n` +
+      "Push your branch to its own name and open a pull request:\n" +
+      "  git push origin HEAD:refs/heads/<your-branch>\n" +
+      "A tracked default branch plus push.default=upstream causes this; create worktrees with --no-track.\n" +
+      "Deliberate override (logged): GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH=1",
+  };
+}
+
+/**
+ * The pre-push hook's second argument is the push location. A path or file:// URL is a repository
+ * on this disk: test suites build throwaway repos and push a fixture ref to their main, and that
+ * updates no shared default branch. Only a network remote (scheme://, or scp-style host:path) is
+ * guarded. An unknown location keeps the guard on.
+ */
+function isLocalFilesystemRemote(url) {
+  const location = typeof url === "string" ? url.trim() : "";
+  if (!location) return false;
+  if (/^file:\/\//i.test(location)) return true;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(location)) return false;
+  // scp-style user@host:path or host:path: a colon before the first slash.
+  const colon = location.indexOf(":");
+  const slash = location.indexOf("/");
+  if (colon > 0 && (slash === -1 || colon < slash)) return false;
+  return true;
+}
+
+function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
+  const remote = typeof check.remote === "string" && check.remote.trim()
+    ? check.remote.trim()
+    : "origin";
+  // Mergeability is a property of a branch that will be integrated. A push of tags alone, such
+  // as a release tag at the tip of its line, integrates nothing. Secret and conflict-marker
+  // checks still run on every push.
+  if (refUpdates.length > 0 && refUpdates.every((u) => /^refs\/tags\//.test((u && u.remoteRef) || ""))) {
+    return { ok: true, status: 0, output: "Every pushed ref is a tag — mergeability check skipped." };
+  }
+  const configuredBase = typeof check.baseRef === "string" && check.baseRef.trim();
+  const releaseLine = configuredBase ? undefined : pushedReleaseLine(refUpdates);
+  const baseRef = configuredBase
+    ? check.baseRef.trim()
+    : releaseLine
+      ? `${remote}/${releaseLine}`
+      : resolveDefaultBaseRef(repoRoot, remote);
+  const remoteBranch = typeof check.remoteBranch === "string" && check.remoteBranch.trim()
+    ? check.remoteBranch.trim()
+    : baseRef.replace(/^refs\/remotes\//, "").replace(`${remote}/`, "");
+
+  if (check.fetch !== false) {
+    const fetch = runGit(repoRoot, ["fetch", "--quiet", remote, remoteBranch], true);
+    if (!fetch.ok) {
+      // Remote branch doesn't exist yet (new repo or new branch on remote) — nothing to conflict with.
+      const noRemoteRef = (fetch.stderr || "").includes("couldn't find remote ref") ||
+        (fetch.stderr || "").includes("does not appear to be a git repository");
+      if (noRemoteRef) {
+        return { ok: true, status: 0, output: `${remote}/${remoteBranch} does not exist yet — skipping mergeability check` };
+      }
+      return {
+        ok: false,
+        status: fetch.status || 1,
+        output: fetch.stderr || `Failed to fetch ${remote} ${remoteBranch}`,
+      };
+    }
+  }
+
+  const base = runGit(repoRoot, ["rev-parse", "--verify", baseRef], true);
+  if (!base.ok) {
+    // Base ref unavailable after a successful fetch means it truly doesn't exist — skip.
+    return { ok: true, status: 0, output: `${baseRef} does not exist yet — skipping mergeability check` };
+  }
+
+  // A non-fast-forward push to the base branch itself is an intentional history
+  // rewrite — "does HEAD merge into <base>" is not a meaningful question when you are
+  // deliberately overwriting <base>. Skip mergeability (the secret + conflict-marker
+  // checks still run). A normal OR force-pushed feature branch is unaffected: this
+  // only triggers when the pushed remote ref IS the base branch and is non-ff.
+  const rewritingBase = refUpdates.some((u) => {
+    if (!u || !u.remoteRef || !u.remoteSha || !u.localSha) return false;
+    const targetsBase =
+      u.remoteRef === `refs/heads/${remoteBranch}` || u.remoteRef.endsWith(`/${remoteBranch}`);
+    if (!targetsBase) return false;
+    if (zeroOid.test(u.remoteSha) || zeroOid.test(u.localSha)) return false; // create / delete
+    const ff = runGit(repoRoot, ["merge-base", "--is-ancestor", u.remoteSha, u.localSha], true);
+    return !ff.ok; // remote tip not reachable from the new tip → non-fast-forward
+  });
+  if (rewritingBase) {
+    return {
+      ok: true,
+      status: 0,
+      output:
+        `Force-push (non-fast-forward) of ${remoteBranch} — intentional history rewrite; ` +
+        `mergeability check skipped.`,
+    };
+  }
+
+  // Archival pushes (rescue-<date>/ or archive/ namespaces) preserve historic
+  // work at its exact SHA. "Does HEAD merge into <base>" is not a meaningful
+  // question for them: the pushed ref is not HEAD and is deliberately old.
+  // Scope the exemption to the archival namespaces so normal feature-branch
+  // pushes keep the PR-readiness guarantee. Secret and conflict-marker checks
+  // still run on every push.
+  const archivalRef = /^refs\/heads\/(?:rescue(?:-[^/]+)?|archive)\//;
+  if (refUpdates.length > 0 && refUpdates.every((u) => u && u.remoteRef && archivalRef.test(u.remoteRef))) {
+    return {
+      ok: true,
+      status: 0,
+      output: "Every pushed ref is archival (rescue-*/ or archive/) — mergeability check skipped.",
+    };
+  }
+
+  const merge = runGit(repoRoot, ["merge-tree", "--write-tree", baseRef, "HEAD"], true);
+  if (!merge.ok) {
+    return {
+      ok: false,
+      status: merge.status || 1,
+      output:
+        `HEAD does not merge cleanly into ${baseRef}.\n` +
+        `Rebase or merge ${baseRef}, resolve conflicts locally, rerun tests, then push.\n\n` +
+        `${merge.stdout}${merge.stderr}`,
+    };
+  }
+
+  return { ok: true, status: 0, output: `HEAD merges cleanly into ${baseRef}.` };
+}
+
+function runBuiltin(builtin, context) {
+  if (builtin === "merge-conflict-markers") {
+    return bySource(context, (files, rev) => checkMergeConflictMarkers(context.repoRoot, files, rev));
+  }
+
+  if (builtin === "suspicious-secrets") {
+    return bySource(context, (files, rev) => checkSuspiciousSecrets(context.repoRoot, files, rev));
+  }
+
+  if (builtin === "mergeable-with-base") {
+    return checkMergeableWithBase(context.repoRoot, context.check, context.pushRefUpdates);
+  }
+
+  if (builtin === "no-cross-name-default-push") {
+    return checkNoCrossNameDefaultPush(
+      context.repoRoot,
+      context.pushRefUpdates,
+      context.pushRemoteUrl,
+    );
+  }
+
+  return { ok: false, status: 1, output: `Unknown builtin check: ${builtin}` };
+}
+
+function runProcess({ command, args, cwd, timeoutSec, logPath, env = process.env, stdinText = "" }) {
+  return new Promise((resolvePromise) => {
+    const startedAt = Date.now();
+    let settled = false;
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      output += String(chunk);
+    });
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 1000);
+    }, Math.max(1, timeoutSec) * 1000);
+
+    if (stdinText) {
+      child.stdin.write(stdinText);
+    }
+    child.stdin.end();
+
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      writeFileSync(logPath, error.message, "utf8");
+      resolvePromise({ ok: false, status: 1, elapsedMs: Date.now() - startedAt });
+    });
+
+    child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      const elapsedMs = Date.now() - startedAt;
+      const status = timedOut ? 124 : code ?? 1;
+      const ok = status === 0;
+      const finalOutput = timedOut ? `${output}\nTimed out after ${timeoutSec}s` : output;
+
+      writeFileSync(logPath, finalOutput, "utf8");
+      resolvePromise({ ok, status, elapsedMs });
+    });
+  });
+}
+
+function runShell(command, cwd, timeoutSec, logPath, env = process.env) {
+  return runProcess({
+    command: "bash",
+    args: ["-lc", command],
+    cwd,
+    timeoutSec,
+    logPath,
+    env,
+  });
+}
+
+function buildReviewOutputSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "summary", "findings"],
+    properties: {
+      status: {
+        type: "string",
+        enum: ["pass", "fail"],
+      },
+      summary: {
+        type: "string",
+      },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "category", "title", "file", "line", "evidence", "recommendation"],
+          properties: {
+            severity: {
+              type: "string",
+              enum: FINDING_SEVERITIES,
+            },
+            category: {
+              type: "string",
+            },
+            title: {
+              type: "string",
+            },
+            file: {
+              type: ["string", "null"],
+            },
+            line: {
+              type: ["integer", "null"],
+            },
+            evidence: {
+              type: ["string", "null"],
+            },
+            recommendation: {
+              type: "string",
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateReviewResult(result) {
+  if (!isPlainObject(result)) {
+    return "Review result must be an object.";
+  }
+  if (result.status !== "pass" && result.status !== "fail") {
+    return "Review result status must be 'pass' or 'fail'.";
+  }
+  if (typeof result.summary !== "string" || result.summary.trim().length === 0) {
+    return "Review result summary must be a non-empty string.";
+  }
+  if (!Array.isArray(result.findings)) {
+    return "Review result findings must be an array.";
+  }
+
+  for (const [index, finding] of result.findings.entries()) {
+    if (!isPlainObject(finding)) {
+      return `Finding ${index} must be an object.`;
+    }
+    if (!FINDING_SEVERITIES.includes(finding.severity)) {
+      return `Finding ${index} has invalid severity.`;
+    }
+    if (typeof finding.category !== "string" || finding.category.trim().length === 0) {
+      return `Finding ${index} category must be a non-empty string.`;
+    }
+    if (typeof finding.title !== "string" || finding.title.trim().length === 0) {
+      return `Finding ${index} title must be a non-empty string.`;
+    }
+    if (finding.file !== null && finding.file !== undefined && typeof finding.file !== "string") {
+      return `Finding ${index} file must be a string or null.`;
+    }
+    if (
+      finding.line !== null &&
+      finding.line !== undefined &&
+      (!Number.isInteger(finding.line) || finding.line < 1)
+    ) {
+      return `Finding ${index} line must be a positive integer or null.`;
+    }
+    if (
+      finding.evidence !== null &&
+      finding.evidence !== undefined &&
+      typeof finding.evidence !== "string"
+    ) {
+      return `Finding ${index} evidence must be a string or null.`;
+    }
+    if (
+      typeof finding.recommendation !== "string" ||
+      finding.recommendation.trim().length === 0
+    ) {
+      return `Finding ${index} recommendation must be a non-empty string.`;
+    }
+  }
+
+  return "";
+}
+
+function buildAuditPrompt(check, context, artifactPaths) {
+  const basePrompt = typeof check.prompt === "string" && check.prompt.trim()
+    ? check.prompt.trim()
+    : DEFAULT_AUDIT_PROMPT;
+  const promptDiffMaxChars =
+    typeof check.promptDiffMaxChars === "number" && Number.isFinite(check.promptDiffMaxChars)
+      ? Math.max(0, check.promptDiffMaxChars)
+      : DEFAULT_PROMPT_DIFF_MAX_CHARS;
+  const diffForPrompt = truncateForPrompt(context.diff || "", promptDiffMaxChars);
+
+  return [
+    basePrompt,
+    "",
+    "Return only structured review output. Classify every finding severity as low, medium, high, or critical.",
+    `Blocking severities for this review: ${(check.failOnSeverities || DEFAULT_FAIL_ON_SEVERITIES).join(", ")}.`,
+    "Use status='pass' when there are no blocking findings. Use status='fail' when there is at least one blocking finding.",
+    "",
+    `Repository root: ${context.repoRoot}`,
+    `Hook: ${context.hookName}`,
+    `Branch: ${context.branch || "(unknown)"}`,
+    `Diff range: ${context.pushContext.range || "staged changes"}`,
+    `Changed files list: ${artifactPaths.changedFilesPath}`,
+    `Unified diff patch: ${artifactPaths.diffPath}`,
+    "",
+    "The changed-files list and unified diff are embedded below; use the artifact paths only for reruns/debugging.",
+    "",
+    "Changed files:",
+    context.files.length > 0 ? context.files.map((file) => `- ${file}`).join("\n") : "(none)",
+    "",
+    "Unified diff:",
+    "```diff",
+    diffForPrompt,
+    "```",
+  ].join("\n");
+}
+
+function truncateForPrompt(value, maxChars) {
+  if (maxChars === 0 || value.length <= maxChars) return value;
+  const omitted = value.length - maxChars;
+  return `${value.slice(0, maxChars)}\n\n[diff truncated: ${omitted} chars omitted; inspect artifact file for full patch]`;
+}
+
+function writeAuditArtifacts(runDir, checkId, context, check) {
+  const promptPath = join(runDir, `${slug(checkId)}.prompt.txt`);
+  const diffPath = join(runDir, `${slug(checkId)}.diff.patch`);
+  const changedFilesPath = join(runDir, `${slug(checkId)}.changed-files.txt`);
+  const contextPath = join(runDir, `${slug(checkId)}.git-context.json`);
+
+  writeFileSync(diffPath, context.diff || "", "utf8");
+  writeFileSync(changedFilesPath, context.files.join("\n"), "utf8");
+  writeFileSync(
+    contextPath,
+    JSON.stringify(
+      {
+        hook: context.hookName,
+        branch: context.branch,
+        diffRange: context.pushContext.range,
+        baseRef: context.pushContext.baseRef,
+        upstream: context.pushContext.upstream,
+        changedFiles: context.files,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const prompt = buildAuditPrompt(check, context, {
+    diffPath,
+    changedFilesPath,
+    contextPath,
+  });
+  writeFileSync(promptPath, prompt, "utf8");
+
+  return {
+    prompt,
+    promptPath,
+    diffPath,
+    changedFilesPath,
+    contextPath,
+  };
+}
+
+function skippedOutcome(logPath, reason) {
+  writeFileSync(logPath, reason, "utf8");
+  return {
+    ok: true,
+    skipped: true,
+    status: 0,
+    elapsedMs: 0,
+  };
+}
+
+function parseJsonFile(path) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function evaluateReviewResult(check, reviewResult) {
+  const failOnSeverities = Array.isArray(check.failOnSeverities) && check.failOnSeverities.length > 0
+    ? check.failOnSeverities
+    : DEFAULT_FAIL_ON_SEVERITIES;
+
+  const blockingFindings = reviewResult.findings.filter((finding) =>
+    failOnSeverities.includes(finding.severity)
+  );
+  const expectedStatus = blockingFindings.length > 0 ? "fail" : "pass";
+  const statusMatchesPolicy = reviewResult.status === expectedStatus;
+
+  return {
+    ok: blockingFindings.length === 0 && statusMatchesPolicy,
+    blockingFindings,
+    failOnSeverities,
+    expectedStatus,
+    statusMatchesPolicy,
+  };
+}
+
+async function runAudit(check, context, logPath, runDir) {
+  const artifacts = writeAuditArtifacts(runDir, check.id, context, check);
+  const env = {
+    ...process.env,
+    AI_AGENT_HOOKS_PROMPT_FILE: artifacts.promptPath,
+    AI_AGENT_HOOKS_DIFF_FILE: artifacts.diffPath,
+    AI_AGENT_HOOKS_CHANGED_FILES_FILE: artifacts.changedFilesPath,
+    AI_AGENT_HOOKS_GIT_CONTEXT_FILE: artifacts.contextPath,
+    AI_AGENT_HOOKS_REPO_ROOT: context.repoRoot,
+    AI_AGENT_HOOKS_HOOK: context.hookName,
+    AI_AGENT_HOOKS_DIFF_RANGE: context.pushContext.range || "",
+  };
+
+  if (check.runner === "codex-review") {
+    if (!commandExists("codex")) {
+      if (check.skipIfMissing) {
+        return skippedOutcome(logPath, "Skipped codex-review: codex CLI not found.");
+      }
+      throw new Error("codex CLI not found");
+    }
+
+    const schemaPath = join(runDir, `${slug(check.id)}.schema.json`);
+    const modelOutputPath = join(runDir, `${slug(check.id)}.result.json`);
+    const runnerMetaPath = join(runDir, `${slug(check.id)}.runner-meta.json`);
+    writeFileSync(schemaPath, JSON.stringify(buildReviewOutputSchema(), null, 2), "utf8");
+
+    const args = [
+      "exec",
+      "-",
+      "-C",
+      context.repoRoot,
+      "--sandbox",
+      "read-only",
+      "--output-schema",
+      schemaPath,
+      "--output-last-message",
+      modelOutputPath,
+      "--color",
+      "never",
+    ];
+    if (check.model) {
+      args.push("-c", `model=${JSON.stringify(check.model)}`);
+    }
+    if (check.reasoningEffort) {
+      args.push("-c", `model_reasoning_effort=${JSON.stringify(check.reasoningEffort)}`);
+    }
+    args.push("--skip-git-repo-check");
+
+    writeFileSync(
+      runnerMetaPath,
+      JSON.stringify(
+        {
+          runner: check.runner,
+          model: check.model || "",
+          reasoningEffort: check.reasoningEffort || "",
+          failOnSeverities: check.failOnSeverities || DEFAULT_FAIL_ON_SEVERITIES,
+          outputSchemaPath: schemaPath,
+          outputResultPath: modelOutputPath,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const processResult = await runProcess({
+      command: "codex",
+      args,
+      cwd: context.repoRoot,
+      timeoutSec: check.timeoutSec,
+      logPath,
+      env,
+      stdinText: artifacts.prompt,
+    });
+
+    if (!processResult.ok) {
+      return processResult;
+    }
+
+    if (!existsSync(modelOutputPath)) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nMissing structured review output: ${modelOutputPath}\n`,
+        "utf8",
+      );
+      return {
+        ok: false,
+        status: 1,
+        elapsedMs: processResult.elapsedMs,
+      };
+    }
+
+    let reviewResult;
+    try {
+      reviewResult = parseJsonFile(modelOutputPath);
+    } catch (error) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nInvalid JSON review output: ${error.message}\n`,
+        "utf8",
+      );
+      return {
+        ok: false,
+        status: 1,
+        elapsedMs: processResult.elapsedMs,
+      };
+    }
+
+    const validationError = validateReviewResult(reviewResult);
+    if (validationError) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nSchema validation failed: ${validationError}\n`,
+        "utf8",
+      );
+      return {
+        ok: false,
+        status: 1,
+        elapsedMs: processResult.elapsedMs,
+      };
+    }
+
+    const gate = evaluateReviewResult(check, reviewResult);
+    writeFileSync(modelOutputPath, JSON.stringify(reviewResult, null, 2), "utf8");
+    if (!gate.statusMatchesPolicy) {
+      writeFileSync(
+        logPath,
+        `${readFileSync(logPath, "utf8")}\nReview status '${reviewResult.status}' does not match expected status '${gate.expectedStatus}' for configured severities.\n`,
+        "utf8",
+      );
+    }
+
+    return {
+      ok: gate.ok,
+      status: gate.ok ? 0 : 1,
+      elapsedMs: processResult.elapsedMs,
+      reviewResult,
+      gate,
+      modelOutputPath,
+      runnerMetaPath,
+    };
+  }
+
+  if (check.runner === "claude") {
+    if (!commandExists("claude")) {
+      if (check.skipIfMissing) {
+        return skippedOutcome(logPath, "Skipped claude audit: claude CLI not found.");
+      }
+      throw new Error("claude CLI not found");
+    }
+
+    const args = [
+      "-p",
+      "--output-format",
+      "text",
+      "--permission-mode",
+      "bypassPermissions",
+    ];
+    if (check.model) {
+      args.push("--model", check.model);
+    }
+    args.push(artifacts.prompt);
+
+    return runProcess({
+      command: "claude",
+      args,
+      cwd: context.repoRoot,
+      timeoutSec: check.timeoutSec,
+      logPath,
+      env,
+    });
+  }
+
+  if (check.runner === "command") {
+    return runShell(check.command, context.repoRoot, check.timeoutSec, logPath, env);
+  }
+
+  throw new Error(`Unknown audit runner: ${check.runner}`);
+}
+
+function normalizeChecks(hookConfig) {
+  const checks = Array.isArray(hookConfig?.checks) ? hookConfig.checks : [];
+  return checks.map((check, index) => {
+    if (typeof check !== "object" || check === null) {
+      throw new Error(`Invalid check at index ${index}`);
+    }
+
+    const id = typeof check.id === "string" && check.id.trim() ? check.id : `check-${index + 1}`;
+    const required = check.required !== false;
+    const group = check.group === "ensemble" ? "ensemble" : "sequential";
+    const timeoutSec =
+      typeof check.timeoutSec === "number" && Number.isFinite(check.timeoutSec) ? check.timeoutSec : 300;
+
+    if (typeof check.builtin === "string") {
+      if (!BUILTIN_IDS.has(check.builtin)) {
+        throw new Error(`Unknown builtin '${check.builtin}' for check '${id}'`);
+      }
+      return {
+        id,
+        required,
+        group,
+        timeoutSec,
+        kind: "builtin",
+        builtin: check.builtin,
+        baseRef: typeof check.baseRef === "string" ? check.baseRef : "",
+        remote: typeof check.remote === "string" ? check.remote : "",
+        remoteBranch: typeof check.remoteBranch === "string" ? check.remoteBranch : "",
+        fetch: check.fetch !== false,
+      };
+    }
+
+    if (typeof check.audit === "object" && check.audit !== null) {
+      const runner = typeof check.audit.runner === "string" ? check.audit.runner : "";
+      if (!runner) {
+        throw new Error(`Audit check '${id}' is missing audit.runner`);
+      }
+
+      return {
+        id,
+        required,
+        group,
+        timeoutSec,
+        kind: "audit",
+        runner,
+        command: typeof check.audit.command === "string" ? check.audit.command : "",
+        prompt: typeof check.audit.prompt === "string" ? check.audit.prompt : DEFAULT_AUDIT_PROMPT,
+        model: typeof check.audit.model === "string" ? check.audit.model : "",
+        reasoningEffort:
+          typeof check.audit.reasoningEffort === "string" ? check.audit.reasoningEffort : "",
+        failOnSeverities: Array.isArray(check.audit.failOnSeverities)
+          ? check.audit.failOnSeverities.filter((value) => FINDING_SEVERITIES.includes(value))
+          : DEFAULT_FAIL_ON_SEVERITIES,
+        skipIfMissing: check.audit.skipIfMissing === true,
+        promptDiffMaxChars:
+          typeof check.audit.promptDiffMaxChars === "number"
+            ? check.audit.promptDiffMaxChars
+            : DEFAULT_PROMPT_DIFF_MAX_CHARS,
+      };
+    }
+
+    if (typeof check.run === "string" && check.run.trim()) {
+      return { id, required, group, timeoutSec, kind: "shell", run: check.run };
+    }
+
+    throw new Error(`Check '${id}' must define either 'builtin' or 'run'`);
+  });
+}
+
+function defaultConfig() {
+  return {
+    artifactsDir: ".git/ai-agent-hooks/runs",
+    hooks: {
+      "pre-commit": {
+        checks: [
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+      "pre-push": {
+        checks: [
+          CROSS_NAME_GUARD,
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+          {
+            id: "codex-review",
+            group: "sequential",
+            required: true,
+            timeoutSec: 900,
+            audit: {
+              runner: "codex-review",
+              failOnSeverities: ["high", "critical"],
+              prompt: DEFAULT_AUDIT_PROMPT,
+            },
+          },
+        ],
+      },
+    },
+  };
+}
+
+function globalBaselineConfig() {
+  return {
+    artifactsDir: ".git/ai-agent-hooks/runs",
+    hooks: {
+      "pre-commit": {
+        checks: [
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+      "pre-push": {
+        checks: [
+          CROSS_NAME_GUARD,
+          { id: "merge-conflict-markers", builtin: "merge-conflict-markers", required: true },
+          { id: "mergeable-with-base", builtin: "mergeable-with-base", required: true },
+          { id: "suspicious-secrets", builtin: "suspicious-secrets", required: true },
+        ],
+      },
+    },
+  };
+}
+
+async function loadConfig(repoRoot) {
+  const modulePath = join(repoRoot, ".ai-agent-hooks.mjs");
+  if (existsSync(modulePath)) {
+    const mod = await import(`${pathToFileURL(modulePath).href}?ts=${Date.now()}`);
+    return mod.default || defaultConfig();
+  }
+
+  const jsonPath = join(repoRoot, ".ai-agent-hooks.json");
+  if (existsSync(jsonPath)) {
+    return JSON.parse(readFileSync(jsonPath, "utf8"));
+  }
+
+  if (process.env.AI_AGENT_HOOKS_GLOBAL_BASELINE === "1") {
+    return globalBaselineConfig();
+  }
+
+  return defaultConfig();
+}
+
+function slug(value) {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+function writeSummary(runDir, hookName, results) {
+  const failedRequired = results.filter((result) => !result.ok && result.required);
+  writeFileSync(
+    join(runDir, "summary.json"),
+    JSON.stringify(
+      {
+        hook: hookName,
+        finishedAt: new Date().toISOString(),
+        overallStatus: failedRequired.length > 0 ? "fail" : "pass",
+        results,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+async function runHookCommand(rawArgs) {
+  const { positionals } = parseArgs(rawArgs);
+  const hookName = positionals[0];
+  if (hookName !== "pre-commit" && hookName !== "pre-push") {
+    throw new Error("run requires hook name: pre-commit or pre-push");
+  }
+
+  const repoRoot = resolveRepoRoot();
+  const config = await loadConfig(repoRoot);
+  const hookConfig = config?.hooks?.[hookName];
+  const checks = normalizeChecks(hookConfig);
+  // A repository's own config chooses its checks, but it cannot drop this guard.
+  if (hookName === "pre-push") {
+    const guard = checks.find((c) => c.builtin === CROSS_NAME_GUARD.builtin);
+    if (guard) {
+      guard.required = true;
+      guard.group = "sequential";
+    } else {
+      checks.unshift(...normalizeChecks({ checks: [CROSS_NAME_GUARD] }));
+    }
+  }
+
+  if (checks.length === 0) {
+    console.log(`No checks configured for ${hookName}`);
+    process.exit(0);
+  }
+
+  // In a worktree, `<root>/.git` is a FILE pointing at the real git dir, so
+  // `resolve(repoRoot, ".git/...")` would mkdir under a non-directory (ENOTDIR).
+  // Resolve the actual git dir so artifacts land in the worktree's git store.
+  const gitDirProbe = runGit(repoRoot, ["rev-parse", "--absolute-git-dir"], true);
+  const gitDir = gitDirProbe.ok ? gitDirProbe.stdout.trim() : resolve(repoRoot, ".git");
+  const configuredDir = config.artifactsDir || ".git/ai-agent-hooks/runs";
+  // A `.git/...` artifactsDir is logically relative to the git dir, which in a
+  // worktree is NOT `<root>/.git` (that's a file). Rebase onto the real git dir.
+  const gitRelative = configuredDir === ".git" || configuredDir.startsWith(".git/");
+  const artifactsRoot = gitRelative
+    ? join(gitDir, configuredDir.slice(".git".length).replace(/^\//, ""))
+    : resolve(repoRoot, configuredDir);
+  const runDir = join(
+    artifactsRoot,
+    slug(`${new Date().toISOString().replaceAll(":", "-")}-${hookName}`),
+  );
+  mkdirSync(runDir, { recursive: true });
+
+  const pushRefUpdates = hookName === "pre-push" ? readPrePushRefUpdates() : [];
+  const barePush = isBareRepo(repoRoot) ? pushRefUpdates.find((u) => !/^0+$/.test(u.localSha)) : undefined;
+  const pushContext = barePush ? barePushContext(barePush) : resolvePushDiffContext(repoRoot);
+  const { files, sources } = changedFiles(repoRoot, hookName, pushContext, { updates: pushRefUpdates, location: positionals[2] || "", contentRev: barePush?.localSha || "" });
+  const context = {
+    repoRoot,
+    hookName,
+    branch: currentBranch(repoRoot),
+    pushContext,
+    sources,
+    pushRefUpdates,
+    // git runs pre-push with <remote name> <push location>.
+    pushRemoteUrl: hookName === "pre-push" ? positionals[2] || "" : "",
+    files,
+    diff: diffText(repoRoot, hookName, pushContext),
+  };
+
+  console.log(`ai-agent-hooks: hook=${hookName}`);
+  console.log(`ai-agent-hooks: changed_files=${files.length}`);
+  console.log(`ai-agent-hooks: artifacts=${runDir}`);
+
+  const sequentialChecks = checks.filter((check) => check.group === "sequential");
+  const ensembleChecks = checks.filter((check) => check.group === "ensemble");
+  const results = [];
+
+  for (const check of sequentialChecks) {
+    const logPath = join(runDir, `${slug(check.id)}.log`);
+    const started = Date.now();
+
+    let outcome;
+    if (check.kind === "builtin") {
+      outcome = runBuiltin(check.builtin, { ...context, check });
+      writeFileSync(logPath, outcome.output || "", "utf8");
+      outcome.elapsedMs = Date.now() - started;
+      if (!outcome.ok && outcome.output) console.error(outcome.output);
+    } else if (check.kind === "audit") {
+      outcome = await runAudit(check, context, logPath, runDir);
+    } else {
+      outcome = await runShell(check.run, repoRoot, check.timeoutSec, logPath);
+    }
+
+    const result = {
+      id: check.id,
+      required: check.required,
+      ok: outcome.ok,
+      status: outcome.status,
+      elapsedMs: outcome.elapsedMs,
+      logPath,
+      skipped: outcome.skipped === true,
+      reviewResult: outcome.reviewResult || null,
+      gate: outcome.gate || null,
+      modelOutputPath: outcome.modelOutputPath || null,
+      runnerMetaPath: outcome.runnerMetaPath || null,
+    };
+
+    results.push(result);
+    console.log(
+      `- ${
+        result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
+      } ${check.id}`,
+    );
+
+    if (!result.ok && result.required) {
+      writeSummary(runDir, hookName, results);
+      process.exit(1);
+    }
+  }
+
+  if (ensembleChecks.length > 0) {
+    const ensembleResults = await Promise.all(
+      ensembleChecks.map(async (check) => {
+        const logPath = join(runDir, `${slug(check.id)}.log`);
+        const started = Date.now();
+
+        if (check.kind === "builtin") {
+          const outcome = runBuiltin(check.builtin, { ...context, check });
+          writeFileSync(logPath, outcome.output || "", "utf8");
+          return {
+            id: check.id,
+            required: check.required,
+            ok: outcome.ok,
+            status: outcome.status,
+            elapsedMs: Date.now() - started,
+            logPath,
+            skipped: false,
+          };
+        }
+
+        if (check.kind === "audit") {
+          const outcome = await runAudit(check, context, logPath, runDir);
+          return {
+            id: check.id,
+            required: check.required,
+            ok: outcome.ok,
+            status: outcome.status,
+            elapsedMs: outcome.elapsedMs,
+            logPath,
+            skipped: outcome.skipped === true,
+            reviewResult: outcome.reviewResult || null,
+            gate: outcome.gate || null,
+            modelOutputPath: outcome.modelOutputPath || null,
+            runnerMetaPath: outcome.runnerMetaPath || null,
+          };
+        }
+
+        const outcome = await runShell(check.run, repoRoot, check.timeoutSec, logPath);
+        return {
+          id: check.id,
+          required: check.required,
+          ok: outcome.ok,
+          status: outcome.status,
+          elapsedMs: outcome.elapsedMs,
+          logPath,
+          skipped: false,
+        };
+      }),
+    );
+
+    results.push(...ensembleResults);
+    for (const result of ensembleResults) {
+      console.log(
+        `- ${
+          result.skipped ? "skipped" : result.ok ? "ok" : result.required ? "failed" : "warn"
+        } ${result.id}`,
+      );
+    }
+  }
+
+  writeSummary(runDir, hookName, results);
+  if (results.some((result) => !result.ok && result.required)) {
+    process.exit(1);
+  }
+
+  process.exit(0);
+}
+
+async function doctorCommand(rawArgs) {
+  const { flags } = parseArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(flags.get("repo"));
+  const config = await loadConfig(repoRoot);
+  const hooksPath = runGit(repoRoot, ["config", "--get", "core.hooksPath"], true).stdout.trim();
+
+  console.log(`repo: ${repoRoot}`);
+  console.log(`core.hooksPath: ${hooksPath || "(not set)"}`);
+  const configuredHooks = config?.hooks ? Object.keys(config.hooks) : [];
+  console.log(`configured_hooks: ${configuredHooks.join(", ") || "(none)"}`);
+
+  for (const hookName of configuredHooks) {
+    const checks = normalizeChecks(config.hooks[hookName]);
+    console.log(`- ${hookName}: ${checks.length} checks`);
+  }
+}
+
+function printHelp() {
+  console.log(`ai-agent-hooks
+
+Usage:
+  ai-agent-hooks install [--repo <path>] [--hooks-dir <path>] [--force] [--init-config]
+  ai-agent-hooks init-config [--repo <path>] [--force]
+  ai-agent-hooks run <pre-commit|pre-push>
+  ai-agent-hooks doctor [--repo <path>]
+`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0];
+
+  if (!command || command === "-h" || command === "--help") {
+    printHelp();
+    return;
+  }
+
+  if (command === "install") {
+    await installCommand(args.slice(1));
+    return;
+  }
+
+  if (command === "init-config") {
+    initConfigCommand(args.slice(1));
+    return;
+  }
+
+  if (command === "run") {
+    await runHookCommand(args.slice(1));
+    return;
+  }
+
+  if (command === "doctor") {
+    await doctorCommand(args.slice(1));
+    return;
+  }
+
+  throw new Error(`Unknown command: ${command}`);
+}
+
+main().catch((error) => {
+  console.error(`ai-agent-hooks error: ${error.message}`);
+  process.exit(1);
+});

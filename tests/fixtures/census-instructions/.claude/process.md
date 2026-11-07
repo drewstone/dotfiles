@@ -1,0 +1,1 @@
+- Always run the integration tests before you merge any change to main.

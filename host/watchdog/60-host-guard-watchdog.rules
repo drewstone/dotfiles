@@ -1,0 +1,6 @@
+# Installed by ~/dotfiles/host/install.sh.
+# Names each kernel watchdog by its driver identity, so the watchdog daemon and
+# PID 1 never depend on probe order. /dev/watchdogN numbering changed between
+# boots and left the daemon configured for a device that did not exist.
+SUBSYSTEM=="watchdog", ATTR{identity}=="Software Watchdog", SYMLINK+="watchdog-softdog"
+SUBSYSTEM=="watchdog", ATTR{identity}!="Software Watchdog", SYMLINK+="watchdog-hw"

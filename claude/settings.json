@@ -1,0 +1,234 @@
+{
+  "cleanupPeriodDays": 3650,
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "permissions": {
+    "defaultMode": "auto"
+  },
+  "model": "opus[1m]",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/lineage-session-start.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/inject-directive.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.hindsight/coding-agents/dist/claude-sessionstart-hook.js\"; [ -f \"$f\" ] || exit 0; exec node \"$f\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.hindsight/coding-agents/dist/claude-hook.js\"; [ -f \"$f\" ] || exit 0; exec node \"$f\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/host-blast-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/process_guard.py"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/rtk-rewrite.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/git-push-preflight.sh",
+            "timeout": 180
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/poll-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/ci-wait-guard.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/scan-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Workflow|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/artifact-guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|mcp__fff__grep|mcp__fff__multi_grep|BashOutput|TaskOutput|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/secret_scan.py"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/halo-profile.sh",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/skill-run-settle.sh",
+            "timeout": 300,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$CLAUDE_PROJECT_DIR\" ] && [ -x \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" ] && \"$CLAUDE_PROJECT_DIR/scripts/archive-session-transcript.sh\" >/dev/null 2>&1 || true",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$HOME/.hindsight/coding-agents/dist/claude-stop-hook.js\"; [ -f \"$f\" ] || exit 0; exec node \"$f\"",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/blocked_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "codex@openai-codex": true,
+    "last30days@last30days-skill": true
+  },
+  "extraKnownMarketplaces": {
+    "anthropic-agent-skills": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/skills"
+      }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    },
+    "last30days-skill": {
+      "source": {
+        "source": "github",
+        "repo": "mvanhorn/last30days-skill"
+      }
+    }
+  },
+  "outputStyle": "Attention-kind",
+  "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "theme": "auto",
+  "autoCompactEnabled": true,
+  "switchModelsOnFlag": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
+}

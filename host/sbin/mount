@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# mount wrapper. Refuse a target of /, /proc, /sys, /dev, /run, or /boot, and a
+# --move whose source is one of them. Loop mounts, bind mounts, and remounts
+# under scratch directories pass. Binding /proc INTO a chroot passes: only the
+# target is checked.
+set -uo pipefail
+. /usr/local/lib/host-blast-guard.sh
+real="$(hbg_real mount)" || exit 127
+hbg_off && exec "$real" "$@"
+move=0
+positional=()
+skip=0
+for a in "$@"; do
+  if [ "$skip" = 1 ]; then skip=0; continue; fi
+  case "$a" in
+    --move|-M) move=1 ;;
+    -o|-t|-O|-L|-U|-N|--options|--types|--label|--uuid|--namespace|--source|--target) skip=1 ;;
+    -*) ;;
+    *) positional+=("$a") ;;
+  esac
+done
+if [ "${#positional[@]}" -ge 1 ]; then
+  target="${positional[${#positional[@]}-1]}"
+  hbg_is_kernel_dir "$target" && hbg_refuse mount "target $target is a kernel filesystem mountpoint or the root"
+fi
+if [ "$move" = 1 ] && [ "${#positional[@]}" -ge 2 ]; then
+  hbg_is_kernel_dir "${positional[0]}" && hbg_refuse mount "moving ${positional[0]} off the host"
+fi
+exec "$real" "$@"

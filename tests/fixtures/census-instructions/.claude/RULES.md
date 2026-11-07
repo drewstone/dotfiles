@@ -1,0 +1,4 @@
+- Always run the integration tests before you merge any change to main.
+- Keep at most 3 live widgets per fixture.
+- History lives in `docs/gone.md`, which this fixture never ships.
+- Check widgets with `zz-missing-tool --status`.

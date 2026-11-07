@@ -1,0 +1,393 @@
+#!/usr/bin/env node
+/**
+ * model-freshness — are the model ids the listed products declare still real,
+ * still served by an OpenAI-compatible router, and still current?
+ *
+ * Three questions, in the order they bite:
+ *
+ *   1. DECLARED  Which ids does each product actually name in its source?
+ *   2. SERVING   Does the router serve that id — and serve THAT ID, not a
+ *                substitute? A failover 200 reads exactly like a healthy 200
+ *                unless the served-model header is compared to the requested
+ *                one.
+ *   3. CURRENT   Is a newer generation of the same family in the catalog and
+ *                serving? That is the staleness this tool exists to catch.
+ *
+ * A failure names its own cause when the router returns a
+ * `<prefix>failure-category` header, so a spend cap, a dead credential and a
+ * genuinely missing model are three different lines here, not one.
+ *
+ * No CI. Run it by hand or from the local crontab; it writes a report and exits
+ * non-zero only when something a human must act on changed.
+ *
+ *   model-freshness              # report to stdout
+ *   model-freshness --json       # machine-readable
+ *   model-freshness --quiet      # print only problems (cron mode)
+ */
+
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
+const LAYER = `${process.env.DOTFILES_PRIVATE ?? `${process.env.HOME}/.local/share/dotfiles-private`}/claude/config`
+const CONFIG = existsSync(`${LAYER}/model-freshness.env`) ? readFileSync(`${LAYER}/model-freshness.env`, 'utf8') : ''
+const layer = Object.fromEntries(CONFIG.split('\n').map((line) => line.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean)
+  .map(([, name, value]) => [name, value.replace(/^~\//, `${process.env.HOME}/`)]))
+const setting = (name, fallback = '') => process.env[name] ?? layer[name] ?? fallback
+const ROUTER = setting('MODEL_FRESHNESS_ROUTER').replace(/\/+$/, '')
+const KEY_NAME = setting('MODEL_FRESHNESS_KEY_NAME', 'MODEL_FRESHNESS_API_KEY')
+const SECRETS = setting('MODEL_FRESHNESS_SECRETS')
+const HEADER = setting('MODEL_FRESHNESS_HEADER_PREFIX')
+const CODE = `${process.env.HOME}/code`
+
+const args = new Set(process.argv.slice(2))
+const JSON_OUT = args.has('--json')
+const QUIET = args.has('--quiet')
+
+/** Where each product declares the ids it will send. Kept as explicit files so
+ *  a scan cannot silently start reading the wrong thing after a refactor. */
+const PRODUCTS_FILE = setting('MODEL_FRESHNESS_PRODUCTS', `${LAYER}/model-freshness-products.json`)
+if (!ROUTER || !existsSync(PRODUCTS_FILE)) {
+  console.error(`model-freshness: refused: set MODEL_FRESHNESS_ROUTER and a product list at ${PRODUCTS_FILE} ([{ "repo": ..., "files": [...] }])`)
+  process.exit(2)
+}
+const PRODUCTS = JSON.parse(readFileSync(PRODUCTS_FILE, 'utf8'))
+
+/** Harness ids that read like model ids and are not models. `claude-code` names
+ *  the RUNNER; the model it runs is a separate field, and reporting it as a dead
+ *  model is a false alarm that trains a reader to skim the output. */
+const HARNESS_IDS = new Set([
+  'claude-code', 'kimi-code', 'opencode', 'codex', 'gemini-cli',
+  'openclaw', 'nanoclaw', 'hermes', 'amp', 'crush', 'forge', 'cursor', 'acp', 'droid',
+])
+
+/** Model-id shapes worth checking. Deliberately narrow: a regex that matches
+ *  every string finds file paths and prose. */
+const ID_PATTERN =
+  /\b((?:anthropic|openai|google|deepseek|moonshot|zai|x-ai|meta-llama|qwen|mistral)\/)?((?:claude|gpt|o[134]|gemini|gemma|deepseek|kimi|glm|grok|llama|qwen|mistral)[a-z0-9._-]*)\b/gi
+
+/** Families we track a generation for, newest first is decided by the catalog. */
+const FAMILY = (id) => {
+  const bare = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id
+  const m = bare.match(/^(claude-[a-z]+|gpt|gemini|deepseek|kimi|glm|grok|llama|qwen|mistral)/i)
+  return m ? m[1].toLowerCase() : null
+}
+
+function apiKey() {
+  if (process.env[KEY_NAME]) return process.env[KEY_NAME]
+  if (!SECRETS) return null
+  try {
+    return execFileSync('dotenvx', ['get', KEY_NAME, '-f', SECRETS], { encoding: 'utf8' }).trim()
+  } catch {
+    return null
+  }
+}
+
+async function catalog(key) {
+  // Authenticated: an anonymous catalog can be a NARROWER list, so an
+  // unauthenticated check reports ids as "not in catalog" that a real request
+  // would find.
+  const res = await fetch(`${ROUTER}/v1/models`, { headers: key ? { authorization: `Bearer ${key}` } : {} })
+  if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`)
+  const body = await res.json()
+  return (body.data ?? []).map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    interactive: !/:batch$/i.test(m.id),
+    routeable: m.routeability?.routeable !== false && m.routeability?.status !== 'unavailable',
+  }))
+}
+
+/**
+ * One real completion. The verdict is not the status code — it is whether the
+ * id we asked for is the id that answered.
+ */
+async function probe(model, key, maxTokens = 4, reasoningEffort = null) {
+  let res
+  try {
+    res = await fetch(`${ROUTER}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'ok' }],
+        max_tokens: maxTokens,
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      }),
+    })
+  } catch (err) {
+    return { model, verdict: 'unreachable', detail: String(err).slice(0, 120) }
+  }
+  const header = (name) => (HEADER ? res.headers.get(`${HEADER}${name}`) : null)
+  const requested = header('requested-model')
+  const served = header('served-model')
+  const failover = header('failover')
+  const category = header('failure-category')
+  let body = null
+  try {
+    body = await res.json()
+  } catch {
+    /* non-JSON body is itself reported through the status below */
+  }
+
+  if (!res.ok) {
+    const cause = category ?? body?.error?.code ?? 'unknown'
+    // Some reasoning models spend the four-token smoke budget before they
+    // emit visible text. Retry only that explicit failure with enough room;
+    // a quota, credential, or mapping error remains a single cheap request.
+    if (cause === 'reasoning_budget_exhausted' && maxTokens < 128) {
+      return probe(model, key, 128, 'low')
+    }
+    return {
+      model,
+      verdict: 'not-serving',
+      status: res.status,
+      cause,
+      detail: (body?.error?.message ?? '').slice(0, 140),
+    }
+  }
+
+  const answered = body?.model ?? served ?? null
+  const substituted = answered != null && !sameModel(answered, model)
+  return {
+    model,
+    verdict: substituted ? 'substituted' : 'serving',
+    answered,
+    ...(failover ? { failover } : {}),
+    ...(requested ? { requested } : {}),
+  }
+}
+
+function sameModel(a, b) {
+  return modelIdentity(a) === modelIdentity(b)
+}
+
+/** One model identity across provider prefixes and dated serving aliases. */
+function modelIdentity(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/^.*\//, '')
+    .replace(/-\d{8}$/, '')
+    .replace(/-\d{4}-\d{2}-\d{2}$/, '')
+}
+
+/** Read shipped source without switching or changing an active worktree. */
+function resolveProductSource(repo) {
+  const repoPath = join(CODE, repo)
+  try {
+    const remoteHead = execFileSync('git', ['-C', repoPath, 'ls-remote', '--symref', 'origin', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })
+    const branch = remoteHead.match(/^ref: refs\/heads\/([^\t ]+)\s+HEAD$/m)?.[1]
+    const commit = remoteHead.match(/^([0-9a-f]+)\s+HEAD$/m)?.[1]
+    if (!branch || !commit) throw new Error('origin HEAD did not identify a default branch and commit')
+    execFileSync('git', ['-C', repoPath, 'fetch', '--quiet', 'origin', branch], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })
+    execFileSync('git', ['-C', repoPath, 'cat-file', '-e', `${commit}^{commit}`])
+    return {
+      ref: `origin/${branch}`,
+      commit,
+      verified: true,
+      read(rel) {
+        return execFileSync('git', ['-C', repoPath, 'show', `${commit}:${rel}`], {
+          encoding: 'utf8',
+          maxBuffer: 4 * 1024 * 1024,
+        })
+      },
+    }
+  } catch (error) {
+    const detail = String(error?.stderr || error?.message || error).trim().slice(0, 180)
+    let commit = null
+    try {
+      commit = execFileSync('git', ['-C', repoPath, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    } catch {
+      /* the source warning below is authoritative */
+    }
+    return {
+      ref: 'working-tree',
+      commit,
+      verified: false,
+      error: detail,
+      read(rel) {
+        return readFileSync(join(repoPath, rel), 'utf8')
+      },
+    }
+  }
+}
+
+/** Ids a product declares in one resolved source revision. */
+function declaredIds(files, source) {
+  const found = new Map()
+  const missing = []
+  for (const rel of files) {
+    let text
+    try {
+      text = source.read(rel)
+    } catch {
+      missing.push(rel)
+      continue
+    }
+    for (const line of text.split('\n')) {
+      // Only lines that assign or list a value — skip prose and imports.
+      if (!/[:=]|['"`]/.test(line)) continue
+      if (/^\s*(\/\/|\*|#)/.test(line)) continue
+      for (const m of line.matchAll(ID_PATTERN)) {
+        const id = (m[1] ?? '') + m[2]
+        if (id.length < 6) continue
+        if (/\.(ts|tsx|js|mjs|json|md)$/.test(id)) continue
+        // A model id carries a VERSION. Without this, prose ("claude models",
+        // "the gemini path") and harness names match and get probed.
+        if (!/\d/.test(id)) continue
+        const bare = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id
+        if (HARNESS_IDS.has(bare)) continue
+        found.set(id, (found.get(id) ?? []).concat(`${rel}`))
+      }
+    }
+  }
+  found.missingFiles = missing
+  return found
+}
+
+/** Newer members of the same family that the catalog carries. */
+function newerInFamily(id, ids) {
+  const fam = FAMILY(id)
+  if (!fam) return []
+  // A version is the number attached to the FAMILY NAME, not any digit in the
+  // id: `gpt-oss-120b` is not a newer `gpt-5`, and reading its 120 as a version
+  // is how a parameter count becomes a fake upgrade recommendation.
+  const rank = (x) => {
+    const bare = x.includes('/') ? x.slice(x.indexOf('/') + 1) : x
+    const m = bare.match(new RegExp(`^${fam}[-.]?(\\d+)(?:[-.](\\d+))?`, 'i'))
+    if (!m) return null
+    return Number(m[1]) * 1000 + Number(m[2] ?? 0)
+  }
+  const mine = rank(id)
+  if (mine === null) return []
+  return ids
+    .filter((c) => FAMILY(c) === fam)
+    .filter((c) => {
+      const r = rank(c)
+      return r !== null && r > mine
+    })
+    .filter((c) => !/preview|batch|:|\bimage\b|tts|embedding|rerank|-oss-/i.test(c))
+    .sort((a, b) => (rank(b) ?? 0) - (rank(a) ?? 0))
+    .slice(0, 3)
+}
+
+const out = { checkedAt: new Date().toISOString(), router: ROUTER, products: [], problems: [] }
+
+const key = apiKey()
+if (!key) {
+  console.error(`model-freshness: no ${KEY_NAME} (environment or ${SECRETS || 'MODEL_FRESHNESS_SECRETS'}) — cannot probe liveness`)
+  process.exit(2)
+}
+
+const cat = await catalog(key)
+const catIds = cat.map((m) => m.id)
+const catSet = new Set(catIds)
+const interactiveCatIds = cat.filter((model) => model.interactive).map((model) => model.id)
+const routeableCatIds = cat.filter((model) => model.interactive && model.routeable).map((model) => model.id)
+const routeableCatSet = new Set(routeableCatIds)
+const catalogIdentities = new Set(catIds.map(modelIdentity))
+const probeCache = new Map()
+
+async function probeOnce(model) {
+  let pending = probeCache.get(model)
+  if (!pending) {
+    pending = probe(model, key)
+    probeCache.set(model, pending)
+  }
+  return pending
+}
+
+for (const { repo, files } of PRODUCTS) {
+  if (!existsSync(join(CODE, repo))) continue
+  const source = resolveProductSource(repo)
+  if (!source.verified) {
+    out.problems.push({ repo, id: '(source)', verdict: 'source-unverified', cause: source.error })
+  }
+  const declared = declaredIds(files, source)
+  const rows = []
+  // A configured file that is not on disk is why this tool once reported two
+  // products clean while reading nothing at all. Absence of findings is only
+  // good news when the scan actually ran.
+  if (declared.missingFiles.length > 0) {
+    out.problems.push({ repo, id: '(scan)', verdict: 'unreadable', cause: `configured file(s) not found: ${declared.missingFiles.join(', ')}` })
+  } else if (declared.size === 0) {
+    out.problems.push({ repo, id: '(scan)', verdict: 'no-ids-found', cause: `read ${files.length} file(s) and matched no model id — either this product names none, or the paths are wrong` })
+  }
+  for (const [id, where] of declared) {
+    const inCatalog = catSet.has(id) || catalogIdentities.has(modelIdentity(id))
+    const result = inCatalog ? await probeOnce(id) : { model: id, verdict: 'not-in-catalog' }
+    const newerInCatalog = newerInFamily(id, interactiveCatIds)
+    const routeableNewer = newerInFamily(id, routeableCatIds)
+    const newerChecks = await Promise.all(routeableNewer.map((candidate) => probeOnce(candidate)))
+    const newer = newerChecks
+      .filter((candidate) => candidate.verdict === 'serving')
+      .map((candidate) => candidate.model)
+    const unavailableNewer = newerInCatalog.filter((candidate) => !routeableCatSet.has(candidate))
+    const row = { id, where: [...new Set(where)], inCatalog, ...result, newer, unavailableNewer }
+    rows.push(row)
+    if (row.verdict !== 'serving') {
+      out.problems.push({ repo, id, verdict: row.verdict, cause: row.cause ?? row.failover ?? row.detail ?? null })
+    } else if (newer.length > 0) {
+      out.problems.push({ repo, id, verdict: 'stale', newer })
+    } else if (unavailableNewer.length > 0) {
+      out.problems.push({ repo, id, verdict: 'newer-unavailable', newer: unavailableNewer })
+    }
+  }
+  out.products.push({
+    repo,
+    source: { ref: source.ref, commit: source.commit, verified: source.verified },
+    models: rows,
+    filesRead: files.length - declared.missingFiles.length,
+    filesMissing: declared.missingFiles,
+  })
+}
+
+if (JSON_OUT) {
+  console.log(JSON.stringify(out, null, 2))
+  process.exit(out.problems.length ? 1 : 0)
+}
+
+const ICON = { serving: 'ok  ', substituted: 'SUB ', 'not-serving': 'DEAD', 'not-in-catalog': 'GONE', unreachable: '????' }
+const SCAN_NOTE = (p) =>
+  p.filesMissing.length > 0
+    ? `  !! ${p.filesMissing.length} configured file(s) NOT FOUND: ${p.filesMissing.join(', ')} — this product was not scanned`
+    : p.models.length === 0
+      ? `  !! read ${p.filesRead} file(s), matched no model id — either none is declared or the paths are stale`
+      : null
+if (!QUIET || out.problems.length) {
+  console.log(`model freshness — ${out.checkedAt} — ${ROUTER}`)
+  console.log(`catalog: ${catIds.length} models\n`)
+  for (const p of out.products) {
+    if (QUIET && !SCAN_NOTE(p) && p.models.every((m) => m.verdict === 'serving' && m.newer.length === 0)) continue
+    console.log(`${p.repo}`)
+    const note = SCAN_NOTE(p)
+    if (note) console.log(note)
+    for (const m of p.models) {
+      if (QUIET && m.verdict === 'serving' && m.newer.length === 0) continue
+      const tail =
+        m.verdict === 'substituted'
+          ? `  answered by ${m.answered}${m.failover ? `  [${m.failover}]` : ''}`
+          : m.verdict === 'not-serving'
+            ? `  ${m.status} ${m.cause}${m.detail ? ` — ${m.detail}` : ''}`
+            : m.newer.length
+              ? `  newer available: ${m.newer.join(', ')}`
+              : m.unavailableNewer.length
+                ? `  newer catalog entry is unavailable: ${m.unavailableNewer.join(', ')}`
+              : ''
+      console.log(`  ${ICON[m.verdict] ?? '??  '} ${m.id.padEnd(30)}${tail}`)
+      if (!QUIET) console.log(`       declared in ${m.where.join(', ')}`)
+    }
+    console.log('')
+  }
+  if (out.problems.length === 0) console.log('every declared model serves itself and is current.')
+}
+
+process.exit(out.problems.length ? 1 : 0)

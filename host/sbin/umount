@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# umount wrapper. Refuse /, /proc, /sys, /dev, /run, /boot, and -a.
+set -uo pipefail
+. /usr/local/lib/host-blast-guard.sh
+real="$(hbg_real umount)" || exit 127
+hbg_off && exec "$real" "$@"
+for a in "$@"; do
+  case "$a" in
+    -a|--all) hbg_refuse umount "-a unmounts every filesystem on the host" ;;
+    -*) ;;
+    *) hbg_is_kernel_dir "$a" && hbg_refuse umount "$a is a kernel filesystem mountpoint or the root" ;;
+  esac
+done
+exec "$real" "$@"

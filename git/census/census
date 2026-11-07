@@ -1,0 +1,483 @@
+#!/usr/bin/env python3
+"""The census: every codebase instrument, owned beside the ratchets (git/census/README.md).
+
+  census measure <checkout> <rev> [--scope prefix ...]   whole-repo metrics, with an optional scoped view
+  census floors <checkout> <base> <head> --floor F [--floor F ...] [--peer name=checkout:rev ...] [--growth-approval file]
+  census xrepo name=checkout:rev [name=checkout:rev ...]
+  census files <checkout> <rev>                         path, lines and class of every logic file, as TSV
+  census instructions [--cwd dir] [--json] ...          the instruction text an agent loads (instructions.mjs --help)
+
+Floor groups: lines, copies, god, hug, confusion; individual metric names also work.
+WORKTREE includes untracked edits and sparse paths using a copied index; the real index is untouched.
+Exit 0: measured, or every floor held. Exit 1: a floor rose. Exit 2: measurement refused, never a reported zero.
+"""
+import collections
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import shutil
+import time
+
+sys.dont_write_bytecode = True
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import classify as C  # noqa: E402
+GH = subprocess.run(["sh", "-c", 'f="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/census.env"; [ ! -r "$f" ] || . "$f" >/dev/null; printf %s "${CENSUS_GH:-gh}"'], capture_output=True, text=True).stdout or "gh"
+
+GROUPS = {
+    "lines": ["prod_lines"],
+    "copies": ["dup_lines", "xrepo_windows"],
+    "god": ["fns_over_300", "classes_over_40", "files_over_1000"],
+    "hug": ["hug_files", "hug_fns"],
+    "confusion": ["stale_doc_refs", "dup_exports"],
+}
+PATH_REF = re.compile(r"`([A-Za-z0-9_./-]+\.(?:ts|tsx|mjs|js|py|sh|md|json|yml|yaml|toml))`")
+
+
+class Refused(Exception):
+    """The census cannot measure honestly; it exits 2 and names why."""
+
+
+def git(checkout, *args, data=None, env=None):
+    run = subprocess.run(["git", "-C", checkout, *args], input=data, capture_output=True, env=env)
+    if run.returncode != 0:
+        raise Refused(f"git {args[0]} failed in {checkout}: {run.stderr.decode(errors='replace').strip()}")
+    return run.stdout
+
+
+def optional_ref(checkout, ref):
+    run = subprocess.run(["git", "-C", checkout, "rev-parse", "-q", "--verify", ref], capture_output=True)
+    return run.stdout.decode().strip() if run.returncode == 0 else None
+
+
+def area(path):
+    dirs = path.split("/")[:-1]
+    return "/".join(dirs[:2] if dirs[:1] and dirs[0] in ("apps", "products", "packages", "services", "tools") else dirs[:1]) or "(root)"
+
+
+def production_delta(checkout, base, head, merge=None, paths=None):
+    """Production-line change per area and grown oversized files, cross-area renames free; a merge pays only its own additions."""
+    if merge:  # the lesser of its two three-way readings, on paths unlike both parents: a rename never charges the other side's edit
+        fork = git(checkout, "merge-base", base, merge).decode().strip()
+        paths = set.intersection(*(set(git(checkout, "diff", "--name-only", "--no-renames", "-z", p, head).decode().split("\0")[:-1]) for p in (base, merge)))
+        (mine, big), (theirs, past) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
+        mine.subtract(production_delta(checkout, fork, merge, paths=paths)[0])
+        theirs.subtract(production_delta(checkout, fork, base, paths=paths)[0])
+        return {a: min(mine[a], theirs[a]) for a in mine.keys() | theirs.keys()}, [o for o in big if o[0] in {p for p, _, _ in past}]
+    size = lambda ref, name, mode: production_sizes(checkout, ref, read_blobs(checkout, ref, [name]) if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
+    parts = iter(git(checkout, "diff", "--raw", "-z", "-M", "--diff-filter=ACDMRT", base, head).decode().split("\0")[:-1])
+    growth, oversized = collections.Counter(), []
+    for entry in parts:
+        old_mode, new_mode, _, _, status = entry.removeprefix(":").split()
+        old_path = next(parts)
+        path = next(parts) if status[0] in "RC" else old_path
+        if paths is not None and not {old_path, path} & paths:
+            continue
+        old, new = size(base, old_path, "000000" if status[0] == "C" else old_mode), size(head, path, new_mode)
+        if status[0] == "R" and area(old_path) != area(path):
+            growth[area(path)] += (new or 0) - (old or 0)
+        else:
+            growth[area(old_path)] -= old or 0
+            growth[area(path)] += new or 0
+        if new and new > max(C.FILE_LIMIT, old or 0):
+            oversized.append((path, old, new))
+    return growth, oversized
+
+
+def approved_growth(checkout, base, head, growth, approval=None):
+    """Only a sourced approval for this exact origin, base, tree and positive area deltas admits growth."""
+    if approval is None:
+        run = subprocess.run(["git", "-C", checkout, "config", "--local", "--path", "--get", "census.growthApproval"], capture_output=True)
+        approval = run.stdout.decode().strip()
+    if not approval:
+        return False
+    record = json.load(open(approval))
+    source = record.pop("source")
+    scope = {"repository": git(checkout, "remote", "get-url", "origin").decode().strip(),
+             "base": git(checkout, "rev-parse", "--verify", base).decode().strip(), "tree": tree_of(checkout, head),
+             "areas": {a: n for a, n in growth.items() if n > 0}}
+    if json.dumps(record, sort_keys=True) != json.dumps(scope, sort_keys=True) or not scope["areas"]:
+        raise Refused("growth approval does not match origin, base, tree and growing areas")
+    match = re.fullmatch(r"https://github.com/([^/]+/[^/]+)/(?:issues|pull)/[1-9]\d*#issuecomment-([1-9]\d*)", source["url"])
+    if not match:
+        raise Refused("growth approval source must name a GitHub issue comment")
+    def github(endpoint):
+        run = subprocess.run([GH, "api", endpoint], capture_output=True, timeout=30)
+        if run.returncode:
+            raise Refused(f"growth approval source could not be verified through {GH}")
+        return json.loads(run.stdout)
+    comment = github(f"repos/{match[1]}/issues/comments/{match[2]}")
+    if (comment["html_url"] != source["url"] or comment["user"]["login"] != github("user")["login"] or
+            not source["quote"].strip() or source["quote"] not in comment["body"] or
+            hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
+        raise Refused("growth approval source author, quote or body digest does not match")
+    scopes = re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)
+    if json.dumps(scope, sort_keys=True) not in [json.dumps(json.loads(block), sort_keys=True) for block in scopes]:
+        raise Refused("growth approval fetched source does not approve this scope")
+    print(f"census: approved production growth from {source['url']}", file=sys.stderr)
+    return True
+
+
+def tree_of(checkout, rev):
+    """WORKTREE uses a copied index: untracked edits count, sparse paths remain, the real index is untouched."""
+    if rev != "WORKTREE":
+        return git(checkout, "rev-parse", "--verify", "-q", f"{rev}^{{tree}}").decode().strip()
+    with tempfile.TemporaryDirectory(prefix="census-index-") as scratch:
+        index = os.path.join(checkout, git(checkout, "rev-parse", "--git-path", "index").decode().strip())
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(scratch, "index"))
+        if os.path.exists(index):
+            shutil.copyfile(index, env["GIT_INDEX_FILE"])
+        git(checkout, "add", "-A", "--sparse", env=env)
+        return git(checkout, "write-tree", env=env).decode().strip()
+
+
+def tree_entries(checkout, tree):
+    """Tree metadata distinguishes blobs from Gitlinks without requiring their target commits locally."""
+    rows = git(checkout, "ls-tree", "-r", "-z", "--full-tree", tree).decode().split("\0")[:-1]
+    return {path: metadata.split()[1] for metadata, path in (row.split("\t", 1) for row in rows)}
+
+
+def read_blobs(checkout, tree, paths):
+    """Every blob in one `git cat-file --batch`; a path that does not come back is refused, never skipped."""
+    out = git(checkout, "cat-file", "--batch", data="".join(f"{tree}:{p}\n" for p in paths).encode())
+    blobs, i = {}, 0
+    for p in paths:
+        nl = out.index(b"\n", i)
+        header = out[i:nl].split()
+        i = nl + 1
+        if len(header) < 3 or header[1] != b"blob":
+            raise Refused(f"{p} at {tree[:12]} did not read as a blob")
+        n = int(header[2])
+        blobs[p] = out[i:i + n]
+        i += n + 1
+    return blobs
+
+
+def attr_exempt(checkout, tree, paths):
+    """Paths the repo marks linguist-generated or linguist-vendored, read at `tree` like loc-ratchet reads them."""
+    if not paths:
+        return set()
+    out = git(checkout, "check-attr", f"--source={tree}", "-z", "--stdin", "linguist-generated", "linguist-vendored",
+              data="\0".join(paths).encode() + b"\0").decode(errors="replace").split("\0")
+    return {out[k] for k in range(0, len(out) - 2, 3) if out[k + 2] in ("set", "true")}
+
+
+def functions(checkout, paths, blobs):
+    run = subprocess.run(["node", os.path.join(HERE, "functions.cjs"), checkout], capture_output=True, text=True,
+                         input=json.dumps([{"file": p, "text": blobs[p].decode()} for p in paths]))
+    if run.returncode != 0:
+        raise Refused(run.stderr.strip() or "functions.cjs failed")
+    found = json.loads(run.stdout)
+    if found["parsed"] != found["files"]:
+        raise Refused(f"functions.cjs parsed {found['parsed']} of {found['files']} source files")
+    return found
+
+
+def windows(text):
+    """Hashes of every WINDOW consecutive normalized lines, in order."""
+    lines = C.normalized(text)
+    return [hashlib.blake2b("\n".join(lines[j:j + C.WINDOW]).encode(), digest_size=8).digest()
+            for j in range(len(lines) - C.WINDOW + 1)]
+
+
+def duplicated(texts):
+    """One whole-repo occurrence index supplies coverage, scoped views and original source locations."""
+    per_file = {p: windows(t) for p, t in texts.items()}
+    seen = collections.Counter(h for hs in per_file.values() for h in hs)
+    files, groups = {}, collections.defaultdict(list)
+    for p, hs in per_file.items():
+        lines = C.normalized(texts[p], locations=True)
+        covered = set()
+        for j, h in enumerate(hs):
+            if seen[h] > 1:
+                covered.update(range(j, j + C.WINDOW))
+                groups[h.hex()].append({"path": p, "normalized_start": j + 1,
+                                        "start_line": lines[j][0], "end_line": lines[j + C.WINDOW - 1][0]})
+        files[p] = {"normalized_lines": len(lines), "dup_lines": len(covered)}
+    return {"files": files, "windows": dict(sorted(groups.items()))}
+
+
+def scope_paths(scopes):
+    paths = sorted(set(os.path.normpath(p) for p in scopes))
+    if not all(scopes) or any(os.path.isabs(p) or p == ".." or p.startswith("../") for p in paths):
+        raise Refused("--scope must name repository-relative prefixes")
+    return paths
+
+
+def measurement_view(result, rev, scopes):
+    """Scope selects covered locations only; the cached peer population always remains the entire tree."""
+    view = {**result, "rev": rev}
+    if not scopes:
+        return view
+    belongs = lambda p: any(root == "." or p == root or p.startswith(root + "/") for root in scopes)
+    sizes, copies = result["lists"]["prod_lines"], result["lists"]["dup_lines"]
+    for root in scopes:
+        if not any(root == "." or p == root or p.startswith(root + "/") for p in sizes.keys() | copies["files"].keys()):
+            raise Refused(f"--scope {root}: matched no measured logic or source file")
+    selected = {p: counts for p, counts in copies["files"].items() if belongs(p)}
+    dup = sum(f["dup_lines"] for f in selected.values())
+    normalized = sum(f["normalized_lines"] for f in selected.values())
+    view["scope"] = {"paths": scopes, "files_read": {"logic": sum(belongs(p) for p in sizes), "source": len(selected)},
+                     "metrics": {"prod_lines": sum(n for p, n in sizes.items() if belongs(p)), "dup_lines": dup,
+                                 "dup_pct": round(100 * dup / max(normalized, 1), 2)},
+                     "lists": {"dup_lines": {"files": selected, "windows": {h: occ for h, occ in copies["windows"].items()
+                               if any(belongs(o["path"]) for o in occ)}}}}
+    return view
+
+
+def stale_refs(tree_paths, docs):
+    """Backticked file paths in current docs that name no file or directory at the revision."""
+    dirs = {"/".join(p.split("/")[:i]) for p in tree_paths for i in range(1, p.count("/") + 1)}
+    stale = []
+    for doc, text in docs.items():
+        for ref in PATH_REF.findall(text):
+            if "/" not in ref or ref.startswith(("http", "~", "/", "$")) or "*" in ref or "<" in ref:
+                continue
+            here = (ref.removeprefix("./"), os.path.normpath(os.path.join(os.path.dirname(doc), ref)))
+            if not any(c in tree_paths or c in dirs for c in here):
+                stale.append(f"{doc}: {ref}")
+    return stale
+
+
+def exports(sources):
+    """Exported declaration names and the files that declare each, as dup-export-ratchet reads them."""
+    defs = collections.defaultdict(set)
+    for p, text in sources.items():
+        for name in C.declared_exports(text):
+            defs[name].add(p)
+    return defs
+
+
+def cache_file(tree):
+    digest = hashlib.sha256()
+    for name in ("census", "classify.py", "functions.cjs", "patterns.json", "python_functions.py"):
+        try:
+            with open(os.path.join(HERE, name), "rb") as instrument:
+                digest.update(instrument.read())
+        except OSError as why:
+            raise Refused(f"cannot read instrument {name}: {why}") from why
+    root = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "census")
+    return os.path.join(root, digest.hexdigest()[:12], f"{tree}.json")
+
+
+def remember(file, value):
+    """Cache a measurement by instrument revision and tree; older instrument revisions and month-old trees go."""
+    root, version = os.path.dirname(os.path.dirname(file)), os.path.basename(os.path.dirname(file))
+    os.makedirs(os.path.dirname(file), exist_ok=True)
+    for old in set(os.listdir(root)) - {version}:
+        shutil.rmtree(os.path.join(root, old), ignore_errors=True)
+    for old in os.listdir(os.path.dirname(file)):
+        path = os.path.join(os.path.dirname(file), old)
+        try:
+            if time.time() - os.path.getmtime(path) > 30 * 86400:
+                os.remove(path)
+        except FileNotFoundError:
+            pass
+    # A private temporary name: two runs measuring the same tree at once both write, and either result is the same.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(file), suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        json.dump(value, f)
+    os.replace(tmp, file)
+
+
+def measure(checkout, rev, scopes=()):
+    scopes = scope_paths(scopes)
+    tree = tree_of(checkout, rev)
+    cached = cache_file(tree)
+    try:
+        return measurement_view(json.load(open(cached)), rev, scopes)
+    except (OSError, ValueError):
+        pass
+    entries = tree_entries(checkout, tree)
+    paths = [p for p, kind in entries.items() if kind == "blob"]
+    logic, source = [p for p in paths if C.candidate(p)], [p for p in paths if C.source(p)]
+    function_paths = [p for p in paths if C.function_source(p)]
+    docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
+    blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
+    sizes = production_sizes(checkout, tree, {p: blobs[p] for p in logic})
+    if not sizes:
+        raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
+    texts = {p: blobs[p].decode(errors="replace") for p in source}
+    fn = functions(checkout, function_paths, blobs)
+    spans, defs, copies = [f[0] for f in fn["fns"]], exports(texts), duplicated(texts)
+    dup = sum(f["dup_lines"] for f in copies["files"].values())
+    normalized = sum(f["normalized_lines"] for f in copies["files"].values())
+    stale = stale_refs(set(entries), {p: blobs[p].decode(errors="replace") for p in docs})
+    big_files = sorted(([n, p] for p, n in sizes.items() if n > C.FILE_LIMIT), reverse=True)
+    hug_files = sorted(([n, p] for p, n in sizes.items() if C.FILE_HUG[0] <= n <= C.FILE_HUG[1]), reverse=True)
+    hug_fns = [f for f in fn["fns"] if C.FUNCTION_HUG[0] <= f[0] <= C.FUNCTION_HUG[1]]
+    classes = [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS]
+    duplicate_exports = {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}
+    m = {"prod_lines": sum(sizes.values()), "files_over_1000": len(big_files), "hug_files": len(hug_files),
+         "logic_files": len(sizes), "stale_doc_refs": len(stale), "hug_fns": len(hug_fns), "classes_over_40": len(classes),
+         "dup_lines": dup, "dup_exports": len(duplicate_exports), "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2),
+         "exported_names": len(defs), "dup_pct": round(100 * dup / max(normalized, 1), 2)}
+    m.update({f"fns_over_{n}": sum(s > limit for s in spans) for n, limit in ((150, 150), (300, C.FUNCTION_LIMIT), (500, 500))})
+    lists = {"prod_lines": sizes, "dup_lines": copies, "files_over_1000": big_files, "hug_files": hug_files,
+             "stale_doc_refs": stale, "fns_over_150": [f for f in fn["fns"] if f[0] > 150], "hug_fns": hug_fns,
+             "classes_over_40": classes, "dup_exports": duplicate_exports}
+    result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)}, "metrics": m, "lists": lists}
+    view = measurement_view(result, rev, scopes)
+    remember(cached, result)
+    return view
+
+
+def source_texts(checkout, tree):
+    paths = [p for p, kind in tree_entries(checkout, tree).items() if kind == "blob" and C.source(p)]
+    if not paths:
+        raise Refused(f"read 0 source files at {tree[:12]} in {checkout}")
+    return {p: b.decode(errors="replace") for p, b in read_blobs(checkout, tree, paths).items()}
+
+
+def window_set(checkout, rev):
+    return {h for text in source_texts(checkout, tree_of(checkout, rev)).values() for h in windows(text)}
+
+
+def peer(spec):
+    name, rest = spec.split("=", 1)
+    return name, *rest.rsplit(":", 1)
+
+
+def floors(checkout, base, head, names, peers, approval=None):
+    wanted = [m for name in names for m in GROUPS.get(name, [name])]
+    before, after = measure(checkout, base), measure(checkout, head)
+    notes = []
+    if "xrepo_windows" in wanted:
+        if peers:
+            shared = set().union(*(window_set(c, r) for _, c, r in map(peer, peers)))
+            before["metrics"]["xrepo_windows"] = len(window_set(checkout, before["tree"]) & shared)
+            after["metrics"]["xrepo_windows"] = len(window_set(checkout, after["tree"]) & shared)
+        elif "xrepo_windows" in names:
+            raise Refused("xrepo_windows needs a --peer to measure against")
+        else:
+            wanted.remove("xrepo_windows")
+            notes.append("xrepo_windows: not measured, no --peer named")
+    if not wanted:
+        raise Refused(f"no metric to compare for --floor {' '.join(names)}")
+    approved = approved_growth(checkout, base, after["tree"], production_delta(checkout, base, after["tree"])[0], approval) if approval else False
+    rows, refused, unmeasured = [], [], []
+    for metric in wanted:
+        b, h = before["metrics"].get(metric), after["metrics"].get(metric)
+        if b is None or h is None:
+            unmeasured.append(metric)
+            rows.append(f"{metric:<16} unmeasured at {'base' if b is None else 'head'}  REFUSED: no instrument read it")
+            continue
+        allowed = metric == "prod_lines" and approved
+        verdict = "ok" if h <= b else "approved growth" if allowed else "REFUSED: may not rise"
+        if h > b and not allowed:
+            refused.append(metric)
+        rows.append(f"{metric:<16} {b:>9} -> {h:<9} {h - b:+}  {verdict}")
+    print(f"census floors {' '.join(names)}: base {base} (tree {before['tree'][:12]}) -> head {head} (tree {after['tree'][:12]})")
+    print("\n".join(rows + notes))
+    print(json.dumps({"base": {"rev": base, "tree": before["tree"], "files_read": before["files_read"]},
+                      "head": {"rev": head, "tree": after["tree"], "files_read": after["files_read"]},
+                      "deltas": {m: after["metrics"][m] - before["metrics"][m] for m in wanted if m not in unmeasured},
+                      "refused": refused, "unmeasured": unmeasured}))
+    if unmeasured:
+        raise Refused(f"no instrument measured {', '.join(unmeasured)}")
+    return 1 if refused else 0
+
+
+def xrepo(specs):
+    """Complete cross-repository export and located-copy evidence, with the existing ranked previews."""
+    names = collections.defaultdict(dict)
+    files, texts = {}, {}
+    for name, checkout, rev in map(peer, specs):
+        sources = source_texts(checkout, tree_of(checkout, rev))
+        files[name] = len(sources)
+        for n, paths in exports(sources).items():
+            names[n][name] = sorted(paths)
+        texts.update({(name, p): text for p, text in sources.items()})
+    cross = {n: rs for n, rs in names.items() if len(rs) >= 2}
+    counts = {n: {r: len(paths) for r, paths in rs.items()} for n, rs in cross.items()}
+    order = {p: i for i, p in enumerate(texts)}
+    groups = duplicated(texts)["windows"]
+    pairs, by_repo, located = collections.defaultdict(list), collections.Counter(), {}
+    # First-occurrence order preserves preview ties; repeated occurrences remain in the evidence.
+    for h, occurrences in sorted(groups.items(), key=lambda item: min((order[o["path"]], o["normalized_start"]) for o in item[1])):
+        paths = sorted({o["path"] for o in occurrences})
+        if len({repo for repo, _ in paths}) < 2:
+            continue
+        located[h] = [{**o, "repo": o["path"][0], "path": o["path"][1]} for o in occurrences]
+        for a, left in enumerate(paths):
+            for right in paths[a + 1:]:
+                if left[0] != right[0]:
+                    pairs[(left, right)].append(h)
+                    by_repo[(left[0], right[0])] += 1
+    ranked = sorted(counts.items(), key=lambda kv: (-len(kv[1]), -sum(kv[1].values())))
+    pair_counts = collections.Counter({pair: len(hashes) for pair, hashes in pairs.items()})
+    repo_pairs = {f"{a}~{b}": n for (a, b), n in by_repo.most_common()}
+    return {"per_repo_files": files, "names_in_2plus_repos": len(cross), "names_in_3plus_repos": sum(len(v) >= 3 for v in cross.values()),
+            "top_names": [[n, rs] for n, rs in ranked[:40]],
+            "cross_repo_shared_windows_by_repo_pair": dict(list(repo_pairs.items())[:20]),
+            "top_cross_file_pairs": [[n + C.WINDOW - 1, f"{a[0]}/{a[1]}", f"{b[0]}/{b[1]}"] for (a, b), n in pair_counts.most_common(25)],
+            "top_cross_file_pairs_unit": "shared window hashes + window size - 1; not contiguous copied LOC",
+            "window_normalized_lines": C.WINDOW,
+            "lists": {"names": cross, "repo_pairs": repo_pairs, "windows": located,
+                      "cross_file_pairs": [{"a": {"repo": a[0], "path": a[1]}, "b": {"repo": b[0], "path": b[1]},
+                                            "shared_windows": len(hashes), "window_hashes": hashes} for (a, b), hashes in pairs.items()]}}
+
+
+def production_sizes(checkout, tree, blobs):
+    """Lines of the logic files among `blobs`, less linguist-generated, vendored and generated-header files."""
+    blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
+    exempt = attr_exempt(checkout, tree, list(blobs)) | {p for p, b in blobs.items() if C.generated(b[:2000].decode(errors="replace"))}
+    return {p: C.line_count(b) for p, b in blobs.items() if p not in exempt}
+
+
+def files(checkout, rev):
+    tree = tree_of(checkout, rev)
+    logic = [p for p, kind in tree_entries(checkout, tree).items() if kind == "blob" and C.candidate(p)]
+    blobs = {p: b for p, b in read_blobs(checkout, tree, logic).items() if C.logic(p, C.head_of(b))}
+    sizes = production_sizes(checkout, tree, blobs)
+    return "".join(f"{p}\t{C.line_count(b)}\t{'logic' if p in sizes else 'exempt'}\n" for p, b in blobs.items())
+
+
+def main(argv):
+    command, args = (argv[0], argv[1:]) if argv else ("", [])
+    if command == "instructions":  # loaded files, not a tree: instructions.mjs owns its options and the same exit codes
+        return subprocess.call(["node", os.path.join(HERE, "instructions.mjs"), *args])
+    allowed = {"measure": ("--scope",), "floors": ("--floor", "--peer", "--growth-approval")}.get(command, ())
+    options, plain = {name: [] for name in allowed}, []
+    try:
+        arguments = iter(args)
+        for arg in arguments:
+            if not arg.startswith("--"):
+                plain.append(arg)
+                continue
+            name, equal, value = arg.partition("=")
+            if name not in options:
+                raise Refused(f"unknown option for {command or 'census'}: {name}")
+            if not equal:
+                value = next(arguments, None)
+            if value is None or value.startswith("--"):
+                raise Refused(f"{name} requires a value for every occurrence")
+            options[name].append(value)
+        flag = lambda name: options.get(name, [])
+        if command == "measure" and len(plain) == 2:
+            print(json.dumps(measure(*plain, scopes=flag("--scope"))))
+            return 0
+        if len(flag("--growth-approval")) > 1:
+            raise Refused("--growth-approval accepts exactly one record")
+        if command == "floors" and len(plain) == 3 and flag("--floor"):
+            return floors(*plain, flag("--floor"), flag("--peer"), next(iter(flag("--growth-approval")), None))
+        if command == "xrepo" and plain:
+            print(json.dumps(xrepo(plain)))
+            return 0
+        if command == "files" and len(plain) == 2:
+            sys.stdout.write(files(*plain))
+            return 0
+    except Exception as why:  # Refused, or anything else: never exit 1, which callers read as a refused floor
+        sys.stdout.flush()
+        print(f"CENSUS REFUSED: {why}", file=sys.stderr)
+        return 2
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

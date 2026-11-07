@@ -1,0 +1,8 @@
+# Append-only agent ledgers merge by union in every repository and on every branch. Git reads attributes from the
+# checked-out branch, so a branch cut before its repository's .gitattributes named these files still conflicts on
+# them; this global file closes that gap (L1's chain 10 hit it at 01:51Z on 2026-10-11). A repository's own
+# .gitattributes still wins for anything it sets. GitHub's server merge reads neither file: update a conflicting
+# PR branch locally (git merge origin/<base>). `climb-log check` rejects a row a union merge splits or repeats.
+.agent/climb.jsonl merge=union
+.agent/experiments.jsonl merge=union
+reports/climb/ledger.jsonl merge=union

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# unshare wrapper. A mount namespace copies the mount table, not the disk:
+# rmdir and file writes inside it change the real root. Refuse -m/--mount and
+# --mount-proc as root; other namespaces pass.
+set -uo pipefail
+. /usr/local/lib/host-blast-guard.sh
+real="$(hbg_real unshare)" || exit 127
+hbg_off && exec "$real" "$@"
+for a in "$@"; do
+  case "$a" in
+    --) break ;;
+    --mount|--mount-proc|--mount-proc=*) hbg_refuse unshare "mount namespaces on the host root are off limits ($a)" ;;
+    --*) ;;
+    -*m*) hbg_refuse unshare "mount namespaces on the host root are off limits ($a)" ;;
+    -*) ;;
+    *) break ;;
+  esac
+done
+exec "$real" "$@"

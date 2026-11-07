@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Every commit-time ratchet, for a repository with no origin or one whose owner ~/.claude/guard-config.json lists in "ratchets": {"owners": [...]};
+# any other clone follows its maintainers' rules. The global pre-commit and repos with their own core.hooksPath run it; ../census owns what each counts.
+set -euo pipefail; dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 -c 'import json,os,re,sys; url = sys.argv[1]; owners = url and json.load(open(os.path.expanduser("~/.claude/guard-config.json")))["ratchets"]["owners"]; sys.exit(bool(url) and not set(re.split("[:/]", url)[1:-1]) & set([owners] if isinstance(owners, str) else owners))' "$(git remote get-url origin 2>/dev/null)" 2>/dev/null || exit 0
+"$dir/loc-ratchet"
+"$dir/doc-ref-ratchet"
+"$dir/dup-export-ratchet"
+if command -v node >/dev/null 2>&1; then node "$dir/fn-ratchet.cjs"; fi

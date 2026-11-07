@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Identity guard: refuse a commit not authored by the owner, read from private git config (dotfiles.ownerEmail,
+# else global user.email; this repo is public). Fixtures set core.hooksPath=/dev/null or GIT_ALLOW_TEST_IDENTITY=1.
+OWNER_EMAIL="$(git config --global --get dotfiles.ownerEmail 2>/dev/null || git config --global --get user.email 2>/dev/null || true)"
+if [ "${GIT_ALLOW_TEST_IDENTITY:-0}" != "1" ] && [ -n "$OWNER_EMAIL" ]; then
+  # Check the identity the commit will carry: GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL override config.
+  ident_email() { git var "$1" 2>/dev/null | sed -n 's/^.*<\([^>]*\)>.*$/\1/p'; }
+  commit_email="$(ident_email GIT_AUTHOR_IDENT)"
+  committer_email="$(ident_email GIT_COMMITTER_IDENT)"
+  if [ "$commit_email" = "$OWNER_EMAIL" ] && [ "$committer_email" != "$OWNER_EMAIL" ]; then
+    commit_email="$committer_email"
+  fi
+  if [ -n "${GIT_AUTHOR_EMAIL:-}${GIT_COMMITTER_EMAIL:-}" ] && [ "$commit_email" != "$OWNER_EMAIL" ]; then
+    echo "pre-commit: refusing commit as <${commit_email:-unset}>, from GIT_AUTHOR_EMAIL/GIT_COMMITTER_EMAIL (set by the caller, or by git when amending a commit someone else authored; use --reset-author for your own work)." >&2
+    echo "  FIXTURE / THROWAWAY REPOS: export GIT_ALLOW_TEST_IDENTITY=1 for that command," >&2
+    echo "  or set core.hooksPath=/dev/null in the fixture." >&2
+    exit 1
+  fi
+  case "$commit_email" in
+    "$OWNER_EMAIL") ;;
+    *)
+      # Name the file that sets the identity: `--local --unset` advice is inert for a global override.
+      origin="$(git config --show-origin --get user.email 2>/dev/null | awk '{print $1}' | sed 's/^file://')"
+      echo "pre-commit: refusing commit as '$(git config user.name || echo '?')' <${commit_email:-unset}>." >&2
+      echo "The identity comes from: ${origin:-unknown}" >&2
+      # Repo-local config is always .git/config; a global one can live anywhere (GIT_CONFIG_GLOBAL, XDG).
+      case "$origin" in
+        */.git/config)
+          echo "  Repo-local override; clear it:" >&2
+          echo "    git config --local --unset user.name; git config --local --unset user.email" >&2
+          ;;
+        *)
+          echo >&2
+          echo "  !! That is your GLOBAL git identity and it is WRONG. Nothing on this machine" >&2
+          echo "     should commit as anyone but <$OWNER_EMAIL>. Restore it:" >&2
+          echo "       git config --global user.email $OWNER_EMAIL   # and user.name" >&2
+          ;;
+      esac
+      echo >&2
+      echo "  FIXTURE / THROWAWAY REPOS: export GIT_ALLOW_TEST_IDENTITY=1 for that command," >&2
+      echo "  or set core.hooksPath=/dev/null in the fixture. NEVER change the global config" >&2
+      echo "  to get past this hook — it is machine-wide and it mis-attributes real work." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# Tripwire, independent of the commit that triggered it: a poisoned global identity is a
+# machine-level fault, and a fixture repo exporting GIT_ALLOW_TEST_IDENTITY=1 would
+# otherwise sail past the check above and never surface it.
+global_email="$(git config --global --get user.email 2>/dev/null || true)"
+if [ -n "$global_email" ] && [ -n "$OWNER_EMAIL" ] && [ "$global_email" != "$OWNER_EMAIL" ]; then
+  echo "pre-commit: WARNING — global git identity is <$global_email>, not the owner <$OWNER_EMAIL>." >&2
+  echo "  Every repo on this machine without a local override will mis-attribute. Restore with:" >&2
+  echo "    git config --global user.email $OWNER_EMAIL" >&2
+fi
+
+# Privacy guard: personal details never enter a commit. This repo is public, so the
+# patterns live in a local, untracked file: one case-insensitive fixed string per line
+# (home address variants, personal phone numbers). Matches are never echoed, because the
+# hook's own output lands in agent transcripts and CI logs. Fixture repos opt out the
+# same way as above, with core.hooksPath=/dev/null; there is no escape variable.
+privacy_file="${GIT_PRIVACY_DENYLIST:-$HOME/.config/privacy/denylist}"
+added="$(git diff --cached --no-color --no-ext-diff -U0 --diff-filter=ACMR 2>/dev/null | grep -E '^\+' | grep -v '^+++' || true)"
+if [ -n "$added" ]; then
+  if [ -s "$privacy_file" ]; then
+    patterns="$(grep -v -e '^#' -e '^[[:space:]]*$' "$privacy_file" || true)"
+    if [ -n "$patterns" ] && printf '%s\n' "$added" | grep -q -i -F -f <(printf '%s\n' "$patterns"); then
+      echo "pre-commit: refusing commit: a staged line contains a personal detail listed in $privacy_file." >&2
+      echo "  Remove it. Home addresses, personal phone numbers and card numbers never go in a commit." >&2
+      exit 1
+    fi
+  fi
+  # Payment card numbers: the 16-digit (4-4-4-4) and 15-digit Amex (4-6-5) shapes with a
+  # card-network prefix that pass the Luhn check, except the published processor test
+  # numbers fixtures legitimately use. Shape and prefix keep epoch-millisecond timestamps
+  # and numeric IDs from tripping it, and the decimal-point guards keep the digits of a
+  # fraction (cost tables print 16 or more decimal places) from reading as a card.
+  # ASCII letters also bound the token: a numeric span inside an ID is not a card.
+  if printf '%s\n' "$added" | python3 -c '
+import re, sys
+TEST = {"4242424242424242", "4000056655665556", "5555555555554444", "2223003122003222",
+        "5200828282828210", "378282246310005", "371449635398431", "6011111111111117",
+        "3566002020360505", "6200000000000005", "4111111111111111", "4000000000000002",
+        "4000000000009995", "4000000000000069", "4000000000000127", "4000000000000119",
+        "4000002500003155", "4000002760003184"}
+PREFIX = re.compile(r"^(4|5[1-5]|2[2-7]|3[47]|6011|65)")
+SHAPE = re.compile(r"(?<![A-Za-z\d.])(?:\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}|3[47]\d{2}[ -]?\d{6}[ -]?\d{5})(?![A-Za-z\d]|\.\d)")
+def luhn(d):
+    t = 0
+    for i, c in enumerate(reversed(d)):
+        n = int(c)
+        if i % 2: n = n * 2 - 9 if n > 4 else n * 2
+        t += n
+    return t % 10 == 0
+for m in SHAPE.finditer(sys.stdin.read()):
+    d = re.sub(r"[ -]", "", m.group())
+    if d not in TEST and PREFIX.match(d) and len(set(d)) > 2 and luhn(d):
+        sys.exit(1)
+'; then :; else
+    echo "pre-commit: refusing commit: a staged line contains what looks like a payment card number." >&2
+    echo "  Remove it. If it is a processor test number, use one of the published test cards." >&2
+    exit 1
+  fi
+fi
+
+# Public-tree gate: in a repository with git/hooks/public-denylist at its root (one case-insensitive regex per line), refuse
+# a staged file with a line matching any of them, printing file:line and the pattern. PUBLIC_SCAN_SKIP=1 skips this check.
+top="$(git rev-parse --show-toplevel)"
+if [ -f "$top/git/hooks/public-denylist" ] && [ "${PUBLIC_SCAN_SKIP:-0}" != 1 ]; then
+  if ! git diff --cached --name-only -z --diff-filter=ACMR | python3 -c '
+import re, subprocess, sys
+pats = [re.compile(l.strip(), re.I) for l in open(sys.argv[1]) if l.strip() and not l.startswith("#")]
+hits = 0
+for path in filter(None, sys.stdin.read().split("\0")):
+    data = subprocess.run(["git", "show", ":" + path], capture_output=True).stdout
+    if b"\0" in data:
+        continue
+    for number, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+        for pat in pats:
+            if pat.search(line):
+                print(f"  {path}:{number}: {pat.pattern}", file=sys.stderr)
+                hits += 1
+sys.exit(1 if hits else 0)
+' "$top/git/hooks/public-denylist"; then
+    echo "pre-commit: refusing commit: the staged lines above match git/hooks/public-denylist; that material belongs in the private layer." >&2
+    exit 1
+  fi
+fi
+
+# Ratchets: no god objects, no docs naming moved files, no second export of a name (git/hooks/ratchets lists them).
+"$(dirname "${BASH_SOURCE[0]}")/ratchets"
+
+export AI_AGENT_HOOKS_GLOBAL_BASELINE="${AI_AGENT_HOOKS_GLOBAL_BASELINE:-1}"
+
+HOOKS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/bin/ai-agent-hooks.mjs"
+if [ -x "$HOOKS_BIN" ]; then
+  exec "$HOOKS_BIN" run pre-commit "$@"
+fi
+
+if command -v ai-agent-hooks >/dev/null 2>&1; then
+  exec ai-agent-hooks run pre-commit "$@"
+fi
+
+echo "ai-agent-hooks not found. Expected $HOOKS_BIN or ai-agent-hooks in PATH." >&2
+exit 1
