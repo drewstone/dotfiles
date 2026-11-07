@@ -347,8 +347,8 @@ class LeadScorecardTest(Sandbox):
         self.assertEqual(day["violationsByGuard"], {"secret-scan": 1, "process-guard:mac-build": 1, "secret-exposures": 1})
         self.assertEqual(day["bypasses"], 1)
         climb = run("--local", "--no-github", "--climb", "--days", "1", m=180).stdout.splitlines()
-        hills = {json.loads(line)["hill"] for line in climb}
-        self.assertIn("operator:time-to-recover", hills)
+        hills = {row["hill"]: row["baseline"] for row in map(json.loads, climb)}
+        self.assertEqual((hills["operator:time-to-recover"]["value"], hills["operator:time-to-recover"]["unit"]), (1, "incidents"))
 
 
 if __name__ == "__main__":
