@@ -8,7 +8,7 @@ Each rule below replays a command agents actually ran while their briefs said no
   raw-gh        GitHub reached around the operator's gh wrapper (merge_check's `gh`), as an agent replayed a merge it refused: a word
                 naming a gh other than the shim (first gh on PATH, a script) outside path probes and --version/help; `command -p`,
                 `env -i` or a PATH whose first gh is not the shim; `which -a gh`; a `raw_gh` variable; `gh auth token`; `dotenvx get`
-                of a `github_tokens` name; curl/wget/httpie/python/node sending api.github.com a token or write. No override.
+                of a `github_tokens` name; curl/wget/httpie/python/node sending api.github.com a token or write. No override; `raw_gh_instead`: what to run.
   force-push    `git push -f`, `--force-with-lease`, `+refspec`, mostly to amend an agent's own fresh branch.
                 AGENTS.md: it needs the owner's explicit authorization. The command (or the owner, session-wide) sets CC_ALLOW_FORCE_PUSH=1.
   hooks-bypass  `git -c core.hooksPath=/dev/null commit`, `-c core.hooksPath=.husky commit`,
