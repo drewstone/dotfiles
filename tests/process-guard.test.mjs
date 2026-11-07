@@ -27,7 +27,7 @@ function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcri
   const payload = { tool_name: "Bash", tool_input, cwd, session_id: SESSION, transcript_path: transcript };
   const r = spawnSync(HOOK, [], {
     input: JSON.stringify(payload),
-    env: { ...CLEAN_ENV, HOME, CC_GUARD_UNAME: uname, CC_GUARD_HOST: "test-host", ...env },
+    env: { ...CLEAN_ENV, HOME, PATH: `${HOME}/bin:${process.env.PATH}`, CC_GUARD_UNAME: uname, CC_GUARD_HOST: "test-host", ...env },
     encoding: "utf8",
   });
   assert.equal(r.status, 0, r.stderr);
@@ -99,18 +99,32 @@ test("admin-merge: ordinary PR commands pass", () => {
 const REPLAY = `T=$(PATH="$PATH:$HOME/.local/bin:$HOME/bin" dotenvx get ACME_GH_TOKEN -f ~/vault/agent.env -fk ~/vault/.env.keys --overload 2>/dev/null)
 login=$(GH_TOKEN="$T" /opt/homebrew/bin/gh api user --jq .login 2>/dev/null)
 GH_TOKEN="$T" /opt/homebrew/bin/gh pr merge 41 -R example/app --squash --match-head-commit 0123456789abcdef0123456789abcdef01234567 --subject "x" --body "y"`;
+// The shim is the first gh on the hook's PATH and a script; realbin/gh stands for a real gh binary.
+mkdirSync(join(HOME, "bin"));
+writeFileSync(join(HOME, "bin/gh"), "#!/bin/sh\nexec gh-acme \"$@\"\n", { mode: 0o755 });
+const REALBIN = join(ROOT, "realbin");
+mkdirSync(REALBIN);
+writeFileSync(join(REALBIN, "gh"), "\x7fELF", { mode: 0o755 });
 const PUT_MERGE = 'curl -X PUT -H "Authorization: token $T" https://api.github.com/repos/o/r/pulls/1/merge';
 
 test("raw-gh: refuses GitHub reached around the gh wrapper, locally, over ssh and in nested shells", () => {
   check([REPLAY, "/usr/bin/gh pr merge 1 -R o/r --squash", "ACME_GH_SHIM=1 gh pr merge 1 --squash", PUT_MERGE, `ssh host-a '${PUT_MERGE}'`,
     "ssh host-a '/usr/bin/gh pr merge 1 --squash'", "export ACME_GH_SHIM=1; gh pr merge 1", "ACME_REAL_GH=/usr/bin/gh gh pr merge 1",
-    "G=/usr/local/bin/gh; $G pr merge 1", "/opt/homebrew/Cellar/gh/2.63.0/bin/gh pr merge 1", "command gh pr merge 1",
+    "G=/usr/local/bin/gh; $G pr merge 1", "/opt/homebrew/Cellar/gh/2.63.0/bin/gh pr merge 1", "command -p gh pr merge 1",
     "env -i HOME=$HOME gh pr merge 1", "PATH=/usr/bin:/bin gh pr merge 1", "bash -c 'eval /usr/bin/gh api user'",
     "bash <<'EOF'\n/usr/bin/gh pr merge 1\nEOF", 'curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user',
     "curl -d '{\"query\":\"{viewer{login}}\"}' https://api.github.com/graphql",
     `python3 -c "import os,urllib.request as u; u.urlopen(u.Request('https://api.github.com/repos/o/r/pulls/1/merge', method='PUT'))"`,
     "node -e \"fetch('https://api.github.com/repos/o/r/git/refs/heads/main', {method: 'PATCH'})\"",
+    // Review of the first cut: spellings that name a real gh without a plain /usr/bin/gh first word.
+    "${G:-/usr/bin/gh} pr merge 1", "cd /tmp && ../usr/bin/gh pr merge 1", "//usr/bin/gh pr merge 1", "/usr/local/../bin/gh pr merge 1",
+    "/proc/self/root/usr/bin/gh pr merge 1", "exec -a x /usr/bin/gh pr merge 1", "setsid /usr/bin/gh pr merge 1",
+    "stdbuf -oL /usr/bin/gh pr merge 1", "watch -n 5 /usr/bin/gh pr checks 1", "script -qc '/usr/bin/gh pr merge 1' /dev/null",
+    "$(which -a gh | tail -1) pr merge 1", "p=$(which -a gh | sed -n 2p); $p pr merge 1", `perl -e 'exec "/usr/bin/gh", "pr", "merge", "1"'`,
+    `ruby -e 'system("/usr/bin/gh pr merge 1")'`, `python3 -c "import os; os.execv('/usr/bin/gh', ['gh', 'pr', 'merge', '1'])"`,
+    `PATH=${REALBIN}:$PATH gh pr merge 1`, "U=HTTPS://API.GITHUB.COM; curl -X PUT $U/repos/o/r/pulls/1/merge",
   ], "deny");
+  assert.equal(decide("./gh pr merge 1", { cwd: REALBIN }), "deny");
   assert.match(reason(REPLAY), /process-guard \(raw-gh\): .*the real gh at \/opt\/homebrew\/bin\/gh.*`gh-acme <args>`.*no override/s);
 });
 
@@ -118,6 +132,9 @@ test("raw-gh: plain gh, the wrapper and unauthenticated GitHub reads pass", () =
   check(["gh pr view 1", "gh-acme pr merge 1 -R o/r --squash --match-head-commit abc", "gh-acme api user --jq .login",
     "curl https://api.github.com/zen", "curl -s https://api.github.com/repos/o/r/pulls/1", "command -v gh", "ls -la /usr/bin/gh",
     'export PATH="$HOME/bin:$PATH"; gh pr view 1', "echo ACME_GH_SHIM", 'curl -H "Authorization: Bearer $K" https://api.example.com/x',
+    "command gh pr merge 1 -R o/r --squash", "/usr/bin/gh --version", "/opt/homebrew/bin/gh help", "~/bin/gh pr view 1",
+    "PATH=$HOME/bin:/usr/bin gh pr view 1", "readlink -f /usr/bin/gh", "which -a gh", "sha256sum /usr/bin/gh", "setsid gh pr view 1",
+    "gh pr create --body 'the real gh is /usr/bin/gh'", "git clone https://github.com/example/gh", "cd ~/bin && ./gh pr view 1",
   ], "allow");
 });
 
