@@ -11,6 +11,23 @@ census = SimpleNamespace(**run_path(os.path.join(os.path.dirname(os.path.realpat
 LOCKFILE = re.compile(r"(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|uv\.lock|poetry\.lock|go\.sum)$")
 
 
+def third_party_fork():
+    """Only GitHub metadata proving an external parent exempts this repository."""
+    try:
+        owners = census.FORK_PARENT_OWNERS.strip().lower()
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*", owners):
+            return False
+        origin = census.git(".", "remote", "get-url", "origin").decode().strip()
+        match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", origin)
+        if not match:
+            return False
+        repo = census.github(f"repos/{match[1]}")
+        owner = repo.get("parent", {}).get("owner", {}).get("login", "").strip().lower()
+        return repo.get("fork") is True and bool(owner) and owner not in owners.split(",")
+    except Exception:
+        return False
+
+
 def net_lines(base, head):
     """Lines the change adds less lines it deletes in every text file but lockfiles: tests, docs and comments count."""
     links = [{p for p, kind in census.tree_entries(".", ref).items() if kind == "commit"} for ref in (base, head)]
@@ -32,6 +49,8 @@ def main():
              (a == "(root)" or census.git(".", "ls-tree", "-d", "--name-only", base, "--", a).strip())}
     # A merge keeps its per-area charge.
     net = None if merge or not grown else net_lines(base, head)
+    if (oversized or grown and (net is None or net > 0)) and third_party_fork():
+        return 0
     approved = bool(grown) and (net is not None and net <= 0 or census.approved_growth(".", base, head, growth))
     for name, n in ([] if approved else grown.items()):
         print(f"loc-ratchet: refusing commit: {name} gains {n} production lines{'' if net is None else f' and the change adds {net} net lines'}.\n"

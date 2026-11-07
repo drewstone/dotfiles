@@ -26,7 +26,8 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import classify as C  # noqa: E402
-GH = subprocess.run(["sh", "-c", 'f="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/census.env"; [ ! -r "$f" ] || . "$f" >/dev/null; printf %s "${CENSUS_GH:-gh}"'], capture_output=True, text=True).stdout or "gh"
+GH, _, FORK_PARENT_OWNERS = subprocess.run(["sh", "-c", 'f="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/census.env"; [ ! -r "$f" ] || . "$f" >/dev/null; printf "%s\n%s" "${CENSUS_GH:-gh}" "${CENSUS_FORK_PARENT_OWNERS:-}"'], capture_output=True, text=True).stdout.partition("\n")
+GH = GH or "gh"
 
 GROUPS = {
     "lines": ["prod_lines"],
@@ -88,6 +89,13 @@ def production_delta(checkout, base, head, merge=None, paths=None):
     return growth, oversized
 
 
+def github(endpoint):
+    run = subprocess.run([GH, "api", endpoint], capture_output=True, timeout=30)
+    if run.returncode:
+        raise Refused(f"growth approval source could not be verified through {GH}")
+    return json.loads(run.stdout)
+
+
 def approved_growth(checkout, base, head, growth, approval=None):
     """Only a sourced approval for this exact origin, base, tree and positive area deltas admits growth."""
     if approval is None:
@@ -105,11 +113,6 @@ def approved_growth(checkout, base, head, growth, approval=None):
     match = re.fullmatch(r"https://github.com/([^/]+/[^/]+)/(?:issues|pull)/[1-9]\d*#issuecomment-([1-9]\d*)", source["url"])
     if not match:
         raise Refused("growth approval source must name a GitHub issue comment")
-    def github(endpoint):
-        run = subprocess.run([GH, "api", endpoint], capture_output=True, timeout=30)
-        if run.returncode:
-            raise Refused(f"growth approval source could not be verified through {GH}")
-        return json.loads(run.stdout)
     comment = github(f"repos/{match[1]}/issues/comments/{match[2]}")
     if (comment["html_url"] != source["url"] or comment["user"]["login"] != github("user")["login"] or
             not source["quote"].strip() or source["quote"] not in comment["body"] or
