@@ -61,7 +61,7 @@ module_traces() {
   if [ -z "$dev" ] || [ ! -b "$dev" ]; then
     local -a disks=()
     mapfile -t disks < <(candidate_disks | sed 's/^/  /')
-    manual "No drive is labelled traces. To erase one and make it the trace drive, Drew runs (it asks for ERASE on the terminal):" \
+    manual "No drive is labelled traces. To erase one and make it the trace drive, the owner runs (it asks for ERASE on the terminal):" \
       "sudo $DOTFILES/host/bin/format-traces-drive --model '<MODEL>' --serial '<SERIAL>' [--transport usb]" \
       "Disks here (NAME MODEL SERIAL TRAN SIZE):" "${disks[@]}"
     return 0

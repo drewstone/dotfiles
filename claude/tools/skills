@@ -80,8 +80,8 @@ def dangling_links(root):
 
     skill_paths() filters these out via is_dir(follow_symlinks=True), so a
     broken link is invisible to every other code path — it just silently stops
-    being a skill. That is how build-with-agent-runtime sat in the repo pointing
-    at a Linux path (/home/drew/...) on a macOS machine without anything saying
+    being a skill. That is how a Runtime skill sat in the repo pointing
+    at a Linux home path on a macOS machine without anything saying
     so.
     """
     try:

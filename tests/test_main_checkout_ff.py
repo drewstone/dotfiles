@@ -8,7 +8,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "git" / "main-checkout-ff" / "mai
 
 
 def git(cwd, *args):
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 class MainCheckoutFfTest(unittest.TestCase):

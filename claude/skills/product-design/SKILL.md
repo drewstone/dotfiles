@@ -12,7 +12,7 @@ For a report-only request, deliver findings without changing the product.
 
 ## Read the shared owner
 
-For Tangle products, read the [Brand design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) before local pattern guidance. Follow its implementation-owner links for tokens, type/control scale and surfaces/states. Read the relevant product docs for composition and recovery semantics. Product-design owns execution procedure; Brand owns shared principles, motion, interaction and acceptance.
+When the product has a design bible, read it before local pattern guidance. Follow its implementation-owner links for tokens, type/control scale and surfaces/states. Read the relevant product docs for composition and recovery semantics. Product-design owns execution procedure; the bible owns shared principles, motion, interaction and acceptance.
 
 ## Establish the task
 
@@ -69,7 +69,7 @@ Click through the changed flow and inspect desktop and mobile screenshots, suppo
 Fix observed regressions before reporting quality.
 Reopen the original failing paths after a fix; a complaint or defect is fixed only when the rendered evidence shows the intended result.
 
-Use the bible's evidence and acceptance contract for Tangle verdicts and [UI evidence](../../../docs/anti-patterns/ui-evidence.md) for capture and privacy procedure.
+Use the bible's evidence and acceptance contract for verdicts and [UI evidence](../../../docs/anti-patterns/ui-evidence.md) for capture and privacy procedure.
 Keep observable behavior, independent craft review and target-user results separate. Mark missing proof UNCHECKED and scope any NOT APPLICABLE verdict with a reason.
 If deployment is part of the request, verify the served revision and live user path.
 

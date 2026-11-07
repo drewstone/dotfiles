@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Install agent-runtime's skills from a published npm version.
+"""Install a runtime package's skills from a published npm version.
 
-Spawned agents read these skills from the @tangle-network/agent-runtime version their
-project pins. Operators used to read them from whatever agent-runtime checkout sat on the
-machine, which on 2026-09-27 was 316 commits behind on the laptop and a feature branch on
-the dev box, so the two sides read different text. Installing from a published version
+Spawned agents read these skills from the runtime package version their project pins.
+Operators used to read them from whatever checkout of it sat on the machine, which on
+2026-09-27 was 316 commits behind on the laptop and a feature branch on the dev box, so
+the two sides read different text. Installing from a published version
 gives operators the same bytes a pinned project mounts, and the manifest records each
 SKILL.md's sha256 so the two can be compared.
 
+The package is RUNTIME_SKILLS_PACKAGE, else PACKAGE= in the private layer's
+claude/config/install-runtime-skills.env, else the one the store has installed.
 The version comes from AGENT_RUNTIME_SKILLS_VERSION (an exact version or a dist-tag),
 default `latest`. The tarball's npm integrity is checked before anything is extracted.
 When the registry cannot be reached, the installed version stays in place.
@@ -31,7 +33,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PACKAGE = '@tangle-network/agent-runtime'
+PACKAGE = ''   # set by main() from package()
 DEFAULT_REGISTRY = 'https://registry.npmjs.org'
 
 
@@ -43,7 +45,17 @@ def fetch(url: str, accept: str | None = None) -> bytes:
     return subprocess.run(command + [url], check=True, capture_output=True).stdout
 
 
+def package(store: Path) -> str:
+    config = Path(os.environ.get('DOTFILES_PRIVATE') or Path.home() / '.local/share/dotfiles-private') / 'claude/config/install-runtime-skills.env'
+    lines = config.read_text().splitlines() if config.is_file() else []
+    installed = store / 'current' / 'manifest.json'
+    return (os.environ.get('RUNTIME_SKILLS_PACKAGE') or next((line[8:].strip().strip('\'"') for line in lines if line.startswith('PACKAGE=')), '')
+            or (json.loads(installed.read_text()).get('package', '') if installed.is_file() else ''))
+
+
 def resolve(registry: str, spec: str) -> dict:
+    if not PACKAGE:
+        raise RuntimeError('no package named: set RUNTIME_SKILLS_PACKAGE or PACKAGE in the install-runtime-skills.env config')
     name = PACKAGE.replace('/', '%2f')
     meta = json.loads(fetch(f'{registry.rstrip("/")}/{name}/{spec}', 'application/json'))
     dist = meta.get('dist') or {}
@@ -126,7 +138,9 @@ def main() -> int:
     parser.add_argument('--registry', default=os.environ.get('AGENT_RUNTIME_SKILLS_REGISTRY', DEFAULT_REGISTRY))
     parser.add_argument('--version', default=os.environ.get('AGENT_RUNTIME_SKILLS_VERSION', 'latest'))
     args = parser.parse_args()
+    global PACKAGE
     try:
+        PACKAGE = package(args.store)
         result = install(args.store, args.registry, args.version)
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError, tarfile.TarError) as error:
         current = args.store / 'current' / 'manifest.json'

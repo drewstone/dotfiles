@@ -14,7 +14,7 @@ From the repository root, run `bash claude/install.sh` to install the configurat
 Resolve existing links before updating an installation; local settings or skills can point into a different working tree.
 Preserve unrelated edits and external skills.
 
-Skills owned by another maintained repository, such as agent-runtime's, stay linked to that source.
+Skills owned by another maintained repository, such as the Runtime skills from a published package, stay linked to that source.
 A skill adapted from outside work is rewritten here in our own words and credits it in one line ("Derived from <repo> (MIT)").
 
 ## Validation
