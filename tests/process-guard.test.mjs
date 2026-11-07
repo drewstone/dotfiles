@@ -19,7 +19,8 @@ const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
 // The operator's hosts, commands and secret stores come from ~/.claude/guard-config.json; these are fictional.
 mkdirSync(join(HOME, ".claude"), { recursive: true });
 writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_guard: { gates: ["gate"], remote_runners: ["gate"],
-  mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$" } }));
+  mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$",
+  raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"] }, merge_check: { gh: "gh-acme" } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
   const tool_input = background ? { command, run_in_background: true } : { command };
@@ -89,6 +90,34 @@ test("admin-merge: ordinary PR commands pass", () => {
     "gh pr create --title 'fix: x' --body 'never merge with --admin'",
     "gh pr view 1 --json state,mergeStateStatus",
     "gh api repos/example/app/branches/main/protection",
+  ], "allow");
+});
+
+// --------------------------------------------------------------------------------- raw-gh
+// 2026-11-07: the wrapper refused a merge for a red gate, and the agent merged anyway with the real gh by path and a vault token.
+
+const REPLAY = `T=$(PATH="$PATH:$HOME/.local/bin:$HOME/bin" dotenvx get ACME_GH_TOKEN -f ~/vault/agent.env -fk ~/vault/.env.keys --overload 2>/dev/null)
+login=$(GH_TOKEN="$T" /opt/homebrew/bin/gh api user --jq .login 2>/dev/null)
+GH_TOKEN="$T" /opt/homebrew/bin/gh pr merge 41 -R example/app --squash --match-head-commit 0123456789abcdef0123456789abcdef01234567 --subject "x" --body "y"`;
+const PUT_MERGE = 'curl -X PUT -H "Authorization: token $T" https://api.github.com/repos/o/r/pulls/1/merge';
+
+test("raw-gh: refuses GitHub reached around the gh wrapper, locally, over ssh and in nested shells", () => {
+  check([REPLAY, "/usr/bin/gh pr merge 1 -R o/r --squash", "ACME_GH_SHIM=1 gh pr merge 1 --squash", PUT_MERGE, `ssh host-a '${PUT_MERGE}'`,
+    "ssh host-a '/usr/bin/gh pr merge 1 --squash'", "export ACME_GH_SHIM=1; gh pr merge 1", "ACME_REAL_GH=/usr/bin/gh gh pr merge 1",
+    "G=/usr/local/bin/gh; $G pr merge 1", "/opt/homebrew/Cellar/gh/2.63.0/bin/gh pr merge 1", "command gh pr merge 1",
+    "env -i HOME=$HOME gh pr merge 1", "PATH=/usr/bin:/bin gh pr merge 1", "bash -c 'eval /usr/bin/gh api user'",
+    "bash <<'EOF'\n/usr/bin/gh pr merge 1\nEOF", 'curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/user',
+    "curl -d '{\"query\":\"{viewer{login}}\"}' https://api.github.com/graphql",
+    `python3 -c "import os,urllib.request as u; u.urlopen(u.Request('https://api.github.com/repos/o/r/pulls/1/merge', method='PUT'))"`,
+    "node -e \"fetch('https://api.github.com/repos/o/r/git/refs/heads/main', {method: 'PATCH'})\"",
+  ], "deny");
+  assert.match(reason(REPLAY), /process-guard \(raw-gh\): .*the real gh at \/opt\/homebrew\/bin\/gh.*`gh-acme <args>`.*no override/s);
+});
+
+test("raw-gh: plain gh, the wrapper and unauthenticated GitHub reads pass", () => {
+  check(["gh pr view 1", "gh-acme pr merge 1 -R o/r --squash --match-head-commit abc", "gh-acme api user --jq .login",
+    "curl https://api.github.com/zen", "curl -s https://api.github.com/repos/o/r/pulls/1", "command -v gh", "ls -la /usr/bin/gh",
+    'export PATH="$HOME/bin:$PATH"; gh pr view 1', "echo ACME_GH_SHIM", 'curl -H "Authorization: Bearer $K" https://api.example.com/x',
   ], "allow");
 });
 
