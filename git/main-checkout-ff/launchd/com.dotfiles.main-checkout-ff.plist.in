@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.drew.main-checkout-ff</string>
+  <string>com.dotfiles.main-checkout-ff</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>

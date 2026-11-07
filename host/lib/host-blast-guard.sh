@@ -34,7 +34,7 @@ hbg_refuse() {
   {
     printf 'host-blast-guard: refused %s: %s\n' "$verb" "$*"
     printf 'This class of command took this host down twice.\n'
-    printf 'Run it in a throwaway VM instead:  hostlab run -- %s ...   (hostlab --help)\n' "$verb"
+    printf 'Run %s in a throwaway VM instead.\n' "$verb"
     printf 'A human may bypass one call with HOST_BLAST_GUARD=off. An agent must not.\n'
   } >&2
   exit 125

@@ -348,7 +348,7 @@ function readPrePushRefUpdates() {
 
 /**
  * The release line every pushed ref updates, when they all update one: `release/<line>` is a
- * backport line that consumers pinned to an older version resolve (agent-runtime's publish workflow
+ * backport line that consumers pinned to an older version resolve (a package's publish workflow
  * releases a tag at the tip of `release/<major>.<minor>.x`). It diverges from the default branch on
  * purpose, so its base is the line itself.
  */

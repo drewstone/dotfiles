@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -32,7 +33,7 @@ def integrity(data: bytes) -> str:
 
 
 class Registry:
-    """Serves one package version at /@tangle-network%2fagent-runtime/<spec>."""
+    """Serves one package version at /<package>/<spec>."""
 
     def __init__(self) -> None:
         self.versions: dict[str, tuple[bytes, str]] = {}
@@ -78,6 +79,7 @@ class Registry:
 def run(store: Path, registry: str, version: str = 'latest') -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(INSTALLER), '--store', str(store), '--registry', registry, '--version', version],
+        env={**os.environ, 'RUNTIME_SKILLS_PACKAGE': '@acme/runtime'},
         capture_output=True,
         text=True,
     )

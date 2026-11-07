@@ -2,7 +2,7 @@
 # Install the main-checkout fast-forward job. Idempotent. No sudo.
 #
 #   Linux: ~/.local/bin/main-checkout-ff + systemd user main-checkout-ff.{service,timer} (every 30 min)
-#   macOS: ~/.local/bin/main-checkout-ff + ~/Library/LaunchAgents/com.drew.main-checkout-ff.plist (every 30 min)
+#   macOS: ~/.local/bin/main-checkout-ff + ~/Library/LaunchAgents/com.dotfiles.main-checkout-ff.plist (every 30 min)
 #
 # Files are copied, so the installed job does not depend on this checkout.
 # Preview on a new machine with `main-checkout-ff --dry-run`.
@@ -27,8 +27,11 @@ case "$(uname -s)" in
     echo "main-checkout-ff timer: $(systemctl --user show main-checkout-ff.timer -p NextElapseUSecRealtime --value)"
     ;;
   Darwin)
-    label=com.drew.main-checkout-ff
+    label=com.dotfiles.main-checkout-ff
     plist="$HOME/Library/LaunchAgents/$label.plist"
+    for old in "$HOME"/Library/LaunchAgents/*.main-checkout-ff.plist; do   # retire this job under an earlier label
+      [ "$old" = "$plist" ] || [ ! -f "$old" ] || { launchctl bootout "gui/$(id -u)/$(basename "$old" .plist)" 2>/dev/null || true; rm -f "$old"; }
+    done
     install -d "$HOME/Library/LaunchAgents"
     tmp="$(mktemp)"
     sed "s#@HOME@#$HOME#g" "$SCRIPT_DIR/launchd/$label.plist.in" > "$tmp"

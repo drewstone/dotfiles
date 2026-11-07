@@ -1,11 +1,17 @@
 #!/usr/bin/env -S python3 -S
-"""Emit the drew-default claude-code AgentProfile, every resource a GitHub ref pinned to one pushed commit."""
+"""Emit the default claude-code AgentProfile, every resource a GitHub ref pinned to one pushed commit.
+
+Its name is PROFILE_NAME in the private layer's claude/config/emit-agent-profile.env, default dotfiles-default."""
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
 REPOSITORY = "drewstone/dotfiles"
+CONFIG = Path(os.environ.get("DOTFILES_PRIVATE") or Path.home() / ".local/share/dotfiles-private") / "claude/config/emit-agent-profile.env"
+NAME = next((line[13:].strip().strip("'\"") for line in (CONFIG.read_text().splitlines() if CONFIG.is_file() else [])
+             if line.startswith("PROFILE_NAME=")), "dotfiles-default")
 # Skills that need no Mac, fleet host or local CLI; each mounts with its sibling files.
 SKILLS = ["be-ambitious", "codebase-design", "converge", "critical-audit", "diagnose", "evolve", "finalize",
           "ground-truth", "harden", "hypothesize", "reflect", "simplify", "tdd", "verify", "writing-for-agents"]
@@ -43,8 +49,8 @@ for event, group, hook in ((e, g, h) for e, gs in settings["hooks"].items() for 
                                             **({"timeoutMs": hook["timeout"] * 1000} if "timeout" in hook else {})})
 
 profile = {
-    "name": "drew-default",
-    "description": f"Drew's Claude Code defaults from {REPOSITORY}@{sha[:12]}.",
+    "name": NAME,
+    "description": f"Claude Code defaults from {REPOSITORY}@{sha[:12]}.",
     "harness": "claude-code",
     "model": {"provider": "anthropic", "default": settings["model"], "reasoningEffort": settings["effortLevel"],
               "metadata": {"credentialSource": "subscription"}},

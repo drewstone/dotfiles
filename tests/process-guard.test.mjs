@@ -19,7 +19,8 @@ const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
 // The operator's hosts, commands and secret stores come from ~/.claude/guard-config.json; these are fictional.
 mkdirSync(join(HOME, ".claude"), { recursive: true });
 writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_guard: { gates: ["gate"], remote_runners: ["gate"],
-  mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$" } }));
+  mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$",
+  ledgers: "(?:^|/)(?:\\.agent/climb\\.jsonl|reports/climb/ledger\\.jsonl)$", ledger_hint: "Rows go through climb-log append." } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
   const tool_input = background ? { command, run_in_background: true } : { command };

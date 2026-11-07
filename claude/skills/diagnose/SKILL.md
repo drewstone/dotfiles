@@ -66,7 +66,7 @@ When a disappointing or null comparison may not have tested the proposed mechani
 
 1. The task entered the conditions where the design claims an advantage.
 2. The claimed mechanism ran and its required events were recorded.
-   For a recursive claim, use [the recursive proof requirements](../operate/references/recursive-proof.md).
+   For a recursive claim, use [the recursive proof requirements](references/recursive-proof.md).
 3. The assessment could distinguish the smallest useful effect.
 4. The comparison met its registered resource, sampling, and stopping rules.
 

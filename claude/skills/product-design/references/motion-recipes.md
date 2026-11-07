@@ -1,8 +1,8 @@
 # Motion implementation techniques
 
-For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+When the product has a design bible, read it for principles, visual grammar, motion, interaction and acceptance. The bible owns shared policy and executable token values; this file owns procedure.
 
-Read the existing component story before implementing a recipe. The following are techniques to evaluate against that owner, not approved Tangle behavior or default timing values.
+Read the existing component story before implementing a recipe. The following are techniques to evaluate against that owner, not approved product behavior or default timing values.
 
 | Component | Technique to evaluate |
 |---|---|
@@ -17,4 +17,4 @@ Read the existing component story before implementing a recipe. The following ar
 | Drag to dismiss | Capture one pointer, ignore extra touches, project release velocity and choose a resting target. |
 | Programmatic motion | Retain the animation handle so a new intent can retarget or cancel it; semantic completion belongs in application state. |
 
-Use the project's motion-role duration and easing in CSS and JavaScript. Proven Tangle recipes belong in Brand's shared UI component and consumer stories after the bible's required proof. Keep a local experiment clearly labelled until then.
+Use the project's motion-role duration and easing in CSS and JavaScript. Proven recipes belong in the design system's shared UI component and consumer stories after the bible's required proof. Keep a local experiment clearly labelled until then.

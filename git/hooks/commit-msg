@@ -11,7 +11,7 @@ MSG_FILE="${1:?commit-msg hook requires the message file}"
 coauthor="$(grep -v '^#' "$MSG_FILE" | grep -i -m1 '^[[:space:]]*co-authored-by:' || true)"
 if [ -n "$coauthor" ]; then
   {
-    echo "commit-msg: refusing — no co-authorship trailers on Drew's commits."
+    echo "commit-msg: refusing — no co-authorship trailers on the owner's commits."
     echo "  $coauthor"
     echo "Remove the line and commit again."
   } >&2

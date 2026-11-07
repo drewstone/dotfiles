@@ -4,10 +4,10 @@
 #
 # Usage: sudo host/bin/format-traces-drive --model MODEL --serial SERIAL [--transport TRAN]
 #
-# Drew runs this himself, in a terminal outside Claude and Codex. Two checks
+# The owner runs this, in a terminal outside Claude and Codex. Two checks
 # stop an agent that runs it by mistake: the Claude host-blast-guard hook
 # refuses every Bash command that names this script, read-only, ssh and
-# hostlab forms included; and this script refuses when a claude or codex
+# VM forms included; and this script refuses when a claude or codex
 # process is one of its ancestors. They do not stop an agent that means
 # to erase a disk, because an agent with sudo can erase one without it.
 #
@@ -55,7 +55,7 @@ agent_ancestor() {
   return 1
 }
 if agent=$(agent_ancestor); then
-  die "an agent started this: $agent is an ancestor. Drew runs it in a terminal outside Claude and Codex"
+  die "an agent started this: $agent is an ancestor. The owner runs it in a terminal outside Claude and Codex"
 fi
 
 trim() { sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }

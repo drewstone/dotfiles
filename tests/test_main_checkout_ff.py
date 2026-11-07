@@ -8,7 +8,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "git" / "main-checkout-ff" / "mai
 
 
 def git(cwd, *args):
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 class MainCheckoutFfTest(unittest.TestCase):
@@ -151,6 +151,7 @@ class MainCheckoutFfTest(unittest.TestCase):
         repo = self.clone("other-lane")
         before = git(repo, "rev-parse", "HEAD")
         self.advance_origin()
+        self.env["MAIN_CHECKOUT_FF_EXCLUDE"] = "docs other-lane"
         self.run_ff()
         self.assertEqual(git(repo, "rev-parse", "HEAD"), before)
 

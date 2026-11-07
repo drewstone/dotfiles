@@ -1,6 +1,6 @@
 # Product design audit matrix
 
-For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+When the product has a design bible, read it for principles, visual grammar, motion, interaction and acceptance. The bible owns shared policy and executable token values; this file owns procedure.
 
 For a broad audit, track the routes and states needed to cover the requested workflows and user complaints.
 Use the existing project record rather than creating separate inventories for every component.
@@ -20,7 +20,7 @@ Use the existing project record rather than creating separate inventories for ev
 Choose sizes, themes, and states from product support and the changed layout.
 A horizontal scroll region or dense table can be intentional; judge whether the user can accomplish the task.
 
-Record assertions, independent craft judgment and target-user evidence in separate columns. Use the bible's evidence contract for Tangle acceptance and mark missing coverage UNCHECKED. An agent answer cannot fill a user-study result.
+Record assertions, independent craft judgment and target-user evidence in separate columns. Use the bible's evidence contract for acceptance and mark missing coverage UNCHECKED. An agent answer cannot fill a user-study result.
 
 ## Complaint tracking
 
