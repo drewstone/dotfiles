@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Fast-forward idle, clean primary checkouts without resetting local work.
+# MAIN_CHECKOUT_ROOTS (colon-separated roots, default ~/code) and MAIN_CHECKOUT_FF_EXCLUDE (space-separated repo names) come
+# from the environment, else from the private layer's claude/config/main-checkout-ff.env, read when no roots are set.
 set -u
 usage() { echo 'Usage: main-checkout-ff [--dry-run | --help]'; }
 case "$#:${1-}" in
@@ -12,7 +14,9 @@ esac
 state="$HOME/.local/state/main-checkout-ff"
 log="$state/main-checkout-ff.log"
 mkdir -p "$state"
-roots="${MAIN_CHECKOUT_ROOTS:-$HOME/code:$HOME/company:$HOME/webb}"
+cfg="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/main-checkout-ff.env"
+[ -n "${MAIN_CHECKOUT_ROOTS-}" ] || [ ! -r "$cfg" ] || . "$cfg"
+roots="${MAIN_CHECKOUT_ROOTS:-$HOME/code}"
 
 export GIT_TERMINAL_PROMPT=0
 export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=15}"

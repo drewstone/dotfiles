@@ -30,9 +30,9 @@ test("census instructions holds this repository's installed load to the numbers 
   mkdirSync(join(claude, "skills"), { recursive: true });
   for (const name of ["CLAUDE.md", "AGENTS.md", "RTK.md", "directives", "hooks"]) symlinkSync(resolve("claude", name), join(claude, name));
   for (const skill of readdirSync(resolve("claude/skills")).filter((s) => !s.startsWith("_"))) symlinkSync(resolve("claude/skills", skill), join(claude, "skills", skill));
-  const held = instructions(home, "--budget-tokens", "4860", "--max-dup-share", "0.0615");
+  const held = instructions(home, "--budget-tokens", "3147", "--max-dup-share", "0");
   assert.equal(held.status, 0, held.stderr);
-  const tighter = instructions(home, "--budget-tokens", "4859", "--max-dup-share", "0.06");
+  const tighter = instructions(home, "--budget-tokens", "3146", "--max-dup-share", "0");
   assert.equal(tighter.status, 1);
-  assert.match(tighter.stderr, /loaded tokens 4860 exceed --budget-tokens 4859[\s\S]*duplication share 0.0615 exceeds --max-dup-share 0.06/);
+  assert.match(tighter.stderr, /loaded tokens 3147 exceed --budget-tokens 3146/);
 });

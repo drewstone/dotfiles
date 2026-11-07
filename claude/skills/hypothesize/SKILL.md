@@ -103,4 +103,3 @@ skill-run-log /hypothesize --target "<outcome, constraint, or external claim>" -
 | A scoped change has a deciding experiment | `/evolve` | The hypothesis, baseline, and test |
 | The constraint still needs measurement on the actual path | `/ground-truth` | The missing evidence and execution boundary |
 | Unnecessary work can be removed directly | `/simplify` | The candidate, required behavior, and affected callers |
-| A runtime capability needs adoption in the active project | `/build-with-agent-runtime` | The required behavior and current implementation |

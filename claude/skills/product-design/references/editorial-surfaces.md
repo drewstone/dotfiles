@@ -1,6 +1,6 @@
 # Editorial surfaces
 
-For Tangle work, read the [design bible](https://github.com/tangle-network/brand/blob/main/docs/design-bible.md) for principles, visual grammar, motion, interaction and acceptance. Brand owns shared policy and executable token values; this file owns procedure.
+When the product has a design bible, read it for principles, visual grammar, motion, interaction and acceptance. The bible owns shared policy and executable token values; this file owns procedure.
 
 Use the page's purpose to choose navigation and evidence presentation.
 Read the repository's current editorial and design guidance before choosing a direction.

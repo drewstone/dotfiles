@@ -10,7 +10,7 @@ function run(cmd, args, cwd, env = process.env) {
 }
 
 function commit(args, cwd) {
-  return run("git", ["commit", ...args], cwd, {
+  return run("git", ["-c", "core.hooksPath=/dev/null", "commit", ...args], cwd, {
     ...process.env,
     GIT_AUTHOR_NAME: "Test",
     GIT_AUTHOR_EMAIL: "test@example.invalid",

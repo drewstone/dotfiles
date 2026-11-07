@@ -20,6 +20,7 @@ const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
 mkdirSync(join(HOME, ".claude"), { recursive: true });
 writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_guard: { gates: ["gate"], remote_runners: ["gate"],
   mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$",
+  ledgers: "(?:^|/)(?:\\.agent/climb\\.jsonl|reports/climb/ledger\\.jsonl)$", ledger_hint: "Rows go through climb-log append.",
   raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"], github_tokens: ["ACME_GH_TOKEN"] }, merge_check: { gh: "gh-acme" } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {

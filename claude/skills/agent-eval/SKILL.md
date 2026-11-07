@@ -5,11 +5,11 @@ description: Maintain agent-eval contracts, scoring, comparisons, traces, and re
 
 # Agent Eval
 
-Change `@tangle-network/agent-eval` itself while preserving trustworthy measurements and public contracts.
+Change the agent-eval package itself while preserving trustworthy measurements and public contracts.
 
 ## Read the owning source
 
-Start with the current [package concepts](https://github.com/tangle-network/agent-eval/blob/main/docs/concepts.md) and [public exports](https://github.com/tangle-network/agent-eval/blob/main/package.json).
+Start with the package's current `docs/concepts.md` and the public exports in its `package.json`.
 Read the implementation and existing tests for the affected export before adding a primitive.
 Use the current maintained checkout; confirm the target package's actual imports when changing an existing consumer.
 

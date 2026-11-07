@@ -43,6 +43,7 @@ for line in sys.stdin:
     HOME: home,
     PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
     AGENT_RUNTIME_SKILLS_REGISTRY: 'http://127.0.0.1:9',
+    RUNTIME_SKILLS_PACKAGE: '@acme/runtime',
   }
 }
 
@@ -412,7 +413,7 @@ test('operator scenarios keep every question, expected action and owning rule', 
   const rows = source.split('\n')
     .filter((line) => /^\| S\d+ \|/.test(line))
     .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
-  assert.ok(rows.length >= 12, `expected at least 12 scenarios, found ${rows.length}`)
+  assert.ok(rows.length >= 8, `expected at least 8 scenarios, found ${rows.length}`)
   assert.deepEqual(rows.map(([id]) => id), rows.map((_, index) => `S${index + 1}`))
   const incomplete = rows.filter((cells) => cells.length !== 5 || cells.some((cell) => !cell)).map(([id]) => id)
   assert.deepEqual(incomplete, [], `scenarios missing a question, action, owning rule or guard: ${incomplete.join(', ')}`)

@@ -2,7 +2,7 @@
 """Refuse a commit that moves or deletes a file while a current doc still names its old path.
 
 A repo must not mislead its next agent. While split lanes moved thousands of files, a third
-of the file paths named in agent-container's current docs (594 of 1,683) pointed at nothing, and every
+of the file paths named in one product repository's current docs (594 of 1,683) pointed at nothing, and every
 split made it worse. A doc that names a missing file sends the next agent looking for code that is gone.
 
 The rule: when the staged change deletes or renames a file, no staged Markdown file outside dated

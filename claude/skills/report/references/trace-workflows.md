@@ -12,8 +12,7 @@ Use this reference for questions about what agents did, why they changed course,
 
 Resolve the installed `traces` executable and inspect its help.
 Read the maintained CLI documentation for commands the installed version actually provides.
-The owning source is [tangle-network/traces](https://github.com/tangle-network/traces).
-Its [analyst guide](https://github.com/tangle-network/traces/blob/main/docs/trace-analysts.md) describes supported analysis workflows.
+The analyst guide in the tool's source repository describes supported analysis workflows.
 
 Start with deterministic metadata and event inspection.
 Use the execution owner's journals and native originals when a trace reader cannot answer the question.
