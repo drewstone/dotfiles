@@ -21,7 +21,8 @@ mkdirSync(join(HOME, ".claude"), { recursive: true });
 writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_guard: { gates: ["gate"], remote_runners: ["gate"],
   mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$",
   ledgers: "(?:^|/)(?:\\.agent/climb\\.jsonl|reports/climb/ledger\\.jsonl)$", ledger_hint: "Rows go through climb-log append.",
-  raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"], github_tokens: ["ACME_GH_TOKEN"] }, merge_check: { gh: "gh-acme" } }));
+  raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"], github_tokens: ["ACME_GH_TOKEN"],
+  raw_gh_instead: ["API calls: `gh-acme api <path>`.", "Package files: `gh-acme fetch <url>`."] }, merge_check: { gh: "gh-acme" } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
   const tool_input = background ? { command, run_in_background: true } : { command };
@@ -126,7 +127,7 @@ test("raw-gh: refuses GitHub reached around the gh wrapper, locally, over ssh an
     `PATH=${REALBIN}:$PATH gh pr merge 1`, "U=HTTPS://API.GITHUB.COM; curl -X PUT $U/repos/o/r/pulls/1/merge",
   ], "deny");
   assert.equal(decide("./gh pr merge 1", { cwd: REALBIN }), "deny");
-  assert.match(reason(REPLAY), /process-guard \(raw-gh\): .*the real gh at \/opt\/homebrew\/bin\/gh.*`gh-acme <args>`.*no override/s);
+  assert.match(reason(REPLAY), /process-guard \(raw-gh\): .*the real gh at \/opt\/homebrew\/bin\/gh.*no override\. Instead:\n- API calls/is);
 });
 
 test("raw-gh: plain gh, the wrapper and unauthenticated GitHub reads pass", () => {
@@ -145,6 +146,9 @@ test("raw-gh: reading the GitHub token is refused; the wrapper's git credential 
   check(["dotenvx get ACME_GH_TOKEN -f ~/vault/agent.env", 'T=$(dotenvx get ACME_GH_TOKEN -f other.env 2>/dev/null); echo ${#T}', "gh auth token",
     "gh-acme auth token", "ssh host-a 'gh auth token -h github.com'"], "deny");
   check(["gh-acme auth git-credential get", "dotenvx get OTHER_KEY -f ~/vault/agent.env", "gh auth status"], "allow");
+  // The refusal names what to run instead, one line per use the operator's guard-config lists.
+  assert.match(reason("tok=$(gh-acme auth token); curl -H \"Authorization: Bearer $tok\" https://npm.pkg.github.com/@o%2fp"),
+    /Instead:\n- API calls: `gh-acme api <path>`\.\n- Package files: `gh-acme fetch <url>`\.$/);
 });
 
 // ----------------------------------------------------------------------------- force-push

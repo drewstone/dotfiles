@@ -8,6 +8,7 @@ from secret_scan import guard_config
 SHIM_VARS = guard_config("process_guard", {}).get("raw_gh")  # variables that make the gh shim pass through; absent: rule off
 TOKENS = set(guard_config("process_guard", {}).get("github_tokens", []))  # vault names of the GitHub token
 WRAPPER = guard_config("merge_check", {}).get("gh") or "gh"
+INSTEAD = guard_config("process_guard", {}).get("raw_gh_instead") or [f"`{WRAPPER} api <path>` for REST and GraphQL calls."]
 _SHIM = shutil.which("gh")  # the first gh on the hook's PATH is the operator's shim when it is a script, not a gh binary
 SHIMS = {_SHIM, os.path.realpath(_SHIM)} if _SHIM and open(_SHIM, "rb").read(2) == b"#!" else set()
 GH_PATH = re.compile(r"(?<![\w.:/~$-])(?:~|\.{1,2})?(?:/+[\w.@+-]+)*/+gh(?![\w.-])")
@@ -59,7 +60,6 @@ def rule_raw_gh(cmd):
     if not what:
         return None
     return ("raw-gh", what,
-            f"This command reaches GitHub around {WRAPPER} ({what}). {WRAPPER} is the one path to GitHub: it pins the identity, "
-            "applies the merge gate and logs the call, and a real gh binary run by path, a shim bypass variable or a token sent "
-            f"straight to api.github.com skips all of it. Run `{WRAPPER} <args>` instead, reads included. When {WRAPPER} refuses "
-            "a merge, that refusal stands: fix the red it names, or take it to the owner. There is no override.", None)
+            f"This command reaches GitHub around {WRAPPER} ({what}), which pins the identity, applies the merge gate and logs the "
+            "call. A merge it refuses stays refused: fix the red it names, or take it to the owner. There is no override. Instead:"
+            + "".join(f"\n- {line}" for line in INSTEAD), None)
