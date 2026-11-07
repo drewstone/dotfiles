@@ -20,7 +20,7 @@ const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
 mkdirSync(join(HOME, ".claude"), { recursive: true });
 writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_guard: { gates: ["gate"], remote_runners: ["gate"],
   mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$",
-  raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"] }, merge_check: { gh: "gh-acme" } }));
+  raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"], github_tokens: ["ACME_GH_TOKEN"] }, merge_check: { gh: "gh-acme" } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
   const tool_input = background ? { command, run_in_background: true } : { command };
@@ -136,6 +136,12 @@ test("raw-gh: plain gh, the wrapper and unauthenticated GitHub reads pass", () =
     "PATH=$HOME/bin:/usr/bin gh pr view 1", "readlink -f /usr/bin/gh", "which -a gh", "sha256sum /usr/bin/gh", "setsid gh pr view 1",
     "gh pr create --body 'the real gh is /usr/bin/gh'", "git clone https://github.com/example/gh", "cd ~/bin && ./gh pr view 1",
   ], "allow");
+});
+
+test("raw-gh: reading the GitHub token is refused; the wrapper's git credential helper passes", () => {
+  check(["dotenvx get ACME_GH_TOKEN -f ~/vault/agent.env", 'T=$(dotenvx get ACME_GH_TOKEN -f other.env 2>/dev/null); echo ${#T}', "gh auth token",
+    "gh-acme auth token", "ssh host-a 'gh auth token -h github.com'"], "deny");
+  check(["gh-acme auth git-credential get", "dotenvx get OTHER_KEY -f ~/vault/agent.env", "gh auth status"], "allow");
 });
 
 // ----------------------------------------------------------------------------- force-push
