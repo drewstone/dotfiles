@@ -5,10 +5,10 @@ Each rule below replays a command agents actually ran while their briefs said no
 
   admin-merge   `gh pr merge ... --admin` (or through a `gh-<name>` wrapper), and branch-protection
                 writes through `gh api`. Both bypass the repository's merge protection.
-  raw-gh        GitHub reached around the operator's gh wrapper (merge_check's `gh`), as an agent replayed a merge it refused:
-                any word naming a gh other than the shim (the first gh on PATH, a script), normalized, outside path probes
-                and `--version`/`help`; `command -p`, `env -i` or a PATH whose first gh is not the shim; `which -a gh`; a `raw_gh`
-                shim variable; curl/wget/httpie/python/node sending api.github.com a token or a write. No override.
+  raw-gh        GitHub reached around the operator's gh wrapper (merge_check's `gh`), as an agent replayed a merge it refused: a word
+                naming a gh other than the shim (first gh on PATH, a script) outside path probes and --version/help; `command -p`,
+                `env -i` or a PATH whose first gh is not the shim; `which -a gh`; a `raw_gh` variable; `gh auth token`; `dotenvx get`
+                of a `github_tokens` name; curl/wget/httpie/python/node sending api.github.com a token or write. No override.
   force-push    `git push -f`, `--force-with-lease`, `+refspec`, mostly to amend an agent's own fresh branch.
                 AGENTS.md: it needs the owner's explicit authorization. The command (or the owner, session-wide) sets CC_ALLOW_FORCE_PUSH=1.
   hooks-bypass  `git -c core.hooksPath=/dev/null commit`, `-c core.hooksPath=.husky commit`,

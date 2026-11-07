@@ -6,6 +6,7 @@ import shutil
 from secret_scan import guard_config
 
 SHIM_VARS = guard_config("process_guard", {}).get("raw_gh")  # variables that make the gh shim pass through; absent: rule off
+TOKENS = set(guard_config("process_guard", {}).get("github_tokens", []))  # vault names of the GitHub token
 WRAPPER = guard_config("merge_check", {}).get("gh") or "gh"
 _SHIM = shutil.which("gh")  # the first gh on the hook's PATH is the operator's shim when it is a script, not a gh binary
 SHIMS = {_SHIM, os.path.realpath(_SHIM)} if _SHIM and open(_SHIM, "rb").read(2) == b"#!" else set()
@@ -17,6 +18,7 @@ CLIENTS = {"curl", "wget", "http", "https", "xh", "python", "python3", "node", "
 AUTH = re.compile(r"authorization|\w*(?:gh|github)_?\w*token\b|auth token|(?:^| )(?:-u|--user)(?: |=)", re.I)
 WRITE = re.compile(r"(?:^|[\s'\"=:])(?:PUT|POST|PATCH|DELETE)\b|(?:^| )(?:-d|-F|-T|--data\S*|--json|--form|--post-\w+|--upload-file)\b"
                    r"|/merges?\b|git/refs|graphql")
+GH = re.compile(r"gh(?:-[\w.-]+)?$")  # gh, or a gh-<name> wrapper
 EXPAND = re.compile(r"\$\{(\w+)(?::?[-=]([^}]*))?\}|\$(\w+)")
 
 
@@ -37,12 +39,15 @@ def rule_raw_gh(cmd):
     env, head = {"HOME": os.path.expanduser("~"), **cmd.env}, " ".join(cmd.prefix + cmd.argv[:1]) + " "
     words = [expand(w, env) for w in cmd.argv]
     what = next((f"{v}= set for this command" for v in SHIM_VARS if v in cmd.env), None)
+    verb = [w for w in words[1:] if not w.startswith("-")][:2]
+    if cmd.prog == "dotenvx" and verb[:1] == ["get"] and TOKENS & set(words) or verb == ["auth", "token"] and GH.match(cmd.prog):
+        what = what or f"`{cmd.prog} {' '.join(verb)}`, which reads the GitHub token"
     path = cmd.env.get("PATH", os.defpath if DODGE.search(head) else None) if words[0] == "gh" else None
     if not what and path is not None:
         dirs = expand(path, {**env, "PATH": os.environ.get("PATH", "")}).split(":")
         found = next((p for p in (normal(os.path.join(d or ".", "gh"), cmd.cwd) for d in dirs) if os.path.isfile(p)), None)
         what = None if found in SHIMS else f"`{head.strip()}`, which runs {found or 'no shim'} instead of the shim"
-    text_only = cmd.prog in PROBES or ("/" not in words[0] and re.match(r"gh(?:-[\w.-]+)?$", words[0]))
+    text_only = cmd.prog in PROBES or ("/" not in words[0] and GH.match(words[0]))
     for k, word in enumerate([] if text_only or what else words):
         for m in GH_PATH.finditer(word):
             if normal(m.group(0), cmd.cwd) not in SHIMS and not (k == 0 and words[1:] in (["--version"], ["version"], ["help"])):
