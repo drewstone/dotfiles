@@ -34,6 +34,7 @@ from __future__ import annotations
 import collections
 import datetime as dt
 import json
+import math
 import os
 import shutil
 import re
@@ -66,39 +67,27 @@ def fail(message: str, code: int = 2):
 
 
 def parse_flags(argv, value_flags, bool_flags=()):
-    values, flags, positional = {}, set(), []
-    index = 0
-    while index < len(argv):
-        arg = argv[index]
-        index += 1
+    values, flags, positional, args = {}, set(), [], iter(argv)
+    for arg in args:
+        name, eq, inline = arg.partition("=")
         if arg in ("-h", "--help"):
             print(__doc__.strip())
             sys.exit(0)
-        if arg in bool_flags:
+        elif arg in bool_flags:
             flags.add(arg)
-            continue
-        name = arg.split("=", 1)[0]
-        if name in value_flags:
-            if "=" in arg:
-                values[name] = arg.split("=", 1)[1]
-            else:
-                if index >= len(argv):
-                    fail(f"{arg} requires a value")
-                values[name] = argv[index]
-                index += 1
-            continue
-        if arg.startswith("-"):
+        elif name in value_flags:
+            values[name] = inline if eq else next(args, None)
+            if values[name] is None:
+                fail(f"{arg} requires a value")
+        elif arg.startswith("-"):
             fail(f"unknown argument: {arg}")
-        positional.append(arg)
+        else:
+            positional.append(arg)
     return values, flags, positional
 
 
-def when(text: str | None, default_now: bool = True):
-    if text is None:
-        return L.iso(L.now()) if default_now else None
-    if text == "now":
-        return L.iso(L.now())
-    parsed = L.parse_ts(text)
+def when(text: str | None):
+    parsed = L.now() if text in (None, "now") else L.parse_ts(text)
     if parsed is None:
         fail(f"time must be ISO 8601 or 'now', not {text!r}")
     return L.iso(parsed)
@@ -131,9 +120,6 @@ def record(kind: str, argv):
         fail(f"unknown {kind} action: {action}")
     L.append_jsonl(path, row)
     print(f"{kind} {action}: {ident} [{path}]")
-
-
-# ---------------------------------------------------------------------------------------------
 
 
 def fold(texts) -> dict:
@@ -207,6 +193,15 @@ def github_reverts(start: dt.datetime, end: dt.datetime):
                 break
             cursor = search["pageInfo"]["endCursor"]
     return list(found.values()), None
+
+
+def median_ci(values):
+    """Distribution-free 95% bounds on the median, [X_(l), X_(u)] with P(X_(l) <= median <= X_(u)) >= 0.95: B ~ Binomial(n, 1/2)
+    counts samples below the median, l is the highest rank with P(B < l) <= 2.5%, u the lowest with P(B >= u) <= 2.5%."""
+    data = sorted(values)
+    cdf = [sum(math.comb(len(data), i) for i in range(k + 1)) / 2 ** len(data) for k in range(len(data))]  # P(B <= k)
+    low, high = [r for r in range(1, len(data) + 1) if cdf[r - 1] <= 0.025], [r for r in range(1, len(data) + 1) if cdf[r - 1] >= 0.975]
+    return [data[low[-1] - 1], data[high[0] - 1]] if low and high else None  # None below n = 6
 
 
 def day_of(ts: dt.datetime) -> str:
@@ -287,7 +282,8 @@ def build(opts, at):
             "reverts": None if day_reverts is None else len(day_reverts),
             "revertPRs": None if day_reverts is None else [f"{r['repository']['nameWithOwner']}#{r['number']}" for r in day_reverts],
             "incidentsOpened": len(opened), "ttdHoursP50": L.percentile(ttd, 0.5), "ttrHoursP50": L.percentile(ttr, 0.5),
-            "incidentsOpenAtEnd": open_at_end, "ttdHoursRange": ttd and [min(ttd), max(ttd)], "ttrHoursRange": ttr and [min(ttr), max(ttr)],
+            "incidentsOpenAtEnd": open_at_end, "incidentsRecovered": len(ttr),
+            "ttdHoursCI": median_ci(ttd), "ttrHoursCI": median_ci(ttr),
             "queueOpenAtEnd": len(waiting), "queueOldestHours": max(waiting) if waiting else None,
             "queueResolved": len(waits), "queueWaitHoursP50": L.percentile(waits, 0.5),
         })
@@ -335,7 +331,7 @@ def render(report) -> str:
 
 
 CLIMB_LOG = shutil.which("climb-log") or os.path.expanduser("~/.local/bin/climb-log")
-# hill -> (value, n, unit, metric, selectBy, how the day's items were chosen)
+# hill -> (value, n, unit, metric, selectBy, how the day's items were chosen[, the median's 95% ci or None])
 HILLS = {
     "operator:corrections": lambda d: (d["corrected"], d["judged"], "corrections", "operator corrections", "event",
                                        "every judged skill run settled during the local day"),
@@ -344,9 +340,9 @@ HILLS = {
     "operator:reverts": lambda d: (d["reverts"], d["reverts"], "PRs", "revert and rollback PRs", "event",
                                    "every revert or rollback PR by the operator merged during the local day"),
     "operator:time-to-detect": lambda d: (d["ttdHoursP50"], d["incidentsOpened"], "h", "time to detect p50", "start",
-                                          "every incident whose start falls in the local day", d["ttdHoursRange"]),
-    "operator:time-to-recover": lambda d: (d["ttrHoursP50"], d["incidentsOpened"], "h", "time to recover p50", "start",
-                                           "every incident whose start falls in the local day", d["ttrHoursRange"]),
+                                          "every incident whose start falls in the local day", d["ttdHoursCI"]),
+    "operator:time-to-recover": lambda d: (d["ttrHoursP50"], d["incidentsRecovered"], "h", "time to recover p50", "start",
+                                           "every recovered incident whose start falls in the local day", d["ttrHoursCI"]),
     "operator:decision-queue": lambda d: (d["queueOpenAtEnd"], d["queueOpenAtEnd"], "decisions",
                                           "decisions waiting on the operator", "all",
                                           "every decision still open at the end of the local day"),
@@ -365,10 +361,12 @@ def climb_rows(report) -> list[dict]:
             value, n, unit, metric, select_by, selection, *ci = measure(d)
             if value is None:
                 continue
+            if ci and ci[0] is None:  # too few incidents for a 95% interval on the median: report how many there were
+                value, unit, metric, ci = n, "incidents", f"incidents with a {metric[:-4]}, too few for a 95% interval", []
             baseline = {"value": value, "unit": unit, "measurement": {
                 "metric": metric, "unit": unit, "selection": selection, "selectBy": select_by, "n": n or 0,
                 "basis": "measured", "window": {"from": L.iso(start), "to": L.iso(end)},
-                "instrument": "lead-scorecard --climb", **({"ci": ci[0], "ciMethod": "day min-max, P(covers median) = 1-2^(1-n)"} if ci else {}),
+                "instrument": "lead-scorecard --climb", **({"ci": ci[0], "ciMethod": "binomial order statistics, 95%"} if ci else {}),
                 "calibration": {"verdict": "UNCALIBRATED",
                                 "next": "recount one day by hand from the guard logs, _lead records and GitHub"}}}
             if hill == "operator:decision-queue":
