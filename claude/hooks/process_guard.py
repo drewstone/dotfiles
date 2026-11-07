@@ -5,6 +5,10 @@ Each rule below replays a command agents actually ran while their briefs said no
 
   admin-merge   `gh pr merge ... --admin` (or through a `gh-<name>` wrapper), and branch-protection
                 writes through `gh api`. Both bypass the repository's merge protection.
+  raw-gh        GitHub reached around the operator's gh wrapper (merge_check's `gh`), as an agent replayed a merge it refused:
+                a real gh by path or variable, `command gh`, `env -i gh`, a PATH without $PATH, a `raw_gh` shim bypass variable
+                set or exported, or curl/wget/httpie/a python or node one-liner sending api.github.com a token or a write.
+                No override. process_guard_github.py.
   force-push    `git push -f`, `--force-with-lease`, `+refspec`, mostly to amend an agent's own fresh branch.
                 AGENTS.md: it needs the owner's explicit authorization. The command (or the owner, session-wide) sets CC_ALLOW_FORCE_PUSH=1.
   hooks-bypass  `git -c core.hooksPath=/dev/null commit`, `-c core.hooksPath=.husky commit`,
@@ -71,6 +75,7 @@ from secret_scan import guard_config, redact  # noqa: E402
 from process_guard_waits import rule_detached_gate, rule_tail_sleep  # noqa: E402
 from process_guard_secrets import SECRET_DIRS, flush_secret_read, track_secret_read  # noqa: E402
 from process_guard_builds import rule_no_build_host  # noqa: E402
+from process_guard_github import rule_raw_gh  # noqa: E402
 
 CONFIG = guard_config("process_guard", {})
 HOME = os.path.expanduser("~")
@@ -141,6 +146,21 @@ def _lex(src, i, out, stop_paren):
         word.append("$(" + src[j:end - 1] + ")")
         return end
 
+    def expansion(i):
+        """Consume $(( )), $( ) or a backquote at i into the word: the index after it, or None."""
+        if src.startswith("$((", i):
+            j = src.find("))", i)
+            word.append(src[i:] if j < 0 else src[i:j + 2])
+            return n if j < 0 else j + 2
+        if src.startswith("$(", i):
+            return substitution(i + 2)
+        if src[i] != "`":
+            return None
+        j = src.find("`", i + 1)
+        out.extend(lex(src[i + 1:n if j < 0 else j]))
+        word.append("$(...)")
+        return n + 1 if j < 0 else j + 1
+
     while i < n:
         ch = src[i]
         if ch == "\n":
@@ -190,42 +210,15 @@ def _lex(src, i, out, stop_paren):
                     if src[i + 1] != "\n":
                         word.append(src[i + 1])
                     i += 2
-                elif c == "$" and src.startswith("$((", i):
-                    j = src.find("))", i)
-                    j = n if j < 0 else j + 2
-                    word.append(src[i:j])
+                elif c in "$`" and (j := expansion(i)) is not None:
                     i = j
-                elif c == "$" and src.startswith("$(", i):
-                    i = substitution(i + 2)
-                elif c == "`":
-                    j = src.find("`", i + 1)
-                    j = n if j < 0 else j
-                    out.extend(lex(src[i + 1:j]))
-                    word.append("$(...)")
-                    i = j + 1
                 else:
                     word.append(c)
                     i += 1
             i += 1
             continue
-        if ch == "$" and src.startswith("$((", i):
-            j = src.find("))", i)
-            j = n if j < 0 else j + 2
-            word.append(src[i:j])
-            started = True
-            i = j
-            continue
-        if ch == "$" and src.startswith("$(", i):
-            i = substitution(i + 2)
-            started = True
-            continue
-        if ch == "`":
-            j = src.find("`", i + 1)
-            j = n if j < 0 else j
-            out.extend(lex(src[i + 1:j]))
-            word.append("$(...)")
-            started = True
-            i = j + 1
+        if ch in "$`" and (j := expansion(i)) is not None:
+            i, started = j, True
             continue
         if ch in "<>" and i + 1 < n and src[i + 1] == "(" :
             # process substitution <( ... ) / >( ... )
@@ -294,15 +287,17 @@ SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 
 
 class Command:
-    def __init__(self, argv, env, remote, cwd, ctx):
-        self.argv, self.env, self.remote, self.cwd, self.ctx = argv, env, remote, cwd, ctx
+    def __init__(self, argv, env, ctx, seg, upstream, piped_from):
+        self.argv, self.env, self.remote, self.cwd, self.ctx = argv, env, ctx.remote, ctx.cwd, ctx
         self.origin = ctx.origin  # the script file this command was read from, if any
         self.tainted = frozenset(ctx.tainted)  # taint as of this command, not the end of the script
-        self.stream_tainted = False  # stdin carries pids from a pattern match
+        self.stream_tainted = upstream  # stdin carries pids from a pattern match
         self.loops = dict(ctx.loops)  # loop variables as of this command
-        self.upstream = []  # the argvs piped into this command
-        self.via_xargs = False  # this command's arguments come from its stdin through xargs
-        self.writes = []  # files this command writes: redirection targets, and tee's arguments
+        self.upstream = piped_from  # the argvs piped into this command
+        self.prefix = seg.words[:len(seg.words) - len(argv)]  # env assignments and wrappers (sudo, env, command, xargs)
+        self.via_xargs = "xargs" in self.prefix  # this command's arguments come from its stdin through xargs
+        tee = [a for a in argv[1:] if not a.startswith("-")] if self.prog == "tee" else []
+        self.writes = list(seg.writes) + tee  # files this command writes: redirection targets, and tee's arguments
         self.stashed = ctx.stashed  # this command pushed a stash before this point
 
     @property
@@ -426,25 +421,6 @@ def ssh_target(args):
         break
     return (args[i], args[i + 1:]) if i < len(args) else (None, [])
 
-
-def ssh_remote(args):
-    """Return the remote command words of an ssh invocation (after options and host)."""
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--":
-            i += 1
-            break
-        if a.startswith("-") and len(a) > 1:
-            for k, ch in enumerate(a[1:]):
-                if ch in SSH_VALUE:
-                    if k == len(a) - 2:
-                        i += 1  # value is the next word
-                    break
-            i += 1
-            continue
-        break
-    return args[i + 1:] if i < len(args) else []
 
 
 PGREP_VALUE = {"-P", "--parent", "-u", "--euid", "-U", "--uid", "-g", "--pgroup", "-G", "--group", "-s",
@@ -642,18 +618,7 @@ def script_text(path, cmd_cwd, env, ctx):
         return None
     if resolved in ctx.written:
         return ctx.written[resolved]
-    if not under_temp_root(resolved):
-        return None
-    try:
-        if os.path.getsize(resolved) > SCRIPT_LIMIT:
-            return None
-        with open(resolved, "rb") as fh:
-            data = fh.read()
-    except OSError:
-        return None
-    if b"\0" in data:
-        return None  # a binary, not a script
-    return data.decode("utf-8", "replace")
+    return read_local(resolved, None, env) if under_temp_root(resolved) else None  # None for a binary too
 
 
 def nested(text, cwd, remote, ctx, origin):
@@ -803,11 +768,7 @@ def commands(src, cwd, remote=False, ctx=None):
             continue
         merged = dict(ctx.vars)
         merged.update(env)
-        cmd = Command(argv, merged, ctx.remote, ctx.cwd, ctx)
-        cmd.stream_tainted = upstream
-        cmd.upstream = piped_from
-        cmd.via_xargs = "xargs" in seg.words[:len(seg.words) - len(argv)]
-        cmd.writes = list(seg.writes) + ([a for a in argv[1:] if not a.startswith("-")] if prog == "tee" else [])
+        cmd = Command(argv, merged, ctx, seg, upstream, piped_from)
         result.append(cmd)
         g = git_split(argv) if prog == "git" else None
         ctx.stashed |= bool(g and g[2] == "stash" and next((a for a in g[3] if a[:1] != "-"), "push") in ("push", "save"))
@@ -1513,7 +1474,7 @@ def evaluate_full(payload):
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_no_build_host(cmd, classify_tool), rule_kill(cmd),
-                    rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload)):
+                    rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])
