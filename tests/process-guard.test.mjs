@@ -781,3 +781,26 @@ test("detached-gate: foreground gates, & inside the gate's quoted payload, backg
   assert.equal(decide("gate auto u s -- true > g.log 2>&1 &", { background: true }), "allow");
   assert.equal(decide("CC_ALLOW_DETACHED_GATE=1 gate auto u s -- true > g.log 2>&1 &"), "allow");
 });
+
+// ---------------------------------------------------------------------------- prod-d1-read
+
+test("prod-d1-read: refuses the 2026-11-07 22:50Z production D1 scan, allows a LIMITed indexed read", () => {
+  // The exact command, run from the scratchpad that held the agent's D1 reader; the reader is under a temp root.
+  const scratch = join(ROOT, "d1-scratchpad");
+  mkdirSync(scratch, { recursive: true });
+  writeFileSync(join(scratch, "d1read.py"), fixture("d1read-2026-11-07.py"));
+  const incident = `cd ${scratch} && python3 d1read.py "SELECT outcome, state, origin, count(*) n, min(created_at) lo, max(created_at) hi FROM sandbox_finalizations GROUP BY outcome, state, origin"; python3 d1read.py "SELECT count(*) n FROM sandbox_meta m WHERE EXISTS (SELECT 1 FROM sandbox_finalizations f WHERE f.sandbox_id = m.sandbox_id AND f.origin <> 'create_refused' AND f.outcome IS NOT 'superseded')"`;
+  assert.match(reason(incident), /prod-d1-read.*`count\(\)` with no WHERE equality on an id key reads every row.*Add LIMIT <= 1000/s);
+  const api = "https://api.cloudflare.com/client/v4/accounts/0000example/d1/database/00000000-0000-4000-8000-000000000000/query";
+  check([
+    incident,
+    "npx wrangler d1 execute app-db --remote --command 'SELECT outcome, count(*) FROM sandbox_finalizations GROUP BY outcome'",
+    `curl -s -X POST ${api} -H 'Content-Type: application/json' -d '{"sql":"SELECT * FROM sandbox_meta"}'`,
+  ], "deny");
+  check([
+    `cd ${scratch} && python3 d1read.py 'SELECT id FROM sandbox_meta WHERE id = ? LIMIT 1' sandbox-1`,
+    "npx wrangler d1 execute app-db --remote --command 'SELECT id FROM sandbox_meta WHERE id = ? LIMIT 1'",
+    `curl -s -X POST ${api} -d '{"sql":"SELECT id FROM sandbox_meta WHERE id = ? LIMIT 1","params":["sandbox-1"]}'`,
+    "npx wrangler d1 execute app-db --local --command 'SELECT outcome, count(*) FROM sandbox_finalizations GROUP BY outcome'",
+  ], "allow");
+});
