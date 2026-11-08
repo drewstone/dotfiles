@@ -38,7 +38,8 @@ Each rule below replays a command agents actually ran while their briefs said no
 
   env-dump      printing environment VALUES into the transcript: bare `env`/`printenv`/`export -p`/`declare -x`/`set`,
                 `env | grep X`, /proc/<pid>/environ, `printenv KEY` or `echo $X_TOKEN` of a secret-named variable, env written
-                to a file, and a read of a secret file (process_guard_secrets.py). Names (`compgen -e`, `grep -o '^(A|B)='`),
+                to a file, a python or node one-liner printing os.environ or process.env whole, and a read of a secret file
+                (process_guard_secrets.py). Names (`compgen -e`, `sorted(os.environ)`, `grep -o '^(A|B)='`),
                 counts (`wc`), exact non-secret names (`grep '^(PORT|TMPDIR)='`, `printenv PORT`), a non-command `env` and
                 `env VAR=x cmd` pass, but not `cut -d= -f1`, sed or awk: a multi-line value's later lines hold no NAME=.
                 Override CC_ALLOW_ENV_DUMP=1, set by the owner for the session.
@@ -53,12 +54,12 @@ Each rule below replays a command agents actually ran while their briefs said no
                 wakes the caller when it ends, so its result sits unread. Launch the gate itself with
                 run_in_background. Override: CC_ALLOW_DETACHED_GATE=1 on the gate command.
 
-Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell, `dotenvx|op|doppler|infisical run ... -- <command>`
-and `<runner> ... -- <command>` (a command named in `remote_runners`) are parsed too (an admin merge run on another host has
-the same effect on GitHub); the build rules skip remote commands. So are ad-hoc scripts the command runs (`bash x.sh`,
-`./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host bash -s < x.sh`) when a heredoc in the same command wrote them or they
-sit under a temp root. A repository's own scripts are not read. Operator values (hosts, commands, secret stores) come from
-the "process_guard" entry of ~/.claude/guard-config.json; a rule whose key is absent stays off.
+A wrapper's command (`sudo`, `timeout`, `npx`, `uv run`, `dotenvx run --`, `docker exec <container>`: WRAPPERS) is the command.
+Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell and `<runner> ... -- <command>` (a command named
+in `remote_runners`) are parsed too (an admin merge on another host has the same effect); the build rules skip remote
+commands. So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host bash -s
+< x.sh`) when a heredoc in the same command wrote them or they sit under a temp root. A repository's own scripts are not
+read. Operator values (hosts, commands, secret stores) come from guard-config.json's "process_guard"; absent keys: rule off.
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
 redacted. Fail-open: an unparsable payload exits 0 with no output.
 """
@@ -334,43 +335,36 @@ class Context:
         self.stashed = False  # a `git stash` / `stash push` ran earlier in this command
 
 
+# Programs that run the command after their options, here, in a container or on a pod: the words they take first (a duration,
+# profile, container or pod) and their options that take a value. `--` ends their options; `command -v` looks a name up.
+WRAPPERS = {"env": (0, "-u -C -S"), "command": (0, ""), "exec": (0, "-a"), "setsid": (0, ""), "stdbuf": (0, "-i -o -e"),
+            "watch": (0, "-n"), "sudo": (0, "-u -g -C -D -h -p -R -T -U"), "nice": (0, "-n"), "timeout": (1, "-s -k"),
+            "rtk proxy": (0, ""), "rtk": (0, ""), "xargs": (0, "-I -n -P -L -s -E -d"), "npx": (0, "-p --package"),
+            "uv run": (0, "--with -p --python --project --directory --package --env-file"), "poetry run": (0, "-C -P --directory"),
+            "dotenvx run": (0, "-f -fk --env-file --env-keys-file -e --env"), "op run": (0, "--env-file"), "doppler run": (0, "-p -c"),
+            "infisical run": (0, "--env --path"), "aws-vault exec": (1, "-d --duration --region"),
+            "docker exec": (1, "-e -u -w --env --env-file --user --workdir"), "docker compose exec": (1, "-e -u -w --env --user --workdir"),
+            "kubectl exec": (1, "-n -c --namespace --container --context")}
+
+
 def strip_prefix(words):
     env, i = {}, 0
     while i < len(words):
         w = words[i]
         m = ASSIGN.match(w)
+        name = next((n for n in WRAPPERS if [os.path.basename(w)] + words[i + 1:i + len(n.split())] == n.split()), None)
         if m:
             env[m.group(1)] = m.group(2)
             i += 1
         elif w in KEYWORDS or w in ("nohup", "time", "builtin", "caffeinate", "noglob"):
             i += 1
-        elif w in ("env", "command", "exec", "setsid", "stdbuf", "watch"):  # their options: env -u X, exec -a NAME, stdbuf -o L
-            i += 1
-            while i < len(words) and words[i].startswith("-") and words[i] not in ("-v", "-V"):
-                i += 2 if words[i] in (("-u", "-C", "-S") if w == "env" else ("-a", "-n", "-i", "-o", "-e")) else 1
-        elif w == "sudo":
-            i += 1
-            while i < len(words) and words[i].startswith("-"):
-                i += 2 if words[i] in ("-u", "-g", "-C", "-D", "-h", "-p", "-R", "-T", "-U") else 1
-        elif w == "nice":
-            i += 1
-            if i < len(words) and words[i] == "-n":
-                i += 2
-            elif i < len(words) and re.match(r"^-\d+$", words[i]):
-                i += 1
-        elif w == "timeout":
-            i += 1
-            while i < len(words) and words[i].startswith("-"):
-                i += 2 if words[i] in ("-s", "-k") else 1
-            i += 1  # duration
-        elif w == "rtk":
-            i += 1
-            if i < len(words) and words[i] == "proxy":
-                i += 1
-        elif w == "xargs":
-            i += 1
-            while i < len(words) and words[i].startswith("-"):
-                i += 2 if words[i] in ("-I", "-n", "-P", "-L", "-s", "-E", "-d") else 1
+        elif name:
+            (before, values), i = WRAPPERS[name], i + len(name.split())
+            while i < len(words) and words[i] != "--" and (words[i][:1] == "-" or before) and not (
+                    name == "command" and words[i] in ("-v", "-V")):
+                before -= words[i][:1] != "-"
+                i += 2 if words[i] in values.split() else 1
+            i += words[i:i + 1] == ["--"]
         else:
             break
     return env, words[i:]
@@ -639,6 +633,8 @@ def nested(text, cwd, remote, ctx, origin):
 ENV_SECRET_VAR = re.compile(r"^(?!.*(?:_FILE|_PATH|_DIR|_SOCK|NAME)$).*(?:KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE)", re.I)
 PROC_ENVIRON = re.compile(r"/proc/[^\s/]+/environ")
 ENV_PASSTHROUGH = {"grep", "egrep", "fgrep", "rg", "sort", "uniq", "head", "tail", "tr", "cat", "column"}
+NAMED_ENV = re.compile(r"(?:sorted|list|len|set|keys)\(\s*(?:os\.environ|process\.env)\s*\)|\bin\s+(?:os\.environ|process\.env)"
+                       r"\b(?!\s*[.\[])|(?:os\.environ|process\.env)\s*(?:\[\s*[\"']|\.get\(\s*[\"']|\.keys\(\))|process\.env\.\w")
 
 
 def env_dump(seg, argv):
@@ -648,7 +644,7 @@ def env_dump(seg, argv):
         if PROC_ENVIRON.fullmatch(w) and not env_names_only(argv):
             return shlex.join(argv) + "".join(" < " + i for i in seg.inputs) if argv else f"read of {w}"
     # `env` as the command (consumed by strip_prefix, or argv[0]) with none of its own prints everything.
-    k = next((i for i, w in enumerate(words[:len(words) - len(argv)]) if w == "env"),
+    k = next((i for i, w in enumerate(words[:len(words) - len(argv)]) if os.path.basename(w) == "env" and "=" not in w),
              len(words) - len(argv) if argv and os.path.basename(argv[0]) == "env" else None)
     if k is not None:
         rest, j = words[k + 1:], 0
@@ -676,6 +672,10 @@ def env_dump(seg, argv):
         return f"{prog} {' '.join(args)}".strip()
     if prog == "set" and not args:
         return "set with no arguments"
+    code = " ".join(args + seg.heredocs)  # a python or node program that prints the whole environment rather than named keys
+    if re.fullmatch(r"python[\d.]*|node|bun", prog) and re.search(r"\b(?:print|pprint|console|stdout|stderr)\b|(?:^| )-p ", code) and (
+            re.search(r"\b(?:os\.environ|process\.env)\b", NAMED_ENV.sub("", code))):
+        return f"{prog} printing the environment"
     if prog in ("echo", "printf", "print"):
         for a in args:  # a $( ) in the argument runs, and is checked, as its own command
             for m in VAR.finditer(re.sub(r"\$\((?:[^()]|\([^()]*\))*\)", "", a)):
@@ -771,7 +771,8 @@ def commands(src, cwd, remote=False, ctx=None):
         result.append(cmd)
         g = git_split(argv) if prog == "git" else None
         ctx.stashed |= bool(g and g[2] == "stash" and next((a for a in g[3] if a[:1] != "-"), "push") in ("push", "save"))
-        loaded = secret_load(argv) or (secret_references(argv[1:]) if ctx.xtrace else None)
+        loaded = next(filter(None, map(secret_load, (seg.words[k:] for k in range(len(cmd.prefix) + 1)))), None) or (  # dotenvx run --
+            secret_references(argv[1:]) if ctx.xtrace else None)
         if loaded:
             note(ctx, loaded)
         if prog == "set":
@@ -869,8 +870,6 @@ def commands(src, cwd, remote=False, ctx=None):
                         result.extend(nested(body, None, True, sub, source))
         elif prog == "eval":
             result.extend(commands(" ".join(argv[1:]), ctx.cwd, ctx.remote, ctx))
-        elif prog in ("dotenvx", "op", "doppler", "infisical") and argv[1:2] == ["run"] and "--" in argv:  # with secrets
-            result.extend(commands(shlex.join(argv[argv.index("--") + 1:]), ctx.cwd, ctx.remote, ctx))
         elif prog in CONFIG.get("remote_runners", []) and "--" in argv:
             sub = Context(None, True, events=ctx.events)
             sub.vars.update(merged)
@@ -1403,11 +1402,6 @@ def classify_tool(argv, cmd):
         return classify_turbo(args)
     if prog in ("pnpm", "npm", "yarn", "bun"):
         return classify_pm(prog, args, cmd)
-    if prog == "npx":
-        k = 0
-        while k < len(args) and args[k].startswith("-"):
-            k += 2 if args[k] in ("-p", "--package") else 1
-        return classify_tool(args[k:], cmd) if k < len(args) else None
     docker_host = cmd.env.get("DOCKER_HOST") or os.environ.get("DOCKER_HOST") or ""
     if prog in ("docker", "docker-compose") and not docker_host.startswith(("ssh://", "tcp://")):
         return classify_docker(prog, args)

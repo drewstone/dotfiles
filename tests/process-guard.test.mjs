@@ -762,6 +762,30 @@ test("env-dump: a names-only filter prints no line of a multi-line value; the 11
   }
   check(["compgen -e", "bash -c 'compgen -e' | sort", "env | wc -l", "grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' vault.env",
     `cd ~/vault && dotenvx run -q -f vault.env -- bash -c 'compgen -e' | grep -iE "key|token" | sort | head -60`], "allow");
+  // A one-liner that prints the whole environment prints the value; named keys, names and a child's env print none of it.
+  for (const command of ["python3 -c 'import os; print(os.environ)'", "python3 -c 'import os, json; print(json.dumps(dict(os.environ)))'",
+    "python3 -c 'import os; [print(k, v) for k, v in os.environ.items()]'", "python3 -c 'import os; print(sorted(os.environ.items()))'",
+    "python3 -c 'import os; [print(k, os.environ[k]) for k in sorted(os.environ)]'", "node -e 'console.log(process.env)'",
+    "node -e 'console.log(JSON.stringify(process.env))'", "node -p 'process.env'",
+    "node -e 'for (const [k, v] of Object.entries(process.env)) console.log(k, v)'"]) {
+    assert.match(shown(command), /fake-refresh-0000/, command);
+    check([command, `uv run ${command}`, `docker exec -it app ${command}`], "deny");
+  }
+  for (const command of ["python3 -c 'import os, json; print(sorted(json.loads(os.environ[\"APP_AUTH_JSON\"])[\"tokens\"]))'",
+    "python3 -c 'import os; print(len(os.environ[\"APP_AUTH_JSON\"]), sorted(os.environ), \"APP_AUTH_JSON\" in os.environ)'",
+    "python3 -c 'import os, subprocess; subprocess.run([\"true\"], env=dict(os.environ, X=\"1\"))'",
+    "node -e 'console.log(Object.keys(process.env).length, JSON.parse(process.env.APP_AUTH_JSON).tokens ? \"set\" : \"unset\")'",
+    "node -p 'process.env.APP_AUTH_JSON.length'", "node -e 'require(\"child_process\").spawnSync(\"true\", {env: {...process.env, X: \"1\"}})'"]) {
+    assert.doesNotMatch(shown(command), /fake-/, command);
+    check([command], "allow");
+  }
+  // A runner starts the command after its options, the profile, container or pod it names, or `--`.
+  check(["npx dotenvx run -f vault.env -- env", "npx @dotenvx/dotenvx run -f vault.env -- sh -c 'printenv'", "uv run env",
+    "uv run --with httpx -- printenv | sort", "poetry run env", "poetry run -C app printenv", "docker exec -it -u root app env",
+    "docker exec app sh -c 'env | grep KEY'", "docker compose exec web printenv", "kubectl exec -n prod pod-a -- env",
+    "kubectl exec pod-a -c main -- sh -c 'printenv'", "aws-vault exec dev -- env", "aws-vault exec --duration 1h dev -- printenv"], "deny");
+  check(["uv run python3 x.py", "poetry run pytest -- -k env", "docker exec app ls /", "kubectl exec pod-a -- ls",
+    "aws-vault exec dev -- aws s3 ls", "npx dotenvx run -f vault.env -- node x.js", "docker exec app bash -c 'compgen -e'"], "allow");
 });
 
 test("env-dump override is the owner's session flag, not a command-line assignment", () => {
