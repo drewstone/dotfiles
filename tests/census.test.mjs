@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -85,6 +86,32 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   assert.match(evil.stderr, /src gains 4 production lines/);
   assert.doesNotMatch(evil.stderr, /lib gains/);
   assert.match(evil.stderr, /src\/big\.py: 1006 lines \(was 997\)/);
+});
+
+test("a growth approval admits only a scope its reviewer's words name; a general or reused sentence approves nothing", () => {
+  // The GitHub comment the census verifies comes from a fake gh; DOTFILES_PRIVATE names no census.env, so gh is the CLI.
+  const { dir, git } = repo({ "src/a.py": "a = 1\n" });
+  git("remote", "add", "origin", "https://github.com/o/r.git");
+  write(dir, { "src/a.py": "a = 1\nb = 2\nc = 3\n" });
+  git("add", "-A");
+  const scope = { repository: "https://github.com/o/r.git", base: git("rev-parse", "HEAD"), tree: git("write-tree"), areas: { src: 2 } };
+  const bin = join(scratch, `gh-${repos}`), comment = join(bin, "comment.json");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\ncase "$*" in "api user") echo '{"login": "owner"}' ;; "api repos/o/r/issues/comments/7") cat ${comment} ;; *) exit 9 ;; esac\n`, { mode: 0o755 });
+  const ratchet = (quote) => {
+    const body = `${quote}\n\n\`\`\`census-growth-approval\n${JSON.stringify(scope)}\n\`\`\``, url = "https://github.com/o/r/pull/1#issuecomment-7";
+    writeFileSync(comment, JSON.stringify({ html_url: url, user: { login: "owner" }, body }));
+    const sha256 = createHash("sha256").update(body).digest("hex");
+    writeFileSync(join(bin, "record.json"), JSON.stringify({ ...scope, source: { url, quote, sha256 } }));
+    git("config", "census.growthApproval", join(bin, "record.json"));
+    return spawnSync(join(hooks, "loc-ratchet"), [], { cwd: dir, encoding: "utf8", env: { ...env, PATH: `${bin}:${env.PATH}`, DOTFILES_PRIVATE: bin } });
+  };
+  const reused = ratchet('Owner, 2026-11-04: "You can push the PR even if it increases lines of code. I don\'t care."');
+  assert.equal(reused.status, 2, reused.stderr);
+  assert.match(reused.stderr, /does not approve this scope in its block and in words written for it/);
+  const named = ratchet(`Census growth approval for ${scope.repository}, base ${scope.base}, tree ${scope.tree}, areas {"src": 2}: the parser is new and reuses nothing.`);
+  assert.equal(named.status, 0, named.stderr);
+  assert.match(named.stderr, /census: approved production growth from https:\/\/github.com\/o\/r\/pull\/1#issuecomment-7/);
 });
 
 test("a new area's production growth is charged like an existing area's; only a repository's first commit is free", () => {

@@ -98,9 +98,7 @@ def github(endpoint):
 
 def approved_growth(checkout, base, head, growth, approval=None):
     """Only a sourced approval for this exact origin, base, tree and positive area deltas admits growth."""
-    if approval is None:
-        run = subprocess.run(["git", "-C", checkout, "config", "--local", "--path", "--get", "census.growthApproval"], capture_output=True)
-        approval = run.stdout.decode().strip()
+    approval = approval or subprocess.run(["git", "-C", checkout, "config", "--local", "--path", "--get", "census.growthApproval"], capture_output=True).stdout.decode().strip()
     if not approval:
         return False
     record = json.load(open(approval))
@@ -118,9 +116,11 @@ def approved_growth(checkout, base, head, growth, approval=None):
             not source["quote"].strip() or source["quote"] not in comment["body"] or
             hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
         raise Refused("growth approval source author, quote or body digest does not match")
-    scopes = re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)
-    if json.dumps(scope, sort_keys=True) not in [json.dumps(json.loads(block), sort_keys=True) for block in scopes]:
-        raise Refused("growth approval fetched source does not approve this scope")
+    blocks = {json.dumps(json.loads(block), sort_keys=True) for block in re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)}
+    words = {json.dumps(dict(repository=r, base=b, tree=t, areas=json.loads(a)), sort_keys=True) for r, b, t, a in re.findall(
+        r"Census growth approval for (\S+), base ([0-9a-f]{40}), tree ([0-9a-f]{40}), areas (\{[^{}]*\}): *\S", source["quote"])}
+    if json.dumps(scope, sort_keys=True) not in blocks & words:
+        raise Refused('growth approval fetched source does not approve this scope in its block and in words written for it: "Census growth approval for <repository>, base <base>, tree <tree>, areas <areas JSON>: <why>"')
     print(f"census: approved production growth from {source['url']}", file=sys.stderr)
     return True
 

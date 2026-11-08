@@ -105,9 +105,11 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     assert original["user"]["login"] == json.loads(run(scratch, GH, "api", "user"))["login"]
     assert SOURCE["quote"] in original["body"] and hashlib.sha256(original["body"].encode()).hexdigest() == SOURCE["sha256"]
     body = f"Normal-hook qualification. Existing requester authorization: {SOURCE['url']}\n\n{SOURCE['quote']}\n\n"
+    body += "".join(f"Census growth approval for {r['repository']}, base {r['base']}, tree {r['tree']}, areas {json.dumps(r['areas'])}: qualification.\n"
+                    for _, r in (exact, large, function, copies)) + "\n"
     body += "\n\n".join("```census-growth-approval\n" + json.dumps(record, indent=2, sort_keys=True) + "\n```" for _, record in (exact, large, function, copies))
     comment = json.loads(run(scratch, GH, "api", f"repos/{match[1]}/issues/{match[2]}/comments", "--method", "POST", "--input", "-", data=json.dumps({"body": body})))
-    source = {"url": comment["html_url"], "sha256": hashlib.sha256(comment["body"].encode()).hexdigest(), "quote": SOURCE["quote"]}
+    source = {"url": comment["html_url"], "sha256": hashlib.sha256(comment["body"].encode()).hexdigest(), "quote": comment["body"].split("```")[0].strip()}
     print(f"Qualification scope source: {source['url']}")
 
     repo, scope = exact
