@@ -28,6 +28,8 @@ Each rule below replays a command agents actually ran while their briefs said no
   broadcast-kill  `kill 0`, `kill -1`, `kill -9 -1`, `kill -- -<pgid>`: a target of 0 or a negative pid
                 signals the caller's process group, a whole group or every process the user owns. Both kill
                 rules: override CC_ALLOW_BROADCAST_KILL=1, set by the owner for the session (not on a command).
+  prod-d1-read  an unbounded or unkeyed-aggregate SELECT against production Cloudflare D1, through `wrangler d1 execute
+                --remote` or the D1 query API: one 473k-row read overloaded D1 (process_guard_d1.py).
   xtrace-secrets  shell tracing (`bash -x`, `sh -x`, `set -x`, `set -o xtrace`, BASH_XTRACEFD)
                 while the traced scope loads or expands a secret: dotenvx run/get, sourcing or
                 reading a .env, key, token or secrets file, a *_KEY/*_TOKEN variable set from an
@@ -76,6 +78,7 @@ from process_guard_waits import rule_detached_gate, rule_tail_sleep  # noqa: E40
 from process_guard_secrets import SECRET_DIRS, flush_secret_read, track_secret_read  # noqa: E402
 from process_guard_builds import rule_no_build_host  # noqa: E402
 from process_guard_github import rule_raw_gh  # noqa: E402
+from process_guard_d1 import rule_prod_d1_read  # noqa: E402
 
 CONFIG = guard_config("process_guard", {})
 HOME = os.path.expanduser("~")
@@ -298,6 +301,7 @@ class Command:
         self.via_xargs = "xargs" in self.prefix  # this command's arguments come from its stdin through xargs
         tee = [a for a in argv[1:] if not a.startswith("-")] if self.prog == "tee" else []
         self.writes = list(seg.writes) + tee  # files this command writes: redirection targets, and tee's arguments
+        self.heredocs = seg.heredocs  # heredoc and herestring bodies fed to its stdin
         self.stashed = ctx.stashed  # this command pushed a stash before this point
 
     @property
@@ -882,7 +886,7 @@ def commands(src, cwd, remote=False, ctx=None):
 # ---------------------------------------------------------------------------------------
 # Rules. Each returns None, or (rule, summary, reason, override_variable or None).
 
-SESSION_ONLY = {"CC_ALLOW_BROADCAST_KILL"}  # the owner sets these for a session; an agent's command cannot
+SESSION_ONLY = {"CC_ALLOW_BROADCAST_KILL", "CC_ALLOW_D1_SCAN"}  # the owner sets these for a session; an agent's command cannot
 
 
 def flag_on(cmd, name):
@@ -1455,13 +1459,8 @@ def rule_mac_build(cmd):
 
 # ---------------------------------------------------------------------------------------
 
-def evaluate(payload):
-    """Return a list of (rule, summary, reason, override, bypassed) findings for a PreToolUse payload."""
-    return evaluate_full(payload)[0]
-
-
 def evaluate_full(payload):
-    """(findings, warnings): refusals as in evaluate(), and warnings that let the command run."""
+    """(findings, warnings): (rule, summary, reason, override, bypassed) refusals, and warnings that let the command run."""
     if payload.get("tool_name") not in (None, "Bash"):
         return [], []
     command = (payload.get("tool_input") or {}).get("command") or ""
@@ -1474,7 +1473,8 @@ def evaluate_full(payload):
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_no_build_host(cmd, classify_tool), rule_kill(cmd),
-                    rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd)):
+                    rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd),
+                    rule_prod_d1_read(cmd, read_local, script_text)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])
