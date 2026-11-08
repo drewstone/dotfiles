@@ -22,7 +22,10 @@ writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_
   mac_build: "Run it on host-b.", secret_dirs: [".config/acme/env"], secret_dir_public: "/(?:ACME_BOX_BUDGET|\\w*_BASE_URL)$",
   ledgers: "(?:^|/)(?:\\.agent/climb\\.jsonl|reports/climb/ledger\\.jsonl)$", ledger_hint: "Rows go through climb-log append.",
   raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"], github_tokens: ["ACME_GH_TOKEN"],
-  raw_gh_instead: ["API calls: `gh-acme api <path>`.", "Package files: `gh-acme fetch <url>`."] }, merge_check: { gh: "gh-acme" } }));
+  raw_gh_instead: ["API calls: `gh-acme api <path>`.", "Package files: `gh-acme fetch <url>`."],
+  refused_call_texts: { write: "(?:^|\\s)-X\\s*POST\\b|Request\\([^)]*\\bdata\\s*=" },
+  refused_calls: [{ rule: "box-order", match: ["api\\.boxes\\.example/v1/orders\\b"], write: "write", reason: "Order through acme-order." }] },
+  merge_check: { gh: "gh-acme" } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
   const tool_input = background ? { command, run_in_background: true } : { command };
@@ -834,4 +837,15 @@ test("prod-d1-read: refuses the 2026-11-07 22:50Z production D1 scan, allows a L
     `curl -s -X POST ${api} -d '{"sql":"SELECT id FROM sandbox_meta WHERE id = ? LIMIT 1","params":["sandbox-1"]}'`,
     "npx wrangler d1 execute app-db --local --command 'SELECT outcome, count(*) FROM sandbox_finalizations GROUP BY outcome'",
   ], "allow");
+});
+
+// ---------------------------------------------------------------------------- refused-call
+
+test("refused-call: an operator's order call is refused in a command, a temp script and a script fed over ssh; reads pass", () => {
+  const order = join(ROOT, "order.py");
+  writeFileSync(order, "import urllib.request\nq = urllib.request.Request(\n    'https://api.boxes.example/v1/orders',\n    data=b'plan=big')\nurllib.request.urlopen(q)\n");
+  const curl = "curl -s -X POST https://api.boxes.example/v1/orders -d plan=big";
+  assert.match(reason(curl), /process-guard \(box-order\):.*Order through acme-order\./s);
+  check([`dotenvx run -- ${curl}`, `python3 ${order}`, `ssh host-a 'python3 -' < ${order}`], "deny");
+  check(["curl -s https://api.boxes.example/v1/orders/7", `rg -n 'v1/orders' ${order} 2>/dev/null`, "acme-order --plan big"], "allow");
 });

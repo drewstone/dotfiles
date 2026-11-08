@@ -18,12 +18,22 @@ import re
 MAX_ROWS = 1000
 D1_API = re.compile(r"/d1/database/[^/\s\"']+/(?:query|raw)\b|\.d1\.database\.(?:query|raw)\(")
 NON_PROD = re.compile(r"(?:^|[-_.])(?:staging|stage|dev|test|preview)(?:$|[-_.])", re.I)
-INTERPRETERS = re.compile(r"^(?:python[0-9.]*|node|bun|deno|tsx|ruby|perl)$")
+INTERPRETERS = re.compile(r"^(?:python[0-9.]*|node|bun|deno|tsx|ts-node|ruby|perl)$")
 SQL_START = re.compile(r"^\s*(?:SELECT|WITH|VALUES|EXPLAIN|PRAGMA|INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b", re.I)
 WHOLE = re.compile(r"\b(?:count|sum|avg|min|max|total|group_concat)\s*\(|\bGROUP\s+BY\b|\bORDER\s+BY\s+(?!(?:\w+\.)?(?:rowid|id)\b)|\bDISTINCT\b", re.I)
 KEYED = re.compile(r"\bWHERE\b.*?\b(?:id|\w+_id)\s*(?:=\s*(?:\?|:\w|''|\d)|IN\s*\(\s*(?:\?|:\w|''|\d))", re.I | re.S)
 LIMIT = re.compile(r"\bLIMIT\s+(\d+)(?:\s*,\s*(\d+)|\s+OFFSET\s+(\d+))?\s*$", re.I)
 VALUE_OPTS = {"--command", "--file", "--env", "-e", "--config", "-c", "--persist-to"}
+
+
+def script_of(args):
+    """An interpreter's script argument; None when its code comes from -c/-e/-m or stdin."""
+    for arg in args:
+        if arg in ("-", "-c", "-e", "-m", "--eval", "-p", "--print"):
+            return None
+        if not arg.startswith("-"):
+            return arg
+    return None
 
 
 def heavy(stmt):
@@ -86,7 +96,7 @@ def rule_prod_d1_read(cmd, read_local, script_text):
     elif cmd.argv and INTERPRETERS.match(os.path.basename(cmd.argv[0])):
         args = cmd.argv[1:]
         code = [args[k + 1] for k, a in enumerate(args[:-1]) if a in ("-c", "-e", "--eval")] + cmd.heredocs
-        script = next((a for a in args if not a.startswith("-") and a not in code), None)
+        script = script_of(args)
         code += [script_text(script, cmd.cwd, cmd.env, cmd.ctx) or ""] if script else []
         if not any(D1_API.search(c) for c in code):
             return None

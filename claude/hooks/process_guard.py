@@ -35,7 +35,6 @@ Each rule below replays a command agents actually ran while their briefs said no
                 reading a .env, key, token or secrets file, a *_KEY/*_TOKEN variable set from an
                 expansion or expanded in a command, `gh auth token`. A traced script is read (a remote one over ssh,
                 once, 10 s timeout; unreadable means allowed).
-
   env-dump      printing environment VALUES into the transcript: bare `env`/`printenv`/`export -p`/`declare -x`/`set`,
                 `env | grep X`, /proc/<pid>/environ, `printenv KEY` or `echo $X_TOKEN` of a secret-named variable, env written
                 to a file, a python or node one-liner printing os.environ or process.env whole, and a read of a secret file
@@ -43,16 +42,15 @@ Each rule below replays a command agents actually ran while their briefs said no
                 counts (`wc`), exact non-secret names (`grep '^(PORT|TMPDIR)='`, `printenv PORT`), a non-command `env` and
                 `env VAR=x cmd` pass, but not `cut -d= -f1`, sed or awk: a multi-line value's later lines hold no NAME=.
                 Override CC_ALLOW_ENV_DUMP=1, set by the owner for the session.
-
   ledger-write  a shell write (`>>`, `tee -a`, `>`) into a file matching `ledgers`, a regex, around the checked append
                 `ledger_hint` names. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair the owner approved.
-
   tail-sleep    `tail -f /dev/null` as a command, usually `read -t N < <(tail -f /dev/null)` as a sleep. Under
                 the Mac's bash 3.2 the read can outlive its timeout and each poll leaks a tail. Override: CC_ALLOW_TAIL_SLEEP=1 on the tail command itself.
-
   detached-gate `<gate> ... &` (a command named in `gates`) in a foreground Bash call: the gate runs, but nothing
                 wakes the caller when it ends, so its result sits unread. Launch the gate itself with
                 run_in_background. Override: CC_ALLOW_DETACHED_GATE=1 on the gate command.
+  refused-call  a call matching an operator rule in `refused_calls` (a purchase API, say), whose owning tool must make it instead;
+                override CC_ALLOW_REFUSED_CALL=1, set by the owner for the session (process_guard_calls.py).
 
 A wrapper's command (`sudo`, `timeout`, `npx`, `uv run`, `dotenvx run --`, `docker exec <container>`: WRAPPERS) is the command.
 Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell and `<runner> ... -- <command>` (a command named
@@ -81,6 +79,7 @@ from process_guard_secrets import SECRET_DIRS, flush_secret_read, track_secret_r
 from process_guard_builds import rule_no_build_host  # noqa: E402
 from process_guard_github import rule_raw_gh  # noqa: E402
 from process_guard_d1 import rule_prod_d1_read  # noqa: E402
+from process_guard_calls import rule_refused_call  # noqa: E402
 
 CONFIG = guard_config("process_guard", {})
 HOME = os.path.expanduser("~")
@@ -303,7 +302,7 @@ class Command:
         self.via_xargs = "xargs" in self.prefix  # this command's arguments come from its stdin through xargs
         tee = [a for a in argv[1:] if not a.startswith("-")] if self.prog == "tee" else []
         self.writes = list(seg.writes) + tee  # files this command writes: redirection targets, and tee's arguments
-        self.heredocs = seg.heredocs  # heredoc and herestring bodies fed to its stdin
+        self.heredocs, self.inputs = seg.heredocs, seg.inputs  # heredoc and herestring bodies, and `< file` sources, fed to its stdin
         self.stashed = ctx.stashed  # this command pushed a stash before this point
 
     @property
@@ -882,7 +881,7 @@ def commands(src, cwd, remote=False, ctx=None):
 # ---------------------------------------------------------------------------------------
 # Rules. Each returns None, or (rule, summary, reason, override_variable or None).
 
-SESSION_ONLY = {"CC_ALLOW_BROADCAST_KILL", "CC_ALLOW_D1_SCAN"}  # the owner sets these for a session; an agent's command cannot
+SESSION_ONLY = {"CC_ALLOW_BROADCAST_KILL", "CC_ALLOW_D1_SCAN", "CC_ALLOW_REFUSED_CALL"}  # the owner sets these for a session; an agent's command cannot
 
 
 def flag_on(cmd, name):
@@ -1465,7 +1464,7 @@ def evaluate_full(payload):
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_no_build_host(cmd, classify_tool), rule_kill(cmd),
                     rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd),
-                    rule_prod_d1_read(cmd, read_local, script_text)):
+                    rule_prod_d1_read(cmd, read_local, script_text), rule_refused_call(cmd, script_text)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])
