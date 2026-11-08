@@ -40,11 +40,13 @@ Every metric is better smaller. Floor groups are declared in `GROUPS` in [census
 
 Normal commits may offset production growth with real text deletions anywhere except lockfiles; merges keep the per-area charge.
 Otherwise a new capability may grow: a reviewer other than its author checks that it is new, reuses nothing that exists and is proportionate, then posts the approval comment.
-The author keeps it in a private JSON record containing `repository` (exact origin URL), `base` (full object ID),
-`tree` (exact head tree), `areas` (every positive production delta), and `source` with `url`, `sha256` and the exact authorization `quote`.
+The scope it approves is `growth_scope(checkout, base, head)` in [census](census): `repository` (exact origin URL), `areas` (every positive production delta),
+and `patch`, the `git patch-id --verbatim` of base..head's production-candidate lines diffed with no context and no similarity score.
+Merging the moved base into the branch keeps the patch; any change to those lines, or to the lines they replace, moves it, a conflict's resolution included.
+The author keeps a private JSON record whose `source` has `url`, `sha256` and the exact authorization `quote`.
 The source URL names a GitHub issue/PR comment. Its complete body digest and quote must match; `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) verifies its author against the authenticated user.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
-That comment must contain a fenced `census-growth-approval` JSON block matching exactly `repository`, `base`, `tree` and `areas`, and the quote must carry the reviewer's words for that same scope, `Census growth approval for <repository>, base <base>, tree <tree>, areas <areas JSON>: <why>`, so a general or reused sentence, or an ask whose `<why>` is unwritten, approves nothing; several exact scopes may share a comment.
+That comment must contain a fenced `census-growth-approval` JSON block equal to the scope, and the quote must carry the reviewer's words for that same scope, `Census growth approval for <repository>, patch <patch>, areas <areas JSON>: <why>`, so a general or reused sentence, or an ask whose `<why>` is unwritten, approves nothing; several exact scopes may share a comment.
 Areas are `apps|products|packages|services|tools/<name>`, other top-level dirs, or `(root)`; a new area is charged like an existing one, only a repository's first commit grows from nothing, and cross-area renames charge only changed lines.
 A merge is charged only for its additions beyond both parents, excluding the merged branch's changes since their merge-base.
 Set local `census.growthApproval` to the private record for normal commit/push, or pass `--growth-approval` to `floors`; remove local config afterwards.

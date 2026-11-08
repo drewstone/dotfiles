@@ -96,31 +96,31 @@ def github(endpoint):
     return json.loads(run.stdout)
 
 
+def growth_scope(checkout, base, head, growth=None):
+    """What an approval names: origin, growing areas and the patch ID of base..head's production-candidate lines without context or similarity score."""
+    paths = [p for p in git(checkout, "diff", "--name-only", "--no-renames", "-z", base, head).decode().split("\0")[:-1] if C.candidate(p)]
+    diff = git(checkout, "--literal-pathspecs", "diff-tree", "-r", "-p", "-U0", "-M", "--indent-heuristic", base, head, "--", *paths) if paths else b""
+    return {"repository": git(checkout, "remote", "get-url", "origin").decode().strip(), "areas": {a: n for a, n in (growth or production_delta(checkout, base, head)[0]).items() if n > 0},
+            "patch": git(checkout, "patch-id", "--verbatim", data=re.sub(rb"(?m)^(dis)?similarity index .*\n", b"", diff)).decode()[:40]}
+
+
 def approved_growth(checkout, base, head, growth, approval=None):
-    """Only a sourced approval for this exact origin, base, tree and positive area deltas admits growth."""
+    """Only the record's sourced comment approving this exact origin, production patch and positive area deltas admits growth."""
     approval = approval or subprocess.run(["git", "-C", checkout, "config", "--local", "--path", "--get", "census.growthApproval"], capture_output=True).stdout.decode().strip()
     if not approval:
         return False
-    record = json.load(open(approval))
-    source = record.pop("source")
-    scope = {"repository": git(checkout, "remote", "get-url", "origin").decode().strip(),
-             "base": git(checkout, "rev-parse", "--verify", base).decode().strip(), "tree": tree_of(checkout, head),
-             "areas": {a: n for a, n in growth.items() if n > 0}}
-    if json.dumps(record, sort_keys=True) != json.dumps(scope, sort_keys=True) or not scope["areas"]:
-        raise Refused("growth approval does not match origin, base, tree and growing areas")
+    source, scope = json.load(open(approval))["source"], json.dumps(growth_scope(checkout, base, head, growth), sort_keys=True)
     match = re.fullmatch(r"https://github.com/([^/]+/[^/]+)/(?:issues|pull)/[1-9]\d*#issuecomment-([1-9]\d*)", source["url"])
     if not match:
         raise Refused("growth approval source must name a GitHub issue comment")
     comment = github(f"repos/{match[1]}/issues/comments/{match[2]}")
-    if (comment["html_url"] != source["url"] or comment["user"]["login"] != github("user")["login"] or
-            not source["quote"].strip() or source["quote"] not in comment["body"] or
-            hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
+    if (comment["html_url"] != source["url"] or comment["user"]["login"] != github("user")["login"] or not source["quote"].strip() or
+            source["quote"] not in comment["body"] or hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
         raise Refused("growth approval source author, quote or body digest does not match")
     blocks = {json.dumps(json.loads(block), sort_keys=True) for block in re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)}
-    words = {json.dumps(dict(repository=r, base=b, tree=t, areas=json.loads(a)), sort_keys=True) for r, b, t, a in re.findall(
-        r"Census growth approval for (\S+), base ([0-9a-f]{40}), tree ([0-9a-f]{40}), areas (\{[^{}]*\}): *(?!<why>)\S", source["quote"])}
-    if json.dumps(scope, sort_keys=True) not in blocks & words:
-        raise Refused('growth approval fetched source does not approve this scope in its block and in words written for it: "Census growth approval for <repository>, base <base>, tree <tree>, areas <areas JSON>: <why>"')
+    words = {json.dumps(dict(repository=r, patch=p, areas=json.loads(a)), sort_keys=True) for r, p, a in re.findall(r"Census growth approval for (\S+), patch ([0-9a-f]{40}), areas (\{[^{}]*\}): *(?!<why>)\S", source["quote"])}
+    if '"areas": {}' in scope or scope not in blocks & words:
+        raise Refused(f'growth approval fetched source does not approve scope {scope} in its block and in words written for it: "Census growth approval for <repository>, patch <patch>, areas <areas JSON>: <why>"')
     print(f"census: approved production growth from {source['url']}", file=sys.stderr)
     return True
 
