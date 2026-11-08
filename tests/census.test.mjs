@@ -109,6 +109,9 @@ test("a growth approval admits only a scope its reviewer's words name; a general
   const reused = ratchet('Owner, 2026-11-04: "You can push the PR even if it increases lines of code. I don\'t care."');
   assert.equal(reused.status, 2, reused.stderr);
   assert.match(reused.stderr, /does not approve this scope in its block and in words written for it/);
+  // A refusal's ask, the sentence with its <why> left for the reviewer, approves nothing however it is posted.
+  const ask = ratchet(`Census growth approval for ${scope.repository}, base ${scope.base}, tree ${scope.tree}, areas {"src": 2}: <why>`);
+  assert.equal(ask.status, 2, ask.stderr);
   const named = ratchet(`Census growth approval for ${scope.repository}, base ${scope.base}, tree ${scope.tree}, areas {"src": 2}: the parser is new and reuses nothing.`);
   assert.equal(named.status, 0, named.stderr);
   assert.match(named.stderr, /census: approved production growth from https:\/\/github.com\/o\/r\/pull\/1#issuecomment-7/);

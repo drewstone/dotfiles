@@ -118,7 +118,7 @@ def approved_growth(checkout, base, head, growth, approval=None):
         raise Refused("growth approval source author, quote or body digest does not match")
     blocks = {json.dumps(json.loads(block), sort_keys=True) for block in re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)}
     words = {json.dumps(dict(repository=r, base=b, tree=t, areas=json.loads(a)), sort_keys=True) for r, b, t, a in re.findall(
-        r"Census growth approval for (\S+), base ([0-9a-f]{40}), tree ([0-9a-f]{40}), areas (\{[^{}]*\}): *\S", source["quote"])}
+        r"Census growth approval for (\S+), base ([0-9a-f]{40}), tree ([0-9a-f]{40}), areas (\{[^{}]*\}): *(?!<why>)\S", source["quote"])}
     if json.dumps(scope, sort_keys=True) not in blocks & words:
         raise Refused('growth approval fetched source does not approve this scope in its block and in words written for it: "Census growth approval for <repository>, base <base>, tree <tree>, areas <areas JSON>: <why>"')
     print(f"census: approved production growth from {source['url']}", file=sys.stderr)
