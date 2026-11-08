@@ -655,7 +655,6 @@ test("env-dump refuses every command that prints environment values", () => {
     assert.equal(decide(command), "deny", command);
     assert.match(reason(command), /env-dump/, command);
   }
-  assert.match(reason("env | grep APP_"), /cut -d= -f1/);
 });
 
 // 2026-11-04: the commands one lane ran over a secret_dirs directory, whose files hold a raw value and no NAME=.
@@ -683,12 +682,11 @@ test("env-dump refuses printing a secret file, whatever filter follows, and allo
 
 test("env-dump allows names, counts, fingerprints, non-secret names and env used to run a command", () => {
   for (const command of [
-    "env | cut -d= -f1", "env | cut -d'=' -f1 | grep APP_", "env | grep APP_ | cut -d= -f1",
-    "env | sed 's/=.*//'", "env | awk -F= '{print $1}'", "env | wc -l", "env FOO=1 node x.js",
+    "env | wc -l", "env FOO=1 node x.js",
     "env -u FOO bash -c 'echo hi'", "/usr/bin/env python3 x.py", "printenv HOME", "printenv PATH",
     "printenv APP_RUN_ID APP_ROOT_RUN_ID", "echo $HOME", "echo ${#GH_TOKEN}", "set -euo pipefail",
     "export FOO=bar", "declare -x FOO=bar", "printf %s \"$GH_TOKEN\" | sha256sum",
-    "tr '\\0' ' ' < /proc/1/cmdline", "tr '\\0' '\\n' < /proc/1/environ | cut -d= -f1",
+    "tr '\\0' ' ' < /proc/1/cmdline", "grep -zoE '^[A-Za-z_][A-Za-z0-9_]*=' /proc/1/environ | tr '\\0' '\\n'",
     // 10-19..26 refusals: exact non-secret names, and -o of names that stops at `=`.
     "cat /proc/612912/environ | tr '\\0' '\\n' | grep -E '^(LAB_HOST_ROOT|TMPDIR)='",
     "tr '\\0' '\\n' < /proc/$p/environ | grep -E '^BRIDGE_DATA_DIR=|^PORT=|^BRIDGE_PORT='",
@@ -704,8 +702,7 @@ test("env-dump allows env that is not the command, redacted values and non-secre
   for (const command of [
     "ls ~/.config/acme/env | grep -i SANDBOX", "[ -f $d/env ] && echo exists",
     "printf '%s\\n' '#!/usr/bin/env bash' 'echo hi' > /tmp/x.sh", "mytool env 2>&1 | cut -d= -f1",
-    "cat > ~/.config/acme/env/.ACME_SANDBOX_KEY.new", "env | grep -i JOB | sed 's/=.*/=<set>/'",
-    "printenv | grep -E '^APP' | sed -E 's/=.*/=<redacted>/'", "printf '%s\\n' \"$CLAUDE_CODE_SESSION_ID\"",
+    "cat > ~/.config/acme/env/.ACME_SANDBOX_KEY.new", "printf '%s\\n' \"$CLAUDE_CODE_SESSION_ID\"",
     "echo \"keeper $SANDBOX_KEY_FILE\"", "echo \"key name: $KEYNAME\"",
     "env | grep -oE \"^(APP|SANDBOX)_[A-Z_]*(KEY|TOKEN)\" | head -5", "env | grep -c APP_",
     "cat /proc/1653568/environ | tr '\\0' '\\n' | grep -c UV_THREADPOOL_SIZE", "grep -l c39862803b /proc/3469945/environ",
@@ -714,6 +711,7 @@ test("env-dump allows env that is not the command, redacted values and non-secre
     assert.equal(decide(command), "allow", command);
   }
   for (const command of ["env | sed -E 's/(KEY|TOKEN)=.*/\\1=<redacted>/'", "echo $SESSION_TOKEN", "do env | grep X",
+    "env | grep -i JOB | sed 's/=.*/=<set>/'", "printenv | grep -E '^APP' | sed -E 's/=.*/=<redacted>/'",
     "env | grep -o 'KEY=.*'", "tr '\\0' '\\n' < /proc/866036/environ | grep -E '^(TMPDIR|NODE_OPTIONS)'"]) {
     assert.equal(decide(command), "deny", command);
   }
@@ -726,7 +724,7 @@ test("env-dump: 2>/dev/null, a $( ) inside echo and *_SOCK paths no longer refus
     "tr '\\0' '\\n' < /proc/1967152/environ 2>/dev/null | grep -E \"^NODE_OPTIONS=\" | cut -c1-300",
     "P=$(tmux display -p -t %561 '#{pane_pid}'); for c in $P $(pgrep -P $P); do tr '\\0' '\\n' < /proc/$c/environ 2>/dev/null | grep -E \"^APP_RUN_ID=|^APP_PROJECT=|^APP_OPERATOR=\"; done | sort -u",
     "tr '\\0' '\\n' < /proc/2971658/environ 2>/dev/null | grep -e '^KEEPER_ROOT=' -e '^LAB_NAME=' -e '^LAB_ROOT='",
-    "env 2>/dev/null | cut -d= -f1",
+    "env 2>/dev/null | wc -l",
     "for u in /hosts /admin/hosts; do echo \"$u: $(curl -s -m 10 -o /dev/null -w \"%{http_code}\" -H \"Authorization: Bearer $ADMIN_API_KEY\" http://127.0.0.1:4096$u)\"; done",
     "git config --global --get-regexp '^url\\.'; ls -la $SSH_AUTH_SOCK 2>&1 | head -1; echo $SSH_AUTH_SOCK",
     "env | grep -o '^[A-Z_]*\\(KEY\\|TOKEN\\)[A-Z_]*' | head", "env | grep -o \"^HCLOUD[A-Z_]*\\|^CLOUD[A-Z_]*\"",
@@ -743,18 +741,27 @@ test("env-dump: 2>/dev/null, a $( ) inside echo and *_SOCK paths no longer refus
   }
 });
 
-test("env-dump: the refusal prints the agent's own pipeline with a trailing cut, which passes", () => {
-  for (const [command, fix] of [
-    ["env | grep -i factory | head", "env | grep -i factory | head | cut -d= -f1"],
-    ["tr '\\0' '\\n' < /proc/3305948/environ | grep -iE \"Environment|ExecStart\"",
-      "tr '\\0' '\\n' < /proc/3305948/environ | grep -iE 'Environment|ExecStart' | cut -d= -f1"],
-    ["printenv | sort", "printenv | sort | cut -d= -f1"],
-  ]) {
-    assert.ok(reason(command).includes("`" + fix + "`"), reason(command));
-    assert.equal(decide(fix), "allow", fix);
+// 2026-11-08: an agent ran the refusal's own names-only hint inside `dotenvx run -- sh -c`, and four multi-line JSON values
+// printed their token lines. A continuation line holds no NAME=, so cut, sed and awk print it whole. Each filter runs here on
+// a fake multi-line value: a filter whose output holds the value is refused, and the forms the refusal names print none.
+test("env-dump: a names-only filter prints no line of a multi-line value; the 11-08 replay is refused", () => {
+  const value = '{\n  "tokens": {\n    "access_token": "fake-access-0000",\n    "refresh_token": "fake-refresh-0000"\n  }\n}';
+  const shown = (command) => spawnSync("bash", ["-c", command], { env: { PATH: process.env.PATH, APP_AUTH_JSON: value }, encoding: "utf8" }).stdout;
+  const replay = `cd ~/vault && dotenvx run -q -f vault.env -- sh -c 'env | cut -d= -f1' | grep -iE "key|token|router|app" | sort | head -60`;
+  for (const filter of ["cut -d= -f1", "cut -d'=' -f1", "sed 's/=.*//'", "sed 's/=.*/=<set>/'", "awk -F= '{print $1}'"]) {
+    assert.match(shown(`env | ${filter}`), /fake-refresh-0000/, filter);
+    check([`env | ${filter}`, `printenv | sort | ${filter}`, `tr '\\0' '\\n' < /proc/1/environ | ${filter}`,
+      `dotenvx run -f vault.env -- sh -c 'env | ${filter.replaceAll("'", "\"")}'`], "deny");
   }
-  assert.ok(!reason("echo $GH_TOKEN").includes("$GH_TOKEN | cut"));
-  assert.ok(!reason("cut -d= -f1 ~/.config/acme/env/X").includes("X | cut"));
+  check([replay, "dotenvx run -f vault.env -- printenv", "dotenvx run -f vault.env -- env | grep -i token"], "deny");
+  for (const text of ["`bash -c 'compgen -e'`", "`grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' <file>`"]) {
+    for (const command of [replay, "env | grep APP_", "printenv | sort"]) assert.ok(reason(command).includes(text), reason(command));
+  }
+  for (const safe of ["compgen -e", "bash -c 'compgen -e' | sort", "env | grep -oE '^[A-Za-z_][A-Za-z0-9_]*='", "env | wc -l"]) {
+    assert.doesNotMatch(shown(safe), /fake-/, safe);
+  }
+  check(["compgen -e", "bash -c 'compgen -e' | sort", "env | wc -l", "grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' vault.env",
+    `cd ~/vault && dotenvx run -q -f vault.env -- bash -c 'compgen -e' | grep -iE "key|token" | sort | head -60`], "allow");
 });
 
 test("env-dump override is the owner's session flag, not a command-line assignment", () => {
