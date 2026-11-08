@@ -19,7 +19,8 @@ import tempfile
 ROOT = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else pathlib.Path(__file__).resolve().parents[1]
 HOOKS = ROOT / "git/hooks"
 CENSUS = ROOT / "git/census/census"
-GH = runpy.run_path(str(CENSUS))["GH"]  # the GitHub CLI census verifies approvals through
+CENSUS_MODULE = runpy.run_path(str(CENSUS))
+GH = CENSUS_MODULE["GH"]  # the GitHub CLI census verifies approvals through
 SOURCE = json.loads(pathlib.Path(sys.argv[1]).read_text())
 
 
@@ -52,14 +53,15 @@ def fixture(scratch, name, files, changed, areas):
     for path, text in changed.items():
         write(repo, path, text)
     run(repo, "git", "add", "-A")
-    record = {"repository": str(remote), "base": run(repo, "git", "rev-parse", "HEAD"),
-              "tree": run(repo, "git", "write-tree"), "areas": areas}
+    base, tree = run(repo, "git", "rev-parse", "HEAD"), run(repo, "git", "write-tree")
+    record = {**CENSUS_MODULE["growth_scope"](str(repo), base, tree), "base": base, "tree": tree}
+    assert record["areas"] == areas and record["repository"] == str(remote), record
     return repo, record
 
 
 def approval(repo, record, source):
     path = repo.parent / f"{repo.name}-approval.json"
-    record = {**record, "source": source}
+    record = {**record, "source": source}  # the census reads only the source
     path.write_text(json.dumps(record))
     run(repo, "git", "config", "--local", "census.growthApproval", str(path))
     return path, record
@@ -105,9 +107,9 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     assert original["user"]["login"] == json.loads(run(scratch, GH, "api", "user"))["login"]
     assert SOURCE["quote"] in original["body"] and hashlib.sha256(original["body"].encode()).hexdigest() == SOURCE["sha256"]
     body = f"Normal-hook qualification. Existing requester authorization: {SOURCE['url']}\n\n{SOURCE['quote']}\n\n"
-    body += "".join(f"Census growth approval for {r['repository']}, base {r['base']}, tree {r['tree']}, areas {json.dumps(r['areas'])}: qualification.\n"
+    body += "".join(f"Census growth approval for {r['repository']}, patch {r['patch']}, areas {json.dumps(r['areas'])}: qualification.\n"
                     for _, r in (exact, large, function, copies)) + "\n"
-    body += "\n\n".join("```census-growth-approval\n" + json.dumps(record, indent=2, sort_keys=True) + "\n```" for _, record in (exact, large, function, copies))
+    body += "\n\n".join("```census-growth-approval\n" + json.dumps({k: record[k] for k in ("repository", "patch", "areas")}, indent=2, sort_keys=True) + "\n```" for _, record in (exact, large, function, copies))
     comment = json.loads(run(scratch, GH, "api", f"repos/{match[1]}/issues/{match[2]}/comments", "--method", "POST", "--input", "-", data=json.dumps({"body": body})))
     source = {"url": comment["html_url"], "sha256": hashlib.sha256(comment["body"].encode()).hexdigest(), "quote": comment["body"].split("```")[0].strip()}
     print(f"Qualification scope source: {source['url']}")
@@ -115,9 +117,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     repo, scope = exact
     commit(repo, status=1, contains="src gains 1 production lines")
     path, record = approval(repo, scope, source)
-    for field, value in (("repository", "wrong"), ("base", "0" * 40), ("tree", "0" * 40), ("areas", {"other": 1}), ("areas", {"src": True})):
-        path.write_text(json.dumps({**record, field: value}))
-        commit(repo, status=1, contains="growth approval does not match")
     for field, value in (("url", "https://example.invalid/approval"), ("sha256", "0" * 64), ("quote", "missing explicit authorization")):
         bad = copy.deepcopy(record)
         bad["source"][field] = value
@@ -126,10 +125,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     path.write_text(json.dumps(record))
     write(repo, "src/extra.py", "third = 3\n")
     run(repo, "git", "add", "-A")
-    commit(repo, status=1, contains="growth approval does not match")
-    fresh = {**scope, "tree": run(repo, "git", "write-tree"), "areas": {"src": 2}}
-    approval(repo, fresh, source)
-    commit(repo, status=1, contains="fetched source does not approve this scope")
+    commit(repo, status=1, contains="fetched source does not approve scope")
     run(repo, "git", "rm", "-q", "--cached", "src/extra.py")
     (repo / "src/extra.py").unlink()
     path.write_text(json.dumps(record))
@@ -145,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     write(repo, "src/main.py", "value = 1\nsecond = 2\nfourth = 4\n")
     run(repo, "git", "add", "-A")
     commit(repo, status=1, contains="src gains 1 production lines")
-    print("PASS: exact comment-bound scope; forged fresh local scope refused; normal commit/range/push; truthful Census")
+    print("PASS: exact comment-bound scope; a further production line refused; normal commit/range/push; truthful Census")
 
     repo, scope = large
     approval(repo, scope, source)
