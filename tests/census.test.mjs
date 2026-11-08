@@ -11,7 +11,9 @@ import assert from "node:assert/strict";
 const hooks = resolve("git/hooks");
 const census = resolve("git/census/census");
 const scratch = mkdtempSync(join(tmpdir(), "census-test-"));
-const env = { ...process.env, NODE_PATH: join(scratch, "ts/node_modules"), XDG_CACHE_HOME: join(scratch, "cache") };
+// Fixture commits carry their own identity: a check may run these with a HOME that has none.
+const env = { ...process.env, NODE_PATH: join(scratch, "ts/node_modules"), XDG_CACHE_HOME: join(scratch, "cache"),
+  GIT_AUTHOR_NAME: "f", GIT_AUTHOR_EMAIL: "f@example.invalid", GIT_COMMITTER_NAME: "f", GIT_COMMITTER_EMAIL: "f@example.invalid" };
 after(() => rmSync(scratch, { recursive: true, force: true }));
 before(() => {
   const require = createRequire(import.meta.url);
@@ -34,7 +36,7 @@ function repo(files) {
   git("config", "core.hooksPath", "/dev/null");
   write(dir, files);
   git("add", "-A");
-  git("-c", "user.email=f@example.invalid", "-c", "user.name=f", "commit", "-qm", "base");
+  git("commit", "-qm", "base");
   return { dir, git };
 }
 function write(dir, files) {
@@ -58,7 +60,7 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   const commit = (files, message) => {
     write(dir, files);
     git("add", "-A");
-    git("-c", "user.email=f@example.invalid", "-c", "user.name=f", "commit", "-qm", message);
+    git("commit", "-qm", message);
   };
   git("checkout", "-qb", "branch");
   mkdirSync(join(dir, "lib"));
