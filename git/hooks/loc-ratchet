@@ -45,8 +45,8 @@ def main():
         head = census.git(".", "write-tree").decode().strip()
         merge = census.optional_ref(".", "MERGE_HEAD")
     growth, oversized = census.production_delta(".", base, head, merge)
-    grown = {a: n for a, n in growth.items() if n > 0 and
-             (a == "(root)" or census.git(".", "ls-tree", "-d", "--name-only", base, "--", a).strip())}
+    # Every area that gains production lines is charged, a new one too; only a repository's first commit grows from nothing.
+    grown = {a: n for a, n in growth.items() if n > 0 and census.git(".", "ls-tree", base).strip()}
     # A merge keeps its per-area charge.
     net = None if merge or not grown else net_lines(base, head)
     if (oversized or grown and (net is None or net > 0)) and third_party_fork():

@@ -85,6 +85,21 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   assert.match(evil.stderr, /src\/big\.py: 1006 lines \(was 997\)/);
 });
 
+test("a new area's production growth is charged like an existing area's; only a repository's first commit is free", () => {
+  const { dir, git } = repo({ "src/a.py": "a = 1\n", "NOTES.md": "one\n" });
+  write(dir, { "benchmarks/run.py": "b = 1\nc = 2\n" });
+  git("add", "-A");
+  const grown = run(dir, join(hooks, "loc-ratchet"), []);
+  assert.equal(grown.status, 1, grown.stderr);
+  assert.match(grown.stderr, /benchmarks gains 2 production lines and the change adds 2 net lines/);
+  const first = join(scratch, `repo-${repos++}`);
+  mkdirSync(first);
+  run(first, "git", ["init", "-q", "-b", "main"]);
+  write(first, { "src/a.py": "a = 1\n" });
+  run(first, "git", ["add", "-A"]);
+  assert.equal(run(first, join(hooks, "loc-ratchet"), []).status, 0);
+});
+
 test("census floors measure a sparse worktree against its base and refuse a rise in production lines and copies", () => {
   const body = lines(12, (i) => `  total += values[${i}] * ${i + 2}`);
   const { dir, git } = repo({ "a/x.ts": `export function x(values: number[]) {\n  let total = 0\n${body}  return total\n}\n`, "b/z.ts": "export const z = 1\n" });
