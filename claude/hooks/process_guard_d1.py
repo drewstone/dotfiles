@@ -55,7 +55,7 @@ def sql_in(text):
 def wrangler_d1(argv):
     """(database, --env, --command, --file) of a remote `wrangler d1 execute`, else None."""
     i = next((k for k, w in enumerate(argv) if re.match(r"wrangler(?:@\S*)?$", os.path.basename(w))), None)
-    if i is None or argv[i + 1:i + 3] != ["d1", "execute"] or "--remote" not in argv or "--local" in argv:
+    if i is None or argv[i + 1:i + 3] != ["d1", "execute"] or "--remote" not in argv:
         return None
     opts, db, args, k = {}, None, argv[i + 3:], 0
     while k < len(args):
