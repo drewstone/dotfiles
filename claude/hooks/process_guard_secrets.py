@@ -1,5 +1,5 @@
 """Process-guard rule for secret files: each file under a guard-config `process_guard.secret_dirs` directory (a path
-under home) holds one raw value and no NAME=, so `cut -d= -f1`, which keeps only names from `env`, prints the secret.
+under home) holds one raw value and no NAME=, so `cut -d= -f1`, which keeps the text before `=`, prints the secret.
 `secret_dir_public` is a regex of the file names there that hold no secret.
 
 A read is refused only when its bytes reach the transcript: every stage they flow through is a filter that keeps

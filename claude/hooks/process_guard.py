@@ -38,9 +38,10 @@ Each rule below replays a command agents actually ran while their briefs said no
 
   env-dump      printing environment VALUES into the transcript: bare `env`/`printenv`/`export -p`/`declare -x`/`set`,
                 `env | grep X`, /proc/<pid>/environ, `printenv KEY` or `echo $X_TOKEN` of a secret-named variable, env written
-                to a file, and a read of a secret file (process_guard_secrets.py). Names only (`cut -d= -f1`, `sed 's/=.*//'`,
-                awk, `wc`, `grep -o '^(A|B)='`), exact non-secret names (`grep '^(PORT|TMPDIR)='`, `printenv PORT`), a
-                non-command `env` and `env VAR=x cmd` pass; override CC_ALLOW_ENV_DUMP=1, set by the owner for the session.
+                to a file, and a read of a secret file (process_guard_secrets.py). Names (`compgen -e`, `grep -o '^(A|B)='`),
+                counts (`wc`), exact non-secret names (`grep '^(PORT|TMPDIR)='`, `printenv PORT`), a non-command `env` and
+                `env VAR=x cmd` pass, but not `cut -d= -f1`, sed or awk: a multi-line value's later lines hold no NAME=.
+                Override CC_ALLOW_ENV_DUMP=1, set by the owner for the session.
 
   ledger-write  a shell write (`>>`, `tee -a`, `>`) into a file matching `ledgers`, a regex, around the checked append
                 `ledger_hint` names. Override: CC_ALLOW_LEDGER_WRITE=1 in the command, for a repair the owner approved.
@@ -52,12 +53,12 @@ Each rule below replays a command agents actually ran while their briefs said no
                 wakes the caller when it ends, so its result sits unread. Launch the gate itself with
                 run_in_background. Override: CC_ALLOW_DETACHED_GATE=1 on the gate command.
 
-Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell and `<runner> ... -- <command>` (a command
-named in `remote_runners`) are parsed too (an admin merge run on another host has the same effect on GitHub); the build
-rules skip remote commands. So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`,
-`ssh host bash -s < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root. A repository's
-own scripts are not read. Operator values (hosts, commands, secret stores) come from the "process_guard" entry of
-~/.claude/guard-config.json; a rule whose key is absent stays off.
+Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell, `dotenvx|op|doppler|infisical run ... -- <command>`
+and `<runner> ... -- <command>` (a command named in `remote_runners`) are parsed too (an admin merge run on another host has
+the same effect on GitHub); the build rules skip remote commands. So are ad-hoc scripts the command runs (`bash x.sh`,
+`./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host bash -s < x.sh`) when a heredoc in the same command wrote them or they
+sit under a temp root. A repository's own scripts are not read. Operator values (hosts, commands, secret stores) come from
+the "process_guard" entry of ~/.claude/guard-config.json; a rule whose key is absent stays off.
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
 redacted. Fail-open: an unparsable payload exits 0 with no output.
 """
@@ -685,15 +686,9 @@ def env_dump(seg, argv):
 
 
 def env_names_only(argv):
-    """A pipeline stage that keeps only variable names (or counts), so values never print."""
+    """A pipeline stage that prints no value: a count, a fingerprint or a grep for names. A multi-line value's later lines
+    hold no NAME=, so a filter that keeps the text before `=` (cut -d= -f1, sed 's/=.*//', awk -F=) prints them whole."""
     prog, args = (os.path.basename(argv[0]), argv[1:]) if argv else ("", [])
-    if prog == "cut":
-        joined = " ".join(args)
-        return bool(re.search(r"-d\s*=|--delimiter[= ]=", joined)) and bool(re.search(r"(?:-f\s*|--fields[= ])1\b(?!\s*[-,])", joined))
-    if prog == "sed":
-        return any(re.match(r"^s(.)=\.\*\$?\1[^\\&]*\1g?$", a) for a in args)  # also s/=.*/=<set>/
-    if prog == "awk":
-        return any(a in ("-F=", "-F", "=") for a in args) and any(re.search(r"print\s+\$1\b\s*}", a) for a in args)
     flags = "".join(a[1:] for a in args if re.match(r"^-[a-zA-Z]+$", a))
     pat = "|".join(b for a, b in zip(args, args[1:]) if a == "-e") or next((a for a in args if a[:1] != "-"), "")
     if prog in ("grep", "egrep", "rg"):  # counts, file names, -o of an anchored name pattern, or exact non-secret names
@@ -874,6 +869,8 @@ def commands(src, cwd, remote=False, ctx=None):
                         result.extend(nested(body, None, True, sub, source))
         elif prog == "eval":
             result.extend(commands(" ".join(argv[1:]), ctx.cwd, ctx.remote, ctx))
+        elif prog in ("dotenvx", "op", "doppler", "infisical") and argv[1:2] == ["run"] and "--" in argv:  # with secrets
+            result.extend(commands(shlex.join(argv[argv.index("--") + 1:]), ctx.cwd, ctx.remote, ctx))
         elif prog in CONFIG.get("remote_runners", []) and "--" in argv:
             sub = Context(None, True, events=ctx.events)
             sub.vars.update(merged)
@@ -1530,12 +1527,12 @@ def rule_env_dump(events):
     found = [e[1] for e in events if e[0] == "env-dump"]
     if not found:
         return None
-    fix = (f"{found[0]} | cut -d= -f1" if re.match(r"(?:env|printenv|(?!read )[^|>]*/environ[^|>]*)(?: \||$)", found[0]) and " > " not in
-           found[0] else "env | cut -d= -f1")  # env, printenv or a /proc environ read: a trailing cut keeps names
     return ("env-dump", "print of environment values",
-            f"This command prints environment values (`{found[0]}`), and the transcript keeps them. Print the names (`{fix}`) or one "
-            "non-secret variable (`printenv NAME`); check a key by its length (`${#VAR}`) or `printf %s \"$VAR\" | sha256sum`. "
-            + "".join(f"A ~/{d} file holds one raw value, so `cut -d= -f1` prints it: use `ls`, `wc -c` or `sha256sum`. " for d in SECRET_DIRS)
+            f"This command prints environment values (`{found[0]}`), and the transcript keeps them. `cut -d= -f1`, `sed` and `awk` "
+            "print a multi-line value's later lines whole. Print the names with `bash -c 'compgen -e'` (also after `dotenvx run -f "
+            "<file> --`), a dotenvx file's names with `grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' <file>`, or one non-secret variable "
+            "(`printenv NAME`); check a key by its length (`${#VAR}`) or `printf %s \"$VAR\" | sha256sum`. "
+            + "".join(f"A ~/{d} file holds one raw value, which a filter prints: use `ls`, `wc -c` or `sha256sum`. " for d in SECRET_DIRS)
             + "The owner can allow it for a session with CC_ALLOW_ENV_DUMP=1 (logged).", "CC_ALLOW_ENV_DUMP")
 
 
