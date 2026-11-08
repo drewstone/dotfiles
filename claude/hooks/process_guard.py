@@ -59,7 +59,7 @@ commands. So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source
 < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root. A repository's own scripts are not
 read. Operator values (hosts, commands, secret stores) come from guard-config.json's "process_guard"; absent keys: rule off.
 Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
-redacted. Fail-open: an unparsable payload exits 0 with no output.
+redacted. Only a payload that is not JSON passes unread (exit 0, no output); a command no rule can read is refused.
 """
 import datetime
 import glob
@@ -1545,8 +1545,8 @@ def main():
     try:
         payload = json.loads(sys.stdin.read())
         findings, warnings = evaluate_full(payload)
-    except Exception:
-        return 0
+    except Exception as exc:  # refuse what no rule can read: failing open let one `$( )` nested 400 deep turn every rule off
+        findings, warnings = [("unreadable", "", f"No rule can read this command ({type(exc).__name__}); split it.", None, False)] * ("payload" in locals()), []
     denied = [f for f in findings if not f[4]]
     bypassed = [f for f in findings if f[4]]
     for rule, *_ in bypassed:
