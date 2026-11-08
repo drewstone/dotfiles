@@ -45,7 +45,7 @@ The author keeps it in a private JSON record containing `repository` (exact orig
 The source URL names a GitHub issue/PR comment. Its complete body digest and quote must match; `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) verifies its author against the authenticated user.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
 That comment must contain a fenced `census-growth-approval` JSON block matching exactly `repository`, `base`, `tree` and `areas`; several exact scopes may share a comment.
-Areas are `apps|products|packages|services|tools/<name>`, other top-level dirs, or `(root)`; cross-area renames charge only changed lines.
+Areas are `apps|products|packages|services|tools/<name>`, other top-level dirs, or `(root)`; a new area is charged like an existing one, only a repository's first commit grows from nothing, and cross-area renames charge only changed lines.
 A merge is charged only for its additions beyond both parents, excluding the merged branch's changes since their merge-base.
 Set local `census.growthApproval` to the private record for normal commit/push, or pass `--growth-approval` to `floors`; remove local config afterwards.
 [The normal-hook qualification](../../tests/census-growth.integration.py) exercises the record format and source binding.
