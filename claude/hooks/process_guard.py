@@ -1547,8 +1547,8 @@ def main():
         findings, warnings = evaluate_full(payload)
     except Exception as exc:  # refuse what no rule can read: failing open let one `$( )` nested 400 deep turn every rule off
         findings, warnings = [("unreadable", "", f"No rule can read this command ({type(exc).__name__}); split it.", None, False)] * ("payload" in locals()), []
-    denied = [f for f in findings if not f[4]]
-    bypassed = [f for f in findings if f[4]]
+    denied = [f for f in findings if not f[4] or f[3] == "CC_ALLOW_REFUSED_CALL"]  # a child agent inherits it: no env flag buys
+    bypassed = [f for f in findings if f not in denied]
     for rule, *_ in bypassed:
         log("BYPASS", rule, payload)
     if denied:
