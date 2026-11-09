@@ -1,7 +1,7 @@
 # UI delivery evidence
 
 Use this for product UI, websites, documentation widgets, charts, visual assets, and visible CLI interactions.
-The PR must let a reviewer see the changed user experience.
+Captures attach to the PR when available; the required proof is the post-deploy [production recording](#production-proof-is-a-video).
 
 ## Before implementation
 
@@ -10,7 +10,7 @@ Use a safe account or fixture, and exclude credentials and unrelated personal da
 Record the source revision, URL or execution target, viewport, theme, and starting state.
 When the prior surface no longer exists, name that gap and link the retained artifact.
 
-## Before opening the PR
+## Captures, when available
 
 Attach before and after screenshots at matching viewports and states.
 Include desktop and phone images when the surface supports both.
@@ -33,8 +33,7 @@ Name the source revision, execution target, missing coverage, and observed failu
 Link the preview URL or an artifact the user can open.
 Attach the media to the PR and final delivery; local file paths alone are insufficient for remote reviewers.
 A test count, build log, or deployment acknowledgement does not replace product evidence.
-Resolve defects visible in the captures before merging.
-For a production claim, check the served artifact and affected user flow after deployment.
+After deployment, record the served flow as below; a defect the recording shows becomes a fix-forward PR.
 
 ## Production proof is a video
 
