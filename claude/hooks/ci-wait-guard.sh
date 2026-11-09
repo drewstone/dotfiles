@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # PreToolUse(Bash) block for waiting on PR CI.
 #
-# Policy (AGENTS.md): the local gate is the merge gate. After it passes, merge
-# or enable auto-merge and move on; CI failures are fixed forward. A warning was
-# tried and ignored, so this denies.
+# Policy (AGENTS.md rule 11): merge on push. The repo's gate runs before a deploy,
+# never before a merge, and CI failures are fixed forward. A warning was tried and
+# ignored, so this denies.
 #
 # Scope: `gh pr checks --watch`; any sleep loop around `gh pr checks` or
 # `gh pr view ... statusCheckRollup` (gh or a gh-<name> wrapper). A wait on a
@@ -62,10 +62,9 @@ def deny(reason):
 watch = re.search(GH + r"pr\s+checks\b[^\n|;&]*--watch", cmd)
 poll_target = re.search(GH + r"(?:pr\s+checks|pr\s+view[^\n]*statusCheckRollup)", cmd)
 if watch or (poll_target and loop):
-    deny("ci-wait-guard: do not wait on PR CI. The local gate "
-         "(merge base, frozen install, typecheck, affected tests) is the merge gate. "
-         "Merge, or enable auto-merge, then continue other work; fix CI failures "
-         "forward. A deploy, release or publish run is delivery: `gh run watch <id> --exit-status`.")
+    deny("ci-wait-guard: do not wait on PR CI. The repo's gate runs before a deploy, never "
+         "before a merge. Merge, then continue other work; fix CI failures forward. "
+         "A deploy, release or publish run is delivery: `gh run watch <id> --exit-status`.")
 sys.exit(0)
 PY
 

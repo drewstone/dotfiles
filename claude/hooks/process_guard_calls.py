@@ -32,8 +32,8 @@ LAUNCHERS = {"claude", "codex", "opencode", "tmux", "screen", "systemd-run", *CO
 GRANT = re.compile(r"(?<![$\w{])CC_ALLOW_\w+(?:['\"]\]?)?\s*[:=](?!=)|\b(?:set-?env(?:ironment)?|setdefault|putenv)\b.*\bCC_ALLOW_")
 TARGET = re.compile(r"(?:^|/)(?:settings[\w.-]*\.json|\.\w*(?:rc|env|profile))\b")
 GRANT_WHY = ("A CC_ALLOW_* in a process's environment lifts that rule for every command of the agents and shells it starts, so it "
-             "is never handed to a child, a settings file or a profile. Put a per-command flag on the one command it is for "
-             "(`CC_ALLOW_FORCE_PUSH=1 git push ...`); session flags are the owner's, set before the session starts.")
+             "is never handed to a child, a settings file or a profile. Put a per-command flag on the one command it is for; "
+             "session flags are the owner's, set before the session starts.")
 
 
 def rule_refused_page(payload):

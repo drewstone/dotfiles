@@ -24,7 +24,7 @@ Scope:    <repo and worktree>; files you own: <...>; out of scope: <...>
 Constraints, all binding:
   [ ] no force-push, no `gh pr merge --admin`, no `--no-verify`, no change to Git identity
   [ ] never print, log or paste a secret; read keys from their vault
-  [ ] a chat or prompt change runs the full suite before merge, not only affected tests
+  [ ] the repo's gate selects the full suite for prompt or chat paths and runs before a deploy, never before a merge
   [ ] no new unit or mock tests, and a unit or mock test broken by a new API is deleted, not updated; prove with integration tests and a live proof
   [ ] <this task's limits: spend, production state, who approves what>
 Safety, required when the change can delete data, send bytes off a box, or change a release gate:
@@ -60,7 +60,6 @@ Before committing, check Git identity; report a mismatch instead of changing it 
 Fetch the PR target, verify `git merge-tree --write-tree BASE HEAD`, and resolve conflicts.
 Use Conventional Commits and repository hooks; dotfiles git/install.sh owns global hooks.
 Write a multi-line commit or PR message to a file and pass it with `git commit -F <file>` or `--body-file <file>`; an inline `-m` with unbalanced quotes ran message text as shell commands.
-Use the [shared merge gate](../../claude/AGENTS.md#ship); apply authorized waivers through the permitted path.
 
 One accountable owner carries each coherent PR and all its outcomes through review, merge, release, and requested consumer proof.
 After a push, read available comments, reviews, and inline threads; fix actual findings without waiting for optional automation.

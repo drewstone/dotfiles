@@ -9,8 +9,8 @@ Each rule below replays a command agents actually ran while their briefs said no
                 naming a gh other than the shim (first gh on PATH, a script) outside path probes and --version/help; `command -p`,
                 `env -i` or a PATH whose first gh is not the shim; `which -a gh`; a `raw_gh` variable; `gh auth token`; `dotenvx get`
                 of a `github_tokens` name; curl/wget/httpie/python/node sending api.github.com a token or write. No override; `raw_gh_instead`: what to run.
-  force-push    `git push -f`, `--force-with-lease`, `+refspec`, mostly to amend an agent's own fresh branch.
-                AGENTS.md: it needs the owner's explicit authorization. The command (or the owner, session-wide) sets CC_ALLOW_FORCE_PUSH=1.
+  force-push    `git push -f`, `--force-with-lease`, `+refspec`, mostly to amend an agent's own fresh branch. No flag lifts
+                it; the owner runs a force-push in their own terminal.
   hooks-bypass  `git -c core.hooksPath=/dev/null commit`, `-c core.hooksPath=.husky commit`,
                 `commit --no-verify`, GIT_CONFIG_* overrides and `git config core.hooksPath` skip the global privacy,
                 secret and commit-msg hooks. A throwaway fixture repo (under a temp dir with no remote, or created by
@@ -989,11 +989,9 @@ def rule_force_push(cmd):
     if not hit:
         return None
     return ("force-push", f"git push {hit}",
-            f"Force push refused (`{hit}`): it rewrites published history, and force-push needs the owner's explicit "
-            "authorization. Push new commits instead: commit the fix (not --amend) and `git push origin HEAD:<branch>`; "
-            "bring the base in with `git merge origin/<base>`; to start a branch over, push it under a new name. "
-            "Set CC_ALLOW_FORCE_PUSH=1 only with the owner's authorization for this push: rerun it as "
-            "`CC_ALLOW_FORCE_PUSH=1 git push ...` (logged).", "CC_ALLOW_FORCE_PUSH")
+            f"Force push refused (`{hit}`): it rewrites published history. Push new commits instead: commit the fix (not "
+            "--amend) and `git push origin HEAD:<branch>`; bring the base in with `git merge origin/<base>`; to start a branch "
+            "over, push it under a new name. No flag lifts this: the owner runs a force-push in their own terminal.", None)
 
 
 HOOK_SUBCOMMANDS = {"commit", "push", "merge", "pull", "rebase", "am", "cherry-pick", "revert"}
@@ -1027,8 +1025,7 @@ def same_hooks_path(cmd, cdir, value):
     if re.match(r"^\$\(\s*git config (?:--get )?core\.hooks[Pp]ath\b", value):
         return True  # `-c core.hooksPath="$(git config core.hooksPath)"` restates the configured path
     if cmd.remote:
-        # The remote repo's config is out of reach. `.githooks` is the repo-owned hook directory
-        # git-push-preflight.sh routes preflight repos to, so naming it is taken as restating it.
+        # The remote repo's config is out of reach. `.githooks` is the repo-owned hook directory, so naming it restates it.
         return value == ".githooks"
     directory = git_dir(cmd, cdir)
     if not directory or not value:
@@ -1080,8 +1077,6 @@ def rule_hooks_bypass(cmd):
                     break
         if what and is_fixture_repo(cmd, git_dir(cmd, cdir)):
             what = None
-        if sub == "push" and what and what.endswith("--no-verify"):
-            what = None  # git-push-preflight.sh owns push --no-verify
     elif sub == "config":
         lowered = [a.lower() for a in args]
         if "core.hookspath" in lowered:

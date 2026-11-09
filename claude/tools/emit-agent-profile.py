@@ -15,7 +15,7 @@ NAME = next((line[13:].strip().strip("'\"") for line in (CONFIG.read_text().spli
 # Skills that need no Mac, fleet host or local CLI; each mounts with its sibling files.
 SKILLS = ["be-ambitious", "codebase-design", "converge", "critical-audit", "diagnose", "evolve", "finalize",
           "ground-truth", "harden", "hypothesize", "reflect", "simplify", "tdd", "verify", "writing-for-agents"]
-HOOKS = ["secret_scan.py", "process_guard.py", "git-push-preflight.sh", "ci-wait-guard.sh", "poll-guard.sh", "scan-guard.sh"]
+HOOKS = ["secret_scan.py", "process_guard.py", "ci-wait-guard.sh", "poll-guard.sh", "scan-guard.sh"]
 PERMISSIONS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

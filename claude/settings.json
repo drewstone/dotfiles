@@ -72,11 +72,6 @@
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/git-push-preflight.sh",
-            "timeout": 180
-          },
-          {
-            "type": "command",
             "command": "$HOME/.claude/hooks/poll-guard.sh"
           },
           {

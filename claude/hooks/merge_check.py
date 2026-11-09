@@ -5,8 +5,8 @@ For every PR a command merges, including through a `for` loop, `while read`, or 
 the head commit's statusCheckRollup, which holds both check runs (conclusion) and commit statuses
 (state), in one GraphQL request, and lists each PR that is red or pending, and why: a failed or
 cancelled check run, a failed commit status, or a gate status not yet passed. GitHub CI check runs
-still running stay quiet on their own: the merge gate is the local gate and PR CI is never awaited;
-they are listed only beside another finding.
+still running stay quiet on their own: PR CI is never awaited, and the repo's gate runs before a deploy,
+never before a merge; they are listed only beside another finding.
 
 Loop and xargs inputs are read when they are literal, or come from a short pipeline of read-only
 text tools over local files (`awk` without system, getline or redirection, grep, cut, cat, head,
@@ -260,7 +260,7 @@ def query(targets):
 
 
 def gate_status(context):
-    """The commit statuses that are the merge gate (`gate_statuses`)."""
+    """The gate's commit statuses (`gate_statuses`)."""
     return bool(GATE_STATUS.search(context))
 
 
@@ -277,8 +277,8 @@ def verdict(node, as_of=None):
     """(red, pending, quiet, sha) for one PR node.
 
     red: a failed or cancelled check run, or a failed commit status. pending: a gate status not finished.
-    quiet: GitHub CI check runs still running and other unfinished statuses; the merge gate is the local
-    gate and PR CI is not awaited, so these alone never warn.
+    quiet: GitHub CI check runs still running and other unfinished statuses; PR CI is not awaited, so these
+    alone never warn.
     A re-run supersedes an earlier run of the same check, so only the latest run per check name counts.
     `as_of` (ISO time, for replays) judges each check as it stood then: a run started later is ignored, and
     one that completed later was still running."""

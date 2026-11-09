@@ -171,8 +171,9 @@ test("force-push: refuses the force pushes agents ran on their own branches", ()
     "ssh host-a 'cd ~/code/_wt/x && git push -f origin x'",
     "ssh host-a bash -s <<'EOF'\ncd ~/code/_wt/x\ngit push --force-with-lease origin x\nEOF",
     "for b in a b; do git push -f origin $b; done",
+    "CC_ALLOW_FORCE_PUSH=1 git push --force-with-lease origin feat/x",
   ], "deny");
-  assert.match(reason("git push -f origin x"), /CC_ALLOW_FORCE_PUSH=1 only with/);
+  assert.match(reason("git push -f origin x"), /No flag lifts this: the owner runs a force-push in their own terminal/);
 });
 
 test("force-push: normal pushes and text that mentions force pushing pass", () => {
@@ -187,14 +188,6 @@ test("force-push: normal pushes and text that mentions force pushing pass", () =
     "echo 'git push -f is refused'",
     "git fetch -f origin main:main",
   ], "allow");
-});
-
-test("force-push: CC_ALLOW_FORCE_PUSH=1 lets one push through and says so", () => {
-  const out = run("CC_ALLOW_FORCE_PUSH=1 git push --force-with-lease origin feat/x");
-  assert.equal(out.hookSpecificOutput, undefined);
-  assert.match(out.systemMessage, /CC_ALLOW_FORCE_PUSH=1/);
-  assert.equal(decide("git push -f origin x", { env: { CC_ALLOW_FORCE_PUSH: "1" } }), "allow");
-  assert.match(readFileSync(join(HOME, ".claude/logs/process-guard.log"), "utf8"), /BYPASS rule=force-push/);
 });
 
 // --------------------------------------------------------------------------- hooks-bypass
@@ -213,6 +206,7 @@ test("hooks-bypass: refuses hooksPath overrides and --no-verify commits", () => 
     "GIT_CONFIG_GLOBAL=/dev/null git commit -qm x",
     "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null; git commit -qm x",
     "git -c core.hooksPath=/dev/null am -q /tmp/wip.patch",
+    "git push --no-verify origin feat/x",
   ], "deny", { cwd: real });
   mkdirSync(join(real, "map"));
   assert.equal(decide("git -C .. commit -qm \"wip(map): sources, resolution, snapshot, taxonomy\" --no-verify",
@@ -855,13 +849,13 @@ test("refused-call: an operator's order call is refused in a command, a temp scr
 });
 
 test("override-grant: a CC_ALLOW_* is never handed to a child, a profile or a settings file; a per-command flag and a read pass", () => {
-  check(["CC_ALLOW_REFUSED_CALL=1 python3 x.py", "CC_ALLOW_FORCE_PUSH=1 claude -p go", "CC_ALLOW_MAC_BUILD=1 acme-lane start x",
-    "export CC_ALLOW_FORCE_PUSH=1; codex exec go", "echo 'export CC_ALLOW_FORCE_PUSH=1' >> ~/.zshrc",
-    "python3 -c \"import os; os.environ['CC_ALLOW_FORCE_PUSH'] = '1'; os.execvp('claude', ['claude'])\""], "deny");
-  check(["CC_ALLOW_FORCE_PUSH=1 git push --force-with-lease origin x", "[ \"$CC_ALLOW_FORCE_PUSH\" = 1 ] && echo on",
+  check(["CC_ALLOW_REFUSED_CALL=1 python3 x.py", "CC_ALLOW_MAC_BUILD=1 claude -p go", "CC_ALLOW_MAC_BUILD=1 acme-lane start x",
+    "export CC_ALLOW_MAC_BUILD=1; codex exec go", "echo 'export CC_ALLOW_MAC_BUILD=1' >> ~/.zshrc",
+    "python3 -c \"import os; os.environ['CC_ALLOW_MAC_BUILD'] = '1'; os.execvp('claude', ['claude'])\""], "deny");
+  check(["CC_ALLOW_MAC_BUILD=1 pnpm build", "[ \"$CC_ALLOW_MAC_BUILD\" = 1 ] && echo on",
     "grep -n CC_ALLOW_ ~/.claude/settings.json"], "allow");
   const write = (file_path) => spawnSync(HOOK, [], { input: JSON.stringify({ tool_name: "Write", session_id: SESSION,
-    tool_input: { file_path, content: '{"env": {"CC_ALLOW_FORCE_PUSH": "1"}}' } }), env: { ...CLEAN_ENV, HOME }, encoding: "utf8" }).stdout;
+    tool_input: { file_path, content: '{"env": {"CC_ALLOW_MAC_BUILD": "1"}}' } }), env: { ...CLEAN_ENV, HOME }, encoding: "utf8" }).stdout;
   assert.match(write(join(HOME, ".claude/settings.local.json")), /"deny"/);
   assert.equal(write(join(ROOT, "notes.json")), "");
 });
