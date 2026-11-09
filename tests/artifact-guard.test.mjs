@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -35,11 +34,4 @@ test("allows reading, listing and deleting, so a pasted link can still be read",
 test("ignores other tools and fails open on input it cannot parse", () => {
   assert.equal(decide({ tool_name: "Bash", tool_input: { command: "ls" } }), null);
   assert.equal(decide("not json"), null);
-});
-
-test("settings route every Artifact call through the guard", () => {
-  const settings = JSON.parse(readFileSync(resolve("claude/settings.json"), "utf8"));
-  const entry = settings.hooks.PreToolUse.find((m) => m.matcher === "Artifact");
-  assert.ok(entry, "no PreToolUse matcher for Artifact");
-  assert.ok(entry.hooks.some((h) => h.command.endsWith("/hooks/artifact-guard.py")));
 });

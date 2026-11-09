@@ -108,7 +108,7 @@
         ]
       },
       {
-        "matcher": "Artifact",
+        "matcher": "Artifact|mcp__claude-artifacts__.*",
         "hooks": [
           {
             "type": "command",
