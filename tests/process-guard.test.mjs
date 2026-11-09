@@ -24,7 +24,8 @@ writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_
   raw_gh: ["ACME_GH_SHIM", "ACME_REAL_GH"], github_tokens: ["ACME_GH_TOKEN"],
   raw_gh_instead: ["API calls: `gh-acme api <path>`.", "Package files: `gh-acme fetch <url>`."],
   refused_call_texts: { write: "(?:^|\\s)-X\\s*POST\\b|Request\\([^)]*\\bdata\\s*=" },
-  refused_calls: [{ rule: "box-order", match: ["api\\.boxes\\.example/v1/orders\\b"], write: "write", reason: "Order through acme-order." }] },
+  refused_calls: [{ rule: "box-order", match: ["api\\.boxes\\.example/v1/orders\\b"], write: "write", reason: "Order through acme-order." }],
+  message_commands: ["acme-msg send\\b"], agent_launchers: ["acme-lane"] },
   merge_check: { gh: "gh-acme" } }));
 
 function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
@@ -845,7 +846,23 @@ test("refused-call: an operator's order call is refused in a command, a temp scr
   const order = join(ROOT, "order.py");
   writeFileSync(order, "import urllib.request\nq = urllib.request.Request(\n    'https://api.boxes.example/v1/orders',\n    data=b'plan=big')\nurllib.request.urlopen(q)\n");
   const curl = "curl -s -X POST https://api.boxes.example/v1/orders -d plan=big";
-  assert.match(reason(curl), /process-guard \(box-order\):.*Order through acme-order\./s);
+  assert.match(reason(curl, { env: { CC_ALLOW_REFUSED_CALL: "1" } }), /process-guard \(box-order\):.*Order through acme-order\./s);
   check([`dotenvx run -- ${curl}`, `python3 ${order}`, `ssh host-a 'python3 -' < ${order}`], "deny");
   check(["curl -s https://api.boxes.example/v1/orders/7", `rg -n 'v1/orders' ${order} 2>/dev/null`, "acme-order --plan big"], "allow");
+  // 11-08 red team: a program piped into a shell, a URL split by concatenation; a message describing the call makes none.
+  check([`echo '${curl}' | sh`,
+    "python3 -c \"import urllib.request as u; u.urlopen(u.Request('https://api.boxes.example/v1/' + 'orders', data=b'x'))\""], "deny");
+  check([`acme-msg send lane-1 "Run: ${curl}"`, `gh pr comment 7 --body "${curl}"`, `tee notes.md <<'EOF'\n${curl}\nEOF`], "allow");
+});
+
+test("override-grant: a CC_ALLOW_* is never handed to a child, a profile or a settings file; a per-command flag and a read pass", () => {
+  check(["CC_ALLOW_REFUSED_CALL=1 python3 x.py", "CC_ALLOW_FORCE_PUSH=1 claude -p go", "CC_ALLOW_MAC_BUILD=1 acme-lane start x",
+    "export CC_ALLOW_FORCE_PUSH=1; codex exec go", "echo 'export CC_ALLOW_FORCE_PUSH=1' >> ~/.zshrc",
+    "python3 -c \"import os; os.environ['CC_ALLOW_FORCE_PUSH'] = '1'; os.execvp('claude', ['claude'])\""], "deny");
+  check(["CC_ALLOW_FORCE_PUSH=1 git push --force-with-lease origin x", "[ \"$CC_ALLOW_FORCE_PUSH\" = 1 ] && echo on",
+    "grep -n CC_ALLOW_ ~/.claude/settings.json"], "allow");
+  const write = (file_path) => spawnSync(HOOK, [], { input: JSON.stringify({ tool_name: "Write", session_id: SESSION,
+    tool_input: { file_path, content: '{"env": {"CC_ALLOW_FORCE_PUSH": "1"}}' } }), env: { ...CLEAN_ENV, HOME }, encoding: "utf8" }).stdout;
+  assert.match(write(join(HOME, ".claude/settings.local.json")), /"deny"/);
+  assert.equal(write(join(ROOT, "notes.json")), "");
 });
