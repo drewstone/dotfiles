@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import test from "node:test";
 
 const HOOK = resolve("claude/hooks/blocked_guard.py");
 const HOME = mkdtempSync(join(tmpdir(), "blocked-guard-home-"));
+test.after(() => rmSync(HOME, { recursive: true, force: true }));
 const LOG = join(HOME, ".claude/logs/blocked-guard.jsonl");
 
 const KEY_HANDOFF = "Two things are watched: - **#1911 gate:** retries until about 21:55Z. When it returns a result, I merge #1911 if it passes; if it fails, I fix it forward. - **App secret:** checked every 2 minutes until about 00:25Z. When it changes, I run Release Live Evidence and publish 0.3.4. Three things are still blocked on you: 1. **App release:** update the `APP_LIVE_ENV_JSON` secret in the `release-live` environment with a working API key. 2. **Tournament judging and generation 0:** tell me where `SANDBOX_KEY_PLAYS` lives on host-a. Critics refuse the keeper's `API_KEY` by design. 3. **Critiques:** unlock host-a's keyring.";
