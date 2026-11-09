@@ -124,6 +124,15 @@
             "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "^mcp__(claude-in-chrome|Claude_Browser|remote-devices|computer-use)__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/process_guard.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [
