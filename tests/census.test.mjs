@@ -120,7 +120,7 @@ test("a growth approval admits only a scope its reviewer's words name; a general
   // A refusal's ask, the sentence with its <why> left for the reviewer, approves nothing however it is posted.
   approve(staged, words(staged, "<why>"));
   assert.equal(ratchet().status, 2);
-  approve(staged, words(staged, "the parser is new and reuses nothing."));
+  approve({ ...staged, repository: "git@github.com:o/r.git" }, words({ ...staged, repository: "git@github.com:o/r.git" }, "the parser is new and reuses nothing."));
   const named = ratchet();
   assert.equal(named.status, 0, named.stderr);
   assert.match(named.stderr, /census: approved production growth from https:\/\/github.com\/o\/r\/pull\/1#issuecomment-7/);

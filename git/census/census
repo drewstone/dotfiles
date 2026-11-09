@@ -95,17 +95,17 @@ def github(endpoint):
         raise Refused(f"growth approval source could not be verified through {GH}")
     return json.loads(run.stdout)
 
+def repository(url):
+    m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
 def growth_scope(checkout, base, head, growth=None):
-    """What an approval names: origin, growing areas and the patch ID of base..head's production-candidate lines without context or similarity score."""
     paths = [p for p in git(checkout, "diff", "--name-only", "--no-renames", "-z", base, head).decode().split("\0")[:-1] if C.candidate(p)]
     diff = git(checkout, "--literal-pathspecs", "diff-tree", "-r", "-p", "-U0", "-M", "--indent-heuristic", base, head, "--", *paths) if paths else b""
-    return {"repository": git(checkout, "remote", "get-url", "origin").decode().strip(), "areas": {a: n for a, n in (growth or production_delta(checkout, base, head)[0]).items() if n > 0},
+    return {"repository": repository(git(checkout, "remote", "get-url", "origin").decode()), "areas": {a: n for a, n in (growth or production_delta(checkout, base, head)[0]).items() if n > 0},
             "patch": git(checkout, "patch-id", "--verbatim", data=re.sub(rb"(?m)^(dis)?similarity index .*\n", b"", diff)).decode()[:40]}
 
 
 def approved_growth(checkout, base, head, growth, approval=None):
-    """Only the record's sourced comment approving this exact origin, production patch and positive area deltas admits growth."""
     approval = approval or subprocess.run(["git", "-C", checkout, "config", "--local", "--path", "--get", "census.growthApproval"], capture_output=True).stdout.decode().strip()
     if not approval:
         return False
@@ -117,8 +117,8 @@ def approved_growth(checkout, base, head, growth, approval=None):
     if (comment["html_url"] != source["url"] or comment["user"]["login"] != github("user")["login"] or not source["quote"].strip() or
             source["quote"] not in comment["body"] or hashlib.sha256(comment["body"].encode()).hexdigest() != source["sha256"]):
         raise Refused("growth approval source author, quote or body digest does not match")
-    blocks = {json.dumps(json.loads(block), sort_keys=True) for block in re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S)}
-    words = {json.dumps(dict(repository=r, patch=p, areas=json.loads(a)), sort_keys=True) for r, p, a in re.findall(r"Census growth approval for (\S+), patch ([0-9a-f]{40}), areas (\{[^{}]*\}): *(?!<why>)\S", source["quote"])}
+    blocks = {json.dumps(dict(row, repository=repository(row.get("repository", ""))) if isinstance(row, dict) else row, sort_keys=True) for row in map(json.loads, re.findall(r"```census-growth-approval\r?\n(.*?)\r?\n```", comment["body"], re.S))}
+    words = {json.dumps(dict(repository=repository(r), patch=p, areas=json.loads(a)), sort_keys=True) for r, p, a in re.findall(r"Census growth approval for (\S+), patch ([0-9a-f]{40}), areas (\{[^{}]*\}): *(?!<why>)\S", source["quote"])}
     if '"areas": {}' in scope or scope not in blocks & words:
         raise Refused(f'growth approval fetched source does not approve scope {scope} in its block and in words written for it: "Census growth approval for <repository>, patch <patch>, areas <areas JSON>: <why>"')
     print(f"census: approved production growth from {source['url']}", file=sys.stderr)

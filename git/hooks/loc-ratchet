@@ -17,8 +17,8 @@ def third_party_fork():
         owners = census.FORK_PARENT_OWNERS.strip().lower()
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*", owners):
             return False
-        origin = census.git(".", "remote", "get-url", "origin").decode().strip()
-        match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", origin)
+        origin = census.repository(census.git(".", "remote", "get-url", "origin").decode())
+        match = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)\.git", origin)
         if not match:
             return False
         repo = census.github(f"repos/{match[1]}")
