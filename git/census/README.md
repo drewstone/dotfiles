@@ -40,7 +40,7 @@ Every metric is better smaller. Floor groups are declared in `GROUPS` in [census
 
 Normal commits may offset production growth with real text deletions anywhere except lockfiles; merges keep the per-area charge.
 Otherwise a new capability may grow: a reviewer other than its author checks that it is new, reuses nothing that exists and is proportionate, then posts the approval comment.
-The scope it approves is `growth_scope(checkout, base, head)` in [census](census): `repository` (exact origin URL), `areas` (every positive production delta),
+The scope it approves is `growth_scope(checkout, base, head)` in [census](census): `repository` (`repository()` of the origin URL, so git@ and https name one GitHub repository), `areas` (every positive production delta),
 and `patch`, the `git patch-id --verbatim` of base..head's production-candidate lines diffed with no context and no similarity score.
 Merging the moved base into the branch keeps the patch; any change to those lines, or to the lines they replace, moves it, a conflict's resolution included.
 The author keeps a private JSON record whose `source` has `url`, `sha256` and the exact authorization `quote`.
