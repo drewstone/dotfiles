@@ -108,6 +108,15 @@
         ]
       },
       {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/process_guard.py"
+          }
+        ]
+      },
+      {
         "matcher": "Artifact|mcp__claude-artifacts__.*",
         "hooks": [
           {

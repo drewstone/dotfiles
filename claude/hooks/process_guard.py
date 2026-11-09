@@ -49,8 +49,8 @@ Each rule below replays a command agents actually ran while their briefs said no
   detached-gate `<gate> ... &` (a command named in `gates`) in a foreground Bash call: the gate runs, but nothing
                 wakes the caller when it ends, so its result sits unread. Launch the gate itself with
                 run_in_background. Override: CC_ALLOW_DETACHED_GATE=1 on the gate command.
-  refused-call  a call matching an operator rule in `refused_calls` (a purchase API, say), whose owning tool must make it instead;
-                override CC_ALLOW_REFUSED_CALL=1, set by the owner for the session (process_guard_calls.py).
+  refused-call  a call matching an operator rule in `refused_calls` (a purchase API, say), made outside its owning tool; no flag
+                lifts it; the owner runs it by hand. override-grant: a CC_ALLOW_* handed to a child (process_guard_calls.py, both).
 
 A wrapper's command (`sudo`, `timeout`, `npx`, `uv run`, `dotenvx run --`, `docker exec <container>`: WRAPPERS) is the command.
 Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell and `<runner> ... -- <command>` (a command named
@@ -79,7 +79,7 @@ from process_guard_secrets import SECRET_DIRS, flush_secret_read, track_secret_r
 from process_guard_builds import rule_no_build_host  # noqa: E402
 from process_guard_github import rule_raw_gh  # noqa: E402
 from process_guard_d1 import rule_prod_d1_read  # noqa: E402
-from process_guard_calls import rule_refused_call, rule_refused_page  # noqa: E402
+from process_guard_calls import SESSION_ONLY, rule_grant_file, rule_override_grant, rule_refused_call, rule_refused_page  # noqa: E402
 
 CONFIG = guard_config("process_guard", {})
 HOME = os.path.expanduser("~")
@@ -881,8 +881,6 @@ def commands(src, cwd, remote=False, ctx=None):
 # ---------------------------------------------------------------------------------------
 # Rules. Each returns None, or (rule, summary, reason, override_variable or None).
 
-SESSION_ONLY = {"CC_ALLOW_BROADCAST_KILL", "CC_ALLOW_D1_SCAN", "CC_ALLOW_REFUSED_CALL"}  # the owner sets these for a session; an agent's command cannot
-
 
 def flag_on(cmd, name):
     return (name not in SESSION_ONLY and cmd.env.get(name) == "1") or os.environ.get(name) == "1"
@@ -1452,7 +1450,7 @@ def rule_mac_build(cmd):
 def evaluate_full(payload):
     """(findings, warnings): (rule, summary, reason, override, bypassed) refusals, and warnings that let the command run."""
     if payload.get("tool_name") not in (None, "Bash"):
-        return [(*h, False) for h in [rule_refused_page(payload)] if h], []
+        return [(*h, False) for h in (rule_refused_page(payload), rule_grant_file(payload)) if h], []
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         return [], []
@@ -1463,7 +1461,7 @@ def evaluate_full(payload):
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
                     rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_no_build_host(cmd, classify_tool), rule_kill(cmd),
-                    rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd),
+                    rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd), rule_override_grant(cmd),
                     rule_prod_d1_read(cmd, read_local, script_text), rule_refused_call(cmd, script_text)):
             if not hit or hit[:2] in seen:
                 continue
@@ -1547,7 +1545,7 @@ def main():
         findings, warnings = evaluate_full(payload)
     except Exception as exc:  # refuse what no rule can read: failing open let one `$( )` nested 400 deep turn every rule off
         findings, warnings = [("unreadable", "", f"No rule can read this command ({type(exc).__name__}); split it.", None, False)] * ("payload" in locals()), []
-    denied = [f for f in findings if not f[4] or f[3] == "CC_ALLOW_REFUSED_CALL"]  # a child agent inherits it: no env flag buys
+    denied = [f for f in findings if not f[4]]
     bypassed = [f for f in findings if f not in denied]
     for rule, *_ in bypassed:
         log("BYPASS", rule, payload)
