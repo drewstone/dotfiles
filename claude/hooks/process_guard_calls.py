@@ -9,7 +9,9 @@ or that `< file` or `cat file |` feeds ssh or an interpreter's stdin (process_gu
 their own commands. An inert command (cat, grep) only shows text: it is judged by its cwd and targets, and a script it writes is
 judged when a command runs it.
 """
+import json
 import re
+from urllib.parse import unquote
 
 from process_guard_d1 import INTERPRETERS, script_of
 from process_guard_github import expand
@@ -17,11 +19,19 @@ from secret_scan import guard_config
 
 CONFIG = guard_config("process_guard", {})
 TEXTS = CONFIG.get("refused_call_texts", {})
+PAGES = [(r["rule"], [re.compile(p) for p in r["match"]], TEXTS.get(r["reason"], r["reason"])) for r in CONFIG.get("refused_pages", [])]
 RULES = [(r["rule"], [re.compile(p) for p in r["match"]], r.get("write") and re.compile(TEXTS.get(r["write"], r["write"]), re.M),
           TEXTS.get(r["reason"], r["reason"])) for r in CONFIG.get("refused_calls", [])]
 OVERRIDE = "CC_ALLOW_REFUSED_CALL"  # process_guard.SESSION_ONLY: an agent's command cannot set it
 INERT = {"grep", "egrep", "fgrep", "rg", "ag", "git", "cat", "head", "tail", "less", "more", "wc", "ls", "bat", "diff", "jq",
          "sort", "uniq", "cut", "tr", "file", "stat", "nl", "column"}
+
+
+def rule_refused_page(payload):
+    """An mcp__ (browser or computer-use) tool whose input, percent-decoded, names a "refused_pages" page; a click names none."""
+    text = unquote(json.dumps(payload.get("tool_input"), ensure_ascii=False)) if str(payload.get("tool_name")).startswith("mcp__") else ""
+    hit = next((p for p in PAGES if all(m.search(text) for m in p[1])), None)
+    return hit and (hit[0], f"{hit[0]} in a browser", f"{hit[2]} A browser order or create page is never the owning path.", None)
 
 
 def rule_refused_call(cmd, script_text):

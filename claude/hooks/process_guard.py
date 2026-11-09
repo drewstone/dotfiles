@@ -79,7 +79,7 @@ from process_guard_secrets import SECRET_DIRS, flush_secret_read, track_secret_r
 from process_guard_builds import rule_no_build_host  # noqa: E402
 from process_guard_github import rule_raw_gh  # noqa: E402
 from process_guard_d1 import rule_prod_d1_read  # noqa: E402
-from process_guard_calls import rule_refused_call  # noqa: E402
+from process_guard_calls import rule_refused_call, rule_refused_page  # noqa: E402
 
 CONFIG = guard_config("process_guard", {})
 HOME = os.path.expanduser("~")
@@ -1452,7 +1452,7 @@ def rule_mac_build(cmd):
 def evaluate_full(payload):
     """(findings, warnings): (rule, summary, reason, override, bypassed) refusals, and warnings that let the command run."""
     if payload.get("tool_name") not in (None, "Bash"):
-        return [], []
+        return [(*h, False) for h in [rule_refused_page(payload)] if h], []
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         return [], []
@@ -1532,7 +1532,7 @@ def rule_env_dump(events):
 def log(kind, rule, payload):
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
-        command = redact((payload.get("tool_input") or {}).get("command") or "").replace("\n", " ")[:400]
+        command = redact((payload.get("tool_input") or {}).get("command") or json.dumps(payload.get("tool_input"))).replace("\n", " ")[:400]
         now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with open(LOG, "a") as fh:
             fh.write(f"{now} {kind} rule={rule} session={payload.get('session_id') or '-'} "
