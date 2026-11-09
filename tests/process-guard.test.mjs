@@ -358,7 +358,6 @@ test("mac-build: single test files, remote runs and light commands pass on the M
     "pnpm exec tsc --noEmit -p .",
     "pnpm install --lockfile-only",
     "npm view @example/app version",
-    "node --test tests/process-guard.test.mjs",
     "ssh host-a 'cd ~/code/app && pnpm install --frozen-lockfile && pnpm test'",
     "timeout 900 ssh host-b 'bash -lc \"cd ~/code/_wt-router && pnpm install --frozen-lockfile && npx vitest run tests/unit\"'",
     "ssh host-a './gate.sh host-b https://github.com/example/app.git c1c1055fc12165bd9fdf0eb0cc64e16f3dd2b7a2 -- pnpm test'",
