@@ -8,7 +8,7 @@ The shared instruments for the [commit ratchets](../hooks) and factory checks.
 ```bash
 census measure <checkout> <rev> [--scope prefix ...] # metrics and supporting lists as JSON
 census floors <checkout> <base> <head> --floor lines --floor copies --floor god --floor hug --floor confusion
-# Optional floors arguments: --peer name=checkout:rev --growth-approval /absolute/private/approval.json
+# Optional floors argument: --peer name=checkout:rev
 census xrepo name=checkout:rev ...        # shared exports and located copies
 census files <checkout> <rev>            # path, lines, logic|exempt as TSV
 census instructions [--cwd dir] [--json] [--budget-tokens N] [--max-dup-share X]  # instruction text an agent loads
@@ -36,22 +36,24 @@ Repo-pair counts sum file-pair/window combinations. Preview scores add window si
 Every metric is better smaller. Floor groups are declared in `GROUPS` in [census](census); individual metric names also work.
 `copies` needs peers for cross-repository windows; without peers, that part is explicitly unmeasured unless requested individually, which refuses.
 
-## Scoped judged approval
+## Growth approval
 
-Normal commits may offset production growth with real text deletions anywhere except lockfiles; merges keep the per-area charge.
-Otherwise a new capability may grow: a reviewer other than its author checks that it is new, reuses nothing that exists and is proportionate, then posts the approval comment.
-The scope it approves is `growth_scope(checkout, base, head)` in [census](census): `repository` (`repository()` of the origin URL, so git@ and https name one GitHub repository), `areas` (every positive production delta),
-and `patch`, the `git patch-id --verbatim` of base..head's production-candidate lines diffed with no context and no similarity score.
-Merging the moved base into the branch keeps the patch; any change to those lines, or to the lines they replace, moves it, a conflict's resolution included.
-The author keeps a private JSON record whose `source` has `url`, `sha256` and the exact authorization `quote`.
-The source URL names a GitHub issue/PR comment. Its complete body digest and quote must match; `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) verifies its author against the authenticated user.
+Growth is enforced at merge only: at a commit `loc-ratchet` prints the production lines the change adds and refuses nothing for them.
+The merge check is `loc-ratchet <merge-base>..<head> <owner>/<repo>#<number>`, run by whatever merges the pull request.
+It charges one number, the PR's total production-line change: deletions anywhere offset additions anywhere, across every directory.
+A total at or under `growthLimit` in [patterns.json](patterns.json) merges with no approval, as does a PR that adds no net lines of text outside lockfiles.
+Above it, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR:
+
+```text
+Growth approved: <owner>/<repo>#<number> at <40-hex head sha>: <why>
+```
+
+The refusal prints that line filled in for the head it read; `<why>` is the reviewer's own words and may not be left as written.
+An approval holds for a later head that descends from the approved sha while the PR's total has grown by at most `growthLimit` since; a rewritten history needs a new one.
+`gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's comments and counts only those by the authenticated user; a caller that posts for several authors keeps the author from posting its own.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
-That comment must contain a fenced `census-growth-approval` JSON block equal to the scope, and the quote must carry the reviewer's words for that same scope, `Census growth approval for <repository>, patch <patch>, areas <areas JSON>: <why>`, so a general or reused sentence, or an ask whose `<why>` is unwritten, approves nothing; several exact scopes may share a comment.
-Areas are `apps|products|packages|services|tools/<name>`, other top-level dirs, or `(root)`; a new area is charged like an existing one, only a repository's first commit grows from nothing, and cross-area renames charge only changed lines.
-A merge is charged only for its additions beyond both parents, excluding the merged branch's changes since their merge-base.
-Set local `census.growthApproval` to the private record for normal commit/push, or pass `--growth-approval` to `floors`; remove local config afterwards.
-[The normal-hook qualification](../../tests/census-growth.integration.py) exercises the record format and source binding.
-Missing access, changed source or mismatched scope refuses. Approval permits only production growth, keeping all metrics visible and every other cap/floor enforced.
+A check that cannot measure or cannot read the comments refuses the merge (exit 2). An approval permits only production growth: every other cap and floor stays enforced.
+[The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository and a fake `gh`.
 
 ## Integrity
 
