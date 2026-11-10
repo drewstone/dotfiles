@@ -22,6 +22,8 @@ import json, pathlib, re, sys
 args, state = sys.argv[1:], pathlib.Path(__file__).with_name("comments.json")
 if args == ["api", "user"]:
     print(json.dumps({"login": "reviewer"}))
+elif args == ["api", "repos/o/r/issues/7"] and state.exists():
+    print(json.dumps({"body": state.with_name("body").read_text()}))
 elif args[:3] == ["api", "repos/o/r/issues/7/comments", "--paginate"] and state.exists():
     login = re.search(r'\\.user\\.login == "([^"]+)"', args[-1])[1]
     for comment in json.loads(state.read_text()):
@@ -72,6 +74,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
 
     repo.mkdir()
     comments()
+    (config / "body").write_text("Adds a parser.\n\nRun ID: run_author\n")
     run("git", "init", "-q", "-b", "main")
     commit({"src/main.py": lines(40), "lib/main.py": lines(40), "old/dead.py": lines(LIMIT), "NOTES.md": lines(100, "note"),
             "src/literal.py": 'description = "@generated or DO NOT EDIT"\n'})
@@ -110,13 +113,24 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     head = branch("feature", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
     line = f"Growth approved: {PR} at {head}: "
     merge_check(status=1, contains=f"the PR adds {2 * LIMIT} production lines")
-    merge_check(status=1, contains=line + "<why>")
+    merge_check(status=1, contains=line + "<why>\n  Session: <the reviewer's own>")
     merge_check(pr=None, status=1, contains="Growth approved: <owner>/<repo>#<number> at")
-    comments(("reviewer", line + "<why>"), ("reviewer", f"Growth approved: o/r#8 at {head}: another PR"), ("author", line + "mine is new."),
-             ("reviewer", "Looks fine to me."))
+    signed = "\nSession: reviewer-1"
+    comments(("reviewer", line + "<why>" + signed), ("reviewer", f"Growth approved: o/r#8 at {head}: another PR" + signed),
+             ("author", line + "mine is new." + signed), ("reviewer", "Looks fine to me." + signed))
     merge_check(status=1, contains=line + "<why>")
     print("PASS: growth over the limit is refused; an unwritten why, another PR's approval and a comment by another account approve nothing")
-    comments(("reviewer", f"Reviewed.\r\n{line}the parser is new and reuses nothing.\r\n"))
+    # The reviewer is not the author: the comment names a session or run, and not the one the PR's body names.
+    written = line + "the parser is new and reuses nothing."
+    comments(("reviewer", written), ("reviewer", written + "\nRun ID: run_author"), ("reviewer", written + "\nSession: <the reviewer's own>"),
+             ("reviewer", written + signed + "\nRun ID: run_author"))
+    merge_check(status=1, contains=line + "<why>")
+    comments(("reviewer", written + signed))
+    (config / "body").write_text("Adds a parser.\n")
+    merge_check(status=1, contains="the PR's body carries no `Run ID:` or `Session:` line")
+    (config / "body").write_text("Adds a parser.\n\nRun ID: run_author\n")
+    print("PASS: an approval with no session line, with the PR's own, or on a PR whose body names no author approves nothing")
+    comments(("reviewer", f"Reviewed.\r\n{written}\r\nSession: reviewer-1\r\n"))
     merge_check(contains=f"census: production growth approved at {head}")
     print("PASS: one approval at the head admits growth across two directories")
 
@@ -136,6 +150,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     commit({"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
     merge_check(status=1, contains="refusing merge")
     (config / "comments.json").unlink()
-    merge_check(status=2, contains="loc-ratchet: REFUSED: repos/o/r/issues/7/comments could not be read")
+    merge_check(status=2, contains="loc-ratchet: REFUSED: repos/o/r/issues/7 could not be read")
     merge_check(pr="not a pull request", status=2, contains="needs the pull request as <owner>/<repo>#<number>")
     print("PASS: a rewritten head needs a new approval; unreadable comments and an unnamed PR refuse the merge")
