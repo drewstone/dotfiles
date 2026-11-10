@@ -20,6 +20,8 @@
   "window": 10,
   "fileLimit": 1000,
   "growthLimit": 50,
+  "tokensPerLine": 8,
+  "lineLimit": 160,
   "functionLimit": 300,
   "classMembers": 40,
   "fileHug": [951, 1000],

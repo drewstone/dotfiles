@@ -1,7 +1,9 @@
 """Classification shared by census and the ratchets; patterns.json owns the definitions."""
+import io
 import json
 import os
 import re
+import tokenize
 
 _P = json.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "patterns.json")))
 
@@ -20,6 +22,8 @@ SHEBANG = re.compile(_P["shebang"])
 WINDOW = _P["window"]
 FILE_LIMIT = _P["fileLimit"]
 GROWTH_LIMIT = _P["growthLimit"]
+TOKENS_PER_LINE = _P["tokensPerLine"]
+LINE_LIMIT = _P["lineLimit"]
 FUNCTION_LIMIT = _P["functionLimit"]
 CLASS_MEMBERS = _P["classMembers"]
 FILE_HUG = tuple(_P["fileHug"])
@@ -81,12 +85,65 @@ def line_count(data):
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
-def normalized(text, *, locations=False):
-    """Nontrivial normalized lines, optionally paired with physical LF line numbers."""
+TOKEN = re.compile(r"\w+|[^\w\s]")
+HASH_STYLE = re.compile(r"py|python[0-9.]*|sh|bash|zsh|dash|rb|ruby|perl|ya?ml")
+# Comment syntax per style: one regex whose `c` group is a comment; any other match is a string literal (a shell heredoc's
+# body included) and stays code. Regular-expression literals are not parsed.
+STYLES = {
+    "//": re.compile(r'''"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|`(?:\\.|[^`\\])*`?|(?P<c>//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|<!--[\s\S]*?(?:-->|\Z))'''),
+    "#": re.compile(r'''<<[-~]?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n(?:[\s\S]*?\n)?[ \t]*\2$|"(?:\\.|[^"\\])*"?|'[^']*'?|`(?:\\.|[^`\\])*`?|(?P<c>(?:^|(?<=\s))#[^\n]*)''', re.M),
+    "--": re.compile(r'''"[^"]*"?|'[^']*'?|(?P<c>--[^\n]*|/\*[\s\S]*?(?:\*/|\Z))'''),
+}
+URL_OR_HASH = re.compile(r"https?://\S+|\b[0-9a-fA-F]{32,}\b|\bsha(?:1|256|384|512)-[A-Za-z0-9+/]+=*")
+
+
+def python_code(text):
+    """Python less its comments and string statements (docstrings), by Python's own tokenizer; None if it does not tokenize."""
+    rows = io.StringIO(text).readlines()
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except SyntaxError:
+        return None
+    for i, t in enumerate(toks):
+        j = i + 1 + (i + 1 < len(toks) and toks[i + 1].type == tokenize.COMMENT)
+        docstring = (t.type == tokenize.STRING and (i == 0 or toks[i - 1].type in (tokenize.NEWLINE, tokenize.NL, tokenize.INDENT, tokenize.DEDENT))
+                     and (j >= len(toks) or toks[j].type in (tokenize.NEWLINE, tokenize.ENDMARKER)))
+        for r in range(t.start[0], t.end[0] + 1) if t.type == tokenize.COMMENT or docstring else ():
+            row = rows[r - 1]
+            a, b = t.start[1] if r == t.start[0] else 0, t.end[1] if r == t.end[0] else len(row.rstrip("\r\n"))
+            rows[r - 1] = row[:a] + " " * (b - a) + row[b:]
+    return "".join(rows)
+
+
+def code(path, data):
+    """A production file's text with its comments blanked, by language (an extensionless script's interpreter names it):
+    Python by its tokenizer, so docstrings are comments; the rest by STYLES. A line left blank was blank or comment-only."""
+    text, name = data.decode(errors="replace"), path.rsplit("/", 1)[-1]
+    lang = name.rsplit(".", 1)[1] if "." in name else (m[1] if (m := SHEBANG.match(text)) else "")
+    if lang.startswith("py") and (stripped := python_code(text)) is not None:
+        return stripped
+    style = STYLES["#" if HASH_STYLE.fullmatch(lang) else "--" if lang == "sql" else "//"]
+    return style.sub(lambda m: "\n" * m[0].count("\n") if m["c"] else m[0], text)
+
+
+def tokens(text):
+    """The growth unit: words and single punctuation characters, so packing, reflowing and line breaks change nothing."""
+    return len(TOKEN.findall(text))
+
+
+def long_lines(old, new):
+    """(line number, length) of each line `new` adds over LINE_LIMIT characters, unless one URL or hash is the excess."""
+    seen = set(old.decode(errors="replace").splitlines()) if old else set()
+    return [(n, len(line)) for n, line in enumerate(new.decode(errors="replace").splitlines(), 1) if len(line) > LINE_LIMIT
+            and line not in seen and len(line) - max(map(len, URL_OR_HASH.findall(line)), default=0) > LINE_LIMIT]
+
+
+def normalized(text, *, locations=False, trivial=False):
+    """Nontrivial normalized lines (every non-blank one with `trivial`), optionally paired with physical LF line numbers."""
     lines, number = [], 1
     for piece in text.splitlines(keepends=True):
         line = re.sub(r"\s+", " ", piece.strip())
-        if line and not TRIVIAL.match(line):
+        if line and (trivial or not TRIVIAL.match(line)):
             lines.append((number, line) if locations else line)
         number += piece.count("\n")
     return lines

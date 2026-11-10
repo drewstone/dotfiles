@@ -16,6 +16,8 @@ ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Pat
 HOOKS = ROOT / "git/hooks"
 CENSUS = ROOT / "git/census/census"
 LIMIT = json.loads((ROOT / "git/census/patterns.json").read_text())["growthLimit"]
+# Fixture lines carry this checkout's tokens per line, so one fixture line is one charged line under either tool root.
+PER_LINE = json.loads((pathlib.Path(__file__).resolve().parents[1] / "git/census/patterns.json").read_text())["tokensPerLine"]
 PR = "o/r#7"
 FAKE_GH = """#!/usr/bin/env python3
 import json, pathlib, re, sys
@@ -35,7 +37,8 @@ else:
 
 
 def lines(n, word="value"):
-    return "".join(f"{word}_{i} = {i}\n" for i in range(n))
+    """`n` code lines of exactly PER_LINE tokens each: `name = -i + 0 + 0`."""
+    return "".join(f"{word}_{i} = {'-' * ((PER_LINE - 3) % 2)}{i}{' + 0' * ((PER_LINE - 3) // 2)}\n" for i in range(n))
 
 
 with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
@@ -48,8 +51,8 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     env = dict(os.environ, DOTFILES_PRIVATE=str(scratch / "private"), XDG_CACHE_HOME=str(scratch / "cache"), GIT_ALLOW_TEST_IDENTITY="1",
                GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@example.invalid", GIT_COMMITTER_NAME="f", GIT_COMMITTER_EMAIL="f@example.invalid")
 
-    def run(*args, status=0, contains=None):
-        result = subprocess.run([str(a) for a in args], cwd=repo, text=True, capture_output=True, env=env)
+    def run(*args, status=0, contains=None, cwd=None):
+        result = subprocess.run([str(a) for a in args], cwd=cwd or repo, text=True, capture_output=True, env=env)
         if result.returncode != status or (contains and contains not in result.stdout + result.stderr):
             raise AssertionError(f"{args}: expected exit {status}, containing {contains!r}\n{result.stdout}\n{result.stderr}")
         return (result.stdout + result.stderr).strip()
@@ -83,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     run("git", "checkout", "-q", "-b", "grown", "main")
     (repo / "src/new.py").write_text(lines(LIMIT + 10))
     (repo / "src/output.py").write_text("# @generated DO NOT EDIT\n" + lines(1001))
-    (repo / "src/literal.py").write_text('description = "@generated or DO NOT EDIT"\nsecond = 2\n')
+    (repo / "src/literal.py").write_text('description = "@generated or DO NOT EDIT"\n' + lines(1, "second"))
     run("git", "add", "-A")
     run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: grow", contains=f"loc-ratchet: this change adds {LIMIT + 11} production lines")
     run("git", "init", "--bare", "-q", scratch / "origin.git")
@@ -100,14 +103,12 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     run("git", "reset", "-q", "--hard")
     print("PASS: the file limit, the function limit and the census lines floor remain enforced")
 
-    # At or under the limit merges with no approval; deletions anywhere offset additions anywhere.
+    # At or under the limit merges with no approval; production deletions anywhere offset additions anywhere.
     branch("small", {"src/new.py": lines(LIMIT)})
     merge_check(pr=None)
     branch("offset", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT), "old/dead.py": None})
     merge_check(pr=None)
-    branch("fix", {"src/new.py": lines(LIMIT + 10), "NOTES.md": lines(100 - LIMIT - 10, "note")})
-    merge_check(pr=None)
-    print(f"PASS: {LIMIT} production lines, {2 * LIMIT} offset by {LIMIT} deleted elsewhere, and growth that adds no net text merge unapproved")
+    print(f"PASS: {LIMIT} production lines, and {2 * LIMIT} offset by {LIMIT} deleted elsewhere, merge unapproved")
 
     # Above it the merge is refused with the approval line filled in; one approval covers growth in two directories.
     head = branch("feature", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
@@ -153,3 +154,75 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     merge_check(status=2, contains="loc-ratchet: REFUSED: repos/o/r/issues/7 could not be read")
     merge_check(pr="not a pull request", status=2, contains="needs the pull request as <owner>/<repo>#<number>")
     print("PASS: a rewritten head needs a new approval; unreadable comments and an unnamed PR refuse the merge")
+
+    # Each case below starts from main and reports on its own, so a red run names every case that fails.
+    comments()
+
+    def tokens_not_lines():
+        args = ", ".join(["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"])
+        charged = round(6 * 24 / PER_LINE)  # six calls of 24 tokens each
+        for name, call in (("packed", "total_{} = combine(" + args + ")\n"), ("wrapped", "total_{} = combine(\n    " + args.replace(", ", ",\n    ") + "\n)\n")):
+            run("git", "checkout", "-q", "-b", name, "main")
+            (repo / "src/calls.py").write_text("".join(call.format(i) for i in range(6)))
+            run("git", "add", "-A")
+            run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: calls", contains=f"this change adds {charged} production lines")
+            merge_check(pr=None)
+        return f"six calls on 6 lines and wrapped on 72 both charge {charged} lines and merge unapproved"
+
+    def comments_pay_nothing():
+        run("git", "checkout", "-q", "main")
+        commit({"src/documented.py": '"""' + "Explains the module.\n" * 60 + '"""\n' + "# A note.\n" * 60 + lines(1)})
+        branch("uncommented", {"src/documented.py": lines(1), "src/added.py": lines(LIMIT + 10)})
+        merge_check(status=1, contains=f"the PR adds {LIMIT + 10} production lines")
+        return f"deleting a 61-line docstring and 60 comment lines pays for none of {LIMIT + 10} new lines"
+
+    def tests_do_not_pay():
+        run("git", "checkout", "-q", "main")
+        commit({"tests/test_old.py": lines(758, "check")})
+        branch("retired", {"tests/test_old.py": None, "src/feature.py": lines(227)})
+        merge_check(status=1, contains="the PR adds 227 production lines")
+        return "227 production lines with 758 test lines deleted need an approval"
+
+    def restores():
+        run("git", "checkout", "-q", "main")
+        commit({"src/kept.py": lines(300, "kept")})
+        deleting = commit({"src/kept.py": None})
+        branch("uncited", {"src/kept.py": lines(300, "kept")})
+        merge_check(status=1, contains="the PR adds 300 production lines")
+        for name, extra in (("cited", ""), ("cited-more", lines(LIMIT + 1, "fresh"))):
+            run("git", "checkout", "-q", "-b", name, "main")
+            (repo / "src/kept.py").write_text(lines(300, "kept") + extra)
+            run("git", "add", "-A")
+            run("git", "-c", "core.hooksPath=/dev/null", "commit", "-qm", f"fix: bring the parser back\n\nRestores: {deleting}")
+        merge_check(status=1, contains=f"the PR adds {LIMIT + 1} production lines")
+        run("git", "checkout", "-q", "cited")
+        merge_check(contains="300 code lines restore deleted code: charged 0")
+        return f"an uncited restore of 300 lines charges 300; cited, it charges 0, and {LIMIT + 1} new lines beside it charge {LIMIT + 1}"
+
+    def blobless_clone_refuses_restore():  # reads the branches restores() made
+        clone = scratch / "blobless"
+        run("git", "config", "uploadpack.allowFilter", "true")
+        run("git", "clone", "-q", "--no-local", "--no-checkout", "--filter=blob:none", f"file://{repo}", clone)
+        fork = run("git", "merge-base", "origin/main", "origin/cited-more", cwd=clone)
+        out = run(HOOKS / "loc-ratchet", f"{fork}..origin/cited-more", PR, cwd=clone, status=1, contains=f"the PR adds {300 + LIMIT + 1} production lines")
+        assert "no restore credit from" in out, out
+        return "a clone without the deleted blobs refuses the restore claim and charges it in full"
+
+    def wide_lines():
+        run("git", "checkout", "-q", "-b", "wide", "main")
+        (repo / "src/wide.py").write_text(f"message = '{'x' * 170}'\nsource = 'https://example.com/{'a' * 200}'\n")
+        run("git", "add", "-A")
+        run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: wide", contains="src/wide.py:1 adds a 182-character line")
+        out = merge_check(pr=None, status=1, contains="refusing merge: src/wide.py:1 adds a 182-character line")
+        assert "src/wide.py:2" not in out, out
+        return "a 182-character line warns at the commit and is refused at merge; a line whose excess is one URL is not"
+
+    failed = []
+    for case in (tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines):
+        try:
+            print(f"PASS: {case()}")
+        except AssertionError as why:
+            failed.append(case.__name__)
+            print(f"FAIL: {case.__name__}: {' '.join(str(why).split())[:400]}")
+            run("git", "reset", "-q", "--hard")
+    sys.exit(f"FAILED: {', '.join(failed)}" if failed else 0)

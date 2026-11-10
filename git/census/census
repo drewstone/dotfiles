@@ -56,27 +56,51 @@ def optional_ref(checkout, ref):
 
 
 def production_delta(checkout, base, head, merge=None, paths=None):
-    """Production-line change and grown oversized files; a merge pays only its own additions."""
+    """The growth charge in code lines (production tokens added less removed, over TOKENS_PER_LINE), logic files grown past
+    FILE_LIMIT physical lines, added lines over LINE_LIMIT, and each normalized code line's net count; a merge pays only its own additions."""
     if merge:  # the lesser of its two three-way readings, on paths unlike both parents: a rename never charges the other side's edit
         fork = git(checkout, "merge-base", base, merge).decode().strip()
         paths = set.intersection(*(set(git(checkout, "diff", "--name-only", "--no-renames", "-z", p, head).decode().split("\0")[:-1]) for p in (base, merge)))
-        (mine, big), (theirs, past) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
+        (mine, big, wide, _), (theirs, past, broad, _) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
         return (min(mine - production_delta(checkout, fork, merge, paths=paths)[0], theirs - production_delta(checkout, fork, base, paths=paths)[0]),
-                [o for o in big if o[0] in {p for p, _, _ in past}])
-    size = lambda ref, name, mode: production_sizes(checkout, ref, read_blobs(checkout, ref, [name]) if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
+                [o for o in big if o[0] in {p for p, _, _ in past}], [w for w in wide if w in broad], collections.Counter())
+    blob = lambda ref, name, mode: production(checkout, ref, read_blobs(checkout, ref, [name]) if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
     parts = iter(git(checkout, "diff", "--raw", "-z", "-M", "--diff-filter=ACDMRT", base, head).decode().split("\0")[:-1])
-    growth, oversized = 0, []
+    growth, oversized, long, keys = 0, [], [], collections.Counter()
     for entry in parts:
         old_mode, new_mode, _, _, status = entry.removeprefix(":").split()
         old_path = next(parts)
         path = next(parts) if status[0] in "RC" else old_path
         if paths is not None and not {old_path, path} & paths:
             continue
-        old, new = size(base, old_path, "000000" if status[0] == "C" else old_mode), size(head, path, new_mode)
-        growth += (new or 0) - (old or 0)
-        if new and new > max(C.FILE_LIMIT, old or 0):
-            oversized.append((path, old, new))
-    return growth, oversized
+        old, new = blob(base, old_path, "000000" if status[0] == "C" else old_mode), blob(head, path, new_mode)
+        (before, after), sizes = [C.code(p, b or b"") for p, b in ((old_path, old), (path, new))], [b and C.line_count(b) for b in (old, new)]
+        growth += C.tokens(after) - C.tokens(before)
+        keys.update(C.normalized(after, trivial=True))
+        keys.subtract(C.normalized(before, trivial=True))
+        if new and sizes[1] > max(C.FILE_LIMIT, sizes[0] or 0):
+            oversized.append((path, sizes[0], sizes[1]))
+        long += [(path, *found) for found in C.long_lines(old, new or b"")]
+    return growth / C.TOKENS_PER_LINE, oversized, long, keys
+
+
+def restored(checkout, base, head, keys):
+    """Code lines the PR adds back that a commit on the base deleted, when one of its commit messages cites that commit with a
+    `Restores: <sha>` line: a line counts only if its normalized form is among the lines that commit removed, as often as it did.
+    A clone that lacks that commit's blobs refuses the claim, never fetching them one at a time or guessing."""
+    pool = collections.Counter()
+    for sha in sorted(set(re.findall(r"(?mi)^Restores: *([0-9a-f]{40})\s*$", git(checkout, "log", "--format=%B", f"{base}..{head}").decode()))):
+        try:
+            if subprocess.run(["git", "-C", checkout, "merge-base", "--is-ancestor", sha, base], capture_output=True).returncode:
+                raise Refused(f"{sha} is not on the base branch")
+            git(checkout, "diff", "--numstat", f"{sha}^", sha, env=dict(os.environ, GIT_NO_LAZY_FETCH="1"))
+            pool.update({k: -n for k, n in production_delta(checkout, f"{sha}^", sha)[3].items() if n < 0})
+        except Refused as why:
+            print(f"census: no restore credit from {sha[:12]}, charged in full: {why}", file=sys.stderr)
+    tokens = sum(min(n, pool[k]) * C.tokens(k) for k, n in keys.items() if n > 0 and pool[k])
+    if tokens:
+        print(f"census: {round(tokens / C.TOKENS_PER_LINE)} code lines restore deleted code: charged 0, a debit against that deletion", file=sys.stderr)
+    return tokens / C.TOKENS_PER_LINE
 
 
 def github(endpoint, *flags):
@@ -284,7 +308,8 @@ def measure(checkout, rev, scopes=()):
     function_paths = [p for p in paths if C.function_source(p)]
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
     blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
-    sizes = production_sizes(checkout, tree, {p: blobs[p] for p in logic})
+    kept = production(checkout, tree, {p: blobs[p] for p in logic})
+    sizes, code_lines = {p: C.line_count(b) for p, b in kept.items()}, {p: round(C.tokens(C.code(p, b)) / C.TOKENS_PER_LINE) for p, b in kept.items()}
     if not sizes:
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
     texts = {p: blobs[p].decode(errors="replace") for p in source}
@@ -298,12 +323,12 @@ def measure(checkout, rev, scopes=()):
     hug_fns = [f for f in fn["fns"] if C.FUNCTION_HUG[0] <= f[0] <= C.FUNCTION_HUG[1]]
     classes = [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS]
     duplicate_exports = {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}
-    m = {"prod_lines": sum(sizes.values()), "files_over_1000": len(big_files), "hug_files": len(hug_files),
+    m = {"prod_lines": sum(code_lines.values()), "files_over_1000": len(big_files), "hug_files": len(hug_files),
          "logic_files": len(sizes), "stale_doc_refs": len(stale), "hug_fns": len(hug_fns), "classes_over_40": len(classes),
          "dup_lines": dup, "dup_exports": len(duplicate_exports), "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2),
          "exported_names": len(defs), "dup_pct": round(100 * dup / max(normalized, 1), 2)}
     m.update({f"fns_over_{n}": sum(s > limit for s in spans) for n, limit in ((150, 150), (300, C.FUNCTION_LIMIT), (500, 500))})
-    lists = {"prod_lines": sizes, "dup_lines": copies, "files_over_1000": big_files, "hug_files": hug_files,
+    lists = {"prod_lines": code_lines, "dup_lines": copies, "files_over_1000": big_files, "hug_files": hug_files,
              "stale_doc_refs": stale, "fns_over_150": [f for f in fn["fns"] if f[0] > 150], "hug_fns": hug_fns,
              "classes_over_40": classes, "dup_exports": duplicate_exports}
     result = {"tree": tree, "files_read": {"logic": len(sizes), "source": len(source), "functions": fn["files"], "docs": len(docs)}, "metrics": m, "lists": lists}
@@ -405,18 +430,18 @@ def xrepo(specs):
                                             "shared_windows": len(hashes), "window_hashes": hashes} for (a, b), hashes in pairs.items()]}}
 
 
-def production_sizes(checkout, tree, blobs):
-    """Lines of the logic files among `blobs`, less linguist-generated, vendored and generated-header files."""
+def production(checkout, tree, blobs):
+    """The logic files among `blobs`, less linguist-generated, vendored and generated-header files."""
     blobs = {p: b for p, b in blobs.items() if C.logic(p, C.head_of(b))}
     exempt = attr_exempt(checkout, tree, list(blobs)) | {p for p, b in blobs.items() if C.generated(b[:2000].decode(errors="replace"))}
-    return {p: C.line_count(b) for p, b in blobs.items() if p not in exempt}
+    return {p: b for p, b in blobs.items() if p not in exempt}
 
 
 def files(checkout, rev):
     tree = tree_of(checkout, rev)
     logic = [p for p, kind in tree_entries(checkout, tree).items() if kind == "blob" and C.candidate(p)]
     blobs = {p: b for p, b in read_blobs(checkout, tree, logic).items() if C.logic(p, C.head_of(b))}
-    sizes = production_sizes(checkout, tree, blobs)
+    sizes = production(checkout, tree, blobs)
     return "".join(f"{p}\t{C.line_count(b)}\t{'logic' if p in sizes else 'exempt'}\n" for p, b in blobs.items())
 
 

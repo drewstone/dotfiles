@@ -7,7 +7,7 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 ## Own the outcome
 
 1. Done means the requested consumer has the result, proven through the shipped flow, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Finish the whole task; a plan, a question or a partial is not a handoff.
-2. Delete first, then simplify, then automate; one name and one implementation per concept. Fixes and refactors add no net lines; a new capability may grow when a reviewer other than its author judges it new, proportionate and reusing nothing that exists, and posts the census approval ([simplify](skills/simplify/SKILL.md), `census`).
+2. Delete first, then simplify, then automate; one name and one implementation per concept. A PR whose production code grows by at most the census limit merges; above it, deletions in the same PR pay, or a new capability may grow when a reviewer other than its author judges it new, proportionate and reusing nothing that exists, and posts the census approval; a restore is not growth ([simplify](skills/simplify/SKILL.md), `census`).
 3. Before saying something is missing, search the owner's default branch and the inventory your layer names, and cite what you found.
 4. A rate, price, quota, limit or version has one owner; documents say where to read it, never its value.
 5. Report the checked outcome first, unknowns explicit, in plain technical English; every number with its unit, baseline and source ([the climb](../docs/processes/climb.md)).
