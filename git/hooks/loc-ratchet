@@ -45,9 +45,9 @@ def main():
         base = census.optional_ref(".", "HEAD") or census.git(".", "hash-object", "-t", "tree", os.devnull).decode().strip()
         head = census.git(".", "write-tree").decode().strip()
         merge = census.optional_ref(".", "MERGE_HEAD")
-    growth, oversized = census.production_delta(".", base, head, merge)
+    total, oversized = census.production_delta(".", base, head, merge)
     # One total: deletions anywhere offset additions anywhere. Only a repository's first commit grows from nothing.
-    total = sum(growth.values()) if census.git(".", "ls-tree", base).strip() else 0
+    total = total if census.git(".", "ls-tree", base).strip() else 0
     limit, pr = census.C.GROWTH_LIMIT, " ".join(sys.argv[2:])
     if len(sys.argv) == 1 and total > 0:  # a commit is never refused for growth
         print(f"loc-ratchet: this change adds {total} production lines; a PR whose total passes {limit} needs a growth approval to merge (git/census/README.md).", file=sys.stderr)
@@ -57,7 +57,8 @@ def main():
     if grown := grown and not (pr and census.approved_growth(".", base, head, total, pr)):
         print(f"loc-ratchet: refusing merge: the PR adds {total} production lines ({net} net lines of all text), over the {limit} that merge unapproved.\n"
               "  Delete low-value tests and dead code first. Otherwise a reviewer who did not write it judges it new, proportionate and reusing nothing\n"
-              f"  that exists, then comments on the PR:\n  Growth approved: {pr or '<owner>/<repo>#<number>'} at {head}: <why>", file=sys.stderr)
+              f"  that exists, then comments on the PR, under a session or run other than the one the PR's body names:\n"
+              f"  Growth approved: {pr or '<owner>/<repo>#<number>'} at {head}: <why>\n  Session: <the reviewer's own>", file=sys.stderr)
     for path, old, new in oversized:
         print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
               f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)

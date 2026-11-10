@@ -46,13 +46,18 @@ Above it, a reviewer who did not write the lines checks that the capability is n
 
 ```text
 Growth approved: <owner>/<repo>#<number> at <40-hex head sha>: <why>
+Session: <the reviewer's own session, or `Run ID: <run>`>
 ```
+
+The PR's body names who wrote it with a `Run ID:` or `Session:` line, and the approving comment carries one the body does not.
+A PR whose body carries neither cannot be approved until it has one, and a comment with no such line, or with the PR's, approves nothing.
 
 The refusal prints that line filled in for the head it read; `<why>` is the reviewer's own words and may not be left as written.
 An approval holds for a later head that descends from the approved sha while the PR's total has grown by at most `growthLimit` since; a rewritten history needs a new one.
 `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's comments and counts only those by the authenticated user; a caller that posts for several authors keeps the author from posting its own.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
-A check that cannot measure or cannot read the comments refuses the merge (exit 2). An approval permits only production growth: every other cap and floor stays enforced.
+A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge makes three REST reads (the PR, its comments, the user), so such merges stop while the REST quota is exhausted; a merge at or under the limit makes none.
+The check runs only where the merging tool calls it: a merge issued with plain `gh` or the web button skips it entirely. An approval permits only production growth: every other cap and floor stays enforced.
 [The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository and a fake `gh`.
 
 ## Integrity

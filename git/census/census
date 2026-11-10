@@ -55,23 +55,17 @@ def optional_ref(checkout, ref):
     return run.stdout.decode().strip() if run.returncode == 0 else None
 
 
-def area(path):
-    dirs = path.split("/")[:-1]
-    return "/".join(dirs[:2] if dirs[:1] and dirs[0] in ("apps", "products", "packages", "services", "tools") else dirs[:1]) or "(root)"
-
-
 def production_delta(checkout, base, head, merge=None, paths=None):
-    """Production-line change per area and grown oversized files, cross-area renames free; a merge pays only its own additions."""
+    """Production-line change and grown oversized files; a merge pays only its own additions."""
     if merge:  # the lesser of its two three-way readings, on paths unlike both parents: a rename never charges the other side's edit
         fork = git(checkout, "merge-base", base, merge).decode().strip()
         paths = set.intersection(*(set(git(checkout, "diff", "--name-only", "--no-renames", "-z", p, head).decode().split("\0")[:-1]) for p in (base, merge)))
         (mine, big), (theirs, past) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
-        mine.subtract(production_delta(checkout, fork, merge, paths=paths)[0])
-        theirs.subtract(production_delta(checkout, fork, base, paths=paths)[0])
-        return {a: min(mine[a], theirs[a]) for a in mine.keys() | theirs.keys()}, [o for o in big if o[0] in {p for p, _, _ in past}]
+        return (min(mine - production_delta(checkout, fork, merge, paths=paths)[0], theirs - production_delta(checkout, fork, base, paths=paths)[0]),
+                [o for o in big if o[0] in {p for p, _, _ in past}])
     size = lambda ref, name, mode: production_sizes(checkout, ref, read_blobs(checkout, ref, [name]) if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
     parts = iter(git(checkout, "diff", "--raw", "-z", "-M", "--diff-filter=ACDMRT", base, head).decode().split("\0")[:-1])
-    growth, oversized = collections.Counter(), []
+    growth, oversized = 0, []
     for entry in parts:
         old_mode, new_mode, _, _, status = entry.removeprefix(":").split()
         old_path = next(parts)
@@ -79,11 +73,7 @@ def production_delta(checkout, base, head, merge=None, paths=None):
         if paths is not None and not {old_path, path} & paths:
             continue
         old, new = size(base, old_path, "000000" if status[0] == "C" else old_mode), size(head, path, new_mode)
-        if status[0] == "R" and area(old_path) != area(path):
-            growth[area(path)] += (new or 0) - (old or 0)
-        else:
-            growth[area(old_path)] -= old or 0
-            growth[area(path)] += new or 0
+        growth += (new or 0) - (old or 0)
         if new and new > max(C.FILE_LIMIT, old or 0):
             oversized.append((path, old, new))
     return growth, oversized
@@ -99,14 +89,20 @@ def repository(url):
     m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
 def approved_growth(checkout, fork, head, total, pr):
-    """A PR comment `Growth approved: <owner>/<repo>#<number> at <sha>: <why>` by the verified account admits the PR's growth at that
-    head, and at a later head that descends from it while the PR's production total has grown at most GROWTH_LIMIT since."""
+    """A PR comment `Growth approved: <owner>/<repo>#<number> at <sha>: <why>` by the verified account, carrying a `Run ID:` or `Session:`
+    line that the PR's body does not, admits the PR's growth at that head, and at a later head that descends from it while the PR's
+    production total has grown at most GROWTH_LIMIT since. A PR whose body names no such line has no known author and cannot be approved."""
     if not re.fullmatch(r"[\w.-]+/[\w.-]+#[1-9]\d*", pr):
         raise Refused(f"growth approval needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
-    comments = github(f"repos/{pr.replace('#', '/issues/')}/comments", "--paginate", "--jq", f'.[] | select(.user.login == "{github("user")["login"]}") | {{body}}')
-    for sha in re.findall(rf"(?mi)^Growth approved: {re.escape(pr)} at ([0-9a-f]{{40}}): *(?!<why>)\S", "\n".join(c["body"] for c in comments)):
+    issue, lanes = f"repos/{pr.replace('#', '/issues/')}", lambda text: set(re.findall(r"(?mi)^(?:Run ID|Session): *(?!<)(\S+)", text or ""))
+    authors = lanes(github(issue)["body"])
+    if not authors:
+        print("census: the PR's body carries no `Run ID:` or `Session:` line naming who wrote it, so no approval can count; add one first.", file=sys.stderr)
+    comments = github(f"{issue}/comments", "--paginate", "--jq", f'.[] | select(.user.login == "{github("user")["login"]}") | {{body}}') if authors else []
+    for sha in (s for c in comments if lanes(c["body"]) and not lanes(c["body"]) & authors
+                for s in re.findall(rf"(?mi)^Growth approved: {re.escape(pr)} at ([0-9a-f]{{40}}): *(?!<why>)\S", c["body"])):
         if sha.lower() == head or (subprocess.run(["git", "-C", checkout, "merge-base", "--is-ancestor", sha, head], capture_output=True).returncode == 0 and
-                                   total - sum(production_delta(checkout, git(checkout, "merge-base", fork, sha).decode().strip(), sha)[0].values()) <= C.GROWTH_LIMIT):
+                                   total - production_delta(checkout, git(checkout, "merge-base", fork, sha).decode().strip(), sha)[0] <= C.GROWTH_LIMIT):
             print(f"census: production growth approved at {sha}", file=sys.stderr)
             return True
     return False
