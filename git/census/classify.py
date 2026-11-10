@@ -120,6 +120,7 @@ def code(path, data):
     Python by its tokenizer, so docstrings are comments; the rest by STYLES. A line left blank was blank or comment-only."""
     text, name = data.decode(errors="replace"), path.rsplit("/", 1)[-1]
     lang = name.rsplit(".", 1)[1] if "." in name else (m[1] if (m := SHEBANG.match(text)) else "")
+    text = re.sub(r"\A#![^\n]*", "", text)  # an interpreter line is not code in any language
     if lang.startswith("py") and (stripped := python_code(text)) is not None:
         return stripped
     style = STYLES["#" if HASH_STYLE.fullmatch(lang) else "--" if lang == "sql" else "//"]

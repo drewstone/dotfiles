@@ -78,7 +78,7 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   git("merge", "-q", "--no-commit", "--no-ff", "main");
   const clean = run(dir, join(hooks, "loc-ratchet"), []);
   assert.equal(clean.status, 0, clean.stderr);
-  write(dir, { "src/a.py": a(30, grown + "own0 = 0\nown1 = 1\n"), "src/big.py": big(997, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\nown0 = 0\nown1 = 1\n") });
+  write(dir, { "src/a.py": a(30, grown + "own0 = pick(0, 0)\nown1 = pick(1, 1)\n"), "src/big.py": big(997, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\nown0 = pick(0, 0)\nown1 = pick(1, 1)\n") });
   git("add", "-A");
   const evil = run(dir, join(hooks, "loc-ratchet"), []);
   assert.equal(evil.status, 1, evil.stderr);
@@ -88,7 +88,7 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
 
 test("a commit reports the production lines it adds and is not refused for them; a repository's first commit reports nothing", () => {
   const { dir, git } = repo({ "src/a.py": "a = 1\n", "NOTES.md": "one\n" });
-  write(dir, { "benchmarks/run.py": "b = 1\nc = 2\n" });
+  write(dir, { "benchmarks/run.py": "b = pick(1, 2)\nc = pick(3, 4)\n" });
   git("add", "-A");
   const grown = run(dir, join(hooks, "loc-ratchet"), []);
   assert.equal(grown.status, 0, grown.stderr);
@@ -111,8 +111,8 @@ test("census floors measure a sparse worktree against its base and refuse a rise
   write(clone, { "a/copy.ts": `export function copy(values: number[]) {\n  let total = 0\n${body}  return total\n}\n` });
   const r = run(clone, census, ["floors", ".", base, "WORKTREE", "--floor", "lines", "--floor", "copies"]);
   assert.equal(r.status, 1, r.stderr);
-  // b/z.ts is outside the sparse set and still counted: 16 + 1 lines before, 32 + 1 after.
-  assert.match(r.stdout, /prod_lines\s+17 -> 33\s+\+16\s+REFUSED/);
+  // b/z.ts is outside the sparse set and still counted: 126 + 5 code tokens before, 252 + 5 after, 8 to a line.
+  assert.match(r.stdout, /prod_lines\s+16 -> 32\s+\+16\s+REFUSED/);
   assert.match(r.stdout, /dup_lines\s+0 -> \d+\s+\+\d+\s+REFUSED/);
   assert.match(r.stdout, /xrepo_windows: not measured, no --peer named/);
 });
@@ -235,7 +235,7 @@ test("scoped census counts covered lines against outside peers and preserves cac
   assert.equal(selected.scope.metrics.dup_lines, 38);
   assert.equal(selected.scope.files_read.source, 3);
   assert.equal(selected.files_read.source, 5);
-  assert.equal(selected.scope.metrics.prod_lines, 18 + 29 + 1);
+  assert.equal(selected.scope.metrics.prod_lines, 46); // 126, 238 and 5 code tokens, 8 to a line
   assert.equal(selected.scope.lists.dup_lines.files["services/repeat.ts"].dup_lines, 24);
   assert.equal(selected.scope.lists.dup_lines.files["scripts/lane.ts"].dup_lines, 14);
   const occurrences = Object.values(selected.scope.lists.dup_lines.windows).flat();
@@ -251,7 +251,7 @@ test("scoped census counts covered lines against outside peers and preserves cac
   assert.deepEqual(global.lists.dup_lines, selected.lists.dup_lines);
   const single = measure("scripts/lane.ts");
   assert.deepEqual(Object.keys(single.scope.lists.dup_lines.files), ["scripts/lane.ts"]);
-  assert.equal(single.scope.metrics.prod_lines, 18);
+  assert.equal(single.scope.metrics.prod_lines, 16);
   // Removing the only outside peer must reduce scope coverage on the next tree.
   git("rm", "packages/peer.ts");
   git("commit", "-qm", "remove outside peer");
@@ -299,7 +299,7 @@ test("Python-only scope has no JS/TS copies and source coordinates count LF acro
   const python = run(dir, census, ["measure", ".", "HEAD", "--scope=tools/only.py"]);
   assert.equal(python.status, 0, python.stderr);
   assert.deepEqual(JSON.parse(python.stdout).scope, { paths: ["tools/only.py"], files_read: { logic: 1, source: 0 },
-    metrics: { prod_lines: 2, dup_lines: 0, dup_pct: 0 }, lists: { dup_lines: { files: {}, windows: {} } } });
+    metrics: { prod_lines: 1, dup_lines: 0, dup_pct: 0 }, lists: { dup_lines: { files: {}, windows: {} } } });
 });
 
 test("Storybook CSF suffixes are outside production while stories routes and modules remain enforced", () => {
@@ -316,7 +316,7 @@ test("Storybook CSF suffixes are outside production while stories routes and mod
   const measured = run(dir, census, ["measure", ".", "HEAD"]);
   assert.equal(measured.status, 0, measured.stderr);
   const report = JSON.parse(measured.stdout);
-  assert.equal(report.metrics.prod_lines, 3, "CSF bodies are not production logic");
+  assert.equal(report.metrics.prod_lines, 2, "CSF bodies are not production logic"); // 3 files of 5 code tokens
   assert.equal(report.files_read.source, 3);
   assert.equal(report.files_read.functions, 3);
   assert.equal(report.metrics.dup_exports, 0, "CSF registry state names are not production API collisions");

@@ -232,7 +232,7 @@ def measurement_view(result, rev, scopes):
     dup = sum(f["dup_lines"] for f in selected.values())
     normalized = sum(f["normalized_lines"] for f in selected.values())
     view["scope"] = {"paths": scopes, "files_read": {"logic": sum(belongs(p) for p in sizes), "source": len(selected)},
-                     "metrics": {"prod_lines": sum(n for p, n in sizes.items() if belongs(p)), "dup_lines": dup,
+                     "metrics": {"prod_lines": round(sum(n for p, n in sizes.items() if belongs(p))), "dup_lines": dup,
                                  "dup_pct": round(100 * dup / max(normalized, 1), 2)},
                      "lists": {"dup_lines": {"files": selected, "windows": {h: occ for h, occ in copies["windows"].items()
                                if any(belongs(o["path"]) for o in occ)}}}}
@@ -309,7 +309,7 @@ def measure(checkout, rev, scopes=()):
     docs = [p for p in paths if p.endswith(".md") and not C.history(p)]
     blobs = read_blobs(checkout, tree, sorted(set(logic + source + function_paths + docs)))
     kept = production(checkout, tree, {p: blobs[p] for p in logic})
-    sizes, code_lines = {p: C.line_count(b) for p, b in kept.items()}, {p: round(C.tokens(C.code(p, b)) / C.TOKENS_PER_LINE) for p, b in kept.items()}
+    sizes, code_lines = {p: C.line_count(b) for p, b in kept.items()}, {p: round(C.tokens(C.code(p, b)) / C.TOKENS_PER_LINE, 3) for p, b in kept.items()}
     if not sizes:
         raise Refused(f"read 0 logic files at {rev} (tree {tree[:12]}) in {checkout}")
     texts = {p: blobs[p].decode(errors="replace") for p in source}
@@ -323,7 +323,7 @@ def measure(checkout, rev, scopes=()):
     hug_fns = [f for f in fn["fns"] if C.FUNCTION_HUG[0] <= f[0] <= C.FUNCTION_HUG[1]]
     classes = [c for c in fn["classes"] if c[0] > C.CLASS_MEMBERS]
     duplicate_exports = {n: sorted(f) for n, f in sorted(defs.items()) if len(f) > 1}
-    m = {"prod_lines": sum(code_lines.values()), "files_over_1000": len(big_files), "hug_files": len(hug_files),
+    m = {"prod_lines": round(sum(code_lines.values())), "files_over_1000": len(big_files), "hug_files": len(hug_files),
          "logic_files": len(sizes), "stale_doc_refs": len(stale), "hug_fns": len(hug_fns), "classes_over_40": len(classes),
          "dup_lines": dup, "dup_exports": len(duplicate_exports), "mean_fn_lines": round(sum(spans) / max(len(spans), 1), 2),
          "exported_names": len(defs), "dup_pct": round(100 * dup / max(normalized, 1), 2)}
