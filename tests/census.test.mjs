@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -83,101 +82,23 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   git("add", "-A");
   const evil = run(dir, join(hooks, "loc-ratchet"), []);
   assert.equal(evil.status, 1, evil.stderr);
-  assert.match(evil.stderr, /src gains 4 production lines/);
-  assert.doesNotMatch(evil.stderr, /lib gains/);
+  assert.match(evil.stderr, /this change adds 4 production lines/);
   assert.match(evil.stderr, /src\/big\.py: 1006 lines \(was 997\)/);
 });
 
-// The GitHub comment the census verifies comes from a fake gh; DOTFILES_PRIVATE names no census.env, so gh is the CLI.
-// approve(scope, quote) posts the comment with the scope's block and points census.growthApproval at its record.
-function approver(dir, git) {
-  git("remote", "add", "origin", "https://github.com/o/r.git");
-  const bin = join(scratch, `gh-${repos}`), comment = join(bin, "comment.json"), url = "https://github.com/o/r/pull/1#issuecomment-7";
-  mkdirSync(bin);
-  writeFileSync(join(bin, "gh"), `#!/bin/sh\ncase "$*" in "api user") echo '{"login": "owner"}' ;; "api repos/o/r/issues/comments/7") cat ${comment} ;; *) exit 9 ;; esac\n`, { mode: 0o755 });
-  const scope = (base, head) => JSON.parse(run(dir, "python3", ["-c", "import json, sys; from runpy import run_path; print(json.dumps(run_path(sys.argv[1])['growth_scope']('.', *sys.argv[2:])))", census, base, head]).stdout);
-  const approve = (approved, quote) => {
-    const body = `${quote}\n\n\`\`\`census-growth-approval\n${JSON.stringify(approved)}\n\`\`\``;
-    writeFileSync(comment, JSON.stringify({ html_url: url, user: { login: "owner" }, body }));
-    writeFileSync(join(bin, "record.json"), JSON.stringify({ source: { url, quote, sha256: createHash("sha256").update(body).digest("hex") } }));
-    git("config", "census.growthApproval", join(bin, "record.json"));
-  };
-  const ratchet = (...args) => spawnSync(join(hooks, "loc-ratchet"), args, { cwd: dir, encoding: "utf8", env: { ...env, PATH: `${bin}:${env.PATH}`, DOTFILES_PRIVATE: bin } });
-  return { scope, approve, ratchet, words: (s, why) => `Census growth approval for ${s.repository}, patch ${s.patch}, areas ${JSON.stringify(s.areas)}: ${why}` };
-}
-
-test("a growth approval admits only a scope its reviewer's words name; a general or reused sentence approves nothing", () => {
-  const { dir, git } = repo({ "src/a.py": "a = 1\n" });
-  const { scope, approve, ratchet, words } = approver(dir, git);
-  write(dir, { "src/a.py": "a = 1\nb = 2\nc = 3\n" });
-  git("add", "-A");
-  const staged = scope("HEAD", git("write-tree"));
-  assert.deepEqual(staged.areas, { src: 2 });
-  approve(staged, 'Owner, 2026-11-04: "You can push the PR even if it increases lines of code. I don\'t care."');
-  const reused = ratchet();
-  assert.equal(reused.status, 2, reused.stderr);
-  assert.match(reused.stderr, /does not approve scope .* in its block and in words written for it/);
-  // A refusal's ask, the sentence with its <why> left for the reviewer, approves nothing however it is posted.
-  approve(staged, words(staged, "<why>"));
-  assert.equal(ratchet().status, 2);
-  approve({ ...staged, repository: "git@github.com:o/r.git" }, words({ ...staged, repository: "git@github.com:o/r.git" }, "the parser is new and reuses nothing."));
-  const named = ratchet();
-  assert.equal(named.status, 0, named.stderr);
-  assert.match(named.stderr, /census: approved production growth from https:\/\/github.com\/o\/r\/pull\/1#issuecomment-7/);
-});
-
-test("one approval holds while the base merges into the branch; any change to the branch's own production lines, a resolution's too, refuses", () => {
-  const a = (mid) => lines(20, (i) => `a${i} = ${i}`) + mid + lines(20, (i) => `a${i + 20} = ${i + 20}`);
-  const moved = (mid) => "top = 0\n" + a(mid).replace("a18 = 18", "a18 = 'main'");
-  const { dir, git } = repo({ "src/a.py": a(""), "src/c.py": "c = 1\n" });
-  const { scope, approve, ratchet, words } = approver(dir, git);
-  const commit = (files, message) => { write(dir, files); git("add", "-A"); git("commit", "-qm", message); };
-  // A merge check's reading: the merge-base with main up to the head.
-  const merge = () => ratchet(`${git("merge-base", "main", "HEAD")}..HEAD`);
-  git("checkout", "-qb", "branch");
-  commit({ "src/a.py": a("grown0 = 0\ngrown1 = 1\n"), "src/c.py": "c = 'branch'\n" }, "grow src by two lines and change c");
-  const approved = scope("main", "HEAD");
-  assert.deepEqual(approved.areas, { src: 2 });
-  approve(approved, words(approved, "the two lines are new and reuse nothing."));
-  assert.equal(merge().status, 0, "approved at the branch head");
-  // Main edits a line within the branch's diff context, grows a file of its own, and merges in clean: same lines, same approval.
-  git("checkout", "-q", "main");
-  commit({ "src/a.py": moved(""), "src/d.py": "d = 1\n" }, "main moves");
-  git("checkout", "-q", "branch");
-  git("merge", "-q", "--no-edit", "main");
-  const merged = merge();
-  assert.equal(merged.status, 0, merged.stderr);
-  assert.match(merged.stderr, /census: approved production growth/);
-  commit({ "tests/test_a.py": "def test_a():\n    pass\n" }, "a test changes no production line");
-  assert.equal(merge().status, 0);
-  // One production line of the branch changes: the same areas, a new patch.
-  commit({ "src/a.py": moved("grown0 = 0\ngrown1 = 'one'\n") }, "change one grown line");
-  const changed = merge();
-  assert.equal(changed.status, 2, changed.stderr);
-  assert.match(changed.stderr, /does not approve scope/);
-  git("reset", "-q", "--hard", "HEAD~1");
-  // Main changes the line the branch changed; the conflict's resolution keeps the branch's words over main's: refused.
-  git("checkout", "-q", "main");
-  commit({ "src/c.py": "c = 'main'\n" }, "main changes c");
-  git("checkout", "-q", "branch");
-  assert.notEqual(run(dir, "git", ["merge", "-q", "--no-edit", "main"]).status, 0, "conflict");
-  commit({ "src/c.py": "c = 'branch'\n" }, "resolve");
-  assert.equal(merge().status, 2);
-});
-
-test("a new area's production growth is charged like an existing area's; only a repository's first commit is free", () => {
+test("a commit reports the production lines it adds and is not refused for them; a repository's first commit reports nothing", () => {
   const { dir, git } = repo({ "src/a.py": "a = 1\n", "NOTES.md": "one\n" });
   write(dir, { "benchmarks/run.py": "b = 1\nc = 2\n" });
   git("add", "-A");
   const grown = run(dir, join(hooks, "loc-ratchet"), []);
-  assert.equal(grown.status, 1, grown.stderr);
-  assert.match(grown.stderr, /benchmarks gains 2 production lines and the change adds 2 net lines/);
+  assert.equal(grown.status, 0, grown.stderr);
+  assert.match(grown.stderr, /this change adds 2 production lines/);
   const first = join(scratch, `repo-${repos++}`);
   mkdirSync(first);
   run(first, "git", ["init", "-q", "-b", "main"]);
   write(first, { "src/a.py": "a = 1\n" });
   run(first, "git", ["add", "-A"]);
-  assert.equal(run(first, join(hooks, "loc-ratchet"), []).status, 0);
+  assert.deepEqual([run(first, join(hooks, "loc-ratchet"), []).status, run(first, join(hooks, "loc-ratchet"), []).stderr], [0, ""]);
 });
 
 test("census floors measure a sparse worktree against its base and refuse a rise in production lines and copies", () => {
@@ -423,7 +344,7 @@ test("Storybook CSF suffixes are outside production while stories routes and mod
 
 test("ratchets run with no origin or a listed origin owner and skip another owner's clone, also without guard-config", () => {
   const { dir, git } = repo({ "src/a.py": "a = 1\n" });
-  write(dir, { "src/b.py": "b = 1\nc = 2\n" });
+  write(dir, { "src/b.py": lines(1001, (i) => `b${i} = ${i}`) });
   git("add", "-A");
   const config = join(scratch, "ratchets-home/.claude/guard-config.json");
   mkdirSync(dirname(config), { recursive: true });
@@ -432,7 +353,7 @@ test("ratchets run with no origin or a listed origin owner and skip another owne
     if (owners !== undefined) writeFileSync(config, JSON.stringify({ ratchets: { owners } }));
     return spawnSync(join(hooks, "ratchets"), [], { cwd: dir, encoding: "utf8", env: { ...env, HOME: join(scratch, "ratchets-home") } }).status;
   };
-  assert.equal(ratchets(), 1, "no origin: the growth is refused");
+  assert.equal(ratchets(), 1, "no origin: the oversized file is refused");
   git("remote", "add", "origin", "git@example.invalid:owner-a/app.git");
   assert.equal(ratchets(), 0, "no guard-config: another owner's clone follows its maintainers' rules");
   assert.equal(ratchets(["owner-b"]), 0);

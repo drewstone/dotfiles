@@ -94,17 +94,14 @@ with tempfile.TemporaryDirectory(prefix="census-gitlinks-") as temporary:
         run(repo, "git", "mv", "lib/moved.py", "src/main.py")
         commit(repo, "refactor: restore regular source path")
         # A type change must charge its blob side; Git reports T rather than M.
-        for index, path in enumerate(("src/main.py", "src/main.ts")):
+        for path in ("src/main.py", "src/main.ts"):
             run(repo, "git", "update-index", "--cacheinfo", f"160000,{absent},{path}")
             commit(repo, "refactor: replace source with submodule")
             run(repo, "git", "add", path)
-            commit(repo, "fix: restore source", status=1, contains="src gains 1 production lines")
-            write(repo, "README.md", "Fixture.\n" * (1999 - index))
-            run(repo, "git", "add", "README.md")
-            commit(repo, "fix: restore source with deletion offset")
+            commit(repo, "fix: restore source", contains="this change adds 1 production lines")
         write(repo, "src/main.py", "value = 1\nsecond = 2\n")
         run(repo, "git", "add", "src/main.py")
-        commit(repo, "fix: forbidden source growth", status=1, contains="src gains 1 production lines")
+        run(repo, HOOKS / "loc-ratchet", contains="this change adds 1 production lines")
         run(repo, CENSUS, "floors", ".", "HEAD", "WORKTREE", "--floor", "lines", status=1, contains="REFUSED: may not rise")
         for path, body, why in [("src/large.py", "value = 1\n" * 1001, "1001 lines (new file)"),
                                 ("src/long.py", "def large():\n" + "    pass\n" * 301, "fn-ratchet: refusing commit"),

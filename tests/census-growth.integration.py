@@ -1,160 +1,141 @@
 #!/usr/bin/env python3
-"""Real normal commits and push, with one exact-scope comment in the supplied private approval issue.
+"""Growth is reported at a commit and enforced at merge: the real hooks and merge check, a temporary repository, a fake gh.
 
-Usage: python3 tests/census-growth.integration.py /private/source.json [tool-root]
-source.json contains the source object documented in git/census/README.md. This qualification posts
-one derivative comment containing only its exact fixture scopes and the supplied authorization.
-No hooks, identities, HOME or CODEX_HOME are disabled or replaced.
+Usage: python3 tests/census-growth.integration.py [tool-root]
+The commits run the hooks under git/hooks; the merge check is `loc-ratchet <merge-base>..<head> o/r#7`.
+GitHub is the only fake: CENSUS_GH names a gh that serves the authenticated user and the PR's comments from a file.
 """
-import copy
-import hashlib
 import json
+import os
 import pathlib
-import re
-import runpy
 import subprocess
 import sys
 import tempfile
 
-ROOT = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parents[1]
 HOOKS = ROOT / "git/hooks"
 CENSUS = ROOT / "git/census/census"
-CENSUS_MODULE = runpy.run_path(str(CENSUS))
-GH = CENSUS_MODULE["GH"]  # the GitHub CLI census verifies approvals through
-SOURCE = json.loads(pathlib.Path(sys.argv[1]).read_text())
+LIMIT = json.loads((ROOT / "git/census/patterns.json").read_text())["growthLimit"]
+PR = "o/r#7"
+FAKE_GH = """#!/usr/bin/env python3
+import json, pathlib, re, sys
+args, state = sys.argv[1:], pathlib.Path(__file__).with_name("comments.json")
+if args == ["api", "user"]:
+    print(json.dumps({"login": "reviewer"}))
+elif args[:3] == ["api", "repos/o/r/issues/7/comments", "--paginate"] and state.exists():
+    login = re.search(r'\\.user\\.login == "([^"]+)"', args[-1])[1]
+    for comment in json.loads(state.read_text()):
+        if comment["user"] == login:
+            print(json.dumps({"body": comment["body"]}))
+else:
+    sys.exit(9)
+"""
 
 
-def run(cwd, *args, status=0, contains=None, data=None):
-    result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, input=data)
-    if result.returncode != status or (contains and contains not in result.stdout + result.stderr):
-        raise AssertionError(f"{args}: expected exit {status}, containing {contains!r}\n{result.stdout}\n{result.stderr}")
-    return result.stdout.strip()
-
-
-def write(repo, path, text):
-    target = repo / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text)
-
-
-def fixture(scratch, name, files, changed, areas):
-    repo = scratch / name
-    repo.mkdir()
-    run(repo, "git", "init", "-q", "-b", "main")
-    run(repo, "git", "config", "core.hooksPath", str(HOOKS))
-    remote = scratch / f"{name}.git"
-    run(scratch, "git", "init", "--bare", "-q", str(remote))
-    run(repo, "git", "remote", "add", "origin", str(remote))
-    for path, text in files.items():
-        write(repo, path, text)
-    run(repo, "git", "add", "-A")
-    run(repo, "git", "commit", "-qm", "feat: base")
-    run(repo, "git", "push", "origin", "HEAD:refs/heads/main", contains="ai-agent-hooks: hook=pre-push")
-    for path, text in changed.items():
-        write(repo, path, text)
-    run(repo, "git", "add", "-A")
-    base, tree = run(repo, "git", "rev-parse", "HEAD"), run(repo, "git", "write-tree")
-    record = {**CENSUS_MODULE["growth_scope"](str(repo), base, tree), "base": base, "tree": tree}
-    assert record["areas"] == areas and record["repository"] == str(remote), record
-    return repo, record
-
-
-def approval(repo, record, source):
-    path = repo.parent / f"{repo.name}-approval.json"
-    record = {**record, "source": source}  # the census reads only the source
-    path.write_text(json.dumps(record))
-    run(repo, "git", "config", "--local", "census.growthApproval", str(path))
-    return path, record
-
-
-def commit(repo, status=0, contains=None):
-    return run(repo, "git", "commit", "-qm", "feat: scoped growth", status=status, contains=contains)
+def lines(n, word="value"):
+    return "".join(f"{word}_{i} = {i}\n" for i in range(n))
 
 
 with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     scratch = pathlib.Path(temporary)
-    exact = fixture(scratch, "exact-scope", {"src/main.py": "value = 1\n"},
-                    {"src/main.py": "value = 1\nsecond = 2\n"}, {"src": 1})
-    large = fixture(scratch, "hard-file", {"src/main.py": "value = 1\n"},
-                    {"src/large.py": "".join(f"value_{i} = {i}\n" for i in range(1001))}, {"src": 1001})
-    function = fixture(scratch, "hard-function", {"src/main.py": "value = 1\n"},
-                       {"src/function.py": "def large():\n" + "".join(f"    value_{i} = {i}\n" for i in range(301))}, {"src": 302})
-    literal = 'description = "@generated or DO NOT EDIT"\n'
-    quoted_comment = '# The markers "@generated" and "DO NOT EDIT" are quoted.\nvalue = 1\n'
-    marker, _ = fixture(scratch, "marker-mentions", {"src/main.py": literal, "src/comment.py": quoted_comment},
-                        {"src/main.py": literal + "second = 2\n", "src/comment.py": quoted_comment + "third = 3\n"}, {"src": 2})
-    commit(marker, status=1, contains="src gains 2 production lines")
-    write(marker, "src/main.py", literal)
-    write(marker, "src/comment.py", quoted_comment)
-    write(marker, "src/output.py", "# @generated DO NOT EDIT\n" + "".join(f"value_{i} = {i}\n" for i in range(1001)))
-    write(marker, "src/go.go", "// Code generated by qualification. DO NOT EDIT.\npackage main\n")
-    run(marker, "git", "add", "-A")
-    marker_base = run(marker, "git", "rev-parse", "HEAD")
-    commit(marker)
-    run(marker, str(CENSUS), "floors", ".", marker_base, "HEAD", "--floor", "god")
-    listed = run(marker, str(CENSUS), "files", ".", "HEAD")
-    assert "src/main.py\t1\tlogic" in listed and "src/comment.py\t2\tlogic" in listed and "src/output.py\t1002\texempt" in listed and "src/go.go\t2\texempt" in listed, listed
-    write(marker, "src/late.py", "value = 1\n# @generated\n")
-    run(marker, "git", "add", "-A")
-    commit(marker, status=1, contains="src gains 2 production lines")
-    print("PASS: quoted and late marker mentions remain production; opening generated headers remain exempt")
-    body = "".join(f"const item_{i} = {i};\n" for i in range(15))
-    copies = fixture(scratch, "copies", {"src/first.ts": body}, {"src/second.ts": body}, {"src": 15})
+    repo, config = scratch / "repo", scratch / "private/claude/config"
+    config.mkdir(parents=True)
+    (config / "gh").write_text(FAKE_GH)
+    (config / "gh").chmod(0o755)
+    (config / "census.env").write_text(f"CENSUS_GH={config / 'gh'}\n")
+    env = dict(os.environ, DOTFILES_PRIVATE=str(scratch / "private"), XDG_CACHE_HOME=str(scratch / "cache"), GIT_ALLOW_TEST_IDENTITY="1",
+               GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@example.invalid", GIT_COMMITTER_NAME="f", GIT_COMMITTER_EMAIL="f@example.invalid")
 
-    match = re.fullmatch(r"https://github.com/([^/]+/[^/]+)/(?:issues|pull)/([1-9]\d*)#issuecomment-([1-9]\d*)", SOURCE["url"])
-    assert match, "qualification needs a real cited GitHub approval comment"
-    original = json.loads(run(scratch, GH, "api", f"repos/{match[1]}/issues/comments/{match[3]}"))
-    assert original["user"]["login"] == json.loads(run(scratch, GH, "api", "user"))["login"]
-    assert SOURCE["quote"] in original["body"] and hashlib.sha256(original["body"].encode()).hexdigest() == SOURCE["sha256"]
-    body = f"Normal-hook qualification. Existing requester authorization: {SOURCE['url']}\n\n{SOURCE['quote']}\n\n"
-    body += "".join(f"Census growth approval for {r['repository']}, patch {r['patch']}, areas {json.dumps(r['areas'])}: qualification.\n"
-                    for _, r in (exact, large, function, copies)) + "\n"
-    body += "\n\n".join("```census-growth-approval\n" + json.dumps({k: record[k] for k in ("repository", "patch", "areas")}, indent=2, sort_keys=True) + "\n```" for _, record in (exact, large, function, copies))
-    comment = json.loads(run(scratch, GH, "api", f"repos/{match[1]}/issues/{match[2]}/comments", "--method", "POST", "--input", "-", data=json.dumps({"body": body})))
-    source = {"url": comment["html_url"], "sha256": hashlib.sha256(comment["body"].encode()).hexdigest(), "quote": comment["body"].split("```")[0].strip()}
-    print(f"Qualification scope source: {source['url']}")
+    def run(*args, status=0, contains=None):
+        result = subprocess.run([str(a) for a in args], cwd=repo, text=True, capture_output=True, env=env)
+        if result.returncode != status or (contains and contains not in result.stdout + result.stderr):
+            raise AssertionError(f"{args}: expected exit {status}, containing {contains!r}\n{result.stdout}\n{result.stderr}")
+        return (result.stdout + result.stderr).strip()
 
-    repo, scope = exact
-    commit(repo, status=1, contains="src gains 1 production lines")
-    path, record = approval(repo, scope, source)
-    for field, value in (("url", "https://example.invalid/approval"), ("sha256", "0" * 64), ("quote", "missing explicit authorization")):
-        bad = copy.deepcopy(record)
-        bad["source"][field] = value
-        path.write_text(json.dumps(bad))
-        commit(repo, status=1, contains="growth approval source")
-    path.write_text(json.dumps(record))
-    write(repo, "src/extra.py", "third = 3\n")
-    run(repo, "git", "add", "-A")
-    commit(repo, status=1, contains="fetched source does not approve scope")
-    run(repo, "git", "rm", "-q", "--cached", "src/extra.py")
-    (repo / "src/extra.py").unlink()
-    path.write_text(json.dumps(record))
-    commit(repo)
-    base = record["base"]
-    run(repo, str(HOOKS / "loc-ratchet"), f"{base}..HEAD")
-    run(repo, "git", "push", "origin", "HEAD:refs/heads/main", contains="ai-agent-hooks: hook=pre-push")
-    assert run(repo, "git", "--git-dir", record["repository"], "rev-parse", "refs/heads/main") == run(repo, "git", "rev-parse", "HEAD")
-    result = run(repo, str(CENSUS), "floors", ".", base, "HEAD", "--floor", "lines", "--floor", "god", "--growth-approval", str(path))
-    assert "approved growth" in result and '"prod_lines": 1' in result, result
-    run(repo, str(CENSUS), "floors", ".", base, "HEAD", "--floor", "lines", status=1, contains="REFUSED: may not rise")
-    run(repo, "git", "config", "--unset", "census.growthApproval")
-    write(repo, "src/main.py", "value = 1\nsecond = 2\nfourth = 4\n")
-    run(repo, "git", "add", "-A")
-    commit(repo, status=1, contains="src gains 1 production lines")
-    print("PASS: exact comment-bound scope; a further production line refused; normal commit/range/push; truthful Census")
+    def commit(files, hooks="/dev/null", **expect):
+        for path, text in files.items():
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(text) if text is not None else (repo / path).unlink()
+        run("git", "add", "-A")
+        out = run("git", "-c", f"core.hooksPath={hooks}", "commit", "-qm", "feat: change", **expect)
+        return out if expect.get("status") else run("git", "rev-parse", "HEAD")
 
-    repo, scope = large
-    approval(repo, scope, source)
-    commit(repo, status=1, contains="1001 lines (new file)")
-    print("PASS: valid growth approval never exempts the hard file limit")
+    def branch(name, files):
+        run("git", "checkout", "-q", "-b", name, "main")
+        return commit(files)
 
-    repo, scope = function
-    path, record = approval(repo, scope, source)
-    commit(repo, status=1, contains="fn-ratchet: refusing commit")
-    run(repo, str(CENSUS), "floors", ".", record["base"], record["tree"], "--floor", "lines", "--floor", "god", "--growth-approval", str(path), status=1, contains="REFUSED: may not rise")
-    print("PASS: normal downstream function hook and Census god floor remain enforced")
+    def merge_check(pr=PR, **expect):
+        return run(HOOKS / "loc-ratchet", f"{run('git', 'merge-base', 'main', 'HEAD')}..HEAD", *([pr] if pr else []), **expect)
 
-    repo, scope = copies
-    path, record = approval(repo, scope, source)
-    run(repo, str(CENSUS), "floors", ".", record["base"], record["tree"], "--floor", "lines", "--floor", "copies", "--growth-approval", str(path), status=1, contains="REFUSED: may not rise")
-    print("PASS: exact growth approval preserves the duplication floor")
+    def comments(*rows):
+        (config / "comments.json").write_text(json.dumps([{"user": user, "body": body} for user, body in rows]))
+
+    repo.mkdir()
+    comments()
+    run("git", "init", "-q", "-b", "main")
+    commit({"src/main.py": lines(40), "lib/main.py": lines(40), "old/dead.py": lines(LIMIT), "NOTES.md": lines(100, "note"),
+            "src/literal.py": 'description = "@generated or DO NOT EDIT"\n'})
+
+    # A commit and a push are never refused for growth: the real hooks print what the change adds.
+    run("git", "checkout", "-q", "-b", "grown", "main")
+    (repo / "src/new.py").write_text(lines(LIMIT + 10))
+    (repo / "src/output.py").write_text("# @generated DO NOT EDIT\n" + lines(1001))
+    (repo / "src/literal.py").write_text('description = "@generated or DO NOT EDIT"\nsecond = 2\n')
+    run("git", "add", "-A")
+    run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: grow", contains=f"loc-ratchet: this change adds {LIMIT + 11} production lines")
+    run("git", "init", "--bare", "-q", scratch / "origin.git")
+    run("git", "-c", f"core.hooksPath={HOOKS}", "push", "-q", scratch / "origin.git", "HEAD:refs/heads/grown")
+    assert "src/literal.py\t2\tlogic" in run(CENSUS, "files", ".", "HEAD") and "src/output.py\t1002\texempt" in run(CENSUS, "files", ".", "HEAD")
+    print("PASS: a commit and a push that grow production are not refused; a quoted marker stays production, a generated header exempt")
+
+    # Every other cap holds at the commit, and the lines floor has no approval.
+    run("git", "checkout", "-q", "-b", "caps", "main")
+    commit({"src/large.py": lines(1001)}, hooks=HOOKS, status=1, contains="1001 lines (new file)")
+    commit({"src/large.py": None, "src/function.py": "def large():\n" + "".join(f"    value_{i} = {i}\n" for i in range(301))},
+           hooks=HOOKS, status=1, contains="fn-ratchet: refusing commit")
+    run(CENSUS, "floors", ".", "main", "grown", "--floor", "lines", status=1, contains="REFUSED: may not rise")
+    run("git", "reset", "-q", "--hard")
+    print("PASS: the file limit, the function limit and the census lines floor remain enforced")
+
+    # At or under the limit merges with no approval; deletions anywhere offset additions anywhere.
+    branch("small", {"src/new.py": lines(LIMIT)})
+    merge_check(pr=None)
+    branch("offset", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT), "old/dead.py": None})
+    merge_check(pr=None)
+    branch("fix", {"src/new.py": lines(LIMIT + 10), "NOTES.md": lines(100 - LIMIT - 10, "note")})
+    merge_check(pr=None)
+    print(f"PASS: {LIMIT} production lines, {2 * LIMIT} offset by {LIMIT} deleted elsewhere, and growth that adds no net text merge unapproved")
+
+    # Above it the merge is refused with the approval line filled in; one approval covers growth in two directories.
+    head = branch("feature", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
+    line = f"Growth approved: {PR} at {head}: "
+    merge_check(status=1, contains=f"the PR adds {2 * LIMIT} production lines")
+    merge_check(status=1, contains=line + "<why>")
+    merge_check(pr=None, status=1, contains="Growth approved: <owner>/<repo>#<number> at")
+    comments(("reviewer", line + "<why>"), ("reviewer", f"Growth approved: o/r#8 at {head}: another PR"), ("author", line + "mine is new."),
+             ("reviewer", "Looks fine to me."))
+    merge_check(status=1, contains=line + "<why>")
+    print("PASS: growth over the limit is refused; an unwritten why, another PR's approval and a comment by another account approve nothing")
+    comments(("reviewer", f"Reviewed.\r\n{line}the parser is new and reuses nothing.\r\n"))
+    merge_check(contains=f"census: production growth approved at {head}")
+    print("PASS: one approval at the head admits growth across two directories")
+
+    # The approval holds for a descendant head while the PR grows at most the limit, the base merging in included.
+    commit({"src/more.py": lines(LIMIT)})
+    run("git", "checkout", "-q", "main")
+    commit({"lib/base.py": lines(3 * LIMIT)})
+    run("git", "checkout", "-q", "feature")
+    run("git", "merge", "-q", "--no-edit", "main")
+    merge_check(contains=f"census: production growth approved at {head}")
+    later = commit({"src/more.py": lines(LIMIT + 1)})
+    merge_check(status=1, contains=f"Growth approved: {PR} at {later}: <why>")
+    print("PASS: an approval at an ancestor holds through small later growth and a base merge, and lapses one line past the limit")
+
+    # A rewritten history is not a descendant, and a check that cannot read GitHub refuses.
+    run("git", "checkout", "-q", "-B", "feature", "main")
+    commit({"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
+    merge_check(status=1, contains="refusing merge")
+    (config / "comments.json").unlink()
+    merge_check(status=2, contains="loc-ratchet: REFUSED: repos/o/r/issues/7/comments could not be read")
+    merge_check(pr="not a pull request", status=2, contains="needs the pull request as <owner>/<repo>#<number>")
+    print("PASS: a rewritten head needs a new approval; unreadable comments and an unnamed PR refuse the merge")

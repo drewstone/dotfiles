@@ -19,6 +19,7 @@ TRIVIAL = re.compile(_P["trivial"])
 SHEBANG = re.compile(_P["shebang"])
 WINDOW = _P["window"]
 FILE_LIMIT = _P["fileLimit"]
+GROWTH_LIMIT = _P["growthLimit"]
 FUNCTION_LIMIT = _P["functionLimit"]
 CLASS_MEMBERS = _P["classMembers"]
 FILE_HUG = tuple(_P["fileHug"])
