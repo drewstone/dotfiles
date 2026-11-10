@@ -117,14 +117,14 @@ trap 'rm -rf "$results_dir"' EXIT
 
 
 # Stage tracked changes and untracked files under WT_SAVE_MAX_BYTES (default 5 MB).
-# Larger untracked files are listed, never added: big artifacts belong in the trace
-# archive, and one `git add -A` over a lab tree once wrote 7.7 GB of loose objects.
+# Larger untracked files are listed, never added: big artifacts belong in the trace archive, and one `git add -A` over a
+# lab tree once wrote 7.7 GB of loose objects. GNU stat first: its `-f` prints file-system text, so Linux added no new file.
 WT_SAVE_MAX_BYTES=${WT_SAVE_MAX_BYTES:-5242880}
 stage_safe() {
   local d="$1" f size skipped=0
   git -C "$d" add -u 2>/dev/null || return 1
   while IFS= read -r -d '' f; do
-    size=$(stat -f %z "$d/$f" 2>/dev/null || stat -c %s "$d/$f" 2>/dev/null || echo 0)
+    size=$(stat -c %s "$d/$f" 2>/dev/null || stat -f %z "$d/$f" 2>/dev/null || echo 0)
     if [ "$size" -le "$WT_SAVE_MAX_BYTES" ]; then
       git -C "$d" add -- "$f" 2>/dev/null
     else
