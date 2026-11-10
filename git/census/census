@@ -64,7 +64,8 @@ def production_delta(checkout, base, head, merge=None, paths=None):
         (mine, big, wide, _), (theirs, past, broad, _) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
         return (min(mine - production_delta(checkout, fork, merge, paths=paths)[0], theirs - production_delta(checkout, fork, base, paths=paths)[0]),
                 [o for o in big if o[0] in {p for p, _, _ in past}], [w for w in wide if w in broad], collections.Counter())
-    blob = lambda ref, name, mode: production(checkout, ref, read_blobs(checkout, ref, [name]) if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
+    blob = lambda ref, name, mode: production(checkout, ref, read_blobs(checkout, ref, [name])
+                                              if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
     parts = iter(git(checkout, "diff", "--raw", "-z", "-M", "--diff-filter=ACDMRT", base, head).decode().split("\0")[:-1])
     growth, oversized, long, keys = 0, [], [], collections.Counter()
     for entry in parts:

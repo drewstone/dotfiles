@@ -50,7 +50,8 @@ def main():
     if (oversized or grown or long) and third_party_fork():
         return 0
     if grown := grown and not (pr and census.approved_growth(".", base, head, total, pr)):
-        print(f"loc-ratchet: refusing merge: the PR adds {total} production lines (code tokens over {census.C.TOKENS_PER_LINE}), over the {limit} that merge unapproved.\n"
+        print(f"loc-ratchet: refusing merge: the PR adds {total} production lines (code tokens over {census.C.TOKENS_PER_LINE}),"
+              f" over the {limit} that merge unapproved.\n"
               "  Deleted tests and docs do not pay for it; a restore of deleted code cites the deleting commit in a commit message, `Restores: <sha>`.\n"
               "  Otherwise a reviewer who did not write it judges it new, proportionate and reusing nothing that exists, then comments on the PR,\n"
               f"  under a session or run other than the one the PR's body names:\n"

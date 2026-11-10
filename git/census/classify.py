@@ -91,7 +91,8 @@ HASH_STYLE = re.compile(r"py|python[0-9.]*|sh|bash|zsh|dash|rb|ruby|perl|ya?ml")
 # body included) and stays code. Regular-expression literals are not parsed.
 STYLES = {
     "//": re.compile(r'''"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?|`(?:\\.|[^`\\])*`?|(?P<c>//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|<!--[\s\S]*?(?:-->|\Z))'''),
-    "#": re.compile(r'''<<[-~]?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n(?:[\s\S]*?\n)?[ \t]*\2$|"(?:\\.|[^"\\])*"?|'[^']*'?|`(?:\\.|[^`\\])*`?|(?P<c>(?:^|(?<=\s))#[^\n]*)''', re.M),
+    "#": re.compile(r'''<<[-~]?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n(?:[\s\S]*?\n)?[ \t]*\2$'''
+                    r'''|"(?:\\.|[^"\\])*"?|'[^']*'?|`(?:\\.|[^`\\])*`?|(?P<c>(?:^|(?<=\s))#[^\n]*)''', re.M),
     "--": re.compile(r'''"[^"]*"?|'[^']*'?|(?P<c>--[^\n]*|/\*[\s\S]*?(?:\*/|\Z))'''),
 }
 URL_OR_HASH = re.compile(r"https?://\S+|\b[0-9a-fA-F]{32,}\b|\bsha(?:1|256|384|512)-[A-Za-z0-9+/]+=*")
