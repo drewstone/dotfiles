@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce file sizes at commit and report growth and long lines; `A..B [owner/repo#N]` is the merge check, which enforces them."""
+"""Enforce file sizes at commit, report growth and warn of long lines; `A..B [owner/repo#N]` is the merge check, which enforces growth."""
 from runpy import run_path
 from types import SimpleNamespace
 import os
@@ -41,13 +41,13 @@ def main():
     # docs never pay for it. Only a repository's first commit grows from nothing.
     total = round(total - (merging and census.restored(".", base, head, keys))) if census.git(".", "ls-tree", base).strip() else 0
     limit, pr = census.C.GROWTH_LIMIT, " ".join(sys.argv[2:])
-    if not merging and total > 0:  # a commit is never refused for growth or line length
+    if not merging and total > 0:  # a commit is never refused for growth
         print(f"loc-ratchet: this change adds {total} production lines; a PR whose total passes {limit} needs a growth approval to merge (git/census/README.md).", file=sys.stderr)
-    for path, number, length in long:
-        print(f"loc-ratchet: {'refusing merge: ' * merging}{path}:{number} adds a {length}-character line; a merge refuses an added production line over\n"
-              f"  {census.C.LINE_LIMIT} characters unless one URL or hash is the excess. Line breaks cost nothing.", file=sys.stderr)
-    grown, long = merging and total > limit, merging and long
-    if (oversized or grown or long) and third_party_fork():
+    if long:  # a warning only, at a commit and at merge: line breaks cost nothing in the token unit
+        print(f"loc-ratchet: warning: {len(long)} added production lines over {census.C.LINE_LIMIT} characters, not counting one URL or hash:\n"
+              + "\n".join(f"  {path}:{number} ({length} characters)" for path, number, length in long), file=sys.stderr)
+    grown = merging and total > limit
+    if (oversized or grown) and third_party_fork():
         return 0
     if grown := grown and not (pr and census.approved_growth(".", base, head, total, pr)):
         print(f"loc-ratchet: refusing merge: the PR adds {total} production lines (code tokens over {census.C.TOKENS_PER_LINE}),"
@@ -59,7 +59,7 @@ def main():
     for path, old, new in oversized:
         print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
               f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)
-    return int(bool(oversized or grown or long))
+    return int(bool(oversized or grown))
 
 
 if __name__ == "__main__":

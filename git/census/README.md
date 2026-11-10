@@ -46,7 +46,7 @@ Comments, Python docstrings and blank lines are not code, so packing, reflowing 
 A total at or under `growthLimit` in [patterns.json](patterns.json) merges with no approval. Deleted tests and docs never pay for production growth.
 A restore is not growth: a commit message in the PR that carries `Restores: <sha>` for a commit on the base branch makes each added line that commit removed, matched by its whitespace-normalized text, charge nothing, and the check prints it as a debit against that deletion.
 That lookup reads the deleting commit's blobs without fetching them; a clone that lacks them refuses the claim and charges the lines in full.
-The merge also refuses an added production line over `lineLimit` characters unless one URL or hash is the excess; a commit only warns.
+A commit and the merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess; it never refuses.
 Above the growth limit, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR:
 
 ```text

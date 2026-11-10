@@ -212,10 +212,11 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         run("git", "checkout", "-q", "-b", "wide", "main")
         (repo / "src/wide.py").write_text(f"message = '{'x' * 170}'\nsource = 'https://example.com/{'a' * 200}'\n")
         run("git", "add", "-A")
-        run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: wide", contains="src/wide.py:1 adds a 182-character line")
-        out = merge_check(pr=None, status=1, contains="refusing merge: src/wide.py:1 adds a 182-character line")
-        assert "src/wide.py:2" not in out, out
-        return "a 182-character line warns at the commit and is refused at merge; a line whose excess is one URL is not"
+        warning = "loc-ratchet: warning: 1 added production lines over"
+        run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: wide", contains=f"{warning}")
+        out = merge_check(pr=None, contains="  src/wide.py:1 (182 characters)")
+        assert warning in out and "src/wide.py:2" not in out, out
+        return "a 182-character line is a warning at the commit and at merge, which exits 0; a line whose excess is one URL is not flagged"
 
     failed = []
     for case in (tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines):
