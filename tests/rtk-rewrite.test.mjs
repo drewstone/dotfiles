@@ -901,9 +901,9 @@ test("every mutant of the guard is caught by this file", async (t) => {
   t.diagnostic(`${injected}/${MUTANTS.length} mutants injected into ${HOOK_SOURCE}; ${MUTANTS.length - injected} inapplicable`);
 });
 
-// subagent-wait-guard.sh owns a subagent's background call: it returns its own updatedInput, and
+// process_guard.py owns a subagent's background call: it returns its own updatedInput, and
 // when two hooks return one the last to finish wins, so rtk must return none for that call.
-test("rtk leaves a subagent's background call to subagent-wait-guard", (t) => {
+test("rtk leaves a subagent's background call to process_guard", (t) => {
   if (!has("git")) return t.skip("git not installed");
   if (!has("rtk")) return t.skip("rtk not installed");
   const fixture = buildFixture("subagent-background");

@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""PreToolUse(Bash) guard for the process rules that agent briefs kept failing to hold.
+#!/usr/bin/env -S python3 -S
+"""The one PreToolUse Bash guard (also on Monitor, Write/Edit and browser calls) for the rules agent briefs kept failing to hold.
 
 Each rule below replays a command agents actually ran while their briefs said not to:
 
@@ -18,7 +18,7 @@ Each rule below replays a command agents actually ran while their briefs said no
   shared-stash  bare `git stash pop` / `apply`. Every worktree of a repo shares one stash list, so the newest entry can be
                 another session's. A named entry must come from a `_wt` worktree this session created
                 (wt-new's .wt-owner, or a `git worktree add` in its transcripts) and its branch. Passes: a bare pop of the entry
-                the same command pushed in a one-worktree checkout; `git stash apply ${s:?}` of `s=$(git stash create)`.
+                the same command pushed in a one-worktree checkout; `git stash apply ${s:?}` of `s=$(git stash create)` (process_guard_git.py).
   mac-build     whole-repo installs, builds, test runs, turbo runs, image builds and signoff on a Mac whose
                 guard-config sets `mac_build` (the refusal's hint). Single test files stay local. Allowed when
                 the command sets CC_ALLOW_MAC_BUILD=1. no-build-host: process_guard_builds.py.
@@ -51,6 +51,24 @@ Each rule below replays a command agents actually ran while their briefs said no
                 run_in_background. Override: CC_ALLOW_DETACHED_GATE=1 on the gate command.
   refused-call  a call matching an operator rule in `refused_calls` (a purchase API, say), made outside its owning tool; no flag
                 lifts it; the owner runs it by hand. override-grant: a CC_ALLOW_* handed to a child (process_guard_calls.py, both).
+  broad-scan    grep -r, rg, find, fd or du rooted at /, /home, /mnt, the home or a sprawling tree under it (and guard-config
+                "scan-guard" `broad`). A find with -maxdepth up to 3 passes, -xdev bounds /mnt; on Linux and after ssh up to 6
+                passes unless it can enter /mnt/traces, and so does du -x. A root set by a variable and a piped rg with no path
+                pass. CC_GUARD_UNAME stands in for uname.
+  host-blast    a local verb that can freeze, wedge or unboot the host (fsfreeze -f, unshare -m, mount over a kernel
+                filesystem, dmsetup, LVM or mkfs on a real disk, dd onto one, sysrq, reboot), and any command naming
+                format-traces-drive. A command matching guard-config "host-blast-guard" `vm_command` passes. Root wrappers in
+                host/ are the second line. Listing forms (fdisk -l, parted print) and loop or mapper devices pass.
+  ci-wait       `gh pr checks --watch`, or a sleep loop around `gh pr checks` or a statusCheckRollup: the gate runs before a
+                deploy, never before a merge. `gh run watch` and loops over `gh run view` are delivery and pass.
+  subagent-monitor  the Monitor tool in a subagent: each event wakes it and re-reads its context. A subagent's Bash call with
+                run_in_background runs in the foreground with the 10-minute cap instead (updatedInput).
+  memory-budget  a Write or Edit that grows a project MEMORY.md (~/.claude/projects/*/memory) past guard-config
+                `memory_budget_tokens` (bytes/4, as `census` counts); the denial names MEMORY-archive.md (process_guard_calls.py).
+  Private rules: each file in guard-config `rule_modules` defines process_guard_rule(command, payload) -> None or (rule,
+                summary, reason); a module that fails to load or raises is logged and skipped.
+Warnings, which never block: a sleep loop that prints nothing before it can be killed at its timeout, or that polls `npm
+view` (scored in claude/analysis/wait-loss), and merge_check's red-head check before `gh pr merge`.
 
 A wrapper's command (`sudo`, `timeout`, `npx`, `uv run`, `dotenvx run --`, `docker exec <container>`: WRAPPERS) is the command.
 Commands inside `ssh host '...'`, `bash -c`, `eval`, heredocs fed to a shell and `<runner> ... -- <command>` (a command named
@@ -58,28 +76,28 @@ in `remote_runners`) are parsed too (an admin merge on another host has the same
 commands. So are ad-hoc scripts the command runs (`bash x.sh`, `./x.sh`, `source x.sh`, `bash -s < x.sh`, `ssh host bash -s
 < x.sh`) when a heredoc in the same command wrote them or they sit under a temp root. A repository's own scripts are not
 read. Operator values (hosts, commands, secret stores) come from guard-config.json's "process_guard"; absent keys: rule off.
-Denials and overrides are logged to ~/.claude/logs/process-guard.log with key-shaped values
-redacted. Only a payload that is not JSON passes unread (exit 0, no output); a command no rule can read is refused.
+Every denial ends with the command that is allowed instead. Each denial and override is one row of
+~/.claude/logs/process-guard.log: rule, session, agent and the whole command, key-shaped values redacted.
+Only a payload that is not JSON passes unread (exit 0, no output); a command no rule can read is refused.
 """
-import datetime
-import glob
 import json
 import os
-import platform
 import re
 import shlex
-import subprocess
 import sys
+import time
 
-sys.dont_write_bytecode = True
+sys.pycache_prefix = os.path.join(os.path.expanduser("~"), ".cache", "claude-hooks")  # compiled modules, outside the checkout
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from secret_scan import guard_config, redact  # noqa: E402
-from process_guard_waits import rule_detached_gate, rule_tail_sleep  # noqa: E402
-from process_guard_secrets import SECRET_DIRS, flush_secret_read, track_secret_read  # noqa: E402
+from process_guard_waits import foreground, rule_ci_wait, rule_detached_gate, rule_subagent_monitor, rule_tail_sleep, wait_notes  # noqa: E402
+from process_guard_host import host_blast_command, rule_broad_scan, rule_host_blast  # noqa: E402
+from process_guard_secrets import flush_secret_read, rule_env_dump, track_secret_read  # noqa: E402
+from process_guard_git import git_out, rule_shared_stash  # noqa: E402
 from process_guard_builds import rule_no_build_host  # noqa: E402
 from process_guard_github import rule_raw_gh  # noqa: E402
 from process_guard_d1 import rule_prod_d1_read  # noqa: E402
-from process_guard_calls import SESSION_ONLY, rule_grant_file, rule_override_grant, rule_refused_call, rule_refused_page  # noqa: E402
+from process_guard_calls import SESSION_ONLY, rule_grant_file, rule_memory_budget, rule_override_grant, rule_refused_call, rule_refused_page  # noqa: E402
 
 CONFIG = guard_config("process_guard", {})
 HOME = os.path.expanduser("~")
@@ -318,7 +336,7 @@ class Context:
         self.cwd = cwd
         self.remote = remote
         self.host = host  # the ssh host a remote context runs on
-        self.events = [] if events is None else events  # ("secret", what, traced) and ("remote-traced-script", ...)
+        self.events = [] if events is None else events  # ("secret", what, traced), ("remote-traced-script", ...), ("loop",)
         self.xtrace = False  # this shell prints each command with its expansions (set -x, bash -x)
         self.git_init = False
         self.scratch_package = False  # a package.json was created here (npm init, > package.json)
@@ -418,7 +436,6 @@ def ssh_target(args):
             continue
         break
     return (args[i], args[i + 1:]) if i < len(args) else (None, [])
-
 
 
 PGREP_VALUE = {"-P", "--parent", "-u", "--euid", "-U", "--uid", "-g", "--pgroup", "-G", "--group", "-s",
@@ -591,6 +608,7 @@ def fetch_remote(host, cwd, path):
         f"head -c {SCRIPT_LIMIT} -- {remote_quote(path)}"
     ssh = os.environ.get("CC_GUARD_SSH", "ssh")
     try:
+        import subprocess
         r = subprocess.run([ssh, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, remote],
                            capture_output=True, timeout=10)
     except Exception:
@@ -633,7 +651,28 @@ ENV_SECRET_VAR = re.compile(r"^(?!.*(?:_FILE|_PATH|_DIR|_SOCK|NAME)$).*(?:KEY|TO
 PROC_ENVIRON = re.compile(r"/proc/[^\s/]+/environ")
 ENV_PASSTHROUGH = {"grep", "egrep", "fgrep", "rg", "sort", "uniq", "head", "tail", "tr", "cat", "column"}
 NAMED_ENV = re.compile(r"(?:sorted|list|len|set|keys)\(\s*(?:os\.environ|process\.env)\s*\)|\bin\s+(?:os\.environ|process\.env)"
-                       r"\b(?!\s*[.\[])|(?:os\.environ|process\.env)\s*(?:\[\s*[\"']|\.get\(\s*[\"']|\.keys\(\))|process\.env\.\w")
+                       r"\b(?!\s*[.\[])|(?:os\.environ|process\.env)\s*(?:\[\s*[\"']|\.get\(\s*[\"']|\.keys\(\))|process\.env\.\w"
+                       r"|dict\(\s*os\.environ\s*,|\*\*\s*os\.environ|\.\.\.\s*process\.env|\benv\s*=\s*(?:os\.environ|process\.env)\b"
+                       r"(?!\s*[.\[])|(?:os\.environ|process\.env)\s*\.\s*(?:copy|update|setdefault|pop)\(")  # names, or a child's env
+NOT_SHELL = re.compile(r"#!(?![^\n]*\b(?:ba|z|da|k)?sh\b)")  # a shebang that names no shell
+
+
+def py_code(text):
+    """Python source with its string literals blanked: a program that edits a file carries the text it writes."""
+    import io
+    import tokenize
+    starts, out, last = [0], [], 0
+    for line in text.split("\n"):
+        starts.append(starts[-1] + len(line) + 1)
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.STRING or tokenize.tok_name[tok.type] in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):
+                a, b = starts[tok.start[0] - 1] + tok.start[1], starts[tok.end[0] - 1] + tok.end[1]
+                out.append(text[last:a] + "''")
+                last = max(last, b)
+    except (tokenize.TokenError, SyntaxError):
+        pass
+    return "".join(out) + text[last:]
 
 
 def env_dump(seg, argv):
@@ -671,7 +710,7 @@ def env_dump(seg, argv):
         return f"{prog} {' '.join(args)}".strip()
     if prog == "set" and not args:
         return "set with no arguments"
-    code = " ".join(args + seg.heredocs)  # a python or node program that prints the whole environment rather than named keys
+    code = " ".join(py_code(p) if prog.startswith("python") and "environ" in p else p for p in args + seg.heredocs)  # whole, not named
     if re.fullmatch(r"python[\d.]*|node|bun", prog) and re.search(r"\b(?:print|pprint|console|stdout|stderr)\b|(?:^| )-p ", code) and (
             re.search(r"\b(?:os\.environ|process\.env)\b", NAMED_ENV.sub("", code))):
         return f"{prog} printing the environment"
@@ -691,8 +730,9 @@ def env_names_only(argv):
     flags = "".join(a[1:] for a in args if re.match(r"^-[a-zA-Z]+$", a))
     pat = "|".join(b for a, b in zip(args, args[1:]) if a == "-e") or next((a for a in args if a[:1] != "-"), "")
     if prog in ("grep", "egrep", "rg"):  # counts, file names, -o of an anchored name pattern, or exact non-secret names
-        alts = re.fullmatch(r"\^\(([\w|]+)\)=", pat)  # ^(A|B)= or ^A=|^B=
-        alts = alts.group(1).split("|") if alts else [a[1:-1] for a in pat.split("|") if re.fullmatch(r"\^\w+=", a)]
+        alts = re.fullmatch(r"\^(\w*)\(([\w|]+)\)(\w*)=", pat)  # ^(A|B)=, ^P_(A|B)= or ^A=|^B=
+        alts = [alts.group(1) + a + alts.group(3) for a in alts.group(2).split("|")] if alts else [
+            a[1:-1] for a in pat.split("|") if re.fullmatch(r"\^\w+=", a)]
         exact = "v" not in flags and len(alts) == pat.count("|") + 1 and not any(ENV_SECRET_VAR.search(a) for a in alts)
         stops = all(b[:1] == "^" for b in re.split(r"\|(?![^()]*\))", pat.replace("\\", ""))) and all(  # each branch ends at =
             re.fullmatch(r"(?:A-Z|a-z|0-9|\w)+", c) for c in re.findall(r"\[([^]]*)\]", pat)) and not re.search(r"\.|\\[^()|]|=[^|)]", pat)
@@ -713,6 +753,8 @@ def commands(src, cwd, remote=False, ctx=None):
     for seg in lex(src):
         upstream = ctx.stream_tainted if seg.pipe_in else False
         lead = [w for w in seg.words if w not in ("do", "then", "else", "{", "!", "(")]
+        if lead[:1] in (["for"], ["while"], ["until"]) and ("loop",) not in ctx.events:
+            ctx.events.append(("loop",))
         if len(lead) >= 3 and lead[0] == "for" and lead[2] == "in":
             if any(pattern_source(w, ctx.tainted) for w in lead[3:]):
                 ctx.tainted.add(lead[1])
@@ -780,8 +822,9 @@ def commands(src, cwd, remote=False, ctx=None):
                 ctx.xtrace = state
         if prog in ("cd", "pushd"):
             target = next((a for a in argv[1:] if not a.startswith("-")), "~")
-            # A remote path is kept as written and never checked against the local disk.
-            ctx.cwd = target if ctx.remote else expand_path(target, ctx.cwd, merged)
+            # A remote path is kept as written (a relative one joined to the last remote cd) and never checked against the local disk.
+            joined = os.path.normpath(os.path.join(ctx.cwd, target)) if ctx.cwd and target[:1] not in "/~$" else target
+            ctx.cwd = joined if ctx.remote else expand_path(target, ctx.cwd, merged)
         elif prog == "git" and "init" in argv[1:3]:
             ctx.git_init = True
         elif prog in ("npm", "pnpm", "yarn", "bun") and "init" in argv[1:3]:
@@ -802,7 +845,7 @@ def commands(src, cwd, remote=False, ctx=None):
             script_path = argv[1]
         if script_path:
             body = script_text(script_path, ctx.cwd, merged, ctx)
-            if body is not None:
+            if body is not None and (prog in ("source", ".") or not NOT_SHELL.match(body)):  # a python script is no shell
                 traced = ctx.xtrace
                 if prog not in ("source", "."):
                     ctx.xtrace = False  # a child shell starts untraced
@@ -908,10 +951,9 @@ def rule_admin_merge(cmd):
     pos = gh_positionals(args)
     if pos[:2] == ["pr", "merge"] and any(a == "--admin" or a.startswith("--admin=") for a in args):
         return ("admin-merge", "gh pr merge --admin",
-                "`gh pr merge --admin` bypasses branch protection and is refused. Merge through protection: once the local "
-                f"gate passes, `{MERGE_GH} pr merge <number> --repo <owner/repo> --squash --auto` (or without --auto when "
-                "the required checks are already green), and fix a failing required check forward. If protection itself is "
-                "wrong, tell the owner; only the owner runs an admin merge, from their own terminal.", None)
+                "`gh pr merge --admin` bypasses branch protection and is refused; only the owner runs an admin merge, from "
+                "their own terminal, so tell them if protection itself is wrong. Fix a failing required check forward, and "
+                f"merge through protection: `{MERGE_GH} pr merge <number> --repo <owner/repo> --squash --auto`.", None)
     if pos[:1] == ["api"] and len(pos) > 1:
         method = "GET"
         for k, a in enumerate(args):
@@ -922,8 +964,8 @@ def rule_admin_merge(cmd):
         if re.search(r"/branches/[^/\s]+/protection|/rulesets\b", pos[1]) and method in ("PUT", "PATCH", "POST", "DELETE"):
             return ("admin-merge", "gh api write to branch protection",
                     "Changing branch protection or rulesets through `gh api` bypasses the merge gate it enforces and is "
-                    f"refused. Merge through protection with `{MERGE_GH} pr merge <number> --squash --auto`; if a protection "
-                    "rule is wrong, tell the owner.", None)
+                    f"refused; if a protection rule is wrong, tell the owner. Merge through protection: `{MERGE_GH} pr merge "
+                    "<number> --squash --auto`.", None)
     return None
 
 
@@ -989,9 +1031,9 @@ def rule_force_push(cmd):
     if not hit:
         return None
     return ("force-push", f"git push {hit}",
-            f"Force push refused (`{hit}`): it rewrites published history. Push new commits instead: commit the fix (not "
-            "--amend) and `git push origin HEAD:<branch>`; bring the base in with `git merge origin/<base>`; to start a branch "
-            "over, push it under a new name. No flag lifts this: the owner runs a force-push in their own terminal.", None)
+            f"Force push refused (`{hit}`): it rewrites published history, and no flag lifts this; the owner runs a "
+            "force-push in their own terminal. Bring the base in with `git merge origin/<base>`, and start a branch over under "
+            "a new name. Commit the fix (not --amend) and push new commits: `git push origin HEAD:<branch>`.", None)
 
 
 HOOK_SUBCOMMANDS = {"commit", "push", "merge", "pull", "rebase", "am", "cherry-pick", "revert"}
@@ -1013,6 +1055,7 @@ def is_fixture_repo(cmd, directory):
     if cmd.remote or not under_temp_root(directory):
         return False
     try:
+        import subprocess
         r = subprocess.run(["git", "-C", directory, "remote"], capture_output=True, text=True, timeout=5)
     except Exception:
         return False
@@ -1038,9 +1081,24 @@ def same_hooks_path(cmd, cdir, value):
     return resolve(current) == resolve(value)
 
 
-HOOKS_FIX = ("These skip the global Git hooks (privacy denylist, secret and card scans, commit-msg trailer check). "
-             "Fix what the hook reports and run the command normally. A throwaway fixture repo (under a temp dir with no "
-             "remote) may set core.hooksPath=/dev/null. If a global hook is wrong, fix it in dotfiles git/hooks.")
+HOOKS_FIX = ("These skip the global Git hooks (privacy denylist, secret and card scans, commit-msg trailer check). A throwaway "
+             "fixture repo (under a temp dir with no remote) may set core.hooksPath=/dev/null; if a global hook is wrong, fix it "
+             "in dotfiles git/hooks. Fix what the hook reports, then run the command without the override: ")
+
+
+def without_bypass(argv, sub):
+    """The git command with its hooks override removed: -c core.hooksPath=..., --no-verify, a commit's -n."""
+    if sub == "config":
+        return "git config --get core.hooksPath"
+    out, skip = [], False
+    for k, w in enumerate(argv):
+        if skip or w == "--no-verify" or w == "-c" and argv[k + 1:k + 2] and argv[k + 1].lower().startswith("core.hookspath"):
+            skip = w == "-c"
+            continue
+        if sub == "commit" and re.match(r"-[^-mFCctSu]*n", w):
+            w = "-" + w[1:].replace("n", "", 1)
+        out += [w] if w != "-" else []
+    return shlex.join(out)
 
 
 def rule_hooks_bypass(cmd):
@@ -1092,118 +1150,13 @@ def rule_hooks_bypass(cmd):
                     what = f"git config {'--unset ' if unset else ''}core.hooksPath {value or ''}".strip()
     if not what:
         return None
-    return ("hooks-bypass", what, f"`{what}` is refused. " + HOOKS_FIX, None)
-
-
-STATIC_STASH = re.compile(r"^(?:stash@\{\d+\}|refs/stash(?:@\{\d+\})?|\d+|[0-9a-f]{7,40})$")
-
-
-def git_out(directory, *args):
-    try:
-        r = subprocess.run(["git", "-C", directory, *args], capture_output=True, text=True, timeout=5)
-    except Exception:
-        return None
-    return r.stdout.strip() if r.returncode == 0 else None
-
-
-def session_created(toplevel, payload):
-    """True when this session's transcripts record creating the worktree at toplevel."""
-    transcript = payload.get("transcript_path") or ""
-    session = payload.get("session_id") or ""
-    if not transcript:
-        return False
-    # <project>/<session>.jsonl, plus every subagent's <project>/<session>/subagents/*.jsonl.
-    parent = os.path.dirname(transcript)
-    if os.path.basename(parent) == "subagents":
-        session_dir = os.path.dirname(parent)
-        files = [transcript, session_dir + ".jsonl"]
-    else:
-        session_dir = os.path.join(parent, session) if session else None
-        files = [transcript]
-    if session_dir:
-        files += glob.glob(os.path.join(session_dir, "subagents", "*.jsonl"))
-    needles = {toplevel.encode()}
-    if toplevel.startswith(HOME + "/"):
-        rest = toplevel[len(HOME):]
-        needles |= {("~" + rest).encode(), ("$HOME" + rest).encode()}
-    for path in files:
-        try:
-            with open(path, "rb") as fh:
-                for line in fh:
-                    if (b"worktree add" in line or b"git clone" in line) and any(n in line for n in needles):
-                        return True
-        except OSError:
-            continue
-    return False
-
-
-def worktree_owner(toplevel):
-    try:
-        with open(os.path.join(toplevel, ".wt-owner")) as fh:
-            for line in fh:
-                if line.startswith("owner="):
-                    return line.strip().split("=", 1)[1]
-    except OSError:
-        return None
-    return None
-
-
-STASH_WHY = "Every worktree of a repo shares one stash list, so the newest entry can be another session's work."
-
-
-def rule_shared_stash(cmd, payload):
-    if cmd.prog != "git":
-        return None
-    _, cdir, sub, args = git_split(cmd.argv)
-    if sub != "stash" or not args or args[0] not in ("pop", "apply", "branch"):
-        return None
-    action = args[0]
-    pos = [a for a in args[1:] if not a.startswith("-")]
-    ref = (pos[1] if len(pos) > 1 else None) if action == "branch" else (pos[0] if pos else None)
-    label = f"git stash {action}"
-    if not ref and cmd.stashed and not cmd.remote and (d := git_dir(cmd, cdir)) and action != "branch" and \
-            (git_out(d, "worktree", "list", "--porcelain") or "").count("worktree ") == 1:
-        return None  # pops the entry this command just pushed, in a checkout no other worktree shares
-    if not ref:
-        return ("shared-stash", f"bare {label}", f"Bare `{label}` is refused. {STASH_WHY} " + (
-            "A push of a clean tree saves nothing, so the pop takes the newest entry, whoever made it. Carry your change "
-            "off the shared list instead: `s=$(git stash create) && git reset -q --hard && <check>; git stash apply -q "
-            "--index ${s:?}`." if cmd.stashed else f"Find your entry with `git stash list`, then `git stash {action} "
-            "stash@{N}` in your own worktree (`wt-new <repo> <branch>`), or copy it and leave it listed: `git stash show "
-            "-p stash@{N} | git apply`."), None)
-    if (var := re.fullmatch(r"\$\{(\w+):\?\}", ref)) and cmd.env.get(var.group(1)) == "$(git stash create)":
-        return None  # this command's own commit, never on the shared list; ${s:?} stops the command when s is empty
-    if cmd.remote:
-        return None
-    directory = git_dir(cmd, cdir)
-    toplevel = git_out(directory, "rev-parse", "--show-toplevel") if directory else None
-    if not toplevel:
-        return ("shared-stash", f"{label} in an unresolved checkout", f"`{label} {ref}` is refused because the checkout it "
-                f"runs in cannot be resolved from the command. {STASH_WHY} cd to the literal path of your own worktree first.", None)
-    session = payload.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
-    own = "/_wt/" in toplevel + "/" and (
-        (session and worktree_owner(toplevel) == session) or session_created(toplevel, payload))
-    if not own:
-        return ("shared-stash", f"{label} outside this session's worktree", f"`{label} {ref}` is refused: {toplevel} is not "
-                "a _wt worktree this session created (no .wt-owner or `git worktree add` for it in this session's transcripts). "
-                f"{STASH_WHY} Copy the entry and leave it listed (`git stash show -p {ref} | git apply`), or use `wt-new`.", None)
-    if STATIC_STASH.match(ref):
-        target = f"stash@{{{ref}}}" if ref.isdigit() else ref
-        subject = git_out(toplevel, "log", "-1", "--format=%s", target)
-        current = git_out(toplevel, "symbolic-ref", "--short", "-q", "HEAD") or "(no branch)"
-        m = re.match(r"^(?:WIP on|On) (.+?): ", subject or "")
-        if m and m.group(1) != current:
-            return ("shared-stash", f"{label} of another branch's entry", f"`{label} {ref}` is refused: that entry was made "
-                    f"on branch {m.group(1)}, and this worktree is on {current}, so it is probably another session's. {STASH_WHY} "
-                    "Pick your own entry from `git stash list`.", None)
-    return None
+    return ("hooks-bypass", what, f"`{what}` is refused. " + HOOKS_FIX + f"`{without_bypass(cmd.argv, sub)}`.", None)
 
 
 KILL_OVERRIDE = "CC_ALLOW_BROADCAST_KILL"
-EXACT_PID = ("Run `{}` on its own, read the command lines, then `kill <pid>` the ones you started. Keep a pid when you "
-             "start a process (`cmd >log 2>&1 & echo $! >pidfile`, later `kill $(cat pidfile)`); a port's listener is "
-             "`kill $(lsof -tiTCP:<port> -sTCP:LISTEN)`, a pid's children `pkill -P <pid>`. "
-             f"User override: {KILL_OVERRIDE}=1 (session-wide, set by the owner).")
+EXACT_PID = (f"The owner's override is {KILL_OVERRIDE}=1, session-wide. Keep a pid when you start a process (`cmd >log 2>&1 & "
+             "echo $! >pidfile`, later `kill $(cat pidfile)`); a port's listener is `kill $(lsof -tiTCP:<port> -sTCP:LISTEN)`, "
+             "a pid's children `pkill -P <pid>`. List the candidates on their own, then `kill <pid>` the ones you started: `{}`.")
 
 
 def kill_targets(args):
@@ -1268,12 +1221,12 @@ def rule_ledger_write(cmd):
     if not hit:
         return None
     return ("ledger-write", "shell write into a ledger", f"This command writes {hit} from the shell, and a `>` would "
-            f"erase its append-only history. {CONFIG.get('ledger_hint', '')} To repair a malformed line with the "
-            "owner's approval, rerun with CC_ALLOW_LEDGER_WRITE=1 (logged).", "CC_ALLOW_LEDGER_WRITE")
+            "erase its append-only history. To repair a malformed line with the owner's approval, rerun with "
+            f"CC_ALLOW_LEDGER_WRITE=1 (logged). {CONFIG.get('ledger_hint', '')}".rstrip(), "CC_ALLOW_LEDGER_WRITE")
 
 
 def is_mac():
-    return (os.environ.get("CC_GUARD_UNAME") or platform.system()) == "Darwin"
+    return (os.environ.get("CC_GUARD_UNAME") or os.uname().sysname) == "Darwin"
 
 
 def test_files(args, cmd):
@@ -1388,6 +1341,8 @@ def classify_pm(prog, args, cmd):
 def classify_tool(argv, cmd):
     prog = os.path.basename(argv[0])
     args = argv[1:]
+    if {"--help", "-h", "--version", "-v", "-V"} & set(args):
+        return None  # help and version print and exit: `turbo run --help | grep concurrency` was refused 11-03..09
     if prog == "vitest":
         return classify_vitest(args, cmd)
     if prog == "turbo":
@@ -1433,31 +1388,56 @@ def rule_mac_build(cmd):
     kind = classify_tool(cmd.argv, cmd)
     if not kind:
         return None
-    shown = " ".join(cmd.argv)[:80]
     return ("mac-build", f"{kind} on the Mac",
-            f"`{shown}` is a {kind}, which this Mac does not run. {CONFIG['mac_build']} Single test files stay local: "
-            f"`pnpm exec vitest run path/to/file.test.ts` (up to {MAX_TEST_FILES} files). "
-            "Set CC_ALLOW_MAC_BUILD=1 only with the owner's authorization for this run.", "CC_ALLOW_MAC_BUILD")
+            f"`{' '.join(cmd.argv)[:80]}` is a {kind}, which this Mac does not run. Single test files stay local (`pnpm exec "
+            f"vitest run path/to/file.test.ts`, up to {MAX_TEST_FILES} files); CC_ALLOW_MAC_BUILD=1 needs the owner's "
+            f"authorization for this run. {CONFIG['mac_build'].replace('{command}', shlex.join(cmd.argv))}", "CC_ALLOW_MAC_BUILD")
 
 
 # ---------------------------------------------------------------------------------------
 
+def private_rules(command, payload):
+    """Findings of the operator's rule modules (guard-config `rule_modules`); one that fails to load or raises is logged."""
+    found = []
+    for path in CONFIG.get("rule_modules", []):
+        try:  # loaded through its compiled bytecode: compiling the source on every call cost 3.6 ms, this 0.2 ms
+            import importlib.util
+            from importlib.machinery import SourceFileLoader
+            loader = SourceFileLoader("process_guard_rule", os.path.realpath(os.path.expanduser(path)))
+            module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+            loader.exec_module(module)
+            hit = module.process_guard_rule(command, payload)
+        except Exception as exc:  # a broken private rule must not stop every command
+            log("ERROR", f"{os.path.basename(path)}:{type(exc).__name__}", payload)
+            continue
+        found += [(*hit[:3], None)] if hit else []
+    return found
+
+
 def evaluate_full(payload):
-    """(findings, warnings): (rule, summary, reason, override, bypassed) refusals, and warnings that let the command run."""
-    if payload.get("tool_name") not in (None, "Bash"):
-        return [(*h, False) for h in (rule_refused_page(payload), rule_grant_file(payload)) if h], []
-    command = (payload.get("tool_input") or {}).get("command") or ""
+    """(findings, notes, updated): (rule, summary, reason, override, bypassed) refusals; (text, context_only) notes that let
+    the command run; and the tool input to run instead (a subagent's background call, in the foreground), or None."""
+    tool, inp = payload.get("tool_name"), payload.get("tool_input") or {}
+    if tool not in (None, "Bash"):
+        hits = (rule_refused_page(payload), rule_grant_file(payload), rule_subagent_monitor(payload), rule_memory_budget(payload))
+        return [(*h, False) for h in hits if h], [], None
+    command = inp.get("command") or ""
+    if isinstance(command, list):  # Codex can send argv: judge the script a shell is given
+        shell = len(command) >= 3 and os.path.basename(command[0]) in SHELLS and command[1] in ("-c", "-lc", "-ilc")
+        command = command[2] if shell else shlex.join(command)
     if not command:
-        return [], []
+        return [], [], None
     cwd = payload.get("cwd") or None
     findings, seen = [], set()
     root = Context(cwd, False)
     cmds = commands(command, cwd, False, root)
+    eraser, vm = host_blast_command(command)
     for cmd in cmds:
         for hit in (rule_admin_merge(cmd), rule_force_push(cmd), rule_hooks_bypass(cmd),
-                    rule_shared_stash(cmd, payload), rule_mac_build(cmd), rule_no_build_host(cmd, classify_tool), rule_kill(cmd),
+                    rule_shared_stash(cmd, payload, git_split, git_dir), rule_mac_build(cmd), rule_no_build_host(cmd, classify_tool), rule_kill(cmd),
                     rule_ledger_write(cmd), rule_tail_sleep(cmd), rule_detached_gate(cmd, payload), rule_raw_gh(cmd), rule_override_grant(cmd),
-                    rule_prod_d1_read(cmd, read_local, script_text), rule_refused_call(cmd, script_text)):
+                    rule_prod_d1_read(cmd, read_local, script_text), rule_refused_call(cmd, script_text),
+                    rule_broad_scan(cmd, is_mac() and not cmd.remote), None if vm else rule_host_blast(cmd)):
             if not hit or hit[:2] in seen:
                 continue
             seen.add(hit[:2])
@@ -1466,24 +1446,24 @@ def evaluate_full(payload):
                 summary += f" (in {cmd.origin})"
                 reason = f"The script {cmd.origin}, which this command runs, contains it. " + reason
             findings.append((rule, summary, reason, override, bool(override and flag_on(cmd, override))))
-    hit = rule_xtrace_secrets(root.events)
-    if hit:
-        findings.append((*hit, False))
+    for hit in (eraser, rule_ci_wait(cmds, root.events, GH, gh_positionals, MERGE_GH), rule_xtrace_secrets(root.events),
+                *private_rules(command, payload)):
+        findings += [(*hit, False)] if hit else []
     hit = rule_env_dump(root.events)
     if hit:
         findings.append((*hit, os.environ.get(hit[3]) == "1"))
-    warnings = []
+    notes = [(w, True) for w in wait_notes(command, inp)]
     if not findings and re.search(r"\bpr\s+merge\b", command):
         try:
             import merge_check
-            warnings = merge_check.warnings(cmds, payload)
+            notes += [(w, False) for w in merge_check.warnings(cmds, payload)]
         except Exception as exc:  # a warning tool never blocks or breaks a command
-            warnings = [f"merge-check: could not check the PRs this command merges ({type(exc).__name__}: {exc})."]
-    return findings, warnings
+            notes.append((f"merge-check: could not check the PRs this command merges ({type(exc).__name__}: {exc}).", False))
+    return findings, notes, foreground(payload)
 
 
 def traced_secrets(events):
-    return [what for kind, what, *rest in events if kind == "secret" and rest and rest[0]]
+    return [e[1] for e in events if e[0] == "secret" and e[2:3] == (True,)]
 
 
 def rule_xtrace_secrets(events):
@@ -1505,62 +1485,48 @@ def rule_xtrace_secrets(events):
             f"This command turns on shell tracing (bash -x, sh -x, set -x, set -o xtrace or BASH_XTRACEFD) while it loads "
             f"or expands a secret ({found[0]}). The trace prints every expanded value, so the secret would land in the "
             "transcript. Run it without -x, or wrap only the non-secret part: `set +x` before the line that reads the key and "
-            "`set -x` after it. To check a key, print its length or a fingerprint, never the value.", None)
-
-
-def rule_env_dump(events):
-    """A command that prints environment values: environments carry live keys, and the transcript keeps them."""
-    found = [e[1] for e in events if e[0] == "env-dump"]
-    if not found:
-        return None
-    return ("env-dump", "print of environment values",
-            f"This command prints environment values (`{found[0]}`), and the transcript keeps them. `cut -d= -f1`, `sed` and `awk` "
-            "print a multi-line value's later lines whole. Print the names with `bash -c 'compgen -e'` (also after `dotenvx run -f "
-            "<file> --`), a dotenvx file's names with `grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' <file>`, or one non-secret variable "
-            "(`printenv NAME`); check a key by its length (`${#VAR}`) or `printf %s \"$VAR\" | sha256sum`. "
-            + "".join(f"A ~/{d} file holds one raw value, which a filter prints: use `ls`, `wc -c` or `sha256sum`. " for d in SECRET_DIRS)
-            + "The owner can allow it for a session with CC_ALLOW_ENV_DUMP=1 (logged).", "CC_ALLOW_ENV_DUMP")
+            "`set -x` after it. Check a key by its length or fingerprint, never its value: `printf %s \"$KEY\" | wc -c`.", None)
 
 
 def log(kind, rule, payload):
+    """One row per denial, override or broken rule module: the whole command with key-shaped values redacted (a Write's path)."""
     try:
+        inp = payload.get("tool_input") or {}
+        command = inp["command"] if isinstance(inp.get("command"), str) else inp.get("file_path") or json.dumps(inp)[:2000]
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
-        command = redact((payload.get("tool_input") or {}).get("command") or json.dumps(payload.get("tool_input"))).replace("\n", " ")[:400]
-        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with open(LOG, "a") as fh:
-            fh.write(f"{now} {kind} rule={rule} session={payload.get('session_id') or '-'} "
-                     f"cwd={payload.get('cwd') or '-'} command={json.dumps(command)}\n")
-    except OSError:
+            fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {kind} rule={rule} session={payload.get('session_id') or '-'} "
+                     f"agent={payload.get('agent_id') or '-'} cwd={payload.get('cwd') or '-'} command={json.dumps(redact(command))}\n")
+    except Exception:
         pass
 
 
 def main():
     try:
         payload = json.loads(sys.stdin.read())
-        findings, warnings = evaluate_full(payload)
+        findings, notes, updated = evaluate_full(payload)
     except Exception as exc:  # refuse what no rule can read: failing open let one `$( )` nested 400 deep turn every rule off
-        findings, warnings = [("unreadable", "", f"No rule can read this command ({type(exc).__name__}); split it.", None, False)] * ("payload" in locals()), []
-    denied = [f for f in findings if not f[4]]
-    bypassed = [f for f in findings if f not in denied]
-    for rule, *_ in bypassed:
-        log("BYPASS", rule, payload)
+        findings, notes, updated = [("unreadable", "", f"No rule can read this command ({type(exc).__name__}); run its parts as "
+                                     "separate Bash calls.", None, False)] * ("payload" in locals()), [], None
+    denied, bypassed = [f for f in findings if not f[4]], [f for f in findings if f[4]]
+    for kind, rows in (("BYPASS", bypassed), ("DENY", denied)):
+        for rule, *_ in rows:
+            log(kind, rule, payload)
     if denied:
-        for rule, *_ in denied:
-            log("DENY", rule, payload)
         reason = "\n\n".join(f"process-guard ({rule}): {reason}" for rule, _, reason, _, _ in denied)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                  "permissionDecisionReason": reason}}))
-    elif bypassed or warnings:
-        lines = []
-        if bypassed:
-            names = ", ".join(f"{summary} via {override}=1" for _, summary, _, override, _ in bypassed)
-            lines.append(f"process-guard: allowed {names}; logged to {LOG}.")
-        lines += warnings
-        text = "\n".join(lines)
-        out = {"systemMessage": text}
-        if warnings:
-            out["hookSpecificOutput"] = {"hookEventName": "PreToolUse", "additionalContext": text}
-        print(json.dumps(out))
+        return 0
+    shown = [f"process-guard: allowed {', '.join(f'{s} via {o}=1' for _, s, _, o, _ in bypassed)}; logged to {LOG}."] if bypassed else []
+    shown += [text for text, context_only in notes if not context_only]
+    context, spec = [text for text, _ in notes], {"hookEventName": "PreToolUse"}
+    if updated:
+        spec.update(permissionDecision="allow", permissionDecisionReason="process-guard: ran in the foreground", updatedInput=updated)
+        context.insert(0, "process-guard ran this command in the foreground with a 10-minute timeout: subagents never wait "
+                          "in-session on background work.")
+    spec.update({"additionalContext": "\n".join(context)} if context else {})
+    out = {**({"systemMessage": "\n".join(shown)} if shown else {}), **({"hookSpecificOutput": spec} if len(spec) > 1 else {})}
+    print(json.dumps(out) if out else "", end="\n" if out else "")
     return 0
 
 

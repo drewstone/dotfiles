@@ -1,4 +1,4 @@
-"""Process-guard rules refused-call (a call the operator routes through an owning tool, made directly) and override-grant.
+"""Process-guard rules refused-call (a call the operator routes through an owning tool, made directly), override-grant, memory-budget.
 
 "process_guard" "refused_calls" in guard-config.json lists {"rule", "match": [regex], "write": regex, "reason"}; a `write` or `reason`
 naming a "refused_call_texts" key is that text. A command matches when every `match`, and `write` (multiline) when set, finds its
@@ -11,8 +11,8 @@ override-grant: a CC_ALLOW_* set for an agent or session launcher ("agent_launch
 CC_ALLOW_* assigned in a command's code or bare words or written to settings*.json, a shell profile or an env file (Write, Edit too).
 """
 import json
+import os
 import re
-from urllib.parse import unquote
 
 from process_guard_d1 import INTERPRETERS, script_of
 from process_guard_github import expand
@@ -32,15 +32,16 @@ LAUNCHERS = {"claude", "codex", "opencode", "tmux", "screen", "systemd-run", *CO
 GRANT = re.compile(r"(?<![$\w{])CC_ALLOW_\w+(?:['\"]\]?)?\s*[:=](?!=)|\b(?:set-?env(?:ironment)?|setdefault|putenv)\b.*\bCC_ALLOW_")
 TARGET = re.compile(r"(?:^|/)(?:settings[\w.-]*\.json|\.\w*(?:rc|env|profile))\b")
 GRANT_WHY = ("A CC_ALLOW_* in a process's environment lifts that rule for every command of the agents and shells it starts, so it "
-             "is never handed to a child, a settings file or a profile. Put a per-command flag on the one command it is for; "
-             "session flags are the owner's, set before the session starts.")
+             "is never handed to a child, a settings file or a profile; session flags are the owner's, set before the session "
+             "starts. Put a per-command flag on the one command it is for: `CC_ALLOW_<NAME>=1 <command>`.")
 
 
 def rule_refused_page(payload):
     """An mcp__ (browser or computer-use) tool whose input, percent-decoded, names a "refused_pages" page; a click names none."""
+    from urllib.parse import unquote
     text = unquote(json.dumps(payload.get("tool_input"), ensure_ascii=False)) if str(payload.get("tool_name")).startswith("mcp__") else ""
     hit = next((p for p in PAGES if all(m.search(text) for m in p[1])), None)
-    return hit and (hit[0], f"{hit[0]} in a browser", f"{hit[2]} A browser order or create page is never the owning path.", None)
+    return hit and (hit[0], f"{hit[0]} in a browser", f"A browser order or create page is never the owning path. {hit[2]}", None)
 
 
 def rule_refused_call(cmd, script_text):
@@ -62,7 +63,7 @@ def rule_refused_call(cmd, script_text):
     text = re.sub(r"(['\"])\s*\+\s*\1", "", "\n".join(texts))
     for rule, patterns, write, reason in RULES:
         if all(p.search(text) for p in patterns) and (not write or write.search(text)):
-            return rule, f"{rule} outside its owning tool", f"{reason} Only the owner runs it, in their own terminal.", None
+            return rule, f"{rule} outside its owning tool", f"Only the owner runs it, in their own terminal. {reason}", None
     return None
 
 
@@ -81,3 +82,32 @@ def rule_grant_file(payload):
     if TARGET.search(edit.get("file_path") or "") and "CC_ALLOW_" in json.dumps([edit.get("content"), edit.get("new_string"), edit.get("edits")]):
         return "override-grant", f"a CC_ALLOW_* written into {edit['file_path']}", GRANT_WHY, None
     return None
+
+
+MEMORY = re.compile(r"/\.claude/projects/[^/]+/memory/MEMORY\.md$")
+
+
+def rule_memory_budget(payload):
+    """A Write or Edit that grows a project MEMORY.md past guard-config `memory_budget_tokens` (bytes/4, as census counts)."""
+    inp, budget, tool = payload.get("tool_input") or {}, CONFIG.get("memory_budget_tokens"), payload.get("tool_name")
+    path = inp.get("file_path") or ""
+    if not budget or not MEMORY.search(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            old = fh.read()
+    except OSError:
+        old = ""
+    new = inp.get("content") if tool == "Write" else old
+    for edit in [] if tool == "Write" else inp.get("edits") or [inp]:  # MultiEdit's edits, or the one Edit
+        if isinstance(edit.get("old_string"), str) and edit["old_string"] and edit["old_string"] in new:
+            new = new.replace(edit["old_string"], edit.get("new_string") or "", -1 if edit.get("replace_all") else 1)
+    size = lambda text: -(-len(text.encode()) // 4)  # noqa: E731
+    if not isinstance(new, str) or size(new) <= budget or size(new) <= size(old):
+        return None
+    archive = os.path.join(os.path.dirname(path), "MEMORY-archive.md")
+    return ("memory-budget", f"MEMORY.md past {budget} tokens",
+            f"This write takes {path} to {size(new)} tokens (bytes/4; it was {size(old)}), over its {budget}-token budget "
+            "(guard-config memory_budget_tokens). MEMORY.md is an index loaded into every session: one line per fact, recipe "
+            "or live rule, and a write that shrinks it always passes. Put the detail, dated incidents and finished programs "
+            f"in the archive, with one pointer line here: `{archive}`.", None)

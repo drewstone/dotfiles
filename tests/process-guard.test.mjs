@@ -25,19 +25,28 @@ writeFileSync(join(HOME, ".claude/guard-config.json"), JSON.stringify({ process_
   raw_gh_instead: ["API calls: `gh-acme api <path>`.", "Package files: `gh-acme fetch <url>`."],
   refused_call_texts: { write: "(?:^|\\s)-X\\s*POST\\b|Request\\([^)]*\\bdata\\s*=" },
   refused_calls: [{ rule: "box-order", match: ["api\\.boxes\\.example/v1/orders\\b"], write: "write", reason: "Order through acme-order." }],
-  message_commands: ["acme-msg send\\b"], agent_launchers: ["acme-lane"] },
+  message_commands: ["acme-msg send\\b"], agent_launchers: ["acme-lane"], memory_budget_tokens: 40,
+  rule_modules: ["~/rules/drill.py", "~/rules/broken.py"] },
+  "host-blast-guard": { vm_command: "vm\\s+(run|shell|ssh)", vm_hint: "Use `vm run -- '<command>'`.", eraser_hint: "Test it in `vm run`." },
   merge_check: { gh: "gh-acme" } }));
+mkdirSync(join(HOME, "rules"));
+writeFileSync(join(HOME, "rules/drill.py"), "def process_guard_rule(command, payload):\n"
+  + "    return ('drill-stop', 'a drill stop', 'Drain first: `drain-host`.') if 'drill-stop' in command else None\n");
+writeFileSync(join(HOME, "rules/broken.py"), "def process_guard_rule(command, payload):\n    if 'boom' in command:\n        raise RuntimeError\n");
 
-function run(command, { cwd = process.cwd(), uname = "Linux", env = {}, transcript, background } = {}) {
-  const tool_input = background ? { command, run_in_background: true } : { command };
-  const payload = { tool_name: "Bash", tool_input, cwd, session_id: SESSION, transcript_path: transcript };
+function hook(payload, { uname = "Linux", env = {} } = {}) {
   const r = spawnSync(HOOK, [], {
-    input: JSON.stringify(payload),
+    input: JSON.stringify({ cwd: process.cwd(), session_id: SESSION, ...payload }),
     env: { ...CLEAN_ENV, HOME, PATH: `${HOME}/bin:${process.env.PATH}`, CC_GUARD_UNAME: uname, CC_GUARD_HOST: "test-host", ...env },
     encoding: "utf8",
   });
   assert.equal(r.status, 0, r.stderr);
   return r.stdout.trim() ? JSON.parse(r.stdout) : {};
+}
+
+function run(command, { cwd = process.cwd(), uname, env, transcript, background } = {}) {
+  const tool_input = background ? { command, run_in_background: true } : { command };
+  return hook({ tool_name: "Bash", tool_input, cwd, transcript_path: transcript }, { uname, env });
 }
 
 function decide(command, options) {
@@ -173,7 +182,7 @@ test("force-push: refuses the force pushes agents ran on their own branches", ()
     "for b in a b; do git push -f origin $b; done",
     "CC_ALLOW_FORCE_PUSH=1 git push --force-with-lease origin feat/x",
   ], "deny");
-  assert.match(reason("git push -f origin x"), /No flag lifts this: the owner runs a force-push in their own terminal/);
+  assert.match(reason("git push -f origin x"), /no flag lifts this; the owner runs a force-push in their own terminal\..*`git push origin HEAD:<branch>`\.$/s);
 });
 
 test("force-push: normal pushes and text that mentions force pushing pass", () => {
@@ -446,10 +455,10 @@ test("pattern-kill: pkill -P of an exact parent passes; parents 0, 1 or from a p
 });
 
 test("pattern-kill: the refusal prints the listing for the agent's own pattern, on the host the kill ran on", () => {
-  assert.match(reason("pkill -f 'tmpdir-leak/driver.sh'"), /Run `pgrep -af '\[t\]mpdir-leak\/driver\.sh'` on its own/);
+  assert.match(reason("pkill -f 'tmpdir-leak/driver.sh'"), /then `kill <pid>` the ones you started: `pgrep -af '\[t\]mpdir-leak\/driver\.sh'`\.$/);
   assert.match(reason("ssh host-a 'pkill -f \"bash /tmp/ft13-watch.sh\"; sleep 1'"),
-    /Run `ssh host-a "pgrep -af '\[b\]ash \/tmp\/ft13-watch\.sh'"` on its own/);
-  assert.match(reason("ssh host-a 'pkill -f \"^bash run.sh$\"'"), /Run `ssh host-a 'pgrep -af '"'"'\^bash run\.sh\$'"'"''`/);
+    /started: `ssh host-a "pgrep -af '\[b\]ash \/tmp\/ft13-watch\.sh'"`\.$/);
+  assert.match(reason("ssh host-a 'pkill -f \"^bash run.sh$\"'"), /started: `ssh host-a 'pgrep -af '"'"'\^bash run\.sh\$'"'"''`/);
   assert.match(reason("killall Slack"), /pgrep -af '\[S\]lack'/);
   assert.match(reason("for p in $(pgrep -f sim.py); do kill $p; done"), /echo \$! >pidfile/);
 });
@@ -818,7 +827,7 @@ test("prod-d1-read: refuses the 2026-11-07 22:50Z production D1 scan, allows a L
   mkdirSync(scratch, { recursive: true });
   writeFileSync(join(scratch, "d1read.py"), fixture("d1read-2026-11-07.py"));
   const incident = `cd ${scratch} && python3 d1read.py "SELECT outcome, state, origin, count(*) n, min(created_at) lo, max(created_at) hi FROM sandbox_finalizations GROUP BY outcome, state, origin"; python3 d1read.py "SELECT count(*) n FROM sandbox_meta m WHERE EXISTS (SELECT 1 FROM sandbox_finalizations f WHERE f.sandbox_id = m.sandbox_id AND f.origin <> 'create_refused' AND f.outcome IS NOT 'superseded')"`;
-  assert.match(reason(incident), /prod-d1-read.*`count\(\)` with no WHERE equality on an id key reads every row.*Add LIMIT <= 1000/s);
+  assert.match(reason(incident), /prod-d1-read.*`count\(\)` with no WHERE equality on an id key reads every row.*Read with LIMIT <= 1000, or a bounded indexed lookup: `wrangler d1 execute <db> --remote/s);
   const api = "https://api.cloudflare.com/client/v4/accounts/0000example/d1/database/00000000-0000-4000-8000-000000000000/query";
   check([
     incident,
@@ -858,4 +867,129 @@ test("override-grant: a CC_ALLOW_* is never handed to a child, a profile or a se
     tool_input: { file_path, content: '{"env": {"CC_ALLOW_MAC_BUILD": "1"}}' } }), env: { ...CLEAN_ENV, HOME }, encoding: "utf8" }).stdout;
   assert.match(write(join(HOME, ".claude/settings.local.json")), /"deny"/);
   assert.equal(write(join(ROOT, "notes.json")), "");
+});
+
+// ------------------------------------------------- broad-scan, host-blast, ci-wait, subagent waits (the old shell guards)
+
+// From a Codex session, 2026-10-11; Codex sends argv as well as a string.
+const RUNAWAY = "find / -name 'OpenCode_raw_evidence_public_SDK__real_.log' -o -name 'climb.md' 2>/dev/null | head -40";
+
+test("broad-scan: refuses unbounded walks of sprawling trees, as Claude and Codex send them, and names the narrower tool", () => {
+  for (const uname of ["Darwin", "Linux"]) {
+    for (const command of [RUNAWAY, ["/bin/bash", "-c", RUNAWAY], ["bash", "-lc", RUNAWAY]]) {
+      const text = reason(command, { uname });
+      for (const tool of [/`git grep <pattern>`/, /`fd <name> <path>`/, /`qmd query`/]) assert.match(text, tool, JSON.stringify(command));
+    }
+    check(["find / -xdev -name x", "find ~ -xdev -name x", "find / -maxdepth 5 -name x", "find /mnt -name x",
+      "cd ~ && find . -name x", "find ~ -name spans.jsonl", "grep -rl key ~/.local/state"], "deny", { uname });
+    check(["find . -name x", "find /some/path -maxdepth 3", "find / -maxdepth 2 -name x", "find /mnt -xdev -name x",
+      ["find", "/some/path", "-name", "x"], "rg -n 'maxSystemPromptBytes' -r '' src tests scripts",
+      "python3 - <<'X'\nfd = os.open(rootfs / 'sidecar.ext4.source', os.O_RDONLY)\ndu = (int(s['end']) - int(s['start'])) / 1e6\nX",
+      "find .claude/projects -name '*.jsonl' -mtime -7 -print0 | du -ch --files0-from=- | tail -1"], "allow", { uname });
+  }
+  assert.equal(decide("grep -rl key ''", { cwd: "/" }), "deny");
+});
+
+test("broad-scan: Linux and remote commands pass bounded walks; the Mac refuses its own config trees (10-19..26 refusals)", () => {
+  const linux = { uname: "Linux" }, mac = { uname: "Darwin" };
+  check(["find / -xdev -maxdepth 6 -name config.toml 2>/dev/null | head", "find /home/user/.local/share -maxdepth 6 -name opencode.db",
+    "find ~ -maxdepth 4 -type d -name agent-interface -not -path '*/node_modules/*'", "grep -rl ORCHESTRATOR_ADMIN ~/.config"], "allow", linux);
+  check(["find / -maxdepth 6 -name x", "find /mnt -maxdepth 5 -name x"], "deny", linux);
+  check(["grep -rl ORCHESTRATOR_ADMIN ~/.config", "find ~ -maxdepth 4 -name x; ssh host-a true", "ssh host-a 'find / -name x'",
+    "bash -s <<'X'\nfind ~ -name x\nX"], "deny", mac);
+  check(["ssh -o BatchMode=yes host-a 'find /home/user/code -maxdepth 6 -name x'", "ssh host-a 'cd ~/wt/x/src && grep -n BATCH -r .. | head'",
+    "cat > notes.sh <<'X'\nfind ~ -name x\nX", "ssh host-a 'ls ~/.local/bin | rg -n \"a|b\"'", "ssh host-a 'find --version'",
+    "ssh host-a 'sudo -n du -x -d1 /home/user 2>/dev/null | sort -h'", "ssh host-a 'grep -rn x \"$D/..\"'",
+    "ssh host-a 'grep -rn -- --intervals \"$d/..\"'", "ssh host-a 'ls -d ~/.cache/x-* | xargs -r du -sh'",
+    "ssh host-a 'cd /srv/r && true; cd code; grep -rn x .'"], "allow", mac);
+  // A wrapper is the command (the old shell guard missed these); du -x on Linux keeps off the archive drive, not on it.
+  check(["ssh host-a 'timeout 60 rg -l x ~/code'", "ssh host-a 'sudo du -x -sh /mnt/traces'", "sudo du -x -sh ~"], "deny", mac);
+});
+
+const ERASER = ["format", "traces", "drive"].join("-");  // spelled out, the name trips the guard on the editor's own Bash calls
+
+test("host-blast: refuses host-level verbs in command position and every command naming the eraser, naming the VM tool", () => {
+  for (const command of [
+    "sudo fsfreeze -f /tmp/x/mnt/parent", "fsfreeze --freeze /mnt/a", 'sudo unshare --mount --fork sh -c "mount --make-rprivate /; rmdir /proc"',
+    "sudo unshare -rm true", "sudo unshare --mount-proc --fork --pid true", "sudo mount --move /proc /tmp/p", "sudo mount -t tmpfs none /proc",
+    "sudo umount /sys", "sudo umount -a", "sudo rmdir /proc", "sudo rm -rf /dev", "sudo dmsetup suspend adcraw-parent", "sudo dmsetup remove_all",
+    "sudo mkfs.xfs -f /dev/nvme0n1p2", "sudo mke2fs /dev/sda1", "sudo pvcreate /dev/sda", "sudo lvm pvcreate /dev/nvme0n1p3",
+    "sudo dd if=/dev/zero of=/dev/nvme0n1 bs=1M", "sudo wipefs -a /dev/nvme0n1p1", "sudo fdisk /dev/nvme0n1", "sudo parted /dev/nvme0n1 mklabel gpt",
+    "echo b > /proc/sysrq-trigger", "sudo reboot", "sudo systemctl poweroff", "sudo shutdown -h now", "bash -s <<'EOF'\nsudo reboot\nEOF",
+    "HOST_BLAST_GUARD=off sudo fsfreeze -f /tmp", "sudo HOST_BLAST_GUARD=off unshare -m true", "cd /x && sudo timeout 30 fsfreeze -f /x/mnt",
+    'S=/tmp/s; sudo umount -l "$S/mnt/parent"; bash "$S/proof.sh" 2>&1 | tail -120; sudo fsfreeze -f $S/mnt/parent',
+    "for i in 1 2; do sudo fsfreeze -f /mnt/$i; done", "sudo -u root fsfreeze -f /mnt/x", "sudo --user=root unshare -m true",
+    // The eraser fails closed: wrappers, ssh, variables, git and sed escapes, read-only and VM forms (the first hook's bypasses).
+    `sudo host/bin/${ERASER} --model X --serial Y`, `echo ERASE | ssh -tt box 'sudo ~/code/dotfiles/host/bin/${ERASER}'`,
+    `F=host/bin/${ERASER}; sudo $F --model X`, `git -c alias.x='!sudo host/bin/${ERASER}' x`, `sed -n '1e sudo host/bin/${ERASER}' README.md`,
+    `ssh -F /tmp/evil.conf box cat host/bin/${ERASER}`, `git log --oneline -S ${ERASER}`, `cat host/bin/${ERASER}`,
+    `vm run -- 'host/bin/${ERASER} --model X'`,
+  ]) assert.match(reason(command), /process-guard \(host-blast\):.*vm run/s, command);
+  check([
+    "grep -rn fsfreeze packages/", "git log --oneline | grep reboot", 'git grep -nE "lifecycle/(quiesce|shutdown)|/health" origin/develop -- scripts/lib',
+    "ls tests/integration | grep -E 'computer-use|ports|mcp-auth|shutdown|events'", "grep -cE 'halt|reboot' log.txt",
+    "cat > run.sh <<'EOF'\n#!/bin/bash\nsudo shutdown -h now\nEOF\nbash -n run.sh", "sudo fsfreeze -u /mnt/parent",
+    'ssh root@10.0.0.1 "sudo fsfreeze -f /mnt/parent"', "ssh box 'sudo dmsetup suspend x && sudo reboot'", "vm run -- 'sudo fsfreeze -f /mnt/x'",
+    "vm shell", "sudo dmsetup ls", "sudo dmsetup info rawthin-proofkid", "sudo lvs", "sudo losetup -d /dev/loop29", "sudo mkfs.xfs -f /dev/loop29",
+    "sudo mkfs.xfs -q -f /dev/mapper/rawthin-proofkid", "sudo lvcreate -V 1G -T adcraw/pool -n parent", "sudo pvcreate -f /dev/loop29",
+    "sudo fdisk -l /dev/nvme0n1", "sudo sfdisk -d /dev/nvme0n1", "sudo parted /dev/nvme0n1 print", "sudo wipefs /dev/nvme0n1",
+    "sudo mount -o loop img.img /tmp/mnt", "sudo mount --bind /proc /tmp/chroot/proc", "sudo umount /tmp/mnt", "sudo unshare -n ip link",
+    "docker restart foo", "cat /proc/cmdline", "ls -la /dev/nvme0n1", "systemctl restart watchdog", "sudo systemctl status docker",
+    "cat > notes.md <<'EOF'\nA human may bypass one call with `HOST_BLAST_GUARD=off`. Run `sudo fsfreeze -u /mnt/x` to thaw.\nEOF",
+    "printf '%s\\n' 'Bypass for a human only: HOST_BLAST_GUARD=off.' >> notes.md",
+    "git commit -m 'docs: explain why `sudo dmsetup suspend` is refused on the host'",
+  ], "allow");
+});
+
+test("ci-wait: a wait on PR checks is refused with the merge to run; waits on delivery runs and task files pass (10-17..26)", () => {
+  for (const command of ["gh pr checks 423 --watch", "for i in $(seq 1 30); do s=$(gh pr checks 423 | awk '{print $2}'); sleep 20; done",
+    "while :; do b=$(gh pr view 13817 --json statusCheckRollup -q '.statusCheckRollup[0].conclusion'); sleep 30; done"]) {
+    assert.match(reason(command), /gh run watch <id> --exit-status.*`gh-acme pr merge <number> --squash --auto`\.$/s, command);
+  }
+  const f = "/private/tmp/claude-501/x/s1/tasks/b6357tl1l.output";
+  check(["gh pr checks 423", "tail -n 40 /private/tmp/x/tasks/b1.output", `until [ -s ${f} ]; do sleep 5; done; tail -60 ${f}`,
+    "until s=$(gh run view 39871159727 -R example/app --json status,conclusion --jq '.status'); [[ \"$s\" == completed* ]]; do sleep 30; done",
+    "for i in 1 2 3; do gh run list --workflow deploy.yml -L 1; sleep 20; done",
+    "for i in $(seq 1 40); do s=$(gh run view 39720334219 --repo example/pkg --json status --jq .status); [ \"$s\" = completed ] && break; sleep 30; done"], "allow");
+});
+
+const SUB = "/Users/x/.claude/projects/p/s1/subagents/agent-a1.jsonl";
+
+test("subagent waits: a background call runs in the foreground at the 10-minute cap, Monitor is refused (346 refusals 10-19..26)", () => {
+  const command = "./gate.sh --retry 20 https://github.com/example/app 7cdfef -- pnpm vitest run x.test.ts";
+  const out = hook({ agent_id: "a1", tool_name: "Bash", tool_input: { command, description: "gate", run_in_background: true, timeout: 2400000 } });
+  assert.equal(out.hookSpecificOutput.permissionDecision, "allow");
+  assert.deepEqual(out.hookSpecificOutput.updatedInput, { command, description: "gate", timeout: 600000 });
+  assert.match(out.hookSpecificOutput.additionalContext, /foreground/);
+  const monitor = hook({ transcript_path: SUB, tool_name: "Monitor", tool_input: { command: "tail -f x" } }).hookSpecificOutput;
+  assert.equal(monitor.permissionDecision, "deny");
+  assert.match(monitor.permissionDecisionReason, /one foreground Bash call.*`until grep -q '\^exit=' <log>; do sleep 15; done; tail -40 <log>`\.$/s);
+  // The lead is never rewritten or refused; a subagent's foreground call is untouched.
+  assert.deepEqual(hook({ transcript_path: "/Users/x/.claude/projects/p/s1.jsonl", tool_name: "Monitor", tool_input: { command: "tail -f x" } }), {});
+  assert.equal(run("sleep 60", { background: true }).hookSpecificOutput, undefined);
+  assert.deepEqual(hook({ agent_id: "a1", tool_name: "Bash", tool_input: { command: "ssh host-a 'nohup ./land.sh &'" } }), {});
+});
+
+test("memory-budget: a write that grows a project MEMORY.md past its budget is refused and names the archive; shrinking passes", () => {
+  const dir = join(HOME, ".claude/projects/p/memory"), file = join(dir, "MEMORY.md");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(file, "- one line per fact, recipe or live rule\n".repeat(5));  // 205 bytes: 52 tokens, over the 40 the test sets
+  const write = (tool_name, tool_input) => hook({ tool_name, tool_input: { file_path: file, ...tool_input } }).hookSpecificOutput;
+  for (const out of [write("Write", { content: "x".repeat(400) }), write("Edit", { old_string: "fact", new_string: "fact and its source" }),
+    write("MultiEdit", { edits: [{ old_string: "rule", new_string: "rule, with its owner", replace_all: true }] })]) {
+    assert.equal(out?.permissionDecision, "deny");
+    assert.ok(out.permissionDecisionReason.endsWith(`\`${join(dir, "MEMORY-archive.md")}\`.`), out.permissionDecisionReason);
+  }
+  assert.equal(write("Edit", { old_string: "fact", new_string: "note" }), undefined);  // not growing
+  assert.equal(write("Write", { content: "- a short index\n" }), undefined);  // under the budget
+  assert.equal(hook({ tool_name: "Write", tool_input: { file_path: join(dir, "notes.md"), content: "x".repeat(400) } }).hookSpecificOutput, undefined);
+});
+
+test("rule modules: an operator's module refuses through the guard and logs one row with the whole command; a raising one is skipped", () => {
+  const command = "ssh host-x 'drill-stop now' && echo done";
+  assert.ok(reason(command).endsWith("Drain first: `drain-host`."), reason(command));
+  assert.equal(decide("echo boom"), "allow");
+  const log = readFileSync(join(HOME, ".claude/logs/process-guard.log"), "utf8");
+  assert.ok(log.includes(`DENY rule=drill-stop session=${SESSION} agent=- cwd=${process.cwd()} command=${JSON.stringify(command)}`), log);
+  assert.match(log, /ERROR rule=broken\.py:RuntimeError session=/);
 });

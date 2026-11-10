@@ -5,7 +5,7 @@
 # Usage: sudo host/bin/format-traces-drive --model MODEL --serial SERIAL [--transport TRAN]
 #
 # The owner runs this, in a terminal outside Claude and Codex. Two checks
-# stop an agent that runs it by mistake: the Claude host-blast-guard hook
+# stop an agent that runs it by mistake: the Claude process_guard hook
 # refuses every Bash command that names this script, read-only, ssh and
 # VM forms included; and this script refuses when a claude or codex
 # process is one of its ancestors. They do not stop an agent that means

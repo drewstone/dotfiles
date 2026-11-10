@@ -5,11 +5,13 @@ Live agents are transcripts under <session>/subagents/ (workflow agents included
 last CC_AGENT_LIVE_SECS seconds (default 240) whose turn has not ended, classed by last model.
 Agent and Workflow calls are denied past CC_OPUS_AGENT_CAP Opus agents (default 6) or
 CC_AGENT_TOTAL_CAP agents (default 12); a Workflow counts CC_WORKFLOW_WEIGHT (default 3).
-CC_ALLOW_AGENT_OVERCAP=1 for the session allows the call and says so.
+CC_ALLOW_AGENT_OVERCAP=1 for the session allows the call and says so. A subagent's denial tells it to do the unit
+itself; the lead's lists the live agents with their models, ages and tasks.
 
 SendMessage to an unfinished workflow agent is denied: it starts a second copy writing the same tree.
 Fail-open: bad input exits 0 silently.
 """
+import calendar
 import json
 import os
 import re
@@ -53,19 +55,25 @@ def finished(path: Path) -> bool:
 
 
 def live_agents(subagents: Path, live_secs: float, now: float):
-    opus = other = 0
+    """(minutes since its first line, id, last model, task) per live agent; the task is its meta file's description."""
+    live = []
     for path in subagents.rglob("agent-*.jsonl"):
         try:
             if now - path.stat().st_mtime > live_secs or finished(path):
                 continue
         except OSError:
             continue
-        model = last_model(path)
-        if "opus" in model or model == "":
-            opus += 1
-        else:
-            other += 1
-    return opus, other
+        try:
+            with path.open("rb") as f:
+                start = calendar.timegm(time.strptime(json.loads(f.readline())["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"))
+        except (OSError, ValueError, KeyError, TypeError):
+            start = now
+        try:
+            task = json.loads(path.with_suffix(".meta.json").read_text()).get("description") or ""
+        except (OSError, ValueError, AttributeError):
+            task = ""
+        live.append((int((now - start) // 60), path.stem.removeprefix("agent-"), last_model(path), task))
+    return sorted(live, reverse=True)
 
 
 def main() -> None:
@@ -79,9 +87,10 @@ def main() -> None:
     transcript = d.get("transcript_path") or ""
     if not transcript:
         return
-    # A subagent's transcript is <session>/subagents/...; the main one is <session>.jsonl.
+    # A subagent's transcript is <session>/subagents/[workflows/<run>/]agent-<id>.jsonl; the main one is <session>.jsonl.
     tpath = Path(transcript)
-    session_dir = tpath.parent.parent if tpath.parent.name == "subagents" else tpath.with_suffix("")
+    caller_is_agent = "subagents" in tpath.parts[:-1] or bool(d.get("agent_id"))
+    session_dir = Path(*tpath.parts[:tpath.parts.index("subagents")]) if "subagents" in tpath.parts[:-1] else tpath.with_suffix("")
     subagents = session_dir / "subagents"
     if not subagents.is_dir():
         return
@@ -104,7 +113,9 @@ def main() -> None:
     total_cap = int(env.get("CC_AGENT_TOTAL_CAP", "12"))
     live_secs = float(env.get("CC_AGENT_LIVE_SECS", "240"))
     adds = int(env.get("CC_WORKFLOW_WEIGHT", "3")) if tool == "Workflow" else 1
-    opus, other = live_agents(subagents, live_secs, float(env.get("CC_AGENT_NOW", time.time())))
+    live = live_agents(subagents, live_secs, float(env.get("CC_AGENT_NOW", time.time())))
+    opus = sum(1 for _, _, m, _ in live if "opus" in m or m == "")
+    other = len(live) - opus
 
     over = []
     if adds_opus and opus + adds > opus_cap:
@@ -121,11 +132,12 @@ def main() -> None:
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": (
-            f"agent-cap-guard: {why}. End your turn: the harness notifies "
-            "you as each agent finishes, and this launch passes once one has. Or run small work with "
-            "model: sonnet."
-        ),
+        "permissionDecisionReason": f"agent-cap-guard: {why}. " + (
+            "The seats are the lead's, and a subagent's launch waits on none of them: do this unit yourself, in this turn, "
+            "with the tools you have." if caller_is_agent else
+            "Live: " + "; ".join(f"{i} {m or 'unknown model'} {age} min" + (f" ({t[:60]})" if t else "") for age, i, m, t in live[:12])
+            + ". End your turn: the harness notifies you as each agent finishes, and this launch passes once one has. Or do "
+            "the unit yourself, or run small work with model: sonnet."),
     }}))
 
 

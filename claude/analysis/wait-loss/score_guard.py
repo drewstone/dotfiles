@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the poll-guard hook against real corpus commands and score it.
+"""Run process_guard's silent-wait note against real corpus commands and score it.
 
 Positives: capped wait loops whose body never writes to stdout, the class that
 measurably loses its answer. Negatives: every other Bash command in a sample of
@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 
-HOOK = os.path.expanduser("~/.claude/hooks/poll-guard.sh")
+HOOK = os.path.expanduser("~/.claude/hooks/process_guard.py")
 random.seed(20260826)
 
 LOOP_BODY = re.compile(r"\b(?:for|while|until)\b[^\n;]*(?:;|\n)\s*do\b(.*?)\bdone\b", re.S | re.I)
@@ -24,7 +24,7 @@ SLEEP = re.compile(r"\bsleep\s+[0-9.]+")
 
 
 def fire(cmd, sid="testsession", bg=False):
-    """Return (silent_note, cipoll_note) booleans for one command."""
+    """Return (silent_note, None) for one command; a refusal or a warning carries no note."""
     payload = json.dumps({
         "session_id": sid,
         "tool_name": "Bash",
@@ -41,10 +41,10 @@ def fire(cmd, sid="testsession", bg=False):
     if not out:
         return (False, False)
     try:
-        ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        ctx = (json.loads(out).get("hookSpecificOutput") or {}).get("additionalContext") or ""
     except Exception:
         return ("BAD_JSON", out[:200])
-    return ("silent-wait" in ctx, "ci-poll" in ctx)
+    return ("silent-wait" in ctx, None)
 
 
 ROWS = os.environ.get("WAIT_LOSS_ROWS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "loss_rows.json"))

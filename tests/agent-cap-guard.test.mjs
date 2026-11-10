@@ -15,7 +15,9 @@ function session({ opus = 0, sonnet = 0, done = 0, ageSecs = 30 } = {}) {
   mkdirSync(sub, { recursive: true });
   const write = (i, model) => {
     const file = join(sub, `agent-a${String(i).padStart(4, "0")}.jsonl`);
-    writeFileSync(file, `${JSON.stringify({ message: { model } })}\n${JSON.stringify({ message: { model: "<synthetic>" } })}\n`);
+    const timestamp = new Date((NOW - 600) * 1000).toISOString();  // started ten minutes ago
+    writeFileSync(file, `${JSON.stringify({ timestamp, message: { model } })}\n${JSON.stringify({ message: { model: "<synthetic>" } })}\n`);
+    writeFileSync(file.replace(/\.jsonl$/, ".meta.json"), JSON.stringify({ description: `task ${i}` }));
     utimesSync(file, NOW - ageSecs, NOW - ageSecs);
   };
   let i = 0;
@@ -43,10 +45,13 @@ function run(transcript, tool_name = "Agent", tool_input = {}, env = {}) {
 
 const decision = (out) => out.hookSpecificOutput?.permissionDecision ?? "allow";
 
-test("the 2026-10-11 peak, 19 live Opus agents, refuses another Opus agent", () => {
+test("the 2026-10-11 peak, 19 live Opus agents, refuses another Opus agent and lists the live ones to the lead", () => {
   const out = run(session({ opus: 19 }));
   assert.equal(decision(out), "deny");
-  assert.match(out.hookSpecificOutput.permissionDecisionReason, /19 Opus agents are live and the cap is 6/);
+  const text = out.hookSpecificOutput.permissionDecisionReason;
+  assert.match(text, /19 Opus agents are live and the cap is 6; .*\. Live: a0018 claude-opus-5-5 10 min \(task 18\); a0017 /);
+  assert.equal(text.match(/ min /g).length, 12);
+  assert.match(text, /End your turn.*do the unit yourself/);
 });
 
 test("five live Opus agents admit a sixth", () => {
@@ -86,10 +91,14 @@ test("the total cap refuses a thirteenth agent of any model", () => {
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /12 agents are live and the total cap is 12/);
 });
 
-test("a subagent's transcript path resolves to the same session", () => {
+test("a subagent's or workflow agent's call resolves to the same session, and its denial says to do the unit itself", () => {
   const main = session({ opus: 6 });
-  const sub = main.replace(/\.jsonl$/, "/subagents/agent-a0000.jsonl");
-  assert.equal(decision(run(sub)), "deny");
+  for (const sub of ["/subagents/agent-a0000.jsonl", "/subagents/workflows/wf_1/agent-a0000.jsonl"]) {
+    const out = run(main.replace(/\.jsonl$/, sub));
+    assert.equal(decision(out), "deny", sub);
+    assert.match(out.hookSpecificOutput.permissionDecisionReason, /do this unit yourself, in this turn/);
+    assert.doesNotMatch(out.hookSpecificOutput.permissionDecisionReason, /Live:/);
+  }
 });
 
 test("the session override allows the call and says so", () => {

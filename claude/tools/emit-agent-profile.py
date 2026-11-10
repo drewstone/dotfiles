@@ -15,7 +15,7 @@ NAME = next((line[13:].strip().strip("'\"") for line in (CONFIG.read_text().spli
 # Skills that need no Mac, fleet host or local CLI; each mounts with its sibling files.
 SKILLS = ["be-ambitious", "codebase-design", "converge", "critical-audit", "diagnose", "evolve", "finalize",
           "ground-truth", "harden", "hypothesize", "reflect", "simplify", "tdd", "verify", "writing-for-agents"]
-HOOKS = ["secret_scan.py", "process_guard.py", "ci-wait-guard.sh", "poll-guard.sh", "scan-guard.sh"]
+HOOKS = ["secret_scan.py", "process_guard.py"]  # wired as settings.json wires them; process_guard's rule modules mount beside it
 PERMISSIONS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
 
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -39,7 +39,8 @@ for skill in SKILLS:
         rel = path.removeprefix("claude/")
         (skills.append(ref(rel, name=skill)) if rel.endswith(f"{skill}/SKILL.md")
          else files.append({"path": f".claude/{rel}", "resource": ref(rel)}))
-files += [{"path": f".claude/hooks/{hook}", "resource": ref(f"hooks/{hook}"), "executable": True} for hook in HOOKS]
+files += [{"path": f".claude/{rel}", "resource": ref(rel), "executable": True} for rel in (path.removeprefix("claude/") for path in
+          git("ls-tree", "--name-only", sha, "claude/hooks/").split()) if rel[6:] in HOOKS or rel.startswith("hooks/process_guard_")]
 
 settings = json.loads(show("settings.json"))
 hooks = {}

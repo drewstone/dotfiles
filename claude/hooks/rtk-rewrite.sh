@@ -947,8 +947,8 @@ if [ -z "$CMD" ]; then
   exit 0
 fi
 
-# subagent-wait-guard.sh owns a subagent's background call (it reruns it in the foreground or
-# refuses it). When two hooks return updatedInput the last to finish wins, so rtk stays out.
+# process_guard.py owns a subagent's background call (it reruns it in the foreground).
+# When two hooks return updatedInput the last to finish wins, so rtk stays out.
 echo "$INPUT" | jq -e '.tool_input.run_in_background == true and ((.agent_id // "") != "" or ((.transcript_path // "") | contains("/subagents/")))' >/dev/null && exit 0
 
 # Correctness beats compaction: never let rtk answer a question whose answer is

@@ -56,36 +56,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
-          },
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/host-blast-guard.sh"
-          },
-          {
-            "type": "command",
             "command": "$HOME/.claude/hooks/process_guard.py"
           },
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/rtk-rewrite.sh"
-          },
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/poll-guard.sh"
-          },
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/ci-wait-guard.sh"
-          },
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/scan-guard.sh"
           }
         ]
       },
       {
-        "matcher": "Agent",
+        "matcher": "Agent|Workflow|SendMessage",
         "hooks": [
           {
             "type": "command",
@@ -94,16 +74,7 @@
         ]
       },
       {
-        "matcher": "Workflow|SendMessage",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/agent-cap-guard.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit|MultiEdit|Monitor",
         "hooks": [
           {
             "type": "command",
@@ -117,15 +88,6 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/artifact-guard.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Monitor",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/subagent-wait-guard.sh"
           }
         ]
       },
