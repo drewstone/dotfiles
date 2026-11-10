@@ -1,7 +1,6 @@
 """Process-guard rule raw-gh: GitHub reached around the operator's gh wrapper (process_guard.py's docstring)."""
 import os
 import re
-import shutil
 
 from secret_scan import guard_config
 
@@ -9,7 +8,8 @@ SHIM_VARS = guard_config("process_guard", {}).get("raw_gh")  # variables that ma
 TOKENS = set(guard_config("process_guard", {}).get("github_tokens", []))  # vault names of the GitHub token
 WRAPPER = guard_config("merge_check", {}).get("gh") or "gh"
 INSTEAD = guard_config("process_guard", {}).get("raw_gh_instead") or [f"`{WRAPPER} api <path>` for REST and GraphQL calls."]
-_SHIM = shutil.which("gh")  # the first gh on the hook's PATH is the operator's shim when it is a script, not a gh binary
+# The first gh on the hook's PATH is the operator's shim when it is a script, not a gh binary.
+_SHIM = next((p for d in os.environ.get("PATH", "").split(":") if os.path.isfile(p := os.path.join(d or ".", "gh")) and os.access(p, os.X_OK)), None)
 SHIMS = {_SHIM, os.path.realpath(_SHIM)} if _SHIM and open(_SHIM, "rb").read(2) == b"#!" else set()
 GH_PATH = re.compile(r"(?<![\w.:/~$-])(?:~|\.{1,2})?(?:/+[\w.@+-]+)*/+gh(?![\w.-])")
 WHICH_ALL = re.compile(r"\bwhich\s+(?:-\w+\s+)*-\w*a\w*\s[^)]*\bgh\b")

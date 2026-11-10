@@ -112,7 +112,7 @@ def rule_prod_d1_read(cmd, read_local, script_text):
     return ("prod-d1-read", "unbounded read of production D1",
             f"This command reads production D1 through {where}, and {cause}{f': `{shown}`' if shown else ''}. Production "
             f"D1 overloads on one large read and then refuses every query for 7-16 s (37 failed requests on 2026-11-07). "
-            f"Add LIMIT <= {MAX_ROWS}, or use a bounded indexed lookup (`WHERE id = ? LIMIT 1`); count or group a key range "
-            "(`WHERE <id> = ?`), not the whole table, and page larger reads by key. Put the SQL in --command or the "
-            "command's arguments so the guard can read it. The owner can allow it for a session with CC_ALLOW_D1_SCAN=1 "
-            "(logged).", "CC_ALLOW_D1_SCAN")
+            "The owner can allow it for a session with CC_ALLOW_D1_SCAN=1 (logged). Count or group a key range (`WHERE <id> = ?`), "
+            "not the whole table, page larger reads by key, and put the SQL in --command or the command's arguments so the "
+            f"guard can read it. Read with LIMIT <= {MAX_ROWS}, or a bounded indexed lookup: `wrangler d1 execute <db> "
+            "--remote --command \"SELECT ... WHERE id = ? LIMIT 1\"`.", "CC_ALLOW_D1_SCAN")

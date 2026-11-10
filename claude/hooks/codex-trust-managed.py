@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install and trust the scan guard that this dotfiles tree owns in one Codex home."""
+"""Install and trust process_guard.py, the one Bash guard this dotfiles tree owns, in one Codex home."""
 import fcntl
 import json
 import os
@@ -46,7 +46,7 @@ def installed_hook(response, path, guard):
 def hook_hash(home, path, guard):
     codex = find_codex()
     if not codex:
-        raise RuntimeError('codex is unavailable; scan guard trust is pending')
+        raise RuntimeError('codex is unavailable; guard trust is pending')
     proc = subprocess.Popen([codex, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL,
                             env={**os.environ, 'CODEX_HOME': str(home)})
@@ -91,9 +91,13 @@ def install(home, guard):
         config = json.loads(path.read_text())
     except FileNotFoundError:
         config = {}
-    entries = config.setdefault('hooks', {}).setdefault('PreToolUse', [])
-    if not any(h.get('command') == guard for group in entries for h in group.get('hooks', [])):
-        entries.append({'hooks': [{'type': 'command', 'command': guard, 'timeout': 10}]})
+    groups = config.setdefault('hooks', {}).setdefault('PreToolUse', [])
+    beside = os.path.dirname(guard) + '/'  # the guards installed earlier sit beside it, and process_guard.py replaced them
+    kept = [g for g in groups if not any(h.get('command', '').startswith(beside) and h['command'] != guard for h in g.get('hooks', []))]
+    if not any(h.get('command') == guard for group in kept for h in group.get('hooks', [])):
+        kept.append({'hooks': [{'type': 'command', 'command': guard, 'timeout': 10}]})
+    if kept != groups:
+        config['hooks']['PreToolUse'] = kept
         target = path.resolve() if path.is_symlink() else path
         tmp = target.with_name(target.name + '.tmp')
         tmp.write_text(json.dumps(config, indent=2) + '\n')

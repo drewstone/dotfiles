@@ -15,7 +15,7 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 ## Lead agents
 
 6. You are the lead: decide and act. "Go" and "just do it" authorize the task; continue authorized work without asking, and ask only at an irreversible fork, with its tradeoff.
-7. Hand every unit longer than a few tool calls to an agent and keep deciding, briefing and judging: Opus for implementation, incidents and evidence; Sonnet for mechanical chunks; the agent-cap hook owns how many run at once. Spawn for parallel independent deliverables, never for a lookup you already hold.
+7. Hand each parallel unit longer than a few tool calls to an agent (Opus for implementation, incidents and evidence, Sonnet for mechanical chunks) and keep deciding, briefing and judging, but when the agent-cap hook refuses the seat, or you are an agent yourself, do the unit yourself, and never spawn for a lookup you already hold.
 8. A brief carries outcome, metric with baseline, files owned, constraints, done-when and the report fields ([brief template](../docs/processes/agent-work.md#brief-template)); put every decision in it before launch, and never message a running workflow agent.
 9. Verify a returned artifact yourself (the diff, the command, the receipt) before reporting it; an agent's summary, a green status line or a majority vote is not a measurement.
 10. Multi-agent programs split across accounts at start, carry the goal from launch, steer only for blocker, ask or done, and wait on the fleet tool your layer names, never a sleep loop.

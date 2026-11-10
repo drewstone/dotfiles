@@ -18,11 +18,9 @@ OPENCODE_DIR="$HOME/.config/opencode"
 AGENTS_SRC="$SCRIPT_DIR/AGENTS.md"
 FORCE="${1:-}"
 # The optional private layer, a repository shaped like this one, adds instructions, skills, hooks, tools and a settings
-# overlay; absent, each step reading it is a no-op. Its claude/config/install.env, when present, sets CODEX_PRIVATE_GUARDS.
+# overlay; absent, each step reading it is a no-op.
 DOTFILES_PRIVATE="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}"
 LAYER="$DOTFILES_PRIVATE/claude"
-CODEX_PRIVATE_GUARDS=""
-[ -f "$LAYER/config/install.env" ] && . "$LAYER/config/install.env"
 
 link() {
   local src="$1" dst="$2"
@@ -171,12 +169,10 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
   done
 fi
 
-# Codex trusts each PreToolUse guard by the hash it reports. A changed file stays untrusted until the next review.
+# Codex runs process_guard.py, which loads the layer's rule modules, and trusts it by the hash it reports.
+# A changed file stays untrusted until the next review.
 for codex_home in "$CODEX_DIR" "$HOME"/.config/agent-accounts/codex/*; do
-  [ -d "$codex_home" ] || continue
-  for guard in scan-guard.sh process_guard.py $CODEX_PRIVATE_GUARDS; do
-    python3 "$SCRIPT_DIR/hooks/codex-trust-managed.py" "$codex_home" "$CLAUDE_DIR/hooks/$guard"
-  done
+  [ -d "$codex_home" ] && python3 "$SCRIPT_DIR/hooks/codex-trust-managed.py" "$codex_home" "$CLAUDE_DIR/hooks/process_guard.py"
 done
 
 # The home-sweep cron redirects into $HOME/attic/sweep.log. A missing directory makes

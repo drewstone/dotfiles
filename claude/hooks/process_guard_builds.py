@@ -6,7 +6,7 @@ build scripts, docker build, nix build/develop, cmake and make. A remote runner'
 No override.
 """
 import os
-import platform
+import shlex
 
 from secret_scan import guard_config
 
@@ -19,7 +19,7 @@ LIGHT_BY_PROG = {"make": {"-v", "-n", "--dry-run", "--just-print", "-q", "--ques
 
 
 def host_name():
-    return (os.environ.get("CC_GUARD_HOST") or platform.node()).lower()
+    return (os.environ.get("CC_GUARD_HOST") or os.uname().nodename).lower()
 
 
 def classify_compile(prog, args):
@@ -50,4 +50,5 @@ def rule_no_build_host(cmd, classify_tool):
         return None
     shown = " ".join(cmd.argv)[:80]
     return ("no-build-host", f"{kind} on {host_name()}",
-            f"`{shown}` is a {kind}, and {host_name()} runs no builds. {NO_BUILD_HOSTS[host_name()]}".rstrip(), None)
+            f"`{shown}` is a {kind}, and {host_name()} runs no builds. "
+            f"{NO_BUILD_HOSTS[host_name()].replace('{command}', shlex.join(cmd.argv))}".rstrip(), None)

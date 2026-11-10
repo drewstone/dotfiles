@@ -69,3 +69,17 @@ def flush_secret_read(ctx):
     if ctx.secret_pending:
         ctx.events.append(("env-dump", ctx.secret_pending[0]))
         ctx.secret_pending = None
+
+
+def rule_env_dump(events):
+    """A command that prints environment values: environments carry live keys, and the transcript keeps them."""
+    found = [e[1] for e in events if e[0] == "env-dump"]
+    if not found:
+        return None
+    return ("env-dump", "print of environment values",
+            f"This command prints environment values (`{found[0]}`), and the transcript keeps them; the owner can allow it for a "
+            "session with CC_ALLOW_ENV_DUMP=1 (logged). `cut -d= -f1`, `sed` and `awk` print a multi-line value's later lines "
+            "whole. A dotenvx file's names: `grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' <file>`; "
+            "one non-secret variable: `printenv NAME`; a key by its length: `${#VAR}`. "
+            + "".join(f"A ~/{d} file holds one raw value, which a filter prints: use `ls`, `wc -c` or `sha256sum`. " for d in SECRET_DIRS)
+            + "Print the names instead (also after `dotenvx run -f <file> --`): `bash -c 'compgen -e'`.", "CC_ALLOW_ENV_DUMP")
