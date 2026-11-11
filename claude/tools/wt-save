@@ -21,7 +21,7 @@
 #                                             clearly labeled wip commit; the
 #                                             hook runs normally, never
 #                                             --no-verify)
-#   - dirty, pre-commit hook blocks it    -> patch saved to
+#   - dirty, pre-commit hook blocks it    -> patch + hook output saved to
 #                                             ~/attic/wt-save-patches/<date>/,
 #                                             working tree left dirty
 #   - unpushed commits                    -> pushed to origin
@@ -112,7 +112,7 @@ owner_of() {
   awk -F= '$1=="owner"{print $2; found=1} END{exit !found}' "$marker"
 }
 
-results_dir="$(mktemp -d -t wt-save-results)"
+results_dir="$(mktemp -d "${TMPDIR:-/tmp}/wt-save-results.XXXXXX")" # a full template: GNU mktemp refuses `-t <prefix>` without X's, which left the table empty on Linux
 trap 'rm -rf "$results_dir"' EXIT
 
 
@@ -154,31 +154,30 @@ process_one() {
     return
   fi
 
-  local dirty unpushed action
+  local dirty unpushed action why=""
   dirty=$(git -C "$d" status --porcelain --untracked-files=normal 2>/dev/null | wc -l | tr -d ' ')
   action=""
 
   if [ "$dirty" != 0 ]; then
     if [ "$DRY" = 1 ]; then
       action="would-commit(dirty=$dirty)"
-    elif stage_safe "$d" && git -C "$d" commit -q -m "wip: preserve in-progress work (wt-save $(date -u +%Y-%m-%dT%H:%M:%SZ))" >/dev/null 2>&1; then
+    elif stage_safe "$d" && why=$(git -C "$d" commit -q -m "wip: preserve in-progress work (wt-save $(date -u +%Y-%m-%dT%H:%M:%SZ))" 2>&1); then
       action="committed"
       [ "${STAGE_SKIPPED:-0}" -gt 0 ] && action="committed, left $STAGE_SKIPPED untracked file(s) over $((WT_SAVE_MAX_BYTES / 1048576)) MB unstaged"
     else
       git -C "$d" reset >/dev/null 2>&1
-      if [ "${is_explicit[$d]:-0}" != 1 ] && [ -z "$marker_owner" ]; then
-        : # unreachable: unowned+unmarked never reaches process_one
-      fi
       mkdir -p "$patch_dir" 2>/dev/null
       local patch_file="$patch_dir/${name}.patch"
       stage_safe "$d"
       git -C "$d" diff --cached > "$patch_file" 2>/dev/null
       git -C "$d" reset >/dev/null 2>&1
+      [ -z "$why" ] || printf '%s\n' "$why" > "$patch_dir/${name}.hook.txt" # the refusing hook's full output, beside the patch
+      why=$(printf '%s' "$why" | tr '\t' ' ' | awk 'NF{l=$0} !k && tolower($0)~/not found|refus|denied|fatal|error/{k=$0} END{print substr(k?k:l,1,160)}') # its first failing line, else its last, for the tab-separated table
       if [ -s "$patch_file" ]; then
-        action="HOOK-BLOCKED patch->$patch_file"
+        action="HOOK-BLOCKED patch->$patch_file${why:+ (hook: $why)}"
       else
         rm -f "$patch_file"
-        action="HOOK-BLOCKED commit failed, empty patch — inspect by hand"
+        action="HOOK-BLOCKED commit failed, empty patch — inspect by hand${why:+ (hook: $why)}"
       fi
     fi
   fi
