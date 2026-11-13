@@ -82,7 +82,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     commit({"src/main.py": lines(40), "lib/main.py": lines(40), "old/dead.py": lines(LIMIT), "NOTES.md": lines(100, "note"),
             "src/literal.py": 'description = "@generated or DO NOT EDIT"\n'})
 
-    # A commit and a push are never refused for growth: the real hooks print what the change adds.
     run("git", "checkout", "-q", "-b", "grown", "main")
     (repo / "src/new.py").write_text(lines(LIMIT + 10))
     (repo / "src/output.py").write_text("# @generated DO NOT EDIT\n" + lines(1001))
@@ -94,7 +93,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     assert "src/literal.py\t2\tlogic" in run(CENSUS, "files", ".", "HEAD") and "src/output.py\t1002\texempt" in run(CENSUS, "files", ".", "HEAD")
     print("PASS: a commit and a push that grow production are not refused; a quoted marker stays production, a generated header exempt")
 
-    # Every other cap holds at the commit, and the lines floor has no approval.
     run("git", "checkout", "-q", "-b", "caps", "main")
     commit({"src/large.py": lines(1001)}, hooks=HOOKS, status=1, contains="1001 lines (new file)")
     commit({"src/large.py": None, "src/function.py": "def large():\n" + "".join(f"    value_{i} = {i}\n" for i in range(301))},
@@ -103,14 +101,12 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     run("git", "reset", "-q", "--hard")
     print("PASS: the file limit, the function limit and the census lines floor remain enforced")
 
-    # At or under the limit merges with no approval; production deletions anywhere offset additions anywhere.
     branch("small", {"src/new.py": lines(LIMIT)})
     merge_check(pr=None)
     branch("offset", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT), "old/dead.py": None})
     merge_check(pr=None)
     print(f"PASS: {LIMIT} production lines, and {2 * LIMIT} offset by {LIMIT} deleted elsewhere, merge unapproved")
 
-    # Above it the merge is refused with the approval line filled in; one approval covers growth in two directories.
     head = branch("feature", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
     line = f"Growth approved: {PR} at {head}: "
     merge_check(status=1, contains=f"the PR adds {2 * LIMIT} production lines")
@@ -121,7 +117,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
              ("author", line + "mine is new." + signed), ("reviewer", "Looks fine to me." + signed))
     merge_check(status=1, contains=line + "<why>")
     print("PASS: growth over the limit is refused; an unwritten why, another PR's approval and a comment by another account approve nothing")
-    # The reviewer is not the author: the comment names a session or run, and not the one the PR's body names.
     written = line + "the parser is new and reuses nothing."
     comments(("reviewer", written), ("reviewer", written + "\nRun ID: run_author"), ("reviewer", written + "\nSession: <the reviewer's own>"),
              ("reviewer", written + signed + "\nRun ID: run_author"))
@@ -135,7 +130,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     merge_check(contains=f"census: production growth approved at {head}")
     print("PASS: one approval at the head admits growth across two directories")
 
-    # The approval holds for a descendant head while the PR grows at most the limit, the base merging in included.
     commit({"src/more.py": lines(LIMIT)})
     run("git", "checkout", "-q", "main")
     commit({"lib/base.py": lines(3 * LIMIT)})
@@ -146,7 +140,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     merge_check(status=1, contains=f"Growth approved: {PR} at {later}: <why>")
     print("PASS: an approval at an ancestor holds through small later growth and a base merge, and lapses one line past the limit")
 
-    # A rewritten history is not a descendant, and a check that cannot read GitHub refuses.
     run("git", "checkout", "-q", "-B", "feature", "main")
     commit({"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
     merge_check(status=1, contains="refusing merge")
@@ -155,7 +148,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     merge_check(pr="not a pull request", status=2, contains="needs the pull request as <owner>/<repo>#<number>")
     print("PASS: a rewritten head needs a new approval; unreadable comments and an unnamed PR refuse the merge")
 
-    # Each case below starts from main and reports on its own, so a red run names every case that fails.
     comments()
 
     def tokens_not_lines():
@@ -218,8 +210,15 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         assert warning in out and "src/wide.py:2" not in out, out
         return "a 182-character line is a warning at the commit and at merge, which exits 0; a line whose excess is one URL is not flagged"
 
+    def incomplete_python():
+        for name, text in (("open-string", '"""unterminated\n'), ("open-call", "value = (\n")):
+            branch(name, {"src/incomplete.py": text})
+            merge_check(pr=None)
+        return "incomplete Python strings and calls are counted without crashing the merge check"
+
+
     failed = []
-    for case in (tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines):
+    for case in (incomplete_python, tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines):
         try:
             print(f"PASS: {case()}")
         except AssertionError as why:
