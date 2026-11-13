@@ -39,10 +39,10 @@ def main():
     total, oversized, long, keys = census.production_delta(".", base, head, merge)
     # One total of production code: deletions anywhere offset additions anywhere, a cited restore is not growth, and tests or
     # docs never pay for it. Only a repository's first commit grows from nothing.
-    total = round(total - (merging and census.restored(".", base, head, keys))) if census.git(".", "ls-tree", base).strip() else 0
+    total = total - (merging and census.restored(".", base, head, keys)) if census.git(".", "ls-tree", base).strip() else 0
     limit, pr = census.C.GROWTH_LIMIT, " ".join(sys.argv[2:])
     if not merging and total > 0:  # a commit is never refused for growth
-        print(f"loc-ratchet: this change adds {total} production lines; a PR whose total passes {limit} needs a growth approval to merge (git/census/README.md).", file=sys.stderr)
+        print(f"loc-ratchet: this change adds {total:g} production lines; a PR whose total passes {limit} needs a growth approval to merge (git/census/README.md).", file=sys.stderr)
     if long:  # a warning only, at a commit and at merge: line breaks cost nothing in the token unit
         print(f"loc-ratchet: warning: {len(long)} added production lines over {census.C.LINE_LIMIT} characters, not counting one URL or hash:\n"
               + "\n".join(f"  {path}:{number} ({length} characters)" for path, number, length in long), file=sys.stderr)
@@ -50,7 +50,7 @@ def main():
     if (oversized or grown) and third_party_fork():
         return 0
     if grown := grown and not (pr and census.approved_growth(".", base, head, total, pr)):
-        print(f"loc-ratchet: refusing merge: the PR adds {total} production lines (code tokens over {census.C.TOKENS_PER_LINE}),"
+        print(f"loc-ratchet: refusing merge: the PR adds {total:g} production lines (code tokens over {census.C.TOKENS_PER_LINE}),"
               f" over the {limit} that merge unapproved.\n"
               "  Deleted tests and docs do not pay for it; a restore of deleted code cites the deleting commit in a commit message, `Restores: <sha>`.\n"
               "  Otherwise a reviewer who did not write it judges it new, proportionate and reusing nothing that exists, then comments on the PR,\n"
