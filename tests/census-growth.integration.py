@@ -16,7 +16,6 @@ ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Pat
 HOOKS = ROOT / "git/hooks"
 CENSUS = ROOT / "git/census/census"
 LIMIT = json.loads((ROOT / "git/census/patterns.json").read_text())["growthLimit"]
-# Fixture lines carry this checkout's tokens per line, so one fixture line is one charged line under either tool root.
 PER_LINE = json.loads((pathlib.Path(__file__).resolve().parents[1] / "git/census/patterns.json").read_text())["tokensPerLine"]
 PR = "o/r#7"
 FAKE_GH = """#!/usr/bin/env python3
@@ -101,11 +100,12 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     run("git", "reset", "-q", "--hard")
     print("PASS: the file limit, the function limit and the census lines floor remain enforced")
 
-    branch("small", {"src/new.py": lines(LIMIT)})
-    merge_check(pr=None)
+    for extra in (0, PER_LINE // 2, 1, PER_LINE // 2 + 1):
+        branch(f"small-{extra}", {"src/new.py": lines(LIMIT) + "pass\n" * extra})
+        merge_check(pr=None, status=int(extra > 0))
     branch("offset", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT), "old/dead.py": None})
     merge_check(pr=None)
-    print(f"PASS: {LIMIT} production lines, and {2 * LIMIT} offset by {LIMIT} deleted elsewhere, merge unapproved")
+    print(f"PASS: {LIMIT} production lines merge unapproved, every extra token needs approval, and production deletions offset additions")
 
     head = branch("feature", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
     line = f"Growth approved: {PR} at {head}: "
