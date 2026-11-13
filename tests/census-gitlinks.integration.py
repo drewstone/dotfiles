@@ -44,7 +44,7 @@ def readers(repo, base, rev):
     if measured:
         report = json.loads(measured)
         assert report["files_read"] == {"logic": 3, "source": 1, "functions": 2, "docs": 1}, report
-        assert report["metrics"]["prod_lines"] == 4, report
+        assert report["metrics"]["prod_lines"] == 3, report  # three 8-token code lines; an interpreter line is not code
     if listed:
         assert listed == "bin/tool\t2\tlogic\nsrc/main.py\t1\tlogic\nsrc/main.ts\t1\tlogic", listed
     run(repo, CENSUS, "floors", ".", base, rev, "--floor", "lines", "--floor", "god", "--floor", "copies",
@@ -58,8 +58,8 @@ with tempfile.TemporaryDirectory(prefix="census-gitlinks-") as temporary:
     repo = Path(temporary)
     run(repo, "git", "init", "-q", "-b", "main")
     run(repo, "git", "config", "core.hooksPath", str(HOOKS))
-    for path, text in {"src/main.ts": "export const mainValue = 1\n", "src/main.py": "value = 1\n",
-                       "bin/tool": "#!/bin/sh\necho ready\n", "README.md": "Fixture.\n" * 2000, "LICENSE": "MIT\n", "Makefile": "all:\n"}.items():
+    for path, text in {"src/main.ts": "export const mainValue = pick(1)\n", "src/main.py": "value = compute(1, 2)\n",
+                       "bin/tool": "#!/bin/sh\necho ready to serve the next request now\n", "README.md": "Fixture.\n" * 2000, "LICENSE": "MIT\n", "Makefile": "all:\n"}.items():
         write(repo, path, text)
     run(repo, "git", "add", "-A")
     commit(repo, "feat: base")
@@ -99,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix="census-gitlinks-") as temporary:
             commit(repo, "refactor: replace source with submodule")
             run(repo, "git", "add", path)
             commit(repo, "fix: restore source", contains="this change adds 1 production lines")
-        write(repo, "src/main.py", "value = 1\nsecond = 2\n")
+        write(repo, "src/main.py", "value = compute(1, 2)\nsecond = compute(3, 4)\n")
         run(repo, "git", "add", "src/main.py")
         run(repo, HOOKS / "loc-ratchet", contains="this change adds 1 production lines")
         run(repo, CENSUS, "floors", ".", "HEAD", "WORKTREE", "--floor", "lines", status=1, contains="REFUSED: may not rise")

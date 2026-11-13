@@ -40,9 +40,14 @@ Every metric is better smaller. Floor groups are declared in `GROUPS` in [census
 
 Growth is enforced at merge only: at a commit `loc-ratchet` prints the production lines the change adds and refuses nothing for them.
 The merge check is `loc-ratchet <merge-base>..<head> <owner>/<repo>#<number>`, run by whatever merges the pull request.
-It charges one number, the PR's total production-line change: deletions anywhere offset additions anywhere, across every directory.
-A total at or under `growthLimit` in [patterns.json](patterns.json) merges with no approval, as does a PR that adds no net lines of text outside lockfiles.
-Above it, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR:
+It charges one number, the PR's total production change: deletions anywhere offset additions anywhere, across every directory.
+A line of the charge is `tokensPerLine` tokens of code, and `prod_lines` uses the same unit; a token is a word or one punctuation character.
+Comments, Python docstrings and blank lines are not code, so packing, reflowing and editing comments charge nothing; file and function limits still count physical lines.
+A total at or under `growthLimit` in [patterns.json](patterns.json) merges with no approval. Deleted tests and docs never pay for production growth.
+A restore is not growth: a commit message in the PR that carries `Restores: <sha>` for a commit on the base branch makes each added line that commit removed, matched by its whitespace-normalized text, charge nothing, and the check prints it as a debit against that deletion.
+That lookup reads the deleting commit's blobs without fetching them; a clone that lacks them refuses the claim and charges the lines in full.
+A commit and the merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess; it never refuses.
+Above the growth limit, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR:
 
 ```text
 Growth approved: <owner>/<repo>#<number> at <40-hex head sha>: <why>
@@ -59,7 +64,7 @@ An approval holds for a later head that descends from the approved sha while the
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
 A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge makes three REST reads (the PR, its comments, the user), so such merges stop while the REST quota is exhausted; a merge at or under the limit makes none.
 The check runs only where the merging tool calls it: a merge issued with plain `gh` or the web button skips it entirely. An approval permits only production growth: every other cap and floor stays enforced.
-[The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository and a fake `gh`.
+[The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository, a blob-less clone of it and a fake `gh`.
 
 ## Integrity
 
