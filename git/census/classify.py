@@ -103,7 +103,7 @@ def python_code(text):
     rows = io.StringIO(text).readlines()
     try:
         toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    except SyntaxError:
+    except (SyntaxError, tokenize.TokenError):
         return None
     for i, t in enumerate(toks):
         j = i + 1 + (i + 1 < len(toks) and toks[i + 1].type == tokenize.COMMENT)
