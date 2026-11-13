@@ -51,6 +51,7 @@ Session: <the reviewer's own session, or `Run ID: <run>`>
 
 The PR's body names who wrote it with a `Run ID:` or `Session:` line, and the approving comment carries one the body does not.
 A PR whose body carries neither cannot be approved until it has one, and a comment with no such line, or with the PR's, approves nothing.
+When no record names the writer, a maintainer who has read the whole diff adopts the PR: the body says the writer is unrecorded and carries the adopter's line, and the adopter's line counts as the writer's.
 
 The refusal prints that line filled in for the head it read; `<why>` is the reviewer's own words and may not be left as written.
 An approval holds for a later head that descends from the approved sha while the PR's total has grown by at most `growthLimit` since; a rewritten history needs a new one.
