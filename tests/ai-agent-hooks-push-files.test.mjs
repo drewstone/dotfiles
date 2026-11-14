@@ -5,12 +5,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-// Real pushes check sent commits, excluding history already held by the destination.
+// Real pushes check sent commits, excluding history already held by the destination. The scan
+// guards network remotes only, so remotes here are ext:: locations (network-shaped, served offline
+// by a bare repository on this disk); `local` recovers that repository's path.
 const hooksPath = resolve("git/hooks");
 const env = { ...process.env, AI_AGENT_HOOKS_GLOBAL_BASELINE: "1", GIT_ALLOW_CROSS_NAME_DEFAULT_PUSH: "" };
 delete env.GITHUB_ACTIONS;
 const noHooks = mkdtempSync(join(tmpdir(), "push-files-nohooks-"));
 const KEY = ["-----BEGIN", "RSA", "PRIVATE", "KEY-----"].join(" ");
+
+const net = (path) => `ext::git %s ${path}`;
+const local = (url) => url.replace(/^ext::git %s /, "");
 
 function git(cwd, args, input) {
   return spawnSync("git", args, { cwd, encoding: "utf8", env, input });
@@ -42,7 +47,8 @@ function setup() {
       ok(git(path, ["config", k, v]));
     }
   }
-  ok(git(repo, ["remote", "add", "origin", remote]));
+  ok(git(repo, ["config", "protocol.ext.allow", "always"]));
+  ok(git(repo, ["remote", "add", "origin", net(remote)]));
   commit(repo, { "a.txt": "a\n" }, "a");
   ok(bare(repo, ["switch", "-q", "-c", "feat/x"]));
   commit(repo, { "feature.txt": "feature\n" }, "feature");
@@ -86,7 +92,7 @@ test("a secret a merge adds while resolving is refused", () => {
 function remoteNamed(repo, name) {
   const path = mkdtempSync(join(tmpdir(), `push-files-${name}-`));
   ok(bare(path, ["init", "--bare", "-q", "-b", "main"]));
-  ok(git(repo, ["remote", "add", name, path]));
+  ok(git(repo, ["remote", "add", name, net(path)]));
   return path;
 }
 
@@ -159,7 +165,7 @@ test("a remote that pushes to another repository than it fetches from vouches fo
   leakOnOrigin(repo);
   const publicRepo = mkdtempSync(join(tmpdir(), "push-files-public-"));
   ok(bare(publicRepo, ["init", "--bare", "-q", "-b", "main"]));
-  ok(git(repo, ["config", "remote.origin.pushurl", publicRepo]));
+  ok(git(repo, ["config", "remote.origin.pushurl", net(publicRepo)]));
   const result = git(repo, ["push", "origin", "leak"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
@@ -171,7 +177,7 @@ test("a remote whose name is a glob matches no other remote's tracking refs", ()
   const other = mkdtempSync(join(tmpdir(), "push-files-glob-"));
   ok(bare(other, ["init", "--bare", "-q", "-b", "main"]));
   // `git remote add` refuses the name; a config section does not.
-  ok(git(repo, ["config", "remote.o*.url", other]));
+  ok(git(repo, ["config", "remote.o*.url", net(other)]));
   const result = git(repo, ["push", "o*", "leak"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
@@ -193,7 +199,7 @@ test("a remote re-pointed at another repository keeps no say through its old tra
   leakOnOrigin(repo);
   const publicRepo = mkdtempSync(join(tmpdir(), "push-files-repointed-"));
   ok(bare(publicRepo, ["init", "--bare", "-q", "-b", "main"]));
-  ok(git(repo, ["remote", "set-url", "origin", publicRepo]));
+  ok(git(repo, ["remote", "set-url", "origin", net(publicRepo)]));
   const result = git(repo, ["push", "origin", "leak"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /leak\.pem:1 \(private-key\)/);
@@ -202,7 +208,7 @@ test("a remote re-pointed at another repository keeps no say through its old tra
 test("a tracking ref left after its branch was deleted upstream vouches for nothing", () => {
   const repo = setup();
   leakOnOrigin(repo);
-  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  const origin = local(ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim());
   // Another clone deletes the branch; this one still holds refs/remotes/origin/leak.
   ok(bare(origin, ["update-ref", "-d", "refs/heads/leak"]));
   const result = git(repo, ["push", "origin", "leak:refs/heads/leak-again"]);
@@ -214,7 +220,7 @@ test("a branch built on a base that moved upstream since the last fetch pushes w
   const repo = setup();
   ok(bare(repo, ["merge", "-q", "--no-edit", "main"]));
   // Another clone advances main; this repository has not fetched it.
-  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  const origin = local(ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim());
   const other = mkdtempSync(join(tmpdir(), "push-files-other-"));
   ok(bare(tmpdir(), ["clone", "-q", origin, other]));
   for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.invalid"], ["commit.gpgsign", "false"]])
@@ -227,7 +233,7 @@ test("a branch built on a base that moved upstream since the last fetch pushes w
 
 test("a blobless clone checks a push without fetching each destination tip it lacks", () => {
   const repo = setup();
-  const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
+  const origin = local(ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim());
   ok(bare(origin, ["config", "uploadpack.allowFilter", "true"]));
   // 300 destination tips this clone has never seen, each its own commit.
   const tree = ok(bare(origin, ["rev-parse", "main^{tree}"])).stdout.trim();
@@ -242,6 +248,8 @@ test("a blobless clone checks a push without fetching each destination tip it la
   for (const [k, v] of [["user.name", "t"], ["user.email", "t@example.invalid"], ["commit.gpgsign", "false"]])
     ok(git(partial, ["config", k, v]));
   ok(git(partial, ["config", "core.hooksPath", hooksPath]));
+  ok(git(partial, ["config", "protocol.ext.allow", "always"]));
+  ok(git(partial, ["config", "remote.origin.pushurl", net(origin)]));
   commit(partial, { "clean.txt": "clean\n" }, "clean");
   const started = Date.now();
   ok(git(partial, ["push", "origin", "feat/x"]));
@@ -269,8 +277,8 @@ test("a push location an insteadOf lists as another repository vouches for nothi
   const repo = setup();
   leakOnOrigin(repo);
   const origin = ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim();
-  const publicRepo = mkdtempSync(join(tmpdir(), "push-files-rewrite-"));
-  ok(bare(publicRepo, ["init", "--bare", "-q", "-b", "main"]));
+  const publicRepo = net(mkdtempSync(join(tmpdir(), "push-files-rewrite-")));
+  ok(bare(local(publicRepo), ["init", "--bare", "-q", "-b", "main"]));
   // Pushes go to the public repository; reads of it are rewritten back to origin.
   ok(git(repo, ["config", `url.${publicRepo}.pushInsteadOf`, origin]));
   ok(git(repo, ["config", `url.${origin}.insteadOf`, publicRepo]));
@@ -320,3 +328,33 @@ for (const kind of ["clean", "secret", "removed-secret"]) test(`a bare ${kind} r
     assert.equal(ok(git(remote, ["for-each-ref"])).stdout, "");
   }
 });
+
+test("a secret pushed to a repository on this disk sends nothing, so it is not scanned", () => {
+  for (const form of ["path", "file"]) {
+    const remote = mkdtempSync(join(tmpdir(), "push-files-disk-"));
+    ok(bare(remote, ["init", "--bare", "-q", "-b", "main"]));
+    const repo = setup();
+    commit(repo, { "fixture.pem": `${KEY}\n` }, "a test fixture shaped like a key");
+    ok(git(repo, ["remote", "add", "disk", form === "path" ? remote : `file://${remote}`]));
+    ok(git(repo, ["push", "-q", "disk", "feat/x"]));
+    assert.equal(ok(git(remote, ["rev-parse", "feat/x"])).stdout, ok(git(repo, ["rev-parse", "HEAD"])).stdout);
+  }
+});
+
+for (const location of ["git@github.com:example/repo.git", "https://github.com/example/repo.git"]) {
+  test(`the same secret pushed to a network remote is refused (${location})`, () => {
+    const repo = setup();
+    commit(repo, { "fixture.pem": `${KEY}\n` }, "a test fixture shaped like a key");
+    const sha = ok(git(repo, ["rev-parse", "HEAD"])).stdout.trim();
+    // Reads of the location resolve to the fixture's origin, so the hook lists nothing over the
+    // network and every sent commit is scanned.
+    ok(git(repo, ["config", `url.${local(ok(git(repo, ["remote", "get-url", "origin"])).stdout.trim())}.insteadOf`, location]));
+    const result = spawnSync(
+      process.execPath,
+      [resolve("bin/ai-agent-hooks.mjs"), "run", "pre-push", "origin", location],
+      { cwd: repo, encoding: "utf8", env, input: `refs/heads/feat/x ${sha} refs/heads/feat/x ${"0".repeat(40)}\n` },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout + result.stderr, /fixture\.pem:1 \(private-key\)/);
+  });
+}
