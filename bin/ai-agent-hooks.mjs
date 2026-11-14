@@ -372,13 +372,7 @@ function checkNoCrossNameDefaultPush(repoRoot, refUpdates = [], remoteUrl = "") 
   if (process.env.GITHUB_ACTIONS) {
     return { ok: true, status: 0, output: "Inside GitHub Actions — workflows own their pushes." };
   }
-  if (isLocalFilesystemRemote(remoteUrl)) {
-    return {
-      ok: true,
-      status: 0,
-      output: `Local filesystem remote (${remoteUrl}) — not a shared default branch.`,
-    };
-  }
+  if (isLocalFilesystemRemote(remoteUrl)) return onDisk(remoteUrl);
   const refused = [];
   for (const u of refUpdates) {
     const name = /^refs\/heads\/(.+)$/.exec((u && u.remoteRef) || "")?.[1];
@@ -416,9 +410,9 @@ function checkNoCrossNameDefaultPush(repoRoot, refUpdates = [], remoteUrl = "") 
 
 /**
  * The pre-push hook's second argument is the push location. A path or file:// URL is a repository
- * on this disk: test suites build throwaway repos and push a fixture ref to their main, and that
- * updates no shared default branch. Only a network remote (scheme://, or scp-style host:path) is
- * guarded. An unknown location keeps the guard on.
+ * on this disk: test suites build throwaway repos and push a fixture ref to their main, which updates
+ * no shared default branch and sends no secret anywhere, so neither guard applies. Only a network
+ * remote (scheme://, or scp-style host:path) is guarded; an unknown or empty location keeps them on.
  */
 function isLocalFilesystemRemote(url) {
   const location = typeof url === "string" ? url.trim() : "";
@@ -431,6 +425,7 @@ function isLocalFilesystemRemote(url) {
   if (colon > 0 && (slash === -1 || colon < slash)) return false;
   return true;
 }
+const onDisk = (url) => ({ ok: true, status: 0, output: `Local filesystem remote (${url}) — nothing leaves this disk.` });
 
 function checkMergeableWithBase(repoRoot, check, refUpdates = []) {
   const remote = typeof check.remote === "string" && check.remote.trim()
@@ -536,6 +531,7 @@ function runBuiltin(builtin, context) {
   }
 
   if (builtin === "suspicious-secrets") {
+    if (isLocalFilesystemRemote(context.pushRemoteUrl)) return onDisk(context.pushRemoteUrl);
     return bySource(context, (files, rev) => checkSuspiciousSecrets(context.repoRoot, files, rev));
   }
 
