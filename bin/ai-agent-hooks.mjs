@@ -260,7 +260,7 @@ function checkSuspiciousSecrets(repoRoot, files, contentRev = "") {
     { id: "openai", regex: /\bsk-[A-Za-z0-9]{20,}\b/g },
     { id: "aws-access-key", regex: /\bAKIA[0-9A-Z]{16}\b/g },
     { id: "github-token", regex: /\bghp_[A-Za-z0-9]{36}\b/g },
-    { id: "private-key", regex: /-----BEGIN (RSA|EC|OPENSSH|DSA) PRIVATE KEY-----/g },
+    { id: "private-key", regex: /-----BEGIN (RSA|EC|OPENSSH|DSA) PRIVATE KEY-----(?!\.\.\.|…)/g },
     { id: "slack-token", regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
   ];
   const allowHints = ["example", "dummy", "placeholder", "redacted", "sample"];

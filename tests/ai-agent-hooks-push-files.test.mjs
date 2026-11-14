@@ -111,6 +111,18 @@ test("a merged branch only another remote holds is checked when it is sent", () 
   assert.match(result.stdout + result.stderr, /fork\.pem:1 \(private-key\)/);
 });
 
+test("a key header elided on its own line is a placeholder; a key block is still refused", () => {
+  const repo = setup();
+  const header = KEY.replace("RSA", "OPENSSH");
+  commit(repo, { "README.md": `KEY="${header}..."\nKEY='${header}…'\n` }, "an outside repo documents a placeholder");
+  ok(git(repo, ["push", "origin", "feat/x"]));
+  commit(repo, { "id.pem": `${header}\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\n` }, "a real key block");
+  const result = git(repo, ["push", "origin", "feat/x"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /id\.pem:1 \(private-key\)/);
+  assert.doesNotMatch(result.stdout + result.stderr, /README\.md/);
+});
+
 test("a pushed branch is read at its own commit, not from the working tree", () => {
   const repo = setup();
   commit(repo, { "feat.pem": `${KEY}\n` }, "feat adds a key");
