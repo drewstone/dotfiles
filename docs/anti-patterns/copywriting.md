@@ -12,13 +12,42 @@ Do not use:
 
 ## Counting Copy
 
-Do not write sentences that count the page's own items or restate what the list beside them already shows:
+Do not announce how many things follow, and do not count the page's own items:
 
+- "Three commands: create the project, prompt the agent, start a preview."
+- "Two things changed."
 - "Three witnesses address two proposed inequalities."
 - "Five tools cover four workflows."
 - A closing note that restates which items on the page share a subject.
 
-The reader can see the list. Name the content or delete the sentence. Counts belong in data: tables, labels and units.
+The reader can count. Give the things themselves: the commands as the reader types them, the items by name. Counts belong in data: tables, labels and units.
+
+Bad:
+
+> Three commands: create the project, prompt the agent, start a preview.
+
+Better:
+
+```sh
+app create demo
+app prompt demo "a landing page with a signup form"
+app preview demo
+```
+
+## Captions That Describe The Media
+
+Do not use the text beside a clip or image to describe, excuse or disclaim it:
+
+- "The video is sped up."
+- "As you can see in the clip..."
+- "The screenshot shows the dashboard."
+- "Watch until the end."
+
+Put the fact in the frame. A sped-up recording carries a running clock, so the viewer reads the real duration from the picture. The text says what was built and gives the input to repeat it.
+
+## Show The Example
+
+A how-to post gives the exact input and shows the output: the commands, the prompt, the result on screen. Cut a sentence that describes an example the post could have shown, and show the example.
 
 ## Generic AI Marketing Copy
 
