@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Keep Claude Code, Codex and the private layer's npm CLIs current (agent-cli-update.timer, daily); a running session keeps its binary until it restarts.
+# Keep Claude Code, Codex and the private layer's npm CLIs and update commands current (agent-cli-update.timer, daily); a running session keeps its binary until it restarts.
 set -uo pipefail
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 status=0
@@ -32,5 +32,8 @@ for pkg in ${AGENT_CLI_NPM_PACKAGES:-}; do  # space-separated npm packages, each
   if [ -n "$want" ] && [ "$have" != "$want" ]; then
     npm i -g --prefix "$HOME/.local" "$pkg@$want" >/dev/null && printf '%s %s -> %s\n' "$pkg" "${have:-unknown}" "$want" || status=1
   else printf '%s %s, latest %s\n' "$pkg" "${have:-unknown}" "${want:-unknown}"; fi
+done
+for command in "${AGENT_CLI_UPDATE_COMMANDS[@]}"; do  # shell commands for CLIs that own their update; each reports its own versions
+  bash -c "$command" || status=1
 done
 exit "$status"
