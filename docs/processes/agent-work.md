@@ -62,6 +62,8 @@ Use Conventional Commits and repository hooks; dotfiles git/install.sh owns glob
 Write a multi-line commit or PR message to a file and pass it with `git commit -F <file>` or `--body-file <file>`; an inline `-m` with unbalanced quotes ran message text as shell commands.
 
 One accountable owner carries each coherent PR and all its outcomes through review, merge, release, and requested consumer proof.
+The author sends a PR's required review ask itself the moment the PR is ready, naming its URL and head sha; nobody forwards it later.
+When ready PRs wait on one owner decision, send one ask naming every waiting PR and the single question as soon as the first is ready: never one ask per PR, never after waiting for a batch (one decision held 7 PRs for 22 hours, 157 PR-hours, on 2026-11-14).
 After a push, read available comments, reviews, and inline threads; fix actual findings without waiting for optional automation.
 Separate change defects, unrelated defects, and infrastructure failures; repair the first and track the others with their owners.
 For a blocked requirement, record its owner, next action, and completion check in the existing task record.
