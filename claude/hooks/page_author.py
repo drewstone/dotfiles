@@ -44,8 +44,19 @@ def stamp(text):
     line = (f'<style>{STYLE}</style><div id="page-author">Written by <b>{e(name)}</b>{tab} · Message: <code>{e(message)}'
             f'</code> · {sid[:8]} · {e(socket.gethostname().split(".")[0])} · {when}</div>')
     text = BLOCK.sub("", text)
-    body = re.search(r"<body\b[^>]*>\n?", text, re.I)  # the meta tags ride in the one block: every HTML parser reads them there
-    return text[:body.end()] + f"{BEGIN}{metas}{line}{END}\n" + text[body.end():] if body else text
+    at = body_start(text)  # the meta tags ride in the one block: every HTML parser reads them there
+    return text if at is None else text[:at] + f"{BEGIN}{metas}{line}{END}\n" + text[at:]
+
+
+def body_start(text):
+    """Where the visible page begins: after <body>, else before the first tag a head cannot hold (a page may omit <body>)."""
+    body = re.search(r"<body\b[^>]*>\n?", text, re.I)
+    if body:
+        return body.end()
+    for tag in re.finditer(r"<style\b.*?</style\s*>|<script\b.*?</script\s*>|<!--.*?-->|<(/?[a-z!]+)", text, re.I | re.S):
+        if tag[1] and tag[1].lower() not in ("html", "head", "/head", "meta", "title", "/title", "link", "base", "!doctype"):
+            return tag.start()
+    return None
 
 
 def stamp_page(word):
