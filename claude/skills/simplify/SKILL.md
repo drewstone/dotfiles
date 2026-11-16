@@ -16,6 +16,7 @@ Preserve required user behavior and public contracts unless their retirement is 
 3. Find the maintained library owner before retaining or replacing a local implementation.
 4. Check real consumers: source callers, exports, configuration, registries, generated entrypoints, dynamic imports, and persisted records.
    Establish external use before retiring a published API.
+   A skill is in use when its owner has typed its name or invoked it, or a standing instruction, profile, hill or brief names it; a usage window counts runs, not these consumers.
 5. Delete unnecessary behavior; simplify, optimize, then automate what survives.
    Name the surviving capability and real proof for each removal.
 
