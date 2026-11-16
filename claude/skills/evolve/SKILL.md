@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: Improve a measured target through causal diagnosis, scoped experiments, verification, and retained results, including architecture variants compared at equal resources.
+description: Improve a measured target through causal diagnosis, scoped experiments, verification, and retained results.
 ---
 
 # Evolve
@@ -40,11 +40,6 @@ Continue eligible hypotheses while the objective and resource limits permit.
 Change approach when evidence rejects it; rerun unchanged work only to resolve recorded uncertainty.
 Stop at the requested outcome, an explicit limit, cancellation, or an evidenced dead end.
 
-## Architecture variants
-
-When the gap needs a structural change, give each independent variant an isolated workspace and a causal edit scope, and compare it against the measured baseline on the same cases at equal, reported resources.
-Keep every attempt and raw outcome, test any combination as a new candidate, and promote one variant through one owner.
-
 ## Live-system hills
 
 When the target is a production system's speed or infrastructure, run the loop in production:
@@ -81,6 +76,7 @@ skill-run-log /evolve --target "<outcome and experiment scope>" --verdict <PASS|
 | Condition | Next skill | What to pass |
 |---|---|---|
 | The next useful mechanism is unclear | `/hypothesize` | Goal, prior evidence, and alternatives |
+| The remaining gap needs an architectural change, independent variants, or an equal-resource architecture comparison | `/pursue` | Baseline, constraint, and rejected approaches |
 | A result is null, surprising, or suspect, or failures need causal grouping | `/diagnose` | Raw observations, exact command, and baseline |
 | Changed scoring invalidates calibration | `/eval-engineering` | Changed path, fixtures, and decision |
 | A proven change is ready for authorized release | `/ship` | Tested revision, decision evidence, and release scope |
