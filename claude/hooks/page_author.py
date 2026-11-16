@@ -11,7 +11,6 @@ import os
 import re
 import shlex
 import socket
-import sys
 from pathlib import Path
 
 BEGIN, END = "<!-- page-author -->", "<!-- /page-author -->"
@@ -59,16 +58,10 @@ def body_start(text):
     return None
 
 
-def stamp_page(word):
-    """Stamp the page a word names if it is one, exists and has no stamp; False when it does not exist yet."""
-    page = Path(os.path.expanduser(os.path.expandvars(word)))
-    if is_page(word) and page.is_file() and BEGIN not in (text := page.read_text(errors="replace")):
-        page.write_text(stamp(text) or text)
-    return page.exists() or not is_page(word)
-
-
 def pre_tool_use(payload):
-    """{"updatedInput": stamped input} for a Write of a page, else {}; stamps each unstamped page `open` names. Never raises."""
+    """{"updatedInput": stamped input} for a Write of a page, else {}; stamps each unstamped page `open` names. Never raises.
+    A page a Bash call writes and opens in the same call is not there yet, so it stays unstamped until its next open: a
+    rewritten command (an `open` wrapper) was refused by the Bash tool's own check as brace-with-quote obfuscation."""
     tool, inp = payload.get("tool_name"), payload.get("tool_input") or {}
     try:
         if tool == "Write" and isinstance(inp.get("content"), str) and is_page(inp.get("file_path") or ""):
@@ -76,13 +69,10 @@ def pre_tool_use(payload):
             return {"updatedInput": {**inp, "content": content}} if content else {}
         command = inp.get("command") if tool == "Bash" else None
         if isinstance(command, str) and re.search(r"(^|[;&|(\s])open\s", command):
-            if not all([stamp_page(word) for word in shlex.split(command, comments=True)]):  # this command writes the page
-                stamp_at_open = f'open() {{ python3 {shlex.quote(__file__)} "$@"; command open "$@"; }}; '
-                return {"updatedInput": {**inp, "command": stamp_at_open + command}}
+            for word in shlex.split(command, comments=True):
+                page = Path(os.path.expanduser(os.path.expandvars(word)))
+                if is_page(word) and page.is_file() and BEGIN not in (text := page.read_text(errors="replace")):
+                    page.write_text(stamp(text) or text)
     except Exception:  # a stamp never blocks or breaks a call
         pass
     return {}
-
-
-if __name__ == "__main__":  # the `open` wrapper above: stamp the pages among its arguments
-    [stamp_page(word) for word in sys.argv[1:]]
