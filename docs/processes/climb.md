@@ -202,6 +202,17 @@ For every output class we make (a financial model, research report, workbook, ch
 
 Done so far: the operator review, in the [operator review standard](../../claude/skills/report/references/operator-review.md); its features are the rubric's `3:` lines.
 
+### The making loop
+
+The first content package the owner called great, after drafts he scored 2 of 10, came from this loop. It applies to any deliverable: a post, a page, a demo, a PR, an analysis.
+1. **Start from the user's problem in their own setup,** and show that it is real with linked public evidence before saying anything about our product.
+2. **Tear down the best real work on the same topic first,** 15 to 25 pieces: how each opens, its proof, where the product appears. Choose the structure that fits, then write one page: the reader, the pain, the thesis in one sentence, and the proof each beat needs.
+3. **Write the attacks before the draft.** Run the skeptic's strongest checks to the end on the served product from a fresh account. Finish by hand any attempt that timed out, and read the raw data behind every number.
+4. **Name the usual answers fairly and credit who already ships the idea.** Differentiate on the questions the reader can take to any vendor, answered with links to proof, and write the limits down.
+5. **Judge blind and pairwise against the best real work on the same topic.** Use clean readers in the real reader's personas, and a known-weak control that must rank last or the round is void. Readers must restate the problem and the solution. An agent that did not make the piece reruns the attacks. Return to step 2 until it wins.
+6. **When the work exposes a gap in the product, fix the product.** Claim only what the served release does.
+7. **The maker states why they would bet their name on it and what is still weaker than the best reference.** The lead checks beyond the maker's report: every frame at phone width, every link, every number's unit. The lead then brings the owner one decision page, with the recommendation first.
+
 ## Organize like the hardest projects in history
 
 The Manhattan Project ran parallel approaches to the uncertain parts: three enrichment methods and two bomb designs. It had central technical direction, measurement before scale (Fermi's pile before Hanford), and relentless integration.
