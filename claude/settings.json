@@ -61,6 +61,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/rtk-rewrite.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/page_author.py"
           }
         ]
       },
@@ -79,6 +83,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/process_guard.py"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/page_author.py"
           }
         ]
       },
