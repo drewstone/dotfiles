@@ -300,7 +300,6 @@ def _lex(src, i, out, stop_paren):
     return i
 
 
-# ---------------------------------------------------------------------------------------
 # Commands: words with prefixes stripped, the environment they run with, and where.
 
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
@@ -921,7 +920,6 @@ def commands(src, cwd, remote=False, ctx=None):
     return result
 
 
-# ---------------------------------------------------------------------------------------
 # Rules. Each returns None, or (rule, summary, reason, override_variable or None).
 
 
@@ -1518,8 +1516,10 @@ def main():
     shown = [f"process-guard: allowed {', '.join(f'{s} via {o}=1' for _, s, _, o, _ in bypassed)}; logged to {LOG}."] if bypassed else []
     shown += [text for text, context_only in notes if not context_only]
     context, spec = [text for text, _ in notes], {"hookEventName": "PreToolUse"}
-    if ".htm" in str((inp := payload.get("tool_input") or {}).get("command") or inp.get("file_path")):  # loads only for a page
-        spec.update(__import__("page_author").pre_tool_use(payload))
+    try:  # the stamp module loads only for a call naming a page, and nothing in it can fail the call
+        spec.update(__import__("page_author").pre_tool_use(payload) if ".htm" in str(payload.get("tool_input")) else {})
+    except Exception:
+        pass
     if updated:
         spec.update(permissionDecision="allow", permissionDecisionReason="process-guard: ran in the foreground", updatedInput=updated)
         context.insert(0, "process-guard ran this command in the foreground with a 10-minute timeout: subagents never wait "

@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import socket
+import sys
 from pathlib import Path
 
 BEGIN, END = "<!-- page-author -->", "<!-- /page-author -->"
@@ -28,27 +29,31 @@ def is_page(path):
 
 
 def stamp(text):
-    """text with this session's stamp in place of any earlier one, or None outside a Claude session."""
+    """text with this session's stamp after <body> in place of any earlier one; None outside a Claude session."""
     try:
         session = json.loads((Path.home() / ".claude" / "sessions" / f"{os.environ['CLAUDE_PID']}.json").read_text())
     except (KeyError, OSError, ValueError):
         return None
     e = lambda s: html.escape(str(s), quote=True)
-    name, sid, focus = session.get("name", ""), session.get("sessionId", ""), os.environ.get("WARP_FOCUS_URL", "")
+    sid, focus = session.get("sessionId", ""), os.environ.get("WARP_FOCUS_URL", "")
+    name = session.get("name") or sid[:8]
+    message = f'SendMessage to "{session["name"]}"' if session.get("name") else f"claude --resume {sid}"
     metas = "".join(f'<meta name="author-{k}" content="{e(v)}">' for k, v in (("session", sid), ("name", name), ("focus", focus)))
     when = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
     tab = f' · <a href="{e(focus)}">Open tab</a>' if focus else ""
-    line = (f'<style>{STYLE}</style><div id="page-author">Written by <b>{e(name)}</b>{tab} · Message: <code>SendMessage to '
-            f'"{e(name)}"</code> · {sid[:8]} · {e(socket.gethostname().split(".")[0])} · {when}</div>')
+    line = (f'<style>{STYLE}</style><div id="page-author">Written by <b>{e(name)}</b>{tab} · Message: <code>{e(message)}'
+            f'</code> · {sid[:8]} · {e(socket.gethostname().split(".")[0])} · {when}</div>')
     text = BLOCK.sub("", text)
-    head = re.search(r"</head\s*>", text, re.I)
-    if head:
-        text = text[:head.start()] + f"{BEGIN}{metas}{END}\n" + text[head.start():]
-    else:  # no head: the meta tags travel with the visible line
-        line = metas + line
-    at = re.search(r"<body\b[^>]*>\n?", text, re.I) or re.search(r"</head\s*>\n?|<html\b[^>]*>\n?|<!doctype[^>]*>\n?", text, re.I)
-    at = at.end() if at else 0
-    return text[:at] + f"{BEGIN}{line}{END}\n" + text[at:]
+    body = re.search(r"<body\b[^>]*>\n?", text, re.I)  # the meta tags ride in the one block: every HTML parser reads them there
+    return text[:body.end()] + f"{BEGIN}{metas}{line}{END}\n" + text[body.end():] if body else text
+
+
+def stamp_page(word):
+    """Stamp the page a word names if it is one, exists and has no stamp; False when it does not exist yet."""
+    page = Path(os.path.expanduser(os.path.expandvars(word)))
+    if is_page(word) and page.is_file() and BEGIN not in (text := page.read_text(errors="replace")):
+        page.write_text(stamp(text) or text)
+    return page.exists() or not is_page(word)
 
 
 def pre_tool_use(payload):
@@ -60,10 +65,13 @@ def pre_tool_use(payload):
             return {"updatedInput": {**inp, "content": content}} if content else {}
         command = inp.get("command") if tool == "Bash" else None
         if isinstance(command, str) and re.search(r"(^|[;&|(\s])open\s", command):
-            for word in shlex.split(command, comments=True):
-                page = Path(os.path.expanduser(os.path.expandvars(word)))
-                if is_page(word) and page.is_file() and BEGIN not in (text := page.read_text(errors="replace")):
-                    page.write_text(stamp(text) or text)
+            if not all([stamp_page(word) for word in shlex.split(command, comments=True)]):  # this command writes the page
+                stamp_at_open = f'open() {{ python3 {shlex.quote(__file__)} "$@"; command open "$@"; }}; '
+                return {"updatedInput": {**inp, "command": stamp_at_open + command}}
     except Exception:  # a stamp never blocks or breaks a call
         pass
     return {}
+
+
+if __name__ == "__main__":  # the `open` wrapper above: stamp the pages among its arguments
+    [stamp_page(word) for word in sys.argv[1:]]
