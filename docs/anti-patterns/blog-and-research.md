@@ -34,7 +34,7 @@ Better as research:
 Measured on 61 engineering and launch posts from 17 public developer blogs (Anthropic, OpenAI, Cognition, Fly.io, Modal, Cloudflare, Stripe, Vercel, Figma, a networking vendor, Cursor, Simon Willison, Hamel Husain, Eugene Yan, Chip Huyen, Julia Evans, Dan Luu), fetched 2026-11-16, with Hacker News points as a biased popularity proxy.
 Medians with interquartile range (IQR). Write a post that matches these; judge it with the protocol below.
 
-1. **Open on what was built, measured, found or broken.** Opening moves: result 14, problem 12, story 11, context 10, claim 9, definition 5. "Fly Machines are VMs with a fast REST API that can boot instances in about 300ms." "The new version is 2x faster, 12% better on our Junior Developer Evals."
+1. **Lead with the problem and the answer in the first two sentences.** Name what a developer hits and what was built, measured or found about it. In the corpus, openings are result 14, problem 12, story 11, context 10, claim 9, definition 5; the result openings that work name the problem they solve. "Fly Machines are VMs with a fast REST API that can boot instances in about 300ms." "The new version is 2x faster, 12% better on our Junior Developer Evals."
 2. **Name the product in the first sentences, as the subject that did something or the setting where the work happened.** First mention at a median 0.75% of the text. Stripe: "Over a thousand pull requests merged each week at Stripe are completely minion-produced." Cloudflare: Pingora "serves over 1 trillion requests a day ... requiring only a third of the CPU and memory".
 3. **Write as the people who did the work, to a reader with a decision.** "We" 17.7 per 1,000 words (IQR 8.9-28.3), "you" 7.7. A post with no "we" and no "you" reads as an encyclopedia entry, and nothing in it reads as evidence.
 4. **Give every number a unit and a baseline.** 2.4 numbers with units per 1,000 words (IQR 0.7-5.5). "950 tok/s, 6x faster than Haiku 4.5 and 13x faster than Sonnet 4.5." "Time-to-first-query drops from 7.87 seconds to 525 milliseconds."
@@ -67,6 +67,7 @@ Avoid:
 
 - SEO posts that never teach
 - posts that assume the reader already knows the company, product, repository, or vocabulary
+- opening with a metric, acronym, commit, or implementation detail before stating the problem it answers
 - native product terms used as if they were ordinary language
 - internal commands, shell pipelines, local file paths, commit hashes, branch names, or package inspection steps in the article body
 - internal notes, private-repository references, or author-side debugging history presented as reader evidence
