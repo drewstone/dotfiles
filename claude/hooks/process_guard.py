@@ -1394,8 +1394,6 @@ def rule_mac_build(cmd):
             f"authorization for this run. {CONFIG['mac_build'].replace('{command}', shlex.join(cmd.argv))}", "CC_ALLOW_MAC_BUILD")
 
 
-# ---------------------------------------------------------------------------------------
-
 def private_rules(command, payload):
     """Findings of the operator's rule modules (guard-config `rule_modules`); one that fails to load or raises is logged."""
     found = []
@@ -1520,6 +1518,8 @@ def main():
     shown = [f"process-guard: allowed {', '.join(f'{s} via {o}=1' for _, s, _, o, _ in bypassed)}; logged to {LOG}."] if bypassed else []
     shown += [text for text, context_only in notes if not context_only]
     context, spec = [text for text, _ in notes], {"hookEventName": "PreToolUse"}
+    if ".htm" in str((inp := payload.get("tool_input") or {}).get("command") or inp.get("file_path")):  # loads only for a page
+        spec.update(__import__("page_author").pre_tool_use(payload))
     if updated:
         spec.update(permissionDecision="allow", permissionDecisionReason="process-guard: ran in the foreground", updatedInput=updated)
         context.insert(0, "process-guard ran this command in the foreground with a 10-minute timeout: subagents never wait "
