@@ -202,6 +202,19 @@ For every output class we make (a financial model, research report, workbook, ch
 
 Done so far: the operator review, in the [operator review standard](../../claude/skills/report/references/operator-review.md); its features are the rubric's `3:` lines.
 
+### The making loop
+
+The first content package the owner called great, after drafts he scored 2 of 10, came from this loop. It applies to any deliverable: a post, a page, a demo, a PR, an analysis.
+The maker named three changes that moved it most:
+- **The bar is the best real work on the same topic.** Each round reads the work blind and pairwise against the best three pieces on that topic, with a rejected draft as a control that must lose. Readers say which piece they would finish and act on, and restate the problem and the solution. "Can you tell an AI wrote it" is not the question. Their reasons drive each rewrite: the six-questions table they liked best came from them.
+- **Evidence comes before prose.** The attack runs on production first, and someone who did not make the piece runs it again. The work can then open on that attack against the reader's own setup, and every number, limit and admission traces to a file. A product gap found this way gets fixed, not written around.
+- **The lead checks every artifact at the reader's size.** That means a contact sheet of every clip, the last frame at 390 px, every diagram at full size, and every link fetched. Nothing reaches the owner until both the maker and the lead would bet their names on it.
+
+Around those three:
+1. **Tear down the best work on the same topic before writing,** 15 to 25 pieces: how each opens, its proof, and where the product appears. Write one page covering the reader, their pain, the thesis in one sentence, and the proof each beat needs.
+2. **Name the usual answers fairly, and credit whoever already ships the idea.** Differentiate on questions the reader can take to any vendor, answer them with links to proof, and write the limits down.
+3. **Claim only what the served release does.** Bring the owner one decision page, recommendation first, that names its author.
+
 ## Organize like the hardest projects in history
 
 The Manhattan Project ran parallel approaches to the uncertain parts: three enrichment methods and two bomb designs. It had central technical direction, measurement before scale (Fermi's pile before Hanford), and relentless integration.
