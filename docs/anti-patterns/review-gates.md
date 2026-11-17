@@ -92,6 +92,26 @@ Pass only if:
 - users can approve or reject high-stakes actions
 - generated output is distinguished from verified state
 
+## Result Page Gate
+
+For a page that reports what a run, job or experiment did; the rejected examples are in [product design](product-design.md#result-and-run-pages).
+
+Reject if:
+
+- any status on the page contradicts the run's records
+- the first screen prints the run's brief where the finding belongs
+- a verdict lacks its number, unit, baseline or bar
+- an instrument failure reads as a failure of the result
+- the result is not drawn
+- the change was reviewed without screenshots of the rendered page
+
+Pass only if:
+
+- one function computes every status the page shows, and a check over real retained runs fails on any status their records contradict
+- a cold reader given only a first-screen screenshot answers the six questions (asked, happened with number, how sure, finished, cost, next), scored against facts written from the records before the review, for each kind of run: succeeded, missed its bar, live, never started
+- an element-by-element critique at desktop and phone width finds no blocking defect
+- the pull request shows before and after screenshots of the served page for each kind of run
+
 ## Source Gate
 
 Reject if:
