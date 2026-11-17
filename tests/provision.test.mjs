@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 // Offline checks for host/provision.sh and the files it installs.
@@ -393,9 +393,9 @@ test("ssh counts as keys only when sshd's effective settings say so, not when th
   // A drop-in can be root-only, so sshd -G runs as root.
   assert.equal(readFileSync(join(dir, "calls"), "utf8"), "AS ROOT\n".repeat(10));
 });
-
+// Trust fixtures need a durable parent even when the checkout and HOME are temporary.
 test("Claude install and provisioning remove temporary trust without losing other settings", () => {
-  const home = mkdtempSync(join(root, ".claude-trust-test-"));
+  const home = mkdtempSync(join(userInfo().homedir, ".claude-trust-test-"));
   const claudeDir = join(home, ".claude");
   mkdirSync(claudeDir);
   mkdirSync(join(home, "code"));
@@ -442,7 +442,7 @@ test("Claude install and provisioning remove temporary trust without losing othe
 });
 
 test("Claude provisioning recreates deleted local trust settings", () => {
-  const home = mkdtempSync(join(root, ".claude-trust-missing-"));
+  const home = mkdtempSync(join(userInfo().homedir, ".claude-trust-missing-"));
   try {
     mkdirSync(join(home, ".claude"));
     mkdirSync(join(home, "code"));
