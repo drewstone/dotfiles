@@ -214,6 +214,7 @@ Around those three:
 1. **Tear down the best work on the same topic before writing,** 15 to 25 pieces: how each opens, its proof, and where the product appears. Write one page covering the reader, their pain, the thesis in one sentence, and the proof each beat needs.
 2. **Name the usual answers fairly, and credit whoever already ships the idea.** Differentiate on questions the reader can take to any vendor, answer them with links to proof, and write the limits down.
 3. **Claim only what the served release does.** Bring the owner one decision page, recommendation first, that names its author.
+4. **Lead with the reader's problem in the words they search, never with the mechanism.** A true title about how it works ("run the tests on a machine it never touched") lost to the owner as "who cares"; one about what goes wrong for the reader wins. Test it blind: readers pick what they would click from the real top titles for the reader's queries with your candidates mixed in, and say what each promises them.
 
 ## Organize like the hardest projects in history
 
