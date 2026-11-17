@@ -17,6 +17,11 @@ CODEX_DIR="$HOME/.codex"
 OPENCODE_DIR="$HOME/.config/opencode"
 AGENTS_SRC="$SCRIPT_DIR/AGENTS.md"
 FORCE="${1:-}"
+case "$FORCE" in
+  ""|--force) ;;
+  -h|--help) sed -n '2,3p' "$0" | sed 's/^# //'; exit 0 ;;
+  *) echo "install.sh: unknown argument '$FORCE' (usage: ./install.sh [--force]); nothing installed" >&2; exit 2 ;;
+esac
 # The optional private layer, a repository shaped like this one, adds instructions, skills, hooks, tools and a settings
 # overlay; absent, each step reading it is a no-op.
 DOTFILES_PRIVATE="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}"
