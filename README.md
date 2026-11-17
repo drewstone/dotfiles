@@ -10,10 +10,12 @@ Try the guard from a clone, before installing anything:
 
 ```console
 $ git clone https://github.com/drewstone/dotfiles.git && cd dotfiles
-$ echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' | claude/hooks/process_guard.py
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason":
-"process-guard (force-push): Force push refused (`--force`): it rewrites published history, and no flag lifts this;
-[...] Commit the fix (not --amend) and push new commits: `git push origin HEAD:<branch>`."}}
+$ echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' \
+    | claude/hooks/process_guard.py
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+"permissionDecisionReason": "process-guard (force-push): Force push refused (`--force`):
+it rewrites published history, and no flag lifts this; [...] push new commits:
+`git push origin HEAD:<branch>`."}}
 ```
 
 ## Commands agents ran, now refused
@@ -49,7 +51,8 @@ and register it in `~/.claude/settings.json`:
 ```json
 "hooks": {
   "PreToolUse": [
-    {"matcher": "Bash", "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/process_guard.py"}]}
+    {"matcher": "Bash",
+     "hooks": [{"type": "command", "command": "$HOME/.claude/hooks/process_guard.py"}]}
   ]
 }
 ```
@@ -106,7 +109,8 @@ For Codex to read repositories that have only a `CLAUDE.md`, add `project_doc_fa
 
 ```bash
 ls -l ~/.claude/CLAUDE.md ~/.codex/AGENTS.md ~/.config/opencode/AGENTS.md
-echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' | ~/.claude/hooks/process_guard.py
+echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"}}' \
+  | ~/.claude/hooks/process_guard.py
 ~/bin/skills --check
 git/census/census instructions
 ```
@@ -203,7 +207,7 @@ From the checkout, list what the installers left and remove it:
 # links into this checkout: remove each with rm
 find ~/.claude ~/.codex ~/.config/opencode ~/bin -maxdepth 3 -type l -lname "$PWD/*"
 # global Git settings pointing here: git config --global --unset <key> for each
-git config --global --get-regexp '^(core\.(hookspath|excludesfile|attributesfile)|init\.templatedir)$'
+git config --global --get-regexp 'hookspath|excludesfile|attributesfile|templatedir'
 # macOS background jobs; on Linux: systemctl --user disable --now main-checkout-ff.timer
 launchctl bootout gui/$(id -u)/com.dotfiles.page-feedback
 launchctl bootout gui/$(id -u)/com.dotfiles.main-checkout-ff
