@@ -64,6 +64,15 @@ def stamp(text, page):
     return text if at is None else text[:at] + f"{BEGIN}{metas}{line}{END}\n" + text[at:]
 
 
+def own(text):
+    """True when this session stamped the page: its open may add the feedback box an older stamp lacks."""
+    try:
+        sid = json.loads((Path.home() / ".claude" / "sessions" / f"{os.environ['CLAUDE_PID']}.json").read_text())["sessionId"]
+    except (KeyError, OSError, ValueError):
+        return False
+    return f'<meta name="author-session" content="{html.escape(sid, quote=True)}">' in text
+
+
 def body_start(text):
     """Where the visible page begins: after <body>, else before the first tag a head cannot hold (a page may omit <body>)."""
     body = re.search(r"<body\b[^>]*>\n?", text, re.I)
@@ -76,7 +85,8 @@ def body_start(text):
 
 
 def pre_tool_use(payload):
-    """{"updatedInput": stamped input} for a Write of a page, else {}; stamps each unstamped page `open` names. Never raises.
+    """{"updatedInput": stamped input} for a Write of a page, else {}; stamps each page `open` names that has no stamp,
+    or this session's stamp without the feedback box. Never raises.
     A page a Bash call writes and opens in the same call is not there yet, so it stays unstamped until its next open: a
     rewritten command (an `open` wrapper) was refused by the Bash tool's own check as brace-with-quote obfuscation."""
     tool, inp = payload.get("tool_name"), payload.get("tool_input") or {}
@@ -88,7 +98,8 @@ def pre_tool_use(payload):
         if isinstance(command, str) and re.search(r"(^|[;&|(\s])open\s", command):
             for word in shlex.split(command, comments=True):
                 page = Path(os.path.expanduser(os.path.expandvars(word)))
-                if is_page(word) and page.is_file() and BEGIN not in (text := page.read_text(errors="replace")):
+                if is_page(word) and page.is_file() and 'id="pa-send"' not in (text := page.read_text(errors="replace")) \
+                        and (BEGIN not in text or own(text)):
                     page.write_text(stamp(text, page) or text)
     except Exception:  # a stamp never blocks or breaks a call
         pass
