@@ -21,6 +21,15 @@
         ]
       },
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/page_feedback.py --session-start",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
           {

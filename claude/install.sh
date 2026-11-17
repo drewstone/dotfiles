@@ -149,6 +149,22 @@ for hook in "$SCRIPT_DIR/hooks"/* "$LAYER"/hooks/*; do
   [ -f "$hook" ] || continue
   link "$hook" "$CLAUDE_DIR/hooks/$(basename "$hook")"
 done
+# The feedback box on stamped pages posts to hooks/page_feedback.py: a launchd agent on macOS, restarted so it runs this code.
+if [ "$(uname -s)" = Darwin ]; then
+  plist="$HOME/Library/LaunchAgents/com.dotfiles.page-feedback.plist"
+  mkdir -p "$(dirname "$plist")"
+  cat > "$plist" <<EOF
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.dotfiles.page-feedback</string>
+  <key>ProgramArguments</key><array><string>$(command -v python3)</string><string>$CLAUDE_DIR/hooks/page_feedback.py</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$HOME/bin:$PATH</string></dict>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/page-feedback.log</string>
+</dict></plist>
+EOF
+  launchctl bootout "gui/$(id -u)/com.dotfiles.page-feedback" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist" || echo "  WARN page feedback listener did not start (launchctl bootstrap $plist)"
+fi
 # OpenCode loads ~/.config/opencode/plugins/*.js; each one adapts a Claude hook above.
 mkdir -p "$OPENCODE_DIR/plugins"
 for plugin in "$SCRIPT_DIR/opencode-plugins"/*.js; do
