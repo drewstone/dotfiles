@@ -113,10 +113,9 @@ def github(endpoint, *flags):
 def repository(url):
     m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
-def approved_growth(checkout, fork, head, total, pr):
-    """A PR comment `Growth approved: <owner>/<repo>#<number> at <sha>: <why>` by the verified account, carrying a `Run ID:` or `Session:`
-    line that the PR's body does not, admits the PR's growth at that head, and at a later head that descends from it while the PR's
-    production total has grown at most GROWTH_LIMIT since. A PR whose body names no such line has no known author and cannot be approved."""
+def approved_growth(head, pr):
+    """Only the exact merge head counts; a later withdrawal by the approving account voids its earlier lines.
+    The approving comment must name a run or session absent from the PR body, which must identify its writer."""
     if not re.fullmatch(r"[\w.-]+/[\w.-]+#[1-9]\d*", pr):
         raise Refused(f"growth approval needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
     issue, lanes = f"repos/{pr.replace('#', '/issues/')}", lambda text: set(re.findall(r"(?mi)^(?:Run ID|Session): *(?!<)(\S+)", text or ""))
@@ -124,11 +123,14 @@ def approved_growth(checkout, fork, head, total, pr):
     if not authors:
         print("census: the PR's body carries no `Run ID:` or `Session:` line naming who wrote it, so no approval can count; add one first.", file=sys.stderr)
     comments = github(f"{issue}/comments", "--paginate", "--jq", f'.[] | select(.user.login == "{github("user")["login"]}") | {{body}}') if authors else []
-    for sha in (s for c in comments if lanes(c["body"]) and not lanes(c["body"]) & authors
-                for s in re.findall(rf"(?mi)^Growth approved: {re.escape(pr)} at ([0-9a-f]{{40}}): *(?!<why>)\S", c["body"])):
-        if sha.lower() == head or (subprocess.run(["git", "-C", checkout, "merge-base", "--is-ancestor", sha, head], capture_output=True).returncode == 0 and
-                                   total - production_delta(checkout, git(checkout, "merge-base", fork, sha).decode().strip(), sha)[0] <= C.GROWTH_LIMIT):
-            print(f"census: production growth approved at {sha}", file=sys.stderr)
+    # GitHub returns issue comments oldest first, across pages; only the authenticated account survived the query.
+    for comment in reversed(comments):
+        body = comment["body"]
+        if re.search(r"(?mi)^\s*(?:\*\*)?Growth line withdrawn\b", body):
+            return False
+        if lanes(body) and not lanes(body) & authors and re.search(
+                rf"(?mi)^Growth approved: {re.escape(pr)} at {re.escape(head)}: *(?!<why>)\S", body):
+            print(f"census: production growth approved at {head}", file=sys.stderr)
             return True
     return False
 

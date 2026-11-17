@@ -130,15 +130,40 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     merge_check(contains=f"census: production growth approved at {head}")
     print("PASS: one approval at the head admits growth across two directories")
 
-    commit({"src/more.py": lines(LIMIT)})
-    run("git", "checkout", "-q", "main")
-    commit({"lib/base.py": lines(3 * LIMIT)})
-    run("git", "checkout", "-q", "feature")
-    run("git", "merge", "-q", "--no-edit", "main")
-    merge_check(contains=f"census: production growth approved at {head}")
-    later = commit({"src/more.py": lines(LIMIT + 1)})
-    merge_check(status=1, contains=f"Growth approved: {PR} at {later}: <why>")
-    print("PASS: an approval at an ancestor holds through small later growth and a base merge, and lapses one line past the limit")
+    failed = []
+
+    def withdrawn_approval():
+        # Preserve the incident's approval -> bold withdrawal -> fresh approval ordering.
+        withdrawn = "**Growth line withdrawn: do not merge " + head[:8] + ".** Reviewed findings require a new head."
+        comments(("reviewer", written + signed), ("author", withdrawn))
+        merge_check(contains=f"census: production growth approved at {head}")
+        comments(("reviewer", written + signed), ("reviewer", withdrawn))
+        merge_check(status=1, contains=line + "<why>")
+        comments(("reviewer", written + signed), ("reviewer", withdrawn), ("reviewer", written + signed))
+        merge_check(contains=f"census: production growth approved at {head}")
+        return "a later same-account withdrawal refuses the exact head; another account cannot withdraw it, and fresh independent approval restores it"
+
+    def exact_head_approval():
+        comments(("reviewer", written + signed))
+        commit({"src/more.py": lines(LIMIT)})
+        run("git", "checkout", "-q", "main")
+        commit({"lib/base.py": lines(3 * LIMIT)})
+        run("git", "checkout", "-q", "feature")
+        run("git", "merge", "-q", "--no-edit", "main")
+        current = run("git", "rev-parse", "HEAD")
+        merge_check(status=1, contains=f"Growth approved: {PR} at {current}: <why>")
+        comments(("reviewer", f"Growth approved: {PR} at {current}: reviewed this exact head." + signed))
+        merge_check(contains=f"census: production growth approved at {current}")
+        later = commit({"src/more.py": lines(LIMIT + 1)})
+        merge_check(status=1, contains=f"Growth approved: {PR} at {later}: <why>")
+        return "an ancestor approval refuses small later growth and a base merge; only a fresh exact-head approval admits it"
+
+    for case in (withdrawn_approval, exact_head_approval):
+        try:
+            print(f"PASS: {case()}")
+        except AssertionError as why:
+            failed.append(case.__name__)
+            print(f"FAIL: {case.__name__}: {' '.join(str(why).split())[:400]}")
 
     run("git", "checkout", "-q", "-B", "feature", "main")
     commit({"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
@@ -217,7 +242,6 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         return "incomplete Python strings and calls are counted without crashing the merge check"
 
 
-    failed = []
     for case in (incomplete_python, tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines):
         try:
             print(f"PASS: {case()}")
