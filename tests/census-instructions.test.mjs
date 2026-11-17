@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 
-const scratch = mkdtempSync(join(tmpdir(), "census-instructions-"));
+// Census loads every ancestor's .claude/CLAUDE.md, as Claude Code does; a TMPDIR under a real home (a gate host's)
+// added that home's instructions to both fixtures and held the 11-17 deploy at 4541 tokens. /tmp has no such ancestor.
+const scratch = mkdtempSync("/tmp/census-instructions-");
 after(() => rmSync(scratch, { recursive: true, force: true }));
 const instructions = (home, ...args) => spawnSync(resolve("git/census/census"), ["instructions", "--home", home, "--cwd", home, ...args], { encoding: "utf8" });
 
