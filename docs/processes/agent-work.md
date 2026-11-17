@@ -16,6 +16,7 @@ Brief the complete set of goals and expect it finished in one go: the worker des
 
 Every delegated task carries this brief, and the worker's report answers it field by field.
 The Safety block makes the brief the spec, so the review confirms it rather than writing it.
+A brief for search, research, construction or system work also carries each [prompt library](prompt-library.md) entry whose trigger matches, pasted under Constraints.
 
 ```text
 Outcome:  <the user-visible result, in the requester's words>

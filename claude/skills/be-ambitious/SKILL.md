@@ -14,7 +14,7 @@ The task is the text after the invocation, else the latest request in the conver
 
 Name the field first (SRE incident response, clinical pharmacology, zero-knowledge proof engineering), then answer for that field with the actual thing, not its category:
 
-1. **Expert moves not asked for.** The two or three moves that separate expert from competent work here, such as naming the decision the work serves, checking base rates, reproducing before fixing, or writing the strongest counter-argument.
+1. **Expert moves not asked for.** The two or three moves that separate expert from competent work here, such as naming the decision the work serves, checking base rates, reproducing before fixing, or writing the strongest counter-argument. The [prompt library](../../../docs/processes/prompt-library.md) holds graded moves with their triggers; use a matching entry and its evidence grade before inventing one.
 2. **Rawest material.** The primary source the expert starts from instead of a digest: the dataset, not the chart; the filing, not the article; the logs and code, not the bug report; the methods section, not the abstract. Say where it lives: here that is often a trace, a run's journal, `origin/<default>` or the served endpoint.
 3. **Named methods and tools.** Techniques, instruments, libraries or commands, each with the reason it fits this task.
 4. **Outside check.** What, other than the user or the model, shows the result is right: a test suite, benchmark, reproduction, ground-truth data, known answer, measurement, independent reviewer or real user behavior. State the pass line and the failure line, as numbers where the check allows.
