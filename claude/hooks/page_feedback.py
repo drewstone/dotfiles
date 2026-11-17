@@ -24,6 +24,7 @@ from page_author import PORT, STATE
 
 def queue(record, message):
     with os.fdopen(os.open(STATE / "inbox.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "a") as inbox:
+        fcntl.flock(inbox, fcntl.LOCK_EX)  # session_start rewrites the inbox under this lock
         inbox.write(json.dumps({"cwd": record["cwd"], "message": message, "at": time.time()}) + "\n")
 
 
@@ -51,11 +52,15 @@ class Feedback(BaseHTTPRequestHandler):
         if not record or not text:
             return self.answer(403, False, "Refused: unknown page token, or no text.")
         message = f"[page feedback] {record['page']}\n{text}"
-        sender = shutil.which("page-feedback-send")
-        run = sender and subprocess.run([sender, record["sid"]], input=message, capture_output=True, text=True, timeout=20)
+        sender, run, why = shutil.which("page-feedback-send"), None, "no page-feedback-send on PATH"
+        try:
+            run = sender and subprocess.run([sender, record["sid"]], input=message, capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError) as error:  # a hung or broken sender still queues
+            why = f"page-feedback-send: {type(error).__name__}"
         if run and run.returncode == 0:
             return self.answer(200, True, f"Delivered to {record['name']}.")
-        why = (run.stderr.strip().splitlines() or [f"exit {run.returncode}"])[-1] if run else "no page-feedback-send on PATH"
+        if run:
+            why = (run.stderr.strip().splitlines() or [f"exit {run.returncode}"])[-1]
         queue(record, message)
         self.answer(200, False, f"Not delivered to {record['name']} ({why}). Queued for the next session in {record['cwd']}; "
                                 f"by hand: printf %s {shlex.quote(message)} | page-feedback-send {record['sid']}")
