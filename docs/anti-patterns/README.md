@@ -44,6 +44,7 @@ Before claiming done:
 2. Apply [UI evidence](ui-evidence.md) to visible product changes, including PR attachments.
 3. State what was removed, not only what was added.
 4. Record functional, craft and user-evidence verdicts.
+5. For a page that reports a run or result, pass the [result page gate](review-gates.md#result-page-gate).
 
 ## Source Discipline
 

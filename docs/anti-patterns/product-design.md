@@ -100,3 +100,37 @@ Check responsive text fit and reflow. Allow necessary wrapping and accessible sc
 
 When the claim and the surface disagree, do not keep either.
 Write three other ways to show the claim (another real surface, a real capture, a narrower claim that the surface does prove), pick the one a buyer recognises, and cut the caption.
+
+## Result and run pages
+
+A page that reports what an automated run, job or experiment did.
+Its reader has thirty seconds and has never seen the system.
+The first screen answers six questions in plain words: what was asked; what happened, with the number, its unit, the baseline and the bar; how sure, and why; whether it is finished; what it cost; what to do next.
+
+Bad:
+
+- a status that contradicts the records: "Running" after the result passed its check, "waiting on" a step that ended days ago
+- one chip carrying two answers, such as the verdict joined to the state of the logs
+- a verdict that blames the result for an instrument failure: "did not pass" when the measurement could not run
+- a verdict without its number, or a number without its unit, baseline and bar
+- the brief printed as the finding: the question, hypothesis or success definition the run was given, shown as if it were what happened
+- internal vocabulary on the first screen: names of comparators, stages, contracts, nodes, seats, versions, traces
+- counts that read as verdicts: "0 findings" on a run that produced a working change
+- the result described but never drawn: the object, the diff, the timing against its baseline
+- a next action set in bold text instead of a link or button
+- an alarm without its cause, its cost and the action that clears it
+- a masthead centred in an empty viewport, or a second column that is mostly blank
+- one name for several agents or versions
+- copy that narrates the system or hedges: "the system's own test checked this apart from the team"
+
+Removal test: each visible element names the reader question it answers.
+Remove an element that answers none; treat an element whose answer contradicts the records as a defect, not a style choice.
+
+Why these pages regress:
+
+- They are proven by tests of strings and by code review, and nobody looks at the rendered page.
+- No record holds the result's number, baseline, bar and object, so the page fills its slots with the run's brief.
+- Status is computed in several places from partial state, so the places disagree.
+- Redesigns stop at a storyboard, and the build that follows ships a slice.
+
+Fix the cause, not the page: one function computes every status from the records, settlement writes the result as data, and the [result page gate](review-gates.md#result-page-gate) runs on the rendered page before merge and after deploy.
