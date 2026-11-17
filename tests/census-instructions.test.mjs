@@ -24,6 +24,8 @@ test("census instructions measures a fixture's load, duplicates, conflicts, hook
   assert.deepEqual(m.move.drop.map((d) => at(d.copy)), [".claude/process.md:1", ".claude/process.md:1"]);
 });
 
+// The load this budget measures; a change to it selects this test in its own deploy check (dotfiles#44 grew it past the budget unrun).
+// deploy-check: selected by claude/CLAUDE.md claude/AGENTS.md claude/RTK.md claude/directives/** claude/hooks/** claude/skills/**/SKILL.md tests/fixtures/census-instructions/**
 test("census instructions holds the installed load budget and refuses a measured tighter bound", () => {
   const home = join(scratch, "installed"), claude = join(home, ".claude");
   mkdirSync(join(claude, "skills"), { recursive: true });
