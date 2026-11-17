@@ -109,10 +109,23 @@ def install(home, guard):
     with config_path.open('a+') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
         stream.seek(0)
-        existing = tomllib.loads(stream.read()).get('hooks', {}).get('state', {}).get(key)
+        text = stream.read()
+        state = tomllib.loads(text).get('hooks', {}).get('state', {})
+        existing = state.get(key)
         if existing:
-            if existing.get('trusted_hash') != current_hash:
+            if existing.get('trusted_hash') == current_hash:
+                return
+            # Dropping a replaced guard renumbers the group (pre_tool_use:2:0 became :0:0, 11-17): the same hash trusted at
+            # another index of this file is the same guard moved, not an edit for a human to review.
+            stale = f'[hooks.state.{json.dumps(key)}]\ntrusted_hash = {json.dumps(existing.get("trusted_hash"))}'
+            if stale not in text or not any(k.startswith(key.rsplit(':', 2)[0] + ':') and v.get('trusted_hash') == current_hash
+                                            for k, v in state.items()):
                 raise RuntimeError(f'{path} changed since it was trusted; review it with Codex /hooks')
+            stream.truncate(0)
+            stream.write(text.replace(stale, f'[hooks.state.{json.dumps(key)}]\ntrusted_hash = {json.dumps(current_hash)}'))
+            stream.flush()
+            os.fsync(stream.fileno())
+            print(f'  CODEX {path}: {Path(guard).name} trusted at its new index')
             return
         stream.write(f'\n[hooks.state.{json.dumps(key)}]\ntrusted_hash = {json.dumps(current_hash)}\n')
         stream.flush()
