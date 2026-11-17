@@ -1,6 +1,6 @@
 ---
 name: pursue
-description: Build and compare architectural changes against a measured baseline, including independent variants and equal-resource architecture comparisons.
+description: Compare independent architecture variants against a measured baseline at equal resources.
 ---
 
 # Pursue

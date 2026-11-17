@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Coordinate dependent or parallel agent tasks, including independent architecture tracks, through available tools and deliver one integrated result.
+description: Coordinate dependent or parallel agent tasks through available tools and deliver one integrated result.
 ---
 
 # Orchestrate
