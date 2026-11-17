@@ -9,7 +9,9 @@
 
 set -uo pipefail
 
-EXTRACT="$HOME/dotfiles/claude/tools/halo-extract.mjs"
+# Installed as a link into ~/.claude/hooks: resolve it back to this checkout, wherever that is (~/dotfiles, ~/code/dotfiles).
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+EXTRACT="$(cd "$(dirname "$SELF")/../tools" 2>/dev/null && pwd)/halo-extract.mjs"
 OUT_DIR="$HOME/.claude/halo"
 OUT="$OUT_DIR/profiles.jsonl"
 
