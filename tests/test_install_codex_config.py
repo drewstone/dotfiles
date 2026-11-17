@@ -22,7 +22,7 @@ class InstallCodexConfigTest(unittest.TestCase):
             self.assertEqual(config.read_text(), original)
             self.assertEqual(subprocess.run(command).returncode, 0)
             parsed = tomllib.loads(config.read_text())
-            self.assertEqual(parsed, {**tomllib.loads(original), 'model': 'gpt-6.1-sol', 'model_reasoning_effort': 'high'})
+            self.assertEqual(parsed, {**tomllib.loads(original), 'model': 'gpt-6.2-astra', 'model_reasoning_effort': 'high'})
             self.assertIn('# keep this comment', config.read_text())
             self.assertTrue(enrolled.is_symlink())
             self.assertEqual(config.stat().st_mode & 0o777, 0o600)
