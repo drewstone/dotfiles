@@ -51,7 +51,7 @@ The plan names the strongest method the field already uses for this kind of obje
 **Evidence:** n=1, the codeword case.
 The first run, one agent for two hours, annealed toward fewer zero entries and stalled at 7 zeros.
 A first-moment count gives about 3.7e6 target words among 3^54 (about 5.8e25) codewords, a density near 6e-20 that local search does not reach, while enumerating value patterns on an information set expects a first hit after about 5e9 patterns.
-With that count and method written into its task, a four-hour second run enumerated information-set patterns and found a target after about 1.8e9 patterns, 0.9 s of compute on 8 cores, about 30 minutes after it started; an independent check confirmed the word.
+With that count and method written into its task, a four-hour second run enumerated information-set patterns and found a target after about 1.8e9 patterns, 0.9 s of compute on 8 cores, about 19 minutes after it started; an independent check confirmed the word.
 The second run also had workers and twice the budget, so the count's own effect is not isolated.
 Sources for the method: R. Hamming, "You and Your Research" (1986), on working only where there is a reasonable attack; J. R. Platt, "Strong Inference", Science 146:347 (1964), on alternatives and the test that excludes them.
 
@@ -150,7 +150,7 @@ A sentence that describes a check without its receipt is narration and carries n
 **Targets:** reports that describe checks that were not run, or explain a failure with a cause nobody observed.
 
 **Evidence:** n=1, the codeword case.
-After the refusal above, the worker's report blamed the platform for re-serializing the array; the stored claim showed the hand-typed array was 110 entries long, which a stored run of its own check would have shown.
+After the refusal above, the worker's report blamed the platform for re-serializing the array; the stored claim showed the hand-typed array was 110 entries long, which its own checker, run on the submitted claim rather than on the program's file, would have shown.
 The lead's side of this rule is [rule 9](../../claude/AGENTS.md): verify the receipt, not the summary.
 
 **Test:** family: tasks with a required check; arms: with and without this entry; metric: share of check claims in the final report that match a command and output in the tool-call log, and share of causes stated without an observation.
@@ -292,7 +292,7 @@ Practitioner sources: Anthropic, "Effective context engineering for AI agents" (
 Results on instructions to be brief are mixed: a concise-reasoning prompt halved response length with an accuracy loss on some math tasks (M. Renze and E. Guven, arXiv:2401.05618), and token budgets set too tight raised total tokens (T. Han et al., arXiv:2412.18547).
 In the cost map, the first model call carried about 14.7K input tokens, each root agent made 36 to 94 calls, and cache hit rates were 90.8% to 98.2%.
 A coding CLI's default system prompt, about 8.5K characters, reached the research agents with instructions to minimize output tokens and answer in fewer than 4 lines.
-One agent lost 21 minutes to two maximal-effort steps that hit the output cap without a tool call.
+One agent lost 21 minutes to two extra-high reasoning-effort steps that hit the output cap without a tool call.
 Sandboxes stayed held 18 to 42 minutes after the agent session ended, about 36% of box-hours across three pilots, because bookkeeping steps ran before trace export and teardown.
 
 **Test:** family: a fixed set of tasks the current harness already completes, taken from real runs; arms: the current harness and the changed one, same models and seats; metric: billed cost per completed task, with completion rate no more than 5 points lower.
