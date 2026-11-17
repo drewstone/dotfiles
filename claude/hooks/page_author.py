@@ -85,7 +85,8 @@ def body_start(text):
 
 
 def pre_tool_use(payload):
-    """{"updatedInput": stamped input} for a Write of a page, else {}; stamps each page `open` names that has no stamp, or this session's stamp without the feedback box. Never raises.
+    """{"updatedInput": stamped input} for a Write of a page, else {}; stamps each page `open` names that has no stamp,
+    or this session's stamp without the feedback box. Never raises.
     A page a Bash call writes and opens in the same call is not there yet, so it stays unstamped until its next open: a
     rewritten command (an `open` wrapper) was refused by the Bash tool's own check as brace-with-quote obfuscation."""
     tool, inp = payload.get("tool_name"), payload.get("tool_input") or {}
