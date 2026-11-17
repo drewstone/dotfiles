@@ -59,7 +59,8 @@ A PR whose body carries neither cannot be approved until it has one, and a comme
 When no record names the writer, a maintainer who has read the whole diff adopts the PR: the body says the writer is unrecorded and carries the adopter's line, and the adopter's line counts as the writer's.
 
 The refusal prints that line filled in for the head it read; `<why>` is the reviewer's own words and may not be left as written.
-An approval holds for a later head that descends from the approved sha while the PR's total has grown by at most `growthLimit` since; a rewritten history needs a new one.
+An approval counts only at the exact head being merged; every later head needs its own approval.
+A later comment beginning `Growth line withdrawn` (also accepted in bold) by the same account voids that account's earlier approvals on the PR. An independent approval posted after the withdrawal can approve the exact head again.
 `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's comments and counts only those by the authenticated user; a caller that posts for several authors keeps the author from posting its own.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
 A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge makes three REST reads (the PR, its comments, the user), so such merges stop while the REST quota is exhausted; a merge at or under the limit makes none.
