@@ -9,7 +9,7 @@ import tempfile
 import tomllib
 
 
-DEFAULTS = {'model': 'gpt-6.1-sol', 'model_reasoning_effort': 'high'}
+DEFAULTS = {'model': 'gpt-6.2-astra', 'model_reasoning_effort': 'high'}
 
 
 def main():
