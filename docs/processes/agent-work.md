@@ -40,7 +40,7 @@ Report back:
   evidence:    <commands with exit codes, SHAs, PR URLs, receipts>
   changed:     <files and PRs>
   constraints: <each box above: kept, or what broke and when>
-  open:        <what remains, its owner and the next check>
+  open:        <what remains and each gap found on the way: its issue, owner, fix state and next check>
 ```
 
 ## Choose the checkout
