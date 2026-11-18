@@ -33,6 +33,7 @@ Safety, required when the change can delete data, send bytes off a box, or chang
   Do not undo:  <earlier decisions this change must not reverse, each with its link>
   Red first:    <each failure the change must prevent, as a test the worker shows failing before the fix>
   Review:       opens with `hold` and a comment naming the review and its owner; an independent adversarial review passes before `hold` comes off
+Time box: <UTC end>; read `date -u` before each long step and never compare times from memory; at the box, save state and report partial
 Done when: <observable condition>, proven by <command and output, URL, receipt or SHA>
 Report back:
   status:      done | partial | blocked
