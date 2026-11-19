@@ -67,6 +67,7 @@ When no record names the writer, a maintainer who has read the whole diff adopts
 The refusal prints both forms filled in for the head it read, with `N` set to the charge rounded up to a whole line; `<why>` is the reviewer's own words and may not be left as written.
 A head that is neither the exact head approved nor within a ceiling approval needs a new approval.
 A later comment beginning `Growth line withdrawn` (also accepted in bold) by the same account voids that account's earlier approvals of either form on the PR. An independent approval posted after the withdrawal can approve again.
+Every approval posted since the last withdrawal counts, so lowering a ceiling takes a withdrawal and a new approval.
 `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's comments and counts only those by the authenticated user; a caller that posts for several authors keeps the author from posting its own.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
 A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge makes three REST reads (the PR, its comments, the user), so such merges stop while the REST quota is exhausted; a merge at or under the limit makes none.
