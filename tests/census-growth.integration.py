@@ -199,7 +199,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
             run("git", "add", "-A")
             run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: calls", contains=f"this change adds {charged} production lines")
             merge_check(pr=None)
-        return f"six calls on 6 lines and wrapped on 72 both charge {charged} lines and merge unapproved"
+        return f"six calls on 6 lines and wrapped on 72 both charge {charged} lines and merge with no declaration"
 
     def comments_pay_nothing():
         run("git", "checkout", "-q", "main")
@@ -213,7 +213,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         commit({"tests/test_old.py": lines(758, "check")})
         branch("retired", {"tests/test_old.py": None, "src/feature.py": lines(227)})
         merge_check(status=1, contains="the PR adds 227 production lines")
-        return "227 production lines with 758 test lines deleted need an approval"
+        return "227 production lines with 758 test lines deleted need a declaration"
 
     def restores():
         run("git", "checkout", "-q", "main")
