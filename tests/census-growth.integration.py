@@ -241,8 +241,75 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
             merge_check(pr=None)
         return "incomplete Python strings and calls are counted without crashing the merge check"
 
+    def ceiling(sha, n, lane=signed):
+        return f"Growth approved: {PR} at {sha} up to {n} lines: the parser is new and reuses nothing.{lane}"
 
-    for case in (incomplete_python, tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines):
+    def reviewed(name):
+        """A PR of 2 * LIMIT production lines whose head a reviewer read; each ceiling case first shows its approval admits it."""
+        run("git", "checkout", "-q", "-B", name, "main")
+        head = commit({"src/parser.py": lines(LIMIT), "lib/parser.py": lines(LIMIT)})
+        comments(("reviewer", ceiling(head, 2 * LIMIT + 10)))
+        merge_check(contains=f"census: production growth approved at {head}")
+        return head
+
+    def ceiling_survives_fixups():
+        run("git", "checkout", "-q", "-B", "ceiling", "main")
+        approved = commit({"src/parser.py": lines(LIMIT), "lib/parser.py": lines(LIMIT)})
+        out = merge_check(status=1, contains=f"Growth approved: {PR} at {approved}: <why>\n  Session: <the reviewer's own>")
+        assert f"Growth approved: {PR} at {approved} up to {2 * LIMIT} lines: <why>\n  Session: <the reviewer's own>" in out, out
+        comments(("reviewer", ceiling(approved, 2 * LIMIT + 10)))
+        merge_check(contains=f"census: production growth approved at {approved}")
+        fixup = commit({"src/parser.py": lines(LIMIT + 10)})
+        merge_check(contains=f"census: production growth approved at {fixup}")
+        run("git", "checkout", "-q", "main")
+        commit({"lib/later.py": lines(3 * LIMIT, "later")})
+        run("git", "checkout", "-q", "ceiling")
+        run("git", "merge", "-q", "--no-edit", "main")
+        merge_check(contains=f"census: production growth approved at {run('git', 'rev-parse', 'HEAD')}")
+        return f"one approval up to {2 * LIMIT + 10} lines admits the reviewed head, a fixup push to exactly {2 * LIMIT + 10} lines and a base merge"
+
+    def ceiling_caps_the_charge():
+        approved = reviewed("ceiling-over")
+        comments(("reviewer", ceiling(approved, 2 * LIMIT)))
+        over = commit({"src/parser.py": lines(LIMIT) + "pass\n"})
+        charge = f"{2 * LIMIT + 1 / PER_LINE:g}"
+        out = merge_check(status=1, contains=f"the approval at {approved} up to {2 * LIMIT} lines approves nothing: the PR's charge of {charge} production lines is over it")
+        assert f"Growth approved: {PR} at {over} up to {2 * LIMIT + 1} lines: <why>" in out, out
+        return f"a push one token past a {2 * LIMIT}-line ceiling is refused, naming the ceiling and the {charge}-line charge"
+
+    def ceiling_needs_the_reviewed_commit():
+        approved = reviewed("ceiling-reviewed")
+        run("git", "checkout", "-q", "-B", "ceiling-rewritten", "main")
+        rewritten = commit({"src/parser.py": lines(2 * LIMIT)})
+        merge_check(status=1, contains=f"the approval at {approved} up to {2 * LIMIT + 10} lines approves nothing: {rewritten} does not descend from it")
+        missing = "0123456789abcdef" * 2 + "01234567"
+        comments(("reviewer", ceiling(missing, 2 * LIMIT + 10)))
+        merge_check(status=1, contains=f"the approval at {missing} up to {2 * LIMIT + 10} lines approves nothing: it does not resolve in this clone")
+        return "a ceiling approval admits no head that lacks the approved commit, and none that names a commit this clone does not have"
+
+    def ceiling_needs_an_independent_reviewer():
+        approved = reviewed("ceiling-writer")
+        comments(("reviewer", ceiling(approved, 2 * LIMIT + 10, "\nRun ID: run_author")), ("author", ceiling(approved, 2 * LIMIT + 10)))
+        merge_check(status=1, contains=f"Growth approved: {PR} at {approved} up to {2 * LIMIT} lines: <why>")
+        return "a ceiling approval under the writer's own run, or posted by another account, approves nothing"
+
+    def ceiling_withdrawn():
+        approved = reviewed("ceiling-withdrawn")
+        comments(("reviewer", ceiling(approved, 2 * LIMIT + 10)), ("reviewer", "**Growth line withdrawn.** Findings need a new head."))
+        merge_check(status=1, contains=f"Growth approved: {PR} at {approved} up to {2 * LIMIT} lines: <why>")
+        return "a later withdrawal by the approving account voids a ceiling approval"
+
+    def ceiling_keeps_file_limit():
+        approved = reviewed("ceiling-caps")
+        comments(("reviewer", ceiling(approved, 2 * LIMIT + 1001)))
+        commit({"src/large.py": lines(1001)})
+        out = merge_check(status=1, contains="src/large.py: 1001 lines (new file)")
+        assert "census: production growth approved at" in out, out
+        return "a ceiling approval admits production growth only: a new 1001-line file is still refused"
+
+    for case in (incomplete_python, tokens_not_lines, comments_pay_nothing, tests_do_not_pay, restores, blobless_clone_refuses_restore, wide_lines,
+                 ceiling_survives_fixups, ceiling_caps_the_charge, ceiling_needs_the_reviewed_commit, ceiling_needs_an_independent_reviewer,
+                 ceiling_withdrawn, ceiling_keeps_file_limit):
         try:
             print(f"PASS: {case()}")
         except AssertionError as why:
