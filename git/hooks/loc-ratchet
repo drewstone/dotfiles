@@ -2,7 +2,6 @@
 """Enforce file sizes at commit, report growth and warn of long lines; `A..B [owner/repo#N]` is the merge check, which enforces growth."""
 from runpy import run_path
 from types import SimpleNamespace
-import math
 import os
 import re
 import sys
@@ -40,8 +39,7 @@ def main():
     total, oversized, long, keys = census.production_delta(".", base, head, merge)
     # One total of production code: deletions anywhere offset additions anywhere, a cited restore is not growth, and tests or
     # docs never pay for it. Only a repository's first commit grows from nothing.
-    # Rounding drops float noise from the subtractions, so the printed charge is the one a ceiling approval is compared with.
-    total = round(total - (merging and census.restored(".", base, head, keys)), 9) if census.git(".", "ls-tree", base).strip() else 0
+    total = total - (merging and census.restored(".", base, head, keys)) if census.git(".", "ls-tree", base).strip() else 0
     limit, pr = census.C.GROWTH_LIMIT, " ".join(sys.argv[2:])
     if not merging and total > 0:  # a commit is never refused for growth
         print(f"loc-ratchet: this change adds {total:g} production lines; a PR whose total passes {limit} needs a growth approval to merge (git/census/README.md).", file=sys.stderr)
@@ -51,15 +49,13 @@ def main():
     grown = merging and total > limit
     if (oversized or grown) and third_party_fork():
         return 0
-    if grown := grown and not (pr and census.approved_growth(head, pr, total)):
-        approval = lambda ceiling: f"  Growth approved: {pr or '<owner>/<repo>#<number>'} at {head}{ceiling}: <why>\n  Session: <the reviewer's own>\n"
+    if grown := grown and not (pr and census.approved_growth(head, pr)):
         print(f"loc-ratchet: refusing merge: the PR adds {total:g} production lines (code tokens over {census.C.TOKENS_PER_LINE}),"
               f" over the {limit} that merge unapproved.\n"
               "  Deleted tests and docs do not pay for it; a restore of deleted code cites the deleting commit in a commit message, `Restores: <sha>`.\n"
               "  Otherwise a reviewer who did not write it judges it new, proportionate and reusing nothing that exists, then comments on the PR,\n"
-              f"  under a session or run other than the one the PR's body names, one of:\n{approval('')}{approval(f' up to {math.ceil(total)} lines')}"
-              "  The second also approves each later push that descends from this head while the PR's charge stays at or under its ceiling.",
-              file=sys.stderr)
+              f"  under a session or run other than the one the PR's body names:\n"
+              f"  Growth approved: {pr or '<owner>/<repo>#<number>'} at {head}: <why>\n  Session: <the reviewer's own>", file=sys.stderr)
     for path, old, new in oversized:
         print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
               f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)

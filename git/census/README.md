@@ -47,27 +47,20 @@ A total at or under `growthLimit` in [patterns.json](patterns.json) merges with 
 A restore is not growth: a commit message in the PR that carries `Restores: <sha>` for a commit on the base branch makes each added line that commit removed, matched by its whitespace-normalized text, charge nothing, and the check prints it as a debit against that deletion.
 That lookup reads the deleting commit's blobs without fetching them; a clone that lacks them refuses the claim and charges the lines in full.
 A commit and the merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess; it never refuses.
-Above the growth limit, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR with one of two approval lines and their own session line:
+Above the growth limit, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR:
 
 ```text
 Growth approved: <owner>/<repo>#<number> at <40-hex head sha>: <why>
-Growth approved: <owner>/<repo>#<number> at <40-hex sha> up to <N> lines: <why>
 Session: <the reviewer's own session, or `Run ID: <run>`>
 ```
-
-The first, the exact-head form, approves only that head; use it for a finished PR.
-The second, the ceiling form, approves the head being merged when that head is the named sha or descends from it in the merging clone, and the PR's charge at that head, the total the check prints, is at or under `N`; use it when the reviewer has read the capability and accepts fixup pushes within `N` lines.
-A ceiling form naming a commit the clone does not have approves nothing; the check never fetches it.
-The check does not compare a later push with the code the reviewer read: within `N`, a later push may change or replace it.
 
 The PR's body names who wrote it with a `Run ID:` or `Session:` line, and the approving comment carries one the body does not.
 A PR whose body carries neither cannot be approved until it has one, and a comment with no such line, or with the PR's, approves nothing.
 When no record names the writer, a maintainer who has read the whole diff adopts the PR: the body says the writer is unrecorded and carries the adopter's line, and the adopter's line counts as the writer's.
 
-The refusal prints both forms filled in for the head it read, with `N` set to the charge rounded up to a whole line; `<why>` is the reviewer's own words and may not be left as written.
-A head that is neither the exact head approved nor within a ceiling approval needs a new approval.
-A later comment beginning `Growth line withdrawn` (also accepted in bold) by the same account voids that account's earlier approvals of either form on the PR. An independent approval posted after the withdrawal can approve again.
-Every approval posted since the last withdrawal counts, so lowering a ceiling takes a withdrawal and a new approval.
+The refusal prints that line filled in for the head it read; `<why>` is the reviewer's own words and may not be left as written.
+An approval counts only at the exact head being merged; every later head needs its own approval.
+A later comment beginning `Growth line withdrawn` (also accepted in bold) by the same account voids that account's earlier approvals on the PR. An independent approval posted after the withdrawal can approve the exact head again.
 `gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's comments and counts only those by the authenticated user; a caller that posts for several authors keeps the author from posting its own.
 `CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
 A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge makes three REST reads (the PR, its comments, the user), so such merges stop while the REST quota is exhausted; a merge at or under the limit makes none.

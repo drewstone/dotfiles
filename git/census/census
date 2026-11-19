@@ -113,9 +113,8 @@ def github(endpoint, *flags):
 def repository(url):
     m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
-def approved_growth(head, pr, charge):
-    """An approval names the exact merge head, or a commit the head descends from in this clone with a ceiling the PR's charge
-    stays at or under; a later withdrawal by the approving account voids its earlier lines.
+def approved_growth(head, pr):
+    """Only the exact merge head counts; a later withdrawal by the approving account voids its earlier lines.
     The approving comment must name a run or session absent from the PR body, which must identify its writer."""
     if not re.fullmatch(r"[\w.-]+/[\w.-]+#[1-9]\d*", pr):
         raise Refused(f"growth approval needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
@@ -129,22 +128,9 @@ def approved_growth(head, pr, charge):
         body = comment["body"]
         if re.search(r"(?mi)^\s*(?:\*\*)?Growth line withdrawn\b", body):
             return False
-        if not lanes(body) or lanes(body) & authors:
-            continue
-        for sha, ceiling in re.findall(rf"(?mi)^Growth approved: {re.escape(pr)} at ([0-9a-f]{{40}})(?: up to (\d+) lines)?: *(?!<why>)\S", body):
-            sha = sha.lower()
-            if not ceiling and sha != head:
-                continue
-            if ceiling:  # only this clone's history counts: a commit it lacks is never fetched, and refuses the claim
-                descends = subprocess.run(["git", "merge-base", "--is-ancestor", sha, head], capture_output=True,
-                                          env=dict(os.environ, GIT_NO_LAZY_FETCH="1")).returncode
-                refusal = ("it does not resolve in this clone" if descends not in (0, 1) else f"{head} does not descend from it" if descends
-                           else charge > int(ceiling) and f"the PR's charge of {charge:g} production lines is over it")
-                if refusal:
-                    print(f"census: the approval at {sha} up to {ceiling} lines approves nothing: {refusal}", file=sys.stderr)
-                    continue
-            print(f"census: production growth approved at {head}" + (f", {charge:g} lines within the {ceiling} approved at {sha}" if ceiling else ""),
-                  file=sys.stderr)
+        if lanes(body) and not lanes(body) & authors and re.search(
+                rf"(?mi)^Growth approved: {re.escape(pr)} at {re.escape(head)}: *(?!<why>)\S", body):
+            print(f"census: production growth approved at {head}", file=sys.stderr)
             return True
     return False
 
