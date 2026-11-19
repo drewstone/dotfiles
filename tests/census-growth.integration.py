@@ -128,13 +128,13 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
 
     failed = []
 
-    def grown(name):
+    def grown(name, **expect):
         """A PR of 2 * LIMIT production lines, committed through the hooks."""
         run("git", "checkout", "-q", "-B", name, "main")
-        return commit({"src/parser.py": lines(2 * LIMIT)}, hooks=HOOKS, contains=f"a PR over {LIMIT} says why in its body with `Growth: <why>`")
+        return commit({"src/parser.py": lines(2 * LIMIT)}, hooks=HOOKS, **expect)
 
     def undeclared_growth_refused():
-        grown("undeclared")
+        grown("undeclared", contains=f"a PR over {LIMIT} says why in its body with `Growth: <why>`")
         for pr in (PR, None):
             out = merge_check(pr=pr, status=1, contains=f"the PR adds {2 * LIMIT} production lines")
             assert "Large is fine when the capability earns it" in out and "\n  Growth: <why>\n" in out, out
