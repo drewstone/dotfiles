@@ -54,7 +54,7 @@ State the proposed benefit and the smallest check that could refute it, and run 
 
 When the project's knowledge base uses `prior` pages, record the external claim as `external-unverified` until local reproduction supports promotion to `measured`.
 Keep the external source and local result separately attributable, and use the project's current ingestion interface.
-For authorized adoption, make the smallest change in the owning code or guidance and verify it; a no-change decision is complete when its evidence is recorded.
+For authorized adoption, build the complete change in the owning code or guidance, reusing what exists, and verify it; a no-change decision is complete when its evidence is recorded.
 
 ## Form and compare candidates
 

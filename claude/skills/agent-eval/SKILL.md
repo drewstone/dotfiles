@@ -9,6 +9,7 @@ Change the agent-eval package itself while preserving trustworthy measurements a
 
 ## Read the owning source
 
+Inside the agent-eval checkout, its `.claude/skills/agent-eval/SKILL.md` owns the maintainer procedure and its `AGENTS.md` owns delivery; this skill holds what applies from any repository.
 Start with the package's current `docs/concepts.md` and the public exports in its `package.json`.
 Read the implementation and existing tests for the affected export before adding a primitive.
 Use the current maintained checkout; confirm the target package's actual imports when changing an existing consumer.

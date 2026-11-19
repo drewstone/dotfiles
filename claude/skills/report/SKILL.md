@@ -55,7 +55,7 @@ Preserve the original acceptance criteria and report stricter interpretations se
 
 Lead with what is happening, what useful work exists, and what remains uncertain.
 Say plainly when the fleet is idle, and name the actual stop cause and the corrective action already underway.
-Recommend the smallest action that can resolve the important uncertainty or advance useful work, and continue actions the active task already authorizes.
+Recommend the action with the largest effect on the outcome, sized to the outcome and never to a line count, name the cheapest check that could refute it, and continue actions the active task already authorizes.
 Respect current ownership, resource limits, and uncertain admissions before launching replacements.
 
 Read [the fleet review register](references/fleet-review.md) for recurring fleet reviews or a broad research audit.

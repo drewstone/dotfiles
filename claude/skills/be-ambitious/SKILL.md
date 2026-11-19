@@ -5,8 +5,8 @@ description: Rewrite a task as the deeper version a top professional would ask f
 
 # Be ambitious
 
-Make the task deeper, not bigger: the same goal and scope, held to a higher standard through better sources, sharper methods and an outside check.
-Drop any suggestion that adds a deliverable, feature or side quest.
+Make the task deeper: the same goal, held to a higher standard through better sources, sharper methods and an outside check, at whatever size of work that standard takes.
+Drop any suggestion that serves a different goal.
 
 The task is the text after the invocation, else the latest request in the conversation; with neither, ask for it in one line.
 
