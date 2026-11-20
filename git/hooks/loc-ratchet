@@ -56,7 +56,7 @@ def main():
               f" over the {limit} that merge without saying why.\n"
               "  Large is fine when the capability earns it. Add this line to the PR body, with <why> saying what the capability is\n"
               "  and what existing code it reuses or replaces:\n"
-              "  Growth: <why>\n"
+              "Growth: <why>\n"
               "  Deleted tests and docs do not offset growth; a restore of deleted code is free when a commit message cites it, `Restores: <sha>`.",
               file=sys.stderr)
     for path, old, new in oversized:

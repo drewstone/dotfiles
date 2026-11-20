@@ -3,8 +3,9 @@
 
 Usage: python3 tests/census-growth.integration.py [tool-root]
 The commits run the hooks under git/hooks; the merge check is `loc-ratchet <merge-base>..<head> o/r#7`.
-GitHub is the only fake: CENSUS_GH names a gh that serves the PR's body, its comments and the authenticated user from files,
-and logs every call it receives.
+The merge check runs with origin https://github.com/o/r.git; commits run with no origin, so every commit ratchet runs.
+GitHub is the only fake: CENSUS_GH names a gh that serves the PR's body, its comments and the repository from files, byte for
+byte, and logs every call it receives.
 """
 import json
 import os
@@ -20,21 +21,16 @@ LIMIT = json.loads((ROOT / "git/census/patterns.json").read_text())["growthLimit
 PER_LINE = json.loads((pathlib.Path(__file__).resolve().parents[1] / "git/census/patterns.json").read_text())["tokensPerLine"]
 PR = "o/r#7"
 FAKE_GH = """#!/usr/bin/env python3
-import json, pathlib, re, sys
-args, state = sys.argv[1:], pathlib.Path(__file__).with_name("comments.json")
-with state.with_name("calls").open("a") as calls:
+import json, pathlib, sys
+args, here = sys.argv[1:], pathlib.Path(__file__).parent
+with (here / "calls").open("a") as calls:
     calls.write(" ".join(args[:2]) + "\\n")
-if args == ["api", "user"]:
-    print(json.dumps({"login": "reviewer"}))
-elif args == ["api", "repos/o/r/issues/7"] and state.with_name("body").exists():
-    print(json.dumps({"body": state.with_name("body").read_text()}))
-elif args[:3] == ["api", "repos/o/r/issues/7/comments", "--paginate"] and state.exists():
-    login = re.search(r'\\.user\\.login == "([^"]+)"', args[-1])[1]
-    for comment in json.loads(state.read_text()):
-        if comment["user"] == login:
-            print(json.dumps({"body": comment["body"]}))
-else:
+served = {"repos/o/r/issues/7": "body", "repos/o/r/issues/7/comments": "comments.json", "repos/o/r": "repo.json"}
+source = here / served.get(args[1] if args[:1] == ["api"] and len(args) > 1 else "", "unserved")
+if not source.exists():
     sys.exit(9)
+text = source.read_bytes().decode()
+print(json.dumps({"body": text}) if source.name == "body" else text)
 """
 
 
@@ -71,14 +67,25 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         run("git", "checkout", "-q", "-b", name, "main")
         return commit(files)
 
-    def merge_check(pr=PR, **expect):
-        return run(HOOKS / "loc-ratchet", f"{run('git', 'merge-base', 'main', 'HEAD')}..HEAD", *([pr] if pr else []), **expect)
+    def merge_check(pr=PR, origin="https://github.com/o/r.git", **expect):
+        if origin:
+            run("git", "remote", "add", "origin", origin)
+        try:
+            return run(HOOKS / "loc-ratchet", f"{run('git', 'merge-base', 'main', 'HEAD')}..HEAD", *([pr] if pr else []), **expect)
+        finally:
+            if origin:
+                run("git", "remote", "remove", "origin")
 
-    def comments(*rows):
-        (config / "comments.json").write_text(json.dumps([{"user": user, "body": body} for user, body in rows]))
+    def comments(*bodies):
+        (config / "comments.json").write_text(json.dumps([{"body": text} for text in bodies]))
 
     def body(text):
-        (config / "body").write_text(text)
+        (config / "body").write_bytes(text.encode())
+
+    def declaring(line, **expect):
+        """The merge check with `line` in the PR body; refused unless expected to pass."""
+        body(f"Adds a parser.\n\n{line}\nRun ID: run_author\n")
+        return merge_check(**({"status": 1, "contains": "\nGrowth: <why>\n"} | expect))
 
     def reads():
         """The GitHub calls since the last look, as `api <endpoint>`."""
@@ -137,14 +144,14 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         grown("undeclared", contains=f"a PR over {LIMIT} says why in its body with `Growth: <why>`")
         for pr in (PR, None):
             out = merge_check(pr=pr, status=1, contains=f"the PR adds {2 * LIMIT} production lines")
-            assert "Large is fine when the capability earns it" in out and "\n  Growth: <why>\n" in out, out
+            assert "Large is fine when the capability earns it" in out and "\nGrowth: <why>\n" in out, out
         return "a commit over the limit is told to say why; at merge, growth with no `Growth:` line is refused and the refusal prints the line to add"
 
     def declared_growth_merges():
         grown("declared")
         body(declared)
         reads()
-        merge_check(contains=f"census: {PR} declares its growth: a streaming parser no module has")
+        merge_check(contains=f"census: {PR} declares its growth: 'a streaming parser no module has; it replaces the line splitter in lib/main.py.'")
         assert reads() == ["api repos/o/r/issues/7"], "an over-limit merge read more than the PR"
         commit({"src/more.py": lines(3 * LIMIT, "more")})
         run("git", "checkout", "-q", "main")
@@ -155,22 +162,91 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         body(undeclared)
         return f"a `Growth:` line in the PR body merges {2 * LIMIT} lines with one GitHub read, and {5 * LIMIT} after a later push and a base merge"
 
-    def placeholder_refused():
+    def placeholders_refused():
         grown("placeholder")
-        for why in ("<why>", "", "   "):
-            body(f"Adds a parser.\n\nGrowth: {why}\nRun ID: run_author\n")
-            merge_check(status=1, contains="\n  Growth: <why>\n")
+        reasons = ("<why>", "", "   ", "\u200b", "\ufeff", "\u2060", "\\<why\\>", "`<why>`", '"<why>"', "why", "-", ".", "a b c", "two words",
+                   "<what the capability is, and what existing code it reuses or replaces>")
+        for why in reasons:
+            declaring(f"Growth: {why}")
+        declaring("Growth: <Dialog> primitive replacing three modal copies", status=0, contains="declares its growth: '<Dialog> primitive")
         body(undeclared)
-        return "a `Growth:` line left as `<why>`, empty or blank merges nothing"
+        return f"{len(reasons)} reasons that are blank, a placeholder, markup or under three words merge nothing; one that starts with <Dialog> merges"
 
-    def approval_comment_retired():
-        head = grown("retired-approval")
-        comments(("reviewer", f"Growth approved: {PR} at {head}: the parser is new and reuses nothing.\nSession: reviewer-1"))
-        merge_check(status=1, contains="\n  Growth: <why>\n")
+    def unwritten_text_refused():
+        grown("unwritten")
+        hidden = ("<!-- Growth: say what the capability is and what it reuses -->", "<!--\nGrowth: say what the capability is and what it reuses\n-->",
+                  "```\nGrowth: a quoted example of the declaration\n```", "~~~text\nGrowth: a quoted example of the declaration\n~~~",
+                  "```\nGrowth: an unclosed fence hides the rest of the body")
+        for text in hidden:
+            declaring(text)
+        declaring("<!-- template note -->\n```\ncode\n```\nGrowth: the same reason outside them counts", status=0, contains="declares its growth")
+        body(undeclared)
+        return f"a `Growth:` line inside an HTML comment or a fenced code block, {len(hidden)} ways, declares nothing; outside them it does"
+
+    def one_line_form():
+        grown("form")
+        for line in ("    Growth: four spaces make an indented code block", "- Growth: a bullet is another form", "**Growth:** bold is another form",
+                     "growth: lower case is another form", "> Growth: a quote is another form"):
+            declaring(line)
+        declaring("   Growth: three leading spaces still start the line", status=0, contains="declares its growth: 'three leading spaces")
+        body("Adds a parser.\r\n\r\nGrowth: a streaming parser no module has\r\nRun ID: run_author\r\n")
+        merge_check(contains="declares its growth: 'a streaming parser no module has'\n")
+        body(undeclared)
+        return "the line starts with `Growth:` after at most three spaces, in a CRLF body too; bullets, bold, quotes, lower case and code indents do not"
+
+    def origin_names_the_repository():
+        grown("origin")
+        body(declared)
+        reads()
+        merge_check(pr="other/r#7", status=2, contains="REFUSED: other/r#7 is not the repository this checkout's origin names")
+        assert reads() == [], "a mismatched PR was read"
+        merge_check(origin="git@github.com:O/R.git", contains="declares its growth")
+        merge_check(origin=None, status=2, contains="No such remote 'origin'")
+        body(undeclared)
+        return "a PR of another repository, or a checkout with no origin, refuses with exit 2 before any read; SSH and case differences match"
+
+    def reason_printed_escaped():
+        grown("escaped")
+        body("Growth: replaces the old loader \x1b[2J\x1b[31m with one reader\n")
+        out = merge_check(contains="declares its growth: 'replaces the old loader \\x1b[2J\\x1b[31m with one reader'")
+        assert "\x1b" not in out, out
+        body(undeclared)
+        return "terminal escapes in the reason are printed escaped, never raw"
+
+    def comment_declares_nothing():
+        grown("commented")
+        body(undeclared)
+        comments("Growth: a real reason for this capability")
+        reads()
+        merge_check(status=1, contains="\nGrowth: <why>\n")
+        assert reads() == ["api repos/o/r/issues/7"], "the check read more than the PR body"
         comments()
-        return "a `Growth approved:` comment from another session no longer merges growth"
+        return "a `Growth:` line in a comment, with none in the body, is refused, and the PR body is the only read"
 
-    for case in (undeclared_growth_refused, declared_growth_merges, placeholder_refused, approval_comment_retired):
+    def fork_lookup_reads():
+        env_file = config / "census.env"
+        env_file.write_text(f"CENSUS_GH={config / 'gh'}\nCENSUS_FORK_PARENT_OWNERS=upstream\n")
+        parent = lambda owner: (config / "repo.json").write_text(json.dumps({"fork": True, "parent": {"owner": {"login": owner}}}))
+        try:
+            grown("forked")
+            parent("upstream")
+            body(declared)
+            reads()
+            merge_check(contains="declares its growth")
+            assert reads() == ["api repos/o/r/issues/7"], "a declared merge read more than the PR body"
+            body(undeclared)
+            merge_check(status=1, contains="\nGrowth: <why>\n")
+            assert reads() == ["api repos/o/r/issues/7", "api repos/o/r"], "an undeclared merge did not read the PR body and the fork"
+            parent("someone-else")
+            out = merge_check()
+            assert "refusing" not in out and reads() == ["api repos/o/r/issues/7", "api repos/o/r"], out
+        finally:
+            env_file.write_text(f"CENSUS_GH={config / 'gh'}\n")
+            (config / "repo.json").unlink(missing_ok=True)
+        return "with the fork lookup on, a declared merge reads the PR body once, an undeclared one also reads the repository, and a third-party fork stays exempt"
+
+    for case in (undeclared_growth_refused, declared_growth_merges, placeholders_refused, unwritten_text_refused, one_line_form,
+                 origin_names_the_repository, reason_printed_escaped, comment_declares_nothing, fork_lookup_reads):
         try:
             print(f"PASS: {case()}")
         except AssertionError as why:
@@ -236,7 +312,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         run("git", "config", "uploadpack.allowFilter", "true")
         run("git", "clone", "-q", "--no-local", "--no-checkout", "--filter=blob:none", f"file://{repo}", clone)
         fork = run("git", "merge-base", "origin/main", "origin/cited-more", cwd=clone)
-        out = run(HOOKS / "loc-ratchet", f"{fork}..origin/cited-more", PR, cwd=clone, status=1, contains=f"the PR adds {300 + LIMIT + 1} production lines")
+        out = run(HOOKS / "loc-ratchet", f"{fork}..origin/cited-more", cwd=clone, status=1, contains=f"the PR adds {300 + LIMIT + 1} production lines")
         assert "no restore credit from" in out, out
         return "a clone without the deleted blobs refuses the restore claim and charges it in full"
 
