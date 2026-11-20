@@ -3,7 +3,8 @@
 
 Usage: python3 tests/census-growth.integration.py [tool-root]
 The commits run the hooks under git/hooks; the merge check is `loc-ratchet <merge-base>..<head> o/r#7`.
-GitHub is the only fake: CENSUS_GH names a gh that serves the authenticated user and the PR's comments from a file.
+GitHub is the only fake: CENSUS_GH names a gh that serves the PR's body, its comments and the authenticated user from files,
+and logs every call it receives.
 """
 import json
 import os
@@ -21,9 +22,11 @@ PR = "o/r#7"
 FAKE_GH = """#!/usr/bin/env python3
 import json, pathlib, re, sys
 args, state = sys.argv[1:], pathlib.Path(__file__).with_name("comments.json")
+with state.with_name("calls").open("a") as calls:
+    calls.write(" ".join(args[:2]) + "\\n")
 if args == ["api", "user"]:
     print(json.dumps({"login": "reviewer"}))
-elif args == ["api", "repos/o/r/issues/7"] and state.exists():
+elif args == ["api", "repos/o/r/issues/7"] and state.with_name("body").exists():
     print(json.dumps({"body": state.with_name("body").read_text()}))
 elif args[:3] == ["api", "repos/o/r/issues/7/comments", "--paginate"] and state.exists():
     login = re.search(r'\\.user\\.login == "([^"]+)"', args[-1])[1]
@@ -74,9 +77,21 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
     def comments(*rows):
         (config / "comments.json").write_text(json.dumps([{"user": user, "body": body} for user, body in rows]))
 
+    def body(text):
+        (config / "body").write_text(text)
+
+    def reads():
+        """The GitHub calls since the last look, as `api <endpoint>`."""
+        log = config / "calls"
+        found = log.read_text().splitlines() if log.exists() else []
+        log.unlink(missing_ok=True)
+        return found
+
+    undeclared = "Adds a parser.\n\nRun ID: run_author\n"
+    declared = "Adds a parser.\n\nGrowth: a streaming parser no module has; it replaces the line splitter in lib/main.py.\nRun ID: run_author\n"
     repo.mkdir()
     comments()
-    (config / "body").write_text("Adds a parser.\n\nRun ID: run_author\n")
+    body(undeclared)
     run("git", "init", "-q", "-b", "main")
     commit({"src/main.py": lines(40), "lib/main.py": lines(40), "old/dead.py": lines(LIMIT), "NOTES.md": lines(100, "note"),
             "src/literal.py": 'description = "@generated or DO NOT EDIT"\n'})
@@ -105,73 +120,73 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         merge_check(pr=None, status=int(extra > 0))
     branch("offset", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT), "old/dead.py": None})
     merge_check(pr=None)
-    print(f"PASS: {LIMIT} production lines merge unapproved, every extra token needs approval, and production deletions offset additions")
-
-    head = branch("feature", {"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
-    line = f"Growth approved: {PR} at {head}: "
-    merge_check(status=1, contains=f"the PR adds {2 * LIMIT} production lines")
-    merge_check(status=1, contains=line + "<why>\n  Session: <the reviewer's own>")
-    merge_check(pr=None, status=1, contains="Growth approved: <owner>/<repo>#<number> at")
-    signed = "\nSession: reviewer-1"
-    comments(("reviewer", line + "<why>" + signed), ("reviewer", f"Growth approved: o/r#8 at {head}: another PR" + signed),
-             ("author", line + "mine is new." + signed), ("reviewer", "Looks fine to me." + signed))
-    merge_check(status=1, contains=line + "<why>")
-    print("PASS: growth over the limit is refused; an unwritten why, another PR's approval and a comment by another account approve nothing")
-    written = line + "the parser is new and reuses nothing."
-    comments(("reviewer", written), ("reviewer", written + "\nRun ID: run_author"), ("reviewer", written + "\nSession: <the reviewer's own>"),
-             ("reviewer", written + signed + "\nRun ID: run_author"))
-    merge_check(status=1, contains=line + "<why>")
-    comments(("reviewer", written + signed))
-    (config / "body").write_text("Adds a parser.\n")
-    merge_check(status=1, contains="the PR's body carries no `Run ID:` or `Session:` line")
-    (config / "body").write_text("Adds a parser.\n\nRun ID: run_author\n")
-    print("PASS: an approval with no session line, with the PR's own, or on a PR whose body names no author approves nothing")
-    comments(("reviewer", f"Reviewed.\r\n{written}\r\nSession: reviewer-1\r\n"))
-    merge_check(contains=f"census: production growth approved at {head}")
-    print("PASS: one approval at the head admits growth across two directories")
+    reads()
+    branch("small-read", {"src/new.py": lines(LIMIT)})
+    merge_check()
+    assert reads() == [], "a merge at or under the limit read GitHub"
+    print(f"PASS: {LIMIT} production lines merge with no declaration and no GitHub read, every extra token needs one, and production deletions offset additions")
 
     failed = []
 
-    def withdrawn_approval():
-        # Preserve the incident's approval -> bold withdrawal -> fresh approval ordering.
-        withdrawn = "**Growth line withdrawn: do not merge " + head[:8] + ".** Reviewed findings require a new head."
-        comments(("reviewer", written + signed), ("author", withdrawn))
-        merge_check(contains=f"census: production growth approved at {head}")
-        comments(("reviewer", written + signed), ("reviewer", withdrawn))
-        merge_check(status=1, contains=line + "<why>")
-        comments(("reviewer", written + signed), ("reviewer", withdrawn), ("reviewer", written + signed))
-        merge_check(contains=f"census: production growth approved at {head}")
-        return "a later same-account withdrawal refuses the exact head; another account cannot withdraw it, and fresh independent approval restores it"
+    def grown(name, **expect):
+        """A PR of 2 * LIMIT production lines, committed through the hooks."""
+        run("git", "checkout", "-q", "-B", name, "main")
+        return commit({"src/parser.py": lines(2 * LIMIT)}, hooks=HOOKS, **expect)
 
-    def exact_head_approval():
-        comments(("reviewer", written + signed))
-        commit({"src/more.py": lines(LIMIT)})
+    def undeclared_growth_refused():
+        grown("undeclared", contains=f"a PR over {LIMIT} says why in its body with `Growth: <why>`")
+        for pr in (PR, None):
+            out = merge_check(pr=pr, status=1, contains=f"the PR adds {2 * LIMIT} production lines")
+            assert "Large is fine when the capability earns it" in out and "\n  Growth: <why>\n" in out, out
+        return "a commit over the limit is told to say why; at merge, growth with no `Growth:` line is refused and the refusal prints the line to add"
+
+    def declared_growth_merges():
+        grown("declared")
+        body(declared)
+        reads()
+        merge_check(contains=f"census: {PR} declares its growth: a streaming parser no module has")
+        assert reads() == ["api repos/o/r/issues/7"], "an over-limit merge read more than the PR"
+        commit({"src/more.py": lines(3 * LIMIT, "more")})
         run("git", "checkout", "-q", "main")
-        commit({"lib/base.py": lines(3 * LIMIT)})
-        run("git", "checkout", "-q", "feature")
+        commit({"lib/base.py": lines(3 * LIMIT, "base")})
+        run("git", "checkout", "-q", "declared")
         run("git", "merge", "-q", "--no-edit", "main")
-        current = run("git", "rev-parse", "HEAD")
-        merge_check(status=1, contains=f"Growth approved: {PR} at {current}: <why>")
-        comments(("reviewer", f"Growth approved: {PR} at {current}: reviewed this exact head." + signed))
-        merge_check(contains=f"census: production growth approved at {current}")
-        later = commit({"src/more.py": lines(LIMIT + 1)})
-        merge_check(status=1, contains=f"Growth approved: {PR} at {later}: <why>")
-        return "an ancestor approval refuses small later growth and a base merge; only a fresh exact-head approval admits it"
+        merge_check(contains=f"census: {PR} declares its growth")
+        body(undeclared)
+        return f"a `Growth:` line in the PR body merges {2 * LIMIT} lines with one GitHub read, and {5 * LIMIT} after a later push and a base merge"
 
-    for case in (withdrawn_approval, exact_head_approval):
+    def placeholder_refused():
+        grown("placeholder")
+        for why in ("<why>", "", "   "):
+            body(f"Adds a parser.\n\nGrowth: {why}\nRun ID: run_author\n")
+            merge_check(status=1, contains="\n  Growth: <why>\n")
+        body(undeclared)
+        return "a `Growth:` line left as `<why>`, empty or blank merges nothing"
+
+    def approval_comment_retired():
+        head = grown("retired-approval")
+        comments(("reviewer", f"Growth approved: {PR} at {head}: the parser is new and reuses nothing.\nSession: reviewer-1"))
+        merge_check(status=1, contains="\n  Growth: <why>\n")
+        comments()
+        return "a `Growth approved:` comment from another session no longer merges growth"
+
+    for case in (undeclared_growth_refused, declared_growth_merges, placeholder_refused, approval_comment_retired):
         try:
             print(f"PASS: {case()}")
         except AssertionError as why:
             failed.append(case.__name__)
             print(f"FAIL: {case.__name__}: {' '.join(str(why).split())[:400]}")
+            run("git", "reset", "-q", "--hard")
+    body(undeclared)
 
     run("git", "checkout", "-q", "-B", "feature", "main")
     commit({"src/new.py": lines(LIMIT), "lib/new.py": lines(LIMIT)})
     merge_check(status=1, contains="refusing merge")
-    (config / "comments.json").unlink()
+    (config / "body").unlink()
     merge_check(status=2, contains="loc-ratchet: REFUSED: repos/o/r/issues/7 could not be read")
     merge_check(pr="not a pull request", status=2, contains="needs the pull request as <owner>/<repo>#<number>")
-    print("PASS: a rewritten head needs a new approval; unreadable comments and an unnamed PR refuse the merge")
+    body(undeclared)
+    print("PASS: an unreadable PR body and an unnamed PR refuse the merge")
 
     comments()
 
@@ -184,7 +199,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
             run("git", "add", "-A")
             run("git", "-c", f"core.hooksPath={HOOKS}", "commit", "-qm", "feat: calls", contains=f"this change adds {charged} production lines")
             merge_check(pr=None)
-        return f"six calls on 6 lines and wrapped on 72 both charge {charged} lines and merge unapproved"
+        return f"six calls on 6 lines and wrapped on 72 both charge {charged} lines and merge with no declaration"
 
     def comments_pay_nothing():
         run("git", "checkout", "-q", "main")
@@ -198,7 +213,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         commit({"tests/test_old.py": lines(758, "check")})
         branch("retired", {"tests/test_old.py": None, "src/feature.py": lines(227)})
         merge_check(status=1, contains="the PR adds 227 production lines")
-        return "227 production lines with 758 test lines deleted need an approval"
+        return "227 production lines with 758 test lines deleted need a declaration"
 
     def restores():
         run("git", "checkout", "-q", "main")

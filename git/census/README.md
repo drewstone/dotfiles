@@ -36,36 +36,31 @@ Repo-pair counts sum file-pair/window combinations. Preview scores add window si
 Every metric is better smaller. Floor groups are declared in `GROUPS` in [census](census); individual metric names also work.
 `copies` needs peers for cross-repository windows; without peers, that part is explicitly unmeasured unless requested individually, which refuses.
 
-## Growth approval
+## Growth
 
 Growth is enforced at merge only: at a commit `loc-ratchet` prints the production lines the change adds and refuses nothing for them.
 The merge check is `loc-ratchet <merge-base>..<head> <owner>/<repo>#<number>`, run by whatever merges the pull request.
 It charges one number, the PR's total production change: deletions anywhere offset additions anywhere, across every directory.
 A line of the charge is `tokensPerLine` tokens of code, and `prod_lines` uses the same unit; a token is a word or one punctuation character.
 Comments, Python docstrings and blank lines are not code, so packing, reflowing and editing comments charge nothing; file and function limits still count physical lines.
-A total at or under `growthLimit` in [patterns.json](patterns.json) merges with no approval. Deleted tests and docs never pay for production growth.
+A total at or under `growthLimit` in [patterns.json](patterns.json) merges with nothing more. Deleted tests and docs never pay for production growth.
 A restore is not growth: a commit message in the PR that carries `Restores: <sha>` for a commit on the base branch makes each added line that commit removed, matched by its whitespace-normalized text, charge nothing, and the check prints it as a debit against that deletion.
 That lookup reads the deleting commit's blobs without fetching them; a clone that lacks them refuses the claim and charges the lines in full.
 A commit and the merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess; it never refuses.
-Above the growth limit, a reviewer who did not write the lines checks that the capability is new, reuses nothing that exists and is proportionate, then comments on the PR:
+Large changes are welcome when the capability earns them. Above the growth limit, the PR's writer says why once, in the PR body, on a line of its own whose `<why>` says what the capability is and what existing code it reuses or replaces:
 
 ```text
-Growth approved: <owner>/<repo>#<number> at <40-hex head sha>: <why>
-Session: <the reviewer's own session, or `Run ID: <run>`>
+Growth: <why>
 ```
 
-The PR's body names who wrote it with a `Run ID:` or `Session:` line, and the approving comment carries one the body does not.
-A PR whose body carries neither cannot be approved until it has one, and a comment with no such line, or with the PR's, approves nothing.
-When no record names the writer, a maintainer who has read the whole diff adopts the PR: the body says the writer is unrecorded and carries the adopter's line, and the adopter's line counts as the writer's.
-
-The refusal prints that line filled in for the head it read; `<why>` is the reviewer's own words and may not be left as written.
-An approval counts only at the exact head being merged; every later head needs its own approval.
-A later comment beginning `Growth line withdrawn` (also accepted in bold) by the same account voids that account's earlier approvals on the PR. An independent approval posted after the withdrawal can approve the exact head again.
-`gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's comments and counts only those by the authenticated user; a caller that posts for several authors keeps the author from posting its own.
-`CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`. Missing or invalid configuration keeps enforcement.
-A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge makes three REST reads (the PR, its comments, the user), so such merges stop while the REST quota is exhausted; a merge at or under the limit makes none.
-The check runs only where the merging tool calls it: a merge issued with plain `gh` or the web button skips it entirely. An approval permits only production growth: every other cap and floor stays enforced.
-[The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository, a blob-less clone of it and a fake `gh`.
+The merge check reads that line from the PR's body at every merge, so it holds at each later head with no re-declaration, and it names no number.
+A line whose reason is empty, blank or still a `<placeholder>` says nothing, and a PR over the limit without a line that says something does not merge; the refusal prints the line to add.
+To audit growth, search merged PR bodies for the line, as `gh search prs --owner <owner> --merged --match body Growth` does.
+`gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's body.
+`CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`, and the check looks a fork up only for a merge it would otherwise refuse. Missing or invalid configuration keeps enforcement.
+A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge reads GitHub once, for the PR's body, and the fork lookup adds one read to a merge the check would refuse; a merge at or under the limit with no file over its limit reads nothing.
+The check runs only where the merging tool calls it: a merge issued with plain `gh` or the web button skips it entirely. A declaration permits only production growth: the file and function limits, the duplicate and export ratchets and every other cap and floor stay enforced.
+[The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository, a blob-less clone of it and a fake `gh` that serves the PR's body and logs each read.
 
 ## Integrity
 

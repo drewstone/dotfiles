@@ -113,26 +113,14 @@ def github(endpoint, *flags):
 def repository(url):
     m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
-def approved_growth(head, pr):
-    """Only the exact merge head counts; a later withdrawal by the approving account voids its earlier lines.
-    The approving comment must name a run or session absent from the PR body, which must identify its writer."""
+def declared_growth(pr):
+    """The writer's `Growth: <why>` line in the PR's body, read once and holding at every head; a placeholder or blank says nothing."""
     if not re.fullmatch(r"[\w.-]+/[\w.-]+#[1-9]\d*", pr):
-        raise Refused(f"growth approval needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
-    issue, lanes = f"repos/{pr.replace('#', '/issues/')}", lambda text: set(re.findall(r"(?mi)^(?:Run ID|Session): *(?!<)(\S+)", text or ""))
-    authors = lanes(github(issue)["body"])
-    if not authors:
-        print("census: the PR's body carries no `Run ID:` or `Session:` line naming who wrote it, so no approval can count; add one first.", file=sys.stderr)
-    comments = github(f"{issue}/comments", "--paginate", "--jq", f'.[] | select(.user.login == "{github("user")["login"]}") | {{body}}') if authors else []
-    # GitHub returns issue comments oldest first, across pages; only the authenticated account survived the query.
-    for comment in reversed(comments):
-        body = comment["body"]
-        if re.search(r"(?mi)^\s*(?:\*\*)?Growth line withdrawn\b", body):
-            return False
-        if lanes(body) and not lanes(body) & authors and re.search(
-                rf"(?mi)^Growth approved: {re.escape(pr)} at {re.escape(head)}: *(?!<why>)\S", body):
-            print(f"census: production growth approved at {head}", file=sys.stderr)
-            return True
-    return False
+        raise Refused(f"a growth declaration needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
+    found = re.search(r"(?mi)^Growth:[ \t]*((?!<)\S.*)", github(f"repos/{pr.replace('#', '/issues/')}")["body"] or "")
+    if found:
+        print(f"census: {pr} declares its growth: {found[1].strip()}", file=sys.stderr)
+    return bool(found)
 
 
 def tree_of(checkout, rev):

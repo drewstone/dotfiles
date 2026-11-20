@@ -146,7 +146,7 @@ In a repository that both Claude Code and Codex work in, keep shared guidance in
 
 Code size has a budget too.
 A pull request is charged its net production change: deletions anywhere offset additions anywhere, and comments, tests and docs are not counted.
-At or under `growthLimit` in [`git/census/patterns.json`](git/census/patterns.json) it merges; above it, a reviewer who did not write the lines checks that the capability is new, proportionate and reuses nothing that exists, then posts the `Growth approved:` comment the merge check reads.
+At or under `growthLimit` in [`git/census/patterns.json`](git/census/patterns.json) it merges; above it, the PR's body says why on the `Growth:` line the merge check reads, and it merges.
 In repositories whose owner `~/.claude/guard-config.json` lists under `ratchets`, commit-time ratchets also refuse oversized files and functions, docs that name moved or deleted files, and a second export of an existing name.
 [`git/census/README.md`](git/census/README.md) owns these rules.
 
