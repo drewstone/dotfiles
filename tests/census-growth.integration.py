@@ -198,7 +198,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
         grown("origin")
         body(declared)
         reads()
-        merge_check(pr="other/r#7", status=2, contains="census: other/r#7 is not the repository this checkout's origin names")
+        merge_check(pr="other/r#7", status=2, contains="REFUSED: other/r#7 is not the repository this checkout's origin names")
         assert reads() == [], "a mismatched PR was read"
         merge_check(origin="git@github.com:O/R.git", contains="declares its growth")
         merge_check(origin=None, status=2, contains="No such remote 'origin'")
@@ -215,6 +215,7 @@ with tempfile.TemporaryDirectory(prefix="census-growth-") as temporary:
 
     def comment_declares_nothing():
         grown("commented")
+        body(undeclared)
         comments("Growth: a real reason for this capability")
         reads()
         merge_check(status=1, contains="\nGrowth: <why>\n")

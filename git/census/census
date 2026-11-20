@@ -114,13 +114,23 @@ def repository(url):
     m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
 def declared_growth(pr):
-    """The writer's `Growth: <why>` line in the PR's body, read once and holding at every head; a placeholder or blank says nothing."""
+    """The writer's `Growth: <why>` line in the body of a PR of this checkout's origin, read once and holding at every head.
+    The line starts with `Growth:` after at most three spaces, outside HTML comments and fenced code blocks. Its reason counts when,
+    with zero-width characters and the markup punctuation \\ ` * _ ~ and quotes removed, it is not one `<placeholder>` and holds
+    at least three words of two or more letters."""
     if not re.fullmatch(r"[\w.-]+/[\w.-]+#[1-9]\d*", pr):
         raise Refused(f"a growth declaration needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
-    found = re.search(r"(?mi)^Growth:[ \t]*((?!<)\S.*)", github(f"repos/{pr.replace('#', '/issues/')}")["body"] or "")
-    if found:
-        print(f"census: {pr} declares its growth: {found[1].strip()}", file=sys.stderr)
-    return bool(found)
+    origin = repository(git(".", "remote", "get-url", "origin").decode())
+    if origin.lower() != f"https://github.com/{pr.partition('#')[0]}.git".lower():
+        raise Refused(f"{pr} is not the repository this checkout's origin names ({origin})")
+    text = re.sub(r"\r\n?", "\n", github(f"repos/{pr.replace('#', '/issues/')}")["body"] or "")
+    text = re.sub(r"(?ms)<!--.*?(?:-->|\Z)|^ {0,3}(`{3,}|~{3,}).*?(?:^ {0,3}\1|\Z)", "", text)  # text the writer did not write as prose
+    for reason in re.findall(r"(?m)^ {0,3}Growth:(.*)$", text):
+        plain = re.sub("[­᠎​-‏⁠-⁤﻿\\\\`*_~\"'‘’“”]", "", reason).strip()
+        if not re.fullmatch(r"<[^<>]*>", plain) and len(re.findall(r"[^\W\d_]{2,}", plain)) >= 3:
+            print(f"census: {pr} declares its growth: {reason.strip()!r}", file=sys.stderr)  # escaped: a PR body cannot write to the log
+            return True
+    return False
 
 
 def tree_of(checkout, rev):
