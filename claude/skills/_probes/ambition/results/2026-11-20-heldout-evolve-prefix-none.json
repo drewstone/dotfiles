@@ -1,0 +1,228 @@
+{
+ "base": "99143a9578b77aaa1c4ab3479a639e50e474594c",
+ "head": "78f1746a0f07bd40fb6550d2bb744fcfdcc67522",
+ "head_commit": "2fa6b6ee9d579f217de218c34dbda8c3fc705d14",
+ "agent_model": "opus",
+ "agent_tools": "none",
+ "snapshots": {},
+ "judge": "grok",
+ "samples": 2,
+ "measured_at": "2026-11-20T02:25:56Z",
+ "summary": {
+  "arms": {
+   "new": {
+    "n": 8,
+    "q1": 6,
+    "q2": 6,
+    "q3": 8,
+    "all3": 5
+   }
+  },
+  "paired": {},
+  "by_skill": {
+   "heldout/evolve": {
+    "new": {
+     "n": 8,
+     "q1": 6,
+     "q2": 6,
+     "q3": 8,
+     "all3": 5
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "scenario": "H01",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our speech-to-text pipeline has a 14.2% word error rate on our 1,200-utterance call-center test set (last nightly run). Lower it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "# Plan: lower WER from 14.2% on the 1,200-utterance call-center set\n\n## First steps\n\n1. **Resume state.** Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and `pursuits/`, plus the climb ledger. I'll reuse rejected approaches as evidence rather than retrying them.\n2. **Reproduce the baseline on the real path.** I'll rerun the nightly pipeline exactly as production runs it: the same model revision, resampling, VAD and segmentation, decoding and text normalization. That confirms 14.2%, and I'll put a per-utterance bootstrap 95% confidence interval on it.\n3. **Set the bar.** I'll find published WER for conversational telephone speech (Switchboard and CallHome results, current open models such as Whisper and Parakeet-class, and commercial telephony models), each with its source. I won't quote figures I haven't verified. The target must beat the best comparable result on 8 kHz call audio, or name the measured limit that prevents it. Reaching our own last number is not a target.\n4. **Protect the decision set.** The 1,200 utterances stay held out. All tuning happens on a separate dev split from call-center audio, and no test utterances go into training, prompts or biasing lists.\n\n## Find the limiting constraint\n\nI'll break the 14.2% down before naming a cause:\n\n- **Error type:** substitutions, deletions and insertions, each by speaker side, call, SNR and duration.\n- **Metric validity:** how much \"error\" is really normalization mismatch, such as numbers (\"five hundred\" vs \"500\"), disfluencies, contractions or spelling variants. If it's large, I'll fix the normalizer first and record that in `metricClaims` as a change to the metric, not a gain.\n- **Segmentation:** deletions clustered at VAD or chunk boundaries, or overlapping talk.\n- **Domain vocabulary:** errors on product names, account terms and spelled IDs.\n- **Audio path:** resampling from 8 to 16 kHz, codec artifacts, and whether stereo channels are mixed instead of transcribed per channel.\n\n## Candidates\n\nEach gets a hypothesis file in `.agent/hypotheses/` with its expected WER delta, the observation that would refute it, and a resource cap:\n\n- **Fix the pipeline.** Repair normalization, VAD and chunking, and transcribe per channel. This is cheap.\n- **Use a stronger acoustic model.** Compare alternatives at equal compute and latency.\n- **Fine-tune on in-domain telephony.** Use LoRA or full fine-tuning on licensed call audio that excludes the test set, plus 8 kHz augmentation.\n- **Bias toward domain terms.** Add contextual biasing or hotwords, or LM rescoring with a call-center text model.\n- **Combine passes.** Use ROVER or confidence-based system combination, or a second pass on low-confidence segments.\n\nBefore ranking these, I'll do three passes. First, a red-team pass on why the leader would fail. Second, what would cut WER by 10\u00d7. Third, the unasked question: is WER even the right outcome measure, or should we weight entity and intent accuracy?\n\n## Decide\n\n- I'll run paired, per-utterance comparisons against the baseline on the same audio.\n- I'll fix the acceptance rule before any results: the CI must exclude zero, the gain must clear a minimum useful effect, and real-time factor, latency and cost must stay within regression limits.\n- Each candidate gets a verdict of KEEP, ITERATE, ABANDON or REGRESSION, logged to `experiments.jsonl`, the scorecard and the ledger.\n- If the metric stays flat for three measurements, I'll switch to a different mechanism rather than more tuning.\n\n**What I'll build:** an error-breakdown harness, the dev/test split guard, and the winning pipeline change, end to end.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Switchboard and CallHome results, current open models such as Whisper and Parakeet-class",
+    "q2": false,
+    "q2_quote": "The target must beat the best comparable result on 8 kHz call audio",
+    "q3": true,
+    "q3_quote": "Use ROVER or confidence-based system combination",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H01",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our speech-to-text pipeline has a 14.2% word error rate on our 1,200-utterance call-center test set (last nightly run). Lower it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "## Plan: lower WER below 14.2% on the call-center set\n\n### 1. Set the bar\n- **Our number:** 14.2% WER on the 1,200-utterance set, from the last nightly run. I'll rerun it before trusting it.\n- **Outside best:**\n  - Published conversational-telephony results (Switchboard/CallHome; Whisper-large-v3, Parakeet/Canary, commercial APIs).\n  - Current open models run directly on our audio. That is the only comparison that counts.\n- **Provisional target:** \u226410% WER, and at least as good as the best off-the-shelf model on our data. I'll revise it once those numbers exist.\n- **Deciding check:** WER on a held-out decision split I never tune on. It must use fixed normalization and a paired bootstrap confidence interval. Latency and cost limits come from the current pipeline.\n\n### 2. Establish the comparison\n1. Read `.agent/` state, earlier experiments and rejected approaches.\n2. Rerun the nightly scorer on the real path: same audio decoding, sample rate, VAD/segmentation, model and normalizer.\n3. Split the 1,200 utterances into dev (tuning) and decision (held out), stratified by call type and speaker. If anything was ever tuned on the full set, the split needs a fresh holdout. I'll ask whether more labeled calls exist.\n4. Audit metric validity:\n   - Sample about 100 errors by hand.\n   - Check whether formatting differences (\"$20\" vs \"twenty dollars\", \"OK\" vs \"okay\", disfluencies, casing) are counted as errors.\n   - Check whether the references themselves are wrong.\n\n   Normalization bugs often account for several WER points. Fixing them is a measurement fix, so I'll report it separately and not claim it as model gain.\n\n### 3. Find the limiting constraint\nBreak the errors down by:\n- substitution, deletion and insertion;\n- per-utterance WER distribution, so a few outliers don't hide;\n- agent vs. customer channel, crosstalk, hold music, noise and SNR;\n- utterance length and segmentation boundaries;\n- domain terms: product names, account numbers, addresses;\n- 8 kHz handling, including upsampling artifacts.\n\nThe diagnosis should show whether the problem is the acoustic model, segmentation, vocabulary or the references.\n\n### 4. Candidates\nEach candidate gets an expected effect and a refutation test in `.agent/hypotheses/2026-11-19-callcenter-wer.md`:\n- **Fix the normalizer.** Applies if formatting errors dominate the sample.\n- **Swap in a stronger model.** Run the same harness on the current open SOTA models plus one commercial API, at equal latency and cost budgets.\n- **Fix segmentation/VAD.** Applies if deletions cluster at boundaries or on long utterances.\n- **Contextual biasing or hotword lists** for domain vocabulary. Applies if entity errors dominate.\n- **Fine-tune on in-domain call audio** (only if labeled audio exists outside the decision split). This is likely the largest gain and the largest cost.\n- **Channel separation or denoising.** Applies if crosstalk or noise errors dominate.\n\nBefore ranking, I'll run the red-team, 10\u00d7-better and unasked-question passes. One unasked question I already have: does WER on these errors actually matter for downstream use such as intent detection, or do entity errors matter more?\n\n### 5\u20136. Run and decide\n- Test independent changes in isolation and coupled ones together, all at equal measured resources.\n- Mark each result KEEP, ITERATE, ABANDON or REGRESSION with confidence intervals and latency/cost regressions.\n- If the number stays flat for three measurements, switch mechanism.\n- Log everything to `.agent/experiments.jsonl` and the climb ledger.\n\n**What I'll build:** the stratified split, an audited normalizer, an error-breakdown report and a multi-model evaluation harness. After that, whichever mechanism the breakdown points to.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Switchboard/CallHome; Whisper-large-v3, Parakeet/Canary",
+    "q2": true,
+    "q2_quote": "\u226410% WER",
+    "q3": true,
+    "q3_quote": "Channel separation or denoising",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H02",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Two months of prompt and few-shot changes have kept our invoice field extractor between 87% and 89% of fields correct on 500 labeled invoices. Decide what to try next.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "# Plan: break the 87\u201389% plateau on invoice extraction\n\nTwo months of prompt and few-shot edits sitting in a 2-point band is a flat hill. The next step is to change the mechanism, not to try more prompts. Here is the order I'll work in.\n\n## 1. Set the bar (before any experiment)\n\n- **Our number:** rerun the current extractor on the real production path, over all 500 invoices. I'll bootstrap by invoice, not by field, because fields within one invoice are correlated. That tells us whether 87 vs 89 was ever a real difference. My guess is it's mostly noise.\n- **Best known result:** look up published results on comparable tasks, such as DocILE key-information extraction and vendor accuracy claims, with sources. I won't invent a number. If nothing comparable exists, the bar becomes a measured ceiling (step 3).\n- **Target:** proposed \u226595% field accuracy, confirmed once the ceiling is measured. The ceiling is not the 89% we already reached.\n- **Deciding check:**\n  - Freeze about 150 invoices as a held-out decision set, stratified by vendor and layout.\n  - Develop only on the other 350.\n  - Fix the thresholds now, not after seeing results.\n\n## 2. Find the limiting constraint\n\nI'll sort every wrong field into one of these causes:\n- OCR or text-extraction loss\n- Layout misread (tables, multi-page, line items)\n- Wrong field chosen, e.g. subtotal vs total, or ship-to vs bill-to\n- Normalization or format errors (dates, currency, decimal commas)\n- Label errors in the ground truth\n- Genuinely ambiguous cases\n\nI'll also break errors down by field and by vendor. On extractors that have hit a prompt plateau, most failures are usually **not** prompt-addressable. Typical causes are input text that is already wrong, or label noise capping the score. If audited labels show, say, 4% are wrong, the real ceiling is about 96% and the metric needs fixing first.\n\n## 3. Candidate mechanisms\n\nEach candidate gets the number to beat, its expected effect, and the result that would refute it. The ranking will follow the error breakdown:\n\n1. **Label audit.** Re-adjudicate every disagreement on the dev split. This is cheap and may move the number without changing any code.\n2. **Change the input.** Send the page image to a vision model, or use layout-aware text with coordinates, instead of flat OCR text. This targets OCR and layout errors.\n3. **Validators plus targeted re-ask.** Check that totals equal subtotal + tax, that line items sum correctly, that dates parse and IBAN/VAT checksums pass. Re-extract only the fields that fail. This targets wrong-field and format errors.\n4. **Deterministic normalization.** Move formatting out of the model into code.\n5. **Per-field self-consistency, or a fine-tuned small model** for the worst fields. Only with training data separate from the decision set.\n\nThen three passes on the leading candidate:\n- **Red-team:** why did it fail two weeks from now?\n- **Bigger:** what would make this 10\u00d7 better, for example confidence-routed human review that delivers about 99.5% on the fields we auto-accept?\n- **Unasked question:** what does the business actually need? Is it field accuracy, or invoices with zero errors?\n\nI'll write all of this up in `.agent/hypotheses/2026-11-19-invoice-plateau.md`.\n\n## 4. Build and decide\n\n- Build the top one or two candidates as isolated experiments, compared at equal cost and latency budgets.\n- Score each on the frozen held-out set.\n- Mark each `KEEP`, `ITERATE` or `ABANDON`, with confidence intervals and per-field regressions.\n- Log every run in `.agent/experiments.jsonl` and the climb ledger.\n\n**First concrete actions:**\n1. Read the `.agent/` state.\n2. Rerun the baseline with bootstrap confidence intervals.\n3. Hand-label the causes of 100 sampled errors.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "DocILE key-information extraction",
+    "q2": true,
+    "q2_quote": "proposed \u226595% field accuracy",
+    "q3": true,
+    "q3_quote": "Send the page image to a vision model, or use layout-aware text with coordinates, instead of flat OCR text.",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H02",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Two months of prompt and few-shot changes have kept our invoice field extractor between 87% and 89% of fields correct on 500 labeled invoices. Decide what to try next.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "**Two months between 87% and 89% means the prompt has stopped being the constraint.** By the skill's rule, a hill that stays flat changes mechanism, not effort. So I won't write another prompt variant until I know where the 11\u201313% of wrong fields come from.\n\n**First steps**\n\n1. **Read the existing record.** I'll read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and the climb ledger. Every prompt and few-shot variant tried goes on the rejected list so nobody reruns it.\n2. **Set the bar.** I'll look up published results on comparable invoice tasks (DocILE KILE, SROIE, CORD) and on commercial invoice extractors, and record each number with its source. I won't quote figures from memory. Our number is the current extractor on the real path: same OCR or PDF text, same model, same scoring. The target beats the best comparable published result, or is the measured ceiling of our labels if that is lower.\n3. **Check whether the plateau is real.** Fields within one invoice are correlated, so I'll bootstrap by invoice to get a confidence interval on 87\u201389%. Much of the two months' variation may be noise. The 500 invoices have also been tuned against for two months, so I'll split them into a development set and a sealed decision set before any new experiment. Labeling fresh invoices for the decision set would be better still.\n4. **Classify every wrong field** on the baseline run:\n   - The text never reached the model (OCR error, multi-page, a field inside an image).\n   - The label is wrong or ambiguous. I'll relabel a sample of about 50 disagreements to measure label noise, which caps accuracy.\n   - The scorer rejected a correct answer (date, currency or whitespace formats).\n   - The model picked the wrong value (subtotal versus total, ship-to versus bill-to).\n   - The field was missing or hallucinated.\n   - The table or line item was misparsed.\n\n   I'll also break errors down by field and by vendor or layout.\n\n**What the breakdown will likely point to, and what I'd build**\n\nWhich candidate goes first depends on the breakdown. For each I'll record the expected effect in fields recovered and the result that would refute it.\n\n- **Scorer or label fixes.** Cheapest. These only change what we measure, so they go in first and the baseline is re-run under the corrected scoring.\n- **Better input.** Use native PDF text where it exists, add layout coordinates, or send the page image alongside the text when input loss dominates.\n- **Validation and repair.** Check line items against subtotal, tax and total; check date sanity and VAT/IBAN checksums. Re-ask only on fields that fail. Arithmetic is a strong check for invoices.\n- **Vendor-matched examples.** Retrieve the same vendor's past invoices as few-shot examples, if errors cluster by layout.\n- **Fine-tuning.** Train a layout-aware model, or fine-tune the LLM on the labeled data, if errors look like systematic confusion between fields.\n\nI'll run the red-team, ten-times-better and unasked-question passes, then write `.agent/hypotheses/2026-11-19-invoice-plateau.md`. It will record the number to beat, cost and latency per invoice as resource limits, the per-field regression limit, and the stopping condition.\n\n**Deciding**\n\nEach candidate runs at equal cost and latency on the dev set, and finalists run once on the sealed decision set. A candidate is kept only if the per-invoice bootstrap interval clears the baseline and no field regresses beyond the limit. The result is recorded as KEEP, ITERATE or ABANDON in `experiments.jsonl` and the ledger.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "I won't quote figures from memory.",
+    "q2": false,
+    "q2_quote": "The target beats the best comparable published result",
+    "q3": true,
+    "q3_quote": "Train a layout-aware model, or fine-tune the LLM",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H03",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our coding agent resolves 22 of 75 tasks in our internal bug-fix benchmark with one model in a single loop. We think the loop design is the limit. Find a better agent design.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "# Plan: find a better agent design than 22/75\n\n## 1. Set the bar\n\n- **Our number:** 22/75 (29%) from a single run, with one model and one loop.\n- **Outside reference:** on public bug-fix benchmarks like SWE-bench Verified, the scaffold alone moves the same model by large margins. Agentless-style pipelines, reproduction-first agents and sample-then-select approaches have each beaten plain loops. I'll pull current leaderboard entries that use our model or a comparable one, with sources, instead of quoting numbers from memory.\n- **Target:** at least 38/75 at equal cost per task (dollars or tokens, wall-clock limit included). If the evidence shows a limit below that, the deliverable is the measured explanation.\n- **Deciding check:** a paired per-task comparison on a held-out split.\n\n## 2. Establish the comparison\n\n1. Read `.agent/` state and any earlier experiments, and keep rejected designs.\n2. Rerun the baseline 3\u00d7 on the real harness. On 75 tasks, one run carries roughly \u00b15 points of binomial noise, so 22 may not be the true number. Record tokens, cost and steps per task.\n3. Audit the benchmark: find tasks that no run and no oracle patch can pass. Broken tests or flaky environments cap the score regardless of agent design.\n4. Split the tasks:\n   - 45 development tasks for diagnosis and iteration.\n   - 30 held-out tasks, untouched until the final decision.\n\n## 3. Test whether the loop is actually the limit\n\nBefore building anything, I'll classify every failure trace:\n\n- wrong file or function localized\n- no reproduction attempted\n- the patch fails its own tests\n- the agent passed its own checks but failed the hidden tests\n- step or context limit hit\n- tool or edit errors\n- environment errors\n\nThree cheap ablations will show where the leverage is:\n\n- **pass@k (k=5):** if pass@5 is much higher than pass@1, the lever is selection and verification, not exploration.\n- **Oracle localization:** give the agent the correct files. If the score jumps, localization is the constraint.\n- **Stronger model in the same loop, for a few tasks:** this separates a model limit from a design limit.\n\n## 4. Candidate mechanisms\n\nI'll rank these after the breakdown above. Each gets a hypothesis file with its predicted effect, the cost cap and the result that would refute it.\n\n- **A. Reproduce first:** the agent writes a failing test before editing, and accepts a patch only when that test goes red to green.\n- **B. Agentless-style pipeline:** hierarchical localization, then repair, then validation, with no open-ended loop.\n- **C. Sample and select:** N independent trajectories or patches, picked by regression tests, reproduction tests and an LLM verifier. N is capped so total cost matches baseline.\n- **D. Context management:** summarize history and give the agent better tools, such as a lint-checked editor and code search.\n- **E. Planner/executor split:** one role plans and another carries out the edits.\n\nPlain fixes, like raising a step limit that is cutting runs short, compete alongside these. Before committing I'll run a red-team pass: why would the winner fail on held-out tasks?\n\n## 5. Build and run\n\n- A variant harness that runs any design with the same model, logs each trajectory, enforces equal per-task budgets and outputs paired results.\n- Each variant iterates only on the development split.\n- Designs that combine well, such as A+C, are tested together.\n\n## 6. Decide\n\n- Each finalist runs once on the held-out 30. I'll apply McNemar or paired bootstrap tests, with thresholds fixed in advance.\n- Each finalist gets a verdict of KEEP, ITERATE or ABANDON, recorded with the logs (`experiments.jsonl` and the climb ledger).\n- If results stay flat after three measurements, I'll switch mechanism rather than tune the current one.\n- The report will cover baseline vs. result, confidence intervals, cost, regressions and any unresolved tasks.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "SWE-bench Verified",
+    "q2": true,
+    "q2_quote": "at least 38/75",
+    "q3": true,
+    "q3_quote": "Planner/executor split",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H03",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our coding agent resolves 22 of 75 tasks in our internal bug-fix benchmark with one model in a single loop. We think the loop design is the limit. Find a better agent design.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "# Plan: find a better agent design than 22/75\n\n## 1. Set the bar\n- **Our number:** 22/75 (29%), one model, single loop.\n- **Outside bar:** On SWE-bench Verified, published scaffolds with frontier models resolve well above 60%. The ones that beat plain loops use one of these designs:\n  - Agentless-style pipelines: localize, then repair, then validate.\n  - Writing a reproduction test first.\n  - Parallel sampling with test-based or critic selection.\n  \n  Our benchmark is internal, so that figure is a reference, not a direct comparison.\n- **Target:** at least 38/75 (about 50%) on held-out tasks, at a measured cost per task. If we fall short, I'll report the measured limit that stops us.\n- **Deciding check:** the benchmark's own hidden tests. I won't swap in a proxy.\n\n## 2. Establish the comparison\n1. Read `.agent/` state and ledger rows for earlier attempts, and keep any rejected approaches on record.\n2. Rerun the current loop 3 times on all 75 tasks. This gives per-task pass rates and tokens, wall time and dollars per task. One run of 22 could be 18 or 26 from sampling noise alone.\n3. Split the tasks into 40 for development and 35 held out. I won't look at the held-out traces until the final decision.\n\n## 3. Find the limiting constraint\nI'll label each failed trajectory with where it broke:\n- never found the right file\n- found it but the patch was wrong\n- the patch broke other tests\n- never reproduced the bug\n- ran out of context or turns\n- tool or edit errors\n- environment or infrastructure faults\n\nI'll also run an **oracle test**: give the agent the correct file and function. If the solve rate jumps, localization is the limit. If it doesn't, repair or verification is. I'll also check pass@k across the 3 runs. If pass@3 is much higher than pass@1, selection is the cheap win.\n\n\"The loop is the limit\" stays a hypothesis until this breakdown supports it. If it shows model capability or broken tasks are the limit, I'll say so.\n\n## 4. Candidates\nEach gets an expected effect, cost and a result that would refute it, written in `.agent/hypotheses/2026-11-19-agent-design.md`:\n- **A. Reproduce first.** The agent writes a failing test before editing and must make it pass. Refuted if fixes that pass their own reproduction test still fail the hidden tests.\n- **B. Staged localization.** Retrieve and rank files and functions, then repair against those locations (Agentless-style).\n- **C. Sample N patches in parallel, then select** using reproduction tests, the existing test suite and an LLM critic.\n- **D. Context management:** summarize history and use structured edit and search tools.\n- **E. Delete work:** strip prompt bloat or tools that the traces show cause errors.\n\nBefore ranking, I'll run three passes:\n- **Red-team:** C may only win by spending 5\u00d7 the compute.\n- **Ten-times-better:** combine A, B and C.\n- **Unasked question:** are some tasks unsolvable or mis-specified?\n\n## 5. Run\n- I'll build each design as a configurable scaffold on the real execution path. Independent ideas are tested in isolation; coupled ones (A+C) are tested together.\n- All comparisons are **at equal measured cost**: tokens and dollars per task, including selector and critic calls. I'll also plot solve rate against cost.\n- I'll use paired per-task comparison (McNemar or a bootstrap). With 75 tasks, only gains of roughly 8 or more tasks will be distinguishable from noise.\n- Every attempt is kept, including failures. Thresholds are fixed before results come in.\n\n## 6. Decide and report\n- Each design gets **KEEP, ITERATE or ABANDON**, judged on the held-out 35 against the 3-run baseline.\n- If results stay flat for 3 measurements, I'll change the mechanism rather than tune harder.\n- I'll update `.agent/` state and the experiments log, then report: baseline, best design, uncertainty, cost, regressions, and the failure breakdown that explains the gain.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "On SWE-bench Verified, published scaffolds with frontier models resolve well above 60%.",
+    "q2": true,
+    "q2_quote": "Target: at least 38/75 (about 50%)",
+    "q3": true,
+    "q3_quote": "Retrieve and rank files and functions, then repair against those locations (Agentless-style).",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H04",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our product search scores NDCG@10 of 0.41 on 2,000 judged queries from last quarter. Improve it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "## Plan: lift product-search NDCG@10 above 0.41\n\n**1. Load prior state and reproduce the baseline**\n- Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and `pursuits/`, plus the climb ledger. Anything already rejected stays rejected unless I have new evidence.\n- Rerun the existing eval on the production query path: same index, analyzers, boosts and filters. The goal is to reproduce 0.41 per query, not just in aggregate.\n- If the number won't reproduce, that becomes the first finding.\n\n**2. Check that the metric reflects the outcome before optimizing it**\n- **Judgment coverage:** what fraction of the current top-10 results are unjudged? Unjudged results score as irrelevant, so a new ranker that surfaces unjudged good products would look worse. I'll report Judged@10. If holes are large, I'll judge the pooled candidate results before comparing.\n- **Staleness:** last quarter's judgments may point at products that are now delisted or out of stock.\n- **Gain scale:** confirm the graded-relevance mapping.\n- **Split:** freeze a held-out decision set of about 600 queries, stratified by head/torso/tail. All tuning happens on the remaining 1,400.\n\n**3. Set the bar**\n- Published product-search results (Amazon ESCI / Shopping Queries, plus hybrid and cross-encoder reranking papers) are a reference, not a direct comparison. Their gain scales and candidate setups differ, so I'll cite them with that caveat rather than claim parity.\n- The real ceiling comes from two measurements on our data:\n  - **Recall@100 and recall@1000** of the current retriever.\n  - **Oracle NDCG@10:** a perfect reordering of the current candidate pool.\n- The gap between those tells me whether the limit is retrieval or ranking.\n- Provisional target: \u22650.50 on the held-out set, revised once the oracle number exists.\n\n**4. Find the limiting constraint**\nI'll break down per-query NDCG by segment to see where the losses are:\n- zero or low results\n- misspellings\n- attribute-heavy queries (\"red 32oz insulated bottle\")\n- brand and SKU lookups\n- long-tail queries\n\nEach loss gets one of three labels: retrieval miss, ranking miss, or judgment artifact.\n\n**5. Candidates, written to `.agent/hypotheses/2026-11-19-ndcg.md`**\nEach candidate gets a refutation condition, cost, and expected effect.\n- **Hybrid retrieval:** BM25 plus a dense product-embedding model, fused with reciprocal rank fusion. Targets recall misses.\n- **Cross-encoder (or small LLM) reranker** over the top 50\u2013100. Targets ranking misses, constrained by the latency budget.\n- **Query understanding:** spell correction and attribute/category extraction mapped to filters and boosts.\n- **Field-weight and analyzer fixes:** the cheap option, which may just be deleting a bad boost.\n- **Learning-to-rank** (LambdaMART) on the train-split judgments plus click features, if click logs exist.\n\nRed-team question for the leading candidate: does the reranker win only on head queries while raising p95 latency past budget?\n\n**6. Run and decide**\n- Every variant runs at equal resources, with p95 latency and cost measured on the real serving path.\n- Coupled changes are tested together; independent ones are isolated.\n- **Comparison rule:** paired bootstrap on per-query NDCG@10 over the held-out set, requiring at least +0.03 with a 95% confidence interval that excludes zero.\n- **Regression limits:**\n  - no head segment drops more than 0.01\n  - zero-result rate does not rise\n  - p95 latency stays within the agreed budget\n- Each variant gets KEEP, ITERATE, ABANDON or REGRESSION, recorded in `experiments.jsonl`, the scorecard and the ledger.\n- Three flat results in a row means I switch mechanism.\n- Offline wins are labeled as offline. An online A/B on conversion is a separate claim and goes through `/ship`.\n\n**What I need from you:** the latency budget, access to click logs, and whether we can do fresh relevance judging if coverage turns out to be low.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Amazon ESCI / Shopping Queries",
+    "q2": true,
+    "q2_quote": "Provisional target: \u22650.50",
+    "q3": true,
+    "q3_quote": "Cross-encoder (or small LLM) reranker",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H04",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our product search scores NDCG@10 of 0.41 on 2,000 judged queries from last quarter. Improve it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "# Plan: raise product search NDCG@10 from 0.41\n\n## 1. Set the bar\n\n- **Our number:** 0.41 NDCG@10 on 2,000 judged queries. First I'll reproduce it on the real serving path: production index, query pipeline and ranking config, not an offline copy.\n- **Best known result:** I'll look up published product-search results on comparable graded judgments, such as Amazon ESCI and WANDS, and rival system writeups.\n- **Target:** provisionally around 0.50 or higher. I'll fix the number before the first experiment, with its source. If something fundamentally caps us, such as judgment noise, the target becomes that measured ceiling.\n- **Deciding check:** a paired bootstrap on a locked held-out set of about 600 queries, all at an equal p95 latency and cost budget.\n\n## 2. Establish the comparison\n\n1. Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/`, `pursuits/` and the climb ledger. I'll resume active work and won't retry rejected approaches.\n2. Audit the metric before optimizing it:\n   - **Unjudged results:** what share of our current top-10 documents have no judgment? Unjudged documents count as irrelevant, so they can depress NDCG falsely.\n   - **Catalog drift:** how many judged products are now out of stock or deleted, since the judgments are from last quarter?\n   - **Grade scale and agreement:** what scale do judges use, and how often do they agree? That sets the noise floor.\n   - **Link to the outcome:** does NDCG move with conversion or add-to-cart on these queries? I'll record this in `metricClaims`.\n3. Split the queries into dev and held-out sets, stratified by head, torso and tail traffic and by query type. The held-out set stays untouched until the decision.\n\n## 3. Find the limiting constraint\n\nI'll break per-query NDCG down along three lines:\n\n- **By slice:** zero or low recall, attribute queries (\"red waterproof size 10\"), brand or SKU lookups, misspellings, long-tail natural language.\n- **Recall versus ranking:** recall@100 tells me whether relevant items are never retrieved or retrieved and misordered. This is the key fork.\n- **Sources of irrelevant results:** missing or poor fields such as titles and attributes, versus scoring.\n\n## 4. Candidates, each with a refutation test\n\n| Candidate | Fixes |\n|---|---|\n| Hybrid retrieval: BM25 plus a dense embedding, combined with reciprocal rank fusion | Recall gaps |\n| Cross-encoder reranker on the top 100, compared with an LLM-judge reranker distilled into a small model | Ordering |\n| Bi-encoder fine-tuned on our click and purchase logs (hard negatives, ESCI-style substitute/complement labels) | Domain mismatch |\n| Query understanding: attribute extraction into structured filters, spelling correction | Attribute and misspelling queries |\n| Index enrichment: LLM-generated attributes and descriptions for sparse listings | Thin product data |\n| Deletion: removing hand-tuned boosts that may hurt | Bad legacy rules |\n\nI'll run the red-team, 10\u00d7 and unasked-question passes before ranking. Then I'll write `.agent/hypotheses/2026-11-19-search-ndcg.md` with each candidate's expected gain, latency cost, accepted regressions per slice, and stopping rule.\n\n## 5\u20136. Experiment and decide\n\n- **Method:** isolated variants at equal latency, run on dev only. Thresholds are fixed before any held-out reading.\n- **Likely build:** a two-stage architecture of hybrid retrieval followed by reranking, with obsolete scoring paths removed.\n- **Decision:** I'll record KEEP, ITERATE, ABANDON or REGRESSION, with confidence intervals, per-slice regressions, and latency and cost.\n- **Stalls:** if the score is flat for three measurements, I'll switch to a different mechanism rather than keep tuning the same one.\n- **Ground truth:** if the judgments turn out stale, I'll route to `/eval-engineering` to re-judge pooled results before trusting any gain.\n\nI'll log every run and report before and after against the bar, with projections labeled separately from measurements.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "I'll look up published product-search results on comparable graded judgments, such as Amazon ESCI and WANDS",
+    "q2": true,
+    "q2_quote": "provisionally around 0.50 or higher",
+    "q3": true,
+    "q3_quote": "Hybrid retrieval: BM25 plus a dense embedding, combined with reciprocal rank fusion",
+    "judge_model": "grok-4.7-build"
+   }
+  }
+ ]
+}

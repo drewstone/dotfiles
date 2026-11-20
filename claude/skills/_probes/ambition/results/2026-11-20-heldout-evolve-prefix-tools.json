@@ -1,0 +1,338 @@
+{
+ "base": "99143a9578b77aaa1c4ab3479a639e50e474594c",
+ "head": "78f1746a0f07bd40fb6550d2bb744fcfdcc67522",
+ "head_commit": "2fa6b6ee9d579f217de218c34dbda8c3fc705d14",
+ "agent_model": "opus",
+ "agent_tools": "search",
+ "snapshots": {
+  "origin/main": "df496aa8bf859551"
+ },
+ "judge": "grok",
+ "samples": 2,
+ "measured_at": "2026-11-20T02:23:09Z",
+ "summary": {
+  "arms": {
+   "new": {
+    "n": 8,
+    "q1": 8,
+    "q2": 7,
+    "q3": 8,
+    "all3": 7
+   }
+  },
+  "paired": {},
+  "by_skill": {
+   "heldout/evolve": {
+    "new": {
+     "n": 8,
+     "q1": 8,
+     "q2": 7,
+     "q3": 8,
+     "all3": 7
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "scenario": "H01",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our speech-to-text pipeline has a 14.2% word error rate on our 1,200-utterance call-center test set (last nightly run). Lower it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'll treat this as a climb toward the best conversational-telephony accuracy anyone has reported, not just a few points off our own number.\n\n**The bar**\n- **Best known result:** I found no public call-center leaderboard. The closest outside reference points are:\n  - The Hugging Face Open ASR Leaderboard averages about 13.0% WER on its private conversational set and about 3.6% on scripted speech, according to a third-party summary I still need to check against the board.\n  - Two careful LDC human transcribers disagree with each other by about 4.1\u20134.5% on conversational telephone speech. That is the practical floor.\n- **Our number:** 14.2% WER on 1,200 utterances, from the last nightly run. I'll reproduce it before trusting it.\n- **Target:** at most 8% WER on the same set, with no subgroup getting worse. If our own human floor turns out to be higher than 4.5%, I'll restate the target as \"within 3 points of our own floor.\"\n- **Outside check:** a paired bootstrap over utterances on the frozen 1,200 set, plus a holdout that nobody tunes on. A win needs the 95% confidence interval to sit entirely below the baseline.\n\n**First steps**\n1. **Read existing state.** Go through `.agent/` (current.json, experiments.jsonl, hypotheses) and the climb ledger, and carry forward approaches already rejected.\n2. **Re-run the nightly pipeline as-is.** Record WER split into substitutions, deletions and insertions, plus real-time factor, p95 latency and cost per audio hour. Speed and cost limit how much accuracy can cost.\n3. **Find where the errors come from** before picking a fix. Break WER down by:\n   - normalization artifacts (numbers, \"uh-huh\", contractions, casing)\n   - segmentation and voice-activity detection (deletions at utterance edges)\n   - channel and sample rate (8 kHz, stereo calls mixed down to mono)\n   - crosstalk and overlapping speech\n   - accent and noise level\n   - domain words (product names, account terms)\n4. **Measure the label noise.** Have about 100 utterances transcribed a second time. If the reference transcripts are wrong 6% of the time, part of the 14.2% can't be removed.\n\n**Candidates**, each with a written refute condition in `.agent/hypotheses/2026-11-19-cts-wer.md`:\n- **Fix normalization** in scoring (Whisper-style English normalizer, consistent across systems). This is cheap and often worth several points, but only if the diagnosis shows it's real. Otherwise it just makes the metric look better.\n- **Swap the model.** Compare Qwen3-ASR-1.7B, NVIDIA Nemotron Transcribe and Whisper large-v3 on our 8 kHz audio. All run at equal cost per audio hour and real-time factor.\n- **Transcribe each stereo channel separately** instead of mixing them, if the calls are recorded in stereo.\n- **Bias recognition toward our domain vocabulary**, or rescore candidate transcripts with a language model trained on call-center text.\n- **Fine-tune on in-domain calls** taken from production audio. Never from the 1,200 test set, and never from a dev split carved out of it.\n\nBefore ranking these, I'll run the red-team pass: the likeliest way the leader turns out to be a mirage is that it wins only on the scoring normalizer, or fails when the 8 kHz audio gets upsampled.\n\n**Rules I'll hold to**\n- Thresholds are set before any results come in.\n- Failed runs are logged too.\n- An experiment is invalid if the subgroup breakdown shows any group regressing by more than 1 point.\n- If three measurements in a row show no improvement, I switch mechanism.\n\nAfter each decision (KEEP, ITERATE, ABANDON or REGRESSION) I'll update experiments.jsonl, the scorecard and the ledger. My report will state WER before and after against the 8% target, with confidence intervals, plus latency and cost changes.\n\nSources:\n- [Hugging Face Open ASR Leaderboard](https://github.com/huggingface/open_asr_leaderboard)\n- [Kili: ASR WER benchmarks 2026](https://kili-technology.com/blog/asr-models-guide-word-error-rate-benchmarks-and-failure-modes-2026)\n- [Apidog: Best open-source STT 2026](https://apidog.com/blog/best-open-source-speech-to-text-models/)\n- [Codesota speech-to-text rankings](https://codesota.com/speech-to-text)\n- [Gladia: open-source STT models](https://www.gladia.io/blog/best-open-source-speech-to-text-models)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/be-ambitious/SKILL.md"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "call center speech recognition WER benchmark 2026 open ASR leaderboard conversational telephony"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "The Hugging Face Open ASR Leaderboard averages about 13.0% WER on its private conversational set",
+    "q2": true,
+    "q2_quote": "at most 8% WER on the same set",
+    "q3": true,
+    "q3_quote": "Compare Qwen3-ASR-1.7B, NVIDIA Nemotron Transcribe and Whisper large-v3",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H01",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our speech-to-text pipeline has a 14.2% word error rate on our 1,200-utterance call-center test set (last nightly run). Lower it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'll start by measuring, not by changing anything. The 14.2% comes from a nightly report, so I'll first rerun it on the real pipeline and check how it was scored.\n\n**The bar**\n- The closest public comparison is [AppTek's call-center dialogues set](https://api-inference.huggingface.co/datasets/apptek-com/apptek_callcenter_dialogues). Its model card reports Qwen3-ASR (1.7B) at **8.3% average WER**.\n- Clean-speech leaderboards report around 5.6% ([Kili](https://kili-technology.com/blog/asr-models-guide-word-error-rate-benchmarks-and-failure-modes-2026)). That isn't a fair comparison for phone audio.\n- Vendor figures, such as [Gladia's](https://www.gladia.io/blog/call-transcription-accuracy-benchmarks-what-contact-centers-should-measure), aren't independently checked. Published WERs only compare when the data, normalization and scoring code match.\n- **Proposed target: 10% WER or lower** on our set, with a stretch goal of about 8%. That's at least a 30% relative cut.\n- I'll lock the target in once those same models are scored on our audio with our scorer.\n\n**First steps**\n1. Read the `.agent/` state and the climb ledger, so earlier attempts aren't repeated.\n2. **Rerun the baseline** on the production path: same model version, preprocessing, segmentation and normalizer. I'll store each utterance's result so later comparisons can be paired.\n3. **Audit the metric.** Two checks:\n   - Score with a standard normalizer (numbers, contractions, fillers, casing). If fixing the normalizer changes WER, that's a metric fix and gets reported separately, not counted as model gain.\n   - Hand-check a sample of high-error references for transcript mistakes.\n4. **Split the data.** Make a development split (or use other in-domain audio) for tuning. The 1,200-utterance set stays as the deciding test, and I don't tune thresholds on it.\n\n**Finding what limits the number**\nI'll break errors down by:\n- type: substitutions, deletions, insertions\n- speaker (agent vs. customer), accent, audio quality, codec\n- utterance length and overlapping speech\n- domain terms: names, account numbers, product names\n\nDeletions point to segmentation or VAD trouble. Domain-term substitutions point to vocabulary. Broad noise across everything points to the model.\n\n**Candidates**\nEach has a test that could prove it wrong:\n- **Swap the model.** Run Qwen3-ASR, Canary-Qwen, Parakeet and one or two API models through the same harness.\n- **Fix segmentation and VAD,** if deletions dominate.\n- **Bias toward domain vocabulary.**\n- **Fine-tune on in-domain 8 kHz audio,** if we have labeled calls.\n- **LLM correction pass** after transcription. It can make up words, so I'll track insertions separately.\n- **Combine model outputs,** if no single model wins.\n\nI'll write the plan to `.agent/hypotheses/2026-11-19-wer-callcenter.md`. For each candidate it will set the number to beat, the test that decides it and the regression limits.\n\n**How I'll decide**\n- I'll use a paired bootstrap, with each utterance (or each call, where utterances share one) as the unit. A change is kept only if it cuts WER by at least 1 point and the uncertainty range excludes zero.\n- Limits that must hold: speed (real-time factor and p95 latency), cost per audio hour, accuracy on key entities, and no group (by accent or audio quality) getting worse beyond a preset margin.\n- If results stay flat for three measurements, I'll switch to a different approach rather than tune harder.\n\n**What I'll build**\n- A scoring harness that runs every candidate the same way.\n- The winning change, wired into the nightly run, with code paths it replaces removed.\n- The `.agent/experiments.jsonl` log, the climb ledger rows, and a report giving before and after against the bar, with uncertainty and costs. Projections will be labelled separately from measurements.\n\nSources:\n- [AppTek call-center dialogues](https://api-inference.huggingface.co/datasets/apptek-com/apptek_callcenter_dialogues)\n- [Kili ASR guide 2026](https://kili-technology.com/blog/asr-models-guide-word-error-rate-benchmarks-and-failure-modes-2026)\n- [Gladia call transcription benchmarks](https://www.gladia.io/blog/call-transcription-accuracy-benchmarks-what-contact-centers-should-measure)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/STATS.md"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "call center conversational speech WER benchmark 2026 state of the art ASR"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Qwen3-ASR (1.7B) at 8.3% average WER",
+    "q2": true,
+    "q2_quote": "Proposed target: 10% WER or lower",
+    "q3": true,
+    "q3_quote": "Swap the model. Run Qwen3-ASR, Canary-Qwen, Parakeet",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H02",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Two months of prompt and few-shot changes have kept our invoice field extractor between 87% and 89% of fields correct on 500 labeled invoices. Decide what to try next.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'll stop doing prompt and few-shot work. The score has stayed between 87% and 89% for two months, and the skill treats a hill that stays flat for three measurements as a sign the mechanism is wrong, not a reason to try harder. Here is what I'll do next.\n\n**The bar.** No shared leaderboard exists for invoice field accuracy, so the published numbers are only rough guides. On layout-heavy documents, GPT-4o reading the page image scored about 0.90 F1 and text-only GPT-4o about 0.80. LayoutLMv3 scored about 0.60 even after fine-tuning ([arXiv 2510.15727](https://arxiv.org/pdf/2510.15727)). A Fraunhofer benchmark also compares image input against text input ([arXiv 2509.04469](https://arxiv.org/pdf/2509.04469)). The target is **at least 95% of fields correct on a fresh held-out set**, or a measured ceiling that explains why we can't get there. Our own 89% is not the bar.\n\n**First steps (read-only analysis, no model changes):**\n1. **Check what the 87\u201389% range means.** All 500 invoices have shaped two months of prompt choices, so they are no longer a clean test. I'll split off a frozen hold-out set that nobody tunes on. I'll also measure the run-to-run spread with confidence intervals grouped by invoice. If the spread is about \u00b11 point, every prompt change so far has been noise.\n2. **Sort every wrong field (about 11% of fields) by cause:**\n   - **Input loss:** the correct value isn't in the text the model receives (OCR errors, reading order, tables flattened). I'll grep the model's input for the gold value. This sets a hard ceiling no prompt can pass.\n   - **Bad labels.** I'll audit a sample.\n   - **Scoring mismatch:** the answer is right but formatted differently (dates, currency, \"1,000.00\" vs \"1000\"). This is a measurement problem, so I'd fix the scorer and report the old and new scores side by side.\n   - **Field confusion:** wrong field picked, such as ship-to vs bill-to, or one tax total for another.\n   - **Line-item and table errors.**\n   - **Reasoning errors**, such as totals that don't add up.\n   I'll also break accuracy down by field type and by vendor layout.\n\n**Candidates, ranked after the sort:**\n- **Page images to a multimodal model**, alone or alongside the OCR text. This fits if input loss or layout dominates. The published gap between image and text input is about 10 points. It's refuted if the gold value is already present in our text for most errors.\n- **Validators and repair:** check that line items add up to the subtotal, that subtotal plus tax equals the total, and that VAT IDs and dates have valid formats. When a check fails, re-ask with the error attached. This fits if reasoning or field confusion dominates.\n- **Scorer and label fixes.** These are cheap and could account for several points on their own.\n- **Fine-tuning or per-field specialist models**, but only if we have labeled data outside the evaluation set.\n- **Deleting work:** drop few-shot examples that the error sort shows aren't helping.\n\nBefore choosing, I'll run the skill's three checks:\n- Why would the top candidate have failed two weeks from now?\n- What would make the result ten times better? One answer is to send low-confidence fields to human review, so that accuracy on auto-accepted fields reaches 99%.\n- Which fields actually cost money when they're wrong? A wrong total is worse than a wrong PO number, so per-field weighting may matter more than the overall average.\n\n**Running the test.** Each candidate gets the same budget for tokens, latency and cost per invoice, and is scored once on the frozen hold-out set. I'll write down the pass and fail lines before running and won't move them. The hypothesis goes in `.agent/hypotheses/2026-11-19-invoice-extraction-plateau.md`, and each result is logged to `.agent/experiments.jsonl` as KEEP, ITERATE or ABANDON.\n\nSources:\n- [Invoice Information Extraction: Methods and Performance Evaluation](https://arxiv.org/pdf/2510.15727)\n- [arXiv 2509.04469](https://arxiv.org/pdf/2509.04469)\n- [Receipt understanding MLLM benchmark](https://arxiv.org/pdf/2605.22413)\n- [arXiv 2603.02789](https://arxiv.org/html/2603.02789)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/constraint-options.md"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "invoice key information extraction benchmark field-level F1 state of the art LLM vs layout model"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "LayoutLMv3 scored about 0.60 even after fine-tuning ([arXiv 2510.15727](https://arxiv.org/pdf/2510.15727))",
+    "q2": true,
+    "q2_quote": "at least 95% of fields correct",
+    "q3": true,
+    "q3_quote": "Page images to a multimodal model",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H02",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Two months of prompt and few-shot changes have kept our invoice field extractor between 87% and 89% of fields correct on 500 labeled invoices. Decide what to try next.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'm not going to suggest another prompt or few-shot change. Two months stuck at 87\u201389% means the limit is somewhere prompts can't reach. The next step is to measure where the remaining ~12% of errors come from, then try a different mechanism.\n\n**The bar.** There's no published number we can compare against, because results depend on the dataset. In public studies, well-structured header fields reach about 90% ([Docling study](https://arxiv.org/pdf/2511.05547)). Image-plus-text input generally beats text-only parsing ([arXiv 2509.04469](https://arxiv.org/html/2509.04469v1)). Informal tests put GPT-4o and cloud OCR at 80\u201391% ([HackerNoon](https://hackernoon.com/can-your-llm-handle-an-invoice-i-tested-5heres-the-truth)). So the real limit is our own: the share of fields that are actually extractable once wrong labels and fields missing from the document are removed. My working target is \u226595% field accuracy on a fresh held-out set, or a measured limit that explains why we can't get there.\n\n**First steps (measure before choosing):**\n1. **Check for noise.** With 500 invoices \u00d7 N fields, part of the 87\u201389% swing may be random variation. I'll compute a confidence interval and rerun the current best version on the same documents to see how much it moves on its own.\n2. **Check for overfitting.** Two months of tuning against all 500 invoices means 88% is probably optimistic. I'll label a fresh set of 150\u2013200 invoices, keep it untouched, and use it only for final decisions.\n3. **Sort every wrong field by cause:**\n   - text-reading (OCR) or input error (the value isn't in the text the model received)\n   - layout, table or multi-page confusion\n   - formatting mismatch between a correct answer and the label (dates, currency, whitespace)\n   - wrong label or genuinely ambiguous field\n   - a real reasoning error\n\n   Each cause gets a count, broken down by field and vendor.\n\n**Candidates.** I'll rank them once the error counts are in, and each one has a result that would rule it out:\n- **Correct the scoring.** Normalize formats and fix wrong labels. Ruled out if they explain less than 2 points of the gap.\n- **Send the page image with the text.** Ruled out if OCR and layout errors make up less than a third of the misses.\n- **Add hard checks with a retry.** Line items must add up to the total, dates must parse, and the vendor or tax ID must match our vendor list. A failed check triggers a targeted re-ask. Ruled out if checkable fields aren't where the errors are.\n- **Score confidence per field and send low-confidence fields to a person.** This changes the metric to accuracy at a given automation rate. I'd only do it if you confirm review is acceptable, since that's a product decision.\n- **Fine-tune a model or train a layout model.** Only if the errors are spread out rather than clustered, and only with more labeled data than 500.\n\n**Two questions I'll answer before ranking:**\n- **Red team:** \"If image input fails two weeks from now, why?\" Most likely the errors were in the labels or the scoring, not in the model.\n- **Unasked:** Does 88% field accuracy translate into correct invoices in your process? A single wrong total may matter more than ten wrong PO numbers. I'll report accuracy per field and per whole invoice, alongside the overall number.\n\n**What I'll build:** a scorer with per-field normalization, the error-cause report, and the frozen held-out set. I'll also write a hypothesis file listing each candidate's number to beat, its test, and how much accuracy we'll accept losing on other fields. The first experiments will be scoring correction plus hard checks, compared one-to-one on the same documents against the current version at equal cost per invoice. Every result gets recorded as KEEP, ITERATE, ABANDON or REGRESSION.\n\nThere was no saved progress, experiment log or earlier hypotheses in this repository copy. Please share them so I don't retry approaches you've already rejected.\n\nSources: [arXiv 2511.05547](https://arxiv.org/pdf/2511.05547) \u00b7 [arXiv 2509.04469](https://arxiv.org/html/2509.04469v1) \u00b7 [arXiv 2603.02789](https://arxiv.org/html/2603.02789v1) \u00b7 [arXiv 2502.18179](https://www.alphaxiv.org/overview/2502.18179) \u00b7 [HackerNoon](https://hackernoon.com/can-your-llm-handle-an-invoice-i-tested-5heres-the-truth)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 4,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/constraint-options.md"
+    },
+    {
+     "tool": "Glob",
+     "arg": ".agent/**"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "invoice key information extraction benchmark field-level accuracy LLM vs layout model DocILE 2025"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "well-structured header fields reach about 90% ([Docling study](https://arxiv.org/pdf/2511.05547))",
+    "q2": true,
+    "q2_quote": "My working target is \u226595% field accuracy",
+    "q3": true,
+    "q3_quote": "Send the page image with the text.",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H03",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our coding agent resolves 22 of 75 tasks in our internal bug-fix benchmark with one model in a single loop. We think the loop design is the limit. Find a better agent design.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I don't think it's safe to start from \"the loop design is the limit\". Public results suggest a plain single loop can score far higher than we do. On the official SWE-bench \"Bash Only\" board, mini-SWE-agent (one model, a basic think-then-act loop, bash only) reached 76.8% with Claude 4.5 Opus. Vals.ai, a third party, reports 97% for Claude Opus 5 in the same kind of loop, but I couldn't confirm that figure and SWE-bench Verified is now saturated. Those tasks aren't our tasks, but 22/75 (29%) is far enough below that the model, tools, environment or broken tasks could matter more than the loop. I'll test the loop claim before building a new design.\n\n**The bar**\n- **Ours:** 22/75 (29%). With 75 tasks, the 95% interval is roughly 20\u201341%.\n- **Target:** at least 45/75 at no more than 1.5\u00d7 our current cost per task. If that's out of reach, I'll report the measured ceiling (below) and the evidence for why.\n- **Deciding check:** our benchmark's own hidden tests, run as paired comparisons on the same tasks. I'll pick about 30 tasks as a held-back set before any tuning, and the final decision is made on those.\n\n**First steps**\n1. Read `.agent/` state and the climb ledger, and keep any approaches already rejected.\n2. **Find the ceiling:** apply each task's reference fix and run its tests. Any task that fails with the known-good fix, or has flaky tests, is out of reach for every design. That count is our real ceiling.\n3. **Baseline:** run the current agent 3 times on all 75 tasks. Record solved or not, tokens, cost, time, step count and the full trace for each run.\n4. **Sort the 53 failures by cause:** environment or setup broken, couldn't find the right code, wrong fix, never ran the tests, ran out of steps or context, or a tool error. This tells us whether the loop is actually what's failing.\n\n**Candidates, at equal measured cost**\n- **A. Control:** mini-SWE-agent unchanged, with the same model. If it also scores about 22, the loop isn't the limit. That would point to the model, environment or tasks, and I'd change course.\n- **B. Same loop, stronger model:** tests whether the model is the limit.\n- **C. Reproduce-then-verify loop:** write a failing test first, then fix, then run the test suite before submitting. This targets \"wrong fix\" and \"never ran the tests\".\n- **D. Several attempts, then pick one:** run N tries and choose using reproduction tests or a reviewer model (the approach used by Agentless and SWE-agent). Its cost is counted as N times a single run.\n- **E. Planner plus executor (multi-agent):** tried only if the failure sort shows planning or context breakdowns. The coordination work counts toward its cost.\n\nBefore running anything, I'll write `.agent/hypotheses/2026-11-19-agent-design.md`. For each candidate it records the number to beat, cost limits, acceptance rule and the result that would rule it out. One rule up front: a variant is kept only if the paired gain on the held-back set beats run-to-run noise and its cost per task stays within 1.5\u00d7. I'll also check that each variant's mechanism actually fired in its traces, such as a reproduction test being written.\n\n**What I'll build**\nEach design runs as a separate arm on our one existing benchmark runner, with a shared cost record covering calls, tokens, cost and time. I'll pick from the failure sort first, not build all five designs up front. If three measurements in a row show no gain, I switch to a different approach rather than adding more effort.\n\nI'll report the score before and after against the target, wins and losses per task, cost, and what was excluded and why. Projections will be labelled separately from measurements.\n\nSources:\n- [SWE-bench Bash Only](https://swebench.com/bash-only.html)\n- [Vals.ai SWE-bench](https://www.vals.ai/benchmarks/swebench)\n- [Simon Willison on SWE-bench](https://simonwillison.net/2026/Feb/19/swe-bench/)\n- [developersdigest leaderboard](https://www.developersdigest.tech/benchmarks/swe-bench)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 4,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/arena.md"
+    },
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/STATS.md"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "SWE-bench Verified leaderboard 2026 top agent resolve rate mini-swe-agent bash-only"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "mini-SWE-agent (one model, a basic think-then-act loop, bash only) reached 76.8% with Claude 4.5 Opus",
+    "q2": true,
+    "q2_quote": "Target: at least 45/75",
+    "q3": true,
+    "q3_quote": "E. Planner plus executor (multi-agent)",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H03",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our coding agent resolves 22 of 75 tasks in our internal bug-fix benchmark with one model in a single loop. We think the loop design is the limit. Find a better agent design.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'll start by measuring, not by redesigning yet. The public evidence makes \"the single loop is the limit\" doubtful.\n\n**The bar.** On the SWE-bench Bash Only board, a plain single-loop agent (mini-SWE-agent) with a frontier model resolves about 77% of SWE-bench Verified, as of Feb 2026. Vals.ai reports 97% for a newer model, but I couldn't confirm it on an official board. Our 22/75 is 29%. So a simple loop can do much better than we do, at least on public tasks. Our internal benchmark may simply be harder, so I won't treat 77% as our number until a reference agent is run on it. The target is to beat the better of our current agent and an off-the-shelf reference agent by a margin set after the pilot. The check is resolve rate on a held-back split, at equal measured tokens and cost.\n\n**First steps:**\n1. Read `.agent/` state and the climb ledger for earlier attempts and rejected ideas.\n2. Rerun the current agent 3\u00d7 on all 75 tasks to get a real baseline. At n=75 the standard error is about \u00b15 points, so one run of 22 can't tell a design change from noise. I'll record which tasks pass every time, sometimes, or never.\n3. Mark invalid runs (setup errors, flaky tests, timeouts) and remove them from both sides of the comparison before going further.\n4. Sort every failed trace by where it broke: finding the bug, reproducing it, writing the edit, checking the fix, running out of budget, or a tool or environment error. This tells us whether the loop is actually the cause.\n\n**Deciding experiments.** All use the same tasks, environment and grader, paired task by task.\n- **Control A (an existing solution):** mini-SWE-agent with our model, unchanged. If it beats us, our tools or prompts are the problem, not the loop design.\n- **Control B (is the model the limit?):** our loop with a stronger model.\n- **Design candidates, chosen to fix whichever failure stage dominates:**\n  - make the agent write a failing test before it edits;\n  - run several independent attempts and pick one by running the tests;\n  - a fixed find-the-bug, write-patch, check-it pipeline in the style of Agentless;\n  - a planner that hands work to sub-agents.\n\nFor each candidate I'll write down the expected gain, the result that would disprove it, and a budget limit in `.agent/hypotheses/2026-11-19-agent-design.md` before running it. Multi-attempt designs get charged for every attempt, including coordination work.\n\n**What I'll build.** Each design runs as a separate arm through one runner, and every row records outcome, tokens, cost, wall time, tool calls and whether the design's key step happened (for example, a reproduction test was written). I'll split off about 25 held-back tasks and never tune on them. I'll report paired wins, losses and ties, corrected for testing several arms, plus cost per extra solved task.\n\n**Decision rules.** KEEP a design only if it wins on the held-back split within the cost limit. If three measurements show no gain, I'll stop tuning that design and try a different one. If the controls show the model or tools set the limit, I'll report that the loop wasn't the cause and not build a more complex system.\n\nThe first deliverable is the failure breakdown and both controls, which should take about 4 runs \u00d7 75 tasks.\n\nSources:\n- [SWE-bench Bash Only](https://swebench.com/bash-only.html)\n- [Epoch AI \u2013 SWE-bench Verified](https://epoch.ai/benchmarks/swe-bench-verified)\n- [Vals.ai SWE-bench](https://www.vals.ai/benchmarks/swebench)\n- [Simon Willison on the Feb 2026 leaderboard](https://simonwillison.net/2026/Feb/19/swe-bench/)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 4,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/arena.md"
+    },
+    {
+     "tool": "Grep",
+     "arg": "level-up passes|red-team|unasked"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "SWE-bench Verified leaderboard 2026 top resolve rate mini-swe-agent bash only"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "mini-SWE-agent) with a frontier model resolves about 77% of SWE-bench Verified",
+    "q2": false,
+    "q2_quote": "by a margin set after the pilot",
+    "q3": true,
+    "q3_quote": "a planner that hands work to sub-agents",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H04",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our product search scores NDCG@10 of 0.41 on 2,000 judged queries from last quarter. Improve it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'll start by measuring. Your 0.41 isn't yet broken down into causes, and the metric has two possible flaws I'll check before optimizing against it.\n\n**The bar.** No public number transfers directly to your catalog. The closest is a 33M-parameter cross-encoder fine-tuned on Amazon's public product-search judgments (ESCI), which reportedly raised nDCG@10 from 0.435 to 0.516 over retrieval alone ([model card](https://huggingface.co/albertobarnabo/ecommerce-product-search-reranker)). A multi-stage pipeline with an LLM reranking stage reports 0.585 \u2192 0.717 over BM25 on ESCI ([blog](https://slavadubrov.github.io/blog/2026/02/08/building-a-modern-search-ranking-stack-from-embeddings-to-llm-powered-relevance)). The same model card warns that an off-the-shelf MS MARCO reranker did worse than retrieval alone on product data, so in-domain training matters. My provisional target is **\u22650.49** on a held-out half of your queries, with a paired-bootstrap 95% CI on the gain above +0.03. To check that the target is fair, I'll also run our current stack on the public ESCI test split, which shows whether 0.41 reflects our system or harder queries.\n\n**First steps (before changing anything):**\n1. **Read existing records.** `.agent/` state and the climb ledger, so I continue any active work and don't repeat rejected approaches.\n2. **Split the 2,000 queries.** A fixed, query-level split: 1,000 for development, 1,000 sealed for the final decision. I'll write the comparison rule, smallest useful gain (+0.02) and regression limits (p95 latency, zero-result rate, head-query nDCG) into `.agent/hypotheses/` before running anything.\n3. **Check the metric:**\n   - **Unjudged results.** If the judgments only cover results the old system returned, any new system gets penalized for surfacing unjudged products. I'll report the share of unjudged results in each top 10 and fill those gaps with an LLM judge, validated against a human-labeled subset first.\n   - **Stale judgments.** Last quarter's judgments may not match the current catalog. I'll count judged products that are now out of stock or deleted.\n4. **Find where the score is lost.** Recall@100 and @1000 show how much a perfect reranker could reach; nDCG at fixed candidate sets shows how much is lost to ordering. I'll break both down by query type (head vs tail, attribute-heavy, misspelled, no results).\n\n**Options I'll rank once that breakdown is in:**\n- **If ordering is the limit:** a cross-encoder fine-tuned on our judgments plus click logs, possibly distilled from an LLM reranker. Expected gain is about +0.05\u20130.08 if it matches ESCI results. I'll drop it if the gain on dev data is under +0.02 at the same candidate depth.\n- **If retrieval is the limit:** combine BM25 with dense retrieval (merged by rank fusion), and expand queries with structured attributes (size, brand, color). I'll drop it if recall@100 rises by less than 5 points.\n- **Simple fixes:** spelling correction and synonyms for tail queries.\n\nBefore ranking, I'll ask why the leading option would fail two weeks from now; likely answers are latency cost or overfitting to last quarter's queries.\n\n**What I'll build:** the scoring setup (fixed split, unjudged-result report, paired bootstrap), then the winning option end to end on the real serving path, measured at equal latency and compute budgets. Each result gets logged as KEEP, ITERATE, ABANDON or REGRESSION. If three measurements in a row show no gain, I'll switch approach rather than keep tuning.\n\n**From you:** access to the search service, the judgment pools, the click logs, and the latency budget.\n\nSources:\n- [ecommerce-product-search-reranker](https://huggingface.co/albertobarnabo/ecommerce-product-search-reranker)\n- [genieai-product-reranker](https://huggingface.co/ramitha2002/genieai-product-reranker)\n- [Search ranking stack blog](https://slavadubrov.github.io/blog/2026/02/08/building-a-modern-search-ranking-stack-from-embeddings-to-llm-powered-relevance)\n- [Preprint 202610.1910](https://www.preprints.org/manuscript/202610.1910)\n- [Amazon ESCI Dataset](https://frutik.github.io/awesome-search/Datasets/Amazon-ESCI-Dataset)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/STATS.md"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "Amazon ESCI product search NDCG reranker cross-encoder results benchmark"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "raised nDCG@10 from 0.435 to 0.516 over retrieval alone ([model card](https://huggingface.co/albertobarnabo/ecommerce-product-search-reranker))",
+    "q2": true,
+    "q2_quote": "My provisional target is **\u22650.49**",
+    "q3": true,
+    "q3_quote": "combine BM25 with dense retrieval (merged by rank fusion)",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "H04",
+   "split": "heldout",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our product search scores NDCG@10 of 0.41 on 2,000 judged queries from last quarter. Improve it.",
+   "words": 954,
+   "text_digest": "cc7c9bbf7a12e5d7",
+   "rev": "origin/main",
+   "reply": "I'll start by measuring, not changing anything. Before the first experiment, here is the bar as far as I can set it today.\n\n**The bar**\n- **Best known result:** published product-search numbers don't line up with ours. On the public Amazon shopping-query dataset (ESCI), one vendor reports that reranking with a fine-tuned cross-encoder lifted NDCG@10 from 0.435 to 0.516 ([model card](https://huggingface.co/albertobarnabo/ecommerce-product-search-reranker)). A blog reports 0.585 \u2192 0.717 with a hybrid plus LLM reranking pipeline ([post](https://slavadubrov.github.io/blog/2026/02/08/building-a-modern-search-ranking-stack-from-embeddings-to-llm-powered-relevance)). Another summary reports 0.360 on ESCI and 0.610 on Wayfair's WANDS dataset ([summary](https://zeli.app/story/50034950)). These are self-reported and use different gain scales and candidate pools, so the useful takeaway is the size of the gain: about +0.07 to +0.13 from a better ranking stage. Our 0.41 can't be compared to them directly.\n- **Our number:** 0.41 NDCG@10 on 2,000 queries. I haven't reproduced it yet.\n- **Target (provisional):** at least 0.48 on a frozen held-out half of the queries, with no regression in p95 latency or cost beyond limits we agree on first. I'll revise it once the breakdown shows whether retrieval or ranking is the limit.\n- **Outside check:** the held-out queries, then an online interleaving or A/B test on clicks and conversion. NDCG on last quarter's queries is only a stand-in for the outcome.\n\n**First steps**\n1. Read `.agent/` state and the climb ledger, so I resume earlier attempts and skip rejected ones.\n2. Rerun the evaluation on the production search path and confirm 0.41.\n3. Split the 2,000 queries into 1,000 for development and 1,000 held out. The held-out half stays frozen and untouched during tuning.\n4. Check that the metric can be trusted:\n   - **Judged coverage:** what share of each system's top 10 has a judgment. If the judgments were made on the current system's results, any new system will be scored down for every unjudged product it returns.\n   - **Staleness:** catalog drift since last quarter and how many judged products no longer exist.\n   - **Fix:** if either is serious, judge the new candidates' unjudged results with the same rubric first. An LLM judge counts only after checking that it agrees with human judges on a sample.\n5. Find where we lose. Compare recall@100 with NDCG@10, split by query type: head versus tail, attribute-heavy, misspelled, zero-result. Low recall means retrieval is the limit. High recall with low NDCG means ranking is.\n\n**Candidates**, each with a refuting result recorded beforehand and all compared at the same latency and cost:\n- **A. Hybrid retrieval:** keyword search plus embeddings, merged by reciprocal rank fusion. This only helps if recall is the limit.\n- **B. Fine-tuned cross-encoder:** rerank the top 50, trained on our own clicks and judgments. The vendor's report that an off-the-shelf reranker did worse than plain retrieval argues against skipping the fine-tuning.\n- **C. LLM reranking:** only the top 10\u201320, measured against its cost.\n- **D. Query understanding:** pull out attributes like brand, size and color, and fix spelling. This is aimed at whichever segments fail in step 5.\n- **E. Removals:** existing boosts or rules that the breakdown shows hurt results.\n\nBefore ranking these, I'll write `.agent/hypotheses/2026-11-19-product-search-ndcg.md`. It will hold, for each candidate, the number to beat, acceptance and stopping rules, and allowed regressions. It will also hold the review passes: a red-team pass (likely failure: gains that come from unjudged results or tuning to the development set), a 10\u00d7 pass (learning from click logs instead of the 2,000 static queries) and the most important unasked question (whether NDCG tracks conversion here).\n\n**What I'll build:** the coverage and breakdown harness first, then A and B behind a flag. B is the most likely winner. I'll compare them with a paired bootstrap over queries on the development set, and record each result as `KEEP`, `ITERATE`, `ABANDON` or `REGRESSION` in `experiments.jsonl`.\n\nSources: [HF reranker card](https://huggingface.co/albertobarnabo/ecommerce-product-search-reranker), [Dubrov ranking stack](https://slavadubrov.github.io/blog/2026/02/08/building-a-modern-search-ranking-stack-from-embeddings-to-llm-powered-relevance), [Bag-of-decisions summary](https://zeli.app/story/50034950)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "Grep",
+     "arg": "set-the-bar|## Set the bar"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "product search NDCG@10 benchmark ESCI WANDS cross-encoder reranker LLM results"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "On the public Amazon shopping-query dataset (ESCI), one vendor reports that reranking with a fine-tuned cross-encoder lifted NDCG@10 from 0.435 to 0.516 ([model card](https://huggingface.co/albertobarnabo/ecommerce-product-search-reranker))",
+    "q2": true,
+    "q2_quote": "Target (provisional): at least 0.48",
+    "q3": true,
+    "q3_quote": "Hybrid retrieval: keyword search plus embeddings, merged by reciprocal rank fusion",
+    "judge_model": "grok-4.7-build"
+   }
+  }
+ ]
+}

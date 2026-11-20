@@ -1,0 +1,228 @@
+{
+ "base": "99143a9578b77aaa1c4ab3479a639e50e474594c",
+ "head": "WORKTREE",
+ "head_commit": "e9f6840706aa557e4198f51c3903979a55f43b3b",
+ "agent_model": "opus",
+ "agent_tools": "none",
+ "snapshots": {},
+ "judge": "grok",
+ "samples": 2,
+ "measured_at": "2026-11-20T02:18:43Z",
+ "summary": {
+  "arms": {
+   "new": {
+    "n": 8,
+    "q1": 7,
+    "q2": 7,
+    "q3": 8,
+    "all3": 7
+   }
+  },
+  "paired": {},
+  "by_skill": {
+   "tuned/evolve": {
+    "new": {
+     "n": 8,
+     "q1": 7,
+     "q2": 7,
+     "q3": 8,
+     "all3": 7
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "scenario": "A01",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our retrieval-augmented support agent answers 61% of our 400-question internal support set exactly right (last week's run, exact-match grading). Improve it.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "# Plan: improve the support agent past 61%\n\n## 1. Set the bar (before touching anything)\n\n- **Outside bar (to verify):** the closest public benchmark is Meta's CRAG (KDD Cup 2024). From memory, its paper reports the best industry RAG systems answering about 63% of questions accurately without hallucination. I'll search to confirm that number and check for a newer leader. CRAG differs from our set: open-domain web and API questions rather than our support corpus, and three-way scoring rather than exact match. If they turn out closer to our cases, I'll also check TechQA and \u03c4-bench's retail and airline tasks.\n- **Our number:** 61% is last week's figure, so I won't treat it as the baseline. I'll rerun the current agent on all 400 questions on the real production retrieval path.\n- **Target:** at least 75% on a validated grader, with no increase in confidently wrong answers. That beats the outside bar by a clear margin. I'll revise the target once the failure breakdown shows what's actually recoverable.\n- **Decider:** a paired comparison on the same 400 questions, with a bootstrap confidence interval. I'll score against a held-out split I won't tune on.\n\n## 2. Check the metric before optimizing it\n\nExact match likely undercounts correct answers that are paraphrased. I'll hand-label a random 60 of the current answers as correct or wrong.\n\n- If exact match disagrees often with those labels, I'll fix the metric first. That could mean normalized match plus a rubric grader calibrated against the hand labels, or reviewing gold answers that allow several valid forms (`/eval-engineering`).\n- I'll record in `metricClaims` how the chosen metric relates to \"the customer got the right answer.\"\n- If the metric is fine, I'll keep exact match as the reported number.\n\n## 3. Find the limiting constraint\n\nFor each failure, I'll log three things:\n\n1. Was the gold passage in the retrieved top-k (retrieval recall@k)?\n2. Did the model use it correctly (generation given gold context)?\n3. Was the question unanswerable from the corpus at all?\n\nI'll also run an oracle-context pass. Feeding gold passages directly gives our ceiling; it is a limit, not the bar. Its gap from the real run shows how much of the miss is retrieval versus generation.\n\n## 4. Candidate mechanisms, ranked by that breakdown\n\n- **If retrieval-bound:**\n  - hybrid BM25 plus dense retrieval with a cross-encoder reranker\n  - query rewriting or decomposition\n  - better chunking, such as section-aware chunks with titles\n  - contextual chunk prefixes (Anthropic's contextual retrieval reports fewer retrieval failures; verify the numbers)\n- **If generation-bound:**\n  - answer-format constraints\n  - cite-then-answer prompting\n  - a stronger model\n  - abstaining when evidence is weak\n- **Deletion or reuse:** stale or duplicate docs that poison retrieval.\n\nFor each candidate, I'll write its expected gain in points, cost, and the observation that would refute it into `.agent/hypotheses/2026-11-19-support-rag.md`. Before ranking, I'll run three passes:\n\n- a red-team pass: why the leading candidate failed\n- a 10\u00d7 pass: what would make the result ten times better\n- the most important question nobody has asked\n\n## 5. Run and decide\n\n- I'll test independent changes in isolation and test coupled ones together.\n- Latency and cost per question will be measured alongside accuracy.\n- Each candidate gets a recorded verdict: KEEP, ITERATE, ABANDON or REGRESSION.\n- If the number stays flat for three measurements, I'll switch mechanisms rather than tune harder.\n- After each decision, I'll update `.agent/current.json`, `progress.md`, `experiments.jsonl` and the scorecard.\n\n## First concrete actions\n\n1. Search for the CRAG leader.\n2. Rerun the 400-question baseline.\n3. Hand-label 60 answers.\n4. Instrument retrieval recall.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Meta's CRAG (KDD Cup 2024). From memory, its paper reports the best industry RAG systems answering about 63%",
+    "q2": true,
+    "q2_quote": "at least 75%",
+    "q3": true,
+    "q3_quote": "hybrid BM25 plus dense retrieval with a cross-encoder reranker",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A01",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our retrieval-augmented support agent answers 61% of our 400-question internal support set exactly right (last week's run, exact-match grading). Improve it.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "The first step is to set the bar, then rerun the baseline. Last week's 61% is a starting point, but I won't build on it until I've re-measured it.\n\n**1. Set the bar (before touching anything)**\n- **Outside bar (to verify):** The closest public benchmarks are Meta's CRAG (KDD Cup 2024) and IBM TechQA, which is technical-support QA. My recollection of the CRAG paper is that straightforward RAG reached about 44% accuracy and the best industry RAG systems reached about 63% without hallucination. I'll check those numbers against the paper and the leaderboard, and also look up the current TechQA leader. The cases differ from ours: CRAG is open-domain web and knowledge-graph data with dynamic facts, while our set is a closed corpus of support documents, which is usually easier to retrieve from.\n- **Ours:** 61% exact match on 400 questions. The 95% interval is about \u00b14.8 points, so a 2-point \"gain\" would be noise.\n- **Target:** at least 75% correct on a held-out split, without a higher rate of confidently wrong answers. That beats the CRAG industry figure on easier cases. An oracle-retrieval ceiling will be our own limit, not the bar.\n- **Deciding check:** paired McNemar test on the held-out questions, graded by the validated grader described below.\n\n**2. Establish the comparison**\n- Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and the climb ledger. I'll resume any active work and keep the list of rejected approaches.\n- **Audit the metric first.** Exact match is a poor stand-in for whether a support answer is right. I'll hand-label about 100 answers and measure how often exact match disagrees with a human. If many \"wrong\" answers are actually correct paraphrases, I'll validate a semantic-equivalence grader against those labels and record the change in `metricClaims`. That change counts as a measurement fix, not an improvement.\n- Rerun the current pipeline on the real path with the model, index and prompt pinned.\n- Split the set once: 250 questions for development and 150 held out for decisions. I won't tune on the held-out questions or move thresholds after seeing results.\n\n**3. Find the limiting constraint**\nI'll trace every failure and sort it into one bucket:\n- **Retrieval miss:** the gold passage is not in the top-k.\n- **Ranking miss:** the passage was retrieved but buried.\n- **Reader error:** the passage was in context but the answer was wrong.\n- **Corpus gap:** the answer isn't in our documents at all.\n- **Grading artifact:** the answer was right but marked wrong.\n\nI'll also run an oracle-context pass, giving the model the gold passage, to measure the ceiling for reader errors.\n\n**4. Candidate mechanisms (ranked by what the breakdown shows)**\n- **Retrieval:** hybrid BM25 plus dense retrieval with reciprocal-rank fusion, a cross-encoder reranker, and re-chunking along the documents' own structure.\n- **Query:** rewriting or decomposition for multi-part tickets.\n- **Reader:** citing the supporting passage or abstaining when there isn't one, plus few-shot examples of the answer format.\n- **Corpus gaps:** filling missing documents. This is a content fix rather than a model fix.\n- **Deletion candidate:** removing any stages that don't help.\n\nFor each candidate I'll record the expected gain in points, its cost and latency, and the result that would refute it. All of this goes in `.agent/hypotheses/2026-11-19-rag-support.md`, along with the red-team, 10\u00d7-better and unasked-question passes.\n\n**5\u20136. Run and decide**\n- Test independent changes in isolation and coupled ones together, at equal latency and token budgets.\n- Mark each as KEEP, ITERATE, ABANDON or REGRESSION with confidence intervals.\n- If results stay flat for three measurements, I'll switch mechanisms rather than keep tuning.\n- After each decision I'll log to `experiments.jsonl`, the ledger and the scorecard. The report will show before and after against the bar and label projections separately from measurements.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "best industry RAG systems reached about 63%",
+    "q2": true,
+    "q2_quote": "at least 75% correct",
+    "q3": true,
+    "q3_quote": "a cross-encoder reranker",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A02",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our code-review bot's flags are accepted by reviewers 42% of the time (204 of 486 flags last month). Improve its precision without losing the bugs it catches today.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "**Bar first.** The closest outside bar I know is Google's Tricorder (Sadowski et al., ICSE 2015). It demoted analyzers whose *effective false-positive rate*, meaning developer-marked \"not useful,\" exceeded about 10%. That is roughly 90% precision on surfaced findings. I'll verify the figure and look for newer published LLM-reviewer acceptance rates, from vendor reports or public review-comment benchmarks. Those numbers would be our comparison, with notes on how their cases differ from ours.\n\n- **Ours:** 42% (204/486, last month).\n- **Target:** at least 70% acceptance this cycle on a held-out month, with zero loss of accepted bug-class flags. Tricorder's ~90% is the bar we're working toward. If measurement shows something blocking it, I'll name that limit with evidence.\n\n**First steps**\n\n1. **Read existing state.** That means `.agent/` state, the experiments log, any rejected approaches, and the bot's pipeline: prompt, model, context retrieval, filters and how it posts flags.\n2. **Build the labeled set.** Export all 486 flags with diff, flag text, category, file, reviewer action and any reply. Split by time: the first ~3 weeks for development, the last week as a frozen decision set I never tune on.\n3. **Audit the metric.** Acceptance is a proxy. Some rejections are correct flags reviewers ignored, and some acceptances are trivial nits.\n   - Hand-label about 100 rejected and 50 accepted flags as real bug, valid-but-low-value, wrong, or duplicate.\n   - Record in `metricClaims` how acceptance relates to \"useful flag.\"\n   - Define \"bugs caught today\" precisely: accepted flags labeled real bug. These are the must-keep set, and the regression limit is recall on them of at least 100%, or with a stated confidence bound.\n4. **Find the limiting constraint.** Break precision down by category, language, repo, flag length, model-stated confidence, duplication and context available. I expect a few categories, such as style, speculative null-checks and repeated flags, to account for most rejections. The breakdown decides, not my guess.\n\n**Candidate mechanisms**, each with an expected effect and an observation that would refute it, written to `.agent/hypotheses/2026-11-19-review-precision.md`:\n\n- **Delete:** suppress or merge low-acceptance categories and duplicates. This is cheapest, and I'll check it against the must-keep set.\n- **Verification stage:** a second pass that must ground each flag in the code. It would cite the triggering line, trace callers, or run a test or type-check where possible, and drop flags it can't substantiate. This is the mechanism most likely to beat a threshold.\n- **Calibrated confidence threshold:** fit on dev data, then choose an operating point on the precision/recall curve that keeps every must-keep bug.\n- **Better context:** callers, types and tests retrieved for the changed code, if the breakdown shows flags are wrong for lack of context.\n\nBefore ranking these I'll run the red-team, 10\u00d7, and unasked-question passes. The unasked question I already see: should the bot ever post nits at all?\n\n**Experiment and decision**\n\n- Replay each variant offline on the frozen week.\n- Compare at equal cost and latency per PR, verification-pass spend included.\n- Use paired bootstrap CIs on precision, and treat must-keep recall as a hard gate.\n- Record KEEP, ITERATE, ABANDON or REGRESSION. If the result is KEEP, run a live shadow or A/B for two weeks, because offline labels aren't reviewer behavior.\n- Log everything to `experiments.jsonl` and the climb ledger. Report the bar, before and after, uncertainty, and cost.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Google's Tricorder (Sadowski et al., ICSE 2015)",
+    "q2": true,
+    "q2_quote": "at least 70% acceptance",
+    "q3": true,
+    "q3_quote": "Verification stage: a second pass that must ground each flag in the code",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A02",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our code-review bot's flags are accepted by reviewers 42% of the time (204 of 486 flags last month). Improve its precision without losing the bugs it catches today.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "## The bar\n\n- **Outside bar:** Google's Tricorder program (Sadowski et al., CACM 2018) required analyzers to stay under a 10% \"effective false positive\" rate, which is roughly 90% of findings acted on. Verify this against the source. LLM reviewers such as Google's AutoCommenter (2024) report lower usefulness rates, which I will look up rather than quote from memory. Tricorder findings are narrower and deterministic, unlike our free-form flags, so the comparison is approximate.\n- **Our number:** 42.0% (204 of 486). The 95% CI is about \u00b14.4 points.\n- **Target:** at least 70% acceptance on a held-out period. The longer-term goal is the Tricorder-class level of about 90%.\n- **Guard:** keep at least 98% of today's accepted bug-class flags, and drop no high-severity accepted flag. Any exception must be listed and justified.\n- **Deciding check:** precision and retained-recall on a time-held-out replay set, then a live shadow comparison.\n\n## First steps\n\n1. **Read existing state.** I'll read `.agent/` and the climb ledger, then record `metricClaims`. \"Accepted\" stands in for \"correct and useful,\" but it is a proxy. Reviewers sometimes reject real bugs and accept nits, so I will audit a sample of rejected flags for real bugs reviewers dismissed.\n2. **Build the replay set.** I'll pull all 486 flags with their diffs, the bot version and the reviewer outcomes. I'll label why each of the 282 rejected flags failed: wrong, nit or style, duplicate, already handled elsewhere, correct but out of scope, or unclear wording. I'll also mark which accepted flags are real bugs; that is the protected set.\n3. **Split by time.** Weeks 1\u20133 are for tuning and week 4 is the sealed holdout. I won't touch the holdout until candidates are frozen.\n4. **Confirm the baseline.** I'll rerun the current bot on the same PRs through the real pipeline and check that it reproduces close to 42%. If it doesn't, nondeterminism becomes the first problem to fix.\n\n## Finding the constraint\n\nThe breakdown of rejection causes decides where effort goes. Mostly nits or duplicates means suppression and dedup. Mostly wrong claims means the bot lacks context or verification. Mostly unclear wording means the presentation needs work.\n\n## Candidates\n\nEach candidate gets a prediction and a refuting observation, recorded in `.agent/hypotheses/`.\n\n- **Category cutoffs.** Measure acceptance per category and cut or gate categories that score near zero. This is the cheapest option and deletes work.\n- **Verifier pass.** A second model call must cite the exact lines and the failure path, or reproduce the issue with a test or execution. Flags that fail verification are dropped.\n- **Calibrated confidence threshold.** Choose the operating point on the tuning weeks only.\n- **Better context.** Retrieve callers, tests and repo conventions, so the bot stops flagging things that are handled elsewhere.\n- **Feedback memory.** Suppress patterns that reviewers have repeatedly rejected in this repo.\n\nAll candidates run at equal model and compute budget, with the cost per PR recorded. The red-team question is whether we're gaining precision by staying silent on the protected set. The 10\u00d7 question is whether verified, reproducible flags could become the default. The unasked question is whether acceptance tracks the bugs that would otherwise ship.\n\n## Decision\n\nI'll compare candidates on the holdout with a paired comparison and bootstrap CIs. A candidate is kept only if it beats 42% by a real margin and passes the recall guard. The winners then run in shadow alongside the current bot for two weeks of live PRs, and I read real acceptance only after confirming the deployed revision. If three measurements stay flat, I switch mechanisms rather than tuning harder.\n\nI'll log each result to `.agent/experiments.jsonl`, the ledger and the scorecard.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Google's Tricorder program (Sadowski et al., CACM 2018) required analyzers to stay under a 10% \"effective false positive\" rate",
+    "q2": true,
+    "q2_quote": "at least 70% acceptance on a held-out period",
+    "q3": true,
+    "q3_quote": "A second model call must cite the exact lines and the failure path, or reproduce the issue with a test or execution.",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A03",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Three rounds of prompt changes moved our text-to-SQL agent from 54% to 55% execution accuracy on our 300 held-out questions. Progress has stalled. Decide what to try next.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "The last three prompt changes went from 54% to 55%. On 300 questions the standard error is about \u00b12.9 points, so that gain is noise. Three flat measurements mean we should change the mechanism, not write a fourth prompt.\n\n## 1. The bar (before touching anything)\n\n- **Outside bar, to verify by search:** The BIRD leaderboard leaders were around 75\u201377% execution accuracy on the test set as of 2025. They use multi-candidate generation with a learned selector (CHASE-SQL, XiYan-SQL style). Spider 1.0 tops out above 90%, but it is saturated and easier.\n- **How BIRD differs from ours:** I'll compare our schema size, how dirty our values are, whether our questions come with \"evidence\" hints, and the join depth our questions need.\n- **Our number:** 55% on the real path.\n- **Target:** 70% or higher on the held-out 300, as a first ratchet toward the BIRD frontier. If our schemas make that impossible, I'll write down the measured limit instead.\n- **Deciding check:** a paired comparison on the same 300 questions, using McNemar's test on the questions where the two versions disagree. No tuning on those 300.\n\n## 2. First concrete steps\n\n1. **Read the existing record.** I'll read `.agent/` state and the experiment log so the three prompt rounds stay recorded as rejected approaches.\n2. **Freeze the evaluation.** I'll split off a separate development slice from the training and log data for iteration, and keep the 300 as the decision set.\n3. **Check the gold answers.** I'll spot-check about 30 failures for wrong or ambiguous gold SQL. If 10% of the gold is broken, that is our ceiling, not the agent's.\n4. **Run a failure diagnosis (`/diagnose`)** to label every failure by cause:\n   - schema linking (wrong table or column)\n   - value mismatch (`'NY'` vs `'New York'`)\n   - join path\n   - aggregation or grouping\n   - SQL that doesn't execute\n   - ambiguity\n5. **Measure the oracle pass@k.** I'll sample 8\u201316 candidates per question and record how often any candidate is correct. A big gap between pass@1 (55%) and pass@8 means selection is the bottleneck. A small gap means generation is.\n\n## 3. Candidates (ranked after diagnosis, not before)\n\n| Mechanism | Fixes | Refuted if |\n|---|---|---|\n| Multiple candidates, execution-based dedup, then a selector (pairwise or self-consistency on result sets) | the pass@k vs pass@1 gap | pass@8 is under 65% |\n| Schema linking: retrieve relevant columns plus a sample-value index (LSH or embeddings over database values) | linking and value errors | those account for less than 20% of failures |\n| Execution-feedback repair loop (run the SQL, feed errors or empty results back) | broken or empty SQL | that class is under 5% |\n| Retrieve similar question/SQL pairs as few-shot examples | join and aggregation patterns | no similar pairs exist in our logs |\n| Fine-tune a smaller model on our query logs (deferred until the above are measured) | domain idioms | \u2014 |\n\nBefore ranking, I'll run three passes:\n- **Red-team:** why the selector overfits to the development slice.\n- **10\u00d7:** what it would take to reach 85%, probably correcting the gold labels plus human-validated canonical views over a messy schema.\n- **Unasked question:** do users actually need execution accuracy, or answer correctness when the SQL is semantically different but valid?\n\n## 4. Build and decide\n\n- I'll write the hypotheses to `.agent/hypotheses/2026-11-19-sql-mechanism.md`, with resource limits for each candidate (tokens and latency per question).\n- I'll build the top one or two as complete pipeline stages, not prompt edits.\n- I'll compare them at equal cost on the decision set and record KEEP, ITERATE, ABANDON or REGRESSION.\n- I'll log everything to `experiments.jsonl` and the climb ledger.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "The BIRD leaderboard leaders were around 75\u201377% execution accuracy",
+    "q2": true,
+    "q2_quote": "Target: 70% or higher on the held-out 300",
+    "q3": true,
+    "q3_quote": "Multiple candidates, execution-based dedup, then a selector",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A03",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Three rounds of prompt changes moved our text-to-SQL agent from 54% to 55% execution accuracy on our 300 held-out questions. Progress has stalled. Decide what to try next.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "The three prompt rounds are a flat hill. 54% to 55% on 300 questions is 3 questions, well inside noise (SE \u2248 2.9 pts). The next step is a mechanism change, not a fourth prompt round.\n\n**1. Set the bar (first, before touching code)**\n- **Outside bar:** BIRD's leaderboard top is roughly 75\u201377% execution accuracy on test, from multi-candidate generation plus a selector (e.g., CHASE-SQL ~73\u201374%, AskData-style systems ~77%). Spider 1.0 leaders are above 90%. These numbers are from memory and marked to verify; I'll search the current BIRD and Spider 2.0 boards.\n- **Where our questions differ:** I'll record how our 300 questions differ from BIRD (schema size, dirty values, dialect).\n- **Target:** \u226570% EX on the held-out set, or a measured reason it can't be reached.\n- **Deciding check:** paired McNemar on the same 300 questions.\n\n**2. Establish the comparison**\n- Read `.agent/` state and the experiment log so the three prompt variants stay recorded as rejected.\n- Re-run the baseline 3\u00d7 to measure run-to-run variance.\n- **Split the data:** carve a separate dev slice from training or synthetic questions for iteration. The 300 held-out questions are scored only at decision points, so nothing gets tuned on them.\n- **Audit the metric:** hand-check ~40 failures for gold-SQL errors, ambiguous questions and result-comparison bugs (row order, float formatting). BIRD itself has a nontrivial gold error rate. If ~10% of our golds are wrong, the ceiling isn't 100%, and I fix the metric before optimizing.\n\n**3. Find the limiting constraint**\nI'll bucket every failure into:\n- schema linking (wrong table or column)\n- value grounding (literal not in DB)\n- join path\n- aggregation or logic\n- dialect or syntax error\n- execution timeout\n- gold or ambiguity\n\nI'll also measure **pass@8 oracle**: does any of 8 sampled candidates execute correctly? That single number picks the mechanism:\n- **High pass@8 (say 70%+) with 55% pass@1:** selection is the constraint. Build a candidate pool plus a selector.\n- **Low pass@8:** generation is the constraint, and schema linking or value retrieval likely dominate.\n\n**4. Candidates** (written to `.agent/hypotheses/2026-11-19-sql-mechanism.md`, each with a refuting observation)\n- **A. Execution-guided repair:** run the SQL, feed errors or empty results back, up to 3 retries. This is cheap. It is refuted if syntax and empty-result failures are under 10% of misses.\n- **B. Schema and value retrieval:** embed columns, use LSH over cell values, and prune the schema passed to the model. It is refuted if linking errors are a minor bucket.\n- **C. Multi-candidate generation plus a pairwise selector** (CHASE-SQL style), with diverse generators: divide-and-conquer, query-plan CoT, retrieved few-shot. It is refuted if the gap between pass@8 and pass@1 is under 5 pts.\n- **D. Retrieved similar question\u2192SQL few-shots** from a training pool.\n- **Deletion check:** does the current long prompt hurt? I'll ablate it to a minimal one.\n\nBefore ranking, I'll do a red-team pass (\"C failed because the selector can't beat majority vote\") and ask what would make it 10\u00d7 better (fine-tuning a selector on our own execution traces).\n\n**5\u20136. Run and decide**\n- Each candidate gets its own dev-slice run at equal token and latency budgets, then one held-out paired test.\n- I'll record KEEP, ITERATE or ABANDON and update the `.agent` files and the climb ledger.\n- I'll stack winners and stop at 70%, or when an evidenced ceiling explains the miss.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "BIRD's leaderboard top is roughly 75\u201377% execution accuracy",
+    "q2": true,
+    "q2_quote": "\u226570% EX on the held-out set",
+    "q3": true,
+    "q3_quote": "Multi-candidate generation plus a pairwise selector",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A04",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our single-agent planner solves 31 of 100 multi-step tasks in our internal benchmark. We think the architecture is the limit. Find a better architecture.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "## Step 1: Set the bar (before touching local state)\n\n31/100 is our number, not the bar. First I'll find which public benchmark is closest to our task class and record its best result with a source. My current recollections, all **marked to verify**:\n\n- **WebArena**: the original GPT-4 agent scored about 14%. Reported 2025 agents (e.g. IBM CUGA, OpenAI CUA) reach about 60%.\n- **TravelPlanner**: GPT-4 alone had about 0.6% final pass. LLM-plus-formal-solver approaches (Hao et al.) reported about 90%+.\n- **GAIA / \u03c4-bench**: the current top leaderboard entries.\n\nI'll pick the benchmark whose tasks most resemble ours and note how its cases differ. The target is to beat that architecture's result, adjusted for those differences, or to show the measured limit that prevents it. The deciding check is the same 100 tasks plus a held-out split I don't tune on.\n\n## Step 2: Establish the comparison\n\n- Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/`, `pursuits/` and the climb ledger. I'll resume any active work and keep rejected approaches rejected.\n- Rerun the baseline on the real execution path 3 or more times. With n=100 at 31%, the 95% interval is roughly \u00b19pp, so a \"win\" of 36 is noise.\n- Record the resource budget per task: tokens, tool calls, wall time and cost. Every candidate gets the same budget.\n- Freeze a held-out split (e.g. 30 tasks) for the final decision only.\n\n## Step 3: Test \"architecture is the limit\" before accepting it\n\nI'll label every one of the 69 failures from traces with one cause: bad decomposition, lost state or context, tool error, no error recovery, constraint violation, wrong final check, or grader error. Two cheap probes:\n\n- **pass@k with k=8.** If pass@8 is far above 31, the capability exists and the limit is selection or verification, not the planner.\n- **Oracle plan injection.** If execution still fails when given a correct plan, planning isn't the bottleneck.\n\nIf the failures turn out to be tool bugs or grader errors, I'll fix those first and say so rather than build a new architecture.\n\n## Step 4: Candidate mechanisms, chosen by failure type\n\n1. **Plan-execute-replan** with explicit state. Targets decomposition and drift failures.\n2. **Generator plus verifier** (best-of-n or tree search with a learned or rule checker). Targets the gap between pass@k and pass@1.\n3. **LLM plus external solver or checker** for constraint-heavy tasks, in the style of TravelPlanner.\n4. **Orchestrator and workers** with isolated contexts. Targets context loss on long tasks.\n5. **Deletion or reuse**: a simpler prompt or tool set, or an off-the-shelf framework.\n\nFor each candidate I'll record the expected effect, cost, and the result that would refute it. I'll run the red-team, 10\u00d7, and unasked-question passes. The plan goes in `.agent/hypotheses/2026-11-19-planner-architecture.md`.\n\n## Step 5: Build and run\n\nI'll build the top 2\u20133 candidates as complete pipelines in isolated workspaces, at equal measured resources, with orchestration overhead counted. Each runs as a paired comparison on the same tasks with repeated seeds, and thresholds are fixed beforehand.\n\n## Step 6: Decide and report\n\nEach candidate gets KEEP, ITERATE, ABANDON or REGRESSION by a pre-registered rule: a paired test with a minimum gain of about 10pp on held-out tasks, and a cost cap. Then I'll update `.agent/*` and the ledger and run `skill-run-log`. The report covers the bar, before and after, uncertainty and cost, with projections kept apart from measurements.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "IBM CUGA, OpenAI CUA) reach about 60%",
+    "q2": true,
+    "q2_quote": "minimum gain of about 10pp",
+    "q3": true,
+    "q3_quote": "Orchestrator and workers with isolated contexts",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A04",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our single-agent planner solves 31 of 100 multi-step tasks in our internal benchmark. We think the architecture is the limit. Find a better architecture.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "**Bar first, before touching local state**\n\nI'll search for the best published result on the public benchmark closest to our task (WebArena, GAIA, \u03c4-bench, SWE-bench Verified or OSWorld) once I know which one our cases resemble. I'll record the leader's number and source, plus how its cases differ from ours. Until I've searched, I'll treat the strong published agents on these benchmarks as solving well over half their tasks. That is marked \"to verify\", not a fact. Our 31/100 is our number, not the bar. The working target is to close most of the gap to the nearest public leader, with the final figure set after the search and the failure breakdown.\n\n**First concrete steps**\n\n1. Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/`, `pursuits/` and the climb ledger. I'll resume any active work and keep rejected approaches rejected.\n2. Re-measure the baseline on the real path with 3 or more seeded runs. With 100 tasks, 31% carries roughly \u00b19pp uncertainty, so small wins are noise unless measured per task and paired.\n3. Split the 100 tasks into a development set and a held-out decision set before any tuning. Fix the comparison rule in advance: paired per-task test, a minimum useful effect, and regression limits on cost and latency.\n\n**Test the claim that architecture is the limit**\n\nBefore building anything, I'll label every failed trace by cause (`/diagnose` if the breakdown is unclear):\n- bad initial plan\n- no recovery after a step fails\n- tool or argument errors\n- lost context or state over long horizons\n- false \"done\"\n- the model can't do a sub-step at all\n\nTwo oracle probes:\n- **Retry probe:** pass@k at the same budget. If retries solve far more tasks, search and verification are the lever.\n- **Plan probe:** inject a correct plan. If solve rate jumps, planning is the limit. If it doesn't, execution or the model is, and adding agents won't fix that.\n\n**Candidates, matched on measured tokens, calls and wall-clock**\n\nEach candidate is chosen against the failure mix and gets a refutation test:\n- **Compute-matched single agent** (best-of-N or longer budget). This is the control, because many published multi-agent gains are really extra compute.\n- **Plan-execute-replan** with explicit state and a step verifier, for the recovery and false-done failures.\n- **Verifier-guided search over plans** (LATS/ToT-style), if pass@k \u226b pass@1.\n- **Orchestrator plus isolated workers** with clean context per subtask, for context loss on long tasks.\n- **Reflexion-style memory across attempts.**\n- **Deletion candidate:** remove prompt and tool scaffolding that the traces show is causing errors.\n\nBefore ranking, I'll run red-team, 10\u00d7, and unasked-question passes. Then I'll write `.agent/hypotheses/2026-11-19-planner-architecture.md` with each candidate's number to beat, budget, acceptance rule and stopping condition.\n\n**Build and decide**\n\n- Build each variant as a complete architecture in an isolated workspace, sharing tools and the model.\n- Tune only on the development split, then score once on the held-out split.\n- Record KEEP, ITERATE, ABANDON or REGRESSION with confidence intervals and cost per solved task.\n- If results stay flat for three measurements, change mechanism rather than effort.\n- After each decision, log to `experiments.jsonl`, the ledger and the scorecard.\n\n**What I need from you:** the task domain, so I can pick the right public benchmark, and access to the eval harness and traces.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "solving well over half their tasks. That is marked \"to verify\", not a fact.",
+    "q2": false,
+    "q2_quote": "the final figure set after the search and the failure breakdown",
+    "q3": true,
+    "q3_quote": "Plan-execute-replan with explicit state and a step verifier",
+    "judge_model": "grok-4.7-build"
+   }
+  }
+ ]
+}

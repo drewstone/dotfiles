@@ -10,7 +10,9 @@ When the target needs an architecture change, a rewrite or several mechanisms at
 
 ## 1. Set the bar
 
-Before the first experiment, [set the bar](../be-ambitious/SKILL.md#set-the-bar): the best result anyone has reached on this metric or task class with its source, our number on the real path, a target that beats it or the measured limit that stops it, and the check that decides.
+Before reading local state or running anything, [set the bar](../be-ambitious/SKILL.md#set-the-bar): the best result anyone has reached on this task class with its source (the leader of the nearest public benchmark or leaderboard, a paper's reported number, a rival system's published result), our number on the real path, a target that beats it or the measured limit that stops it, and the check that decides.
+An internal test set still has an outside bar: the nearest public benchmark's best result, with how its cases differ from ours; an oracle ceiling, a human-agreement ceiling or our own last number is our limit, never the bar.
+Search for that result first; without search, write the strongest result you already know with its source, marked to verify, because a promise to look it up later leaves the target unset.
 A target at our own last number is not a target.
 
 ## 2. Establish the comparison
