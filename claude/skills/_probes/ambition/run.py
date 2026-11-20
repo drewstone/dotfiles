@@ -221,8 +221,8 @@ def main():
     for r in rows:
         r.pop("text", None)
     rows.sort(key=lambda r: (r["scenario"], r["arm"], r["sample"]))
-    result = {"base": subprocess.run(["git", "-C", str(REPO), "rev-parse", args.base], capture_output=True, text=True).stdout.strip(),
-              "head": args.head if args.head == "WORKTREE" else subprocess.run(["git", "-C", str(REPO), "rev-parse", args.head], capture_output=True, text=True).stdout.strip(),
+    rev = lambda r: subprocess.run(["git", "-C", str(REPO), "rev-parse", r], capture_output=True, text=True).stdout.strip()
+    result = {"base": rev(args.base), "head": args.head if args.head == "WORKTREE" else rev(args.head),
               "agent_model": args.agent_model, "judge": args.judge, "samples": args.samples, "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
               "summary": summarize(rows, arms), "rows": rows}
     out.write_text(json.dumps(result, indent=1))

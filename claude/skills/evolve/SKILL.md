@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: Improve a measured target: set the bar against the best known result, find the limiting constraint, choose a mechanism (including one from a paper, rival system or architecture change), test it at equal resources and keep what wins; use also when progress stalls or an outside idea may change a decision.
+description: Improve a measured target past the best known result: find the limiting constraint, choose a mechanism (a paper, rival system or architecture change), test it at equal resources and keep what wins; also when progress stalls or an outside idea appears.
 ---
 
 # Evolve

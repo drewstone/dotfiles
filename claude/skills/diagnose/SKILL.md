@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Find the cause of a broken, failing, flaky or slow code path, a live system's latency or reliability, or a null, surprising or suspect result or eval; reproduce with a red loop, measure the real path's breakdown, and rank fixes.
+description: Find the cause of a broken, flaky or slow code path, a live system's latency or reliability, or a suspect result or eval; reproduce with a red loop, measure the real path's breakdown, rank fixes.
 ---
 
 # Diagnose
