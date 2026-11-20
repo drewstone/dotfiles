@@ -1,0 +1,330 @@
+{
+ "base": "99143a9578b77aaa1c4ab3479a639e50e474594c",
+ "head": "WORKTREE",
+ "head_commit": "e9f6840706aa557e4198f51c3903979a55f43b3b",
+ "agent_model": "opus",
+ "agent_tools": "search",
+ "snapshots": {
+  "WORKTREE": "e57036da9e1d8b20"
+ },
+ "judge": "grok",
+ "samples": 2,
+ "measured_at": "2026-11-20T02:18:55Z",
+ "summary": {
+  "arms": {
+   "new": {
+    "n": 8,
+    "q1": 8,
+    "q2": 7,
+    "q3": 8,
+    "all3": 7
+   }
+  },
+  "paired": {},
+  "by_skill": {
+   "tuned/evolve": {
+    "new": {
+     "n": 8,
+     "q1": 8,
+     "q2": 7,
+     "q3": 8,
+     "all3": 7
+    }
+   }
+  }
+ },
+ "rows": [
+  {
+   "scenario": "A01",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our retrieval-augmented support agent answers 61% of our 400-question internal support set exactly right (last week's run, exact-match grading). Improve it.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I'll start by checking the measurement. I don't trust the 61% as a quality number yet: exact match scores a correct paraphrase as wrong. I'll get a fresh baseline and find out where the misses come from before changing anything.\n\n**The bar to beat (set before looking at local state).** No public support-QA leaderboard grades by exact match, so none compares directly with our set.\n- **Sierra \u03c4-knowledge**, retrieval plus tool use in customer service: the best figure I found is GPT-5.5 at 37.4% Pass^1 (May 2026). That comes from a write-up; I haven't checked the leaderboard myself, and it notes that results from different batches used different retrieval setups.\n- **CRAG**: about 51% truthfulness for industry RAG systems, from secondary summaries. One summary says 63% and I couldn't reconcile the two. The KDD Cup winner scored 36.2%.\n\nBoth test multi-turn conversations, tool use or the open web. Our set is single questions answered from a closed support knowledge base, so it should be easier. Beating 37\u201351% wouldn't be enough to claim a lead. My working target is **\u226575% judged-correct on the 400 questions**, with an interval that clears 61%, plus a check on held-back questions. Our own oracle ceiling (every answer given the right document) will show whether 75% is too low, but it can't be the bar.\n\n**First steps:**\n1. Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and the climb ledger. I'll pick up any active work and won't retry approaches already rejected.\n2. **Run the baseline again today** on the real serving path: same retriever, model, prompt and index. Last week's 61% isn't a comparable baseline if anything has changed since.\n3. **Audit the grader**, recorded in `metricClaims`. I'll hand-label a stratified sample of exact-match failures (about 100) as: actually correct (paraphrase or formatting), wrong document retrieved, right document but wrong answer, or should have declined. If many \"failures\" are actually correct, I'll replace exact match with a rubric grader calibrated against human labels. I'll keep reporting exact match next to it, and I'll change the grader only before seeing any candidate's results.\n4. **Break the 400 down:** retrieval recall@k against the gold documents, an oracle run that gives the model the gold document, and a no-retrieval run. Comparing these shows whether retrieval, generation or the grader is what limits the score.\n\n**What I'll build, depending on the result:**\n- **If retrieval is the limit:** hybrid search (BM25 plus dense), a cross-encoder reranker, query rewriting or decomposition, and re-chunking along the knowledge base's article and section structure.\n- **If generation is the limit:** answers grounded in cited passages, a format normalizer, and a calibrated decline path for unanswerable questions.\n- **If the knowledge base is missing the answers:** fix the content gaps rather than the model.\n\nEach candidate gets a file in `.agent/hypotheses/` that records:\n- the expected gain in percentage points\n- the result that would refute it\n- the resource budget: same model, latency limit, cost per query\n\n**How I'll decide:** paired comparison on the same 400 questions, using McNemar's test or a paired bootstrap. At n=400 the 95% interval is about \u00b14.8 points, so I'll only accept gains of at least 5 points. I'll also run a held-back split, never used for tuning, to catch overfitting. The regression limits are p95 latency, cost per query and wrong-answer rate on the decline questions.\n\nIf the score is flat for three measurements, I'll switch mechanism rather than keep tuning the same one. Every decision gets logged to `experiments.jsonl` and the climb ledger.\n\nSources:\n- [eesel.ai: best AI model for support tickets, citing \u03c4-knowledge results](https://www.eesel.ai/blog/best-ai-model-for-support-tickets)\n- [CRAG: Comprehensive RAG Benchmark (arXiv)](https://arxiv.org/pdf/2406.04744)\n- [CRAG, NeurIPS 2024](https://proceedings.neurips.cc/paper_files/paper/2024/hash/1435d2d0fca85a84d83ddcb754f58c29-Abstract.html)\n- [CRAG summary (Emergent Mind)](https://www.emergentmind.com/topics/comprehensive-rag-benchmark-crag)\n- [ZenML LLMOps database](https://www.zenml.io/llmops-database/benchmarking-ai-agents-on-real-world-knowledge-retrieval-and-tool-use)\n- [EACL 2026: retrieval enhancements in a deployed support chatbot](https://preview.aclanthology.org/credits/2026.eacl-industry.13)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 4,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "customer support RAG benchmark leaderboard state of the art 2026 accuracy"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "CRAG comprehensive RAG benchmark best accuracy truthfulness score leaderboard"
+    },
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/STATS.md"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Sierra \u03c4-knowledge... GPT-5.5 at 37.4% Pass^1 (May 2026)",
+    "q2": true,
+    "q2_quote": "My working target is \u226575% judged-correct on the 400 questions",
+    "q3": true,
+    "q3_quote": "hybrid search (BM25 plus dense), a cross-encoder reranker",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A01",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our retrieval-augmented support agent answers 61% of our 400-question internal support set exactly right (last week's run, exact-match grading). Improve it.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I'll start by measuring, not by changing the agent. Last week's 61% is a stale number, and exact-match grading may be scoring correct answers as wrong.\n\n**The bar to beat (from search, still to check against primary sources)**\n- I found no public support-RAG leaderboard that uses exact match, so no outside number compares directly with our 61%.\n- Nearest end-to-end RAG result: FRAMES (NAACL 2025). Accuracy goes from 0.40 with no retrieval to 0.66 with multi-step retrieval. With the right documents handed over, Gemini-Pro-1.5 reaches 72.9% (an aggregator's figure).\n- Nearest support benchmark: Sierra's \u03c4-knowledge. A secondary source puts GPT-5.5 at 37.4% Pass^1 in May 2026. Its tasks also require multi-step tool calls, so it's harder than our set.\n- **Target: at least 75% on our 400 questions, graded by a checked grader.** That beats the FRAMES numbers. If the \"right documents\" ceiling I measure below comes out under 75%, I'll report that measured limit instead of claiming the target.\n\n**First steps**\n1. Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and the climb ledger. I'll resume any active work and keep the record of approaches already rejected.\n2. Rerun the 400 questions on the real production path today, three times, recording the model, index snapshot and cost. That gives a fresh baseline and shows how much run-to-run noise there is.\n3. **Check the metric before optimizing it.** Hand-label about 100 answers that exact match marked wrong: correct but worded differently, partly correct, wrong, or should have declined. If many are correct paraphrases, I'll build a grader (normalized match plus an LLM judge), check it against human labels, and freeze it before trying any changes. Otherwise we'd just be tuning answer formatting.\n4. **Find where the 39% is lost.** Log the retrieved documents for every question and sort each failure into one of four buckets:\n   - the correct document wasn't retrieved (recall@k)\n   - it was retrieved but the answer was still wrong\n   - the answer was right but badly formatted\n   - the question can't be answered from our docs, or the docs are stale\n\n   I'll also run the agent with the correct documents supplied directly (the \"right documents\" run). That shows how much retrieval fixes alone could gain.\n\n**Candidates, chosen once I know which bucket is biggest**\n- **Retrieval misses:** hybrid keyword (BM25) plus embedding search, a reranker, rewriting the query before searching, and multi-step retrieval in the FRAMES style.\n- **Wrong answers with the right document:** answers that must quote their source, extracting the relevant passage first, and testing a stronger model at equal cost.\n- **Formatting:** constrain the output format. That's only legitimate if users actually need that exact format.\n- **Missing or stale docs:** fix the content. No model change will help those.\n\nEvery candidate gets a hypothesis file (`.agent/hypotheses/<date>-<slug>.md`) recording the number to beat, the cost and speed limits, and what result would disprove it. All runs are compared at equal cost per question and equal latency. I'll keep a held-out split that's never used for tuning, and won't move any threshold after seeing results. A change is kept only if it clears the noise measured in step 2 and doesn't make the agent worse at declining questions it can't answer. If three measurements in a row show no gain, I'll switch to a different mechanism rather than keep tuning the same one. After each decision I'll update the experiment log and the scorecard.\n\nSources:\n- [FRAMES paper](https://arxiv.org/abs/2409.12941)\n- [FRAMES on alphaxiv](https://alphaxiv.org/benchmarks/harvard-university/frames)\n- [RAGBench](https://arxiv.org/html/2407.11005v2)\n- [\u03c4-knowledge summary (ZenML)](https://www.zenml.io/llmops-database/benchmarking-ai-agents-on-real-world-knowledge-retrieval-and-tool-use)\n- [IrisAgent Support Model Arena](https://irisagent.com/support-model-arena/)\n- [Fini on RAG accuracy for policy questions](https://www.usefini.com/blog/rag-vs-structured-execution-ai-customer-support)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "customer support RAG benchmark leaderboard exact match accuracy 2026"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "TechQA OR \"RAGBench\" OR \"FRAMES\" retrieval augmented generation state of the art accuracy"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "FRAMES (NAACL 2025). Accuracy goes from 0.40 with no retrieval to 0.66 with multi-step retrieval.",
+    "q2": true,
+    "q2_quote": "Target: at least 75% on our 400 questions",
+    "q3": true,
+    "q3_quote": "hybrid keyword (BM25) plus embedding search, a reranker, rewriting the query before searching, and multi-step retrieval",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A02",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our code-review bot's flags are accepted by reviewers 42% of the time (204 of 486 flags last month). Improve its precision without losing the bugs it catches today.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I'll aim higher than \"better than 42%\". Here is the plan.\n\n**1. The bar.** No standard benchmark exists, and most numbers are vendor-reported and not directly comparable:\n- Martian's online benchmark counts a comment as correct when the developer edits the code in response. CodeRabbit says it tops it at 49.2% precision; a separate cubic post reportedly puts it at 24.7%. CodeAnt claims 52.2%. All vendor numbers, to verify.\n- Atlassian's RovoDev paper (ICSE 2026, peer-reviewed) reports 38.7% of comments leading to code changes.\n- GitHub's ReviewBench leader has 40.1% grounded F1 (a combined score of precision and bug-finding). That is a different metric, so it's context only.\n\nOur number is 204/486 = 42%, and with 486 flags the uncertainty range is about 38\u201346%. That beats the peer-reviewed figure and is below the vendor claims. **Target: \u226560% acceptance**, clearly above the best published claim of about 52%, **while losing none of today's accepted bug catches.**\n\n**2. Check the metric first.** \"Accepted\" may mean an explicit thumbs-up or a code edit; \"not accepted\" may mean wrong or just ignored. My first step is to pull all 486 flags with their PR, file, category, severity, confidence score, reviewer action and the code that followed. Then I'll hand-label a stratified sample of the 282 unaccepted flags as wrong, correct but ignored, duplicate, nitpick or already handled. If many of those flags are actually correct, the fix is how flags are presented and measured, not filtering. That goes into `metricClaims` before I optimize anything.\n\n**3. Find the cause.** I'll break acceptance down by category, confidence, file type, repo, flag length and duplication. The step-2 labels tell me where the 282 losses come from. I expect most fall into a few groups, for example style nits, missing context (\"this is checked upstream\") and repeated flags.\n\n**4. Candidates.** For each one I'll record the expected gain and the result that would rule it out:\n- **Delete:** suppress the categories that are almost never accepted. Cheapest option.\n- **Verifier pass:** a second model call must point to concrete evidence (the path where the bug triggers, or the missing guard) or drop the flag.\n- **Context lookup:** look up callers and definitions before flagging, aimed at the \"already handled\" group.\n- **Executable check:** for logic bugs, generate a failing test, and keep the flag only if the test fails.\n- **Calibrated threshold:** set a confidence cutoff per category, using acceptance history.\n\nI'll write these to `.agent/hypotheses/2026-11-19-review-precision.md`, with the decision rule fixed before any results.\n\n**5. The deciding test.**\n- Replay the bot on last month's PRs.\n- Split by PR into a tuning half and a held-out half, and never look at the held-out half while tuning.\n- Keep a change only if held-out precision rises with a margin outside the uncertainty range, and every accepted bug-type flag in the held-out half still fires. Anything dropped gets reviewed by hand.\n- Report cost and latency per PR next to the result.\n- Winners then go to a live A/B test on a share of PRs, after confirming the deployed version is the one being scored.\n\nA held-out replay that clears the bar is still a separate claim from it working live. Each result gets logged to `.agent/experiments.jsonl` and the climb ledger.\n\n**What I'll build:** the replay harness, the verifier and suppression stages, and a dashboard of acceptance by category.\n\nSources: [CodeAnt benchmark](https://codeant.ai/blogs/ai-code-review-benchmark-results-from-200-000-real-pull-requests), [ReviewBench](https://github.blog/ai-and-ml/reviewbench-an-open-benchmark-for-ai-code-review/), [Atlas 2026 scoreboard](https://laoujin.github.io/Atlas/research/2026-06-09-ai-assisted-code-review-in-2026-landscape-tools-evidence-and-limits/evaluation-rubrics-and-benchmarks/views/scoreboard.html), [Qodo on benchmarks](https://www.qodo.ai/glossary/what-is-ai-code-review-benchmarks/), [Tenki](https://tenki.cloud/blog/benchmarking-ai-code-reviewers), [false-positive trap](https://tianpan.co/blog/2026-04-17-ai-code-review-at-scale-false-positive-trap)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "AI code review bot comment acceptance rate precision benchmark 2026"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "code review benchmark precision recall AI reviewers leaderboard"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "CodeAnt claims 52.2%.",
+    "q2": true,
+    "q2_quote": "Target: \u226560% acceptance",
+    "q3": true,
+    "q3_quote": "generate a failing test, and keep the flag only if the test fails.",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A02",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our code-review bot's flags are accepted by reviewers 42% of the time (204 of 486 flags last month). Improve its precision without losing the bugs it catches today.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I've set the target and planned the first steps, but I haven't measured anything yet: the bot isn't in this repo, so all I have are your numbers.\n\n**The number to beat.** The closest public measure of \"flags accepted by reviewers\" is Martian's Code Review Bench. It counts precision as the share of bot comments that lead to a code change. Leaders there are reported at about 51\u201364% (Qodo Extended about 64%, Augment about 54%). Those numbers come from the vendors, and I still need to check them against the leaderboard itself. For comparison, an academic study of 16 GitHub review bots found that only 0.9\u201319% of their comments got addressed, against 60% for valid human comments. Google's Tricorder team only kept an analyzer while its effective false-positive rate stayed under 10%.\n\n- **Where we are:** 42% (204 of 486).\n- **Target:** at least 65% acceptance on a later, held-out month, while still flagging at least 200 of today's 204 accepted bugs, with no category losing more than one.\n- **The check that decides it:** replaying last month's pull requests through the old and new pipelines with frozen labels, then a live A/B test.\n\n**First steps**\n1. **Read our own records** in `.agent/` and the climb ledger, so I continue active work and don't retry approaches already rejected.\n2. **Sort the 282 rejected flags by cause:** wrong (no real bug), nitpick or style, duplicate, already fixed or out of the diff's scope, or correct but not acted on. That last group matters. \"Accepted\" is only a stand-in for \"correct,\" so I'll have two people label a sample of about 100 flags to see how far the two differ. If many real bugs are being rejected, the fix is in how flags are worded and when they're posted, not in suppressing them.\n3. **Freeze the 204 accepted flags** as a test set every change must pass. I'll check each candidate against them before looking at precision.\n4. **Split by time:** tune on weeks 1\u20133 and decide on week 4 plus next month. Thresholds get fixed before I see those results.\n\n**What I'll measure.** Acceptance rate with a 95% interval. At n\u2248486 that's about \u00b14.4 points, so the 23-point gap is easily detectable. I'll also track how many of the 204 bugs each change keeps, what each change costs per pull request in tokens and time, and flags per pull request.\n\n**Changes to try,** ranked once step 2 shows where the rejections come from:\n- **A verifier step.** A second pass tries to disprove each flag using the full repo context and, where possible, by running or tracing the code. Flags it can't defend get dropped. I expect this to cut the \"wrong\" bucket the most. It's ruled out if it drops more than 4 of the 204.\n- **Suppression learned from feedback.** Turn off categories and rules each repo keeps rejecting, and remove duplicates. This is cheap and targets nitpicks.\n- **A calibrated confidence threshold,** chosen on weeks 1\u20133, at the cost of some flags per pull request.\n- **Deletion:** stop posting the style categories that people reject. That's the cheapest option and may be enough by itself.\n\nBefore ranking I'll ask what would make each one fail, for example that the verifier just echoes the first model. I'll compare them all at equal cost and write the hypothesis file with acceptance criteria and a stopping rule. If three measurements in a row show no gain, I'll switch approach rather than keep tuning.\n\n**What I'll build:** the replay harness, the cause labels, and the verifier step. I'll keep a change only if it reaches at least 65% on the held-out month with at least 200 of the 204 bugs kept. Every attempt, failed ones included, gets logged to `.agent/experiments.jsonl` and the ledger.\n\nSources:\n- [Martian bench / CodeRabbit](https://www.coderabbit.ai/ja/blog/coderabbit-tops-martian-code-review-benchmark)\n- [CodeAnt summary](https://codeant.ai/blogs/ai-code-review-benchmark-results-from-200-000-real-pull-requests)\n- [Baz](https://baz.co/resources/baz-1-in-precision-in-independent-code-review-bench)\n- [Tenki](https://tenki.cloud/benchmarks/code-reviewer)\n- [Qodo](https://www.qodo.ai/academy/ai-code-review-tools-comparison-and-benchmarks/)\n- [arXiv 2508.18771](https://arxiv.org/html/2508.18771v2)\n- [arXiv 2607.03316](https://www.alphaxiv.org/abs/2607.03316v1)\n- [arXiv 2602.11925](https://www.alphaxiv.org/abs/2602.11925)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "AI code review benchmark precision recall comment acceptance rate 2026"
+    },
+    {
+     "tool": "WebSearch",
+     "arg": "LLM code review comments addressed rate industry study precision false positives"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Qodo Extended about 64%",
+    "q2": true,
+    "q2_quote": "at least 65% acceptance",
+    "q3": true,
+    "q3_quote": "A second pass tries to disprove each flag",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A03",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Three rounds of prompt changes moved our text-to-SQL agent from 54% to 55% execution accuracy on our 300 held-out questions. Progress has stalled. Decide what to try next.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I'm stopping prompt work, and the 1-point gain isn't real. On 300 questions, 54% has a standard error of about \u00b12.9 points, so 54\u219255% is noise. Three flat rounds mean the next step is a different mechanism, not more prompt edits.\n\n**The bar.** On the public BIRD benchmark, Huawei's DataGallery-Text2SQL is reported first among complete systems at 82.39% execution accuracy. Google's Gemini-SQL2 is reported at 80.04% for a single model, and humans score 92.96%. These numbers come from press and aggregator coverage, not the live leaderboard, so I'll confirm them before relying on them. Our questions aren't BIRD's, so the gap is approximate, but it's about 25 points. A study at the CIDR 2026 database conference also found errors in BIRD's reference answers, which suggests our own set may have some too. **Target: \u226565% on our 300 questions, where a gain counts only if it is beyond about +6 points, judged on the same questions before and after.** I'll aim for 70%+ as top systems reach it, or stop at a measured limit.\n\n**First steps:**\n1. Read `.agent/` (current state, past experiments, the three prompt rounds) and log those rounds as rejected approaches.\n2. Run the current agent 3 times on the real execution path to measure run-to-run variation. Then label each of the ~135 failures by cause:\n   - wrong table or column chosen\n   - wrong data value or literal\n   - wrong join or aggregation logic\n   - SQL error at execution\n   - ambiguous question\n   - wrong reference answer\n3. Check a sample of the reference answers, plus every case where we \"fail\" with plausible SQL. If around 10% of the reference answers are wrong, I fix the test set first, keeping both the old and new scores so they stay comparable.\n4. Measure the ceiling: run 8\u201316 candidate queries per question and check how often any one of them is correct. A high ceiling means the bottleneck is picking the right candidate, not generating it.\n\n**Candidates**, ordered by what the failure labels show:\n- **A. Generate several queries and pick one by running them** (the approach in CHASE-SQL and Agentar-Scale-SQL): different generation strategies, group queries that return the same results, and pick within that. This fits if the ceiling is \u226515 points above our score. It's refuted if the ceiling minus our score is under 8 points.\n- **B. Better schema matching:** retrieve relevant columns and look up actual data values (sample values, fuzzy match on literals). This fits if most failures are wrong tables, columns or values. It's refuted if giving the agent the correct schema gains less than 5 points.\n- **C. Self-correction from results:** run the query, flag errors, empty results or odd row counts, and let the agent revise. It's cheap and helps if many failures are SQL errors.\n- **D. Stronger or fine-tuned model:** this is the control. It tells us whether the agent's design matters.\n\nBefore ranking these I'll ask three questions:\n- **Most likely to fail:** A only wins if the picking step works; voting by result can pick the common wrong answer.\n- **What would make it ten times better:** feeding the labelled failures back into the system automatically.\n- **What no one has checked:** whether 300 questions is enough to show a 5-point gain at all.\n\n**What I'll build:** a hypotheses file at `.agent/hypotheses/2026-11-19-sql-beyond-prompts.md` with the number to beat, cost per question and the stop rule for each candidate, chosen before seeing results. Then I'll build the candidate the failure labels point to as a full pipeline change, compared at equal cost per question. I'll keep failed runs and won't tune on the 300 test questions; I'll use a separate dev split for that.\n\nSources:\n- [Agentar-Scale-SQL](https://arxiv.org/pdf/2509.24403)\n- [Huawei DataGallery tops BIRD](https://technologymagazine.com/news/huawei-datagallery-tops-benchmark-for-enterprise-text2sql-ai)\n- [Gemini-SQL2 at 80.04%](https://aiweekly.co/alerts/googles-gemini-sql2-tops-bird-text-to-sql-at-8004)\n- [CIDR 2026 slides](https://www.cidrdb.org/cidr2026/slides/Kang-16.pdf)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "BIRD text-to-SQL leaderboard execution accuracy top 2026"
+    },
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/constraint-options.md"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "On the public BIRD benchmark, Huawei's DataGallery-Text2SQL is reported first among complete systems at 82.39% execution accuracy.",
+    "q2": true,
+    "q2_quote": "Target: \u226565% on our 300 questions",
+    "q3": true,
+    "q3_quote": "Generate several queries and pick one by running them",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A03",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Three rounds of prompt changes moved our text-to-SQL agent from 54% to 55% execution accuracy on our 300 held-out questions. Progress has stalled. Decide what to try next.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I'm stopping prompt tuning. Three rounds moved us from 54% to 55%, which is 3 questions out of 300. With n=300 the standard error is about \u00b12.9 points, so the gain can't be told apart from noise. The hill has been flat for three measurements. The skill says that means changing the mechanism, not putting in more effort.\n\n**The bar (from search; I haven't checked these against BIRD's own leaderboard yet):**\n- **Overall leader:** Huawei DataGallery-Text2SQL, reported at 82.39% execution accuracy on BIRD.\n- **Top single model:** Google's Gemini-SQL2, reported at 80.04%. It can't be reproduced because there's no report or API.\n- **Ceilings:** expert humans score about 93%. ReViSQL reports 93.2% on an expert-checked BIRD subset, so part of the gap below 93% is wrong answer keys, not model errors.\n- **Comparability:** our 300 questions aren't BIRD. I'll write down how our schemas, data and answer keys differ before using these numbers as more than a reference.\n\n**Target:** 70% or higher on the 300 questions. That's about 45 more correct answers, far outside the noise. The decision is a paired comparison on the same questions, with the prompt and the 300 questions frozen before I look at any results.\n\n**First steps:**\n1. Read `.agent/current.json`, `progress.md`, `experiments.jsonl`, `hypotheses/` and the climb ledger. I'll keep the three prompt rounds on record as rejected, not rerun them.\n2. Re-run the 55% baseline three times on the real pipeline. That tells me how much the score moves between runs and gives the cost and latency for each question.\n3. Sort all ~135 failures by cause:\n   - picking the wrong tables or columns\n   - a filter value that doesn't match what's actually in the data\n   - wrong join path\n   - wrong aggregation or grouping\n   - SQL that won't run\n   - a wrong answer key or a question with more than one right answer\n\n   I'll hand-check a sample of the answer keys. If many are wrong, the scoring is part of the problem, and I'll fix it with `/eval-engineering` before optimizing anything.\n\n**Candidate changes, ranked by what the failure counts show:**\n- **A. Schema and value grounding:** retrieve the relevant columns plus sample values and column descriptions, so filters use strings that really occur in the data. Top BIRD systems all do this. I'll drop it if fewer than 20% of failures are grounding errors.\n- **B. Several candidates, chosen by execution:** generate 5\u20138 SQL queries in different ways, run them all, and pick one by a trained selector or by comparing results (the CHASE-SQL approach). I'll drop it if the right query is among the candidates less than 10 points more often than the single query is right today.\n- **C. Fix-and-retry loop:** feed run errors and empty results back to the model. This is cheap, but its ceiling is low.\n- **D. Fix the answer keys:** only if the audit finds a meaningful share of them wrong. I'd report scores under both the old and new keys.\n\nBefore ranking these I'll ask how each one would fail. B can mean 5\u20138 times the cost per question, so I'll compare it with a single query at the same token budget. I'll also ask whether the 300 questions reflect what users actually ask.\n\n**What I'll build:** a hypothesis file at `.agent/hypotheses/2026-11-19-sql-grounding-selection.md` with the numbers to beat and the cost and latency limits. Then a retrieval index of schema and sample values, a candidate generator with an execution-based selector, and logs showing each piece actually ran. I'll test A alone, then A+B together. I'll keep a change only if it gains at least 5 points on the paired test within the cost limit, and update the ledger and scorecard either way.\n\nSources:\n- [Huawei DataGallery Tops Benchmark](https://technologymagazine.com/news/huawei-datagallery-tops-benchmark-for-enterprise-text2sql-ai)\n- [Gemini-SQL2 Tops BIRD at 80.04%](https://aiweekly.co/alerts/googles-gemini-sql2-tops-bird-text-to-sql-at-8004)\n- [The Decoder on Gemini-SQL2](https://the-decoder.com/google-researchs-gemini-sql2-tops-text-to-sql-benchmarks-by-a-wide-margin/)\n- [arXiv 2603.20004](https://arxiv.org/html/2603.20004v2)\n- [Analysis of top BIRD systems](https://medium.com/@adnanmasood/pushing-towards-human-level-text-to-sql-an-analysis-of-top-systems-on-bird-benchmark-666efd211a2d)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "BIRD text-to-SQL leaderboard top execution accuracy 2026"
+    },
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/constraint-options.md"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Huawei DataGallery-Text2SQL, reported at 82.39% execution accuracy on BIRD.",
+    "q2": true,
+    "q2_quote": "Target: 70% or higher on the 300 questions.",
+    "q3": true,
+    "q3_quote": "generate 5\u20138 SQL queries in different ways, run them all, and pick one by a trained selector",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A04",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 0,
+   "task": "Our single-agent planner solves 31 of 100 multi-step tasks in our internal benchmark. We think the architecture is the limit. Find a better architecture.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I haven't run anything yet. The tools here are read-only, and the planner and benchmark aren't in this repo.\n\n**The bar.** There's no public leaderboard for single-agent vs multi-agent planners. The strongest outside result I found is a Stanford preprint from April 2026 ([Tran & Kiela, arXiv 2604.02460](https://arxiv.org/abs/2604.02460); [VentureBeat interview](https://venturebeat.com/orchestration/are-you-paying-an-ai-swarm-tax-why-single-agents-often-beat-complex-systems)). When thinking-token budgets were equal, single agents matched or beat multi-agent systems on every model family tested. Multi-agent systems only won when the single agent's context was degraded or they were given more compute. A blog summary of Fu et al. says only one of six multi-agent workflows (EvoAgent) beat one GPT-4.1 agent: 79.70 vs 76.65 across ten benchmarks. That comes from a secondary source, so it needs checking against the paper.\n\nSo the bar is: beat our own single agent by a meaningful margin at equal measured tokens and cost. Our number is 31/100. With 100 tasks, a 95% interval is about \u00b19 points. I'd set the target at \u226545/100 on held-back tasks, paired against the baseline, at the same spend. I'll also map our tasks to the nearest public benchmark (\u03c4-bench, TravelPlanner or WebArena; to be confirmed once I see the task types) and record that benchmark's leading score and how its tasks differ from ours.\n\n**First steps:**\n1. Read `.agent/` state and the climb ledger, and keep any approaches already rejected.\n2. Re-run the baseline 3 times on the real path, recording tokens, calls, cost and time per task, to measure run-to-run noise. 31 may not be a stable number.\n3. Diagnose the 69 failures before blaming the architecture. I'll label each one: context overflow or degradation, early planning error that carries forward, tool or environment error, never noticing a mistake, running out of budget, or a bad task or grader. The architecture is only the limit if the failures cluster on things another structure fixes, like long or corrupted context or uncaught early errors. If they're mostly grader or tool problems, the fix is elsewhere. Some of the 69 may not be solvable at all, so I'll estimate the ceiling too.\n\n**Candidates, each tied to a failure type:**\n- **Control:** the same single agent with a better use of the same budget (self-check pass, best-of-k with a verifier). Studies at equal compute say this is the arm to beat.\n- **Planner\u2013executor with fresh executor contexts:** addresses context degradation, the one case where the preprint found multi-agent systems winning.\n- **Plan, then check and repair each step:** addresses early errors that carry forward.\n- **Search over plans (tree or beam with a value check):** addresses tasks that need backtracking.\n\nEach one gets a hypothesis file with: the number to beat, the failure type it should fix, the trace event that proves it worked as intended, and what result would refute it. I'll also red-team the leading candidate: likely ways it fails are coordination eating the token budget, or a gain that only shows up on development tasks.\n\n**Experiment:** I'll follow the [architecture comparison protocol](claude/skills/evolve/references/arena.md). Every arm runs on the same runner, model, tools and fresh environment state, paired on the same tasks, with tokens and cost equalized and coordination spend counted. Development tasks stay separate from held-back tasks. I'll report results by difficulty, paired wins and losses, and a multiple-comparison correction. Thresholds are fixed before any results come in.\n\n**What I'll build:** each architecture as an arm in the existing runner, not a separate harness. Whatever wins gets built out fully, and the code paths it replaces get removed.\n\nOther sources: [Emergent Mind summary](https://www.emergentmind.com/papers/2604.02460), [Towards AI overview](https://pub.towardsai.net/one-agent-three-agents-or-a-workflow-what-the-evidence-says-works-better-1a16343a8171).",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "multi-agent vs single-agent planner benchmark equal compute 2026 leaderboard multi-step tasks"
+    },
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/arena.md"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Tran & Kiela, arXiv 2604.02460",
+    "q2": true,
+    "q2_quote": "\u226545/100",
+    "q3": true,
+    "q3_quote": "Planner\u2013executor with fresh executor contexts",
+    "judge_model": "grok-4.7-build"
+   }
+  },
+  {
+   "scenario": "A04",
+   "split": "tuned",
+   "skill": "evolve",
+   "arm": "new",
+   "sample": 1,
+   "task": "Our single-agent planner solves 31 of 100 multi-step tasks in our internal benchmark. We think the architecture is the limit. Find a better architecture.",
+   "words": 1044,
+   "text_digest": "09feb2d82373de90",
+   "rev": "WORKTREE",
+   "reply": "I'm not starting with a new architecture. \"The architecture is the limit\" is a hypothesis that hasn't been tested yet, so the first job is to measure where the 69 failed tasks actually break.\n\n**The bar (not yet verified).** I couldn't find a single public leaderboard that compares single-agent and multi-agent setups on multi-step planning. What I did find cuts against assuming multi-agent wins:\n- TeamBench reports that teams help weak solo agents but cost points for strong ones.\n- PlanAhead (WebArena) reports that static plans often beat dynamic replanning on hard tasks, and that mixed planner-executor pairs beat matched ones.\n- MASBench argues that multi-agent systems usually ship without evidence that they beat a single agent.\n- BrowseComp has one unattributed row: 84.3% single-agent vs 88.5% multi-agent.\n- I also recall a late-2025 Google paper on scaling agent systems reporting that multi-agent setups lose ground on sequential tasks. I still need to check that.\n\nSo the outside bar is the best published result on whichever public benchmark is closest to your 100 tasks, noting how its tasks differ from yours. I'll pin that down first. Our number is 31/100 (an uncertainty interval of roughly 22\u201341%, wide enough to hide a 10-point change). The target is that benchmark leader's level, or a measured limit that explains why we can't reach it. The decision rests on paired runs over tasks held back from tuning.\n\n**First steps:**\n1. Read our existing records in `.agent/` and the climb ledger, and keep any approaches already rejected.\n2. Rerun the current planner 3 times over all 100 tasks on the real execution path. That gives a baseline with noise and tells us which tasks it solves on some runs but not others.\n3. Label each of the 69 failures by where it went wrong: a bad plan, a step done wrong, a tool or environment error, lost state over long chains, never noticing a mistake, or ambiguous tasks and scoring. If most failures are step errors or tool errors, a new architecture won't fix them. If most are bad plans or failures to recover, architecture is the right lever.\n4. Check the scoring on 10 failures by hand before optimizing against it.\n\n**Candidates (ranked once the failure labels are in):**\n- **Control:** the same single agent given the same total budget through retries or best-of-N with a verifier. Any architecture has to beat this, not 31.\n- Separate planner and executor, with the plan fixed up front (the PlanAhead result).\n- An executor plus a critic that checks each step and backtracks on failure.\n- Tree search over plans (LATS-style), if the failures are early bad commitments.\n- Splitting the work across worker agents, only if the tasks really break into parallel parts.\n\n**What I'll build:** one comparison harness where every architecture is a variant running through the same runner, tools, model and scoring. Variants are compared on the same tasks from a fresh environment state, with equal budgets in tokens, cost and model calls, coordination work included. Each run logs the event that shows the intended mechanism actually fired, for example \"the critic caught an error and the agent recovered\". The claim, minimum useful gain and stopping rule go in `.agent/hypotheses/` before any spend. Results are judged on held-back tasks only, and thresholds are fixed before seeing results.\n\n**What would prove me wrong:** if the failures are mostly step-level or tool errors, or if the matched-budget control equals the best architecture, then architecture isn't the limit. I'd report that and work on the actual constraint instead.\n\nSources:\n- [PlanAhead](https://benchmarklist.com/benchmarks/planahead/)\n- [TeamBench](https://benchmarklist.com/benchmarks/teambench_evaluating_agent_coordination_under_enforced_role_separation/)\n- [MASBench](https://benchmarklist.com/benchmarks/masbench/)\n- [BrowseComp](https://benchmarklist.com/benchmarks/browsecomp/)\n- [Agentick](https://benchmarklist.com/benchmarks/agentick/)\n- [Multi-agent benchmark gap](https://agentmarketcap.ai/blog/2026/04/08/multi-agent-coordination-benchmark-gap-2026)",
+   "served": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5"
+   ],
+   "turns": 3,
+   "tool_calls": [
+    {
+     "tool": "WebSearch",
+     "arg": "multi-step agent planning benchmark leaderboard 2026 single-agent vs multi-agent architecture success rate"
+    },
+    {
+     "tool": "Read",
+     "arg": "claude/skills/evolve/references/arena.md"
+    }
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "BrowseComp has one unattributed row: 84.3% single-agent vs 88.5% multi-agent.",
+    "q2": false,
+    "q2_quote": "The target is that benchmark leader's level, or a measured limit that explains why we can't reach it.",
+    "q3": true,
+    "q3_quote": "Separate planner and executor, with the plan fixed up front",
+    "judge_model": "grok-4.7-build"
+   }
+  }
+ ]
+}

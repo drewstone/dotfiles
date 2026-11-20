@@ -353,9 +353,15 @@ def main():
                 rows.append(f.result())
             except Exception as e:
                 print("judge failure:", e, flush=True)
+    # Snapshot paths name this machine's scratch directory; keep them relative to the snapshot.
+    local = re.compile("|".join(re.escape(str(p)) for p in {cache_dir / "checkouts", cache_dir.resolve() / "checkouts"})
+                       + r"/[0-9a-f]{16}/?")
     for r in rows:
         r.pop("text", None)
         r.pop("location", None)
+        r["reply"] = local.sub("", r["reply"])
+        for c in r.get("tool_calls", []):
+            c["arg"] = local.sub("", c["arg"])
     rows.sort(key=lambda r: (r.get("split", "tuned"), r["scenario"], r["arm"], r["sample"]))
     rev = lambda r: subprocess.run(["git", "-C", str(REPO), "rev-parse", r], capture_output=True, text=True).stdout.strip()
     result = {"base": rev(args.base), "head": args.head if args.head == "WORKTREE" else rev(args.head),
