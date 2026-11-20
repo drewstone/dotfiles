@@ -252,11 +252,19 @@ repository_common_dir() {
   git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null
 }
 
-# Return the origin that identifies separate clones of one source repository.
+# Return the origin that identifies separate clones of one source repository, as host/path: one repository is
+# spelled git@host:path, ssh://git@host/path or https://host/path, with or without .git, and a url.insteadOf rewrite
+# under one HOME changes the spelling another HOME reads.
 repository_origin() {
-  local path="$1"
+  local path="$1" url
   command -v git >/dev/null 2>&1 || return 1
-  git -C "$path" remote get-url origin 2>/dev/null
+  url=$(git -C "$path" remote get-url origin 2>/dev/null) || return 1
+  url=${url%/}; url=${url%.git}
+  case "$url" in
+    *://*) url=${url#*://}; url=${url#*@} ;;
+    *@*:*) url=${url#*@}; url=${url/:/\/} ;;
+  esac
+  printf '%s\n' "$url"
 }
 
 DOTFILES_COMMON_DIR=$(repository_common_dir "$SCRIPT_DIR" || true)
