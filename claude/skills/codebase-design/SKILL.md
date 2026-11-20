@@ -7,53 +7,45 @@ description: Design or deepen modules and seams, and keep the domain language in
 
 Derived from mattpocock/skills codebase-design and domain-modeling (MIT).
 
-Aim for deep modules: much behavior behind a small interface, placed at a seam where something actually varies, and tested through that interface.
+An excellent module hides much behavior behind an interface small enough to learn in a minute, sits at a seam where something really varies, and is tested through that interface alone.
+When the right seam means moving code across packages or repositories we own, or replacing several implementations with one, design and build that.
+
+## Set the bar
+
+Before sketching, [set the bar](../be-ambitious/SKILL.md#set-the-bar): the best interface for this concept in a library practitioners respect, with its source; our measured cost today (implementations of the concept, callers that change together, defects traced to the split); the target; and the check (callers migrated, implementations deleted) that will show it.
 
 ## Vocabulary
 
-Use these terms consistently so designs, tests, and reviews name the same things.
-
-- **Module**: anything with an interface and an implementation, from a function to a service.
-- **Interface**: everything a caller must know: types, invariants, ordering, error modes, configuration, and performance.
-- **Depth**: behavior a caller or test reaches per unit of interface learned. Shallow means the interface is nearly as complex as the body.
-- **Seam**: the place where behavior can change without editing that place; the interface lives there.
-- **Adapter**: what fills a seam, such as a Postgres repository or an in-memory fake.
-- **Leverage** is what callers get from depth; **locality** is what maintainers get: change, bugs, and verification concentrate in one place.
+- **Interface**: everything a caller must know: types, invariants, ordering, error modes, configuration and performance.
+- **Depth**: behavior reached per unit of interface learned; shallow means the interface is nearly as complex as the body.
+- **Seam**: where behavior can change without editing that place; an **adapter** (a Postgres repository, an embedded PGlite one) fills it.
+- **Locality**: change, bugs and verification concentrate in one place.
 
 ## Judge a design
 
 - **Deletion test**: delete the module in your head. If complexity vanishes, it was a pass-through; if it reappears across callers, it earns its place.
 - **One adapter is a hypothetical seam; two is a real one.** Add a port only when production and test, or two real backends, differ across it.
 - **The interface is the test surface.** If a test must reach past it, the module has the wrong shape.
-- Accept dependencies instead of constructing them, return results instead of mutating shared state, and keep the surface small.
-- Internal seams may exist for the module's own tests; keep them out of the public interface.
+- Accept dependencies instead of constructing them, return results instead of mutating shared state, and keep internal test seams out of the public interface.
 
-Classify each dependency before deepening a cluster:
+Test across each kind of dependency with real behavior, never a mock ([AGENTS.md](../../AGENTS.md) rule 13):
 
 | Dependency | Test across the seam with |
 |---|---|
 | In-process computation or memory | The real code, merged behind one interface |
 | Local substitute exists (PGlite, in-memory filesystem) | The substitute inside the test suite |
-| Owned remote service | A port with an HTTP or queue adapter in production and an in-memory adapter in tests |
-| Third-party service | An injected port with a mock adapter |
+| Owned remote service | The real service in a test environment, through the production adapter |
+| Third-party service | The provider's sandbox or test mode, through the production adapter |
 
-When tests move to the deepened interface, delete the old tests of the shallow parts; tests assert observable outcomes and survive refactors.
+When tests move to the deepened interface, delete the old tests of the shallow parts.
 
-To compare interface options, state the constraints and dependency categories once, then sketch three to four genuinely different interfaces: minimal entry points, maximum flexibility, the most common caller made trivial, and ports and adapters where a dependency crosses a seam.
-Use separate workers only when delegation is available and authorized.
-Compare the options on depth, locality, and seam placement, and recommend one.
+To compare interface options, sketch three or four genuinely different ones (minimal entry points, maximum flexibility, the common caller made trivial, ports and adapters) and recommend one on depth, locality and seam placement against the bar.
 
 ## Keep the domain language
 
-Read `CONTEXT.md` (or `CONTEXT-MAP.md` for several contexts) and the relevant ADRs before naming or restructuring.
-While designing:
-
-- Call out a term that conflicts with the glossary, and propose one precise term for a vague or overloaded one.
-- Test relationships with concrete edge-case scenarios, and check that the code agrees with what the user states.
-- Update `CONTEXT.md` when a term is resolved. It is a glossary of project-specific concepts only: one or two sentences per term, what it is rather than what it does, with rejected synonyms listed as `_Avoid_`. Create it when the first term is resolved.
-
-Write an ADR in `docs/adr/NNNN-slug.md` only when a decision is hard to reverse, would surprise a future reader, and chose between real alternatives.
-One paragraph with the context, decision, and reason is enough; add status, options, or consequences only when they matter.
+Read `CONTEXT.md` (or `CONTEXT-MAP.md`) and the relevant ADRs before naming or restructuring; call out a term that conflicts with the glossary, propose one precise term for a vague one, and test relationships with edge-case scenarios.
+Update `CONTEXT.md` when a term is resolved: one or two sentences per term, what it is rather than what it does, with rejected synonyms as `_Avoid_`.
+Write a one-paragraph ADR in `docs/adr/NNNN-slug.md` only for a decision that is hard to reverse, would surprise a future reader, and chose between real alternatives.
 
 ## Log the run
 

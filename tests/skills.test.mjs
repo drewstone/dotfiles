@@ -404,7 +404,7 @@ test('operator scenarios keep every question, expected action and owning rule', 
     report: 'claude/skills/report/SKILL.md',
     reflect: 'claude/skills/reflect/SKILL.md',
     evolve: 'claude/skills/evolve/SKILL.md',
-    hypothesize: 'claude/skills/hypothesize/SKILL.md',
+    'be-ambitious': 'claude/skills/be-ambitious/SKILL.md',
     climb: 'docs/processes/climb.md',
     'docs/processes/agent-work.md': 'docs/processes/agent-work.md',
   }

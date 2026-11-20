@@ -1,22 +1,23 @@
 ---
 name: prove-journeys
-description: Prove an agent app's product flows by real usage - record browser journeys as test identities, score every chat turn, run a skeptical critic, and hand over one INDEX.md with a ranked fix list. Use when asked to prove the flows that matter work, to record real users, or to show a fix working the way a customer sees it.
+description: Prove an agent app's product flows by real usage - record browser journeys as test identities, score every chat turn, run a skeptical critic, and hand over one INDEX.md with a ranked fix list; use to prove the flows that matter work or to show a fix the way a customer sees it.
 ---
 
 # Prove journeys
 
-A flow works when a recording shows a person getting the result, at a founder's bar.
-Specs, canaries and green CI are evidence about code; this skill produces evidence about the product.
+A flow works when a recording shows a person getting the result, at a founder's bar: as fast and as good as the best product a customer could use instead.
 
 The recorder, the turn scorer and the report are agent-app's `journeys` kit (CLI `agent-app-journeys`).
-The saved workflow `prove-journeys` runs steps 1 to 4 for a list of flows: `Workflow({ name: 'prove-journeys', args: { app, url, repo, host, checkout, identities, flows, outRoot, stamp } })`, with `flowsSource` in place of `flows` to have it plan them and a `stamp` unique to the run (date and time, e.g. `20261011T2231Z`; a repeated stamp mixes two runs' evidence); the script's header documents each argument.
+The saved workflow `prove-journeys` runs steps 1 to 4 for a list of flows; its script header documents each argument, and each run needs a `stamp` unique to it (a repeated stamp mixes two runs' evidence).
 `journeys-env` loads the identities' credentials from the host vault.
 
 ## Inputs
 
-- The app's production origin and repository, and a checkout of it on a host with dependencies installed, on an agent-app release that ships `journeys`.
-- Test identities: names, roles, the environment variable names that hold their credentials, and the test workspaces they may use. Never a value.
-- The flow list, from the app's own definition of what must work: its launch checklist's minimum customer path, `PRODUCT_FLOWS`, or delivery plan. Treat every "Live" claim as unproven.
+[Set the bar](../be-ambitious/SKILL.md#set-the-bar) for each flow before recording: the best rival product's time and result for the same job, the app's number now, and the target.
+
+- The production origin, repository and a host checkout with dependencies installed, on an agent-app release that ships `journeys`.
+- Test identities: names, roles, the environment variable names holding their credentials (never a value), and their test workspaces.
+- The flow list from the app's own definition of what must work (launch checklist, `PRODUCT_FLOWS`, delivery plan), every "Live" claim treated as unproven.
 
 ## 1. Prepare the host
 
@@ -26,23 +27,22 @@ Done when every identity prints a verified user and the contract check shows the
 
 ## 2. Record one journey per flow
 
-Give each flow one owner who writes its script under `journeys/<flow-id>/` in that checkout and runs it with `journeys-env -- pnpm exec agent-app-journeys run journeys/<flow-id>/run.ts`.
+Each flow's owner writes its script under `journeys/<flow-id>/` and runs `journeys-env -- pnpm exec agent-app-journeys run journeys/<flow-id>/run.ts`.
 
-- Act as the person the flow is for, at their pace, with outcome-level asks; do not read source to decide whether something works, only to name a cause after a failure.
-- Use only the test identities and workspaces; press nothing that sends, posts, schedules, publishes, approves, invites a real address or pays. Drafts and approval cards are fine.
-- Keep to the journey's turn budget (`maxTurns`, default 6). Never press Sign out in a shared session.
-- Screenshot every screen you judge (`j.shot` takes desktop and phone); measure every turn through `sendNew`/`sendInThread`.
-- After `finish()`, run `agent-app-journeys frames <id> <label>` and look at 6 to 10 frames before judging; copy the folder off the host with the rsync line it prints.
+- Act as the person the flow is for, with outcome-level asks; read source only to name a cause after a failure.
+- Use only test identities and workspaces, and press nothing that sends, posts, schedules, publishes, approves, invites a real address or pays; drafts and approval cards are fine. Never press Sign out in a shared session.
+- Keep to the turn budget (`maxTurns`, default 6), screenshot every screen you judge (`j.shot` takes desktop and phone), and measure every turn through `sendNew`/`sendInThread`.
+- After `finish()`, look at 6 to 10 frames from `agent-app-journeys frames <id> <label>` before judging, and copy the folder off the host with the rsync line it prints.
 
-Done when each flow has a highlights video, `timings.json`, frames you looked at, and a report with a verdict, steps with evidence and mm:ss, every turn, the output's grade, and failures with repro steps.
+Done when each flow has a highlights video, `timings.json`, frames you looked at, and a report with a verdict, steps with evidence and mm:ss, every turn, the output's grade against the bar, and failures with repro steps.
 
 ## 3. Review it skeptically
 
-A separate reviewer, never a journey's author, re-checks every P0 and P1 against frames and traces, re-runs a thin repro within a stated turn budget, and marks each failure verified, refuted or unproven.
-It grades output and UI at the owner's bar: specific, sourced, correct, saved where the person finds it; no tiny fonts, field-path helper text, raw JSON or bare codes; live validation; honest failures in plain words.
-Each verified failure carries a rank by impact on a customer getting useful work done, a fix, the measured number now with its denominator, the target, and the journey that proves the fix.
+A separate reviewer, never a journey's author, re-checks every P0 and P1 against frames and traces, re-runs a thin repro within a turn budget, and marks each failure verified, refuted or unproven.
+It grades at the owner's bar: specific, sourced, correct, saved where the person finds it; no tiny fonts, field-path helper text, raw JSON or bare codes; live validation; honest failures in plain words.
+Each verified failure carries a rank by customer impact, a fix, the measured number with its denominator, the target, and the journey that proves the fix.
 Read the turn table against the videos: a turn whose frames contradict its recorded outcome is a scorer defect, reported against agent-app `journeys`, in either direction (`completed` over a failure card, or `stopped` or `failed` over a finished answer, as when an earlier turn's card renders above the new message).
-Done when `critic-result.json` holds the headline, scorecard, ranked verified failures, UI critique, refuted or unproven claims and coverage gaps.
+Done when `critic-result.json` holds the headline, scorecard, ranked verified failures, UI critique, refuted claims and coverage gaps.
 
 ## 4. Write the index
 
@@ -51,8 +51,7 @@ Done when INDEX.md opens with the highlights, and its ranked fixes and turn tabl
 
 ## Prove a fix
 
-Rerun the shortest journey that shows the fixed behavior, on production after the release or on a local stack (`JOURNEYS_BASE_URL`) before it, and quote the before and after numbers from `timings.json` with their denominators.
-Leave the script in `journeys/` so it can become a standing check.
+Rerun the shortest journey that shows the fix, on production after release or a local stack (`JOURNEYS_BASE_URL`) before it, quote before and after numbers from `timings.json` with denominators, and leave the script in `journeys/` as a standing check.
 
 ## Log the run
 
@@ -66,3 +65,4 @@ skill-run-log /prove-journeys --target "<app>: <n> flows" --verdict <PASS|FAIL|P
 |---|---|---|
 | Verified failures need fixing in parallel | `/orchestrate` | one lane per ranked failure, each proven by rerunning its journey |
 | A scored outcome disagrees with its video | `/diagnose` | the turn, its frames, and agent-app `src/journeys/score.ts` |
+| Every flow passes but trails the rival product's number | `/evolve` | the flow, its timings and the rival's number |

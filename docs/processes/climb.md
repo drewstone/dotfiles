@@ -21,7 +21,7 @@ A loop that measures but never decides is not a climb.
 | **Decision rule** | When do we keep, iterate or abandon? | Results are reported but nothing changes |
 | **Calibration** | Does the metric still track the goal? | The metric saturates, drifts, or disagrees with the person's own verdict |
 
-Before work on any layer, name the hill, read its current and best values, and write the number to beat.
+Before work on any layer, name the hill and [set the bar](../../claude/skills/be-ambitious/SKILL.md#set-the-bar): the best known result anywhere with its source, the hill's current value, and a target that beats it.
 
 ## The layers
 
@@ -140,7 +140,7 @@ Each baseline or result that reports a number carries a `measurement` block:
   Per-release covers a compared code, config, infra, model or prompt change, and product, agents and system positions unless `perRelease: false` declares a multi-release window.
 - on a baseline row, the `instrument` and its `calibration`: PASS or FAIL with the `check` that compared the instrument with a known answer and that answer (`against`), or UNCALIBRATED with what would calibrate it (`next`).
 
-The skills that analyze or operate (`report`, `reflect`, `evolve`, `hypothesize`) read the ledger before starting and append to it before finishing.
+The skills that analyze or operate (`report`, `reflect`, `evolve`, `be-ambitious`) read the ledger before starting and append to it before finishing.
 
 ### Rewards, strongest first
 
@@ -188,7 +188,7 @@ An optimizer climbs whatever it is pointed at, so it needs ground truth and fres
 | **The loop** | Run nightly: instruments, then analysts, then proposals with predictions, then offline evals, then draft PRs with evidence; promote in the morning through a held-out gate; write the ledger and the page |
 
 **Never stop climbing.**
-- **Plateau breaker:** a hill flat for three measurements changes approach, not effort. Run `hypothesize`, and the search ledger's landscape lens drafts a new direction.
+- **Plateau breaker:** a hill flat for three measurements changes mechanism, not effort. Return to `evolve`'s mechanism step, and the search ledger's landscape lens drafts a new direction.
 - **Ratchet:** a hill that reaches its target gets a new one for the next move: the best exemplar known anywhere, or twice the old target. The run that reached it settles; it does not keep spending.
 - **Climb the climber:** the climb is itself a hill (hills improved per week, predictions passed), and agent-eval's meta-search lens tunes it.
 

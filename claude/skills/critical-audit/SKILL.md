@@ -5,105 +5,46 @@ description: Review a diff, branch, or PR against standards and spec, or audit a
 
 # Critical Audit
 
-Review the requested artifact for concrete defects and quality gaps, and rank findings by impact and likelihood.
-An audit request authorizes investigation; make fixes only when the task also calls for them.
-A request to polish or improve implemented work includes fixing the confirmed gaps within scope; leave sound work unchanged.
+An excellent review finds the defect that would have reached a user, proves it from a concrete input to a wrong outcome, and names the fix that removes its whole class; it also says when sound work only matches what already existed.
+An audit request authorizes investigation; fix only when the task also asks for it.
+A request to polish or improve implemented work includes fixing every confirmed gap, in the code that owns it and across every caller it reaches ([AGENTS.md](../../AGENTS.md) rule 1).
 
 ## Review
 
-1. Establish the requested scope, revision, and comparison base.
-   For `--diff-only`, inspect the complete diff against `--base` or the repository's target branch.
-   An empty diff is a checked no-change result.
-   Honor `--scope` paths when supplied.
-2. Read the affected code or documents, required behavior, tests, and relevant callers before judging a pattern.
-3. Examine correctness, security, failure handling, architecture, and the repository's documented standards where they affect the task.
-   Trace a suspected defect from a concrete input or state to the wrong outcome.
-4. Use source evidence or a focused reproduction to test each claim.
-   Distinguish confirmed defects, supported inferences, and unresolved hypotheses.
-   Tests must exercise the behavior under review; select unit or integration coverage according to where the defect occurs.
-5. Combine duplicate findings and rank by consequence, reachability, and likelihood.
-   A source-backed defect can be confirmed without a production exploit.
-   An untested possibility is not a blocking finding.
+1. Establish the target, revision and base; `--diff-only` reviews the complete diff against `--base` or the target branch (an empty diff is a checked no-change result), and `--scope` limits paths.
+2. Read the affected code or documents, required behavior, tests and callers, and trace each suspected defect in correctness, security, failure handling or architecture from a concrete input to the wrong outcome.
+3. Test each claim with source evidence or a focused reproduction and label it confirmed, supported inference or open hypothesis; an untested possibility never blocks, and a source-backed defect needs no production exploit.
+4. Merge duplicates and rank by consequence, reachability and likelihood.
 
-Choose independent reviewers only when separate expertise or user perspectives will improve coverage and delegation is available and authorized.
-Reviewer count and execution order depend on the scope and available resources.
-
-When reviewing an SDK's customer-facing surface, read only the applicable perspective briefs:
-
-- [Cloudflare application developer](agents/personas/indie-cf.md) for Worker integration and reconnect behavior.
-- [Enterprise platform engineer](agents/personas/enterprise-platform.md) for tenancy, billing retries, and audit records.
-- [Batch research operator](agents/personas/researcher-batch.md) for durable jobs and recovery after a client crash.
-- [Coding-agent integration](agents/personas/ai-coding-agent.md) for whether the documented entrypoints reveal existing capabilities.
-- [SDK surface designer](agents/personas/sdk-surface-designer.md) for request, schema, server, and client compatibility.
-
-`--personas` can select those perspectives; it does not require additional reviewers or make every listed capability a product requirement.
+Add independent reviewers when separate expertise would find what one reader misses; for an SDK's customer-facing surface, read only the matching brief in `agents/personas/` ([indie Cloudflare](agents/personas/indie-cf.md), [enterprise](agents/personas/enterprise-platform.md), [batch research](agents/personas/researcher-batch.md), [coding agent](agents/personas/ai-coding-agent.md), [SDK surface](agents/personas/sdk-surface-designer.md)), selected by `--personas`.
 
 ## Review a change against standards and spec
 
-Derived from mattpocock/skills code-review (MIT).
-
-For a branch, PR, or work since a fixed point, confirm the point resolves and `git diff <base>...HEAD` is non-empty, then review two axes and report them separately:
-
-- **Standards**: the repository's documented conventions, cited by file and rule. Also flag code smells as judgment calls a documented standard overrides: unclear names, duplicated logic, a function using another module's data more than its own, fields that always travel together, primitives standing in for domain types, the same switch repeated, one change scattered across many files, one file changed for unrelated reasons, speculative abstraction, long call chains, pass-through wrappers, and ignored inheritance. Skip what tooling already enforces.
-- **Spec**: the originating issue or spec, found from commit references, a supplied path, or a matching spec file. Quote the spec for each finding: requirements missing or partial, behavior nobody asked for, and requirements implemented wrongly. With no spec, say so and review standards only.
-
-Keep the axes separate: code can follow every standard and build the wrong thing, or do the right thing against the conventions.
-Use independent reviewers per axis only when delegation is available and authorized.
+For a branch, PR or work since a fixed point, report the repository's standards and the originating spec as two separate axes ([change review](references/change-review.md)).
 
 ## Polish against explicit criteria
 
-When the task is to polish or judge implemented work, assess correctness, design, robustness, tests, and public interfaces where they apply.
-State what each criterion means for this artifact before judging it, then inspect or run the check that can expose its failure.
-For docs, skills, or unfamiliar artifact types, read [quality checks](references/quality-checks.md) when selecting suitable evidence.
-Fix actionable gaps within scope, repeat the affected checks and required repository validation, and finish when the applicable criteria pass or a specific requirement remains unresolved.
-
-A failing test or missing requested behavior is work to resolve within scope, not a reason to end an authorized implementation task.
-An introduced regression takes priority over further polish.
-Avoid changes that only restate code, rename working concepts, or impose a preferred architecture without a demonstrated benefit.
-Use `PASS`, `FAIL`, `UNCHECKED`, or `N/A` for each criterion; a pass needs a cited check and its result, and a not-applicable criterion needs its reason.
+State what each criterion (correctness, design, robustness, tests, public interface) means for this artifact and run the check that could expose its failure ([quality checks](references/quality-checks.md) for docs, skills and unfamiliar artifacts).
+Fix the gaps, rerun the affected checks, and finish when the criteria pass or a named requirement stays open; a failing test is work to finish, and an introduced regression comes before further polish.
+Skip changes that only rename working concepts or impose a preferred architecture without a demonstrated benefit.
+Mark each criterion `PASS` (with its check and result), `FAIL`, `UNCHECKED` or `N/A` (with its reason).
 
 ## Review documents
 
-For technical documents, establish the reader's task from the documents in scope and nearby navigation or metadata.
-For public writing, read the relevant repository `docs/anti-patterns/` guidance before editing.
-Verify claims against current source, configuration, public APIs, deployment state, or cited material.
-Distinguish implemented behavior, hosted operations, protocol guarantees, plans, and opinions.
-Remove unsupported claims, generic filler, and procedural copy that does not help the reader act.
-Keep qualifiers that express a real limitation, and preserve technical repetition and passive voice when they improve clarity.
-Follow current product documentation for exact product names and responsibilities; a generic skill cannot own that inventory.
-
-For a broad document set, use [the scanner](scripts/scan-docs-slop.mjs) to find candidate passages:
-
-```bash
-node <skill-directory>/scripts/scan-docs-slop.mjs --json <file-or-directory>...
-```
-
-Check `scannedFiles`, `findingCount`, and `emittedCount` before relying on its output.
-The scanner skips some directories and file types, limits emitted findings, and does not establish factual correctness.
-Read [document patterns](references/docs-patterns.md) when triaging recurring wording or product-boundary findings.
-Separate the material scanned from the material actually reviewed, and run the repository's documentation and link checks after editing.
+For technical documents, public writing and skills, follow [document review](references/docs-patterns.md): the reader's task, each claim against current source, unsupported claims and filler removed, and the scanner for broad sets.
 
 ## Audit an autonomous agent
 
 Treat labels, docs and the agent's own account as claims until execution records support them.
-- Collect prompts, traces, tool results and state changes under their real run identities, then check that the agent observed the state it needed, acted, and checked the effect.
-- Compare decisions with the user mandate, permissions and completion conditions; a learning claim needs feedback traced to a later changed decision.
-- Separate observed defects from missing evidence, and name the earliest decision that explains each.
+Collect prompts, traces, tool results and state changes under real run identities, check that the agent observed the state it needed, acted and checked the effect, and compare its decisions with the mandate, permissions and completion conditions; a learning claim needs feedback traced to a later changed decision.
+Separate observed defects from missing evidence, and name the earliest decision that explains each.
 
 ## Findings and re-audit
 
-For each finding, include severity, file:line, triggering scenario, evidence, user impact, a proposed fix, and the check that would prove it.
-Use the repository's severity definitions when present.
-Otherwise reserve CRITICAL/HIGH for defects that block release, MEDIUM for material nonblocking defects, and LOW for limited impact.
-Report the scope, checks, uninspected material, and uncertainty with the verdict.
-Quantify impact when evidence permits; identify estimates and unknowns instead of inventing costs or scores.
-A quality verdict does not authorize a release.
+Each finding carries severity, file:line, triggering scenario, evidence, user impact, the fix across its class, and the check that proves it; without repository definitions, CRITICAL and HIGH block release, MEDIUM is material and nonblocking, LOW is limited.
+A quality verdict names what was not inspected and does not authorize a release.
 
-Persist runs that need later review under `.agent/critical-audit/<timestamp>/`:
-`manifest.json` records scope and revisions, `findings.jsonl` records findings and evidence, and `summary.md` records the verdict.
-For `--reaudit <path>`, recheck every prior finding against the current revision.
-Without a path, locate the latest applicable run.
-Record resolved, still present, moved, or unverifiable findings with current evidence.
+Persist runs that need later review under `.agent/critical-audit/<timestamp>/` (`manifest.json`, `findings.jsonl`, `summary.md`); `--reaudit <path>`, or the latest run without one, rechecks every prior finding against the current revision as resolved, still present, moved or unverifiable.
 
 ## Log the run
 
@@ -115,7 +56,8 @@ skill-run-log /critical-audit --target "<scope> n=<F> files" --verdict <PASS|FAI
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| Confirmed blockers or failing CI remain on a PR whose fixes are in scope | `/converge` | the PR, findings, failing checks, and verification |
+| Confirmed blockers or failing CI remain on a PR the task may fix | `/converge` | the PR, findings, failing checks and verification |
 | A security finding needs adversarial validation | `/harden` | the affected boundary and triggering scenario |
 | Obsolete code and documentation share a removable capability | `/simplify` | the consumer evidence and affected paths |
-| The criteria pass and an authorized release remains | `/ship` | the verified revision, target, and checks |
+| The work is sound but only matches what already existed, with no gain over the baseline or the best known result | `/be-ambitious` | the number to beat and the check that would show a gain |
+| The criteria pass and an authorized release remains | `/ship` | the verified revision, target and checks |

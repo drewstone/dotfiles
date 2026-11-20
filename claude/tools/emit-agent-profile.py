@@ -14,7 +14,7 @@ NAME = next((line[13:].strip().strip("'\"") for line in (CONFIG.read_text().spli
              if line.startswith("PROFILE_NAME=")), "dotfiles-default")
 # Skills that need no Mac, fleet host or local CLI; each mounts with its sibling files.
 SKILLS = ["be-ambitious", "codebase-design", "converge", "critical-audit", "diagnose", "evolve", "finalize",
-          "ground-truth", "harden", "hypothesize", "reflect", "simplify", "tdd", "verify", "writing-for-agents"]
+          "harden", "reflect", "simplify", "tdd", "verify", "writing-for-agents"]
 HOOKS = ["secret_scan.py", "process_guard.py"]  # wired as settings.json wires them; process_guard's rule modules mount beside it
 PERMISSIONS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch"]
 

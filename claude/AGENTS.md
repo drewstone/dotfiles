@@ -6,8 +6,8 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 
 ## Own the outcome
 
-1. Done means the requested consumer has the result, proven through the shipped flow, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Finish the whole task; a plan, a question or a partial is not a handoff.
-2. Build the complete, ambitious version the outcome needs, at whatever size it takes, and merge it; keep one name and one implementation per concept by reusing or replacing what exists and deleting what the new code makes dead, and say why growth past the census limit is worth it in the PR body ([simplify](skills/simplify/SKILL.md), [census](../git/census/README.md#growth)).
+1. Done means the requested consumer has the result, proven through the shipped flow, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Finish the whole task; a plan, a question or a partial is not a handoff, and a defect is fixed in its owner across every caller, in any repository we own.
+2. Before the first change, aim past the best result anyone has reached, or show why it cannot be beaten here ([set the bar](skills/be-ambitious/SKILL.md#set-the-bar)); build the complete, ambitious version that target needs, at whatever size it takes, and merge it; keep one name and one implementation per concept by reusing or replacing what exists and deleting what the new code makes dead, and say why growth past the census limit is worth it in the PR body ([simplify](skills/simplify/SKILL.md), [census](../git/census/README.md#growth)).
 3. Before saying something is missing, search the owner's default branch and the inventory your layer names, and cite what you found.
 4. A rate, price, quota, limit or version has one owner; documents say where to read it, never its value.
 5. Report the checked outcome first, unknowns explicit, in plain technical English; every number with its unit, baseline and source ([the climb](../docs/processes/climb.md)).

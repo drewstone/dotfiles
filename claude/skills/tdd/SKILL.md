@@ -7,31 +7,32 @@ description: Build a feature or fix a bug test-first with red-green slices at ag
 
 Derived from mattpocock/skills tdd (MIT).
 
-Each cycle is one vertical slice: one failing test at one seam, then the least code that passes it.
+Excellent test-driven work leaves a few integration tests that would catch the regressions users would feel, each written red before its code, and a complete feature built slice by slice behind them.
+Each cycle is one vertical slice: one failing test at one seam, then the code that passes it; the slices continue until the whole feature, at whatever size it takes, is built.
+
+## Set the bar
+
+When the feature has a measurable outcome (latency, accuracy, throughput), [set the bar](../be-ambitious/SKILL.md#set-the-bar) first: the best known result for it with its source, our number, and the target; one slice's test asserts the target, not today's number.
 
 ## Agree the seams first
 
 A seam is the public interface where behavior is observed without reaching inside.
-Before writing tests, list the seams under test and confirm them with the user, or state them when the user is unavailable.
-Put effort on critical paths and complex logic rather than every edge.
-Use the project's domain terms from `CONTEXT.md` in test names.
-If the interface itself is undecided, settle it with `/codebase-design` first.
+Before writing tests, list the seams under test and state them to the user, then proceed; settle an undecided interface with `/codebase-design` first.
+Use `CONTEXT.md` terms in test names.
 
 ## Run the loop
 
-1. Write one test that describes a behavior a caller cares about, through the public interface.
+1. Write one test of a behavior a caller cares about, through the public interface.
 2. Run it and watch it fail for the expected reason.
-3. Write only enough code to pass it; add no speculative features.
-4. Run it and the affected suite green, then take the next slice.
-
-Refactor after the behavior is complete, as a separate review pass with the suite green.
+3. Write the code that passes it, with no speculative features beyond the slice.
+4. Run it and the affected suite green, then take the next slice; refactor once the behavior is complete, with the suite green.
 
 ## Tests worth keeping
 
 - Assert observable outcomes through the interface, not internal calls, private methods, or a side channel such as querying the database behind the interface.
 - Take expected values from an independent source: a known-good literal, a worked example, or the spec. An expected value computed the way the code computes it can never fail.
 - Write slices one at a time; a batch of tests written first verifies imagined behavior and locks in structure before the design is known.
-- Mock only at system boundaries: third-party APIs, time, randomness, and sometimes the database or filesystem. Use real code for modules you own.
+- Run real dependencies: modules you own, a local substitute such as PGlite, and a third party's sandbox or test mode. Never write a unit or mock test ([AGENTS.md](../../AGENTS.md) rule 13); fix time and randomness by injecting the clock and the seed.
 - Design boundaries for this: inject the client, and expose one function per external operation instead of a generic fetcher with branches.
 
 A test that breaks during a refactor without a behavior change is coupled to the implementation; fix the test.

@@ -31,9 +31,11 @@ For an existing project, check the path it actually runs before applying an upst
 Reuse that check within the task unless the dependency, source, or claim changes.
 Keep revisions in experiment evidence when needed to reproduce a result; avoid routine version inventories in skill instructions.
 
-## Task boundaries
+## Ambition and boundaries
 
-Use the user's existing scope and authorization.
+A skill that produces work opens its procedure by [setting the bar](be-ambitious/SKILL.md#set-the-bar) in its own domain's words, states in one sentence what excellent work in its domain looks like, and finishes when the target is met or the miss is explained, not when its checks pass.
+A checking skill (verify, simplify, critical-audit, converge) routes to `/be-ambitious` when the checked work only matches what already existed.
+The task is the outcome and the whole class of defect behind it ([AGENTS.md](../AGENTS.md) rule 1); write a limit as the authority it protects (spending, production changes, another owner's work, an approval the owner reserves), never as "within scope".
 Choose parallel work from dependencies, risk, and available resources rather than a fixed number of workers.
 Keep meaningful security and data-integrity constraints explicit.
 A concrete failure needs a concrete check; an anecdote does not establish a universal threshold.
@@ -85,6 +87,6 @@ Usage counts and document length do not establish task quality.
 
 1. Check descriptions, local references, and any executable examples affected by the edit.
 2. Run `node --test tests/skills.test.mjs` from the repository root.
-3. For substantial behavior changes, use realistic independent tasks in isolated workspaces and inspect the results; for operator guidance, those tasks are [the operator scenarios](_probes/operator-scenarios.md).
+3. For substantial behavior changes, use realistic independent tasks in isolated workspaces and inspect the results; for operator guidance, those tasks are [the operator scenarios](_probes/operator-scenarios.md), and for a change meant to raise agents' targets, [the ambition probe](_probes/ambition/README.md).
 4. Check that required behavior survived and unnecessary work was removed before using size reduction as supporting evidence.
 5. Commit, review, and install from the maintained source while preserving unrelated local settings and skills.

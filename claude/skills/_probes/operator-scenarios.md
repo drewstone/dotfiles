@@ -9,7 +9,7 @@ Each scenario is a moment where the coordinator went wrong, or a rule that must 
 The cold reader gets exactly these files, at the revision under test, and never this file, which holds the answers:
 - [AGENTS.md](../../AGENTS.md) and [CLAUDE.md](../../CLAUDE.md);
 - [the climb](../../../docs/processes/climb.md) and [the work process](../../../docs/processes/agent-work.md);
-- the skills [report](../report/SKILL.md), [reflect](../reflect/SKILL.md), [evolve](../evolve/SKILL.md) and [hypothesize](../hypothesize/SKILL.md);
+- the skills [report](../report/SKILL.md), [reflect](../reflect/SKILL.md), [evolve](../evolve/SKILL.md) and [be-ambitious](../be-ambitious/SKILL.md);
 - when the change touches memory, the project's memory index (`~/.claude/projects/<project>/memory/MEMORY.md`).
 
 ## Run it

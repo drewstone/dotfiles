@@ -7,14 +7,18 @@ description: Write or edit documents agents read, such as skills, AGENTS.md, CLA
 
 Derived from mattpocock/skills writing-for-agents (MIT).
 
+An excellent agent document makes a cold reader take the right action on the first try, at the level of ambition the owner wants, in the fewest words that still carry every rule.
+
 In the dotfiles repository, also follow [skill authoring](../_common.md) for structure, the run log, and the final `## Then consider` footer.
+
+## Set the bar
+
+Before editing guidance, [set the bar](../be-ambitious/SKILL.md#set-the-bar): the best known result for guidance of its kind (a published prompt or skill evaluation, or our best probe score), the current text's measured result on [the operator scenarios](../_probes/operator-scenarios.md) or [the ambition probe](../_probes/ambition/README.md), and the score the new text must beat.
 
 ## Pointers decide when material is read
 
 A skill description, or an AGENTS.md line naming a doc, is a pointer: always loaded, and its wording decides when the agent reaches the target.
-Lead with the word that should trigger it, give one trigger per distinct case, and cut identity the body already carries.
-Every word of an always-loaded pointer costs on every turn; prune it harder than the body.
-If needed material is reached unreliably, sharpen the pointer before inlining the material.
+Lead with the word that should trigger it, give one trigger per distinct case, and prune it harder than the body, since every word costs on every turn; when material is reached unreliably, sharpen the pointer before inlining the material.
 
 ## Put each piece at the right level
 
@@ -22,14 +26,11 @@ If needed material is reached unreliably, sharpen the pointer before inlining th
 - Reference consulted on demand can sit in the main file when every branch needs it.
 - Detail only some branches need moves to a linked file, with a pointer at the decision point that says when to read it.
 
-Keep a concept's definition, rules, and caveats together under one heading.
-A document that is too long thins attention even when every line is live; disclose detail and split by branch.
+Keep a concept's definition, rules, and caveats together under one heading; a document that is too long thins attention even when every line is live.
 
 ## Steps end on a checkable condition
 
-End each step on a completion condition the agent can observe, such as "every modified model accounted for" or "one command already run that goes red on this bug".
-A vague end invites stopping early; sharpen it before hiding later steps.
-The condition's demand sets how thorough the work is.
+End each step on a completion condition the agent can observe, such as "one command already run that goes red on this bug"; a vague end invites stopping early, and the condition's demand sets how thorough the work is.
 
 ## Words that do work
 
@@ -37,6 +38,9 @@ The condition's demand sets how thorough the work is.
 - State the behavior you want; a prohibition makes the forbidden behavior more salient. Keep a ban only as a hard guardrail, paired with the positive target.
 - Keep each meaning in one place. Leave facts that a file, script, or `--help` can answer to that source; write down what the agent cannot look up: conventions, reasons, gotchas.
 - Delete a sentence that does not change behavior compared with the model's default, and lines that no longer bear on the task.
+- Raise the bar with a standard, not adjectives: a named exemplar, a number to beat and explicit permission to build the larger thing move an agent; "world-class" and "groundbreaking" do not.
+- Write a limit as the authority it protects (spending, production, another owner's work, an approval the owner reserves), never as "within scope", which agents read as "stop at the first file". "Smallest" belongs to a check, never to the change.
+- A work-producing skill opens with its bar in its own domain's words, and finishes when the target is met or the miss is explained, not when its checks pass.
 
 ## Skills
 
@@ -55,3 +59,4 @@ skill-run-log /writing-for-agents --target "<document>" --verdict <PASS|FAIL|PAR
 | Condition | Next skill | What to pass |
 |---|---|---|
 | The document makes factual claims that need checking | `/critical-audit` | the document and its sources |
+| The change is meant to raise agents' ambition | `/reflect` | the change, to rerun the operator scenarios and [the ambition probe](../_probes/ambition/README.md) |

@@ -5,30 +5,26 @@ description: Build or migrate agent products with maintained app modules and int
 
 # Build Agent App
 
-Build the product around an agent: its users, work, tools, approvals, integrations, and persistence.
-Start with the requested outcome and the product's current behavior.
+An excellent agent product does the user's whole job end to end, measurably better than the best tool they could use instead, and every write, charge and message it makes is one the user authorized.
+
+## Set the bar
+
+Before building, [set the bar](../be-ambitious/SKILL.md#set-the-bar): the best product or published system that does this job today with its source, the user's current number (time per task, share solved, quality on a test set), the target that beats it, and the customer-like journey that will show it.
+When the target needs a capability the platform lacks (a connector, memory, better retrieval or planning), build it in its owning package as part of the work.
 
 ## Find the right implementation
 
-For existing products, confirm installed imports and types before adopting upstream guidance.
-Use maintained APIs for new work; upgrade dependencies only when required.
+For an existing product, confirm installed imports and types before adopting upstream guidance.
+The product owns domain rules, permissions, persistence, billing and UI at typed boundaries, reusing package behavior.
 
-The product owns domain rules, permissions, persistence, billing, and UI.
-Keep product policy at typed boundaries while reusing package behavior.
-
-## Choose the path
-
-- For a new product, inspect the current scaffolder and use it when it supports the chosen runtime and deployment target.
-  Install only modules required by the user flow.
+- For a new product, use the current scaffolder when it supports the runtime and deployment target, installing only modules the flow needs.
 - For infrastructure replacement, read [migration](references/migration.md) before choosing what to retain or delete.
-- For connectors, grants, approvals, or webhooks, read [tool integrations](references/integrations.md) before adding a client or connector.
-- For embedded apps, read [embedded app continuity](references/embedded-apps.md) before changing previews, storage, or model switching.
+- For connectors, grants, approvals or webhooks, read [tool integrations](references/integrations.md) first.
+- For embedded apps, read [embedded app continuity](references/embedded-apps.md) before changing previews, storage or model switching.
 
 ## Build the complete flow
 
-Map the user's path from input to useful result, including authentication, tools, persistence, side effects, permissions, and failures.
-Implement approval, cancellation, resume, and usage recording when the product requires them.
-Prove one real request end-to-end before multiplying workflows.
+Map the path from input to useful result (authentication, tools, persistence, side effects, permissions, failures), with approval, cancellation, resume and usage recording where the product needs them; prove one real request end to end, then build out the rest.
 
 Preserve these invariants:
 
@@ -41,27 +37,11 @@ Preserve these invariants:
 
 ## Verify the product
 
-Exercise a customer-like journey against the actual backend and storage.
-Check the result, authorized side effect, usage record, and interruption outcome, including denied permissions.
-Open changed chat, profile, and app-preview routes in a browser at desktop and mobile widths.
-Verify saved profiles/sessions reopen, published apps open through workspace routes, and loading, failure, retry, and permission-denied states render correctly.
-Give each visible control and sentence a user purpose; include useful empty/error states and compare the flow with its brief and actual users.
-Track which product owns each live profile, channel, and secret.
-Keep saved settings, published profiles, and delivered messages distinct; prove each through its consumer.
-For deployed work, repeat the changed flow on the served artifact before claiming it works live.
-
-Discover applicable skills and existing product capabilities for the user's goal.
-Use the app as the intended user through maintained routes and tools.
-Retain actual invocation, tool, artifact, and stored-readback identities; reopen the saved result.
-Apply user corrections to workspace context or scoped implementation while preserving the goal and authorization.
-Exercise the correction in a fresh eligible session, reusing persisted context and preserving pending execution identities.
-Compare audience utility, cost, and owner intervention against a comparable control; retain failures and unknowns.
-Persist the supported lesson immediately in the product's adopted workspace memory, with evidence links.
-Promote shared profile or skill changes through owning review, versioning, and measured evaluation, retaining rollback.
-Use maintained APIs for promotion; a saved lesson does not establish an update to the active agent.
-Stop when the user's acceptance gate and requested delivery are proved; retain missing proof and its owner.
-
-Report the user-visible result, run and artifact identities, checks, unresolved limits, and retained or removed adapters when relevant.
+Run a customer-like journey on the real backend and storage, checking the result, the authorized side effect, the usage record and the interruption outcome, denied permissions included.
+Open changed routes at desktop and mobile widths: saved profiles and sessions reopen, published apps open through workspace routes, and loading, failure, retry and permission-denied states render.
+Prove saved settings, published profiles and delivered messages each through its consumer, and on the served artifact before claiming it works live.
+When the user corrects the agent, apply it to workspace context or the implementation, exercise it in a fresh session against a comparable control, and persist the lesson with evidence; a saved lesson does not update the active agent.
+Stop when the acceptance gate and delivery are proved against the bar, with missing proof named with its owner.
 
 ## Log the run
 
@@ -71,7 +51,9 @@ skill-run-log /build-agent-app --target "<target>" --verdict <PASS|FAIL|PARTIAL|
 
 ## Then consider
 
-- `eval-engineering` when the primary flow lacks a meaningful evaluation.
-- `harden` when changed auth, billing, or tenant boundaries need adversarial proof.
-- `product-design` when the changed UI needs broader interaction or responsive coverage.
-- `verify` when implementation is complete and release checks remain.
+| Condition | Next skill | What to pass |
+|---|---|---|
+| The primary flow lacks a meaningful evaluation | `/eval-engineering` | the journey and its bar |
+| Changed auth, billing or tenant boundaries need adversarial proof | `/harden` | the boundaries and invariants |
+| The changed UI needs broader interaction or responsive coverage | `/product-design` | the flows and states |
+| Every product flow must be proven by recorded real use | `/prove-journeys` | the flow list and test identities |
