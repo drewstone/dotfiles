@@ -5,58 +5,35 @@ description: Preserve a long-running task across context, process, provider, or 
 
 # Session continuity
 
-Use this when checked task state must survive context, process, provider, or machine replacement.
-The active objective and existing authorization survive until their completion or stop conditions apply.
+An excellent handoff lets a fresh session take the next action within a minute, with the goal, the bar it was climbing toward and every needed identity checked, not remembered.
+The active objective, its target and existing authorization survive until their completion or stop conditions apply.
 
 ## Resume from the next action
 
-Read the current brief and latest user correction; identify the next executable action and its completion check.
+Read the current brief and the latest user correction, and identify the next executable action and its completion check.
 Recheck the state that action depends on: checkout and base before editing, current owner and target before a shared write, terminal receipt before consuming a run's output.
-Reuse retained guidance and unaffected proof. Expand inspection when those records are missing, contradictory, or invalidated by changed inputs.
-Continue the action; an ordinary project switch needs only its relevant saved state.
+Reuse unaffected proof, widening inspection only when records are missing, contradictory or invalidated, then continue.
 
 ## Capture a handoff
 
-Update the existing brief at a handoff or material state change; put the next action first.
-Replace stale current status while retaining its predecessor as history. Link supporting records rather than copying them.
-With no existing brief, write the handoff to the OS temporary directory rather than the workspace, tailored to what the next session will do, with the skills it should load.
-Redact keys, passwords, and personal data.
+Update the existing brief at a handoff or material state change, next action first; replace stale status while keeping its predecessor as history, and link supporting records rather than copying them.
+With no existing brief, write the handoff to the OS temporary directory, tailored to what the next session will do and the skills it should load, with keys, passwords and personal data redacted.
 
 - Next action, completion check, and exact blocker if any.
-- Objective, user corrections, existing authority, resource bounds, and unresolved choices.
-- Relevant checkout, revision, PR, uncommitted files, artifact, proof, and actual adoption state.
-- For active execution: owner, run identity, authoritative status, account binding, and supported recovery action.
-- For cross-machine delivery: origin machine, native thread/session from receipts; keep native and Runtime identities distinct. Missing values remain unknown; provenance grants no authority.
+- Objective, the bar (best known result, our number, target), user corrections, authority, resource bounds and open choices.
+- Checkout, revision, PR, uncommitted files, artifacts, proof and actual adoption state.
+- For active execution: owner, run identity, authoritative status, account binding and supported recovery action.
+- For cross-machine delivery: origin machine and native thread or session from receipts, with native and Runtime identities kept distinct; missing values stay unknown, and provenance grants no authority.
 
 ## Preserve useful work
 
-Retain required candidate artifacts, tool sources, dependency identities, and reproducible build instructions in durable workspace storage.
-Keep disposable scratch intermediates separate.
-For a storage or machine move, snapshot affected parent and worker traces with sizes and hashes; record missing workers, preserve source paths, and use supported relocation.
+Keep required artifacts, tool sources, dependency identities and build instructions in durable workspace storage, and for a storage or machine move snapshot parent and worker traces with sizes and hashes.
 
 ## Recover missing execution
 
-Resolve an unfamiliar installed trace tool and its help before selecting a parser.
-Use deterministic records before bounded model analysis.
-Reconcile recovered claims with current commits, live identities, and task ownership.
-An old transcript or restored terminal does not establish a running worker.
-
-Use Runtime's maintained recovery path for Runtime-owned assignments.
-Resume a standalone native session only when that harness owns the task and its resume contract permits it.
-Verify account binding and workspace identity without exposing credentials.
-Reconcile an uncertain admission before issuing replacement work.
-Preserve terminal records; a new experiment or changed profile needs an immutable successor.
-
-Recover one worker first when restoring a fleet after failure.
-Verify execution, capture, and use of a retained artifact or tool before claiming continuity.
-Then restore authorized concurrency within current capacity.
-
-## Continue
-
-Continue already-authorized work when the environment supports it.
-A terminal run can leave the broader objective unfinished.
-State a specific missing capability or authority when it prevents the next action.
-Keep pending outside assessment separate from measured research progress.
+Reconcile recovered claims with current commits, live identities and task ownership; an old transcript or restored terminal does not establish a running worker.
+Use Runtime's maintained recovery path for Runtime-owned assignments, resume a native session only when that harness owns the task and its resume contract permits it, reconcile an uncertain admission before issuing replacement work, and give a new experiment or changed profile an immutable successor.
+When restoring a fleet, recover one worker first and verify it executes and uses a retained artifact before restoring authorized concurrency.
 
 ## Log the run
 

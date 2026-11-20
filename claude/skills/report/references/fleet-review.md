@@ -1,4 +1,23 @@
-# Fleet review question register
+# Questions about active research and fleets
+
+Read this when the question is what a research run or fleet is doing, whether it is progressing, or what to do about it.
+
+Translate the question into the decision the user needs, then inspect the relevant records:
+
+- For activity, inspect authoritative liveness, invocations, terminal records, and the latest meaningful action.
+- For progress, inspect retained artifacts, checks, changed decisions, and unresolved claims.
+- For topology, inspect actual parent edges, executed children, and artifact consumption.
+- For resources, inspect measured usage, elapsed time, concurrency, capacity, and explicit unknowns.
+- For capability, distinguish current source, installed packages, and observed behavior on the active route.
+
+Keep agent-authored claims, observed events, independent findings and analyst interpretations attributable where the difference matters.
+Repeated tool calls or tokens alone do not establish progress, and an unknown outside assessment does not establish its absence.
+Preserve the original acceptance criteria and report stricter interpretations separately.
+Lead with what is happening, what useful work exists and what remains uncertain; say plainly when the fleet is idle, and name the stop cause and the corrective action already underway.
+Respect current ownership, resource limits and uncertain admissions before launching replacements.
+Read [topology and resources](topology-and-resources.md) for collaboration, recursion, efficiency, model or account questions, and [trace workflows](trace-workflows.md) when the answer depends on what agents did, why they changed course, or how work moved between them.
+
+## Fleet review question register
 
 Use this reference for recurring fleet reviews, broad research status, or an audit of the research organization itself.
 The register covers useful work and the system that produces it.

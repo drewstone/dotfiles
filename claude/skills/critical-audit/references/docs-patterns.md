@@ -1,4 +1,17 @@
-# Docs slop patterns
+# Document review
+
+Read this when the audit target is a technical document, public page or skill.
+
+1. Establish the reader's task from the documents in scope and nearby navigation or metadata.
+   For public writing, read the repository's `docs/anti-patterns/` guidance before editing.
+2. Verify each claim against current source, configuration, public APIs, deployment state or cited material, and separate implemented behavior, hosted operations, protocol guarantees, plans and opinions.
+3. Remove unsupported claims, generic filler and procedural copy that does not help the reader act; keep qualifiers that state a real limit, and technical repetition or passive voice where they read clearer.
+   Exact product names and responsibilities come from current product documentation, never from a skill.
+4. For a broad set, find candidate passages with the scanner, `node <skill-directory>/scripts/scan-docs-slop.mjs --json <file-or-directory>...`.
+   Check `scannedFiles`, `findingCount` and `emittedCount` first: it skips some directories and file types, caps emitted findings, and never establishes factual correctness.
+5. Separate the material scanned from the material read, triage with the patterns below, and run the repository's documentation and link checks after editing.
+
+## Slop patterns
 
 Adapted from `hardikpandya/stop-slop` and the humanizer skill. Use these as review heuristics, not as a blind rewrite policy.
 

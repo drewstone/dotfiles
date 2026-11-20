@@ -222,7 +222,7 @@ python3 "$SCRIPT_DIR/tools/claude-trust.py" sanitize-local "$LOCAL_SETTINGS"
 
 # Pi skills (subset — only skills that work in conversation, not coding)
 PI_SKILLS_DIR="$HOME/.pi/agent/skills"
-PI_SKILLS=(reflect hypothesize evolve)
+PI_SKILLS=(reflect be-ambitious evolve)
 if [ -d "$HOME/.pi/agent" ]; then
   mkdir -p "$PI_SKILLS_DIR"
   for skill in "${PI_SKILLS[@]}"; do

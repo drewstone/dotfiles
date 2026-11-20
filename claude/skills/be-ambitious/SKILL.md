@@ -1,45 +1,53 @@
 ---
 name: be-ambitious
-description: Rewrite a task as the deeper version a top professional would ask for, with expert moves, the rawest sources, named methods and an outside check with its pass line; use for /be-ambitious, "be ambitious", "raise the bar" or "what would an expert do". Not for adding scope or polishing tone.
+description: Set the bar before any build, research or improvement task: the best known result anywhere with its source, our number, a target that beats it, the mechanism that could reach it and the outside check; use at the start of such work, for /be-ambitious, "raise the bar" or "what would an expert do".
 ---
 
 # Be ambitious
 
-Make the task deeper: the same goal, held to a higher standard through better sources, sharper methods and an outside check, at whatever size of work that standard takes.
-Drop any suggestion that serves a different goal.
+Excellent work starts from the best result anyone has published or shipped and aims past it; ordinary work starts from the request and stops when its checks pass.
+Every skill that produces work opens by setting the bar here. The task is the text after the invocation, else the latest request.
 
-The task is the text after the invocation, else the latest request in the conversation; with neither, ask for it in one line.
+## Set the bar
 
-## Answer four questions
+Name the field (SRE incident response, retrieval evaluation, compiler optimization), then write five lines before the first change, each concrete or a named unknown with the step that resolves it:
 
-Name the field first (SRE incident response, clinical pharmacology, zero-knowledge proof engineering), then answer for that field with the actual thing, not its category:
+1. **Best known result.** The strongest result anywhere for this class of task, with its source: a paper, public benchmark, leaderboard, rival product, reference implementation, or the best row in our [climb ledger](../../../docs/processes/climb.md#the-ledger). Search for it; "none found in <where you searched>" is an answer, an invented one is not.
+2. **Our number.** Today's measured value with unit, denominator and source; when it is unmeasured, measuring it is the first step.
+3. **Target.** A number that beats the best known result, or the measured reason it cannot be beaten here (a physical or information limit, a requirement) and the best target that remains.
+4. **Mechanism.** The change of kind that could reach the target, as an expert in the field would choose it: a different algorithm, architecture, data source, formulation or tool. More effort on the current mechanism is a fallback, never the plan.
+5. **Outside check.** What, other than the author, shows the result (a benchmark, held-out set, reproduction, known answer, measurement or real-user behavior), with its pass and fail lines.
 
-1. **Expert moves not asked for.** The two or three moves that separate expert from competent work here, such as naming the decision the work serves, checking base rates, reproducing before fixing, or writing the strongest counter-argument. The [prompt library](../../../docs/processes/prompt-library.md) holds graded moves with their triggers; use a matching entry and its evidence grade before inventing one.
-2. **Rawest material.** The primary source the expert starts from instead of a digest: the dataset, not the chart; the filing, not the article; the logs and code, not the bug report; the methods section, not the abstract. Say where it lives: here that is often a trace, a run's journal, `origin/<default>` or the served endpoint.
-3. **Named methods and tools.** Techniques, instruments, libraries or commands, each with the reason it fits this task.
-4. **Outside check.** What, other than the user or the model, shows the result is right: a test suite, benchmark, reproduction, ground-truth data, known answer, measurement, independent reviewer or real user behavior. State the pass line and the failure line, as numbers where the check allows.
+Start from the rawest material: the dataset, not the chart; the logs and code, not the bug report; the served endpoint, not the docs.
+The [prompt library](../../../docs/processes/prompt-library.md) holds graded expert moves with their triggers; use a matching entry before inventing one.
 
-Where the field is beyond what you know, say so instead of inventing a source or tool.
-The step is done when each question has a concrete answer or a named unknown.
+## Go further
 
-## Rewrite
+When the target needs more than the request named (a new module, a rewrite, a second mechanism, a fix in another repository we own), build it in the same task at whatever size it takes ([AGENTS.md](../../AGENTS.md) rule 2).
+Spending, production changes, another owner's work and the approvals the owner reserves stay where they are: ambition changes what you build, never who approves it.
+Drop ideas that serve a different goal.
 
-Write the rewritten prompt in one fenced block, in the user's voice.
-It asks for exactly what the four answers describe: start from the raw material, use the named methods, and end on the outside check and its pass line.
-Keep the user's acceptance criteria and named levers unchanged.
+## Finish against the bar
 
-When the request asked only for the rewrite, stop after it.
-When the task is already authorized work, because the user asked for it to be done or another skill invoked this one for its own task, carry out the rewritten version.
+The work finishes when the outside check shows the target met, or when the miss is explained with evidence: what was tried, the measured gap, and the cause that limits it.
+Passing checks are necessary, not sufficient.
+A met target gets its next one, the [ratchet](../../../docs/processes/climb.md#the-engine-what-makes-the-climb-run-without-us): the best result now known, or twice the old target.
+
+## Rewrite a prompt
+
+When asked for the rewrite itself, write it in one fenced block in the user's voice: it asks for the five lines, starts from the raw material, uses the named methods, and ends on the outside check and its pass line, keeping the user's acceptance criteria and named levers.
+Stop after the rewrite when only that was asked for; when the task is authorized work, carry out the rewritten version.
 
 ## Log the run
 
 ```bash
-skill-run-log /be-ambitious --target "<task>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /<next-skill-or-stop>
+skill-run-log /be-ambitious --target "<task>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --prediction "<target>" --next /<next-skill-or-stop>
 ```
 
 ## Then consider
 
 | Condition | Next skill | What to pass |
 |---|---|---|
-| The rewrite asks for research from primary sources | `/report` | the rewritten prompt |
-| The outside check does not exist yet and must be built | `/eval-engineering` | the pass and failure lines |
+| The target is a measured quantity to climb | `/evolve` | the five lines |
+| The best known result needs research from primary sources | `/report` | the field and where you searched |
+| The outside check does not exist yet and must be built | `/eval-engineering` | the pass and fail lines |
