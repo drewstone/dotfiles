@@ -129,7 +129,7 @@ def summarize(rows, arms):
                     b += x and not y
                     c += y and not x
             pairs[f"new_vs_{other}"] = {"paired_items": 3 * len(mine.keys() & theirs.keys()), "new_only": b,
-                                         f"{other}_only": c, "mcnemar_exact_p": round(exact_binomial_two_sided(b, c), 4)}
+                                         f"{other}_only": c, "mcnemar_exact_p": float(f"{exact_binomial_two_sided(b, c):.3g}")}
     return {"arms": table, "paired": pairs}
 
 

@@ -1,0 +1,681 @@
+{
+ "base": "99143a9578b77aaa1c4ab3479a639e50e474594c",
+ "head": "WORKTREE",
+ "agent_model": "opus",
+ "samples": 2,
+ "measured_at": "2026-11-20T00:53:30Z",
+ "summary": {
+  "arms": {
+   "current": {
+    "n": 30,
+    "q1": 4,
+    "q2": 7,
+    "q3": 30,
+    "all3": 1
+   }
+  },
+  "paired": {}
+ },
+ "rows": [
+  {
+   "scenario": "A01",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 0,
+   "task": "Our retrieval-augmented support agent answers 61% of our 400-question internal support set exactly right (last week's run, exact-match grading). Improve it.",
+   "words": 708,
+   "text_digest": "a10af0913a26f987",
+   "reply": "# Plan: improve the support agent from its 61% exact-match baseline\n\n## First steps\n\n1. **Read prior state.** I'll read `.agent/current.json`, `progress.md`, recent `experiments.jsonl`, and any improvement spec. That lets me resume active work and avoid retrying rejected approaches. If none exist, I'll create them.\n\n2. **Check the metric before optimizing it.** Exact match is a proxy for \"the user got a correct answer.\" It probably misses correct paraphrases, and it may reward canned phrasing. I'll hand-grade about 60 cases, including 61%-passes and failures, against a written rubric. That tells me how often exact-match and humans agree. If false negatives are common, I'll fix the grader first, for example with normalization or a rubric-based judge calibrated on the hand labels. I'll record this in `metricClaims`. Otherwise I could \"improve\" the score just by teaching the agent to match reference wording.\n\n3. **Freeze a split.** I'll divide the 400 questions into about 280 for development and a 120-question held-out set I won't inspect while iterating. Every candidate I promote gets confirmed on the held-out set once.\n\n4. **Re-establish the baseline.** Last week's 61% may not reflect the current index, model, or prompt. I'll rerun on the real execution path and record the code, index, and model versions. I'll run 3 to 5 repeats to measure run-to-run variance, then set the useful-effect threshold (likely \u22653 points, beyond noise) and the regression limits before seeing any results. Regression limits: latency, cost per question, and no new wrong answers on currently-correct cases.\n\n## What I'll measure\n\nFor each failure, I'll log where it broke:\n- **Retrieval miss:** the gold document isn't in the top-k. Measured with recall@k against labeled source docs. I'll build these labels if missing.\n- **Retrieved but misused:** the document was present, but the answer was wrong or hallucinated.\n- **Grading artifact:** the answer was correct, but exact-match marked it wrong.\n- **Knowledge gap:** the answer isn't in the corpus at all.\n\nThis breakdown decides the experiments. Retrieval and generation are scored separately so I can attribute any gain to its cause.\n\n## What I'll build\n\n- A reproducible eval harness. It records per-question outcomes, retrieved IDs, and costs, and treats zero records as a failure.\n- Paired comparisons on the same questions between baseline and candidate, with bootstrap confidence intervals and per-question flip counts.\n- Experiments driven by the dominant failure category. Likely candidates:\n  - chunking or metadata fixes\n  - hybrid BM25+dense retrieval or a reranker\n  - query rewriting\n  - grounded-answer prompting with an abstain option\n\nI'll try removing unneeded steps first, and test independent changes in isolation.\n\n## Decisions and reporting\n\nEach experiment gets a recorded verdict: KEEP, ITERATE, ABANDON, or REGRESSION, with its interval. I'll update `experiments.jsonl` and the scorecard as I go.\n\nI'll report:\n- before/after on the development and held-out sets\n- variance and coverage\n- cost and latency deltas\n- which gains are measured and which are only projected\n\n**Knowledge-gap cases** need corpus content rather than agent changes. I'll list them for your team rather than count them against the agent.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "then set the useful-effect threshold (likely \u22653 points, beyond noise)",
+    "q3": true,
+    "q3_quote": "hybrid BM25+dense retrieval",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A01",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 1,
+   "task": "Our retrieval-augmented support agent answers 61% of our 400-question internal support set exactly right (last week's run, exact-match grading). Improve it.",
+   "words": 708,
+   "text_digest": "a10af0913a26f987",
+   "reply": "I'll first verify that the 61% is measuring the right thing, then establish a fresh baseline, then run scoped experiments against it.\n\n**First concrete steps**\n\n1. **Resume state.** Read `.agent/current.json`, `.agent/progress.md`, recent `.agent/experiments.jsonl` and any improvement spec. That way I keep prior results and don't retry approaches that were already rejected.\n2. **Check the metric against the goal.** The real goal is support answers that are correct and useful. Exact match is a proxy, and it can undercount correct paraphrases or overcount lucky string hits.\n   - I'll hand-grade a stratified sample of about 60 cases: 30 exact-match passes and 30 failures.\n   - From that I'll estimate false-negative and false-positive rates and record them in `metricClaims`.\n   - If a large share of the failures are actually correct answers, I'll fix the grader before optimizing anything. Candidate fixes are normalized matching or a calibrated rubric judge, which would go to `/eval-engineering`. Optimizing the answer generator against a broken grader would be wasted effort.\n3. **Re-run the baseline on the real path.** Last week's run may predate code, index or model changes.\n   - Re-run all 400 questions on the current revision.\n   - Record the commit, index snapshot, model ID, prompt hash and config with the results.\n   - Confirm that errors and timeouts count as failures, not skips.\n   - If the agent is nondeterministic, run 3 repeats to measure run-to-run noise.\n4. **Fix the comparison rule before seeing results.**\n   - Split the 400 questions into a ~280-question dev set for diagnosis and tuning and a ~120-question held-out decision set I won't look at.\n   - Promotion rule: a paired comparison on the held-out set with a pre-registered minimum useful gain (e.g., \u22653 points).\n   - Regression limits: latency, cost per question, and no new failures in critical categories.\n\n**Diagnosis before changes**\n\nI'll label each dev-set failure by cause:\n- **Retrieval miss:** the gold passage is not in the top-k results. Measured by recall@k against the gold sources.\n- **Context present but answer wrong:** the passage was retrieved and the model still answered incorrectly.\n- **Format or grading artifact:** the answer is right but fails the string match.\n- **Stale or missing documents:** the knowledge base doesn't contain the answer.\n\nThe largest bucket decides the first hypothesis. I'll remove unnecessary work before adding mechanisms; for example, I'll check whether overstuffed context hurts accuracy before considering a reranker.\n\n**What I'll build**\n\n- A reproducible eval harness that writes per-question records: retrieved document IDs, recall@k, answer, grade and cost.\n- A failure-taxonomy report.\n- One isolated experiment per hypothesis. Likely candidates, depending on the evidence:\n  - chunking or top-k changes\n  - hybrid BM25 plus dense retrieval\n  - reranking\n  - an answer-format instruction\n  - query rewriting\n\n**Decisions and records**\n\n- Each experiment gets a `KEEP`, `ITERATE`, `ABANDON` or `REGRESSION` decision with confidence intervals.\n- Failed and invalid runs are preserved.\n- Decisions are appended to `.agent/experiments.jsonl` and the climb ledger, and `.agent/scorecard.json` is refreshed.\n\n**Reporting**\n\nThe report will cover:\n- before and after scores on both exact match and the calibrated metric\n- coverage across all 400 questions\n- uncertainty\n- cost and latency deltas\n- deployment limits: a held-out internal set does not prove performance on live tickets\n\nProjections will be labelled separately from measurements.\n\n**Stopping**\n\nI'll stop when the gain target is met, the resource limit is reached, or the evidence shows a dead end. If a dead end requires architectural change, I'll escalate to `/pursue`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": true,
+    "q2_quote": "minimum useful gain (e.g., \u22653 points)",
+    "q3": true,
+    "q3_quote": "reranking",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A02",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 0,
+   "task": "Our code-review bot's flags are accepted by reviewers 42% of the time (204 of 486 flags last month). Improve its precision without losing the bugs it catches today.",
+   "words": 708,
+   "text_digest": "a10af0913a26f987",
+   "reply": "# Plan: raise the review bot's precision without losing caught bugs\n\n## First steps\n\n1. **Load prior state.** I'll read `.agent/current.json`, `progress.md`, recent `experiments.jsonl`, and any improvement spec, so I resume active work and avoid retrying rejected approaches. The working directory isn't a git repo. I'll locate the bot's source and flag logs, and record code identity by content hashes if there's no commit to point to.\n\n2. **Check the metric before optimizing it.** \"Accepted by reviewers\" stands in for \"flag is correct and useful,\" and the two can diverge. Reviewers may dismiss real bugs under time pressure, accept harmless nits, or never respond. In `metricClaims` I'll record that:\n   - acceptance is a proxy with known bias;\n   - the protected quantity is the set of real bugs caught today, not acceptance count.\n\n   To check the proxy, I'll hand-audit a stratified sample: about 50 rejected and 30 accepted flags. Any real bugs among rejections join the protected set.\n\n3. **Build an offline replay harness on the real path.** It replays last month's 486 flagged diffs through the same prompt, model, config and post-filter the bot uses in production. I'll verify that replaying the current version reproduces the original flags closely. If it doesn't, the harness is wrong, not the bot. Runs with errors or no output count as failures.\n\n4. **Freeze the data split.** I'll split the data by PR before I look at any failures:\n   - a development set for diagnosis;\n   - a held-out decision set I never tune on.\n\n   The protected-bug set lives in both, and I record the split in the experiment log.\n\n## Baseline and comparison rule\n\n- **Baseline:** current-version replay precision, measured several times because the model's output is noisy, reported with Wilson 95% intervals. The starting figure is 42% (204/486).\n- **Keep criterion, fixed in advance:**\n  - Holdout precision improves by at least 8 points, with the interval excluding baseline.\n  - Zero protected bugs are lost, or at most 1 with documented justification, as you prefer.\n  - Flags per PR don't collapse; I'll check this so that suppressing everything can't pass.\n\n## Experiments\n\nI'll group the 282 rejections into causes, such as style nits, false nullability claims, missing context, duplicates, and test-file noise. Then I'll test hypotheses one at a time, biggest cause first, removing work before adding it:\n\n- Drop or downgrade categories that are rarely accepted.\n- Deduplicate overlapping flags.\n- Give the bot more surrounding code so it stops guessing.\n- Add a confidence threshold, calibrated on the dev set only.\n- Add a self-verification pass only if the simpler changes plateau.\n\nEvery attempt, including failures, is appended to `experiments.jsonl` as KEEP, ITERATE, ABANDON or REGRESSION. Each entry records its prediction, outcome, cost (tokens and latency per PR) and uncertainty, and `scorecard.json` is updated after each decision.\n\n## Deployment\n\nPassing offline replay doesn't prove the change works live. Before any rollout, I'll ask you whether to:\n\n- run the kept candidate in shadow mode alongside the current bot; or\n- A/B it on a share of PRs, tracking live acceptance and missed-bug reports.\n\nI'll then hand off to `/ship` only with your authorization.\n\n## Report\n\nThe report will give before/after precision with intervals, protected-bug recall, sample coverage, findings from the proxy audit, cost, and open risks. Projections will be labeled separately from measurements.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": true,
+    "q2_quote": "Holdout precision improves by at least 8 points",
+    "q3": true,
+    "q3_quote": "Add a self-verification pass",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A02",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 1,
+   "task": "Our code-review bot's flags are accepted by reviewers 42% of the time (204 of 486 flags last month). Improve its precision without losing the bugs it catches today.",
+   "words": 708,
+   "text_digest": "a10af0913a26f987",
+   "reply": "## Plan\n\n**1. Resume state before acting.** I'll read `.agent/current.json`, `progress.md`, `experiments.jsonl`, and any improvement spec. This directory isn't a git repo, so before changing anything I'll snapshot the bot's prompt, rules, and config with hashes. Then any experiment can be reverted on its own.\n\n**2. Check that the metric measures what you want.** Acceptance rate (204/486 = 42%, Wilson 95% CI \u2248 37.6\u201346.4%) is a proxy for precision, and it can be wrong in two ways:\n- Reviewers may reject real bugs out of haste or disagreement.\n- Reviewers may accept trivial nits that aren't bugs.\n\nI'll record this in `metricClaims`. I'll also hand-audit a stratified sample of about 60 rejected and 40 accepted flags to estimate how often acceptance and true correctness disagree. If they disagree often, I'll fix the label before optimizing against it.\n\n**3. Build the replay harness.** Each of last month's 486 flags gets frozen as a fixture: diff, context, bot output, and reviewer verdict. The harness runs the real bot path, with the same model, prompt, and pipeline, against these PRs and matches new flags to the original ones. It must fail loudly on empty output or errors and never report them as zero flags. Before trusting it, I'll confirm it reproduces today's flags at a stable rate across repeated runs. That repeat-run variance is the noise floor.\n\n**4. Fix the comparison rule before running any candidates.** I'll split the data:\n- **Dev set:** about 60% of PRs.\n- **Held-out decision set:** about 40%, untouched until promotion.\n\nMetrics:\n- **Primary:** precision, meaning accepted flags divided by emitted flags, using audit-corrected labels where they exist.\n- **Hard regression limit:** the recall guard set, which is the accepted flags that are real bugs (subset of the 204). A candidate may lose 0 of these; if replay noise forces it, at most 1 with a documented cause.\n- **Useful effect:** at least +10pp precision on the held-out set, with the CI lower bound above the baseline.\n- **Secondary:** cost and latency per review.\n\nThe thresholds are recorded before any candidate runs.\n\n**5. Generate hypotheses from failures.** I'll cluster the 282 rejected flags by cause, such as style nits, misread context, duplicates, speculative \"might be null\" flags, or flags on test or generated files. I'll start with removals:\n- Suppress the categories that are rejected most.\n- Dedupe flags.\n- Skip generated or vendored paths.\n\nAfter that I'll try added mechanisms, such as a self-verification pass or a confidence threshold. Independent changes are tested separately; coupled ones are tested together.\n\n**6. Decide and record.** Each experiment gets a row in `experiments.jsonl` with its prediction, outcome, and verdict: KEEP, ITERATE, ABANDON, or REGRESSION. I'll update the scorecard and progress files and keep failed runs. Rows also go to the climb ledger.\n\nOffline replay can't fully predict how reviewers will behave. So passing on the held-out set means \"retain the candidate,\" not \"proven in deployment.\" I'd propose a shadow or canary week before shipping, and recommend `/ship` only with your authorization.\n\n## What I'll report\n- Before and after precision with CIs.\n- Recall guard result: bugs kept vs. lost.\n- Audit-based label correction and coverage.\n- Cost.\n- Remaining uncertainty, kept separate from projections.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": true,
+    "q2_quote": "at least +10pp precision on the held-out set",
+    "q3": true,
+    "q3_quote": "a self-verification pass",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A03",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 0,
+   "task": "Three rounds of prompt changes moved our text-to-SQL agent from 54% to 55% execution accuracy on our 300 held-out questions. Progress has stalled. Decide what to try next.",
+   "words": 982,
+   "text_digest": "1ed020cfa5f30a76",
+   "reply": "A move from 54% to 55% on 300 questions is about 3 questions. The standard error at that size is roughly \u00b12.9 points, so the three prompt rounds produced no measurable change. The prompt family isn't working, so I'll find the actual constraint before proposing anything.\n\n**First steps (establish the constraint)**\n\n1. **Read prior attempts.** I'll diff the three prompt versions and their per-question results. Then I'll compute paired flips between versions (McNemar). This tells me whether the rounds changed which questions pass or just reshuffled noise.\n2. **Audit the evaluator before the agent.** I'll hand-check a sample of about 30 failures for:\n   - gold SQL errors;\n   - ambiguous questions;\n   - result comparison that is too strict (row order, float precision, column aliases, duplicate rows).\n\n   If many \"failures\" are correct answers marked wrong, the metric is the limit, not the agent.\n3. **Classify all ~135 failures** by mechanism: wrong table or column, wrong join path, wrong literal value (for example `'NY'` vs `'New York'`), aggregation or grouping logic, SQL that doesn't execute, and question ambiguity. I'll record counts, not impressions.\n4. **Run oracle ablations to locate the bottleneck:**\n   - Give the agent only the gold-relevant tables and columns. A big jump means schema linking is the limit.\n   - Inject the actual cell values referenced by the gold query. A jump means value grounding is the limit.\n   - Measure pass@k with k=10 samples. If the correct SQL often appears among the samples, selection is the limit, not generation.\n   - Swap in a stronger model with the same prompt to get a capability ceiling.\n\n**Candidates (ranked only after the data)**\n\nEach candidate below maps to a bottleneck the ablations could reveal:\n- **Execution feedback loop:** run the query, feed errors and empty results back, retry.\n- **Schema retrieval:** prune or rank the schema the agent sees, with column descriptions.\n- **Value retrieval:** an index of distinct column values for matching literals.\n- **Execution-result voting:** generate several candidates and pick by self-consistency on their results.\n- **Retrieved few-shot examples:** similar question/SQL pairs.\n- **Fix gold labels and the comparator,** which may be the cheapest option.\n\nI'll check primary sources (DIN-SQL, CHESS, the BIRD/Spider leaderboard methods) for whether their assumptions match our schema size and question style.\n\n**Deciding tests**\n\n- Every comparison is paired on the same 300 questions, run with several seeds or samples.\n- Acceptance requires a McNemar-significant gain, with \u22655 points as a meaningful target.\n- I'll set a latency and cost cap per query in advance, and no more than 2 points of regression on any failure category.\n- I'll stop a candidate after one round if its oracle ceiling shows it can't matter.\n\n**Pre-mortem for the likely leader (schema/value retrieval):** it fails because the real limit is gold-label noise or genuinely ambiguous questions.\n\n**The question nobody asked:** are these 300 questions representative of real user traffic?\n\n**What I'll build and record**\n\n- A failure-taxonomy script.\n- The oracle-ablation harness.\n- A paired-stats report.\n- `.agent/hypotheses/2026-11-19-text-to-sql-stall.md`, containing sources, measured constraint, candidates, rejected alternatives (more prompt tweaking), and the test sequence.\n- A log via `skill-run-log /hypothesize`.\n\nThe next step is `/evolve` with the winning ablation as baseline, or `/ground-truth` if the eval audit says the metric is broken.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "DIN-SQL",
+    "q2": true,
+    "q2_quote": "gain, with \u22655 points as a meaningful target",
+    "q3": true,
+    "q3_quote": "run the query, feed errors and empty results back, retry",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A03",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 1,
+   "task": "Three rounds of prompt changes moved our text-to-SQL agent from 54% to 55% execution accuracy on our 300 held-out questions. Progress has stalled. Decide what to try next.",
+   "words": 982,
+   "text_digest": "1ed020cfa5f30a76",
+   "reply": "First, a measurement point: **54% to 55% on 300 questions is 3 questions.** The standard error at that size is about \u00b12.9pp, so three rounds of prompt changes have produced no detectable change. I won't treat it as progress or as a plateau until I know what actually limits accuracy.\n\n## First steps: establish the constraint\n\n1. **Read prior attempts.** I'll diff the three prompt versions and their per-question results. Paired outcomes show whether the changes fixed and broke different questions (churn) or did nothing.\n2. **Check the evaluation itself.** I'll hand-audit a sample of about 40 failures for:\n   - gold SQL errors;\n   - ambiguous questions;\n   - false negatives from the execution-accuracy comparison, such as row order, column aliases, float precision, NULL handling or duplicate rows.\n\n   If a large share of failures are scoring artifacts, the first thing to fix is the metric, not the agent.\n3. **Classify all ~135 failures by mechanism:**\n   - schema linking (wrong table or column);\n   - join path;\n   - value grounding (literals such as `'CA'` vs `'California'`);\n   - aggregation and grouping logic;\n   - dialect or syntax errors;\n   - SQL that fails to execute;\n   - genuine ambiguity.\n\n   Each category gets counts, example IDs and the trace location.\n4. **Measure the ceiling.** I'll sample k=10 at temperature >0 and compute pass@10. A high pass@10 means the model can produce the right query and the constraint is *selection*. A low pass@10 means the constraint is *information*: schema context, values or domain knowledge. This one measurement decides which family of candidates to pursue.\n\n## Candidates, prioritized after the taxonomy\n\n- **Schema and value retrieval**, if linking or grounding errors dominate. This means pruned schemas, column descriptions and sampled distinct values.\n- **Execution-feedback repair loop**, if execution errors or empty results are common.\n- **Sampling plus execution-result voting**, if the gap between pass@k and pass@1 is large.\n- **Retrieved few-shot examples** from similar solved questions.\n- **Fixing gold labels or the comparator**, which deletes measurement error rather than adding work.\n- **Stopping prompt edits altogether.** The evidence says they've stopped working.\n\nEach candidate records its mechanism, its evidence, the failure share it can address (its ceiling in questions), its cost per query and latency, and the result that would refute it.\n\n## Deciding tests\n\n- **Baseline:** the current 55% prompt, rerun three times to measure run-to-run variance.\n- **Comparison:** paired McNemar on the same 300 questions. Acceptance requires a net gain of at least 12 questions (\u22484pp) with p<0.05.\n- **Permitted regressions:** no more than 2\u00d7 latency or cost unless explicitly authorized.\n- **Stopping rule:** if the targeted category doesn't shrink, the mechanism is wrong. That holds even if overall accuracy happens to rise.\n- **Before any build:** run the climb.\n  - Pre-mortem: retrieval helped, but the gold labels were the real problem.\n  - Ten times: what would make the result ten times better?\n  - Unasked question: is 300 questions even enough to steer on? Should we grow it to around 1,000?\n\n## Output\n\nI'll write `.agent/hypotheses/2026-11-19-text-to-sql-stall.md` containing the taxonomy, the pass@k ceiling, the evaluation audit, ranked candidates with numbers to beat, and deciding tests with their limits. Then I'll log the run:\n\n```\nskill-run-log /hypothesize --target \"text-to-SQL EX stall at 55%\" --verdict PASS --detail DEFER --next /ground-truth\n```\n\nThe next step is `/ground-truth` if the evaluation audit is still pending, or `/evolve` with the top candidate once it is done. I won't build any agent changes until the taxonomy shows which constraint dominates.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": true,
+    "q2_quote": "a net gain of at least 12 questions (\u22484pp)",
+    "q3": true,
+    "q3_quote": "Sampling plus execution-result voting",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A04",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 0,
+   "task": "Our single-agent planner solves 31 of 100 multi-step tasks in our internal benchmark. We think the architecture is the limit. Find a better architecture.",
+   "words": 904,
+   "text_digest": "f9ffbc86d5a52124",
+   "reply": "I'll treat \"find a better architecture\" as a comparison against a measured baseline at equal resources. Keeping the current single-agent design is a valid outcome if nothing beats it fairly.\n\n**First steps**\n\n1. **Read existing state.** I'll read `.agent/current.json`, `progress.md`, recent experiments, any `.agent/pursuits/` records and `.agent/meta-harness/`. If a pursuit for this work is still open, I'll resume it instead of starting a new one.\n2. **Re-measure the baseline.** I'll rerun the current planner on the actual benchmark path, 3\u20135 times, logging traces, tokens, wall-clock time and tool calls per task. On 100 tasks, 31% has a 95% confidence interval of roughly \u00b19 points. I need run-to-run variance before any \"gain\" means anything.\n3. **Check that architecture is the cause.** I'll sort the roughly 69 failures from the traces into categories:\n   - plan quality\n   - losing state over long horizons\n   - not detecting errors and recovering\n   - tool or environment faults\n   - grader errors\n\n   If most failures are tool faults or grading bugs, the fix isn't architectural, and I'll report that instead of building variants.\n4. **Calibrate the grader** with the `/eval-engineering` pre-spend check. I'll spot-check passes and fails by hand, and separate a held-out split so variants aren't tuned to the tasks they're scored on.\n\n**What I'll build**\n\nCandidates will follow from the failure categories. Likely ones:\n\n- **Planner/executor/verifier:** the plan is explicit and each step is checked before moving on.\n- **Plan\u2013act\u2013replan loop** with durable task state, so the agent can recover from a failed step without restarting.\n- **Hierarchical decomposition:** subtasks go to fresh-context workers, which addresses long-horizon context loss.\n- **Compute-matched single-agent controls:** best-of-N or self-verify using the same token budget. Without these, a multi-agent \"win\" may only show that more compute helps.\n\nEach candidate will be a complete, isolated implementation. Every candidate goes through the same smoke tests first, then the full benchmark. Tuning prompts or parameters alone doesn't count as an architectural change.\n\n**How I'll compare**\n\n- All arms run on the same tasks through the same harness.\n- I'll use paired per-task analysis (McNemar test or a bootstrap) against the baseline's measured variance.\n- I'll report cost alongside the solve rate: tokens, dollars, latency and orchestration overhead.\n- Some variants will trade solve rate for cost. I'll keep those as tradeoffs rather than forcing everything into one score.\n- If two changes each help, I'll test their combination as a new candidate, since they can interact.\n\n**Decision and record**\n\nI'll write `.agent/pursuits/2026-11-19-planner-architecture.md` with:\n\n- the constraint and failure breakdown\n- the candidates and the ones I rejected\n- raw results, including failed and invalid runs\n- the verdict: ADVANCE, PARTIAL or REVERT\n\nI'll also update the variant store and progress files. The accepted baseline only changes if a variant beats 31% on the held-out split with an interval that excludes noise, at a cost I report.\n\n**What I need from you**\n\n- Where the benchmark harness and planner code live.\n- The compute or dollar budget per arm.\n- Whether a higher cost per task is acceptable.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "beats 31%",
+    "q3": true,
+    "q3_quote": "Planner/executor/verifier",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A04",
+   "skill": "evolve",
+   "arm": "current",
+   "sample": 1,
+   "task": "Our single-agent planner solves 31 of 100 multi-step tasks in our internal benchmark. We think the architecture is the limit. Find a better architecture.",
+   "words": 904,
+   "text_digest": "f9ffbc86d5a52124",
+   "reply": "Here's the plan. The goal is a built and measured architecture that beats 31/100 on the same benchmark at equal resources, or evidence that the current design should stay.\n\n## First concrete steps\n\n1. **Check for existing state.** Read `.agent/current.json`, `.agent/progress.md`, recent experiments, any `.agent/pursuits/` records, and `.agent/meta-harness/`. If a pursuit on this planner is still open, I'll resume it. The working directory isn't a git repo, so I'll find out where the planner and benchmark actually live before changing anything.\n2. **Re-run the baseline on the real execution path.** I'll reproduce the 31/100 with repeated seeds, recording solve rate, variance, tokens, tool calls, wall-clock time and dollar cost per task. A single 31/100 has a wide interval (roughly \u00b19 points), so I need the noise floor before I can call any change a win.\n3. **Test the claim that architecture is the limit.** I'll classify the 69 failures from their traces: planning errors, lost context over long horizons, bad tool use, errors that go unrecovered, or tasks that can't be solved or are graded wrongly. If most failures are grader or tool problems, the answer isn't a new architecture. I'd report that and route to `/diagnose` or `/eval-engineering`.\n4. **Calibrate the assessment.** I'll run the `/eval-engineering` pre-spend check, confirming the grader is reliable and that held-out tasks exist, so we aren't selecting variants on the same 100 tasks we report.\n\n## What I'll build and compare\n\nI'll pick candidates from the failure taxonomy, not from a fixed list. Likely mechanisms:\n- **Planner/executor split** with explicit plan state, if failures show plan drift.\n- **Verify-and-replan loop** (a critic checks each step), if errors go unrecovered.\n- **Decomposition into sub-agents** with scoped context, if long-horizon context loss dominates.\n- **Keep or simplify the current agent** (for example, delete redundant steps) as a real option.\n\nEach proposer gets an isolated workspace with the goal, traces, baseline, constraints and edit scope. Prompt or parameter tuning alone doesn't count. Every candidate passes a small smoke subset before full runs.\n\n## Measurement\n\n- **Pairing and budget:** arms are paired on identical tasks through one harness, at an equalized token and dollar budget. Multi-agent designs often win only by spending more, so cost is reported alongside success.\n- **Statistics:** I'll use a paired test (McNemar or bootstrap) on per-task outcomes and confirm on held-out tasks.\n- **Mechanism check:** I'll verify that the claimed mechanism actually fired in the traces.\n- **Combinations and trade-offs:** any combination of winners is tested as its own new candidate. Variants with supported trade-offs are kept rather than collapsed into one score.\n- **Record keeping:** all attempts are preserved, including crashes and invalid runs.\n\n## Record\n\nI'll write `.agent/pursuits/2026-11-19-planner-architecture.md` with a verdict of ADVANCE, PARTIAL or REVERT, covering:\n- the baseline and each variant, with intervals and cost\n- rejected mechanisms\n- regressions\n- remaining limits\n\nI'll update the variant store and progress, and log the run with `skill-run-log`.\n\n**What I need from you:** the location of the planner and benchmark, the compute and dollar budget, and whether a held-out task set exists or I should create one.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "beats 31/100",
+    "q3": true,
+    "q3_quote": "Planner/executor split",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A05",
+   "skill": "report",
+   "arm": "current",
+   "sample": 0,
+   "task": "Write the analysis of whether our sandbox start latency is good enough and what we should do about it. Last week: p50 4.1 s, p95 11.8 s over 2,000 starts.",
+   "words": 1209,
+   "text_digest": "2566acbb72e73472",
+   "reply": "I can't judge \"good enough\" yet because there's no target to measure against. p50 4.1 s and p95 11.8 s only mean something next to an objective. The p95 being nearly 3\u00d7 the p50 suggests a distinct slow path, such as cold image pulls or scheduling waits, rather than uniform slowness. So the plan is: find the bar, verify the numbers, explain the tail, then recommend.\n\n**First steps**\n\n1. **Find the target.** Search the repo and docs for a latency target: an SLO, a product requirement, or a competitor or customer commitment. If none exists, I'll say so at the top of the report. I'll propose a bar tied to the user experience, such as the point where a waiting user or agent times out. I won't invent a pass/fail.\n2. **Recompute from raw start records.** Use the actual 2,000 starts, not the summary. Pin the exact window: \"last week\" is Nov 9\u201315 or Nov 12\u201318, and I'll state which. Then:\n   - recompute p50, p90, p95, p99 and max;\n   - count failed, timed-out and missing-end-time starts separately, since excluding them flatters the tail;\n   - confirm the parts add back to 2,000.\n3. **Break the tail down.**\n   - **By phase:** queue/scheduling, host allocation, image pull, boot, and readiness check.\n   - **By group:** cold vs warm host, image, region or host pool, sandbox size, and hour of day.\n   - For each group, report its count, its share of starts above p95, and its share of the time spent waiting.\n4. **Look at the trend.** Compare the same percentiles over 4 to 8 prior weeks to show whether this is steady, regressing or improving.\n\n**What I'll measure, and against what**\n\n- Each percentile against the target from step 1, with bootstrap confidence intervals. At n=2,000, p95 rests on about 100 slow starts, so its error bar matters.\n- Each phase's contribution to time spent above p95, against its contribution at p50.\n- Week-over-week change, against normal week-to-week variation.\n\n**What I'll build**\n\n- A local page at `~/reviews/sandbox-start-latency-2026-11-19.html`, using the project's existing rendering path if there is one. It will contain:\n  - **Scoreboard:** each percentile against its target, with sample size, source and read date.\n  - **Charts:** the latency distribution as a CDF and histogram, the weekly trend line, and a stacked bar of time by phase for slow and typical starts.\n  - **Breakdown table:** every group with counts, including zero-count and null groups.\n  - **Recommendation:** one of three options:\n    - keep things as they are;\n    - fix the biggest tail contributor (for example, pre-warming or caching images if cold pulls cause most of the slow starts), with its projected effect labeled as a projection;\n    - set a target first, if none exists.\n  - **The cheapest check that would prove the recommendation wrong**, such as replaying slow starts with the image already cached.\n- I'll keep cause and correlation separate: a group that is overrepresented in the tail is a lead, not proof of the cause.\n- I'll score the page with `brief-judge`, fix any weak spots that are cheap to fix, then log it with `skill-run-log /report`.\n\nIf the raw records turn out to be unavailable, I'll report what I could inspect and what's missing. I won't analyze only the two summary numbers. If the tail cause stays unclear after the breakdown, the next step is `/diagnose`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "pre-warming or caching images",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A05",
+   "skill": "report",
+   "arm": "current",
+   "sample": 1,
+   "task": "Write the analysis of whether our sandbox start latency is good enough and what we should do about it. Last week: p50 4.1 s, p95 11.8 s over 2,000 starts.",
+   "words": 1209,
+   "text_digest": "2566acbb72e73472",
+   "reply": "The two numbers can't answer \"good enough\" yet. The answer depends on a target, and none is stated. A p95 nearly 3\u00d7 the p50 suggests the slow starts come from a distinct subpopulation, not general slowness. My first job is to find the target and that subpopulation.\n\n**First steps**\n\n1. **Find the bar.** Search the repo, docs and SLO configs for a stated start-latency target or the product promise behind it, such as an interactive \"feels instant\" budget or an agent-loop timeout. If none exists, I'll say so plainly and propose one anchored to the user-facing effect, such as timeouts, abandoned sessions or retries. I won't invent a pass/fail.\n2. **Get the raw starts, not the summary.** I'll pull last week's 2,000 start records from wherever they're emitted (metrics store, logs or traces) and record the source, the query, the date range and the read time. I'll recompute p50 and p95 to confirm 4.1 s and 11.8 s, and add p99 and max. I'll count failed, timed-out and missing-duration starts separately, because excluding failures can make the tail look better than it is.\n3. **Decompose the time.** I'll split each start into phases from trace spans: scheduling or queue wait, image pull, boot, runtime init and readiness probe. I'll show each phase's share of p50 and of the tail, and check that the phases sum to the total.\n4. **Segment the tail.** I'll compare cold and warm starts (pool hit vs miss), region or host, image and size, time of day and concurrency at start. This should show whether the 11.8 s tail comes from one cause, such as pool exhaustion or uncached pulls, or several.\n5. **Check the trend.** I'll pull the prior 4\u20138 weeks to see whether last week is normal, improving or regressing.\n\n**What I'll measure against**\n- The target from step 1, or the proposed target, with its rationale.\n- Each segment's count and percentiles, with confidence intervals where segments are small. A p95 from 100 starts is shaky.\n- Where any downstream outcome data exists, whether slow starts actually cost users or agents anything.\n\n**What I'll build**\nA local page under `~/reviews/sandbox-start-latency.html`, built with the brief kit or the project's existing rendering path. It will contain:\n- **Scoreboard:** p50, p95 and p99 against the target, each with its count, source and read date.\n- **Charts:** the latency distribution (histogram or CDF), a stacked phase decomposition for p50 and for the tail, and the weekly trend.\n- **Segment table:** every segment, including zero or missing counts, and the excluded rows with their reasons.\n- **Decision:** one of three options, chosen from the evidence:\n  - keep the current system;\n  - make the supported change, for example enlarging the warm pool or pre-caching hot images if cold misses dominate the tail;\n  - run the cheapest check that would settle it.\n\n  I'll name what would refute the recommendation and keep observed results separate from projected gains.\n\nBefore you see it, I'll score it with `brief-judge`, fix its weakest dimensions and log the run. If the tail resists explanation, I'll pass the raw rows to `/diagnose` rather than report it as unexplained.\n\nOne question that would speed this up: is there an existing latency target, or a known complaint, behind the question?",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "pre-caching hot images",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A06",
+   "skill": "report",
+   "arm": "current",
+   "sample": 0,
+   "task": "Research which approach our coding agent should use for long-session memory. Today it loses earlier decisions after about 150 turns (measured on 40 sessions).",
+   "words": 1209,
+   "text_digest": "2566acbb72e73472",
+   "reply": "# Plan: choosing a long-session memory approach\n\nThe decision is which memory approach the agent adopts to fix decision loss after about 150 turns. Before comparing approaches, I'll check that premise against the 40-session data.\n\n## First concrete steps\n\n1. **Find the baseline data.** The working directory is a temp folder with no git repo. I'll look for the agent's source, the 40-session transcripts or logs, and whatever produced \"about 150 turns.\" If I can't find them, I'll ask you where they live rather than guess.\n2. **Recompute the failure from raw sessions.** For each of the 40 sessions I'll record:\n   - total turns and token count at failure\n   - which decision was lost and the turn it was made\n   - how the loss showed up (contradiction, re-asking, or a silent revert)\n   - whether compaction or truncation fired just before the loss\n\n   I'll report the distribution, not a single average. That includes sessions that never failed and sessions too short to test. \"150 turns\" may actually be a token threshold, a compaction trigger, or a mix of causes. The fix differs for each.\n3. **Read how memory works today.** I'll trace the agent's code path for the context window, truncation or summarization, any scratchpad or memory files, and the model and window size actually in use.\n\n## Candidate approaches, from primary sources\n\nI'll use official docs, specs and source code, and cite each claim to its owner. Candidates:\n- **Server-side context editing or compaction.** Check vendor API docs for what is kept and what is dropped.\n- **A file-backed memory tool** that the model writes and reads, such as Anthropic's memory tool and the CLAUDE.md pattern.\n- **A structured decision log** pinned into the context on every turn.\n- **Retrieval** over past turns, using embedding or keyword search.\n- **Hierarchical summarization** with protected \"decision\" spans.\n\nBefore ranking these I'll check prior art in the repo and any earlier attempts. For each candidate I'll record cost per turn, latency, failure modes, implementation effort, and the specific failure class from step 2 that it addresses.\n\n## Measurement\n\nI'll replay a subset of the 40 sessions, or synthetic sessions seeded with decisions, under the baseline and the top 2\u20133 candidates. All arms use the same model, the same turn budget and the same seeds.\n\n| Metric | What it is |\n|---|---|\n| Primary | Decision-retention rate at turns 150, 300 and 500, reported as count/total with confidence intervals |\n| Secondary | Tokens and dollars per session, latency, and task completion |\n| Guardrail | No regression on short sessions |\n\nI'll disclose any difference in execution between arms before naming a winner. If replay isn't possible, I'll say so and recommend the cheapest test that could reject the leading option.\n\n## What I'll build\n\n- A replay and scoring script that keeps run identities and configuration.\n- A results table with every measured field, plus a retention-versus-turn chart for each approach.\n- A brief at `~/reviews/long-session-memory.html` containing:\n  - the recommendation (adopt, combine, or run a specific check first)\n  - the evidence behind it\n  - the open risks\n- A Markdown research note wherever the repo keeps notes.\n\nI'll score the brief with `brief-judge`, fix its weakest dimensions, and log the run.\n\n**One question now:** where are the 40 sessions and the agent's source?",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "Anthropic's memory tool",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "A structured decision log** pinned into the context on every turn.",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A06",
+   "skill": "report",
+   "arm": "current",
+   "sample": 1,
+   "task": "Research which approach our coding agent should use for long-session memory. Today it loses earlier decisions after about 150 turns (measured on 40 sessions).",
+   "words": 1209,
+   "text_digest": "2566acbb72e73472",
+   "reply": "# Plan: choosing a long-session memory approach\n\nThe question is which memory approach stops the agent from losing earlier decisions past about 150 turns, and what each option costs. I'll answer it with a replay against your 40 sessions, not from vendor claims.\n\n## First steps\n\n1. **Find the baseline artifacts.** I'll locate the 40-session measurement: transcripts, the scoring script, and how \"lost a decision\" was judged. I'll recompute the 150-turn figure as a distribution:\n   - turn of first loss per session\n   - sessions with no loss\n   - sessions that ended before 150 turns\n   - missing or unscorable sessions and why\n\n   If the original scoring was ad hoc, I'll write it down as a probe set. Each probe pairs a decision made at turn t with a later turn where the agent must act on it.\n2. **Read the agent's current context path in source.** This covers truncation, any compaction or summarization, the token budget, the model and its context window, and system-prompt size. The real failure might be a fixed window cutoff or lossy compaction rather than \"no memory\". If so, that correction leads the report.\n3. **Survey candidates from primary sources only.** Sources are official docs, papers and their reference code. Candidates:\n   - a larger context window or prompt caching\n   - rolling compaction or summarization, such as provider compaction and context-editing APIs\n   - a structured decision log the agent writes and that is pinned into context\n   - a file or tool-based memory, such as a provider memory tool or MemGPT/Letta-style paging\n   - retrieval over past turns, using embeddings or BM25\n   - hybrids\n\n   Before adding anything, I'll check what the repo or the agent framework already provides.\n\n## What I'll measure, and against what\n\nI'll replay all 40 sessions under the current system and each viable candidate. Every condition uses the same model and the same probes. For each condition I'll record:\n\n- **Decision recall** at turn buckets (\u226450, 51\u2013100, 101\u2013150, 151\u2013250, 250+). Each rate carries its count, plus bootstrap confidence intervals clustered by session.\n- **Contradictions:** cases where the agent acts against a recorded decision.\n- **Task success** where the sessions have a checkable outcome.\n- **Cost:** tokens, dollar cost and latency per turn.\n- **Failures and exclusions,** with reasons.\n\nThe baseline is the current system's recall curve, and the target is no drop after turn 150. I'll disclose any difference in budget or execution between conditions before naming a winner. Forty sessions is small, so the CI decides whether a gap is real or needs more sessions.\n\n## What I'll build\n\n- **A replay-and-probe harness** with the probe set and per-run records: config, model and seed for every run.\n- **A report page under `~/reviews/`.** Its parts:\n  - a recall-vs-turn chart with one line per approach\n  - a table of every measured field, including unfavorable ones\n  - observed results kept separate from my reading of the mechanism\n  - a recommendation: keep current, adopt X, or run a specific further check\n  - the cheapest test that could refute that recommendation\n\n  If the repo keeps research notes, I'll also write a Markdown note there.\n\nBefore you see it, I'll score the report with `brief-judge` and fix the weakest dimensions. Then I'll log it with `skill-run-log`. If one result looks suspect, such as recall improving while task success drops, I'll pass the raw rows to `/diagnose`.\n\n**One thing I need from you:** where the 40 sessions and their scoring live, if they aren't in this directory.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "the target is no drop after turn 150",
+    "q3": true,
+    "q3_quote": "a structured decision log the agent writes and that is pinned into context",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A07",
+   "skill": "eval-engineering",
+   "arm": "current",
+   "sample": 0,
+   "task": "Build an evaluation for our agent that writes pull request descriptions. Today we only have a smoke test, and reviewers rewrite 35% of the descriptions it writes.",
+   "words": 1116,
+   "text_digest": "8eb290441bfda49d",
+   "reply": "## Plan: PR-description eval\n\n**First steps (mapping, no spending yet)**\n1. Find the agent's production entrypoint, its prompt and profile, its inputs (diff, commits, linked issue, repo templates), and any tools it calls. Read the existing smoke test to see what it already asserts. The working directory isn't a git repo, so I'll need the actual repo path from you.\n2. Find where the 35% rewrite signal comes from. Pairs of agent-original and reviewer-final descriptions on merged PRs are the most valuable data here. Each pair has an independently labeled unacceptable output (the rewritten original), an acceptable reference (the reviewer's version), and the diff that both describe.\n3. Classify a sample of about 50 rewrites by *why* reviewers changed them. Likely categories: claims not in the diff, a missing motivation or \"why\", a missing test plan or risk note, verbosity, or the wrong template. These categories become the named judge criteria and set which cases get built first.\n\n**What I'll build (in the project's existing runner)**\n- **Cases** replayed through the production entrypoint against frozen fixtures: the diff, the commits, the issue text, and the repo template. They run with no live writes to GitHub. The adapter only captures the description the agent would post.\n- **Deterministic checks:**\n  - every file and symbol the description mentions exists in the diff;\n  - template sections are present and non-empty;\n  - linked issue IDs match;\n  - length is within bounds.\n\n  These are hard fails that a judge can't override.\n- **Semantic judge** for faithfulness and usefulness. It does claim-level support classification against the diff, then classifies the description against the named criteria from step 3. It returns structured output with evidence references and a cannot-judge outcome, and treats target text as delimited data. Reviewer rewrites and scoring instructions stay hidden from the target.\n\n**Calibration before running the suite**\n- Run the judge on held-out pairs. It should pass reviewer-final versions and fail the originals that reviewers rewrote for substantive reasons. Add borderline cases where a rewrite was only stylistic, so the judge doesn't learn \"any rewrite = bad.\"\n- Where reviewer versions aren't like-for-like, hand-write a good description and make degraded copies of it (dropped motivation, an invented file, a missing test plan). Check that the set ranks them correctly.\n- Measure false-pass and false-fail rates against independent labels from you or the reviewers. Run each item multiple times to see how much the scores vary. Check inputs for leaked answers.\n- **Baselines under identical conditions:** concatenated commit messages, and one unguided model call given the diff. If either ties the agent, I'll check for scoring defects or missing hard cases (large refactors, multi-concern PRs) before drawing conclusions.\n- Run one real target attempt end to end and inspect what it saw, its output, token usage, and the evidence each check used.\n\n**What it measures, and against what**\n- The predicted rewrite rate versus the observed 35%.\n- The agent versus the baselines.\n- Per-criterion failure rates, so improvements can be targeted.\n\n**I need from you**\n- Access to the repo and to the PR history with reviewer edits.\n- Whether \"rewritten\" includes minor wording edits or only substantive changes. This decides where the pass/fail boundary sits.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "claim-level support classification against the diff",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A07",
+   "skill": "eval-engineering",
+   "arm": "current",
+   "sample": 1,
+   "task": "Build an evaluation for our agent that writes pull request descriptions. Today we only have a smoke test, and reviewers rewrite 35% of the descriptions it writes.",
+   "words": 1116,
+   "text_digest": "8eb290441bfda49d",
+   "reply": "# Plan: PR-description eval built from reviewer rewrites\n\nThe 35% rewrite rate gives us labels. Each rewritten description is a recorded failure paired with a reviewer-written correction, and each description kept as-is is a candidate acceptable output. I'll build the eval on that record.\n\n## First steps\n\n1. **Map the agent.** This working directory isn't a git repo, so I'll first locate the agent's code. If it isn't nearby, I'll ask you for the path. Then I'll read the production entrypoint, prompts, inputs (diff, commits, linked issue, PR template), output path, the existing smoke test and runner, and the record format.\n2. **Mine past runs.** I'll pull PRs where the agent wrote the description and compare the agent's version with the final one. Then I'll sort the rewrites into failure types, such as:\n   - missing or wrong motivation;\n   - claims about changes that aren't in the diff;\n   - an omitted primary change;\n   - no testing or risk notes;\n   - template sections ignored;\n   - excessive length.\n\n   Reviewer edits are the label source, and a human spot-checks them, not the judge. Small edits go in a borderline bucket.\n3. **Freeze fixtures.** Each case snapshots the PR before any description existed: diff, commits, issue and template. The final description is excluded, so the answer can't leak. The case runs the production entrypoint with posting to GitHub disabled and captures the output, trace, tokens and cost.\n\n## What I'll build\n\n**Code checks** for objective properties. Results are reported per check, each with a nonzero, in-range quantity:\n- Required template sections are present and not empty.\n- Every file, function or symbol the description mentions exists in the diff.\n- The linked issue is referenced.\n- Length stays within bounds.\n- No secrets appear.\n\n**A semantic judge** for what code can't decide. Its output is structured: a decision, per-criterion results, evidence references, a short reason, and cannot-judge.\n- **Faithfulness:** claim-level support against the diff.\n- **Coverage:** the primary change and its motivation.\n- **Reviewer value:** testing notes and risks.\n\nA semantic pass can't override a deterministic failure. Target text is delimited as data, and I'll test whether injected text can sway the judge.\n\n## Calibration before scaling\n\n- **Fixtures through the exact scoring path:**\n  - Acceptable: reviewer rewrites, and descriptions kept as-is that a human confirms (silence may reflect reviewer fatigue).\n  - Unacceptable: the agent's originals that reviewers rewrote.\n  - Borderline: lightly edited descriptions.\n- **Error rates:** I'll measure false-pass and false-fail rates and check separation against repeat-run variance. False passes cost more here, because they hide the rewrites we're trying to reduce.\n- **Simple baselines under the same conditions:** (a) concatenated commit messages; (b) one unguided model call given only the diff. If either ties the agent, I'll first check for leakage or a scoring defect. If there's none, the cases are missing the hard conditions, such as large refactors, multi-issue PRs or sparse commit messages, and I'll add those.\n- **Real attempt:** one agent run, where I inspect what it saw, what it produced, and what evidence each check used.\n\n## Measurement and decision\n\nThe eval decides whether a prompt or model change ships. The main metric is the predicted rewrite rate on held-out PRs, compared with the current agent and the baseline. I'll check it against the real 35% by confirming that the eval flags roughly the descriptions reviewers actually rewrote.\n\nAfter the first case proves out, I'll build the full suite, stratified by PR size and type. I'll then report scores, sample counts, variance, the judge's error rates and blind spots.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "A semantic judge",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A08",
+   "skill": "eval-engineering",
+   "arm": "current",
+   "sample": 0,
+   "task": "Our model judge agrees with human graders on 71% of 300 labeled answers. Make the judge good enough to gate releases.",
+   "words": 1116,
+   "text_digest": "8eb290441bfda49d",
+   "reply": "**Plan: make the judge fit to gate releases**\n\n71% agreement doesn't tell us whether the judge can gate releases. The useful questions are which errors it makes, how costly each one is, and whether it beats a trivial baseline. I'll start by measuring, not by rewriting the prompt.\n\n**First steps (read-only)**\n1. Locate the judge's production scoring path: prompt, model and provider, input assembly, output parsing, and how the verdict feeds the release gate. I'll also find the 300 labels and how they were produced.\n2. Pin down the decision. Is it a pass/fail per answer, or an aggregate pass rate compared against a threshold? Is a false pass (shipping a bad release) worse than a false failure (blocking a good one)? I'll infer this from the gate code. If the cost tradeoff isn't recorded, I'll ask, because that tradeoff sets the target, not a generic agreement number.\n\n**What I'll measure, and against what**\n- **Confusion matrix against the human labels.** From it: false-pass rate on human-failed answers, false-fail rate on human-passed answers, and cannot-judge or malformed-output rate, each with a confidence interval at n=300.\n- **Label base rate and constant baselines.** If about 71% of answers are human-passed, \"always pass\" ties the judge. That would mean the judge currently adds nothing.\n- **Human ceiling.** Where items were double-graded, I'll measure human-vs-human agreement. If that's absent, I'll get a subsample re-labeled by a qualified grader. If humans agree only about 80% with each other, the labels need fixing before the judge does.\n- **Scoring variation.** I'll rerun the judge 3\u20135 times on the same inputs to see how much of the disagreement is noise.\n- **Error analysis.** I'll bucket the disagreements by cause: missing evidence given to the judge, inferring correctness from the answer's own assertions, ambiguous rubric, label errors, position or length bias, and injection in the answer text.\n- **Leak check.** The judge input must not contain filenames, answer keys, or hints that make it a proxy.\n\n**What I'll build**\n- A frozen split: a development set for iterating, and a held-out set the judge is never tuned on. I'll seed both with hand-written acceptable answers, degraded copies, and borderline cases.\n- A revised judge, based on what the error analysis shows:\n  - named-criteria classification instead of a holistic score;\n  - required evidence supplied, such as references or tool output;\n  - untrusted answer text delimited as data;\n  - structured output (decision, per-criterion results, evidence references, reason, explicit cannot-judge);\n  - malformed output never counts as a pass.\n- Gate-level calibration: simulate releases by mixing good and bad answers, and check that the gate's ship/block decision matches the human-labeled outcome at the agreed error tolerance.\n- Run logging: model ID, prompt, input digest, raw and parsed output, latency, tokens, cost.\n\n**Readiness criterion**\nOn the held-out set, the judge must keep false passes within the agreed tolerance, clearly beat the constant baseline, and approach the human ceiling. Its run-to-run variance must also be small relative to the gate threshold.\n\n**Reporting**\nI'll report the measured error rates, sample counts, the baseline result, blind spots, and the decision scope the judge supports. If the labels or the rubric turn out to be the bottleneck, I'll say so rather than tune toward them.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "named-criteria classification instead of a holistic score",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A08",
+   "skill": "eval-engineering",
+   "arm": "current",
+   "sample": 1,
+   "task": "Our model judge agrees with human graders on 71% of 300 labeled answers. Make the judge good enough to gate releases.",
+   "words": 1116,
+   "text_digest": "8eb290441bfda49d",
+   "reply": "# Plan: make the judge fit to gate releases\n\n71% agreement alone can't tell us whether the judge is ready. A release gate needs to know which errors the judge makes, how often, and on which kinds of answer. So I'll start by diagnosing before changing any prompt.\n\n## First concrete steps\n\n1. **Map the scoring path.** Read the judge prompt, model and provider config, and output parsing. Read how judge verdicts roll up into a release decision, such as a pass-rate threshold or a regression delta versus the previous release.\n2. **Pin down the decision with you.** Is a false pass (shipping a bad answer) costlier than a false fail (blocking a good release)? What miss rate at the release level is tolerable? This choice sets the readiness bar, not a universal agreement number.\n3. **Break down the 71%.** Build a confusion matrix on the 300 labels: false-pass rate and false-fail rate, base rate of \"bad\" answers, and errors grouped by answer type, length, and criterion.\n   - If 80% of answers are good, a constant \"pass\" already scores near 80%, which would beat the judge.\n4. **Audit the human labels.** Find out whether there is a second grader or recorded disagreements. Have a second grader independently re-label a sample of judge\u2013human disagreements. Some of the 29% are likely label errors or ambiguous rubric items. Human\u2013human agreement is the realistic ceiling.\n5. **Integrity checks on the current judge.**\n   - Leaked reference answers or rubric in the target's inputs.\n   - Malformed outputs that silently count as pass.\n   - Position and length bias.\n   - Prompt-injection susceptibility from answer text.\n   - Run-to-run variation: rerun the same items several times.\n\n## What I'll measure, against what\n\n- **Baselines on the same items:** constant pass, constant fail, a length or keyword heuristic, and the current judge.\n- **Split the labels:** about 200 dev items for iterating on the judge, and about 100 held-out items touched only for the final number. This keeps the reported rate from being overfit.\n- **Report for every judge version:**\n  - false-pass rate and false-fail rate with confidence intervals;\n  - cannot-judge rate;\n  - variance across repeated runs;\n  - cost and latency.\n- **Gate-level check.** Replay past releases, or seeded good and degraded answer sets, through the full gate. Confirm the judge blocks the degraded set and passes the good one with margin above run-to-run noise.\n\n## What I'll build\n\n- **A restructured judge.** It will classify against named rubric criteria, require evidence quotes for each criterion, and output a structured decision. That means a verdict, per-criterion results, a reason, and an explicit cannot-judge option. Malformed output fails closed.\n- **Hardening:** answer content delimited as untrusted data, deterministic checks run first (a judge pass cannot override them), and secrets stripped before calls.\n- **Logging and caching:** record model ID, prompt, input digest, raw and parsed outputs, tokens, and cost. Cached verdicts are reused only when input and configuration match.\n- **A calibration report:** error rates, label sources, disagreements kept, known blind spots, and the decision scope the judge supports. If the judge can't reach your tolerance on some category, that category routes to human review rather than being gated automatically.\n\nI'll stop and report rather than tune further if the labels themselves turn out to be the bottleneck.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "deterministic checks run first (a judge pass cannot override them)",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A09",
+   "skill": "product-design",
+   "arm": "current",
+   "sample": 0,
+   "task": "Redesign the onboarding flow of our developer dashboard. Today 38% of new signups create their first API key within a day.",
+   "words": 852,
+   "text_digest": "229471b1b294594d",
+   "reply": "**Plan: Redesign onboarding around time-to-first-API-key**\n\n**Goal.** Raise the share of new signups who create a first API key within 24 hours, currently 38%. The redesign should make key creation the first thing a new user reaches.\n\n**First steps**\n\n1. **Find the product.** The working directory is a temp folder and not a git repo, so I'll ask you for the dashboard repo path or a running URL. Inside the repo I'll read:\n   - the design bible, tokens and component owners\n   - `docs/anti-patterns/`\n   - any onboarding briefs or unresolved user complaints\n2. **Walk the current flow as a new user.** Using a disposable test account in a real browser, at desktop and phone widths, in every supported theme, I'll record each step from signup to a working key:\n   - screens\n   - clicks\n   - fields\n   - waits, such as email verification or org/project creation\n   - dead ends\n\n   I'll screenshot every step and log console and network failures.\n3. **Trace the 38%.** I'll check where the number comes from: event names, the definition of \"signup\" and the 24h window. Then I'll pull the step-by-step funnel if analytics exist. The redesign targets the biggest drop-off, not guesses.\n4. **Check references.** I'll study the first-run flows of Stripe, OpenAI, Resend and Vercel. I'll note:\n   - how many steps they take before a key exists\n   - whether the key is shown inline with a copy-ready snippet\n   - how they handle the \"save it now, shown once\" moment\n\n**What I'll measure, and against what**\n\n- **Primary:** first API key created within 24h of signup, against the 38% baseline. That is target-user evidence. I can't prove it before launch, so it stays **UNCHECKED** until real cohort data comes in. I'll recommend an A/B test or a before/after cohort comparison, with a sample-size estimate.\n- **Proxies I can verify now:**\n  - clicks and screens from signup to a copied key\n  - time to key\n  - required fields\n  - blocking steps\n- **Leading indicators to instrument:**\n  - first authenticated API call\n  - abandonment at each step\n\n**What I'll build**\n\n- A first-run state where the empty dashboard is the key-creation surface itself: one primary action creates a key, with no tour and no tagline.\n- Deferral of non-essential setup (org name, team invites, billing) until after the key exists, unless the backend truly requires it.\n- An inline reveal of the key with copy, a one-time-display warning, and a quickstart snippet in curl and the main SDK languages, prefilled with the key.\n- Success detection for the first API call, so the next step appears only when it's earned.\n- Loading, error, revoked and existing-key states, including returning users who skipped onboarding.\n\nAll of this uses the existing components and tokens. I'll show variants only if the funnel leaves a real tradeoff, for example deferring email verification versus keeping it.\n\n**Verification**\n\n- Click through the new flow on desktop and phone, in every supported theme, using keyboard only.\n- Stress-test with long org names, failed key creation and slow networks.\n- Reopen the original drop-off paths and confirm they're fixed.\n- Before/after screenshots and step counts go into the report.\n\n**Report.** I'll keep three things separate:\n- observed behavior (**PASS/FAIL**)\n- craft review\n- conversion impact (**UNCHECKED** until data arrives)\n\nThen I'll log the run with `skill-run-log`. Next comes `/verify` for the non-UI checks, or `/report` if the evidence shows the real blocker is product value rather than UI.\n\n**One question for you:** where is the repo or the staging URL, and do you have funnel analytics access?",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "first-run flows of Stripe, OpenAI, Resend and Vercel",
+    "q2": false,
+    "q2_quote": "against the 38% baseline",
+    "q3": true,
+    "q3_quote": "the empty dashboard is the key-creation surface itself",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A09",
+   "skill": "product-design",
+   "arm": "current",
+   "sample": 1,
+   "task": "Redesign the onboarding flow of our developer dashboard. Today 38% of new signups create their first API key within a day.",
+   "words": 852,
+   "text_digest": "229471b1b294594d",
+   "reply": "## Redesign plan: onboarding to first API key\n\nThe current working directory is an empty temp folder and not a git repo, so my first step is to find the actual dashboard repository. If it isn't on this machine, I'll ask you for its path or a link.\n\n### First concrete steps\n\n1. **Read the existing decisions.** I'll start with the design bible, if one exists, plus its token and component owners. Then I'll read the onboarding product docs, `docs/anti-patterns/`, and any open user complaints about signup or keys.\n2. **Trace the 38%.** I'll find where it's computed: which events count as \"signup\" and \"first API key,\" the window, and whether invited teammates or SSO users are included. If the metric is miscounted, the redesign would be aimed at the wrong problem.\n3. **Pull the funnel.** I'll break the path into steps: signup \u2192 email verify \u2192 org/project setup \u2192 dashboard landing \u2192 keys page \u2192 key created \u2192 first successful API call. I'll record drop-off and median time at each step from existing analytics. If there's no step-level data, I'll mark it UNCHECKED and add instrumentation before shipping.\n4. **Walk it as a new user.** I'll go through the flow in a real browser with a disposable test account, on desktop and phone, in each supported theme. I'll count clicks, screens, required fields, and seconds from signup to a copied key. I'll capture screenshots and console/network errors at every step.\n5. **Study references.** I'll walk through Stripe, Resend, OpenAI, Twilio, and Vercel onboarding to see:\n   - where the first key appears\n   - whether it's shown inline in a quickstart snippet\n   - how they handle the reveal-once secret\n   - what counts as \"done\"\n\n### What I'll measure, and against what\n\n- **Baseline:** 38% of signups create a key within 24h, as defined in step 2, on a cohort from before the change.\n- **Leading measures:**\n  - clicks and screens from signup to a key\n  - time to a copied key\n  - percentage who make a first successful API call (a stronger signal of a working setup than creation alone)\n- **Comparison:** an A/B test, or a dated cohort if traffic is too low. I need you to set the target and minimum sample size. I won't invent one.\n- **Keeping claims separate:** I'll report three things separately and won't present the first two as proof of the third:\n  - observable behavior: fewer steps, no errors, text fits on phone\n  - craft review\n  - the actual conversion result, which stays UNCHECKED until cohort data arrives\n\n### What I expect to build (subject to the evidence)\n\n- **Key creation as the first screen after signup.** I'd defer or prefill non-blocking setup such as org name and project. One button creates a key named with a sensible default.\n- **Quickstart with the key embedded.** A snippet (curl and the top SDK languages) with the new key already inserted and a copy button. A live \"waiting for your first request\u2026\" state turns to success when the call lands.\n- **Explicit handling of the reveal-once secret.** A clear copy confirmation, with no dismiss-and-lose-it trap.\n- **Removal of filler.** I'd cut the welcome tour, taglines, and helper text that sit between signup and the key.\n- **Error and empty states:** key-creation failure, a rate-limited test call, and returning users who skipped onboarding.\n- **Instrumentation** for every step, so we can see where people drop off next time.\n\nI'll use the existing components and tokens. Then I'll reopen the original flow paths and verify keyboard use, focus, and phone layout. I'll also test worst-case data: long org names, failed calls, and slow networks.\n\n### Finish\n\nI'll deliver before/after screenshots, changed files, the tested states, and the cohort plan. Then I'll log the run with `skill-run-log`. If the evidence suggests the key isn't the real bottleneck, for example if users get keys but never call the API, I'll hand off to `/report`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "I'll walk through Stripe, Resend, OpenAI, Twilio, and Vercel onboarding to see",
+    "q2": false,
+    "q2_quote": "I need you to set the target",
+    "q3": true,
+    "q3_quote": "Key creation as the first screen after signup.",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A10",
+   "skill": "product-design",
+   "arm": "current",
+   "sample": 0,
+   "task": "Polish the run-detail page of our agent console. In 12 recorded sessions users took a median 48 seconds to find why a run failed.",
+   "words": 852,
+   "text_digest": "229471b1b294594d",
+   "reply": "## First steps\n\n1. **Read the owners.** Read the design bible and its token, type, and surface links. Read any run-detail product docs, especially the failure and recovery semantics. Read `docs/anti-patterns/` for UI evidence and capture procedure.\n2. **Watch the 12 sessions before touching code.** For each one, note where users looked first, what they scrolled or expanded, where they hesitated, and the moment they found the cause. I'll tag each session's delay with its source: hunting through the timeline, collapsed steps, a vague status, a long log, or a cause that only appeared in raw output. That turns the 48-second median into specific, ranked problems.\n3. **Trace the failure data.** Find where the run's terminal error, failing step, exit code, and stack or log excerpt come from. I need to know whether a structured failure reason exists or whether the page only shows a generic \"Failed\" badge while the real cause sits in logs.\n4. **Open the live page** with an authorized test session. Use real failed runs of several kinds: tool error, timeout, model refusal, cancelled, and a nested sub-agent failure. Check desktop and phone widths in every supported theme.\n\n## What I'll measure, and against what\n\n- **Baseline:** the 48s median from the recordings, plus a per-session list of the steps it took to reach the cause.\n- **Proxies I can measure directly**, before and after, at desktop and mobile:\n  - Clicks, scrolls, and expands from page load to a visible failure cause.\n  - Whether the cause is above the fold on first paint.\n  - Whether the failing step is reachable by keyboard and gets focus or highlighting when the page lands.\n- **Worst-case data:** a 5,000-line log, an unbreakable stack trace, a multi-KB error message, a run with 300 steps, a failure inside a nested step, a missing error field, and a still-running run.\n- **Target-user result:** this stays **UNCHECKED** until new sessions are recorded. Proxies don't prove the median dropped. I'll propose a short re-test with the same task so we can compare against 48s.\n\n## What I'll likely build\n\nThe exact scope depends on what the recordings show.\n\n- **A failure block at the top of failed runs.** It shows the failing step name, the error type, and the first meaningful error line (not a generic \"Failed\"), with a direct link that scrolls to and expands that step.\n- **The failing step auto-expanded and visually marked** in the timeline. Other steps stay collapsed. Ancestor steps are opened when the failure is nested.\n- **The log scrolled to the error line**, with that line highlighted. Long lines wrap or scroll within the view and never break the layout.\n- **Deletions:** redundant status chips, helper text, or duplicate metadata that compete with the cause.\n\nEverything uses existing components and tokens. Any missing structured failure field gets flagged as a data issue rather than parsed from the UI.\n\n## Completion\n\nI'll capture before/after screenshots at each width and theme. Then I'll reopen the original failing runs from the recordings, check focus and the console, and report the changed files, verdicts, and the pending user re-test.\n\nI'll finish by logging the run with `skill-run-log /product-design --target \"run-detail failure discoverability\" --verdict \u2026 --next /verify`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "a direct link that scrolls to and expands that step",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A10",
+   "skill": "product-design",
+   "arm": "current",
+   "sample": 1,
+   "task": "Polish the run-detail page of our agent console. In 12 recorded sessions users took a median 48 seconds to find why a run failed.",
+   "words": 852,
+   "text_digest": "229471b1b294594d",
+   "reply": "The target is time-to-cause: users needed a median of **48 s across 12 sessions** to find why a run failed. My job is to cut that by putting the cause where people already look. Prettier spacing alone doesn't count.\n\n## First concrete steps\n\n1. **Read the owners.** Read the design bible and its token, type and surface links. Read the run and recovery product docs, and any prior decisions or open complaints about run detail.\n2. **Mine the 12 recordings.** For each session, log:\n   - where the user looked first\n   - each click, scroll and tab switch before they found the cause\n   - where the cause actually lived (step status, log line, tool-call payload, trace)\n   - the seconds spent in each phase\n\n   This shows whether the 48 s goes to scanning, expanding, scrolling logs or misreading a status.\n3. **Trace the data.** Find where the failure reason comes from: the error field on the run, the step status, or only raw log text. If nothing structured exists, the UI can't surface it reliably. I'll flag that as a backend gap rather than fake it with heuristics.\n4. **Check references.** Compare how GitHub Actions, Buildkite, Vercel deployments, Temporal and LangSmith show a failed run: auto-expanded failing step, jump to the error line, collapsed successes, error-first header. I'll note only patterns that fit our density and tokens.\n5. **Capture the baseline.** Open the live console with an authorized test session and screenshot a failed run at desktop and phone widths in supported themes.\n\n## What I'll build (likely, pending evidence)\n\n- **Failure block at the top** for failed runs: the failing step, the error message, and a direct link to the exact log line or tool call. Built with existing components and no explanatory copy.\n- **Failed step auto-expanded and scrolled into view.** Successful steps collapse to one line.\n- **Clear status hierarchy:** the failure is distinguished by more than color, and retries and cancellations are distinct from failures.\n- **Removal of redundant surfaces** that compete with the cause, such as duplicate status badges or metadata above the error.\n\n## What I'll measure, and against what\n\n- **Proxy metrics, before vs. after, on the same failed runs:**\n  - interactions needed to reach the cause\n  - whether the cause is visible without scrolling at 1440 px and 390 px\n  - scroll distance to the error line\n- **Worst-case data:**\n  - very long and unbreakable error strings\n  - multi-KB stack traces\n  - 200-step runs\n  - multiple failures\n  - failures with no message\n  - in-progress and partially failed runs\n  - empty logs\n- **Behavior checks:** keyboard focus lands on or can reach the failure block, the deep-link to a log line works, there are no console or network errors, and the fixed paths from the recordings work when reopened.\n\n**Target-user result: UNCHECKED.** I can't rerun the 12 sessions myself. A real improvement over 48 s needs a follow-up session round with the same tasks, which I'll recommend with a script. Proxy results and my craft review will be reported separately from that.\n\n## Report\n\nI'll report what the recordings showed, my design decisions, changed files, before and after screenshots, the states tested, and remaining limitations such as missing structured error data. Then I'll log the run with `skill-run-log /product-design --target \"run-detail failure discoverability\" --verdict \u2026 --next /verify`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": true,
+    "q1_quote": "GitHub Actions",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "Failed step auto-expanded and scrolled into view.",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A11",
+   "skill": "build-agent-app",
+   "arm": "current",
+   "sample": 0,
+   "task": "Build an agent app that drafts replies to customer support tickets. Today humans write every reply, taking a median 9 minutes per ticket.",
+   "words": 628,
+   "text_digest": "56b9d911fd18b90a",
+   "reply": "# Plan: Support Reply Drafting Agent\n\n## First concrete steps\n\n1. **Inspect the workspace.** The working directory is an empty temp folder and not a git repo, so I'll assume this is a new product. I'll check whether an existing helpdesk, codebase, or scaffolder applies before writing anything.\n2. **Confirm the blocking inputs with you:**\n   - Which helpdesk you use (Zendesk, Intercom, Front, Help Scout, custom).\n   - Where answers come from: knowledge base, macros, past resolved tickets, order or billing data.\n   - What the agent may never do. My default is that it drafts only and never sends.\n3. **Get a baseline sample.** I'd like 50\u2013100 recently resolved tickets with their human replies, handle times, and CSAT or reopen outcomes. These become both the evaluation set and the control.\n4. **Scaffold** with the current maintained agent-app scaffolder. I'll install only what the flow needs: the helpdesk connector, retrieval, a persistence store, and auth.\n\n## What I'll build\n\n- **Ingest.** A webhook or poll from the helpdesk on new tickets. It's idempotent on the ticket ID, so retries never create duplicate drafts.\n- **Draft tool flow.**\n  - Classify intent.\n  - Retrieve KB articles and similar resolved tickets.\n  - Optionally call read-only lookup tools, such as order status.\n  - Produce a draft with cited sources and a confidence or \"needs human\" flag.\n- **Agent review UI.** It shows the ticket, the draft, and its sources. The agent can edit, regenerate with a correction, or discard. Sending happens only on an explicit human click, through a validated \"post reply\" tool that uses the agent's own helpdesk identity. Text in a draft never authorizes a write.\n- **Persistence.** Every draft stores the run ID, model, sources, the final human-sent text, an edit-distance metric, and token cost. Usage is recorded server-side, never from browser events.\n- **Credentials and tenancy.** Helpdesk credentials stay server-side and are redacted from logs and exports. Tenant, support-agent, and run identities are kept separate.\n\n## What I'll measure, against what\n\n**Baseline:** your current 9-minute median handle time, from the same ticket categories and period.\n\n**Offline (before any live use):** run the agent on the historical tickets and compare its drafts with the human replies on:\n- Factual correctness against sources\n- Policy violations\n- Hallucinated promises\n- Graders blind-rating whether each draft is \"sendable as-is\" or \"minor edit\"\n\n**Pilot (live, with a control group):** a subset of agents or a subset of tickets gets drafts; the rest work as today. Per ticket I'll track:\n- Median handle time\n- Edit distance between the draft and the sent reply\n- Discard rate\n- CSAT\n- Reopen and escalation rate\n- Cost per ticket\n\nThe target is a meaningful drop from 9 minutes with no regression in CSAT or reopens. Every failure is kept, not just successes.\n\n## Verification before claiming done\n\n- **One real end-to-end run:** ticket arrives, draft is created, a human edits and sends, the reply appears in the helpdesk, the record is stored, and reopening it shows the same data.\n- **Failure paths:** permission denied, helpdesk down, and retry with no duplicate post.\n- **Browser check:** the UI at desktop and mobile widths, including loading, empty, and error states.\n\nI'll report the run and artifact IDs, the measured results against the baseline, and any open limits.\n\n**Next:** please tell me your helpdesk and knowledge sources, and share the ticket sample.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "a meaningful drop from 9 minutes",
+    "q3": true,
+    "q3_quote": "Retrieve KB articles and similar resolved tickets.",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A11",
+   "skill": "build-agent-app",
+   "arm": "current",
+   "sample": 1,
+   "task": "Build an agent app that drafts replies to customer support tickets. Today humans write every reply, taking a median 9 minutes per ticket.",
+   "words": 628,
+   "text_digest": "56b9d911fd18b90a",
+   "reply": "## Plan: Support Reply Drafting Agent\n\n**Goal:** Cut median time per ticket below the 9-minute baseline while keeping quality at or above human replies. The agent drafts, and a human approves before anything reaches a customer.\n\n### First concrete steps\n\n1. **Inspect the workspace.** The working directory is empty and not a git repo, so this is a new product. I'll check the current scaffolder and confirm it supports the runtime and deployment target we choose. I'll install only the modules this flow needs.\n2. **Confirm the helpdesk.** I need to know whether you use Zendesk, Intercom, Front, a custom system, or something else. Then I'll read the integrations guidance before adding any connector. Credentials and grants stay server-side.\n3. **Collect real history.** I'll pull about 200 resolved tickets with their human replies, including timestamps and any CSAT data. This gives us an evaluation set and a baseline, so I don't rely only on the \"9 minutes\" figure.\n\n### What I'll build\n\n- **Ingestion.** A helpdesk connector or webhook receives new tickets. A dedupe key on the ticket ID keeps retries from creating duplicate drafts.\n- **Context.** Retrieval pulls from the knowledge base, past resolved tickets, and the customer's account data. Every lookup is scoped to the tenant.\n- **Drafting.** The model produces a structured draft through a validated tool: reply text, cited sources, confidence, and an escalation flag. It also says \"I don't know\" when context is missing instead of inventing policy.\n- **Review UI.** An agent sees the ticket and the draft side by side and can edit, approve, regenerate, or discard. Sending requires an explicit human approval, and the model's prose never authorizes a write. The send is idempotent.\n- **Persistence and usage.** The app stores each draft, its edits, the final sent text, model cost, and timing events. Tenant, user, execution, and billing IDs stay distinct.\n- **Failure states.** The UI handles three cases: the connector is down, retrieval finds nothing, and the reviewer lacks permission to send.\n\n### What I'll measure, and against what\n\n| Metric | Control |\n|---|---|\n| Median handle time (ticket open to send) | 9-min human baseline, same ticket mix |\n| Draft acceptance rate and edit distance (draft vs. sent) | \u2014 |\n| Quality via rubric (accuracy, policy compliance, tone) | Historical human replies, blind-graded |\n| CSAT / reopen rate | Matched human-only tickets |\n| Cost per ticket | Agent labor cost saved |\n| Hallucinated policy or incorrect facts | Target: zero on the evaluation set |\n\nI'll run the offline evaluation on historical tickets first. After that comes a shadow pilot, where drafts are generated but not shown, and then a live A/B test with a few reviewers.\n\n### Verification\n\n- Run one real ticket end to end against the real backend: ingest, draft, edit, approve, send, read the stored record back.\n- Test denied permissions and an interrupted run.\n- Check the review UI in a browser at desktop and mobile widths.\n\n### Open questions for you\n\n- Which helpdesk do you use, and where does the knowledge base live?\n- Which ticket categories should be excluded at first, such as billing disputes or legal issues?\n- What is the acceptance gate? For example: \"median under 5 minutes with no drop in CSAT.\"",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": true,
+    "q2_quote": "For example: \"median under 5 minutes with no drop in CSAT.\"",
+    "q3": true,
+    "q3_quote": "The agent drafts, and a human approves",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A12",
+   "skill": "build-agent-app",
+   "arm": "current",
+   "sample": 0,
+   "task": "Add an assistant to our product that answers questions over a customer's uploaded PDFs. Our current keyword search answers 44% of a 120-question test set correctly.",
+   "words": 628,
+   "text_digest": "56b9d911fd18b90a",
+   "reply": "## Plan: PDF Q&A assistant, measured against the 44% keyword baseline\n\n### First concrete steps (read before writing)\n1. **Inspect the product.** Find how PDFs are uploaded and stored, how tenants and users are scoped, the existing keyword search code path, any LLM/agent dependencies already installed (and their versions), and the UI where the assistant will live.\n2. **Locate the 120-question test set.** Confirm its format, which customer's PDFs each question targets, and how \"correct\" was judged for the 44% number. If grading was manual or loose, I'll write down a rubric before measuring anything new.\n3. **Reproduce the baseline.** Rerun keyword search through a scripted harness. I want our own 44% (\u00b1) with per-question results saved, so later comparisons are apples-to-apples.\n\n### What I'll measure\n- **Answer accuracy** on all 120 questions, using the same grader as the baseline. The bar is to beat 44% clearly, and I'll also report which questions flipped in each direction.\n- **Citation correctness:** whether the cited page or passage actually supports the answer.\n- **Abstention quality:** whether it says \"not in your documents\" instead of inventing an answer. Wrong-but-confident answers count against it.\n- **Retrieval recall:** whether the right passage was in the retrieved set. This separates retrieval failures from generation failures.\n- **Cost and latency** per question, compared to keyword search.\n- **Tenant isolation:** a question asked as customer A must never retrieve customer B's chunks. This is a hard pass/fail.\n\nI'll keep the failures and unknowns in the report rather than only the headline number.\n\n### What I'll build\n1. **Ingestion:** PDF text extraction with page numbers, plus OCR fallback flagged for scanned pages. Chunks are stored with tenant, document and page IDs. Ingestion is idempotent, so re-uploads don't duplicate chunks.\n2. **Hybrid retrieval:** the existing keyword search plus embeddings, optionally reranked. The tenant filter is enforced server-side at the query boundary, not in the prompt.\n3. **Assistant:** answers grounded in retrieved passages, with required page citations and explicit abstention when evidence is missing. It is read-only, so there are no write tools and no approval flow needed in v1.\n4. **Product integration:** a chat panel with clickable citations that open the PDF at the cited page. It includes empty, loading, error/retry, and \"document still processing\" states. Usage is recorded server-side, and API credentials stay on the server.\n5. **Eval harness:** committed and rerunnable, so later changes to chunking, models or prompts are judged against the same 120 questions.\n\n### Verification\n- Run one real end-to-end path first: upload \u2192 ingest \u2192 ask \u2192 cited answer \u2192 reopen the saved session. Then run the full eval.\n- Do a browser check at desktop and mobile widths.\n- Run a cross-tenant denial test.\n\n### Report\nI'll report accuracy versus 44%, the breakdown above, run IDs, open limits (for example scanned PDFs and tables), and whether keyword search is kept as a fallback.\n\nThe run will be logged with `skill-run-log`. Likely next steps are `eval-engineering` (grader quality) and `harden` (tenant boundaries).",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "beat 44% clearly",
+    "q3": true,
+    "q3_quote": "the existing keyword search plus embeddings",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A12",
+   "skill": "build-agent-app",
+   "arm": "current",
+   "sample": 1,
+   "task": "Add an assistant to our product that answers questions over a customer's uploaded PDFs. Our current keyword search answers 44% of a 120-question test set correctly.",
+   "words": 628,
+   "text_digest": "56b9d911fd18b90a",
+   "reply": "## Plan: PDF Q&A assistant, measured against the 44% keyword baseline\n\n### First steps\n1. **Inspect the product.** Find the upload pipeline, PDF storage, the tenant/user model, the current keyword search, the auth middleware, and any installed agent or LLM SDKs. I'll confirm the actual imports and versions before following upstream docs. If an embedding or vector module is already maintained in the stack, I'll reuse it.\n2. **Lock the eval.** Get the 120-question set with its gold answers and source documents. I'll re-run keyword search through a scripted harness to reproduce the 44%, so both systems share one grader and one corpus. I'll record how answers are judged (exact match, rubric, or LLM-judge spot-checked by a human) and tag each question by type: lookup, multi-hop, table, or unanswerable. I'll also hold out about 30 questions so I don't tune to the whole set.\n\n### What I'll build\n- **Ingestion:** Parse PDFs into page-aware chunks that keep tables. Store embeddings tagged with `tenant_id` and `doc_id`. Re-uploads update existing chunks instead of duplicating them, and each document shows a visible status: processing, ready, or failed.\n- **Retrieval:** Hybrid search combining the existing keyword index with vectors, then reranking. A tenant filter is applied server-side on every query. Nothing from the client can widen that scope.\n- **Assistant:** A tool-calling agent with `search_documents` and `read_page` tools. It answers with page-level citations and says \"not found in your documents\" instead of guessing. It is read-only, so it needs no write approvals. Streaming responses can be cancelled. Usage (tokens and cost) is recorded server-side for each request, never from browser events.\n- **UI:** A chat panel next to the document list, with clickable citations that open the PDF page. It includes empty, processing, error/retry, and permission-denied states. Sessions persist and reopen.\n\n### What I'll measure, against what\n| Metric | Control | Target |\n|---|---|---|\n| Accuracy on 120 Qs (and held-out subset) | 44% keyword search | Report real number; aim well above, broken down by question type |\n| Citation correctness | n/a | Share of answers whose cited page supports the answer |\n| Abstention on unanswerable Qs | baseline behavior | Correct refusals versus hallucinations |\n| p50/p95 latency, $ per question | keyword search \u2248 free | Report the cost of each gained point of accuracy |\n| Cross-tenant leakage | \u2014 | Zero: an adversarial test where tenant B queries for tenant A's content |\n\nI'll keep failures as a categorized list (retrieval miss, parse/table error, reasoning error) rather than reporting only the headline score.\n\n### Proof before \"done\"\n- A real end-to-end journey against the actual backend and storage: upload, process, ask, open the cited answer, reload the session.\n- A denied-permission test and a second tenant.\n- Browser checks at desktop and mobile widths.\n- Repeat the flow on the deployed artifact if this ships.\n\n### Report\nI'll report:\n- Accuracy compared with the 44% baseline.\n- Cost and latency.\n- Run IDs and eval artifacts.\n- Known limits, such as scanned PDFs without OCR.\n- Which keyword-search paths I kept as part of hybrid retrieval.\n\nAfter that, I'll suggest `harden` for tenant isolation and `eval-engineering` if the test set turns out too small to separate the variants.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "aim well above",
+    "q3": true,
+    "q3_quote": "Hybrid search combining the existing keyword index with vectors",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A13",
+   "skill": "diagnose",
+   "arm": "current",
+   "sample": 0,
+   "task": "Our CI suite takes 38 minutes at the median and fails flakily on 9% of runs. Find out why and fix it.",
+   "words": 1425,
+   "text_digest": "d116d20acb42f0cd",
+   "reply": "Two problems are in scope here: **slowness** (38 min median) and **flakiness** (9% failure rate). I'll treat them as separate loops, because they usually have different causes even when they share a test suite.\n\n**First, a blocker.** The working directory isn't a git repository and contains no CI config. Before anything else I need the repo path or a clone, plus read access to CI run history, either through an API token or exported logs/JUnit XML. If access to history isn't possible, I'll fall back to reproducing locally. That gives weaker evidence on the 9% figure.\n\n**Step 1: Reconstruct what ran.**\n- Pull the last ~200 CI runs with outcome, duration, commit, runner type, shard, and cache hit/miss.\n- Recompute the median duration and the failure rate from raw rows. Count cancelled, infra-errored, and test-failed runs separately, so that service failures don't get blamed on tests.\n- Build a per-test table from the JUnit artifacts: failure count, retry count, duration p50/p95, and which tests fail together.\n\n**Step 2: Flakiness loop.**\n- Group failures by shared cause, not by error text. Likely candidates:\n  - order dependence or shared state (DB, temp files, ports)\n  - timing and sleep-based waits\n  - network or external services\n  - resource contention under parallelism\n  - runner-specific environment\n- For the top offending tests, build a red loop: run them repeatedly in a loop, under parallel stress, with shuffled order and fixed seeds. The goal is to push 9% up to something debuggable.\n- Rank 3\u20135 falsifiable hypotheses per cluster. Probe one variable at a time (serial vs. parallel, isolated vs. shared fixture, pinned clock), using temporary logs tagged `[DEBUG-a4f2]`.\n\n**Step 3: Duration loop.**\n- Build a stage-level timeline per run: queue, checkout, dependency install, build, each test shard, artifact upload.\n- Compare against a baseline of the same commit on a warm cache versus a cold cache.\n- Find the critical path. Common culprits:\n  - cache misses\n  - unbalanced shards\n  - a few very slow tests\n  - serialized jobs that could run in parallel\n  - retries hiding flakes (retries inflate duration and the failure rate together)\n\n**Step 4: Fix and verify.**\n- Turn each confirmed flake into a regression test or stress loop that goes red before the fix and green after it.\n- Fix the earliest shared cause first. For example, one shared fixture may account for several flakes.\n- Verify with N repeated CI runs on the fix branch. N is chosen from the observed variance, so a 9% \u2192 ~1% claim is distinguishable from noise.\n- Re-measure the median and p95 duration on the same runner class and cache conditions.\n\n**What I'll deliver:**\n- counts for every outcome class\n- causes ranked by affected runs and user cost, with test IDs and evidence\n- the fixes, plus exact rerun commands\n- before/after numbers, with unexplained failures listed separately\n- removal of all debug instrumentation\n\n**Verdict:** `INSUFFICIENT_DATA` until I have repo and CI access. Could you point me at the repository and grant access to CI history?",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": true,
+    "q2_quote": "9% \u2192 ~1%",
+    "q3": true,
+    "q3_quote": "serialized jobs that could run in parallel",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A13",
+   "skill": "diagnose",
+   "arm": "current",
+   "sample": 1,
+   "task": "Our CI suite takes 38 minutes at the median and fails flakily on 9% of runs. Find out why and fix it.",
+   "words": 1425,
+   "text_digest": "d116d20acb42f0cd",
+   "reply": "I'll start by measuring rather than guessing. The working directory I've been given isn't a git repo and contains no CI config, so my first step is to locate the actual repository and get read access to CI history (for example `gh` or the provider's API token). If neither is available, I'll ask you for them.\n\n**1. Reconstruct what ran (baseline)**\n- Pull the last ~200 CI runs on the default branch with commit SHA, workflow, job, step, runner, duration, conclusion, attempt number and logs. With GitHub Actions that's `gh run list` / `gh api .../runs/{id}/jobs`.\n- Recompute your two headline numbers from the raw rows: the 38-minute median and the 9% failure rate. Check them against passed, failed, cancelled, timed-out and retried totals.\n- Sort every failure into one of these classes:\n  - **Product:** a real test failure.\n  - **Flaky test:** the same SHA fails, then passes on rerun.\n  - **Infra/service:** runner loss, network or registry errors, cache failures, OOM or timeouts.\n  - **Cancelled.**\n\n  Infra failures need a different fix than flaky tests, so I'll keep them separate.\n\n**2. Flakiness: build a red loop per cause**\n- Rank failing tests by how often they fail on SHAs that later pass. Group them by shared cause such as timing or sleeps, order dependence, shared state or ports, external calls, time zones or clocks, or parallel workers colliding.\n- For the top offenders, build a loop that reproduces the failure deterministically: run the test 50\u2013500\u00d7, with randomized order, under parallel and CPU stress, and alone versus in its normal shard. I'll keep the exact command that goes red.\n- Minimize each repro. Then rank 3\u20135 falsifiable hypotheses and test them one variable at a time, using temporary logs tagged `[DEBUG-xxxx]`.\n\n**3. Duration: find the critical path**\n- Break the run down by job and step: setup, dependency install, cache hit rate, build, test, artifact upload, and queue wait.\n- Look at per-test durations to find the slowest tests, plus sleeps, timeouts and unbalanced shards.\n- Check whether jobs run serially when they could run in parallel.\n- Measure before changing anything. If duration regressed over time, bisect over history to find when.\n\n**4. Fix and verify**\n- For each confirmed flake, write a regression test that fails, apply the fix, watch it pass, and rerun the stress loop.\n- Likely duration fixes include caching, shard rebalancing, removing fixed sleeps and parallelizing jobs. Each will get a before/after timing.\n- Re-measure on enough runs to tell whether things actually improved. At a 9% base rate, about 100 runs is needed to separate a fix from noise, so I'll report confidence intervals rather than a handful of green runs.\n- Remove all debug instrumentation afterwards.\n\n**What I'll build**\n- A small script that turns CI history into a table of runs \u00d7 jobs \u00d7 tests.\n- The stress-repro commands.\n- Regression tests.\n- The fixes themselves.\n\n**What you'll get**\n- Counts in every outcome class.\n- Each cause with its affected test IDs and evidence, ranked by impact (minutes saved and flake percentage removed).\n- Exact rerun commands.\n- Before/after medians and failure rates.\n- A verdict: `ROOT_CAUSE_CONFIRMED`, `PARTIAL`, or `INSUFFICIENT_DATA`. The last one will name exactly what access or data is missing.\n\n**What I need from you:** the repo location and CI access. Also tell me whether I can trigger reruns or stress jobs on CI runners, since some flakes only show up there.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "parallelizing jobs",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A14",
+   "skill": "diagnose",
+   "arm": "current",
+   "sample": 0,
+   "task": "Cold starts of our serverless API take 2.9 s at p95 (1,400 cold starts last week). Find where the time goes and cut it.",
+   "words": 492,
+   "text_digest": "88dc84c4be550f12",
+   "reply": "The 2.9 s p95 is one number, and I don't yet know what it measures. Before changing anything, I'll break it down on the real deployment path.\n\n**First steps (read-only, existing data)**\n\n1. **Pin down what the 2.9 s covers.** Is it the platform's init duration, or latency seen by clients at the gateway, including handler time on the first request? I'll find the query or dashboard that produced the p95 and the 1,400 count, and confirm the environment, region, function, and memory size.\n2. **Pull last week's cold-start records from the platform logs.** On Lambda, that means `REPORT` lines with `Init Duration` plus invocation `Duration`, joined by request ID. I'll calculate p50/p95/p99 for init alone, the first invocation alone, and both together. I'll also check:\n   - whether the slow cases cluster by function, deploy version, memory, region, time, or concurrency bursts\n   - whether any include init timeouts, retries, or restarts, which can double the cost\n3. **Check for existing traces** (X-Ray/OTel) that cover init and the first request. I'll use those spans before adding anything new.\n\n**Fill only the missing segments**\n\nPlatform logs won't split up what happens *inside* init. I'll add lightweight monotonic timestamps logged once per cold start, tagged with the request ID, at these points:\n- runtime start \u2192 first line of user code (package load/extract)\n- module and dependency imports, with the largest imports listed individually\n- SDK client construction, config and secret fetches, DB/connection-pool setup\n- end of init \u2192 first handler entry\n- lazy work inside the first request: first DB query, TLS handshakes, JIT or cache warm-up\n\nI'll check that this instrumentation adds negligible time by comparing cold starts with and without it.\n\n**Reversible test path**\n\nI'll deploy the instrumented build as a separate version or alias in a non-production stage that uses the same memory, package, VPC, and dependencies. I'll force cold starts by updating a dummy env var or publishing a new version, then call it from a real client through the gateway, about 30+ samples. I'll verify setup, evidence capture, and cleanup before running the full comparison. Production stays untouched.\n\n**Reconcile**\n\nThe stage times should add up to the client-observed total. Any gap is reported as unexplained, not assigned to the nearest stage. Network waits (secrets, DB, VPC attach) stay separate from CPU work.\n\n**What I'll deliver, then build**\n\nA ranked breakdown with:\n- each stage's share of p95\n- the maximum time each candidate fix could save, so we fix the biggest cost first\n- sample counts and conditions\n\nTypical candidates, chosen only if the data points to them:\n- trimming or bundling dependencies, and lazy-loading rarely used modules\n- caching or deferring secret and config fetches\n- reusing connections, or moving DB connect off the critical path\n- adjusting memory, which also scales CPU during init\n- shrinking the package or image\n\nIf the platform-owned portion dominates and can't be removed, the right fix may be provisioned concurrency or SnapStart. That's a cost/config trade-off I'd bring to you rather than apply myself.\n\nEach change gets tested on the same path against the same baseline. Then I'll log the run with `skill-run-log`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "lazy-loading rarely used modules",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A14",
+   "skill": "diagnose",
+   "arm": "current",
+   "sample": 1,
+   "task": "Cold starts of our serverless API take 2.9 s at p95 (1,400 cold starts last week). Find where the time goes and cut it.",
+   "words": 492,
+   "text_digest": "88dc84c4be550f12",
+   "reply": "Here's my plan. I'll measure before changing anything, and do all testing in isolation.\n\n**1. Pin down the claim (existing data first)**\n- Pull last week's 1,400 cold starts from the platform logs. On Lambda that means the REPORT lines with `Init Duration`; other platforms have an equivalent.\n- Confirm the p95 of 2.9 s and what it measures. Is it platform init only, or user-visible latency from the client or API gateway?\n- Split the data by function, region, memory size, runtime version, and deploy version. A single large function or a recent deploy may dominate.\n- Join cold-start records to their request IDs so I can compare init time with total request time. The user-visible figure is gateway latency, not init alone.\n\n**2. Break down the cold path stage by stage**\nThe stages:\n- Sandbox and container provisioning, plus code or image download (platform-side; inferred from the gap between gateway arrival and init start)\n- Runtime boot\n- Module loading and imports\n- Top-level initialization: config and secrets fetches, DB or connection-pool setup, SDK clients, DI container, schema compilation\n- First-invocation handler work: lazy init, JIT, first connection handshake, TLS\n- Response\n\nFor stages the logs don't cover, I'll add minimal timing spans: monotonic timestamps at handler-module load start, after imports, after each init step, and at handler entry and exit, all tagged with the request ID. If needed, I'll add an import-time profile (`-X importtime` or `NODE_OPTIONS=--cpu-prof`, depending on runtime) and tracing on outbound init calls such as secrets, config, and DB, recording retries and timeouts.\n\nI'll reconcile the stage sum against measured init and gateway totals. Anything left over gets reported as an unobserved gap, not assigned to the nearest stage. I also won't sum per-stage p95s; I'll work from per-request breakdowns of p95-tail requests.\n\n**3. Build a reversible test path**\n- Deploy a copy of the function to an isolated stage or alias with the instrumentation. Same artifact, memory, region, and VPC config, and no shared-state edits.\n- Write a script that forces cold starts (config-env bump or a fresh version per run), invokes through the real gateway, captures logs and traces, and tears everything down.\n- Verify that it reproduces production's cold-start distribution before comparing anything. Run 30+ cold samples and record the warm baseline and instrumentation overhead.\n\n**4. Rank and test fixes against the measured breakdown**\nFor each candidate, estimate the ceiling first (its stage's share of the tail). Likely candidates, if the data supports them:\n- Trim or lazy-load heavy imports\n- Bundle and tree-shake to shrink the package\n- Parallelize or cache init network calls such as secrets\n- Defer DB connection setup\n- Choose a different memory/CPU setting\n- Use SnapStart, provisioned concurrency, or keep-warm. These trade cost for latency, so the decision is yours.\n\nEach change gets an A/B run on the isolated path, compared with p50 and p95 and sample counts. Anything that looks surprisingly large gets rechecked for a stale alias, caching, or a no-op change.\n\n**Deliverables**\n- A per-stage breakdown with coverage and the unexplained remainder\n- Ranked changes with measured before and after numbers\n- A run log entry\n- Next step: `/evolve` for the winning change, or `/diagnose` if init failures or retries show up\n\n**First, I need from you:** which platform and runtime this runs on, and read access to its logs and traces.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "Use SnapStart",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A15",
+   "skill": "codebase-design",
+   "arm": "current",
+   "sample": 0,
+   "task": "Design the module for billing usage metering. Today usage is computed in four places that disagree by up to 3% on the same customer-month.",
+   "words": 675,
+   "text_digest": "6d55b4bc61c9847f",
+   "reply": "# Plan: one deep usage-metering module\n\nNo tools are available this turn, so this is the plan, not results.\n\n## First steps\n\n1. **Read the domain language.** Read `CONTEXT.md` or `CONTEXT-MAP.md` and the billing ADRs. I'll check whether \"usage\", \"billable event\", \"billing period\" and \"customer-month\" have defined meanings. Four disagreeing implementations usually mean the term itself is overloaded.\n2. **Find the four computations.** Grep for usage aggregation in invoicing, dashboards, quota or limits, and analytics exports, and list each caller. For each one I'll note:\n   - which events it counts and how it deduplicates them\n   - the timezone and period boundary it uses\n   - how it handles late or corrected events\n   - where and how it rounds\n   - its proration rules\n3. **Replay real cases.** Pick about 20 real customer-months, including the ones with the 3% gap, plus edge cases:\n   - events at a month boundary\n   - duplicate idempotency keys\n   - events that arrive after close\n   - mid-month plan changes\n   - DST shifts\n\n   I'll run all four paths over a frozen event snapshot and record each delta.\n\n## What I'll measure\n\n- **Per-path delta** against a reference result for each customer-month. The reference comes from the definition you approve, not from whichever path is currently treated as \"most correct\".\n- **Cause of each delta.** I'll explain every gap by a named rule (for example \"UTC vs. account timezone\" or \"round per event vs. per total\"). The aim is 100% of the 3% explained before any code is written.\n- **Done means** all callers produce identical results through the new module on the replay set, and the old paths are deleted.\n\n## The decision only you can make\n\nWhich rules are correct is a billing-policy question, not a code question. I'll show you the list of rule conflicts with concrete numbers and ask you to pick. That choice changes invoices and is hard to reverse, so it gets an ADR in `docs/adr/`.\n\n## What I'll build\n\nI'll start with four interface options, then compare them on depth, locality and seam placement:\n\n- **(a) Minimal:** `meter(customerId, period) \u2192 UsageStatement`\n- **(b) Flexible:** a query builder over events\n- **(c) Common caller trivial:** `meter` plus `meterSoFar` for live quota checks\n- **(d) Ports and adapters:** (c) with explicit ports\n\nMy likely pick is **(c) with (d)'s ports**:\n\n- **Interface:** `UsageStatement` holds line items with exact decimal quantities, the period's inclusive and exclusive bounds, the rule version, and a `final | provisional` status.\n- **Inside the module:** dedup, boundary resolution, late-event policy, proration and rounding (applied once, at the end).\n- **Event store dependency:** a real port, using Postgres in production and PGlite in tests.\n- **Clock dependency:** injected.\n- **Plan history dependency:** in-process, so it uses real code.\n- **No public internal seams.**\n\nTests will go through `meter` and `meterSoFar` only, using the replay set as a golden suite. Once callers migrate, I'll delete the old tests for the four paths.\n\n## Domain upkeep\n\nI'll update `CONTEXT.md` with the resolved terms. For example: **Billable Event**, **Billing Period** (avoid: \"month\", \"cycle\"), and **Usage Statement** (avoid: \"usage report\", \"totals\").\n\n## Afterwards\n\nI'll log the run with `skill-run-log /codebase-design --target \"usage metering\" \u2026`. The next step is `/tdd` against the agreed interface, then `/simplify` to remove the four old paths.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "all callers produce identical results through the new module on the replay set, and the old paths are deleted.",
+    "judge_model": "gpt-6.2-astra"
+   }
+  },
+  {
+   "scenario": "A15",
+   "skill": "codebase-design",
+   "arm": "current",
+   "sample": 1,
+   "task": "Design the module for billing usage metering. Today usage is computed in four places that disagree by up to 3% on the same customer-month.",
+   "words": 675,
+   "text_digest": "6d55b4bc61c9847f",
+   "reply": "I'll first explain why the four paths disagree, then design one deep module that replaces them.\n\n## First concrete steps\n\n1. **Read the domain language.** Read `CONTEXT.md` (or `CONTEXT-MAP.md`) and any ADRs that cover billing, usage, invoicing, or time zones. I expect the 3% gap is partly a vocabulary problem, with \"usage,\" \"billable usage,\" \"metered event,\" and \"period\" meaning different things in different places. I'll flag each such conflict.\n2. **Find the four computation sites.** I'll trace each one from its caller (invoice generation, dashboard, export, alerts, or whatever they turn out to be) down to its raw data source. For each, I'll record:\n   - the event source\n   - deduplication key\n   - period boundary and time zone\n   - late-event cutoff\n   - rounding point and precision\n   - proration\n   - filters such as test accounts or refunds\n3. **Classify dependencies.** Usage arithmetic is in-process, so it gets merged behind one interface and tested with the real code. The event store and the database get a local substitute such as PGlite if one is available. Any third-party billing provider gets an injected port with a mock adapter.\n\n## What I'll measure, and against what\n\nI'll build a **differential characterization harness**. It runs all four existing paths over the same frozen sample of customer-months, using a snapshot or fixture, and records the per-path totals.\n\n- **Metric:** absolute and relative difference per customer-month for each pair of paths, plus each path compared with an **independently computed reference**. The reference will be a hand-checked recomputation for about 20 edge-case customers: month boundary in a non-UTC zone, duplicate events, late arrivals, mid-month plan change, and zero usage.\n- **Attribution:** for each discrepancy, I'll toggle one rule at a time (dedup, boundary, rounding, cutoff) and see how much of the gap each rule explains. The goal is to account for the full 3% with named causes rather than guesses.\n- **Success criterion for the new module:** it matches the reference exactly on the edge-case set. Every remaining difference from the old paths must be explained by a decided rule.\n\n## What I'll build (design, not yet implementation)\n\nThe rules that cause divergence get written down as glossary terms, for example **Metering Period**, **Billable Event**, and **Late Event**, with rejected synonyms listed as `_Avoid_`.\n\nI'll sketch four genuinely different interfaces:\n- **Minimal:** `meter(customerId, period) \u2192 UsageStatement`\n- **Flexible:** a policy object that callers configure\n- **Common caller made trivial:** a statement passed straight to invoicing\n- **Ports and adapters:** an `EventSource` port\n\nI'll compare them on depth, locality, and seam placement. My likely recommendation is the minimal interface returning an itemized, immutable `UsageStatement` that includes rounding provenance, with `EventSource` as the only seam. That seam is real because production and tests use different adapters.\n\nFor any decision that is hard to reverse, such as invoice-time rounding versus per-event rounding, or the period time zone, I'll write an ADR. These choices change what customers are charged. I'll ask you to confirm them before anything changes.\n\n**Next:** run `/tdd` against the agreed interface, using the edge-case set as the first tests. Then run `/simplify` to delete the four old paths and their tests. Finally, log the run with `skill-run-log`.",
+   "served": [
+    "claude-opus-5-5"
+   ],
+   "judgment": {
+    "q1": false,
+    "q1_quote": "",
+    "q2": false,
+    "q2_quote": "",
+    "q3": true,
+    "q3_quote": "Usage arithmetic is in-process, so it gets merged behind one interface",
+    "judge_model": "gpt-6.2-astra"
+   }
+  }
+ ]
+}
