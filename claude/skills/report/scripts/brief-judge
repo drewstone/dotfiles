@@ -445,9 +445,10 @@ def measurement(selection, judge=None, baseline=False):
     return block
 
 
-def append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge, beat):
-    """Append the score through climb-log, which checks the row; returns the row, or raises RuntimeError."""
-    now = datetime.now(timezone.utc)
+def append_ledger(ledger, root, deliverable, digest, total, rows, weakest, judge, beat, now=None):
+    """Append the score through climb-log, which checks the row; returns the row, or raises RuntimeError.
+    `now` is the row's time, the current time unless a caller names one."""
+    now = now or datetime.now(timezone.utc)
     scored = {"total": total, "max": 30, "scores": {r["key"]: r["score"] for r in rows},
               "weakest": [r["key"] for r in weakest], "sha256": digest, "judge": judge,
               "measurement": measurement(f"the deliverable {deliverable} (sha256 {digest[:12]})", judge, beat is None)}
