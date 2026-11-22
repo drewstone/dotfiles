@@ -44,6 +44,7 @@ Append one JSON object per completed comparison.
 
 A `measurement` block names how a number's sample was chosen: metric, unit, selection, selectBy, n, basis, its window, and for a per-release number one codeVersion and its deployedAt.
 `climb-log schema` prints the contract, and `climb-log append` writes a climb ledger row only when it holds; a row in `.agent/experiments.jsonl` carries the same block.
+A climb ledger row's `prediction` is a block `climb-log` checks against the result, and the tool, not the agent, writes `outcome.verdict` ([predictions a program checks](../../../docs/processes/climb.md#predictions-a-program-checks)).
 
 Store raw observations, sample counts, analysis, and errors in the referenced evidence.
 Do not invent a numeric `delta` or duration to satisfy this schema.
