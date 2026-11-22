@@ -36,7 +36,7 @@ Retained learning goes to the auto-memory directory or a climb-ledger row, not a
 ## Climb
 
 A reflection measures the operator and its tools ([the climb](../../../docs/processes/climb.md)).
-- Score every prediction made in the period: PASS, FAIL or PENDING, plus calibration.
+- Score every prediction made in the period with `climb-log score` (hit rate, Brier score and calibration from the tool's verdicts) and list the open ones with `climb-log open` ([the ledger](../../../docs/processes/climb.md#predictions-a-program-checks)).
 - Record each correction from the person served as a ledger row with its theme, and count recurrences after a change; a recurring theme escalates to a check or architecture.
 - Measure the period with [`scripts/self-audit`](scripts/self-audit) over its session files, and keep its counts: guardrail matches, rework (repeated commands, rollbacks, revert commits with `--repo`) and stall minutes. A match is a lead: read it in the transcript before calling it a violation. [The self-audit reference](references/self-audit.md) says where the files and incident times live.
 - For each incident, state the time to detect and to recover; chart every count with a time axis or three or more values ([report evidence rule](../report/SKILL.md#state-what-the-evidence-supports)).

@@ -56,7 +56,7 @@ The run ends when the outside check shows the target met, or at an explicit limi
 
 ## Preserve and report
 
-After each decision update `.agent/current.json` and `.agent/progress.md`, append `.agent/experiments.jsonl` ([schema](schema.md)) and the climb ledger row (`layer`, `hill`, `prediction`, `outcome`), and refresh `.agent/scorecard.json`; read [durable unattended runs](references/unattended-runs.md) before handing control to a runner.
+After each decision update `.agent/current.json` and `.agent/progress.md`, append `.agent/experiments.jsonl` ([schema](schema.md)) and the climb ledger row (`layer`, `hill`, a `prediction` block, the `result`), and refresh `.agent/scorecard.json`; read [durable unattended runs](references/unattended-runs.md) before handing control to a runner.
 Report the bar, before and after against it, coverage, uncertainty, regressions, resource use and decision evidence, with projections labeled apart from measurements.
 
 ## Log the run

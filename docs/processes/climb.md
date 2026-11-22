@@ -64,7 +64,7 @@ Match depth to the ask:
 3. **Visuals built from data:**
    - in the terminal, charts (bars, grouped bars, sparklines, pass/fail strips, stacks, waterfalls, timelines, tables), never typed by hand;
    - only in the page cases [AGENTS.md](../../claude/AGENTS.md) names, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and written as a local HTML file under `~/reviews/` (never a claude.ai artifact: an account switch makes it unreadable).
-4. **Scoreboard:** every registered prediction as PASS, FAIL or PENDING beside its measured value.
+4. **Scoreboard:** every registered prediction as hit, miss or open beside its measured value, from `climb-log score` and `climb-log open`.
 5. **Proposals:** each states today's number, the number to beat, the test, the owner and the first step, ranked by impact for the effort.
 6. **Next:** one line naming the next action, and the page's absolute path when one was written.
 
@@ -121,8 +121,8 @@ Historical bytes are never rewritten.
 A row is an [`evolve` experiment record](../../claude/skills/evolve/schema.md) plus four fields:
 - `layer`;
 - `hill`;
-- `prediction` (the number to beat, written before the move);
-- `outcome` (`PASS`, `FAIL` or `PENDING`, with the measured value).
+- `prediction`, a block a program can check, written before the move ([below](#predictions-a-program-checks));
+- `outcome`, whose `verdict` `climb-log` writes, never the agent.
 
 A hill's current position is a row with `lever: "baseline"`.
 Each repository that keeps a ledger marks it `merge=union` in `.gitattributes`, so a local merge of two branches that each append rows keeps every row.
@@ -139,6 +139,32 @@ Each baseline or result that reports a number carries a `measurement` block:
 - for a per-release number, one `codeVersion`, and `deployedAt` at or before `window.from` when the selection is live traffic.
   Per-release covers a compared code, config, infra, model or prompt change, and product, agents and system positions unless `perRelease: false` declares a multi-release window.
 - on a baseline row, the `instrument` and its `calibration`: PASS or FAIL with the `check` that compared the instrument with a known answer and that answer (`against`), or UNCALIBRATED with what would calibrate it (`next`).
+
+### Predictions a program checks
+
+From 2026-11-23, `climb-log append` refuses a row whose `prediction` is text, and prints the block it wants:
+
+```json
+{"claim": "Caching the parsed config cuts cold start p50 below 800 ms",
+ "metric": "cold start p50", "unit": "ms",
+ "expect": {"op": "<", "value": 800}, "confidence": 0.7}
+```
+
+- `expect.op` is `<`, `<=`, `>`, `>=`, `==` or `between`, whose `value` is `[low, high]`.
+- A yes/no prediction uses unit `bool` with `{"op": "==", "value": 1}`.
+- `confidence` is the probability that the claim holds, strictly between 0 and 1.
+
+When the row also carries a numeric `result.value` whose `measurement` names the same metric and unit, `climb-log` stamps `outcome.verdict` `hit` or `miss`.
+It refuses a row whose own verdict disagrees, and a result that measures another metric or unit, naming both.
+A result that arrives later is a new row, `{"closes": "<predicted row id>", "result": ...}`, in the same project and hill; `climb-log` stamps the verdict on that row.
+An abandoned prediction closes with `"outcome": {"verdict": "void", "reason": "..."}`.
+
+Three readers score the ledger from those verdicts alone, each with `--json`:
+- `climb-log open [--older-than 3d]` lists predictions with no verdict, oldest first;
+- `climb-log score [--by project|hill|layer|lever]` gives closed share and hit rate with 95% Wilson intervals, the Brier score and a calibration table, and counts every row it left out with the reason;
+- `climb-log export --changes` writes one line per closed prediction with its block, result, verdict and the PR and commit references in its evidence.
+
+Rows written before the contract keep their text. A labels file (`--labels FILE`) gives them blocks: write each block from the prediction text alone, before reading the row's result, or mark the row `unreadable` with the reason.
 
 The skills that analyze or operate (`report`, `reflect`, `evolve`, `be-ambitious`) read the ledger before starting and append to it before finishing.
 
