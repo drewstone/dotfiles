@@ -103,8 +103,7 @@ with tempfile.TemporaryDirectory(prefix="census-gitlinks-") as temporary:
         run(repo, "git", "add", "src/main.py")
         run(repo, HOOKS / "loc-ratchet", contains="this change adds 1 production lines")
         run(repo, CENSUS, "floors", ".", "HEAD", "WORKTREE", "--floor", "lines", status=1, contains="REFUSED: may not rise")
-        for path, body, why in [("src/large.py", "value = 1\n" * 1001, "1001 lines (new file)"),
-                                ("src/long.py", "def large():\n" + "    pass\n" * 301, "fn-ratchet: refusing commit"),
+        for path, body, why in [("src/long.py", "def large():\n" + "    pass\n" * 301, "fn-ratchet: refusing commit"),
                                 ("src/long.ts", "export function large() {\n" + "    void 0;\n" * 301 + "}\n", "fn-ratchet: refusing commit"),
                                 ("src/bad.py", "*** malformed\n", "python functions refused:")]:
             write(repo, path, body)
@@ -115,9 +114,6 @@ with tempfile.TemporaryDirectory(prefix="census-gitlinks-") as temporary:
                 run(repo, CENSUS, "measure", ".", "WORKTREE", status=2, contains="python functions refused:")
             run(repo, "git", "rm", "--cached", "-q", path)
             (repo / path).unlink()
-        write(repo, "bin/tool", "#!/bin/sh\n" + "echo ready\n" * 1000)
-        run(repo, "git", "add", "bin/tool")
-        commit(repo, "fix: oversized script", status=1, contains="bin/tool: 1001 lines (was 2)")
         write(repo, "bin/tool", "#!/bin/sh\necho ready\n")
         write(repo, "src/main.py", "value = 1\n")
         run(repo, "git", "add", "bin/tool", "src/main.py")

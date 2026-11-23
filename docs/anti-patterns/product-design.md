@@ -132,7 +132,7 @@ Why these pages regress:
 - No record holds the result's number, baseline, bar and object, so the page fills its slots with the run's brief.
 - Status is computed in several places from partial state, so the places disagree.
 - Redesigns stop at a storyboard, and the build that follows ships a slice.
-- The build ends unmerged: a redesign this size passes the growth limit, and when the brief does not line up its `Growth:` line, the deploy path and the served-page capture before the build starts, the work waits at the merge and the served page never changes.
+- The build ends unmerged: when the brief does not line up the deploy path and the served-page capture before the build starts, the work waits at the merge and the served page never changes.
 - The builder cannot see the page before merge: the viewer builds only on a gate host, so nobody renders it on the real worst-case runs until it is served; the brief names how the builder will see the rendered page, or the served page is the first render and the fix-forward is planned.
 
 Fix the cause, not the page: one function computes every status from the records, settlement writes the result as data, and the [result page gate](review-gates.md#result-page-gate) runs on the rendered page before merge and after deploy.

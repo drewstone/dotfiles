@@ -81,9 +81,8 @@ test("a merge commit is charged only for what it adds beyond both parents", () =
   write(dir, { "src/a.py": a(30, grown + "own0 = pick(0, 0)\nown1 = pick(1, 1)\n"), "src/big.py": big(997, grown + "g3 = 3\ng4 = 4\ng5 = 5\ng6 = 6\nown0 = pick(0, 0)\nown1 = pick(1, 1)\n") });
   git("add", "-A");
   const evil = run(dir, join(hooks, "loc-ratchet"), []);
-  assert.equal(evil.status, 1, evil.stderr);
+  assert.equal(evil.status, 0, evil.stderr);
   assert.match(evil.stderr, /this change adds 4 production lines/);
-  assert.match(evil.stderr, /src\/big\.py: 1006 lines \(was 997\)/);
 });
 
 test("a commit reports the production lines it adds and is not refused for them; a repository's first commit reports nothing", () => {
@@ -344,7 +343,7 @@ test("Storybook CSF suffixes are outside production while stories routes and mod
 
 test("ratchets run with no origin or a listed origin owner and skip another owner's clone, also without guard-config", () => {
   const { dir, git } = repo({ "src/a.py": "a = 1\n" });
-  write(dir, { "src/b.py": lines(1001, (i) => `b${i} = ${i}`) });
+  write(dir, { "src/b.py": "def large():\n" + "    pass\n".repeat(301) });
   git("add", "-A");
   const config = join(scratch, "ratchets-home/.claude/guard-config.json");
   mkdirSync(dirname(config), { recursive: true });
@@ -353,7 +352,7 @@ test("ratchets run with no origin or a listed origin owner and skip another owne
     if (owners !== undefined) writeFileSync(config, JSON.stringify({ ratchets: { owners } }));
     return spawnSync(join(hooks, "ratchets"), [], { cwd: dir, encoding: "utf8", env: { ...env, HOME: join(scratch, "ratchets-home") } }).status;
   };
-  assert.equal(ratchets(), 1, "no origin: the oversized file is refused");
+  assert.equal(ratchets(), 1, "no origin: the oversized function is refused");
   git("remote", "add", "origin", "git@example.invalid:owner-a/app.git");
   assert.equal(ratchets(), 0, "no guard-config: another owner's clone follows its maintainers' rules");
   assert.equal(ratchets(["owner-b"]), 0);

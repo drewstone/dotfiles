@@ -26,8 +26,6 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import classify as C  # noqa: E402
-GH, _, FORK_PARENT_OWNERS = subprocess.run(["sh", "-c", 'f="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/census.env"; [ ! -r "$f" ] || . "$f" >/dev/null; printf "%s\n%s" "${CENSUS_GH:-gh}" "${CENSUS_FORK_PARENT_OWNERS:-}"'], capture_output=True, text=True).stdout.partition("\n")
-GH = GH or "gh"
 
 GROUPS = {
     "lines": ["prod_lines"],
@@ -56,18 +54,18 @@ def optional_ref(checkout, ref):
 
 
 def production_delta(checkout, base, head, merge=None, paths=None):
-    """The growth charge in code lines (production tokens added less removed, over TOKENS_PER_LINE), logic files grown past
-    FILE_LIMIT physical lines, added lines over LINE_LIMIT, and each normalized code line's net count; a merge pays only its own additions."""
+    """The production change in code lines (tokens added less removed, over TOKENS_PER_LINE) and the added lines over
+    LINE_LIMIT; a merge counts only its own additions."""
     if merge:  # the lesser of its two three-way readings, on paths unlike both parents: a rename never charges the other side's edit
         fork = git(checkout, "merge-base", base, merge).decode().strip()
         paths = set.intersection(*(set(git(checkout, "diff", "--name-only", "--no-renames", "-z", p, head).decode().split("\0")[:-1]) for p in (base, merge)))
-        (mine, big, wide, _), (theirs, past, broad, _) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
+        (mine, wide), (theirs, broad) = [production_delta(checkout, p, head, paths=paths) for p in (base, merge)]
         return (min(mine - production_delta(checkout, fork, merge, paths=paths)[0], theirs - production_delta(checkout, fork, base, paths=paths)[0]),
-                [o for o in big if o[0] in {p for p, _, _ in past}], [w for w in wide if w in broad], collections.Counter())
+                [w for w in wide if w in broad])
     blob = lambda ref, name, mode: production(checkout, ref, read_blobs(checkout, ref, [name])
                                               if mode not in ("000000", "160000") and C.candidate(name) else {}).get(name)
     parts = iter(git(checkout, "diff", "--raw", "-z", "-M", "--diff-filter=ACDMRT", base, head).decode().split("\0")[:-1])
-    growth, oversized, long, keys = 0, [], [], collections.Counter()
+    growth, long = 0, []
     for entry in parts:
         old_mode, new_mode, _, _, status = entry.removeprefix(":").split()
         old_path = next(parts)
@@ -75,62 +73,10 @@ def production_delta(checkout, base, head, merge=None, paths=None):
         if paths is not None and not {old_path, path} & paths:
             continue
         old, new = blob(base, old_path, "000000" if status[0] == "C" else old_mode), blob(head, path, new_mode)
-        (before, after), sizes = [C.code(p, b or b"") for p, b in ((old_path, old), (path, new))], [b and C.line_count(b) for b in (old, new)]
+        before, after = [C.code(p, b or b"") for p, b in ((old_path, old), (path, new))]
         growth += C.tokens(after) - C.tokens(before)
-        keys.update(C.normalized(after, trivial=True))
-        keys.subtract(C.normalized(before, trivial=True))
-        if new and sizes[1] > max(C.FILE_LIMIT, sizes[0] or 0):
-            oversized.append((path, sizes[0], sizes[1]))
         long += [(path, *found) for found in C.long_lines(old, new or b"")]
-    return growth / C.TOKENS_PER_LINE, oversized, long, keys
-
-
-def restored(checkout, base, head, keys):
-    """Code lines the PR adds back that a commit on the base deleted, when one of its commit messages cites that commit with a
-    `Restores: <sha>` line: a line counts only if its normalized form is among the lines that commit removed, as often as it did.
-    A clone that lacks that commit's blobs refuses the claim, never fetching them one at a time or guessing."""
-    pool = collections.Counter()
-    for sha in sorted(set(re.findall(r"(?mi)^Restores: *([0-9a-f]{40})\s*$", git(checkout, "log", "--format=%B", f"{base}..{head}").decode()))):
-        try:
-            if subprocess.run(["git", "-C", checkout, "merge-base", "--is-ancestor", sha, base], capture_output=True).returncode:
-                raise Refused(f"{sha} is not on the base branch")
-            git(checkout, "diff", "--numstat", f"{sha}^", sha, env=dict(os.environ, GIT_NO_LAZY_FETCH="1"))
-            pool.update({k: -n for k, n in production_delta(checkout, f"{sha}^", sha)[3].items() if n < 0})
-        except Refused as why:
-            print(f"census: no restore credit from {sha[:12]}, charged in full: {why}", file=sys.stderr)
-    tokens = sum(min(n, pool[k]) * C.tokens(k) for k, n in keys.items() if n > 0 and pool[k])
-    if tokens:
-        print(f"census: {round(tokens / C.TOKENS_PER_LINE)} code lines restore deleted code: charged 0, a debit against that deletion", file=sys.stderr)
-    return tokens / C.TOKENS_PER_LINE
-
-
-def github(endpoint, *flags):
-    run = subprocess.run([GH, "api", endpoint, *flags], capture_output=True, timeout=60)
-    if run.returncode:
-        raise Refused(f"{endpoint} could not be read through {GH}")
-    return [json.loads(line) for line in run.stdout.splitlines()] if flags else json.loads(run.stdout)
-
-def repository(url):
-    m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
-
-def declared_growth(pr):
-    """The writer's `Growth: <why>` line in the body of a PR of this checkout's origin, read once and holding at every head.
-    The line starts with `Growth:` after at most three spaces, outside HTML comments and fenced code blocks. Its reason counts when,
-    with zero-width characters and the markup punctuation \\ ` * _ ~ and quotes removed, it is not one `<placeholder>` and holds
-    at least three words of two or more letters."""
-    if not re.fullmatch(r"[\w.-]+/[\w.-]+#[1-9]\d*", pr):
-        raise Refused(f"a growth declaration needs the pull request as <owner>/<repo>#<number>, not {pr!r}")
-    origin = repository(git(".", "remote", "get-url", "origin").decode())
-    if origin.lower() != f"https://github.com/{pr.partition('#')[0]}.git".lower():
-        raise Refused(f"{pr} is not the repository this checkout's origin names ({origin})")
-    text = re.sub(r"\r\n?", "\n", github(f"repos/{pr.replace('#', '/issues/')}")["body"] or "")
-    text = re.sub(r"(?ms)<!--.*?(?:-->|\Z)|^ {0,3}(`{3,}|~{3,}).*?(?:^ {0,3}\1|\Z)", "", text)  # text the writer did not write as prose
-    for reason in re.findall(r"(?m)^ {0,3}Growth:(.*)$", text):
-        plain = re.sub("[\u00ad\u180e\u200b-\u200f\u2060-\u2064\ufeff\\\\`*_~\"'\u2018\u2019\u201c\u201d]", "", reason).strip()
-        if not re.fullmatch(r"<[^<>]*>", plain) and len(re.findall(r"[^\W\d_]{2,}", plain)) >= 3:
-            print(f"census: {pr} declares its growth: {reason.strip()!r}", file=sys.stderr)  # escaped: a PR body cannot write to the log
-            return True
-    return False
+    return growth / C.TOKENS_PER_LINE, long
 
 
 def tree_of(checkout, rev):

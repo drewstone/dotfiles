@@ -36,35 +36,12 @@ Repo-pair counts sum file-pair/window combinations. Preview scores add window si
 Every metric is better smaller. Floor groups are declared in `GROUPS` in [census](census); individual metric names also work.
 `copies` needs peers for cross-repository windows; without peers, that part is explicitly unmeasured unless requested individually, which refuses.
 
-## Growth
+## Size and growth
 
-Growth is enforced at merge only: at a commit `loc-ratchet` prints the production lines the change adds and refuses nothing for them.
-The merge check is `loc-ratchet <merge-base>..<head> <owner>/<repo>#<number>`, run by whatever merges the pull request.
-It charges one number, the PR's total production change: deletions anywhere offset additions anywhere, across every directory.
-A line of the charge is `tokensPerLine` tokens of code, and `prod_lines` uses the same unit; a token is a word or one punctuation character.
-Comments, Python docstrings and blank lines are not code, so packing, reflowing and editing comments charge nothing; file and function limits still count physical lines.
-A total at or under `growthLimit` in [patterns.json](patterns.json) merges with nothing more. Deleted tests and docs never pay for production growth.
-A restore is not growth: a commit message in the PR that carries `Restores: <sha>` for a commit on the base branch makes each added line that commit removed, matched by its whitespace-normalized text, charge nothing, and the check prints it as a debit against that deletion.
-That lookup reads the deleting commit's blobs without fetching them; a clone that lacks them refuses the claim and charges the lines in full.
-A commit and the merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess; it never refuses.
-Large changes are welcome when the capability earns them. Above the growth limit, the PR's writer says why once, in the PR body, on a line of its own whose `<why>` says what the capability is and what existing code it reuses or replaces:
-
-```text
-Growth: <why>
-```
-
-The merge check reads that line from the PR's body at every merge, so it holds at each later head with no re-declaration, and it names no number.
-The line starts with `Growth:` after at most three spaces; a bullet, bold, a quote or another letter case is not the line.
-Lines inside HTML comments and fenced code blocks do not count, so a template's instructions and quoted examples never declare growth.
-The reason counts when, with zero-width characters and the markup punctuation `\`, `` ` ``, `*`, `_`, `~` and quotes removed, it is not one `<placeholder>` and holds at least three words of two or more letters; `<Dialog> primitive replacing three modal copies` counts, `<why>` and `why` do not.
-A PR over the limit without such a line does not merge; the refusal prints the line to add, and an accepted merge prints the reason it read, escaped.
-The PR named must belong to the repository the checkout's `origin` names, compared without case; another repository's PR refuses the merge (exit 2), as a malformed one does.
-To audit growth, search merged PR bodies for the line, as `gh search prs --owner <owner> --merged --match body Growth` does.
-`gh` (`CENSUS_GH` in `$DOTFILES_PRIVATE/claude/config/census.env`) reads the PR's body.
-`CENSUS_FORK_PARENT_OWNERS` in the same configuration lists comma-separated GitHub parent owners whose forks retain the line policy; a verified fork of any other owner skips only `loc-ratchet`, and the check looks a fork up only for a merge it would otherwise refuse. Missing or invalid configuration keeps enforcement.
-A check that cannot measure or cannot read GitHub refuses the merge (exit 2). An over-limit merge reads GitHub once, for the PR's body, and the fork lookup adds one read to a merge the check would refuse; a merge at or under the limit with no file over its limit reads nothing.
-The check runs only where the merging tool calls it: a merge issued with plain `gh` or the web button skips it entirely. A declaration permits only production growth: the file and function limits, the commit-time export ratchet and every other cap and floor stay as they are.
-[The qualification](../../tests/census-growth.integration.py) runs the commit hook and the merge check against a temporary repository, a blob-less clone of it and a fake `gh` that serves the PR's body, its comments and the repository and logs each read.
+Nothing refuses a commit or a merge for production growth or file size.
+At a commit `loc-ratchet` prints the production lines the change adds: deletions anywhere offset additions anywhere, a line is `tokensPerLine` tokens of code, and comments, tests and docs are not counted.
+A commit and a merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess.
+`census measure` reports `prod_lines` and `files_over_1000` for a whole repository.
 
 ## Integrity
 

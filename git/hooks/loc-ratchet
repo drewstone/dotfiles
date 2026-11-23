@@ -1,68 +1,32 @@
 #!/usr/bin/env python3
-"""Enforce file sizes at commit, report growth and warn of long lines; `A..B [owner/repo#N]` is the merge check, which enforces growth."""
+"""Report the production lines a commit adds and warn of long added lines; `A..B` warns for a merge. Nothing is refused for size or growth."""
 from runpy import run_path
 from types import SimpleNamespace
 import os
-import re
 import sys
 
 sys.dont_write_bytecode = True
 census = SimpleNamespace(**run_path(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "census")))
 
 
-def third_party_fork():
-    """Only GitHub metadata proving an external parent exempts this repository."""
-    try:
-        owners = census.FORK_PARENT_OWNERS.strip().lower()
-        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*", owners):
-            return False
-        origin = census.repository(census.git(".", "remote", "get-url", "origin").decode())
-        match = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)\.git", origin)
-        if not match:
-            return False
-        repo = census.github(f"repos/{match[1]}")
-        owner = repo.get("parent", {}).get("owner", {}).get("login", "").strip().lower()
-        return repo.get("fork") is True and bool(owner) and owner not in owners.split(",")
-    except Exception:
-        return False
-
-
 def main():
     merging = len(sys.argv) > 1
-    if merging:  # the merge check: <base>..<head> [<owner>/<repo>#<number>]
+    if merging:  # a merge: <base>..<head>; whatever else the caller passes is ignored
         base, head = sys.argv[1].split("..", 1)
         head, merge = census.git(".", "rev-parse", "--verify", f"{head}^{{commit}}").decode().strip(), None
     else:
         base = census.optional_ref(".", "HEAD") or census.git(".", "hash-object", "-t", "tree", os.devnull).decode().strip()
         head = census.git(".", "write-tree").decode().strip()
         merge = census.optional_ref(".", "MERGE_HEAD")
-    total, oversized, long, keys = census.production_delta(".", base, head, merge)
-    # One total of production code: deletions anywhere offset additions anywhere, a cited restore is not growth, and tests or
-    # docs never pay for it. Only a repository's first commit grows from nothing.
-    total = total - (merging and census.restored(".", base, head, keys)) if census.git(".", "ls-tree", base).strip() else 0
-    limit, pr = census.C.GROWTH_LIMIT, " ".join(sys.argv[2:])
-    if not merging and total > 0:  # a commit is never refused for growth
-        print(f"loc-ratchet: this change adds {total:g} production lines;"
-              f" a PR over {limit} says why in its body with `Growth: <why>` (git/census/README.md).", file=sys.stderr)
-    if long:  # a warning only, at a commit and at merge: line breaks cost nothing in the token unit
+    total, long = census.production_delta(".", base, head, merge)
+    # One total of production code: deletions anywhere offset additions anywhere, and tests or docs are not counted.
+    # A repository's first commit grows from nothing and reports nothing.
+    if not merging and total > 0 and census.git(".", "ls-tree", base).strip():
+        print(f"loc-ratchet: this change adds {total:g} production lines.", file=sys.stderr)
+    if long:  # line breaks cost nothing in the token unit
         print(f"loc-ratchet: warning: {len(long)} added production lines over {census.C.LINE_LIMIT} characters, not counting one URL or hash:\n"
               + "\n".join(f"  {path}:{number} ({length} characters)" for path, number, length in long), file=sys.stderr)
-    # The declaration is read before the fork lookup, so a declared PR's merge makes one GitHub read.
-    grown = merging and total > limit and not (pr and census.declared_growth(pr))
-    if (oversized or grown) and third_party_fork():
-        return 0
-    if grown:
-        print(f"loc-ratchet: refusing merge: the PR adds {total:g} production lines (code tokens over {census.C.TOKENS_PER_LINE}),"
-              f" over the {limit} that merge without saying why.\n"
-              "  Large is fine when the capability earns it. Add this line to the PR body, with <why> saying what the capability is\n"
-              "  and what existing code it reuses or replaces:\n"
-              "Growth: <why>\n"
-              "  Deleted tests and docs do not offset growth; a restore of deleted code is free when a commit message cites it, `Restores: <sha>`.",
-              file=sys.stderr)
-    for path, old, new in oversized:
-        print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
-              f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)
-    return int(bool(oversized or grown))
+    return 0
 
 
 if __name__ == "__main__":
