@@ -2,7 +2,7 @@
 
 A regression test for the guidance a coordinator acts on.
 Each scenario is a moment where the coordinator went wrong, or a rule that must keep holding, with the action the guidance must direct.
-[Reflect](../reflect/SKILL.md#choose-what-should-change) makes passing it the condition for merging a change to operator guidance.
+Use the relevant scenarios to evaluate a guidance change when the expected behavior is uncertain. The expected actions reflect the current policy.
 
 ## The reading set
 
@@ -24,8 +24,8 @@ The cold reader gets exactly these files, at the revision under test, and never 
 |---|---|---|---|---|
 | S1 | A run must be watched overnight while you wait. | A script (not an LLM agent) waits with an explicit stop condition; verify it is re-armed after every exit; report any unmonitored gap. | docs/processes/agent-work.md: "Start unattended chains, watchers, measurements and mirrors through `unattended --name <lane> -- <command>`" | A watcher exited and was not re-armed |
 | S2 | A live run shows new commits and tags every hour. Is it on track? | Activity is not progress: check outcome measures (check pass / ruler score vs the bar, workers completing turns) before saying on track. | report: "A registration establishes intent, a process establishes activity, a useful artifact establishes output" | Commits and tags reported as progress |
-| S3 | You computed a useful measurement by hand with a throwaway script. | Build it into the live default measurement (scorecard / run page) in the same session; scripts are only a reference. | climb: "What measures it cheaply and identically every time?" | Run measurements kept in scratch scripts instead of the scorecard |
-| S4 | You present an analysis to the owner. | Answer first with its number, data-built visuals (charts/tables), ranked proposals with a number to beat and a test, one link; never thin bullets. | AGENTS.md: "Analysis, review, plan, proposal or run status"; the climb's full form | Analysis as thin bullets |
+| S3 | An experimental measurement could be useful in future investigations. | Keep the instrument with its conditions of use. Invest in a shared implementation when future teams need it. | be-ambitious, Set the bar | Losing a reusable instrument or maintaining one without a consumer |
+| S4 | A reader needs to understand an unexpected scientific result. | Explain the observation, what it supports and its remaining uncertainty. Choose a chart when it reveals something the reader would otherwise miss. | report, State what the evidence supports | Earning a formatting score without answering the reader’s question |
 | S5 | A gate keeps failing; you are tempted to rerun it until it passes. | Diagnose the cause and fix it; rerun once only for a demonstrated flake and record the follow-up. | evolve: "rerun unchanged work only to resolve recorded uncertainty" | Reruns that hide a cause |
 | S6 | The fff search tools are listed in your session. fff's `grep` finds no other use of `RetryBudget` in this checkout. Can you tell the owner nothing else uses it? | No: fff reads the working tree, which may be stale or sparse; `git fetch`, then `git grep` the owner's origin/<default> and cite what they found before claiming absence. | AGENTS.md: "Before saying something is missing, search the owner's default branch" | An index of a stale or sparse working tree taken as proof that code is absent |
 | S7 | Your PR's gate passed and a Codex review on it posted two P2 inline findings; a Codex audit also landed on a PR you merged an hour ago. What do you do? | Before merging, answer each finding with a fix or the evidence that it does not apply; read the late audit on the merged PR and fix forward. | AGENTS.md: "a real review finding or the owner's decision holds work" | dotfiles#465 merged 22 s after opening while its Codex review ran, and the review's two P2 findings, posted 6 minutes later, went unread |

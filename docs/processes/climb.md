@@ -1,14 +1,6 @@
 # The climb
 
-Everything we make is a version on a hill: a product, a ruler, an agent profile, a skill, a directive, a hook, a system, a report.
-Everything we want is a measured position on that hill.
-Every change is a move with a prediction, kept if it climbs and fixed forward or deleted if it does not.
-The hill itself is checked against the goal, so we never climb the wrong one.
-
-This document is the shared process for Claude, Codex and OpenCode.
-[`evolve`](../../claude/skills/evolve/SKILL.md) runs one hill; this document runs all of them at once, with one record.
-
-A loop that measures but never decides is not a climb.
+Use this method when a project has a measurable outcome and wants to compare successive attempts. Open research can establish which problem, representation or instrument deserves sustained work before registering a comparison.
 
 ## A hill has six parts, or it is not a climb
 
@@ -21,7 +13,7 @@ A loop that measures but never decides is not a climb.
 | **Decision rule** | When do we keep, iterate or abandon? | Results are reported but nothing changes |
 | **Calibration** | Does the metric still track the goal? | The metric saturates, drifts, or disagrees with the person's own verdict |
 
-Before work on any layer, name the hill and [set the bar](../../claude/skills/be-ambitious/SKILL.md#set-the-bar): the best known result anywhere with its source, the hill's current value, and a target that beats it.
+For a measured improvement, choose the comparison and [set the bar](../../claude/skills/be-ambitious/SKILL.md#set-the-bar).
 
 ## The layers
 
@@ -37,40 +29,15 @@ Before work on any layer, name the hill and [set the bar](../../claude/skills/be
 
 ## How to think: the level-up passes
 
-Run these in order on any analysis, plan, review or proposal before it reaches anyone.
-Each pass leaves a mark in the output, or the pass did not happen.
-
-1. **Frame.** Name the decision this informs, the hill, its current value and the number to beat.
-2. **Evidence.** Draft only from measured sources. Label each claim measured, computed or judged.
-3. **Mechanism.** Count the distinct sources of a repeated signal before naming a pattern.
-4. **Red team.** Write the pre-mortem: it is two weeks later and this failed; why? State the strongest contrary evidence and what would change the conclusion.
-   For each headline number, run the narrowest query that would come out differently if it were false: the product or its harness, merged or served, the start of the outage or the start of the log.
-   When a subscription surface offers another model (pi with GLM, Codex, another Claude seat), have it write the red team.
-5. **Bigger.** Ask what would make the result ten times better, what the best practitioner alive would do, and what we should stop doing entirely. Then ask again from the new answer.
-6. **The question not yet asked.** Name the most important question nobody has asked, and answer it or say what would.
-7. **Stress test the winner.** Recompute its numbers from two independent sources, move its weakest input to its market value, and name who loses if it is wrong.
-8. **Predict.** Write the number to beat and the test that decides it, before acting.
-9. **Visualize.** Turn the evidence into charts built from data, never retyped.
-10. **Cut.** Remove every sentence that changes no decision and carries no number.
+Choose an analysis that can change the decision. For example, test the strongest alternative explanation, inspect a counterexample, or ask which assumption limits the result. A comparison needs a credible baseline and an observation that distinguishes the alternatives.
 
 ## How to communicate
 
-Match depth to the ask:
-- an acknowledgement or routine operation gets one line;
-- an analysis, review, plan, status of a run, or proposal gets the full form below.
-
-1. **Answer first:** one sentence, with its number.
-2. **Evidence:** numbers with value, unit, baseline and source; tables where facts are parallel.
-3. **Visuals built from data:**
-   - in the terminal, charts (bars, grouped bars, sparklines, pass/fail strips, stacks, waterfalls, timelines, tables), never typed by hand;
-   - only in the page cases [AGENTS.md](../../claude/AGENTS.md) names, a page rendered from a JSON spec with the [brief kit](../../claude/skills/report/references/brief-kit.md) and written as a local HTML file under `~/reviews/` (never a claude.ai artifact: an account switch makes it unreadable).
-4. **Scoreboard:** every registered prediction as hit, miss or open beside its measured value, from `climb-log score` and `climb-log open`.
-5. **Proposals:** each states today's number, the number to beat, the test, the owner and the first step, ranked by impact for the effort.
-6. **Next:** one line naming the next action, and the page's absolute path when one was written.
-
-Thin bullets are a failure for analysis: if facts are parallel, use a table; if they are quantities, draw them.
+Answer the reader’s question in the format that fits its evidence. Show the observations behind a proposed mechanism and mark where interpretation begins. Use a chart for a consequential pattern across observations or a table for a comparison. A project that tracks registered predictions can report their outcomes from its ledger.
 
 ## Judging a deliverable
+
+Use this rubric when commissioning an evaluation of a quantitative operator review.
 
 The rubric is the instrument for the communication hill: an independent judge scores each dimension 0–3, out of 30.
 A score the author assigns to its own work is a claim, not a measurement.
@@ -166,7 +133,7 @@ Three readers score the ledger from those verdicts alone, each with `--json`:
 
 Rows written before the contract keep their text. A labels file (`--labels FILE`) gives them blocks: write each block from the prediction text alone, before reading the row's result, or mark the row `unreadable` with the reason.
 
-The skills that analyze or operate (`report`, `reflect`, `evolve`, `be-ambitious`) read the ledger before starting and append to it before finishing.
+Use the ledger when tracking a registered prediction or reporting a comparison against it.
 
 ### Rewards, strongest first
 
@@ -230,7 +197,7 @@ Done so far: the operator review, in the [operator review standard](../../claude
 
 ### The making loop
 
-The first content package the owner called great, after drafts he scored 2 of 10, came from this loop. It applies to any deliverable: a post, a page, a demo, a PR, an analysis.
+The following practices come from a content package the owner rated highly and apply when preparing comparable material.
 The maker named three changes that moved it most:
 - **The bar is the best real work on the same topic.** Each round reads the work blind and pairwise against the best three pieces on that topic, with a rejected draft as a control that must lose. Readers say which piece they would finish and act on, and restate the problem and the solution. "Can you tell an AI wrote it" is not the question. Their reasons drive each rewrite: the six-questions table they liked best came from them.
 - **Evidence comes before prose.** The attack runs on production first, and someone who did not make the piece runs it again. The work can then open on that attack against the reader's own setup, and every number, limit and admission traces to a file. A product gap found this way gets fixed, not written around.

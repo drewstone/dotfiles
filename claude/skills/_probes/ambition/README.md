@@ -1,7 +1,7 @@
 # Ambition probe
 
 A behavioral test for guidance meant to raise agents' targets: does a skill's text make an agent name the best known result, aim above today's number, and change mechanism?
-[Reflect](../../reflect/SKILL.md#choose-what-should-change) and [writing for agents](../../writing-for-agents/SKILL.md) send such changes here; the pull request states the three arms' rates.
+Use this probe to compare numerical target-setting on improvement tasks. Its scores do not assess open-ended research.
 
 ## What it runs
 
