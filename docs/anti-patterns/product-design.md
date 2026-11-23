@@ -81,7 +81,7 @@ Do not use:
 
 ## AI Product UI Anti-Patterns
 
-Keep account, profile and provider setup in settings. If a user cannot send a message, show the missing requirement and one action that resolves it. Once sending works, remove the setup prompt from the composer. Check both states.
+Keep account, profile and provider setup in settings. A blocked composer can offer “Reconnect account” as its [recovery action](#setup-narration).
 
 Do not:
 
