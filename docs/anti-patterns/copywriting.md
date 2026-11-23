@@ -2,6 +2,36 @@
 
 This file owns writing methods and rejected examples for marketing, UI, pages, launches and public-facing writing.
 
+## Sell What You Do
+
+A page we publish is a seller's page. Every sentence gives the reader a reason to choose the product, or the proof of one. Say what the product does, why it matters to the reader, and show it with an example they can run.
+
+Do:
+
+- **Say what it does in the first line.** A reader who stops there knows what is sold: "Financial infrastructure to grow your revenue." ([Stripe](https://stripe.com/)) The test: "If the visitor reads only this text on your page, will they know exactly what you sell?" ([Julian Shapiro](https://www.julian.com/guide/startup/landing-pages))
+- **Lead with the reader's gain, then the feature that delivers it.**
+- **Give the number and how it was measured.** "Up to 18 hours of battery life", with the test beside it: "browsing 25 popular websites while connected to Wi-Fi" ([Apple](https://www.apple.com/macbook-air/)). Claude Hopkins, 1923: "Say it gives three and one-third times the light and people realise that you have made tests and comparisons." ([Scientific Advertising](https://draytonbird.com/wp-content/uploads/2012/08/Hopkins_Scientific_Advtg.pdf))
+- **Put the proof on the same screen as the claim**: the benchmark link, the measurement, the customer's own words.
+- **Show an example the reader can run.** A command on the page is a trial with no signup: "Ship from GitHub or our CLI with fly launch." ([Fly.io](https://fly.io/))
+- **Show one scene the reader can picture.** "I was able to renew @letsencrypt certificate on my home NAS while being 8000 kilometers away from it." (a customer on [Tailscale](https://tailscale.com/)) A scene does more than a list of categories.
+- **Show the product.** "Don't show me fancy illustrations. Show me your product." ([Harry Dry](https://marketingexamples.com/landing-page/guide))
+- **Sell against doing nothing first.** "To win business, the first competitive alternative we need to beat is the status quo." ([April Dunford](https://aprildunford.substack.com/p/positioning-and-competition))
+- **On a page that names a rival, answer its strength in one sentence and go back to selling.** Render concedes and tops it: "Heroku is easy to use compared to AWS, but our customers tell us Render is even easier." ([Render](https://render.com/render-vs-heroku-comparison)) Linear calls the rival's strength an old belief, then lists who switched: "For years, conventional wisdom held that small teams started on Linear for speed while large enterprises needed Jira" ([Linear](https://linear.app/switch)). Then give the switch path: the mapping table and the commands.
+- **End on one next step that completes the headline's claim**, with the words that remove the last objection to clicking.
+
+Do not:
+
+- **Tell the reader when to pick a competitor.** "Pick X when", "X is the right tool if", "any of the four work". A neutral buyer's guide on the seller's own site advertises the rival. Hopkins on the opposite error: "To attack a rival is never good advertising." Neither recommend a rival nor attack one.
+- **List what the product does not do.** "What we don't (yet) ship", "on the roadmap", "a v2 surface". Describe what ships today. A missing capability is work to build, never a sentence on the page.
+- **Reprint a rival's claims or link its pricing page.**
+- **Describe the page's own fairness.** "Honest comparison", "we'd rather correct the table than win a row".
+- **Open with a category label.** Such headers "read like slogans instead of descriptions" (Julian Shapiro). Write one sentence with a subject, a verb and the job done.
+- **Praise without proof.** "The most polished", "famously straightforward". Replace the adjective with the measured number.
+- **Give a number without its method.**
+- **Hedge.** "Can help", "may", "aims to", "designed to".
+
+Some vendors publish a "who should pick them" section on purpose (PostHog's [comparison guide](https://posthog.com/blog/comparison-content-guide) asks for one). We do not. Render, Linear and Supabase sell on their comparison pages without one, and that is the model.
+
 ## Banned Defaults
 
 Do not use:
@@ -201,3 +231,11 @@ The reader needs the conclusion and its evidence, not our investigation transcri
 
 Write the headline to the width it will render in and check it at 1280 and 400 px.
 A noun-first description of what the product is beats an imperative that needs a second line.
+
+## Search And Answer Engines
+
+- **Publish first-hand numbers, commands and results.** Google's own check: "Does the content provide original information, reporting, research, or analysis?" ([helpful content](https://developers.google.com/search/docs/fundamentals/creating-helpful-content))
+- **Keep the substance in visible text.** Google's AI answers need no special file or markup: "There are no additional requirements to appear in AI Overviews or AI Mode" ([AI features](https://developers.google.com/search/docs/appearance/ai-features)). The page must be indexable, and the claim must be in text, not only in an image or a video.
+- **Let the answer engines' crawlers in.** A site that blocks `OAI-SearchBot` in robots.txt is left out of ChatGPT search answers ([OpenAI crawlers](https://developers.openai.com/api/docs/bots)).
+- **Answer the question a person types.** Put the subject in the heading and the answer in the first sentence under it, so a quoted passage stands on its own.
+- **Write the title and description as the reader would search**, and say what the page gives them.
