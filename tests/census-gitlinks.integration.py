@@ -21,7 +21,8 @@ def run(repo, *args, status=0, contains=None):
     global checks
     checks += 1
     result = subprocess.run([str(a) for a in args], cwd=repo, text=True, capture_output=True, timeout=45,
-                            env={**os.environ, "XDG_CACHE_HOME": str(repo / ".git/census-cache")})
+                            env={**os.environ, "XDG_CACHE_HOME": str(repo / ".git/census-cache"), "GIT_ALLOW_TEST_IDENTITY": "1",  # a gate host may have no identity
+                                 "GIT_AUTHOR_NAME": "f", "GIT_AUTHOR_EMAIL": "f@example.invalid", "GIT_COMMITTER_NAME": "f", "GIT_COMMITTER_EMAIL": "f@example.invalid"})
     output = result.stdout + result.stderr
     if result.returncode != status or (contains and contains not in output):
         failures.append(f"{args}: expected {status}, got {result.returncode}\n{output}")
