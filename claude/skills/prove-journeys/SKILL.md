@@ -16,7 +16,7 @@ The saved workflow `prove-journeys` runs steps 1 to 4 for a list of flows; its s
 [Set the bar](../be-ambitious/SKILL.md#set-the-bar) for each flow before recording: the best rival product's time and result for the same job, the app's number now, and the target.
 
 - The production origin, repository and a host checkout with dependencies installed, on an agent-app release that ships `journeys`.
-- Test identities: names, roles, the environment variable names holding their credentials (never a value), and their test workspaces.
+- The identity, role and workspace approved for the journey, with credential variable names only. For a supplied file, job or workflow, follow [user-supplied journey proof](../../../docs/anti-patterns/ui-evidence.md#user-supplied-journeys).
 - The flow list from the app's own definition of what must work (launch checklist, `PRODUCT_FLOWS`, delivery plan), every "Live" claim treated as unproven.
 
 ## 1. Prepare the host
@@ -30,7 +30,7 @@ Done when every identity prints a verified user and the contract check shows the
 Each flow's owner writes its script under `journeys/<flow-id>/` and runs `journeys-env -- pnpm exec agent-app-journeys run journeys/<flow-id>/run.ts`.
 
 - Act as the person the flow is for, with outcome-level asks; read source only to name a cause after a failure.
-- Use only test identities and workspaces, and press nothing that sends, posts, schedules, publishes, approves, invites a real address or pays; drafts and approval cards are fine. Never press Sign out in a shared session.
+- Use isolated test identities and workspaces for general checks. Stop at a draft or approval card before any real send, post, scheduled action, publication, approval, invitation or payment. Never press Sign out in a shared session.
 - Keep to the turn budget (`maxTurns`, default 6), screenshot every screen you judge (`j.shot` takes desktop and phone), and measure every turn through `sendNew`/`sendInThread`.
 - After `finish()`, look at 6 to 10 frames from `agent-app-journeys frames <id> <label>` before judging, and copy the folder off the host with the rsync line it prints.
 
