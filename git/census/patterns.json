@@ -19,7 +19,6 @@
   "trivial": "^([{}()\\[\\];,]+|\\}\\)?;?|\\)\\s*;?|\\]\\s*;?|//.*|/\\*.*|\\*.*|\\*/|import .*|export \\* from .*|export \\{[^}]*\\} from .*|\\} from .*)$",
   "window": 10,
   "fileLimit": 1000,
-  "growthLimit": 50,
   "tokensPerLine": 8,
   "lineLimit": 160,
   "functionLimit": 300,

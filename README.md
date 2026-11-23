@@ -144,10 +144,8 @@ The installer links it at `~/.claude/AGENTS.md`, `~/.codex/AGENTS.md` and `~/.co
 A rule leaves the file once a hook enforces it or a linked document states it; `census instructions` finds those, along with near-duplicate rules and dangling references.
 In a repository that both Claude Code and Codex work in, keep shared guidance in `AGENTS.md`; a `CLAUDE.md` can import it with `@AGENTS.md`.
 
-Code size has a budget too.
-A pull request is charged its net production change: deletions anywhere offset additions anywhere, and comments, tests and docs are not counted.
-At or under `growthLimit` in [`git/census/patterns.json`](git/census/patterns.json) it merges; above it, the PR's body says why on the `Growth:` line the merge check reads, and it merges.
-In repositories whose owner `~/.claude/guard-config.json` lists under `ratchets`, commit-time ratchets also refuse oversized files and functions, docs that name moved or deleted files, and a second export of an existing name.
+Code size has caps, not a budget: no commit and no merge is refused for the amount of code a change adds.
+In repositories whose owner `~/.claude/guard-config.json` lists under `ratchets`, commit-time ratchets refuse oversized files and functions, docs that name moved or deleted files, and a second export of an existing name.
 [`git/census/README.md`](git/census/README.md) owns these rules.
 
 ## Git hooks for every repository
