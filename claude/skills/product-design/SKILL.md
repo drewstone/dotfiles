@@ -26,7 +26,7 @@ For public pages, marketing copy or broad design-system work, read the repositor
 
 1. Choose controls that perform the task directly; when a mode changes input or output type, change the controls with it.
 2. Build with the application's components and tokens, reading [polish](references/polish.md) for detail and phone checks and [motion](references/motion.md) for animation or gestures.
-3. Cut taglines, helper text and secondary labels; when a screen needs one to make sense, fix the layout instead. Controls keep their own labels.
+3. Cut taglines and redundant labels. Keep control names and check first use, ordinary use and recovery against the [setup narration examples](../../../docs/anti-patterns/product-design.md#setup-narration).
 
 For a major redesign, a comparison of directions, or a state model to check before building, read [variants and prototypes](references/variants.md).
 To reproduce a reference site, capture it at desktop and mobile widths with its DOM, computed styles, assets and interaction states, rebuild it with the target's components and tokens, and fix every visible difference at the same viewport.
