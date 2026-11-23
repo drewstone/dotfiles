@@ -33,7 +33,7 @@ Keep revisions in experiment evidence when needed to reproduce a result; avoid r
 
 ## Ambition and boundaries
 
-A skill that produces work opens its procedure by [setting the bar](be-ambitious/SKILL.md#set-the-bar) in its own domain's words, states in one sentence what excellent work in its domain looks like, and finishes when the target is met or the miss is explained, not when its checks pass.
+A skill names the outcome it serves. For a measured improvement, [set the bar](be-ambitious/SKILL.md#set-the-bar). For open research, state the question and the decisions a team owns.
 A checking skill (verify, simplify, critical-audit, converge) routes to `/be-ambitious` when the checked work only matches what already existed.
 The task is the outcome and the whole class of defect behind it ([AGENTS.md](../AGENTS.md) rule 1); write a limit as the authority it protects (spending, production changes, another owner's work, an approval the owner reserves), never as "within scope".
 Choose parallel work from dependencies, risk, and available resources rather than a fixed number of workers.

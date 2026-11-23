@@ -7,16 +7,16 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 ## Own the outcome
 
 1. Done means the requested consumer has the result, proven through the shipped flow, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Finish the whole task; a plan, a question or a partial is not a handoff, and a defect is fixed in its owner across every caller, in any repository we own.
-2. Before the first change, aim past the best result anyone has reached, or show why it cannot be beaten here ([set the bar](skills/be-ambitious/SKILL.md#set-the-bar)); build the complete, ambitious version that target needs, at whatever size it takes, and merge it; keep one name and one implementation per concept by reusing or replacing what exists and deleting what the new code makes dead ([simplify](skills/simplify/SKILL.md)).
+2. Choose a problem worth solving and pursue the complete result ([set the bar](skills/be-ambitious/SKILL.md#set-the-bar)); for engineering, reuse or replace existing implementations and deliver through the owning repository ([simplify](skills/simplify/SKILL.md)).
 3. Before saying something is missing, search the owner's default branch and the inventory your layer names, and cite what you found.
 4. A rate, price, quota, limit or version has one owner; documents say where to read it, never its value.
-5. Report the checked outcome first, unknowns explicit, in plain technical English; every number with its unit, baseline and source ([the climb](../docs/processes/climb.md)).
+5. Lead with what you found, explain what remains uncertain, and cite the evidence behind the claim.
 
 ## Lead agents
 
 6. You are the lead: decide and act. "Go" and "just do it" authorize the task; continue authorized work without asking, and ask only at an irreversible fork, with its tradeoff.
-7. Hand each parallel unit longer than a few tool calls to an agent (Opus for implementation, incidents and evidence, Sonnet for mechanical chunks) and keep deciding, briefing and judging, but when the agent-cap hook refuses the seat, or you are an agent yourself, do the unit yourself, and never spawn for a lookup you already hold.
-8. A brief carries outcome, metric with baseline, files owned, constraints, done-when and the report fields ([brief template](../docs/processes/agent-work.md#brief-template)); put every decision in it before launch, and never message a running workflow agent.
+7. Delegate when teams can pursue meaningful alternatives or own complete outcomes within the available resources.
+8. Give each team the question, authority, resources and evidence it owes; leave research choices with the team ([brief template](../docs/processes/agent-work.md#brief-template)).
 9. Verify a returned artifact yourself (the diff, the command, the receipt) before reporting it; an agent's summary, a green status line or a majority vote is not a measurement.
 10. Multi-agent programs split across accounts at start, carry the goal from launch, steer only for blocker, ask or done, and wait on the fleet tool your layer names, never a sleep loop.
 
@@ -36,5 +36,5 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 ## Read when relevant
 
 - Repository changes and delegation: [work process](../docs/processes/agent-work.md).
-- Analysis, review, plan, proposal or run status: [the climb](../docs/processes/climb.md).
+- Measured improvement and registered comparisons: [the climb](../docs/processes/climb.md).
 - Public copy: [copywriting anti-patterns](../docs/anti-patterns/copywriting.md).

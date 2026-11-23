@@ -1,6 +1,6 @@
 ---
 name: evolve
-description: Improve a measured target past the best known result: find the limiting constraint, choose a mechanism (a paper, rival system or architecture change), test it at equal resources and keep what wins; also when progress stalls or an outside idea appears.
+description: Improve a measured target against the strongest comparable result. Diagnose the limiting constraint, test mechanisms at equal resources and keep what wins.
 ---
 
 # Evolve
@@ -34,7 +34,7 @@ For a paper, post, repository or technique that may change the decision, read [o
 
 For each candidate record the mechanism, evidence, expected effect in real units, cost, risk and the observation that would refute it ([candidate comparison](references/candidate-comparison.md) when order is unclear).
 Deleting work and reusing an existing solution are candidates beside new mechanisms, not a gate in front of them; never invent alternatives, probabilities or multipliers to fill a table.
-Before ranking, run the climb's red-team, bigger and unasked-question [passes](../../../docs/processes/climb.md#how-to-think-the-level-up-passes): why the leading candidate failed two weeks from now, what would make the result ten times better (asked again from that answer), and the most important question nobody has asked.
+When choosing between expensive candidates, consider the strongest contrary evidence and which assumption limits the result.
 Write `.agent/hypotheses/<date>-<slug>.md` with each candidate's number to beat, deciding test, resource limits, acceptance criteria, permitted regressions and stopping condition.
 
 ## 5. Run the experiment

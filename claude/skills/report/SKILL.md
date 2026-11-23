@@ -5,13 +5,7 @@ description: Research a question from primary sources, including sourcing open r
 
 # Report
 
-An excellent report answers the reader's decision in its first sentence with the decisive number, sets that number against the best result anyone has reached, and survived a query that could have refuted it.
-Scale it to the question: a status fact needs a sentence and its check, a comparative study its full evidence.
-
-## Set the bar
-
-For analysis, research or a proposal, [set the bar](../be-ambitious/SKILL.md#set-the-bar) before drafting: the best known result for the quantity in question anywhere (a published benchmark, rival product, paper or our ledger's best) with its source, our number beside it, the target a recommendation must reach, and the check that would show it.
-Recommend the change that reaches the target even when it is larger than anyone asked about, sized to the outcome and never to a line count.
+Start with the finding or decision the reader needs. Give the evidence that supports it and identify uncertainty that changes its interpretation.
 
 ## Get the evidence
 
@@ -38,27 +32,13 @@ For a play, one press of start with several agents working one problem, start fr
 
 ## State what the evidence supports
 
-Lead with the answer, or the correction to the premise, and its decisive measurement; a status or review opens with the scoreboard, each outcome metric against its target.
-Every number carries its source, denominator and read date; a rate without its count is unfinished.
-Disclose resource, sampling or execution differences before naming a comparative winner, and separate observed results from interpretation and projection.
-Comparable rows go in tables; a claim on three or more data points or a time axis ships with a chart built from the data, parts against their whole; an answer with more than one dimension is a local page under `~/reviews/` built with the [brief kit](references/brief-kit.md).
-Keep every measured field, not only favorable columns, and connect findings to the decision: keep the current system, make the change, or run the check that resolves the uncertainty, running a needed diagnosis before reporting a bad result as unexplained.
+Match the format to the reader’s decision. A surprising conjecture can be explained with its motivating observation, a proposed mechanism and the evidence that could distinguish it from alternatives. A comparative result needs the baseline, actual resources, selection and exclusions. Show a table or chart when it communicates the evidence better.
 
-## Climb
-
-A report is a version on the communication hill: run [the climb](../../../docs/processes/climb.md)'s level-up passes before it reaches the reader, and give analysis, status and proposals its [full form](../../../docs/processes/climb.md#how-to-communicate).
-A status, analysis or plan for the owner meets the [operator review standard](references/operator-review.md).
+A project tracking a measured improvement can use [the climb](../../../docs/processes/climb.md). For a commissioned quantitative operator review, the [review standard](references/operator-review.md), [brief kit](references/brief-kit.md) and `brief-judge` are available. Use the judge when its assessment will inform a decision about the report.
 
 ## Log the run
 
-For a substantial deliverable (a brief, report, analysis or multi-dimension status), score it with the independent judge before logging; a one-fact answer skips it.
-
-```bash
-~/.claude/skills/report/scripts/brief-judge <deliverable.html|.md|.txt> --context "<what the reader asked>"
-skill-run-log /report --target "<question and evidence scope>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --score <total> --next /<next-skill-or-stop>
-```
-
-`brief-judge` scores [judging a deliverable](../../../docs/processes/climb.md#judging-a-deliverable)'s dimensions, names the weakest with their fixes, and appends a [ledger](../../../docs/processes/climb.md#the-ledger) row; fix the cheap ones and judge again.
+For a project tracking reports, record the outcome with `skill-run-log /report --target "<question>" --verdict <PASS|FAIL|PARTIAL|BLOCKED|ABANDONED> --next /stop`.
 
 ## Then consider
 
