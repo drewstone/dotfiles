@@ -12,6 +12,14 @@ Bad:
 - captions that restate icons
 - process labels like `run`, `observe`, `improve`, `ship`
 
+## Setup narration
+
+Remove setup instructions once the feature works. A visible document needs no “File loaded successfully” banner or standing explanation of where its bytes are stored. Keep a receipt when the result is otherwise invisible, such as a request accepted for background processing.
+
+When a prerequisite is missing, give the user one next action where the task stopped. For example, show “Choose the original file” in an empty preview that needs a local copy. Remove the prompt when the file opens.
+
+Review every place the feature appears on first use, after reopening it, and when recovery is required. A fix in a shared component should remove the repeated copy from every working screen.
+
 ## Dashboard and Settings Drift
 
 Use one shared page frame and heading component across sibling dashboard pages and settings tabs.
