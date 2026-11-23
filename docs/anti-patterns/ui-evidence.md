@@ -1,12 +1,18 @@
 # UI delivery evidence
 
 Use this for product UI, websites, documentation widgets, charts, visual assets, and visible CLI interactions.
-Captures attach to the PR when available; the required proof is the post-deploy [production recording](#production-proof-is-a-video).
+Use the post-deploy [production recording](#production-proof-is-a-video) for a production claim. Share it with the authorized audience.
+
+## User-supplied journeys
+
+When the user supplies a real file, job or workflow to prove, use it through the product entry point the user would use. Start recording before selecting or uploading the source. Perform the requested action on screen, reopen the saved item through the product, and verify the result against the request.
+
+Keep the source and recording private by default. If access or privacy prevents a required step, report which step is blocked and mark the journey unproven. Label runs with synthetic fixtures or mocks as evaluations. Keep narrated slides and internal API setup outside the customer proof.
 
 ## Before implementation
 
 Capture the existing surface and affected interaction before editing.
-Use a safe account or fixture, and exclude credentials and unrelated personal data.
+Use an authorized workspace. Exclude credentials and unrelated personal data.
 Record the source revision, URL or execution target, viewport, theme, and starting state.
 When the prior surface no longer exists, name that gap and link the retained artifact.
 
@@ -31,7 +37,7 @@ Name the source revision, execution target, missing coverage, and observed failu
 ## Review and delivery
 
 Link the preview URL or an artifact the user can open.
-Attach the media to the PR and final delivery; local file paths alone are insufficient for remote reviewers.
+Use a private delivery link for restricted media. Attach media to a PR only when its audience is authorized.
 A test count, build log, or deployment acknowledgement does not replace product evidence.
 After deployment, record the served flow as below; a defect the recording shows becomes a fix-forward PR.
 
