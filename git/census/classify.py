@@ -21,7 +21,6 @@ TRIVIAL = re.compile(_P["trivial"])
 SHEBANG = re.compile(_P["shebang"])
 WINDOW = _P["window"]
 FILE_LIMIT = _P["fileLimit"]
-GROWTH_LIMIT = _P["growthLimit"]
 TOKENS_PER_LINE = _P["tokensPerLine"]
 LINE_LIMIT = _P["lineLimit"]
 FUNCTION_LIMIT = _P["functionLimit"]
