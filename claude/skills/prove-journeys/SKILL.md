@@ -31,10 +31,10 @@ Each flow's owner writes its script under `journeys/<flow-id>/` and runs `journe
 
 - Act as the person the flow is for, with outcome-level asks; read source only to name a cause after a failure.
 - Use isolated test identities and workspaces for general checks. Stop at a draft or approval card before any real send, post, scheduled action, publication, approval, invitation or payment. Never press Sign out in a shared session.
-- Keep to the turn budget (`maxTurns`, default 6), screenshot every screen you judge (`j.shot` takes desktop and phone), and measure every turn through `sendNew`/`sendInThread`.
+- Set `maxTurns` to cover the requested handoffs. Keep one uninterrupted recording for an ownership walkthrough. Screenshot every screen you judge (`j.shot` takes desktop and phone), and measure every turn through `sendNew`/`sendInThread`.
 - After `finish()`, look at 6 to 10 frames from `agent-app-journeys frames <id> <label>` before judging, and copy the folder off the host with the rsync line it prints.
 
-Done when each flow has a highlights video, `timings.json`, frames you looked at, and a report with a verdict, steps with evidence and mm:ss, every turn, the output's grade against the bar, and failures with repro steps.
+Done when each flow has its requested recording, `timings.json`, frames you looked at, and a report with a verdict, steps with evidence and mm:ss, every turn, the output's grade against the bar, and failures with repro steps.
 
 ## 3. Review it skeptically
 
