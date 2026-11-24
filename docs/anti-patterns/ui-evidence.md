@@ -7,6 +7,8 @@ Use the post-deploy [production recording](#production-proof-is-a-video) for a p
 
 When the user supplies a real file, job or workflow to prove, use it through the product entry point the user would use. Start recording before selecting or uploading the source. Perform the requested action on screen, reopen the saved item through the product, and verify the result against the request.
 
+For a multi-turn handoff, record continuously from intake through the change in instructions and the next operator's fresh session. Check the reopened job against the source and identify who saved, approved or sent each item. Keep the original recording silent unless narration was requested.
+
 Keep the source and recording private by default. If access or privacy prevents a required step, report which step is blocked and mark the journey unproven. Label runs with synthetic fixtures or mocks as evaluations. Keep narrated slides and internal API setup outside the customer proof.
 
 ## Before implementation
