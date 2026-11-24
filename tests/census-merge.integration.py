@@ -108,7 +108,7 @@ with tempfile.TemporaryDirectory(prefix="census-merge-") as temporary:
     run(CENSUS, "floors", ".", "main", "grown", "--floor", "lines", status=1, contains="REFUSED: may not rise")
     run("git", "reset", "-q", "--hard")
     branch("big-file", {"src/huge.py": lines(1001)})
-    merge_check(contains="warning: src/large.py: 1001 lines (new file)")
+    merge_check(contains="warning: src/huge.py: 1001 lines (new file)")
     print("PASS: an oversized file passes at commit and merge with a warning; the function limit and the census lines floor remain enforced")
 
     failed = []
