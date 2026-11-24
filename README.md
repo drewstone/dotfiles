@@ -145,7 +145,7 @@ A rule leaves the file once a hook enforces it or a linked document states it; `
 In a repository that both Claude Code and Codex work in, keep shared guidance in `AGENTS.md`; a `CLAUDE.md` can import it with `@AGENTS.md`.
 
 Code size has caps, not a budget: no commit and no merge is refused for the amount of code a change adds.
-In repositories whose owner `~/.claude/guard-config.json` lists under `ratchets`, commit-time ratchets refuse oversized files and functions, docs that name moved or deleted files, and a second export of an existing name.
+In repositories whose owner `~/.claude/guard-config.json` lists under `ratchets`, commit-time ratchets report oversized files and refuse oversized functions, docs that name moved or deleted files, and a second export of an existing name.
 [`git/census/README.md`](git/census/README.md) owns these rules.
 
 ## Git hooks for every repository

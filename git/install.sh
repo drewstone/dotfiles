@@ -65,7 +65,7 @@ echo "  core.excludesfile=$(git config --global --get core.excludesfile)"
 echo "  core.attributesFile=$(git config --global --get core.attributesFile)"
 echo
 echo "Global baseline checks:"
-echo "  pre-commit: conflict markers, suspicious secrets, logic files over 1,000 lines (loc-ratchet), docs naming moved or deleted files (doc-ref-ratchet), a second export of an existing name (dup-export-ratchet)"
+echo "  pre-commit: conflict markers, suspicious secrets, large logic file warnings (loc-ratchet), docs naming moved or deleted files (doc-ref-ratchet), a second export of an existing name (dup-export-ratchet)"
 echo "  commit-msg: credentials in the commit MESSAGE (diffs scanners miss these)"
 echo "  pre-push: conflict markers, mergeable with origin/main, suspicious secrets"
 echo

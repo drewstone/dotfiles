@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""No commit and no merge is refused for the code it adds; the file and function limits hold: the real hooks, a temporary repository, a fake gh.
+"""No commit and no merge is refused for the code it adds; file size is advisory and function size is enforced: the real hooks, a temporary repository, a fake gh.
 
 Usage: python3 tests/census-merge.integration.py [tool-root]
 The commits run the hooks under git/hooks; the merge check is `loc-ratchet <merge-base>..<head> o/r#7`, as the merging tool calls it.
@@ -102,14 +102,14 @@ with tempfile.TemporaryDirectory(prefix="census-merge-") as temporary:
     print("PASS: a commit, a push and a merge that add 600 production lines are not refused, ask for no declaration and read GitHub never")
 
     run("git", "checkout", "-q", "-b", "caps", "main")
-    commit({"src/large.py": lines(1001)}, hooks=HOOKS, status=1, contains="1001 lines (new file)")
+    commit({"src/large.py": lines(1001)}, hooks=HOOKS, contains="warning: src/large.py: 1001 lines (new file)")
     commit({"src/large.py": None, "src/function.py": "def large():\n" + "".join(f"    value_{i} = {i}\n" for i in range(301))},
            hooks=HOOKS, status=1, contains="fn-ratchet: refusing commit")
     run(CENSUS, "floors", ".", "main", "grown", "--floor", "lines", status=1, contains="REFUSED: may not rise")
     run("git", "reset", "-q", "--hard")
     branch("big-file", {"src/huge.py": lines(1001)})
-    merge_check(status=1, contains="1001 lines (new file)")
-    print("PASS: the file limit holds at a commit and at merge; the function limit and the census lines floor remain enforced")
+    merge_check(contains="warning: src/huge.py: 1001 lines (new file)")
+    print("PASS: an oversized file passes at commit and merge with a warning; the function limit and the census lines floor remain enforced")
 
     failed = []
 
