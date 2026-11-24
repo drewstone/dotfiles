@@ -26,9 +26,6 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import classify as C  # noqa: E402
-GH, _, FORK_PARENT_OWNERS = subprocess.run(["sh", "-c", 'f="${DOTFILES_PRIVATE:-$HOME/.local/share/dotfiles-private}/claude/config/census.env"; [ ! -r "$f" ] || . "$f" >/dev/null; printf "%s\n%s" "${CENSUS_GH:-gh}" "${CENSUS_FORK_PARENT_OWNERS:-}"'], capture_output=True, text=True).stdout.partition("\n")
-GH = GH or "gh"
-
 GROUPS = {
     "lines": ["prod_lines"],
     "copies": ["dup_lines", "xrepo_windows"],
@@ -84,15 +81,6 @@ def production_delta(checkout, base, head, merge=None, paths=None):
         long += [(path, *found) for found in C.long_lines(old, new or b"")]
     return growth / C.TOKENS_PER_LINE, oversized, long, keys
 
-
-def github(endpoint, *flags):
-    run = subprocess.run([GH, "api", endpoint, *flags], capture_output=True, timeout=60)
-    if run.returncode:
-        raise Refused(f"{endpoint} could not be read through {GH}")
-    return [json.loads(line) for line in run.stdout.splitlines()] if flags else json.loads(run.stdout)
-
-def repository(url):
-    m = re.fullmatch(r"(?:ssh://git@github\.com/|git@github\.com:|https://github\.com/)(.+?)(?:\.git)?/?", (url or "").strip()); return f"https://github.com/{m[1]}.git" if m else (url or "").strip()
 
 def tree_of(checkout, rev):
     """WORKTREE uses a copied index: untracked edits count, sparse paths remain, the real index is untouched."""

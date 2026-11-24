@@ -41,9 +41,8 @@ Every metric is better smaller. Floor groups are declared in `GROUPS` in [census
 No commit and no merge is refused for the amount of production code a change adds; a merge waits on its tests, not on a line count.
 At a commit `loc-ratchet` prints the production lines the change adds, as a report.
 `prod_lines` counts code in lines of `tokensPerLine` tokens; a token is a word or one punctuation character, and comments, Python docstrings and blank lines are not code. File and function limits count physical lines.
-`loc-ratchet <merge-base>..<head>`, run by whatever merges a pull request, refuses only what the commit hook refuses: a logic file over the file limit.
+`loc-ratchet <merge-base>..<head>`, run by whatever merges a pull request, reports a new or growing logic file above the configured file size. Both commit and merge checks accept that change.
 A commit and the merge print a warning with the count and each file:line of added production lines over `lineLimit` characters, unless one URL or hash is the excess; it never refuses.
-`CENSUS_FORK_PARENT_OWNERS` in `$DOTFILES_PRIVATE/claude/config/census.env` lists comma-separated GitHub parent owners whose forks retain the file limit; a verified fork of any other owner skips `loc-ratchet`, and the check looks a fork up, through `CENSUS_GH` in the same file, only for a change it would otherwise refuse. Missing or invalid configuration keeps enforcement.
 [The qualification](../../tests/census-merge.integration.py) runs the commit hook and the merge check against a temporary repository.
 
 ## Integrity

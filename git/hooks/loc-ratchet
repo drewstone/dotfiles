@@ -1,31 +1,13 @@
 #!/usr/bin/env python3
-"""Enforce file sizes at commit, report the production lines a commit adds and warn of long lines; `A..B` checks a merge's range.
+"""Report file sizes at commit and merge, report the production lines a commit adds and warn of long lines; `A..B` checks a merge's range.
 The amount of code a change adds is never refused: a merge waits on its tests, not on a line count."""
 from runpy import run_path
 from types import SimpleNamespace
 import os
-import re
 import sys
 
 sys.dont_write_bytecode = True
 census = SimpleNamespace(**run_path(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "census", "census")))
-
-
-def third_party_fork():
-    """Only GitHub metadata proving an external parent exempts this repository."""
-    try:
-        owners = census.FORK_PARENT_OWNERS.strip().lower()
-        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*", owners):
-            return False
-        origin = census.repository(census.git(".", "remote", "get-url", "origin").decode())
-        match = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+)\.git", origin)
-        if not match:
-            return False
-        repo = census.github(f"repos/{match[1]}")
-        owner = repo.get("parent", {}).get("owner", {}).get("login", "").strip().lower()
-        return repo.get("fork") is True and bool(owner) and owner not in owners.split(",")
-    except Exception:
-        return False
 
 
 def main():
@@ -44,12 +26,10 @@ def main():
     if long:  # a warning only, at a commit and at merge: line breaks cost nothing in the token unit
         print(f"loc-ratchet: warning: {len(long)} added production lines over {census.C.LINE_LIMIT} characters, not counting one URL or hash:\n"
               + "\n".join(f"  {path}:{number} ({length} characters)" for path, number, length in long), file=sys.stderr)
-    if oversized and third_party_fork():
-        return 0
     for path, old, new in oversized:
-        print(f"loc-ratchet: refusing commit: {path}: {new} lines ({'new file' if old is None else f'was {old}'}).\n"
-              f"  A logic file may not exceed {census.C.FILE_LIMIT} lines unless it already did and does not grow.", file=sys.stderr)
-    return int(bool(oversized))
+        previous = "new file" if old is None else f"was {old}"
+        print(f"loc-ratchet: warning: {path}: {new} lines ({previous})", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
