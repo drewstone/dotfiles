@@ -29,12 +29,12 @@ path = Path(os.environ['CODEX_HOME']) / 'hooks.json'
 for line in sys.stdin:
     if json.loads(line).get('id') != 2:
         continue
-    # Like Codex, hooks/list reports every PreToolUse command the home's hooks.json registers.
-    groups = json.loads(path.read_text())['hooks']['PreToolUse'] if path.exists() else []
-    hooks = [{'sourcePath': str(path), 'eventName': 'preToolUse', 'handlerType': 'command',
+    # Like Codex, hooks/list reports every command hook the home's hooks.json registers, under its event name.
+    registered = json.loads(path.read_text())['hooks'] if path.exists() else {}
+    hooks = [{'sourcePath': str(path), 'eventName': event[0].lower() + event[1:], 'handlerType': 'command',
               'command': hook['command'], 'timeoutSec': hook.get('timeout'),
               'key': hook['command'], 'currentHash': 'sha256:fixture'}
-             for group in groups for hook in group['hooks']]
+             for event in ('PreToolUse', 'PostToolUse') for group in registered.get(event, []) for hook in group['hooks']]
     print(json.dumps({'jsonrpc': '2.0', 'id': 2, 'result': {'data': [{'hooks': hooks}]}}), flush=True)
 `)
   chmodSync(codex, 0o755)
