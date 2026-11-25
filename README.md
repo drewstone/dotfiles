@@ -68,6 +68,7 @@ The other hooks, registered in [`claude/settings.json`](claude/settings.json) or
 - `merge_check.py`, before `gh pr merge`, warns when the PR's head commit is red or pending.
 - `inject-directive.sh`, at SessionStart, adds the active response-style directive from [`claude/directives`](claude/directives/README.md), rotating variants per session to compare them.
 - `rtk-rewrite.sh`, before Bash, routes supported commands through `rtk` for shorter output.
+- `change-ledger.sh`, after Bash calls, appends a row to `~/.local/state/change-ledger/changes.jsonl` for each `git commit`, `gh pr create` and `gh pr merge` (session, subagent, tool call, repository, commit or pull request); a session's first call also writes an `observed` row, so a session with no change rows is known to have made none. It writes no command text and no attribution.
 - `skill-run-settle.sh`, at SessionEnd, records your corrections after each skill run in the skill ledger.
 
 ## What is where
