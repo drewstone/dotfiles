@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Stop hook: a final message that hands the owner a credential lookup goes back to the agent once.
+"""Stop hook: a final message that hands the owner a credential lookup, or holds work for the owner's
+word, goes back to the agent once.
 
-The rule: a final message that asks the owner for a password, key, token, secret, login or unlock is
-sent back once with an instruction to look first (the vault via dotenvx, the repo's secret stores, the
+Credentials: a final message that asks the owner for a password, key, token, secret, login or unlock is
+sent back with an instruction to look first (the vault via dotenvx, the repo's secret stores, the
 owner's earlier messages, guard-config's "blocked_guard" `places`) and either resolve it or cite where it
-looked. It is a lead, not a wall: a message that cites a completed search passes, and a second
-stop in the same chain (stop_hook_active) always passes, so a real ask still reaches the owner.
+looked.
+
+The owner's word: a final message that waits for "go", an approval or a yes is sent back with the
+instruction to decide, act and report, because an ask whose only useful answer is "go" is the agent's
+own decision. An ask stands when it says, next to the ask, that the action cannot be undone or that a
+rule reserves it for the owner; guard-config's "blocked_guard" `authority` names where those rules are.
+
+It is a lead, not a wall: a message that cites a completed search or the reason the decision is the
+owner's passes, and a second stop in the same chain (stop_hook_active) always passes, so a real ask
+still reaches the owner.
 
 Hits are logged to ~/.claude/logs/blocked-guard.jsonl. Fail-open: an unreadable payload exits 0.
 """
@@ -19,7 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from secret_scan import guard_config  # noqa: E402
 
 LOG = os.path.join(os.path.expanduser("~"), ".claude", "logs", "blocked-guard.jsonl")
-PLACES = guard_config("blocked_guard", {}).get("places", {})  # {shown place: regex of a search citing it}
+CONFIG = guard_config("blocked_guard", {})
+PLACES = CONFIG.get("places", {})  # {shown place: regex of a search citing it}
+AUTHORITY = CONFIG.get("authority", {})  # {shown rule: regex of an ask citing it}
 
 # Phrases that hand an action to the owner.
 ASK = re.compile(
@@ -43,6 +54,28 @@ STORE = re.compile("|".join([
 )
 WINDOW = 160
 
+# Phrases that hold an action until the owner says yes. Markdown and quote marks may wrap the word.
+MARK = "[\"'`*“”]*"
+HOLD = re.compile(
+    r"\b(?:needs?|waits? (?:on|for)|waiting (?:on|for)|awaits?|awaiting|held for|holding for|pending|on|with|until)\s+your\s+" + MARK
+    + r"(?:go(?:[- ]ahead)?|word|approval|ok(?:ay)?|sign[- ]?off|yes|confirmation|permission|say[- ]so)\b"
+    r"|\bsay\s+" + MARK + r"(?:go|yes|the word)\b"
+    r"|\b(?:reply|answer|respond)\s+(?:with\s+)?[\"'`*“]+(?:go|yes)\b"
+    r"|\b(?:once|when|if|until) you (?:approve|confirm|agree|say (?:so|go|yes)|give (?:the|your) (?:word|go[- ]ahead|ok(?:ay)?))\b"
+    r"|\b(?:may|shall|should) I (?!have\b)"
+    r"|\b(?:want|like) me to\b"
+    r"|\bif you(?:'d| would)? (?:like|want|prefer)\b"
+    r"|\bready when you are\b",
+    re.I,
+)
+# The reason an ask is the owner's: the action cannot be undone, or a rule reserves it.
+RESERVED = re.compile("|".join([
+    r"irreversibl|not reversible|(?:cannot|can't|can ?not) be (?:undone|reversed|taken back)|no back-?out"
+    r"|reserve[sd]? (?:it |this |that |them )?(?:for|to) (?:you|the owner)|per[- ]action", *AUTHORITY.values()]),
+    re.I,
+)
+REASON_WINDOW = 2 * WINDOW
+
 
 def credential_asks(text):
     """Each ask phrase with a credential term within WINDOW characters, as a short quote."""
@@ -57,6 +90,16 @@ def credential_asks(text):
 def cites_search(text):
     """True when one sentence names a completed search and the store it searched."""
     return any(SEARCHED.search(s) and STORE.search(s) for s in re.split(r"(?<=[.!?;])\s+|\n+", text))
+
+
+def unexplained_holds(text):
+    """Each phrase that holds work for the owner's word with no reason near it, as a short quote."""
+    hits = []
+    for m in HOLD.finditer(text):
+        lo, hi = max(0, m.start() - REASON_WINDOW), min(len(text), m.end() + REASON_WINDOW)
+        if not RESERVED.search(text, lo, hi):
+            hits.append(" ".join(text[max(0, m.start() - 60):m.end() + 60].split()))
+    return hits
 
 
 def last_message(payload):
@@ -83,22 +126,54 @@ def last_message(payload):
 
 
 def verdict(payload):
+    """(kind, quotes) for the first rule the final message breaks, or None when it passes."""
     if payload.get("stop_hook_active"):
         return None
     text = last_message(payload)
     hits = credential_asks(text)
-    if not hits or cites_search(text):
-        return None
-    return hits
+    if hits and not cites_search(text):
+        return "credential", hits
+    hits = unexplained_holds(text)
+    if hits:
+        return "word", hits
+    return None
 
 
-def log(payload, hits):
+def credential_reason(hit):
+    return (
+        f"blocked-guard: your final message asks the owner for a credential or login (\"{hit}\"). "
+        "You have access to the secrets. Look before asking: the vault "
+        "(`dotenvx get` on the repo's vault files), the repo's secret stores and `gh secret list`, "
+        + "".join(f"{place}, " for place in PLACES) + "and the owner's earlier messages in this session's transcript. "
+        "Read a value only into the process that needs it; never type it into a command. If you find it, "
+        "finish the work. If it is truly absent, end with one sentence naming each place you checked "
+        "and what it returned, then the ask."
+    )
+
+
+def word_reason(hit):
+    rules = " and ".join(AUTHORITY)
+    return (
+        f"blocked-guard: your final message holds work for the owner's word (\"{hit}\"). "
+        "If \"go\" is the only useful answer, the decision is yours: when the action is inside your task and can be "
+        "undone, do it now, then report what you did and how to undo it. Work outside your task is a one-line "
+        "recommendation, not a question. Ask only when the action cannot be undone or a rule reserves it for the owner"
+        + (f" (read {rules} before deciding that one does)" if rules else "")
+        + ". Then say which, next to the ask, with the exact call, its cost and your recommendation, and keep "
+        "working on everything that does not depend on the answer."
+    )
+
+
+REASONS = {"credential": credential_reason, "word": word_reason}
+
+
+def log(payload, kind, hits):
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, "a") as fh:
             fh.write(json.dumps({
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-                "session_id": payload.get("session_id"), "cwd": payload.get("cwd"), "asks": hits[:3],
+                "session_id": payload.get("session_id"), "cwd": payload.get("cwd"), "kind": kind, "asks": hits[:3],
             }) + "\n")
     except OSError:
         pass
@@ -107,24 +182,14 @@ def log(payload, hits):
 def main():
     try:
         payload = json.loads(sys.stdin.read())
-        hits = verdict(payload)
+        found = verdict(payload)
     except Exception:
         return 0
-    if not hits:
+    if not found:
         return 0
-    log(payload, hits)
-    print(json.dumps({
-        "decision": "block",
-        "reason": (
-            f"blocked-guard: your final message asks the owner for a credential or login (\"{hits[0]}\"). "
-            "You have access to the secrets. Look before asking: the vault "
-            "(`dotenvx get` on the repo's vault files), the repo's secret stores and `gh secret list`, "
-            + "".join(f"{place}, " for place in PLACES) + "and the owner's earlier messages in this session's transcript. "
-            "Read a value only into the process that needs it; never type it into a command. If you find it, "
-            "finish the work. If it is truly absent, end with one sentence naming each place you checked "
-            "and what it returned, then the ask."
-        ),
-    }))
+    kind, hits = found
+    log(payload, kind, hits)
+    print(json.dumps({"decision": "block", "reason": REASONS[kind](hits[0])}))
     return 0
 
 
