@@ -6,9 +6,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, existsSync, accessSync, constants } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, accessSync, constants, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const HOOK = new URL('../claude/hooks/change-ledger.sh', import.meta.url).pathname
 
@@ -104,4 +104,48 @@ test('a payload with spaces after the colons is read the same way as a compact o
   for (let i = 0; i < 2; i++) assert.equal(spawnSync('bash', [HOOK], { input: payload, env }).status, 0)
   assert.deepEqual(rows(s).filter((r) => r.action !== 'observed').map((r) => r.sessionId), ['sess-sp', 'sess-sp'])
   assert.equal(rows(s).filter((r) => r.action === 'observed').length, 1)
+})
+
+// The payload below is the shape Codex 0.172 sent a PostToolUse hook in a recorded run: the shell tool is
+// named Bash, tool_response is the command's output as one string, and a command run by a code-mode
+// script carries the command's own `exec-` id, not the script call's.
+test('a Codex hook, told its harness on the command line, writes a codex row from a string tool_response', () => {
+  const s = scratch()
+  const stdout = s.git('commit', '--allow-empty', '-m', 'four')
+  const payload = { session_id: '01a211f9-6278-7081-8daf-c21f04093a8b', turn_id: 'turn-1', transcript_path: null, cwd: s.repo, hook_event_name: 'PostToolUse', model: 'm', permission_mode: 'bypassPermissions',
+    tool_name: 'Bash', tool_input: { command: 'git commit -m four' }, tool_response: stdout, tool_use_id: 'exec-778104bd-9720-470d-81ef-66952a06e8c9' }
+  const run = () => spawnSync('bash', [HOOK, 'codex'], { input: JSON.stringify(payload), env: { ...process.env, HOME: s.root, CHANGE_LEDGER_DIR: s.state }, encoding: 'utf8' })
+  assert.equal(run().status, 0)
+  assert.equal(run().status, 0)
+  const written = rows(s)
+  assert.deepEqual(written.map((r) => [r.harness, r.action]), [['codex', 'observed'], ['codex', 'commit'], ['codex', 'commit']])
+  assert.equal(written[1].toolUseId, 'exec-778104bd-9720-470d-81ef-66952a06e8c9')
+  assert.equal(written[1].remote, 'acme/widgets')
+  assert.equal(written[1].sha, s.git('rev-parse', 'HEAD').trim())
+  assert.equal(existsSync(join(s.state, 'seen', `codex.${payload.session_id}`)), true)
+})
+
+// Codex's own binary, not this tree's routing wrapper (claude/tools/codex), which would pick a seat.
+const realCodex = spawnSync('bash', ['-c', 'which -a codex'], { encoding: 'utf8' }).stdout.split('\n')
+  .filter(Boolean).find((path) => { try { return !realpathSync(path).endsWith('/claude/tools/codex') } catch { return false } })
+
+test('codex-trust-managed installs both hooks into a Codex home and trusts each, as Codex itself hashes them', { skip: realCodex === undefined }, () => {
+  const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
+  const guard = new URL('../claude/hooks/process_guard.py', import.meta.url).pathname
+  const trust = new URL('../claude/hooks/codex-trust-managed.py', import.meta.url).pathname
+  const env = { ...process.env, CODEX_HOME: home, PATH: `${dirname(realCodex)}:${process.env.PATH}` }
+  const run = () => spawnSync('python3', [trust, home, guard, HOOK], { env, encoding: 'utf8' })
+  const first = run()
+  assert.equal(first.status, 0, first.stderr)
+  const hooks = JSON.parse(readFileSync(join(home, 'hooks.json'), 'utf8')).hooks
+  assert.equal(hooks.PreToolUse[0].hooks[0].command, guard)
+  assert.equal(hooks.PostToolUse[0].hooks[0].command, `${HOOK} codex`)
+  const config = readFileSync(join(home, 'config.toml'), 'utf8')
+  assert.match(config, /hooks\.json:pre_tool_use:0:0"\]\ntrusted_hash = "sha256:/)
+  assert.match(config, /hooks\.json:post_tool_use:0:0"\]\ntrusted_hash = "sha256:/)
+  // A second pass changes nothing.
+  const second = run()
+  assert.equal(second.status, 0, second.stderr)
+  assert.equal(readFileSync(join(home, 'config.toml'), 'utf8'), config)
+  assert.equal(JSON.parse(readFileSync(join(home, 'hooks.json'), 'utf8')).hooks.PostToolUse.length, 1)
 })

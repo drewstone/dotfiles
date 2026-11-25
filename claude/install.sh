@@ -190,10 +190,10 @@ if [ -d "$SCRIPT_DIR/tools" ] && [ "$(ls -A "$SCRIPT_DIR/tools" 2>/dev/null)" ];
   done
 fi
 
-# Codex runs process_guard.py, which loads the layer's rule modules, and trusts it by the hash it reports.
-# A changed file stays untrusted until the next review.
+# Codex runs process_guard.py before each tool call (it loads the layer's rule modules) and change-ledger.sh after it,
+# and trusts each by the hash it reports. A changed file stays untrusted until the next review.
 for codex_home in "$CODEX_DIR" "$HOME"/.config/agent-accounts/codex/*; do
-  [ -d "$codex_home" ] && python3 "$SCRIPT_DIR/hooks/codex-trust-managed.py" "$codex_home" "$CLAUDE_DIR/hooks/process_guard.py"
+  [ -d "$codex_home" ] && python3 "$SCRIPT_DIR/hooks/codex-trust-managed.py" "$codex_home" "$CLAUDE_DIR/hooks/process_guard.py" "$CLAUDE_DIR/hooks/change-ledger.sh"
 done
 
 # The home-sweep cron redirects into $HOME/attic/sweep.log. A missing directory makes
