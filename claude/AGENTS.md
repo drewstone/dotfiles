@@ -24,7 +24,7 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 
 11. Merge on push; code is checked before a deploy and before a release, and post-deploy against the served release; a red holds the deploy, not the merge, and goes to its author to fix forward.
 12. Never revert a merged change; fix forward. A red goes to its author with the failing tests, and only a precondition a PR names, a real review finding or the owner's decision holds work.
-13. Proof is a few strong integration tests and frequent live runs; never unit or mock tests ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)).
+13. Proof is the gate on the pushed head, a few strong integration tests and frequent live runs; never unit or mock tests, and never a default `/verify` or `/simplify` pass before each commit ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)).
 
 ## Never
 
