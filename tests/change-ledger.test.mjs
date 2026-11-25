@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, accessSync, constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -85,4 +85,23 @@ test('a malformed payload or an unsafe session id is ignored and the hook still 
   assert.equal(spawnSync('bash', [HOOK], { input: 'not json commit', env }).status, 0)
   hook(s, { session_id: '../escape', tool_input: { command: 'git commit -m x' }, tool_response: { stdout: '[main abc1234] x' } })
   assert.deepEqual(rows(s), [])
+})
+
+test('settings.json runs the hook after every Bash call, and the hook and its helper are installed as files', () => {
+  const settings = JSON.parse(readFileSync(new URL('../claude/settings.json', import.meta.url), 'utf8'))
+  const commands = settings.hooks.PostToolUse
+    .filter((group) => group.matcher === 'Bash')
+    .flatMap((group) => group.hooks.map((h) => h.command))
+  assert.ok(commands.includes('$HOME/.claude/hooks/change-ledger.sh'))
+  for (const name of ['change-ledger.sh', 'change_ledger.py']) accessSync(new URL(`../claude/hooks/${name}`, import.meta.url), constants.X_OK)
+})
+
+test('a payload with spaces after the colons is read the same way as a compact one', () => {
+  const s = scratch()
+  const stdout = s.git('commit', '--allow-empty', '-m', 'three')
+  const payload = JSON.stringify({ tool_name: 'Bash', cwd: s.repo, session_id: 'sess-sp', tool_use_id: 'toolu_sp', tool_input: { command: 'git commit -m three' }, tool_response: { stdout } }, null, 2)
+  const env = { ...process.env, HOME: s.root, CHANGE_LEDGER_DIR: s.state }
+  for (let i = 0; i < 2; i++) assert.equal(spawnSync('bash', [HOOK], { input: payload, env }).status, 0)
+  assert.deepEqual(rows(s).filter((r) => r.action !== 'observed').map((r) => r.sessionId), ['sess-sp', 'sess-sp'])
+  assert.equal(rows(s).filter((r) => r.action === 'observed').length, 1)
 })
