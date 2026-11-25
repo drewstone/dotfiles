@@ -112,6 +112,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/change-ledger.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Bash|Read|Grep|mcp__fff__grep|mcp__fff__multi_grep|BashOutput|TaskOutput|Monitor",
         "hooks": [
           {

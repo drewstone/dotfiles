@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, accessSync, constants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -85,4 +85,13 @@ test('a malformed payload or an unsafe session id is ignored and the hook still 
   assert.equal(spawnSync('bash', [HOOK], { input: 'not json commit', env }).status, 0)
   hook(s, { session_id: '../escape', tool_input: { command: 'git commit -m x' }, tool_response: { stdout: '[main abc1234] x' } })
   assert.deepEqual(rows(s), [])
+})
+
+test('settings.json runs the hook after every Bash call, and the hook and its helper are installed as files', () => {
+  const settings = JSON.parse(readFileSync(new URL('../claude/settings.json', import.meta.url), 'utf8'))
+  const commands = settings.hooks.PostToolUse
+    .filter((group) => group.matcher === 'Bash')
+    .flatMap((group) => group.hooks.map((h) => h.command))
+  assert.ok(commands.includes('$HOME/.claude/hooks/change-ledger.sh'))
+  for (const name of ['change-ledger.sh', 'change_ledger.py']) accessSync(new URL(`../claude/hooks/${name}`, import.meta.url), constants.X_OK)
 })
