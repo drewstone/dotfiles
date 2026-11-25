@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install and trust process_guard.py, the one Bash guard this dotfiles tree owns, in one Codex home."""
+"""Install and trust the hooks this dotfiles tree owns in one Codex home: process_guard.py before each tool call, and the change ledger after it."""
 import fcntl
 import json
 import os
@@ -26,9 +26,10 @@ def find_codex():
     return str(installed) if installed.is_file() and os.access(installed, os.X_OK) else None
 
 
-def installed_hook(response, path, guard):
+def installed_hook(response, path, spec):
+    guard = spec['command']
     hooks = [hook for data in response['result']['data'] for hook in data['hooks']
-             if hook.get('eventName') == 'preToolUse'
+             if hook.get('eventName') == spec['eventName']
              and hook.get('handlerType') == 'command'
              and hook.get('command') == guard
              and hook.get('timeoutSec') == 10]
@@ -39,14 +40,14 @@ def installed_hook(response, path, guard):
     if not matches:
         matches = [hook for hook in hooks if hook.get('sourcePath') == str(path.resolve())]
     if len(matches) != 1:
-        raise RuntimeError(f'expected one installed guard {guard} in {path}; found {len(matches)}')
+        raise RuntimeError(f'expected one installed {spec["event"]} hook {guard} in {path}; found {len(matches)}')
     return matches[0]
 
 
-def hook_hash(home, path, guard):
+def hook_hashes(home, path, specs):
     codex = find_codex()
     if not codex:
-        raise RuntimeError('codex is unavailable; guard trust is pending')
+        raise RuntimeError('codex is unavailable; hook trust is pending')
     proc = subprocess.Popen([codex, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL,
                             env={**os.environ, 'CODEX_HOME': str(home)})
@@ -76,8 +77,8 @@ def hook_hash(home, path, guard):
                     continue
                 if response.get('error'):
                     raise RuntimeError('Codex hooks/list failed')
-                hook = installed_hook(response, path, guard)
-                return hook['key'], hook['currentHash']
+                found = [installed_hook(response, path, spec) for spec in specs]
+                return [(hook['key'], hook['currentHash']) for hook in found]
         raise TrustPending('Codex hooks/list did not answer within 12 seconds')
     finally:
         if proc.poll() is None:
@@ -85,26 +86,41 @@ def hook_hash(home, path, guard):
         proc.wait()
 
 
-def install(home, guard):
-    path = home / 'hooks.json'
+def specs_for(guard, ledger):
+    """The hooks this tree installs. The ledger hook is told its harness on the command line: Codex runs the command as written."""
+    return [
+        {'event': 'PreToolUse', 'eventName': 'preToolUse', 'command': guard, 'replaces': os.path.dirname(guard) + '/'},
+        {'event': 'PostToolUse', 'eventName': 'postToolUse', 'command': f'{ledger} codex', 'replaces': None},
+    ]
+
+
+def write_hooks_json(path, specs):
     try:
         config = json.loads(path.read_text())
     except FileNotFoundError:
         config = {}
-    groups = config.setdefault('hooks', {}).setdefault('PreToolUse', [])
-    beside = os.path.dirname(guard) + '/'  # the guards installed earlier sit beside it, and process_guard.py replaced them
-    kept = [g for g in groups if not any(h.get('command', '').startswith(beside) and h['command'] != guard for h in g.get('hooks', []))]
-    if not any(h.get('command') == guard for group in kept for h in group.get('hooks', [])):
-        kept.append({'hooks': [{'type': 'command', 'command': guard, 'timeout': 10}]})
-    if kept != groups:
-        config['hooks']['PreToolUse'] = kept
-        target = path.resolve() if path.is_symlink() else path
-        tmp = target.with_name(target.name + '.tmp')
-        tmp.write_text(json.dumps(config, indent=2) + '\n')
-        if target.exists():
-            os.chmod(tmp, target.stat().st_mode & 0o777)
-        os.replace(tmp, target)
-    key, current_hash = hook_hash(home, path, guard)
+    changed = False
+    for spec in specs:
+        groups = config.setdefault('hooks', {}).setdefault(spec['event'], [])
+        # The guards installed earlier sit beside process_guard.py, and it replaced them.
+        beside = spec['replaces']
+        kept = [g for g in groups if not beside or not any(h.get('command', '').startswith(beside) and h['command'] != spec['command'] for h in g.get('hooks', []))]
+        if not any(h.get('command') == spec['command'] for group in kept for h in group.get('hooks', [])):
+            kept.append({'hooks': [{'type': 'command', 'command': spec['command'], 'timeout': 10}]})
+        if kept != groups:
+            config['hooks'][spec['event']] = kept
+            changed = True
+    if not changed:
+        return
+    target = path.resolve() if path.is_symlink() else path
+    tmp = target.with_name(target.name + '.tmp')
+    tmp.write_text(json.dumps(config, indent=2) + '\n')
+    if target.exists():
+        os.chmod(tmp, target.stat().st_mode & 0o777)
+    os.replace(tmp, target)
+
+
+def trust(home, path, name, key, current_hash):
     config_path = (home / 'config.toml').resolve()
     with config_path.open('a+') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
@@ -125,17 +141,25 @@ def install(home, guard):
             stream.write(text.replace(stale, f'[hooks.state.{json.dumps(key)}]\ntrusted_hash = {json.dumps(current_hash)}'))
             stream.flush()
             os.fsync(stream.fileno())
-            print(f'  CODEX {path}: {Path(guard).name} trusted at its new index')
+            print(f'  CODEX {path}: {name} trusted at its new index')
             return
         stream.write(f'\n[hooks.state.{json.dumps(key)}]\ntrusted_hash = {json.dumps(current_hash)}\n')
         stream.flush()
         os.fsync(stream.fileno())
-        print(f'  CODEX {path}: {Path(guard).name} trusted')
+        print(f'  CODEX {path}: {name} trusted')
+
+
+def install(home, guard, ledger):
+    path = home / 'hooks.json'
+    specs = specs_for(guard, ledger)
+    write_hooks_json(path, specs)
+    for spec, (key, current_hash) in zip(specs, hook_hashes(home, path, specs)):
+        trust(home, path, Path(spec['command'].split(' ')[0]).name, key, current_hash)
 
 
 if __name__ == '__main__':
     try:
-        install(Path(sys.argv[1]), sys.argv[2])
+        install(Path(sys.argv[1]), sys.argv[2], sys.argv[3])
     except TrustPending as error:
         # A slow app-server under host load is not a broken install; the next pass retries.
         print(f'  CODEX hook trust pending (retry next pass): {error}', file=sys.stderr)

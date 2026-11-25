@@ -57,7 +57,7 @@ and register it in `~/.claude/settings.json`:
 }
 ```
 
-For Codex, `python3 claude/hooks/codex-trust-managed.py ~/.codex ~/.claude/hooks/process_guard.py` adds the same guard to `~/.codex/hooks.json` and trusts it.
+For Codex, `python3 claude/hooks/codex-trust-managed.py ~/.codex ~/.claude/hooks/process_guard.py ~/.claude/hooks/change-ledger.sh` adds the same guard (before each tool call) and the change ledger (`change-ledger.sh codex`, after it) to `~/.codex/hooks.json` and trusts both; `install.sh` does this for `~/.codex` and each account home under `~/.config/agent-accounts/codex`.
 
 The other hooks, registered in [`claude/settings.json`](claude/settings.json) or called by the guard:
 
@@ -68,7 +68,7 @@ The other hooks, registered in [`claude/settings.json`](claude/settings.json) or
 - `merge_check.py`, before `gh pr merge`, warns when the PR's head commit is red or pending.
 - `inject-directive.sh`, at SessionStart, adds the active response-style directive from [`claude/directives`](claude/directives/README.md), rotating variants per session to compare them.
 - `rtk-rewrite.sh`, before Bash, routes supported commands through `rtk` for shorter output.
-- `change-ledger.sh`, after Bash calls, appends a row to `~/.local/state/change-ledger/changes.jsonl` for each `git commit`, `gh pr create` and `gh pr merge` (session, subagent, tool call, repository, commit or pull request); a session's first call also writes an `observed` row, so a session with no change rows is known to have made none. It writes no command text and no attribution.
+- `change-ledger.sh`, after Bash calls, appends a row to `~/.local/state/change-ledger/changes.jsonl` for each `git commit`, `gh pr create` and `gh pr merge` (session, subagent, tool call, repository, commit or pull request); a session's first call also writes an `observed` row, so a session with no change rows is known to have made none. It writes no command text and no attribution. Codex runs the same script after each tool call (`change-ledger.sh codex` in its `hooks.json`) and its rows say `codex`; a command run by a Codex code-mode script carries its own `exec-` id, which the session's rollout maps back to the script call.
 - `skill-run-settle.sh`, at SessionEnd, records your corrections after each skill run in the skill ledger.
 
 ## What is where
