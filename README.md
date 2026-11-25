@@ -63,7 +63,7 @@ The other hooks, registered in [`claude/settings.json`](claude/settings.json) or
 
 - `secret_scan.py`, after Bash, Read and Grep calls, warns when output holds a live-looking credential and gives that key's rotation steps; it logs only the kind, length and SHA-256.
 - `agent-cap-guard.py`, before Agent and Workflow calls, caps live subagents and tells a refused subagent to do the work itself.
-- `blocked_guard.py`, at Stop, sends back once a final message that asks you for a password or key, so the agent searches the vault first.
+- `blocked_guard.py`, at Stop, sends back once a final message that asks you for a password or key, so the agent searches the vault first, or that waits for your "go" on something it can undo, so the agent acts and reports.
 - `page_author.py` stamps each HTML page an agent writes under `~/reviews` with the session that wrote it; `page_feedback.py` takes what you type in the page's feedback box to that session, or to the next one started in its directory.
 - `merge_check.py`, before `gh pr merge`, warns when the PR's head commit is red or pending.
 - `inject-directive.sh`, at SessionStart, adds the active response-style directive from [`claude/directives`](claude/directives/README.md), rotating variants per session to compare them.
