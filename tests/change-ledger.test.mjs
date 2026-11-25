@@ -95,3 +95,13 @@ test('settings.json runs the hook after every Bash call, and the hook and its he
   assert.ok(commands.includes('$HOME/.claude/hooks/change-ledger.sh'))
   for (const name of ['change-ledger.sh', 'change_ledger.py']) accessSync(new URL(`../claude/hooks/${name}`, import.meta.url), constants.X_OK)
 })
+
+test('a payload with spaces after the colons is read the same way as a compact one', () => {
+  const s = scratch()
+  const stdout = s.git('commit', '--allow-empty', '-m', 'three')
+  const payload = JSON.stringify({ tool_name: 'Bash', cwd: s.repo, session_id: 'sess-sp', tool_use_id: 'toolu_sp', tool_input: { command: 'git commit -m three' }, tool_response: { stdout } }, null, 2)
+  const env = { ...process.env, HOME: s.root, CHANGE_LEDGER_DIR: s.state }
+  for (let i = 0; i < 2; i++) assert.equal(spawnSync('bash', [HOOK], { input: payload, env }).status, 0)
+  assert.deepEqual(rows(s).filter((r) => r.action !== 'observed').map((r) => r.sessionId), ['sess-sp', 'sess-sp'])
+  assert.equal(rows(s).filter((r) => r.action === 'observed').length, 1)
+})
