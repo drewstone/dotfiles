@@ -26,10 +26,9 @@ def find_codex():
     return str(installed) if installed.is_file() and os.access(installed, os.X_OK) else None
 
 
-def installed_hook(response, path, spec):
-    guard = spec['command']
+def installed_hook(response, path, guard, event_name='preToolUse'):
     hooks = [hook for data in response['result']['data'] for hook in data['hooks']
-             if hook.get('eventName') == spec['eventName']
+             if hook.get('eventName') == event_name
              and hook.get('handlerType') == 'command'
              and hook.get('command') == guard
              and hook.get('timeoutSec') == 10]
@@ -40,11 +39,11 @@ def installed_hook(response, path, spec):
     if not matches:
         matches = [hook for hook in hooks if hook.get('sourcePath') == str(path.resolve())]
     if len(matches) != 1:
-        raise RuntimeError(f'expected one installed {spec["event"]} hook {guard} in {path}; found {len(matches)}')
+        raise RuntimeError(f'expected one installed {event_name} hook {guard} in {path}; found {len(matches)}')
     return matches[0]
 
 
-def hook_hashes(home, path, specs):
+def hook_hash(home, path, guard, event_name='preToolUse'):
     codex = find_codex()
     if not codex:
         raise RuntimeError('codex is unavailable; hook trust is pending')
@@ -77,8 +76,8 @@ def hook_hashes(home, path, specs):
                     continue
                 if response.get('error'):
                     raise RuntimeError('Codex hooks/list failed')
-                found = [installed_hook(response, path, spec) for spec in specs]
-                return [(hook['key'], hook['currentHash']) for hook in found]
+                hook = installed_hook(response, path, guard, event_name)
+                return hook['key'], hook['currentHash']
         raise TrustPending('Codex hooks/list did not answer within 12 seconds')
     finally:
         if proc.poll() is None:
@@ -86,12 +85,11 @@ def hook_hashes(home, path, specs):
         proc.wait()
 
 
-def specs_for(guard, ledger):
+def specs_for(guard, ledger=None):
     """The hooks this tree installs. The ledger hook is told its harness on the command line: Codex runs the command as written."""
     return [
         {'event': 'PreToolUse', 'eventName': 'preToolUse', 'command': guard, 'replaces': os.path.dirname(guard) + '/'},
-        {'event': 'PostToolUse', 'eventName': 'postToolUse', 'command': f'{ledger} codex', 'replaces': None},
-    ]
+    ] + ([{'event': 'PostToolUse', 'eventName': 'postToolUse', 'command': f'{ledger} codex', 'replaces': None}] if ledger else [])
 
 
 def write_hooks_json(path, specs):
@@ -149,17 +147,18 @@ def trust(home, path, name, key, current_hash):
         print(f'  CODEX {path}: {name} trusted')
 
 
-def install(home, guard, ledger):
+def install(home, guard, ledger=None):
     path = home / 'hooks.json'
     specs = specs_for(guard, ledger)
     write_hooks_json(path, specs)
-    for spec, (key, current_hash) in zip(specs, hook_hashes(home, path, specs)):
+    for spec in specs:
+        key, current_hash = hook_hash(home, path, spec['command'], spec['eventName'])
         trust(home, path, Path(spec['command'].split(' ')[0]).name, key, current_hash)
 
 
 if __name__ == '__main__':
     try:
-        install(Path(sys.argv[1]), sys.argv[2], sys.argv[3])
+        install(Path(sys.argv[1]), sys.argv[2], *sys.argv[3:4])
     except TrustPending as error:
         # A slow app-server under host load is not a broken install; the next pass retries.
         print(f'  CODEX hook trust pending (retry next pass): {error}', file=sys.stderr)
