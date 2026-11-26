@@ -1,11 +1,14 @@
 #!/usr/bin/env -S python3 -S
 """Emit the default claude-code AgentProfile, every resource a GitHub ref pinned to one pushed commit.
 
-Its name is PROFILE_NAME in the private layer's claude/config/emit-agent-profile.env, default dotfiles-default."""
+Its name is PROFILE_NAME in the private layer's claude/config/emit-agent-profile.env, default dotfiles-default.
+A version promoted in the local learned store keeps its mounted skills on each new base (see learned_version)."""
 import argparse
+import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 REPOSITORY = "drewstone/dotfiles"
@@ -21,6 +24,7 @@ PERMISSIONS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "Web
 parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 parser.add_argument("--out", required=True, help="Output JSON path")
 parser.add_argument("--ref", default="origin/main", help="Pushed dotfiles commit the resources pin to")
+parser.add_argument("--learned", help="Learned store whose promoted version to carry; default ~/.config/agent-profiles/learned/<name>")
 args = parser.parse_args()
 repo = Path(__file__).resolve().parents[2]
 git = lambda *argv: subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True, text=True).stdout
@@ -60,4 +64,54 @@ profile = {
     "resources": {"skills": skills, "files": files, "failOnError": True},
     "hooks": hooks,
 }
+
+
+def learned_version(store):
+    """The version on top of the store's history and its mounted skills, or None.
+
+    versions.jsonl is append-only: a `promoted` record names its profile file and version, and a
+    `rolled back` record undoes the promotion before it. A promoted profile's mounted skills are its
+    inline skills with a record in extensions[<name>].resourceProvenance; each must still hash to it.
+    """
+    history = store / "versions.jsonl"
+    stack = []
+    for line in history.read_text().splitlines() if history.is_file() else []:
+        record = json.loads(line) if line.strip() else {}
+        if record.get("action") == "promoted":
+            stack.append(record)
+        elif record.get("action") == "rolled back" and stack:
+            stack.pop()
+    if not stack:
+        return None
+    top = stack[-1]
+    learned = json.loads(Path(top["profile"]).read_text())
+    inline = {skill.get("name"): skill for skill in learned.get("resources", {}).get("skills", []) if skill.get("kind") == "inline"}
+    mounted = []
+    for record in learned.get("extensions", {}).get(NAME, {}).get("resourceProvenance", []):
+        skill = inline.get(record.get("name"))
+        if skill is None or hashlib.sha256(skill["content"].encode()).hexdigest() != record.get("sha256"):
+            raise ValueError(f"{top['profile']}: inline skill {record.get('name')} does not hash to its provenance record")
+        mounted.append((skill, record))
+    return top["version"], mounted
+
+
+store = Path(args.learned).expanduser() if args.learned else Path.home() / ".config/agent-profiles/learned" / NAME
+try:
+    learned = learned_version(store)
+except (OSError, ValueError, KeyError) as error:
+    # The base is always safe to emit; a damaged learned store must not stop an install.
+    print(f"emit-agent-profile: emitting the base without the learned version: {error}", file=sys.stderr)
+    learned = None
+if learned is not None:
+    version, mounted = learned
+    names = {skill.get("name") for skill in skills}
+    carried = [(skill, record) for skill, record in mounted if skill["name"] not in names]
+    for skill, _ in mounted:
+        if skill["name"] in names:
+            print(f"emit-agent-profile: {version} skill {skill['name']} is now in the base; the base copy is kept", file=sys.stderr)
+    profile["version"] = version
+    profile["resources"]["skills"] += [skill for skill, _ in carried]
+    if carried:
+        profile["extensions"] = {NAME: {"resourceProvenance": [record for _, record in carried]}}
+
 Path(args.out).expanduser().write_text(json.dumps(profile, indent=2) + "\n")
