@@ -72,6 +72,9 @@ def learned_version(store):
     versions.jsonl is append-only: a `promoted` record names its profile file and version, and a
     `rolled back` record undoes the promotion before it. A promoted profile's mounted skills are its
     inline skills with a record in extensions[<name>].resourceProvenance; each must still hash to it.
+    A record with a `skill` field is a file mounted beside that skill (agent-interface's
+    mountSkillDirectory): its inline file mount must hash to it too, and it travels with its skill.
+    Returns the version and one (skill, records, file mounts) triple per mounted skill.
     """
     history = store / "versions.jsonl"
     stack = []
@@ -85,14 +88,27 @@ def learned_version(store):
         return None
     top = stack[-1]
     learned = json.loads(Path(top["profile"]).read_text())
-    inline = {skill.get("name"): skill for skill in learned.get("resources", {}).get("skills", []) if skill.get("kind") == "inline"}
-    mounted = []
+    resources = learned.get("resources", {})
+    inline = {skill.get("name"): skill for skill in resources.get("skills", []) if skill.get("kind") == "inline"}
+    files = {mount["resource"].get("name"): mount for mount in resources.get("files", [])
+             if mount.get("resource", {}).get("kind") == "inline"}
+    sha256 = lambda text: hashlib.sha256(text.encode()).hexdigest()
+    mounted, siblings = {}, []
     for record in learned.get("extensions", {}).get(NAME, {}).get("resourceProvenance", []):
+        if record.get("skill") is not None:
+            siblings.append(record)
+            continue
         skill = inline.get(record.get("name"))
-        if skill is None or hashlib.sha256(skill["content"].encode()).hexdigest() != record.get("sha256"):
+        if skill is None or sha256(skill["content"]) != record.get("sha256"):
             raise ValueError(f"{top['profile']}: inline skill {record.get('name')} does not hash to its provenance record")
-        mounted.append((skill, record))
-    return top["version"], mounted
+        mounted[skill["name"]] = (skill, [record], [])
+    for record in siblings:
+        mount = files.get(record.get("name"))
+        if record["skill"] not in mounted or mount is None or sha256(mount["resource"]["content"]) != record.get("sha256"):
+            raise ValueError(f"{top['profile']}: file {record.get('name')} beside skill {record['skill']} does not hash to its provenance record")
+        mounted[record["skill"]][1].append(record)
+        mounted[record["skill"]][2].append(mount)
+    return top["version"], list(mounted.values())
 
 
 store = Path(args.learned).expanduser() if args.learned else Path.home() / ".config/agent-profiles/learned" / NAME
@@ -105,13 +121,14 @@ except (OSError, ValueError, KeyError) as error:
 if learned is not None:
     version, mounted = learned
     names = {skill.get("name") for skill in skills}
-    carried = [(skill, record) for skill, record in mounted if skill["name"] not in names]
-    for skill, _ in mounted:
+    carried = [unit for unit in mounted if unit[0]["name"] not in names]
+    for skill, _, _ in mounted:
         if skill["name"] in names:
             print(f"emit-agent-profile: {version} skill {skill['name']} is now in the base; the base copy is kept", file=sys.stderr)
     profile["version"] = version
-    profile["resources"]["skills"] += [skill for skill, _ in carried]
+    profile["resources"]["skills"] += [skill for skill, _, _ in carried]
+    profile["resources"]["files"] += [mount for _, _, mounts in carried for mount in mounts]
     if carried:
-        profile["extensions"] = {NAME: {"resourceProvenance": [record for _, record in carried]}}
+        profile["extensions"] = {NAME: {"resourceProvenance": [record for _, records, _ in carried for record in records]}}
 
 Path(args.out).expanduser().write_text(json.dumps(profile, indent=2) + "\n")
