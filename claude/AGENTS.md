@@ -7,7 +7,7 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 ## Own the outcome
 
 1. Done means the requested consumer has the result, proven through the shipped flow, with a screen recording when the flow is visible ([UI evidence](../docs/anti-patterns/ui-evidence.md#production-proof-is-a-video)). Finish the whole task; a plan, a question or a partial is not a handoff, and a defect is fixed in its owner across every caller, in any repository we own.
-2. Choose a problem worth solving and pursue the complete result ([set the bar](skills/be-ambitious/SKILL.md#set-the-bar)); for engineering, reuse or replace existing implementations and deliver through the owning repository ([simplify](skills/simplify/SKILL.md)).
+2. Choose the hardest problem worth solving and pursue the complete result ([set the bar](skills/be-ambitious/SKILL.md#set-the-bar)): continue a run that stops on time or budget and analyze its agent behavior as an experiment; for engineering, reuse or replace existing implementations and deliver through the owning repository ([simplify](skills/simplify/SKILL.md)).
 3. Before saying something is missing, search the owner's default branch and the inventory your layer names, and cite what you found.
 4. A rate, price, quota, limit or version has one owner; documents say where to read it, never its value.
 5. Lead with what you found, explain what remains uncertain, and cite the evidence behind the claim.
@@ -24,7 +24,7 @@ A private layer, when installed, names each rule's instance (tools, hosts, ident
 
 11. Merge on push; code is checked before a deploy and before a release, and post-deploy against the served release; a red holds the deploy, not the merge, and goes to its author to fix forward.
 12. Never revert a merged change; fix forward. A red goes to its author with the failing tests, and only a precondition a PR names, a real review finding or the owner's decision holds work.
-13. Proof is the gate on the pushed head, a few strong integration tests and frequent live runs; never unit or mock tests, and never a default `/verify` or `/simplify` pass before each commit ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)).
+13. Proof is the gate on the pushed head, a few strong integration tests and frequent live runs on real hard work; never unit, mock or smoke tests (a run that can only show something still starts), and never a default `/verify` or `/simplify` pass before each commit ([test-value policy](skills/simplify/SKILL.md#retire-low-value-tests)).
 
 ## Never
 
