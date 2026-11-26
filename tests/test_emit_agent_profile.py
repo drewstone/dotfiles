@@ -20,6 +20,17 @@ def mounted(name, content):
     return skill, record
 
 
+def mounted_directory(name, content, siblings):
+    """An inline skill, its sibling file mounts and their records, as agent-interface's mountSkillDirectory writes them."""
+    skill, record = mounted(name, content)
+    record = {**record, 'mountedAt': f'.claude/skills/{name}', 'siblings': sorted(siblings)}
+    files = [{'path': f'.claude/skills/{name}/{rel}', 'resource': {'kind': 'inline', 'name': f'{name}/{rel}', 'content': text}}
+             for rel, text in sorted(siblings.items())]
+    records = [{'name': f'{name}/{rel}', 'repository': 'example/skills', 'ref': 'a' * 40, 'path': f'skills/{name}/{rel}',
+                'sha256': hashlib.sha256(text.encode()).hexdigest(), 'skill': name} for rel, text in sorted(siblings.items())]
+    return skill, [record, *records], files
+
+
 class LearnedVersion(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -43,6 +54,19 @@ class LearnedVersion(unittest.TestCase):
         profile['version'] = version
         profile['resources']['skills'] += [skill for skill, _ in units]
         profile['extensions'] = {NAME: {'resourceProvenance': [record for _, record in units]}}
+        path = self.store / 'profiles' / f'{version}.json'
+        path.write_text(json.dumps(profile))
+        self.record({'action': 'promoted', 'version': version, 'profile': str(path)})
+        return path
+
+    def promote_directory(self, version, unit):
+        """Promote a version whose one learned skill was mounted with its directory."""
+        skill, records, files = unit
+        profile = json.loads(json.dumps(self.base))
+        profile['version'] = version
+        profile['resources']['skills'].append(skill)
+        profile['resources']['files'] += files
+        profile['extensions'] = {NAME: {'resourceProvenance': records}}
         path = self.store / 'profiles' / f'{version}.json'
         path.write_text(json.dumps(profile))
         self.record({'action': 'promoted', 'version': version, 'profile': str(path)})
@@ -92,6 +116,27 @@ class LearnedVersion(unittest.TestCase):
         self.assertEqual(profile['resources']['skills'][0], self.base['resources']['skills'][0])
         self.assertEqual([record['name'] for record in profile['extensions'][NAME]['resourceProvenance']], ['tidy'])
         self.assertIn('is now in the base', self.stderr)
+
+    def test_a_skill_mounted_with_its_directory_carries_its_files_and_records(self):
+        unit = mounted_directory('operate', 'Operate the run.\n', {'references/format.md': 'One line per step.\n'})
+        self.promote_directory('learn.1', unit)
+        profile = self.emit()
+        self.assertEqual(profile['version'], 'learn.1')
+        self.assertEqual(self.skill_names(profile), self.skill_names(self.base) + ['operate'])
+        self.assertEqual(profile['resources']['files'], self.base['resources']['files'] + unit[2])
+        self.assertEqual(profile['extensions'][NAME]['resourceProvenance'], unit[1])
+
+        self.record({'action': 'rolled back', 'from': 'learn.1'})
+        self.assertEqual(self.emit(), self.base)
+
+    def test_an_edited_sibling_file_is_not_carried_and_the_base_is_emitted(self):
+        path = self.promote_directory('learn.1', mounted_directory(
+            'operate', 'Operate the run.\n', {'references/format.md': 'One line per step.\n'}))
+        profile = json.loads(path.read_text())
+        profile['resources']['files'][-1]['resource']['content'] = 'Two lines per step.\n'
+        path.write_text(json.dumps(profile))
+        self.assertEqual(self.emit(), self.base)
+        self.assertIn('beside skill operate does not hash to its provenance record', self.stderr)
 
 
 if __name__ == '__main__':
